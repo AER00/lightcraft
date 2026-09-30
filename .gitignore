@@ -5,3 +5,4 @@ plan/
 /corpus
 /log
 .DS_Store
+.claude/
