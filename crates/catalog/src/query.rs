@@ -1,0 +1,196 @@
+//! Filtering, search and sorting.
+
+use serde::{Deserialize, Serialize};
+
+use crate::{AlbumId, Catalog, ColorLabel, Flag, MediaKind, Photo, PhotoId};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RatingOp {
+    #[default]
+    AtLeast,
+    Exactly,
+    AtMost,
+}
+
+/// What the grid shows. Empty/None fields don't filter.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Filter {
+    /// Free-text search: every token must match filename, title, caption, keywords, camera, lens,
+    /// location or format. Tokens like `rating:3`, `flag:pick`, `iso:>800`, `camera:x2` are fielded.
+    pub text: String,
+    pub rating: u8,
+    pub rating_op: RatingOp,
+    pub flag: Option<Flag>,
+    pub label: Option<ColorLabel>,
+    pub kind: Option<MediaKind>,
+    pub edited: Option<bool>,
+    pub album: Option<AlbumId>,
+    /// Show "Recently Deleted" instead of the library.
+    pub deleted: bool,
+    /// Capture date prefix (`2026`, `2026-04`, `2026-04-12`).
+    pub date: Option<String>,
+    pub keyword: Option<String>,
+    pub camera: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SortKey {
+    #[default]
+    CaptureDate,
+    ImportDate,
+    EditDate,
+    FileName,
+    Rating,
+    FileSize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Sort {
+    pub key: SortKey,
+    pub ascending: bool,
+}
+
+impl Default for Sort {
+    fn default() -> Self {
+        Sort { key: SortKey::CaptureDate, ascending: false }
+    }
+}
+
+fn token_matches(p: &Photo, tok: &str) -> bool {
+    let t = tok.to_lowercase();
+    if let Some((field, val)) = t.split_once(':') {
+        let num = |s: &str| -> Option<(char, f64)> {
+            let (op, rest) = match s.chars().next()? {
+                c @ ('>' | '<' | '=') => (c, &s[1..]),
+                _ => ('=', s),
+            };
+            rest.parse().ok().map(|v| (op, v))
+        };
+        let cmp = |x: f64, s: &str| match num(s) {
+            Some(('>', v)) => x > v,
+            Some(('<', v)) => x < v,
+            Some((_, v)) => (x - v).abs() < 1e-9,
+            None => false,
+        };
+        return match field {
+            "rating" | "stars" => cmp(p.rating as f64, val),
+            "flag" => Flag::parse(val) == Some(p.flag),
+            "label" | "color" => p.label.is_some_and(|l| format!("{l:?}").eq_ignore_ascii_case(val)),
+            "iso" => p.meta.iso.is_some_and(|i| cmp(i as f64, val)),
+            "f" | "aperture" => p.meta.aperture.is_some_and(|a| cmp(a as f64, val)),
+            "focal" => p.meta.focal_mm.is_some_and(|a| cmp(a as f64, val)),
+            "camera" => p.meta.camera.to_lowercase().contains(val),
+            "lens" => p.meta.lens.to_lowercase().contains(val),
+            "keyword" | "kw" => p.meta.keywords.iter().any(|k| k.to_lowercase() == val),
+            "type" | "kind" => format!("{:?}", p.kind).eq_ignore_ascii_case(val),
+            "edited" => (val == "true" || val == "yes") == p.is_edited(),
+            "date" => p.date().starts_with(val),
+            "name" | "file" => p.file_name.to_lowercase().contains(val),
+            _ => false,
+        };
+    }
+    let hay = [&p.file_name, &p.meta.title, &p.meta.caption, &p.meta.camera, &p.meta.lens, &p.meta.location, &p.format];
+    hay.iter().any(|h| h.to_lowercase().contains(&t)) || p.meta.keywords.iter().any(|k| k.to_lowercase().contains(&t))
+}
+
+impl Filter {
+    pub fn matches(&self, p: &Photo, cat: &Catalog) -> bool {
+        if p.deleted != self.deleted {
+            return false;
+        }
+        if self.rating > 0 {
+            let ok = match self.rating_op {
+                RatingOp::AtLeast => p.rating >= self.rating,
+                RatingOp::Exactly => p.rating == self.rating,
+                RatingOp::AtMost => p.rating <= self.rating,
+            };
+            if !ok {
+                return false;
+            }
+        }
+        if self.flag.is_some_and(|f| f != p.flag) || self.label.is_some_and(|l| Some(l) != p.label) || self.kind.is_some_and(|k| k != p.kind) {
+            return false;
+        }
+        if self.edited.is_some_and(|e| e != p.is_edited()) {
+            return false;
+        }
+        if let Some(a) = self.album
+            && !cat.album(a).is_some_and(|al| al.photos.contains(&p.id))
+        {
+            return false;
+        }
+        if let Some(d) = &self.date
+            && !p.date().starts_with(d.as_str())
+        {
+            return false;
+        }
+        if let Some(k) = &self.keyword
+            && !p.meta.keywords.iter().any(|x| x.eq_ignore_ascii_case(k))
+        {
+            return false;
+        }
+        if let Some(c) = &self.camera
+            && !p.meta.camera.eq_ignore_ascii_case(c)
+        {
+            return false;
+        }
+        self.text.split_whitespace().all(|tok| token_matches(p, tok))
+    }
+}
+
+impl Catalog {
+    /// Photos matching `filter`, in `sort` order (ties broken by id for stability).
+    pub fn query(&self, filter: &Filter, sort: &Sort) -> Vec<PhotoId> {
+        let mut v: Vec<&Photo> = self.photos().map(|p| p.as_ref()).filter(|p| filter.matches(p, self)).collect();
+        v.sort_by(|a, b| {
+            let o = match sort.key {
+                SortKey::CaptureDate => a.date().cmp(b.date()),
+                SortKey::ImportDate => a.imported.cmp(&b.imported),
+                SortKey::EditDate => a.edited.cmp(&b.edited),
+                SortKey::FileName => a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()),
+                SortKey::Rating => a.rating.cmp(&b.rating),
+                SortKey::FileSize => a.file_size.cmp(&b.file_size),
+            }
+            .then(a.id.cmp(&b.id));
+            if sort.ascending { o } else { o.reverse() }
+        });
+        v.into_iter().map(|p| p.id).collect()
+    }
+
+    /// Year → month → count tree for the "By Date" section.
+    pub fn date_groups(&self) -> Vec<DateGroup> {
+        let mut map: std::collections::BTreeMap<String, std::collections::BTreeMap<String, usize>> = Default::default();
+        for p in self.photos().filter(|p| !p.deleted) {
+            let d = p.date();
+            if d.len() >= 7 {
+                *map.entry(d[..4].to_string()).or_default().entry(d[..7].to_string()).or_default() += 1;
+            }
+        }
+        map.into_iter()
+            .rev()
+            .map(|(year, months)| DateGroup { count: months.values().sum(), months: months.into_iter().rev().map(|(m, c)| (m, c)).collect(), year })
+            .collect()
+    }
+
+    /// All keywords with usage counts, sorted by name.
+    pub fn keywords(&self) -> Vec<(String, usize)> {
+        let mut m: std::collections::BTreeMap<String, usize> = Default::default();
+        for p in self.photos().filter(|p| !p.deleted) {
+            for k in &p.meta.keywords {
+                *m.entry(k.clone()).or_default() += 1;
+            }
+        }
+        m.into_iter().collect()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DateGroup {
+    pub year: String,
+    pub count: usize,
+    pub months: Vec<(String, usize)>,
+}

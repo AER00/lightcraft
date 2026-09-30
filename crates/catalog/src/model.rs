@@ -1,0 +1,193 @@
+//! Catalog records.
+
+use std::sync::Arc;
+
+use lightcraft_develop::DevelopSettings;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PhotoId(pub u64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AlbumId(pub u64);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaKind {
+    #[default]
+    Image,
+    Raw,
+    Video,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Flag {
+    #[default]
+    None,
+    Pick,
+    Reject,
+}
+
+impl Flag {
+    pub fn parse(s: &str) -> Option<Flag> {
+        match s.to_ascii_lowercase().as_str() {
+            "pick" | "picked" | "flagged" => Some(Flag::Pick),
+            "reject" | "rejected" => Some(Flag::Reject),
+            "none" | "unflagged" | "" => Some(Flag::None),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorLabel {
+    Red,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+}
+
+impl ColorLabel {
+    pub const ALL: [ColorLabel; 5] = [ColorLabel::Red, ColorLabel::Yellow, ColorLabel::Green, ColorLabel::Blue, ColorLabel::Purple];
+    pub fn parse(s: &str) -> Option<ColorLabel> {
+        ColorLabel::ALL.into_iter().find(|c| format!("{c:?}").eq_ignore_ascii_case(s))
+    }
+}
+
+/// Where the pixels come from.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Source {
+    /// A file on disk (native) or in the browser's storage (web).
+    File { path: String },
+    /// A procedurally generated demo scene (by `lightcraft-scenes` id).
+    Demo { scene: u32 },
+}
+
+/// Descriptive + capture metadata.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Meta {
+    pub camera: String,
+    pub lens: String,
+    pub focal_mm: Option<f32>,
+    pub aperture: Option<f32>,
+    pub shutter: String,
+    pub iso: Option<u32>,
+    pub location: String,
+    pub gps: Option<(f64, f64)>,
+    pub title: String,
+    pub caption: String,
+    pub copyright: String,
+    pub creator: String,
+    pub keywords: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Version {
+    pub name: String,
+    pub created: String,
+    pub settings: Arc<DevelopSettings>,
+    #[serde(default)]
+    pub auto: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HistoryStep {
+    pub label: String,
+    pub settings: Arc<DevelopSettings>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Photo {
+    pub id: PhotoId,
+    pub source: Source,
+    pub file_name: String,
+    #[serde(default)]
+    pub kind: MediaKind,
+    pub format: String,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default)]
+    pub file_size: u64,
+    /// ISO 8601 local capture time.
+    #[serde(default)]
+    pub captured: Option<String>,
+    pub imported: String,
+    #[serde(default)]
+    pub meta: Meta,
+    #[serde(default)]
+    pub rating: u8,
+    #[serde(default)]
+    pub flag: Flag,
+    #[serde(default)]
+    pub label: Option<ColorLabel>,
+    pub develop: Arc<DevelopSettings>,
+    #[serde(default)]
+    pub edited: Option<String>,
+    #[serde(default)]
+    pub versions: Vec<Version>,
+    #[serde(default)]
+    pub history: Vec<HistoryStep>,
+    /// In "Recently Deleted".
+    #[serde(default)]
+    pub deleted: bool,
+    /// Video duration in seconds.
+    #[serde(default)]
+    pub duration: Option<f64>,
+}
+
+impl Photo {
+    pub fn new(id: PhotoId, source: Source, file_name: &str, format: &str, width: u32, height: u32, imported: &str) -> Photo {
+        Photo {
+            id,
+            source,
+            file_name: file_name.to_string(),
+            kind: MediaKind::Image,
+            format: format.to_string(),
+            width,
+            height,
+            file_size: 0,
+            captured: None,
+            imported: imported.to_string(),
+            meta: Meta::default(),
+            rating: 0,
+            flag: Flag::None,
+            label: None,
+            develop: Arc::new(DevelopSettings::default()),
+            edited: None,
+            versions: Vec::new(),
+            history: Vec::new(),
+            deleted: false,
+            duration: None,
+        }
+    }
+    pub fn is_edited(&self) -> bool {
+        !self.develop.is_unedited()
+    }
+    /// Capture time if known, else import time (sort key).
+    pub fn date(&self) -> &str {
+        self.captured.as_deref().unwrap_or(&self.imported)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Album {
+    pub id: AlbumId,
+    pub name: String,
+    /// Containing folder (an album with `folder = true`).
+    #[serde(default)]
+    pub parent: Option<AlbumId>,
+    /// Folders hold albums, not photos.
+    #[serde(default)]
+    pub folder: bool,
+    #[serde(default)]
+    pub photos: Vec<PhotoId>,
+    #[serde(default)]
+    pub cover: Option<PhotoId>,
+}
