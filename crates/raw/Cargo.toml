@@ -9,3 +9,15 @@ description = "LightCraft RAW decoding, demosaicing and DNG colour model (L1)"
 workspace = true
 
 [dependencies]
+lightcraft-tiff = { workspace = true }
+lightcraft-meta = { workspace = true }
+lightcraft-raster = { workspace = true }
+lightcraft-color = { workspace = true }
+lightcraft-geom = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+rayon = { workspace = true }
+miniz_oxide = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
