@@ -179,7 +179,7 @@ fn scaled_request(w: u32, h: u32, mw: u32, mh: u32) -> (u16, u16) {
 
 /// Fast path: an embedded JPEG preview (EXIF IFD1 thumbnail, or the largest MPF preview) whose long
 /// edge is ≥ `max_edge`, decoded with DCT scaling and fitted.
-pub(crate) fn embedded_thumbnail(bytes: &[u8], max_edge: u32) -> Option<Thumbnail> {
+pub(crate) fn embedded_thumbnail(bytes: &[u8], max_edge: u32, min_edge: u32) -> Option<Thumbnail> {
     let m = parse_markers(bytes)?;
     let summary = m.exif.as_deref().map(exif::summarize).unwrap_or_default();
     let orientation = summary.orientation.unwrap_or(1);
@@ -202,7 +202,13 @@ pub(crate) fn embedded_thumbnail(bytes: &[u8], max_edge: u32) -> Option<Thumbnai
             && m.height > 0
             && pm.height > 0
             && ((pm.width as f64 / pm.height as f64) / (m.width as f64 / m.height as f64) - 1.0).abs() < 0.02;
-        if long >= max_edge && aspect_ok && best.as_ref().is_none_or(|b| long < b.0) {
+        // Prefer the smallest preview covering `max_edge`; otherwise the largest one ≥ `min_edge`.
+        let better = match &best {
+            None => true,
+            Some(b) if b.0 >= max_edge => long >= max_edge && long < b.0,
+            Some(b) => long > b.0,
+        };
+        if long >= min_edge && aspect_ok && better {
             best = Some((long, data, src));
         }
     }

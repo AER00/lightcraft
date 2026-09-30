@@ -450,3 +450,30 @@ fn raw_routing() {
     b.extend_from_slice(&0u32.to_le_bytes());
     assert!(matches!(decode(&b, DecodeOptions::default()), Err(Error::Unsupported(Format::RawTiffLike, _))));
 }
+
+#[test]
+fn thumbnail_accepts_smaller_preview_when_asked() {
+    let main = Rgba8::filled(800, 600, [200, 30, 30, 255]);
+    let thumb = Rgba8::filled(160, 120, [30, 30, 200, 255]);
+    let thumb_jpeg = encode_jpeg(&EncodeImage::rgba8(&thumb), 80, ChromaSubsampling::S420, &EncodeMeta::default()).unwrap();
+    let exif = exif_with_thumbnail(&thumb_jpeg, 1);
+    let bytes =
+        encode_jpeg(&EncodeImage::rgba8(&main), 80, ChromaSubsampling::S420, &EncodeMeta { exif: Some(&exif), ..Default::default() }).unwrap();
+    let t = decode_thumbnail(&bytes, 256).unwrap();
+    assert_eq!(t.source, ThumbnailSource::Scaled);
+    let t = decode_thumbnail_with(&bytes, &ThumbnailOptions { max_edge: 256, min_embedded_edge: 160 }).unwrap();
+    assert_eq!(t.source, ThumbnailSource::ExifThumbnail);
+    assert_eq!((t.image.width, t.image.height), (160, 120));
+}
+
+#[test]
+fn unusable_icc_falls_back_to_srgb_with_flag() {
+    let bogus = vec![0x42u8; 300];
+    let data = [128u8, 64, 32];
+    let bytes = encode_png(&EncodeImage::new(1, 1, 3, Samples::U8(&data)), &EncodeMeta { icc: Some(&bogus), ..Default::default() }).unwrap();
+    let d = decode(&bytes, DecodeOptions::default()).unwrap();
+    assert_eq!(d.space.origin, SpaceOrigin::IccUnsupported);
+    assert_eq!(d.space.named, Some(NamedSpace::Srgb));
+    assert_eq!(d.icc.as_deref(), Some(&bogus[..]));
+    assert!((d.image.get(0, 0)[0] - srgb_to_linear(128.0 / 255.0)).abs() < 1e-6);
+}

@@ -206,12 +206,35 @@ pub struct Thumbnail {
     pub source_height: u32,
 }
 
-/// Fast thumbnail: an embedded JPEG preview that is at least `max_edge` on its long side if one exists,
-/// else a scaled decode. The result fits within `max_edge × max_edge`.
+/// Thumbnail request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThumbnailOptions {
+    /// Fit the result within `max_edge × max_edge`.
+    pub max_edge: u32,
+    /// Accept an embedded preview whose long edge is at least this (it is then returned at its own,
+    /// smaller size). Defaults to `max_edge`, i.e. only previews that need no upscaling. Lower it
+    /// (e.g. 160 for typical EXIF thumbnails) for an instant placeholder.
+    pub min_embedded_edge: u32,
+}
+
+impl ThumbnailOptions {
+    pub fn new(max_edge: u32) -> Self {
+        ThumbnailOptions { max_edge, min_embedded_edge: max_edge }
+    }
+}
+
+/// Fast thumbnail: an embedded JPEG preview (EXIF IFD1 thumbnail or MPF preview) at least `max_edge`
+/// on its long side if one exists, else a scaled decode. The result fits within `max_edge × max_edge`.
 pub fn decode_thumbnail(bytes: &[u8], max_edge: u32) -> Result<Thumbnail> {
-    let max_edge = max_edge.max(1);
+    decode_thumbnail_with(bytes, &ThumbnailOptions::new(max_edge))
+}
+
+/// [`decode_thumbnail`] with options.
+pub fn decode_thumbnail_with(bytes: &[u8], opts: &ThumbnailOptions) -> Result<Thumbnail> {
+    let max_edge = opts.max_edge.max(1);
+    let min_edge = opts.min_embedded_edge.clamp(1, max_edge);
     if sniff(bytes) == Some(Format::Jpeg)
-        && let Some(t) = jpeg::embedded_thumbnail(bytes, max_edge)
+        && let Ok(Some(t)) = std::panic::catch_unwind(|| jpeg::embedded_thumbnail(bytes, max_edge, min_edge))
     {
         return Ok(t);
     }

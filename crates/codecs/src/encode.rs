@@ -147,7 +147,7 @@ pub fn encode_png(img: &EncodeImage, meta: &EncodeMeta) -> Result<Vec<u8>> {
     let e = |e: png::EncodingError| Error::Encode(e.to_string());
     {
         let mut enc = png::Encoder::with_info(&mut out, info).map_err(e)?;
-        enc.set_compression(png::Compression::Balanced);
+        enc.set_compression(png::Compression::Fast);
         if let Some(xmp) = meta.xmp {
             enc.add_itxt_chunk("XML:com.adobe.xmp".into(), xmp.into()).map_err(e)?;
         }
@@ -179,7 +179,7 @@ pub fn encode_tiff(img: &EncodeImage, compression: TiffCompression, meta: &Encod
     let comp = match compression {
         TiffCompression::None => Compression::Uncompressed,
         TiffCompression::Lzw => Compression::Lzw,
-        TiffCompression::Deflate => Compression::Deflate(DeflateLevel::Balanced),
+        TiffCompression::Deflate => Compression::Deflate(DeflateLevel::Fast),
         TiffCompression::PackBits => Compression::Packbits,
     };
     let float = matches!(img.samples, Samples::F32(_));
