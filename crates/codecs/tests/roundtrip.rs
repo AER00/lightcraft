@@ -450,3 +450,87 @@ fn raw_routing() {
     b.extend_from_slice(&0u32.to_le_bytes());
     assert!(matches!(decode(&b, DecodeOptions::default()), Err(Error::Unsupported(Format::RawTiffLike, _))));
 }
+
+#[test]
+fn thumbnail_accepts_smaller_preview_when_asked() {
+    let main = Rgba8::filled(800, 600, [200, 30, 30, 255]);
+    let thumb = Rgba8::filled(160, 120, [30, 30, 200, 255]);
+    let thumb_jpeg = encode_jpeg(&EncodeImage::rgba8(&thumb), 80, ChromaSubsampling::S420, &EncodeMeta::default()).unwrap();
+    let exif = exif_with_thumbnail(&thumb_jpeg, 1);
+    let bytes =
+        encode_jpeg(&EncodeImage::rgba8(&main), 80, ChromaSubsampling::S420, &EncodeMeta { exif: Some(&exif), ..Default::default() }).unwrap();
+    let t = decode_thumbnail(&bytes, 256).unwrap();
+    assert_eq!(t.source, ThumbnailSource::Scaled);
+    let t = decode_thumbnail_with(&bytes, &ThumbnailOptions { max_edge: 256, min_embedded_edge: 160 }).unwrap();
+    assert_eq!(t.source, ThumbnailSource::ExifThumbnail);
+    assert_eq!((t.image.width, t.image.height), (160, 120));
+}
+
+#[test]
+fn unusable_icc_falls_back_to_srgb_with_flag() {
+    let bogus = vec![0x42u8; 300];
+    let data = [128u8, 64, 32];
+    let bytes = encode_png(&EncodeImage::new(1, 1, 3, Samples::U8(&data)), &EncodeMeta { icc: Some(&bogus), ..Default::default() }).unwrap();
+    let d = decode(&bytes, DecodeOptions::default()).unwrap();
+    assert_eq!(d.space.origin, SpaceOrigin::IccUnsupported);
+    assert_eq!(d.space.named, Some(NamedSpace::Srgb));
+    assert_eq!(d.icc.as_deref(), Some(&bogus[..]));
+    assert!((d.image.get(0, 0)[0] - srgb_to_linear(128.0 / 255.0)).abs() < 1e-6);
+}
+
+/// Splice an MPF APP2 segment right after SOI and append `preview` after the primary image.
+fn with_mpf_preview(primary: &[u8], preview: &[u8]) -> Vec<u8> {
+    // MPF segment payload: "MPF\0" + TIFF (LE) with one IFD holding 3 entries + 2 MP entries.
+    let mut t = b"II*\0".to_vec();
+    t.extend_from_slice(&8u32.to_le_bytes());
+    t.extend_from_slice(&3u16.to_le_bytes());
+    let ifd_end = 8 + 2 + 3 * 12 + 4; // 50
+    let entries_off = ifd_end as u32;
+    let push = |t: &mut Vec<u8>, tag: u16, typ: u16, count: u32, val: [u8; 4]| {
+        t.extend_from_slice(&tag.to_le_bytes());
+        t.extend_from_slice(&typ.to_le_bytes());
+        t.extend_from_slice(&count.to_le_bytes());
+        t.extend_from_slice(&val);
+    };
+    push(&mut t, 0xB000, 7, 4, *b"0100");
+    push(&mut t, 0xB001, 4, 1, 2u32.to_le_bytes());
+    push(&mut t, 0xB002, 7, 32, entries_off.to_le_bytes());
+    t.extend_from_slice(&0u32.to_le_bytes());
+    assert_eq!(t.len(), ifd_end);
+    let seg_len = 2 + 4 + t.len() + 32;
+    let mpf_header_pos = 2 + 4 + 4; // SOI, FFE2+len, "MPF\0"
+    let primary_len = primary.len() + 2 + seg_len;
+    let preview_off = (primary_len - mpf_header_pos) as u32;
+    let mut e = Vec::new();
+    for (size, off) in [(primary_len as u32, 0u32), (preview.len() as u32, preview_off)] {
+        e.extend_from_slice(&0u32.to_le_bytes());
+        e.extend_from_slice(&size.to_le_bytes());
+        e.extend_from_slice(&off.to_le_bytes());
+        e.extend_from_slice(&[0, 0, 0, 0]);
+    }
+    t.extend_from_slice(&e);
+    let mut out = primary[..2].to_vec();
+    out.extend_from_slice(&[0xFF, 0xE2]);
+    out.extend_from_slice(&(seg_len as u16).to_be_bytes());
+    out.extend_from_slice(b"MPF\0");
+    out.extend_from_slice(&t);
+    out.extend_from_slice(&primary[2..]);
+    assert_eq!(out.len(), primary_len);
+    out.extend_from_slice(preview);
+    out
+}
+
+#[test]
+fn thumbnail_from_mpf_preview() {
+    let main = Rgba8::filled(1600, 1200, [200, 30, 30, 255]);
+    let prev = Rgba8::filled(640, 480, [30, 200, 30, 255]);
+    let enc = |i: &Rgba8| encode_jpeg(&EncodeImage::rgba8(i), 80, ChromaSubsampling::S420, &EncodeMeta::default()).unwrap();
+    let bytes = with_mpf_preview(&enc(&main), &enc(&prev));
+    // Still a valid JPEG for the full decoder.
+    let d = decode(&bytes, DecodeOptions::default()).unwrap();
+    assert_eq!((d.width, d.height), (1600, 1200));
+    let t = decode_thumbnail(&bytes, 256).unwrap();
+    assert_eq!(t.source, ThumbnailSource::MpfPreview);
+    assert_eq!((t.image.width, t.image.height), (256, 192));
+    assert!(t.image.get(5, 5)[1] > 150);
+}
