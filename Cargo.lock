@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "adler2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -141,6 +147,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-meta"
+version = "0.1.0"
+dependencies = [
+ "lightcraft-geom",
+ "lightcraft-tiff",
+ "proptest",
+ "quick-xml",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lightcraft-raster"
 version = "0.1.0"
 dependencies = [
@@ -149,6 +167,31 @@ dependencies = [
  "proptest",
  "rayon",
  "serde",
+]
+
+[[package]]
+name = "lightcraft-raw"
+version = "0.1.0"
+dependencies = [
+ "lightcraft-color",
+ "lightcraft-geom",
+ "lightcraft-meta",
+ "lightcraft-raster",
+ "lightcraft-tiff",
+ "miniz_oxide",
+ "proptest",
+ "rayon",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "lightcraft-tiff"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]
@@ -162,6 +205,15 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "miniz_oxide"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
+dependencies = [
+ "adler2",
+]
 
 [[package]]
 name = "num-traits"
@@ -220,6 +272,15 @@ name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
+
+[[package]]
+name = "quick-xml"
+version = "0.38.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "quote"
@@ -407,6 +468,26 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
+dependencies = [
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
 ]
 
 [[package]]

@@ -35,6 +35,10 @@ rayon = "1"
 proptest = "1"
 bytemuck = { version = "1", features = ["derive"] }
 
+# formats
+quick-xml = "0.38"
+miniz_oxide = "0.8"
+
 # codecs
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "webp"] }
 
