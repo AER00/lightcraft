@@ -33,6 +33,8 @@ pub struct Filter {
     pub date: Option<String>,
     pub keyword: Option<String>,
     pub camera: Option<String>,
+    /// Import date prefix (Recently Added).
+    pub imported: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +127,11 @@ impl Filter {
         }
         if let Some(d) = &self.date
             && !p.date().starts_with(d.as_str())
+        {
+            return false;
+        }
+        if let Some(d) = &self.imported
+            && !p.imported.starts_with(d.as_str())
         {
             return false;
         }

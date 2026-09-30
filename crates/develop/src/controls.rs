@@ -2,11 +2,11 @@
 //! default, step, display precision and track style. The UI builds panels from it, MCP exposes it as
 //! a schema, and `get`/`set` address settings by id (e.g. `light.exposure`, `mixer.red.hue`).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::settings::DevelopSettings;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Section {
     Light,
