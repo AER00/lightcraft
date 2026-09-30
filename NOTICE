@@ -6,5 +6,7 @@ This product bundles third-party material under the following licences:
 - Source Sans 3 (assets/fonts/SourceSans3-*) — SIL Open Font License 1.1. See assets/fonts/OFL-SourceSans3.txt.
 - Inter (assets/fonts/Inter-*.ttf) — SIL Open Font License 1.1. See assets/fonts/OFL-Inter.txt.
 
+Every bundled asset (fonts, icons, images) and its licence is listed in assets/ATTRIBUTION.md.
+
 Algorithms are implemented from public specifications and papers (see crate READMEs). Rust dependencies
 (egui, eframe, image, rayon, serde, …) are permissively licensed (MIT/Apache-2.0/BSD/ISC/Zlib) and fetched through crates.io.
