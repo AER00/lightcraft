@@ -172,7 +172,7 @@ impl Catalog {
         }
         map.into_iter()
             .rev()
-            .map(|(year, months)| DateGroup { count: months.values().sum(), months: months.into_iter().rev().map(|(m, c)| (m, c)).collect(), year })
+            .map(|(year, months)| DateGroup { count: months.values().sum(), months: months.into_iter().rev().collect(), year })
             .collect()
     }
 
