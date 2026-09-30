@@ -113,6 +113,9 @@ pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
         i.u16(lightcraft_tiff::tags::PHOTOMETRIC) == Some(lightcraft_tiff::tags::photometric::CFA)
             || i.u16(lightcraft_tiff::tags::COMPRESSION).is_some_and(|c| c == 34713 || c == 32767 || c == 32769 || c == 32770)
     });
+    if make.starts_with("CANON") && t.ifds.len() >= 4 && t.ifds[3].u16(lightcraft_tiff::tags::COMPRESSION) == Some(6) {
+        return Some(RawFormat::Cr2);
+    }
     if make.starts_with("NIKON") {
         return Some(if has_cfa || t.all_ifds().len() > 1 { RawFormat::Nef } else { RawFormat::Nrw });
     }
