@@ -152,7 +152,10 @@ fn copy_into_library(lib: &Path, src: &str, date: &str) -> Result<String, String
 
 /// Import files/folders. See the module docs.
 pub fn import(s: &mut Session, paths: &[String], mode: ImportMode) -> crate::Result<ImportReport> {
-    let lib_dir = s.library.as_ref().map(|l| l.dir.clone());
+    // Only a library on disk has an `Originals/` folder. The browser build keeps the bytes of every
+    // added file in its own storage already, so "copy" there means "add".
+    let mode = if mode == ImportMode::Copy && s.library.as_ref().is_some_and(|l| !l.on_disk) { ImportMode::Add } else { mode };
+    let lib_dir = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
     if mode == ImportMode::Copy && lib_dir.is_none() {
         return Err(crate::EngineError::Other("copying into the library needs an open library".into()));
     }

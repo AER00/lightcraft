@@ -1,16 +1,31 @@
-//! Browser host: starts eframe on `<canvas id="lightcraft_canvas">`, wires the in-memory store to
-//! the file picker and drag-and-drop, and turns exports into downloads.
+//! Browser host: opens the library in browser storage, starts eframe on
+//! `<canvas id="lightcraft_canvas">`, wires the file picker and drag-and-drop, and turns exports
+//! into downloads.
+
+use std::cell::Cell;
+use std::rc::Rc;
+use std::sync::Arc;
 
 use lightcraft_engine::Session;
-use lightcraft_ui_egui::{LightcraftApp, Services};
+use lightcraft_engine::catalog::Source;
+use lightcraft_engine::library::LibraryStores;
+use lightcraft_ui_egui::{LightcraftApp, Services, UiState};
 use serde_json::json;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
+use crate::backend::Backend;
 use crate::bench::Bench;
-use crate::store::{MemStore, download_name};
+use crate::files::{Files, FlushOp, LIBRARY_FILES};
+use crate::store::{Originals, content_hash, download_name, storage_key};
 
 const ACCEPT: &str = ".jpg,.jpeg,.png,.tif,.tiff,.webp,.dng,.cr2,.nef,.arw,.psd,.jxl,.gif,.bmp";
+
+/// Where the library files live in browser storage.
+const LIBRARY_DIR: &str = "library";
+
+/// How often view state and UI prefs are saved (ms).
+const SAVE_EVERY_MS: f64 = 1000.0;
 
 fn window() -> web_sys::Window {
     web_sys::window().expect("no window")
@@ -27,19 +42,62 @@ fn set_status(text: &str) {
     }
 }
 
-/// Read a browser `File` into the store.
-async fn read_file(store: MemStore, file: web_sys::File, ctx: egui::Context) {
-    match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
-        Ok(buf) => {
-            store.add(&file.name(), js_sys::Uint8Array::new(&buf).to_vec());
-            ctx.request_repaint();
+fn library_key(name: &str) -> String {
+    format!("{LIBRARY_DIR}/{name}")
+}
+
+/// URL options (`?bench&store=idb&reset`).
+struct Options {
+    bench: bool,
+    /// "opfs" (default: OPFS, falling back to IndexedDB), "idb" or "memory".
+    store: String,
+    reset: bool,
+}
+
+impl Options {
+    fn from_url() -> Options {
+        let q = window().location().search().unwrap_or_default();
+        let params: Vec<(String, String)> = q
+            .trim_start_matches('?')
+            .split('&')
+            .filter(|p| !p.is_empty())
+            .map(|p| match p.split_once('=') {
+                Some((k, v)) => (k.to_string(), v.to_string()),
+                None => (p.to_string(), String::new()),
+            })
+            .collect();
+        let get = |k: &str| params.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        Options {
+            bench: get("bench").is_some(),
+            store: get("store").filter(|s| s == "idb" || s == "memory").unwrap_or_else(|| "opfs".into()),
+            reset: get("reset").is_some(),
         }
+    }
+}
+
+/// Store a picked/dropped file (bytes into browser storage, then queue its import).
+async fn store_file(originals: Originals, backend: Option<Backend>, name: String, bytes: Vec<u8>, ctx: egui::Context) {
+    let hash = content_hash(&bytes);
+    if let Some(b) = &backend
+        && let Err(e) = b.write(&storage_key(&hash), &bytes).await
+    {
+        // still importable for this session; it won't survive a reload
+        log::error!("storing {name} in browser storage failed: {e}");
+    }
+    originals.added(&name, &hash, Arc::from(bytes));
+    ctx.request_repaint();
+}
+
+/// Read a browser `File` into storage.
+async fn read_file(originals: Originals, backend: Option<Backend>, file: web_sys::File, ctx: egui::Context) {
+    match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
+        Ok(buf) => store_file(originals, backend, file.name(), js_sys::Uint8Array::new(&buf).to_vec(), ctx).await,
         Err(e) => log::warn!("reading {}: {e:?}", file.name()),
     }
 }
 
-/// Show the browser's open dialog; picked files land in the store asynchronously.
-fn open_picker(store: MemStore, ctx: egui::Context) {
+/// Show the browser's open dialog; picked files are imported asynchronously.
+fn open_picker(originals: Originals, backend: Option<Backend>, ctx: egui::Context) {
     let Some(doc) = window().document() else { return };
     let Ok(input) = doc.create_element("input").map(|e| e.unchecked_into::<web_sys::HtmlInputElement>()) else { return };
     input.set_type("file");
@@ -50,7 +108,7 @@ fn open_picker(store: MemStore, ctx: egui::Context) {
         if let Some(files) = inp.files() {
             for i in 0..files.length() {
                 if let Some(f) = files.get(i) {
-                    wasm_bindgen_futures::spawn_local(read_file(store.clone(), f, ctx.clone()));
+                    wasm_bindgen_futures::spawn_local(read_file(originals.clone(), backend.clone(), f, ctx.clone()));
                 }
             }
         }
@@ -83,10 +141,10 @@ fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn services(store: MemStore, ctx: egui::Context) -> Services {
+fn services(originals: Originals, backend: Option<Backend>, ctx: egui::Context) -> Services {
     Services {
         pick_files: Some(Box::new(move || {
-            open_picker(store.clone(), ctx.clone());
+            open_picker(originals.clone(), backend.clone(), ctx.clone());
             Vec::new() // files arrive asynchronously and are imported on a later frame
         })),
         // Preset files: browser pickers are asynchronous; not wired on the web yet.
@@ -99,44 +157,145 @@ fn services(store: MemStore, ctx: egui::Context) -> Services {
     }
 }
 
+/// Write dirty library files to storage, in order, until none are left.
+async fn flush(files: Files, backend: Backend, flushing: Rc<Cell<bool>>) {
+    'outer: loop {
+        let ops = files.take_dirty();
+        if ops.is_empty() {
+            break;
+        }
+        for (i, op) in ops.iter().enumerate() {
+            let r = match op {
+                FlushOp::Write { name, data } => backend.write(&library_key(name), data).await,
+                FlushOp::Append { name, offset, data } => backend.write_at(&library_key(name), Some(*offset), data).await,
+            };
+            if let Err(e) = r {
+                log::error!("saving {} failed: {e}", op.name());
+                files.failed(&ops[i..]);
+                break 'outer;
+            }
+        }
+    }
+    flushing.set(false);
+}
+
+/// Everything loaded before the UI starts.
+struct Boot {
+    opts: Options,
+    backend: Option<Backend>,
+    files: Files,
+}
+
+async fn boot(opts: Options) -> Boot {
+    let t0 = perf_now();
+    let backend = if opts.store == "memory" {
+        None
+    } else {
+        match Backend::open(opts.store == "idb").await {
+            Ok(b) => Some(b),
+            Err(e) => {
+                log::error!("no browser storage ({e}); this session won't be saved");
+                None
+            }
+        }
+    };
+    let files = Files::default();
+    if let Some(b) = &backend {
+        if opts.reset {
+            match b.clear().await {
+                Ok(()) => log::info!("lightcraft: storage cleared (?reset)"),
+                Err(e) => log::error!("clearing storage: {e}"),
+            }
+        }
+        for name in LIBRARY_FILES {
+            match b.read(&library_key(name)).await {
+                Ok(Some(data)) => files.preload(name, data),
+                Ok(None) => {}
+                Err(e) => log::error!("reading {name}: {e}"),
+            }
+        }
+        crate::backend::request_persistence();
+    }
+    log::info!("lightcraft: storage {} opened in {:.0} ms", backend.as_ref().map_or("memory", |b| b.kind()), perf_now() - t0);
+    Boot { opts, backend, files }
+}
+
 struct WebApp {
     app: LightcraftApp,
-    store: MemStore,
+    originals: Originals,
+    files: Files,
+    backend: Option<Backend>,
+    flushing: Rc<Cell<bool>>,
     bench: Option<Bench>,
     first_frame_logged: bool,
+    last_save: f64,
+    ui_written: Vec<u8>,
 }
 
 impl WebApp {
-    fn new(cc: &eframe::CreationContext<'_>, bench: bool) -> Self {
-        let store = MemStore::default();
+    fn new(cc: &eframe::CreationContext<'_>, boot: Boot) -> Self {
+        let Boot { opts, backend, files } = boot;
+        let originals = Originals::default();
         let t = perf_now();
-        let mut session = Session::with_demo();
-        log::info!("lightcraft: wasm started at {:.0} ms; demo library built in {:.0} ms", t, perf_now() - t);
-        store.install(&mut session);
+        let mut session = Session::new();
+        originals.install(&mut session);
+        let stores = LibraryStores {
+            dir: format!("browser:{}/{LIBRARY_DIR}", backend.as_ref().map_or("memory", |b| b.kind())).into(),
+            catalog: Box::new(files.store()),
+            files: Box::new(files.store()),
+            on_disk: false,
+        };
+        match session.open_library_in(stores, true).cloned() {
+            Ok(r) => log::info!(
+                "lightcraft: library {} in {:.0} ms ({} photos; snapshot seq {}, {} ops replayed)",
+                if r.created { "created" } else { "loaded" },
+                perf_now() - t,
+                session.catalog.len(),
+                r.snapshot_seq,
+                r.replayed
+            ),
+            Err(e) => {
+                log::error!("opening the library failed: {e}; starting a temporary one");
+                session = Session::with_demo();
+                originals.install(&mut session);
+            }
+        }
         // previews are large (≤ 2560 px, f32): keep few in a 32-bit address space
         session.media.preview_capacity = 3;
-        let mut app = LightcraftApp::new(session, services(store.clone(), cc.egui_ctx.clone()));
+        let mut app = LightcraftApp::new(session, services(originals.clone(), backend.clone(), cc.egui_ctx.clone()));
+        let ui_written = files.get("ui.json").unwrap_or_default();
+        if let Ok(ui) = serde_json::from_slice::<UiState>(&ui_written) {
+            app.ui = ui;
+        }
         app.ui = app.ui.sanitized();
+        CTX.with(|c| *c.borrow_mut() = Some(cc.egui_ctx.clone()));
         let origin = lightcraft_ui_egui::now_ms() - perf_now();
-        WebApp { app, store, bench: bench.then(|| Bench::new(origin)), first_frame_logged: false }
+        WebApp {
+            app,
+            originals,
+            files,
+            backend,
+            flushing: Rc::new(Cell::new(false)),
+            bench: opts.bench.then(|| Bench::new(origin)),
+            first_frame_logged: false,
+            last_save: 0.0,
+            ui_written,
+        }
     }
 
     fn import_dropped(&mut self, ctx: &egui::Context) {
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         for f in dropped {
-            let (store, ctx) = (self.store.clone(), ctx.clone());
+            let (originals, backend, ctx) = (self.originals.clone(), self.backend.clone(), ctx.clone());
             wasm_bindgen_futures::spawn_local(async move {
                 let name = f.path().to_string_lossy().to_string();
                 match f.bytes_async().await {
-                    Ok(bytes) => {
-                        store.add(&name, bytes);
-                        ctx.request_repaint();
-                    }
+                    Ok(bytes) => store_file(originals, backend, name, bytes, ctx).await,
                     Err(e) => log::warn!("reading dropped {name}: {e}"),
                 }
             });
         }
-        let paths = self.store.take_pending();
+        let paths = self.originals.take_pending();
         if !paths.is_empty() {
             let n = paths.len();
             match self.app.run("library.import", json!({"paths": paths})) {
@@ -145,12 +304,114 @@ impl WebApp {
             }
         }
     }
+
+    /// Load originals the main thread asked for (and the active photo's, ahead of time).
+    fn load_originals(&mut self, ctx: &egui::Context) {
+        if let Some(id) = self.app.session.selection.active
+            && let Some(Source::File { path }) = self.app.session.catalog.photo(id).map(|p| &p.source)
+            && !self.originals.contains(path)
+        {
+            self.originals.prefetch(path);
+        }
+        let Some(b) = &self.backend else { return };
+        for hash in self.originals.take_wanted() {
+            let (b, originals, ctx) = (b.clone(), self.originals.clone(), ctx.clone());
+            wasm_bindgen_futures::spawn_local(async move {
+                match b.read(&storage_key(&hash)).await {
+                    Ok(Some(bytes)) => {
+                        originals.insert(&hash, Arc::from(bytes));
+                        ctx.request_repaint();
+                    }
+                    Ok(None) => {
+                        log::warn!("original {hash} is not in browser storage");
+                        originals.load_failed(&hash);
+                    }
+                    Err(e) => {
+                        log::warn!("loading original {hash}: {e}");
+                        originals.load_failed(&hash);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Save view state and UI prefs now and then; flush dirty files.
+    fn save(&mut self) {
+        let now = perf_now();
+        if now - self.last_save >= SAVE_EVERY_MS {
+            self.last_save = now;
+            self.app.session.save_view();
+            if let Ok(ui) = serde_json::to_vec_pretty(&self.app.ui)
+                && ui != self.ui_written
+            {
+                self.files.write("ui.json", &ui);
+                self.ui_written = ui;
+            }
+        }
+        if let Some(b) = &self.backend
+            && self.files.is_dirty()
+            && !self.flushing.get()
+        {
+            self.flushing.set(true);
+            wasm_bindgen_futures::spawn_local(flush(self.files.clone(), b.clone(), self.flushing.clone()));
+        }
+    }
+}
+
+type Reply = (js_sys::Function, js_sys::Function);
+
+thread_local! {
+    /// Commands from JavaScript ([`command`]), run on the next frame.
+    static INBOX: std::cell::RefCell<Vec<(String, String, Reply)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static CTX: std::cell::RefCell<Option<egui::Context>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run a command by id from JavaScript (automation, tests): `await command("library.info", "{}")`
+/// resolves to the result as JSON text, or rejects with the error. Besides every engine/UI
+/// command, `web.stats` reports the browser host's state (storage, originals in memory).
+#[wasm_bindgen]
+pub fn command(id: String, params: String) -> js_sys::Promise {
+    js_sys::Promise::new(&mut |resolve, reject| {
+        INBOX.with(|q| q.borrow_mut().push((id.clone(), params.clone(), (resolve, reject))));
+        CTX.with(|c| c.borrow().as_ref().map(|c| c.request_repaint()));
+    })
+}
+
+impl WebApp {
+    fn web_stats(&self) -> serde_json::Value {
+        let (orig_n, orig_bytes) = self.originals.usage();
+        json!({
+            "storage": self.backend.as_ref().map_or("memory", |b| b.kind()),
+            "dirty": self.files.is_dirty(),
+            "flushing": self.flushing.get(),
+            "originalsInMemory": orig_n,
+            "originalBytesInMemory": orig_bytes,
+            "renderQueue": self.app.renderer.queued(),
+            "rendersInFlight": self.app.renderer.in_flight(),
+            "thumbTextures": self.app.renderer.thumb_textures(),
+        })
+    }
+
+    fn run_inbox(&mut self) {
+        let inbox = INBOX.with(|q| std::mem::take(&mut *q.borrow_mut()));
+        for (id, params, (resolve, reject)) in inbox {
+            let params: serde_json::Value = serde_json::from_str(&params).unwrap_or(json!({}));
+            let r = if id == "web.stats" { Ok(self.web_stats()) } else { self.app.run(&id, params) };
+            let _ = match r {
+                Ok(v) => resolve.call1(&JsValue::NULL, &v.to_string().into()),
+                Err(e) => reject.call1(&JsValue::NULL, &e.into()),
+            };
+        }
+    }
 }
 
 impl eframe::App for WebApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.run_inbox();
         self.import_dropped(ctx);
+        self.load_originals(ctx);
         self.app.logic(ctx);
+        self.save();
         if let Some(b) = self.bench.as_mut()
             && let Some(report) = b.step(&mut self.app)
         {
@@ -176,11 +437,12 @@ impl eframe::App for WebApp {
     }
 }
 
-#[wasm_bindgen(start)]
+/// Start the app (called by `index.html` after instantiating the module).
+#[wasm_bindgen]
 pub fn start() {
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
     log::info!("lightcraft: wasm instantiated at {:.0} ms", perf_now());
-    let bench = window().location().search().is_ok_and(|q| q.contains("bench"));
+    let opts = Options::from_url();
     wasm_bindgen_futures::spawn_local(async move {
         let Some(canvas) =
             window().document().and_then(|d| d.get_element_by_id("lightcraft_canvas")).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok())
@@ -188,8 +450,9 @@ pub fn start() {
             log::error!("missing <canvas id=\"lightcraft_canvas\">");
             return;
         };
+        let boot = boot(opts).await;
         let runner = eframe::WebRunner::new();
-        let r = runner.start(canvas, eframe::WebOptions::default(), Box::new(move |cc| Ok(Box::new(WebApp::new(cc, bench))))).await;
+        let r = runner.start(canvas, eframe::WebOptions::default(), Box::new(move |cc| Ok(Box::new(WebApp::new(cc, boot))))).await;
         match r {
             Ok(()) => {
                 if let Some(el) = window().document().and_then(|d| d.get_element_by_id("lightcraft_loading")) {

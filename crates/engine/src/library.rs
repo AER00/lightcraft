@@ -10,6 +10,9 @@
 //!   Originals/     (photos imported with "copy into library")
 //! ```
 //!
+//! The files live in [`Store`]s: a directory ([`FsStore`]) natively, or any other implementation
+//! via [`Session::open_library_in`] (the browser build keeps them in OPFS or IndexedDB).
+//!
 //! Every top-level [`Session::execute`] persists the ops it produced (fsynced) before returning,
 //! so a crash loses at most the command in flight. The log is compacted into a snapshot when it
 //! grows (see [`lightcraft_catalog::SnapshotPolicy`]) and on [`Session::close_library`].
@@ -36,13 +39,32 @@ pub fn default_dir() -> Option<PathBuf> {
 }
 
 pub struct Library {
+    /// The library directory, or a descriptive pseudo-path when the library isn't on disk.
     pub dir: PathBuf,
+    /// The library is a real directory: photos can be copied into `Originals/` and thumbnails are
+    /// cached in `thumbs/`.
+    pub on_disk: bool,
     journal: Journal,
+    /// presets.json, view.json, prefs.json.
+    files: Box<dyn Store>,
     /// What happened when the catalog was loaded.
     pub report: LoadReport,
     /// Last persistence error (shown by the UI; ops stay pending and are retried).
     pub last_error: Option<String>,
     presets_written: String,
+    view_written: Vec<u8>,
+}
+
+/// Where a library's files live (see [`Session::open_library_in`]).
+pub struct LibraryStores {
+    /// Shown as the library's location (`library.info`).
+    pub dir: PathBuf,
+    /// The catalog journal (`catalog.snap`, `catalog.log`).
+    pub catalog: Box<dyn Store>,
+    /// presets.json, view.json, prefs.json.
+    pub files: Box<dyn Store>,
+    /// `dir` is a real directory (enables `Originals/` copies and the `thumbs/` disk cache).
+    pub on_disk: bool,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -87,8 +109,8 @@ fn presets_json(presets: &[Preset]) -> String {
     serde_json::to_string_pretty(&f).unwrap_or_default()
 }
 
-fn write_atomic(dir: &Path, name: &str, data: &[u8]) -> std::io::Result<()> {
-    FsStore::open(dir)?.write_atomic(name, data)
+fn read_json<T: serde::de::DeserializeOwned>(store: &mut dyn Store, name: &str) -> Option<T> {
+    store.read(name).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok())
 }
 
 impl Session {
@@ -96,8 +118,16 @@ impl Session {
     /// `seed_demo`, a newly created library starts with the procedural demo photos.
     pub fn open_library(&mut self, dir: impl AsRef<Path>, seed_demo: bool) -> Result<&LoadReport> {
         let dir = dir.as_ref().to_path_buf();
-        let store = FsStore::open(&dir).map_err(|e| EngineError::Other(format!("can't open library {}: {e}", dir.display())))?;
-        let (mut journal, catalog, report) = Journal::open(Box::new(store))?;
+        let open = || FsStore::open(&dir).map_err(|e| EngineError::Other(format!("can't open library {}: {e}", dir.display())));
+        let stores = LibraryStores { catalog: Box::new(open()?), files: Box::new(open()?), on_disk: true, dir: dir.clone() };
+        self.open_library_in(stores, seed_demo)
+    }
+
+    /// Open (or create) a library whose files live in `stores` (e.g. browser storage), replacing
+    /// this session's catalog.
+    pub fn open_library_in(&mut self, stores: LibraryStores, seed_demo: bool) -> Result<&LoadReport> {
+        let LibraryStores { dir, catalog, mut files, on_disk } = stores;
+        let (mut journal, catalog, report) = Journal::open(catalog)?;
         self.catalog = catalog;
         self.undo.clear();
         self.redo.clear();
@@ -110,9 +140,7 @@ impl Session {
             journal.snapshot(&self.catalog)?;
         }
         // presets
-        if let Ok(bytes) = std::fs::read(dir.join("presets.json"))
-            && let Ok(f) = serde_json::from_slice::<PresetsFile>(&bytes)
-        {
+        if let Some(f) = read_json::<PresetsFile>(files.as_mut(), "presets.json") {
             for p in &mut self.presets {
                 p.favorite = p.builtin && f.favorites.contains(&p.id) || (!p.builtin && p.favorite);
             }
@@ -123,12 +151,9 @@ impl Session {
             }
         }
         // preferences
-        self.xmp =
-            std::fs::read(dir.join("prefs.json")).ok().and_then(|b| serde_json::from_slice::<PrefsFile>(&b).ok()).map(|p| p.xmp).unwrap_or_default();
+        self.xmp = read_json::<PrefsFile>(files.as_mut(), "prefs.json").map(|p| p.xmp).unwrap_or_default();
         // view state
-        if let Ok(bytes) = std::fs::read(dir.join("view.json"))
-            && let Ok(v) = serde_json::from_slice::<ViewFile>(&bytes)
-        {
+        if let Some(v) = read_json::<ViewFile>(files.as_mut(), "view.json") {
             self.source = v.source;
             self.filter = v.filter;
             self.sort = v.sort;
@@ -142,8 +167,11 @@ impl Session {
             self.selection = Selection::single(*first);
         }
         let presets_written = presets_json(&self.presets);
-        self.media.attach_disk_cache(&dir.join("thumbs"));
-        self.library = Some(Library { dir, journal, report, last_error: None, presets_written });
+        if on_disk {
+            self.media.attach_disk_cache(&dir.join("thumbs"));
+        }
+        let view_written = self.view_json();
+        self.library = Some(Library { dir, on_disk, journal, files, report, last_error: None, presets_written, view_written });
         Ok(&self.library.as_ref().expect("just set").report)
     }
 
@@ -166,7 +194,7 @@ impl Session {
         }
         let presets = presets_json(&self.presets);
         if presets != lib.presets_written {
-            if let Err(e) = write_atomic(&lib.dir, "presets.json", presets.as_bytes()) {
+            if let Err(e) = lib.files.write_atomic("presets.json", presets.as_bytes()) {
                 log::error!("library: presets: {e}");
             } else {
                 lib.presets_written = presets;
@@ -190,20 +218,39 @@ impl Session {
         }
         let _ = self.end_interaction();
         self.persist()?;
-        let view = ViewFile { source: self.source, filter: self.filter.clone(), sort: self.sort, selection: self.selection.clone() };
+        self.save_view();
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         lib.journal.snapshot(&self.catalog)?;
-        if let Ok(v) = serde_json::to_vec_pretty(&view) {
-            let _ = write_atomic(&lib.dir, "view.json", &v);
-        }
         Ok(())
     }
 
+    fn view_json(&self) -> Vec<u8> {
+        let view = ViewFile { source: self.source, filter: self.filter.clone(), sort: self.sort, selection: self.selection.clone() };
+        serde_json::to_vec_pretty(&view).unwrap_or_default()
+    }
+
+    /// Save the view state (source, filter, sort, selection) if it changed since it was last
+    /// written. Native hosts get this from [`Session::close_library`]; the browser host calls it
+    /// periodically, since a tab can be closed without notice.
+    pub fn save_view(&mut self) {
+        if self.library.is_none() {
+            return;
+        }
+        let v = self.view_json();
+        let Some(lib) = self.library.as_mut() else { return };
+        if v != lib.view_written {
+            match lib.files.write_atomic("view.json", &v) {
+                Ok(()) => lib.view_written = v,
+                Err(e) => log::error!("library: view: {e}"),
+            }
+        }
+    }
+
     /// Save the library preferences (no-op for in-memory sessions).
-    pub fn save_prefs(&self) -> Result<()> {
-        let Some(lib) = &self.library else { return Ok(()) };
+    pub fn save_prefs(&mut self) -> Result<()> {
         let v = serde_json::to_vec_pretty(&PrefsFile { xmp: self.xmp }).unwrap_or_default();
-        write_atomic(&lib.dir, "prefs.json", &v).map_err(|e| EngineError::Other(format!("prefs: {e}")))
+        let Some(lib) = self.library.as_mut() else { return Ok(()) };
+        lib.files.write_atomic("prefs.json", &v).map_err(|e| EngineError::Other(format!("prefs: {e}")))
     }
 
     /// Compact the log into a snapshot now.

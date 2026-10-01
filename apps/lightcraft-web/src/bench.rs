@@ -65,7 +65,7 @@ impl Bench {
         if self.first_frame_ms.is_none() && self.frames > 1 {
             self.first_frame_ms = Some(now - self.start_ms);
         }
-        let idle = app.renderer.queued() == 0;
+        let idle = app.renderer.queued() == 0 && app.renderer.in_flight() == 0;
         match self.phase {
             Phase::Idle => {
                 let thumbs = app.renderer.textures.keys().filter(|s| matches!(s, Slot::Thumb(_))).count();
