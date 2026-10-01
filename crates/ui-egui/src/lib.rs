@@ -80,6 +80,9 @@ pub struct LightcraftApp {
     pub widgets: Vec<(String, egui::Rect)>,
     /// In-progress on-canvas gesture (brush stroke points, gradient drag…).
     pub gesture: Option<panels::detail::Gesture>,
+    /// What the loupe drew last frame: photo and source ("render", "cached", "embedded", "small",
+    /// "thumb", "none").
+    pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
 }
 
 impl LightcraftApp {
@@ -105,6 +108,7 @@ impl LightcraftApp {
             image_rect: None,
             widgets: vec![],
             gesture: None,
+            loupe_shown: None,
         }
     }
 

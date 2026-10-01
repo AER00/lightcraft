@@ -11,7 +11,7 @@ use lightcraft_pipeline::SourceInfo;
 use lightcraft_raster::Rgb32f;
 use lightcraft_raster::resample::{Filter, fit};
 
-use crate::media::{FileLoader, FileProbe, ProbeInfo};
+use crate::media::{FileLoader, FileProbe, PreviewLoader, ProbeInfo};
 
 fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
     let shutter = m.exposure_time.map(|t| if t >= 1.0 { format!("{t:.0}") } else { format!("1/{:.0}", 1.0 / t) }).unwrap_or_default();
@@ -287,6 +287,24 @@ pub fn load_embedded_preview(bytes: &[u8], max_edge: usize) -> Option<(Rgb32f, S
     Some((img.oriented(preview_orientation(bytes, d.orientation)), SourceInfo::default()))
 }
 
+/// The embedded preview of a raw file for display (sRGB, oriented, no larger than `max_edge`): the
+/// loupe and grid show it until the raw itself has been developed ([`crate::media::QuickJob`]).
+pub fn embedded_preview_srgb(bytes: &[u8], max_edge: usize) -> Option<lightcraft_raster::Rgba8> {
+    let jpeg = lightcraft_raw::embedded_preview(bytes)?;
+    let mut d = lightcraft_codecs::decode(&jpeg, lightcraft_codecs::DecodeOptions::fit(max_edge as u32, max_edge as u32)).ok()?;
+    if d.image.width.max(d.image.height) > max_edge {
+        d.image = fit(&d.image, max_edge, max_edge, Filter::Box);
+        d.alpha = None;
+    }
+    let o = preview_orientation(bytes, d.orientation);
+    Some(d.to_srgb8().oriented(o))
+}
+
+/// Filesystem-backed embedded-preview hook (native).
+pub fn fs_preview_loader() -> PreviewLoader {
+    Arc::new(|path: &str, max_edge: usize| embedded_preview_srgb(&std::fs::read(path).ok()?, max_edge))
+}
+
 /// Filesystem-backed hooks (native). On the web the host installs bytes-based hooks instead.
 pub fn fs_hooks() -> (FileLoader, FileProbe) {
     let loader: FileLoader = Arc::new(|path: &str, max_edge: usize| {
@@ -306,6 +324,7 @@ impl crate::Session {
         let (l, p) = fs_hooks();
         self.media.file_loader = Some(l);
         self.media.file_probe = Some(p);
+        self.media.preview_loader = Some(fs_preview_loader());
         self
     }
 }
@@ -340,5 +359,41 @@ mod tests {
         assert!(!src.raw);
         // no preview at all: a clear error, not a panic
         assert!(load_bytes(b"\0\0\0\x18ftypcrx \0\0\0\x01", 24).is_err());
+    }
+
+    #[test]
+    fn quick_jobs_show_embedded_previews_then_cached_renders() {
+        use crate::media::QuickSource;
+        let dir = std::env::temp_dir().join(format!("lc-quick-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.cr3");
+        std::fs::write(&path, cr3_with_preview(96, 64)).unwrap();
+        let mut s = crate::Session::new().with_fs();
+        let r = s.execute("library.import", &serde_json::json!({"paths": [path.to_string_lossy()]})).unwrap();
+        let id = lightcraft_catalog::PhotoId(r["imported"][0].as_u64().unwrap());
+        // loupe: an unedited raw opens on its embedded preview…
+        let q = s.quick_view_job(id, 1600, true).unwrap().run();
+        assert_eq!(q.quick, Some(QuickSource::Embedded));
+        let img = q.rendered.unwrap().image;
+        assert_eq!((img.width, img.height), (96, 64));
+        // …and once the loupe has rendered it, on that render (any size)
+        let full = s.loupe_job(id, 48, 32, true).unwrap().run();
+        assert!(full.rendered.is_ok() && full.quick.is_none());
+        let q = s.quick_view_job(id, 1600, true).unwrap().run();
+        assert_eq!(q.quick, Some(QuickSource::Cached));
+        assert_eq!(q.rendered.unwrap().image.width, 48);
+        // grid: embedded first, then the real thumbnail (final, with the thumbnail job's key)
+        let job = s.thumb_job(id, 128).unwrap();
+        let q = s.quick_thumb_job(&job).unwrap().run();
+        assert_eq!((q.quick, q.key), (Some(QuickSource::Embedded), job.key));
+        drop(job.clone().run());
+        assert_eq!(s.quick_thumb_job(&job).unwrap().run().quick, Some(QuickSource::Cached));
+        // an edited raw: no embedded stand-in (it wouldn't show the edit)
+        s.execute("library.select", &serde_json::json!({"ids": [id.0]})).unwrap();
+        s.execute("develop.set", &serde_json::json!({"control": "light.exposure", "value": 1.0})).unwrap();
+        let job = s.thumb_job(id, 128).unwrap();
+        assert!(s.quick_thumb_job(&job).is_none());
+        assert_eq!(s.quick_view_job(id, 1600, true).unwrap().run().quick, Some(QuickSource::Small));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

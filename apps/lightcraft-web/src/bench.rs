@@ -68,7 +68,7 @@ impl Bench {
         let idle = app.renderer.queued() == 0;
         match self.phase {
             Phase::Idle => {
-                let thumbs = app.renderer.textures.keys().filter(|s| matches!(s, Slot::Thumb(_))).count();
+                let thumbs = app.renderer.textures.keys().filter(|s| matches!(s, Slot::Thumb(_) | Slot::ThumbQuick(_))).count();
                 if idle && thumbs > 0 && self.frames > 3 {
                     self.thumbs_done_ms = Some(now - self.start_ms);
                     let first = app.session.visible().first().copied();

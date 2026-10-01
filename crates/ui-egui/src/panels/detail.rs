@@ -142,9 +142,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let scale = if interacting { 0.6 } else { 1.0 };
     let want = (img_rect.width().max(img_rect.height()) * ppp * scale).min(2560.0) as usize;
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
-    if let Some(job) = app.session.render_job(id, rw.max(8), rh.max(8), false, !crop_tool) {
+    if let Some(job) = app.session.loupe_job(id, rw.max(8), rh.max(8), !crop_tool) {
         let job = if interacting { job.draft() } else { job };
         app.renderer.request(Slot::Main, job, 100);
+    }
+    // until the loupe has this photo: show its cached render / embedded preview / a thumbnail
+    if app.renderer.textures.get(&Slot::Main).is_none_or(|t| t.photo != id)
+        && let Some(q) = app.session.quick_view_job(id, want.max(8), !crop_tool)
+    {
+        app.renderer.request_quick(Slot::Preview, q, 110);
     }
     let show_before = app.ui.before_after == BeforeAfter::Original || ui.input(|i| i.key_down(egui::Key::Backslash));
     if (split || show_before || app.ui.before_after == BeforeAfter::Split)
@@ -153,29 +159,39 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         app.renderer.request(Slot::Before, job, 90);
     }
     let p = ui.painter_at(canvas);
-    let draw = |slot: Slot, r: Rect| {
-        if let Some(tex) = app.renderer.textures.get(&slot).filter(|t| t.photo == id) {
-            p.image(tex.tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-            true
-        } else if let Some(tex) = app.renderer.textures.get(&Slot::Thumb(id)) {
-            p.image(tex.tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-            true
+    // what a view slot shows: its own render of this photo, else the stand-ins (no blank frame
+    // between photos, and the full render replaces them in place)
+    let draw = |slot: Slot, r: Rect| -> &'static str {
+        let mine = |s: Slot| app.renderer.textures.get(&s).filter(|t| t.photo == id);
+        let (tex, what) = if let Some(t) = mine(slot) {
+            (t, "render")
+        } else if let Some(t) = mine(Slot::Preview) {
+            (t, t.quick.map(quick_name).unwrap_or("preview"))
+        } else if let Some(t) = app.renderer.thumb(id) {
+            (t, "thumb")
         } else {
-            false
-        }
+            return "none";
+        };
+        p.image(tex.tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        what
     };
+    let shown;
     if split {
         let br = fit_rect(areas[0], aspect, app.ui.zoom, native, ppp, app.ui.pan);
         draw(Slot::Before, br);
-        draw(Slot::Main, img_rect);
+        shown = draw(Slot::Main, img_rect);
         p.text(pos2(br.left(), br.bottom() + 14.0), Align2::LEFT_CENTER, "Before", t.font(12.0), t.text_dim);
         p.text(pos2(img_rect.left(), img_rect.bottom() + 14.0), Align2::LEFT_CENTER, "After", t.font(12.0), t.text_dim);
     } else if show_before {
-        draw(Slot::Before, img_rect);
+        shown = draw(Slot::Before, img_rect);
         p.text(pos2(img_rect.left() + 8.0, img_rect.top() + 14.0), Align2::LEFT_CENTER, "Before", t.font(12.0), t.text);
-    } else if !draw(Slot::Main, img_rect) {
-        p.text(canvas.center(), Align2::CENTER_CENTER, "Rendering…", t.font(13.0), t.text_dim);
+    } else {
+        shown = draw(Slot::Main, img_rect);
+        if shown == "none" {
+            p.text(canvas.center(), Align2::CENTER_CENTER, "Rendering…", t.font(13.0), t.text_dim);
+        }
     }
+    app.loupe_shown = Some((id, shown));
     if app.ui.before_after == BeforeAfter::Split {
         let mid = img_rect.center().x;
         if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
@@ -197,6 +213,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         _ => general_interaction(app, ui, &resp, &map, img_rect, canvas, native, aspect),
     }
     resp.context_menu(|ui| super::grid::context_menu(app, ui, id));
+}
+
+fn quick_name(q: lightcraft_engine::media::QuickSource) -> &'static str {
+    use lightcraft_engine::media::QuickSource;
+    match q {
+        QuickSource::Cached => "cached",
+        QuickSource::Embedded => "embedded",
+        QuickSource::Small => "small",
+    }
 }
 
 fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
@@ -691,10 +716,8 @@ fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
                 p.text(pos2(cr.right() - 8.0, cr.top() + 10.0), Align2::RIGHT_CENTER, &ph.format, t.semibold(8.5), t.text_dim);
             }
             let img_area = Rect::from_min_max(cr.min + vec2(10.0, 22.0), cr.max - vec2(10.0, 8.0));
-            if let Some(job) = app.session.thumb_job(*id, (256.0 * ppp.min(2.0) / 2.0) as usize * 2) {
-                app.renderer.request(Slot::Thumb(*id), job, 8);
-            }
-            if let Some(tex) = app.renderer.textures.get(&Slot::Thumb(*id)) {
+            super::grid::request_thumb(app, *id, (256.0 * ppp.min(2.0) / 2.0) as usize * 2, 8);
+            if let Some(tex) = app.renderer.thumb(*id) {
                 let [tw, th] = tex.size;
                 let s = (img_area.width() / tw as f32).min(img_area.height() / th as f32);
                 let fr = Rect::from_center_size(img_area.center(), vec2(tw as f32 * s, th as f32 * s));
