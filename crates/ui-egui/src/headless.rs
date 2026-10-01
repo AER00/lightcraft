@@ -385,6 +385,56 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// Presets column: resting on a preset previews it in the loupe without a history entry;
+    /// thumbnails are variant renders; Create Preset includes only the checked groups.
+    #[test]
+    fn preset_hover_previews_and_create_preset_groups() {
+        let mut h = demo([1400.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.request("engine.execute", json!({"command": "panel.presets"}), t);
+        h.settle(SETTLE);
+        let id = h.app.session.active().unwrap();
+        let photo = |h: &Headless| h.app.session.catalog.photo(id).unwrap().clone();
+        let before = photo(&h);
+        h.request("ui.hoverWidget", json!({"id": "preset:lc.bw-high-contrast"}), t);
+        h.settle(SETTLE);
+        h.step();
+        assert_eq!(h.app.hover_preview.as_ref().map(|p| p.label.as_str()), Some("Preset: High Contrast B&W"));
+        assert_eq!(h.app.loupe_shown.map(|l| l.1), Some("hover"));
+        let after = photo(&h);
+        assert_eq!(after.develop, before.develop);
+        assert_eq!(after.history.len(), before.history.len(), "no history entry while hovering");
+        assert!(h.app.session.undo.is_empty());
+        // thumbnails: variant textures for the visible presets
+        h.app.ui.preset_thumbs = true;
+        h.request("ui.move", json!({"x": 5, "y": 500}), t);
+        h.settle(SETTLE);
+        h.step();
+        assert!(h.app.hover_preview.is_none());
+        assert!(h.app.renderer.variant_textures() >= 5, "{}", h.app.renderer.variant_textures());
+        // Create Preset with a group checklist: untick Light, keep Effects
+        h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": 0.5}}), t);
+        h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "effects.clarity", "value": 25}}), t);
+        h.app.ui.dialog = Some(crate::state::Dialog::create_preset());
+        h.step();
+        h.step();
+        let r = h.request("ui.clickWidget", json!({"id": "presetInclude:light"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        match &h.app.ui.dialog {
+            Some(crate::state::Dialog::CreatePreset { groups, .. }) => {
+                assert!(!groups.iter().any(|g| g == "light") && groups.iter().any(|g| g == "effects"), "{groups:?}");
+                assert!(!groups.iter().any(|g| g == "crop" || g == "masks"), "crop and masks off by default");
+            }
+            d => panic!("dialog: {d:?}"),
+        }
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let p = h.app.session.presets.iter().find(|p| !p.builtin).expect("created").clone();
+        assert!(p.settings.get("light").is_none() && p.settings["effects"]["clarity"] == 25.0, "{}", p.settings);
+        h.settle(SETTLE);
+    }
+
     /// The filter bar drives `library.filter` and saves the view as a smart album.
     #[test]
     fn filter_bar_filters_and_saves_a_smart_album() {

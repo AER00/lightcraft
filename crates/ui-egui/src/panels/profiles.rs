@@ -8,6 +8,7 @@ use lightcraft_develop::DevelopSettings;
 use lightcraft_engine::presets::{PROFILES, ProfileInfo, profile, profile_groups};
 use serde_json::json;
 
+use super::presets::cover_uv;
 use crate::icons::{Icon, paint};
 use crate::state::RightPanel;
 use crate::theme::Tokens;
@@ -90,19 +91,6 @@ fn with_profile(d: &DevelopSettings, p: &ProfileInfo) -> DevelopSettings {
         s.profile.amount = 100.0;
     }
     s
-}
-
-/// The part of a `size` image that covers `r` (centre crop), as texture coordinates.
-fn cover_uv(r: Rect, size: [usize; 2]) -> Rect {
-    let a = size[0] as f32 / size[1].max(1) as f32;
-    let ra = r.width() / r.height().max(1.0);
-    if a > ra {
-        let f = ra / a;
-        Rect::from_min_max(pos2((1.0 - f) / 2.0, 0.0), pos2((1.0 + f) / 2.0, 1.0))
-    } else {
-        let f = a / ra;
-        Rect::from_min_max(pos2(0.0, (1.0 - f) / 2.0), pos2(1.0, (1.0 + f) / 2.0))
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

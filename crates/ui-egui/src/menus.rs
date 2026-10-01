@@ -339,7 +339,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "dialog.createPreset" => {
-            app.ui.dialog = Some(Dialog::CreatePreset { name: String::new(), group: "User Presets".into() });
+            app.ui.dialog = Some(Dialog::create_preset());
             Ok(Value::Null)
         }
         "dialog.copySettings" => {
