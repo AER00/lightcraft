@@ -60,11 +60,13 @@ pub enum SortKey {
 pub struct Sort {
     pub key: SortKey,
     pub ascending: bool,
+    /// Date headers in the grid (date sort keys only).
+    pub group: crate::GroupBy,
 }
 
 impl Default for Sort {
     fn default() -> Self {
-        Sort { key: SortKey::CaptureDate, ascending: false }
+        Sort { key: SortKey::CaptureDate, ascending: false, group: crate::GroupBy::Auto }
     }
 }
 

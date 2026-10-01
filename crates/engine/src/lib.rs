@@ -340,6 +340,8 @@ mod tests_color;
 #[cfg(test)]
 mod tests_import;
 #[cfg(test)]
+mod tests_libops;
+#[cfg(test)]
 mod tests_library;
 #[cfg(test)]
 mod tests_merge;

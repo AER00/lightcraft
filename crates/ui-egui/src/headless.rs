@@ -373,6 +373,32 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// The photo grid shows date headers (registered as `group:<date>` widgets); clicking one
+    /// selects that day's photos; month headers when zoomed out; none when grouping is off.
+    #[test]
+    fn grid_groups_by_capture_date() {
+        let mut h = demo([1300.0, 800.0]);
+        let t = Duration::from_secs(10);
+        h.settle(SETTLE);
+        let groups = h.app.session.execute("library.groups", &json!({})).unwrap();
+        let first = groups[0].clone();
+        let key = first["key"].as_str().unwrap().to_string();
+        let r = h.request("ui.clickWidget", json!({"id": format!("group:{key}")}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(h.app.session.selection.ids.len() as u64, first["count"].as_u64().unwrap());
+        // zoomed out: month headers
+        h.app.ui.thumb_size = 120.0;
+        h.settle(SETTLE);
+        let vis = h.app.session.visible_cloned();
+        let month = h.app.session.catalog.date_runs(&vis, h.app.session.sort.key, lightcraft_catalog::GroupBy::Month);
+        let r = h.request("ui.clickWidget", json!({"id": format!("group:{}", month[0].key)}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.request("engine.execute", json!({"command": "library.sort", "params": {"group": "none"}}), t);
+        let r = h.request("ui.clickWidget", json!({"id": format!("group:{}", month[0].key)}), t);
+        assert_eq!(r["ok"], false, "no headers: {r}");
+        h.settle(SETTLE);
+    }
+
     #[test]
     fn screenshot_request_is_answered_without_a_window() {
         let mut h = demo([800.0, 500.0]);

@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
-use lightcraft_catalog::{Flag, PhotoId};
+use lightcraft_catalog::{DateRun, Flag, GroupBy, PhotoId};
 use serde_json::json;
 
 use crate::LightcraftApp;
@@ -52,25 +52,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let square = app.ui.view == ViewMode::SquareGrid;
     let target = app.ui.thumb_size;
     let avail_w = ui.available_width() - 8.0;
-    // layout rows
-    struct Cell {
-        id: PhotoId,
-        rect: Rect,
-    }
-    let mut cells: Vec<Cell> = Vec::with_capacity(ids.len());
-    let gap = if square { 1.0 } else { 6.0 };
-    let mut y = 4.0f32;
-    if square {
-        let cols = ((avail_w + gap) / (target + gap)).floor().max(1.0);
-        let cw = (avail_w - gap * (cols - 1.0)) / cols;
-        for (i, id) in ids.iter().enumerate() {
-            let (c, r) = ((i as f32) % cols, (i as f32 / cols).floor());
-            cells.push(Cell { id: *id, rect: Rect::from_min_size(pos2(4.0 + c * (cw + gap), y + r * (cw + gap)), vec2(cw, cw)) });
-        }
+    let aspects: Vec<f32> = if square {
+        vec![1.0; ids.len()]
     } else {
-        // justified rows: accumulate aspect ratios until the row is full
-        let aspects: Vec<f32> = ids
-            .iter()
+        ids.iter()
             .map(|id| {
                 let p = app.session.catalog.photo(*id);
                 let (w, h) = p.map(|p| (p.width.max(1) as f32, p.height.max(1) as f32)).unwrap_or((3.0, 2.0));
@@ -79,32 +64,22 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let (w, h) = if swap { (h, w) } else { (w, h) };
                 (w * crop.width() as f32) / (h * crop.height() as f32).max(1e-3)
             })
-            .collect();
-        let mut i = 0;
-        while i < ids.len() {
-            let mut sum = 0.0;
-            let mut j = i;
-            while j < ids.len() {
-                sum += aspects[j];
-                let h = (avail_w - gap * (j - i) as f32) / sum;
-                j += 1;
-                if h <= target {
-                    break;
-                }
-            }
-            let full = j < ids.len() || (avail_w - gap * (j - i - 1) as f32) / sum <= target;
-            let h = if full { (avail_w - gap * (j - i - 1) as f32) / sum } else { target };
-            let mut x = 4.0;
-            for k in i..j {
-                let w = aspects[k] * h;
-                cells.push(Cell { id: ids[k], rect: Rect::from_min_size(pos2(x, y), vec2(w, h)) });
-                x += w + gap;
-            }
-            y += h + gap;
-            i = j;
-        }
+            .collect()
+    };
+    let by = resolve_group(app.session.sort.group, target);
+    let runs = if app.session.source == lightcraft_engine::LibrarySource::RecentlyDeleted {
+        Vec::new()
+    } else {
+        app.session.catalog.date_runs(&ids, app.session.sort.key, by)
+    };
+    let spans: Vec<(usize, usize)> = runs.iter().map(|r| (r.start, r.count)).collect();
+    let lay = layout(&aspects, &spans, avail_w, target, square);
+    struct Cell {
+        id: PhotoId,
+        rect: Rect,
     }
-    let total_h = cells.last().map(|c| c.rect.bottom()).unwrap_or(0.0) + 12.0;
+    let cells: Vec<Cell> = ids.iter().zip(&lay.cells).map(|(id, r)| Cell { id: *id, rect: *r }).collect();
+    let total_h = lay.height + 12.0;
     let active = app.session.selection.active;
     // keep the active photo in view when it changes by keyboard
     let scroll_to: Option<Rect> = {
@@ -134,9 +109,143 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 stack_badge(app, ui, c.id, *sid, *pos, r, square);
             }
         }
+        // date headers; the current group's header sticks to the top while its photos scroll by
+        let mut sticky: Option<usize> = None;
+        for (g, hr) in lay.headers.iter().enumerate() {
+            if hr.top() <= viewport.top() {
+                sticky = Some(g);
+            }
+            if hr.intersects(viewport) {
+                group_header(app, ui, &runs[g], &ids, hr.translate(origin.to_vec2()), false);
+            }
+        }
+        if let Some(g) = sticky
+            && lay.headers[g].top() < viewport.top()
+        {
+            // pushed up by the next header as it arrives
+            let next_top = lay.headers.get(g + 1).map(|h| h.top()).unwrap_or(f32::INFINITY);
+            let y = viewport.top().min(next_top - HEADER_H);
+            let hr = Rect::from_min_size(pos2(0.0, y), vec2(area.width(), HEADER_H)).translate(origin.to_vec2());
+            group_header(app, ui, &runs[g], &ids, hr, true);
+        }
     });
     app.renderer.evict_thumbs(&visible_ids, 600);
     let _ = (Color32::BLACK, StrokeKind::Inside, Stroke::NONE);
+}
+
+/// Height of a date header row (points).
+pub const HEADER_H: f32 = 40.0;
+
+/// Cell rectangles (one per photo, in order), date-header rectangles (one per group) and the total
+/// height of the grid content.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GridLayout {
+    pub cells: Vec<Rect>,
+    pub headers: Vec<Rect>,
+    pub height: f32,
+}
+
+/// The grouping actually shown: `Auto` is days with large thumbnails, months with medium ones and
+/// years when zoomed far out.
+pub fn resolve_group(by: GroupBy, thumb_size: f32) -> GroupBy {
+    match by {
+        GroupBy::Auto if thumb_size >= 150.0 => GroupBy::Day,
+        GroupBy::Auto if thumb_size >= 110.0 => GroupBy::Month,
+        GroupBy::Auto => GroupBy::Year,
+        other => other,
+    }
+}
+
+/// Lay out the grid: `aspects` (width / height per photo; ignored for the square grid) in
+/// `groups` (`(start, count)` runs; empty = one group without a header), `avail_w` wide, rows
+/// about `target` high (square cells about `target` wide). Every group starts on a new row
+/// below its header. Justified rows fill the width exactly except a group's last row, which keeps
+/// the target height.
+pub fn layout(aspects: &[f32], groups: &[(usize, usize)], avail_w: f32, target: f32, square: bool) -> GridLayout {
+    let n = aspects.len();
+    let whole = [(0, n)];
+    let (groups, headed) = if groups.is_empty() { (&whole[..], false) } else { (groups, true) };
+    let gap = if square { 1.0 } else { 6.0 };
+    let mut out = GridLayout { cells: vec![Rect::NOTHING; n], headers: Vec::with_capacity(groups.len()), height: 0.0 };
+    let mut y = 4.0f32;
+    for &(start, count) in groups {
+        let end = (start + count).min(n);
+        if headed {
+            out.headers.push(Rect::from_min_size(pos2(0.0, y), vec2(avail_w + 8.0, HEADER_H)));
+            y += HEADER_H;
+        }
+        if start >= end {
+            continue;
+        }
+        if square {
+            let cols = ((avail_w + gap) / (target + gap)).floor().max(1.0);
+            let cw = (avail_w - gap * (cols - 1.0)) / cols;
+            for i in start..end {
+                let k = (i - start) as f32;
+                let (c, r) = (k % cols, (k / cols).floor());
+                out.cells[i] = Rect::from_min_size(pos2(4.0 + c * (cw + gap), y + r * (cw + gap)), vec2(cw, cw));
+            }
+            let rows = ((end - start) as f32 / cols).ceil();
+            y += rows * (cw + gap);
+        } else {
+            // justified rows: accumulate aspect ratios until the row is full
+            let mut i = start;
+            while i < end {
+                let mut sum = 0.0;
+                let mut j = i;
+                while j < end {
+                    sum += aspects[j].max(0.05);
+                    let h = (avail_w - gap * (j - i) as f32) / sum;
+                    j += 1;
+                    if h <= target {
+                        break;
+                    }
+                }
+                let row_h = (avail_w - gap * (j - i - 1) as f32) / sum;
+                let h = if j < end || row_h <= target { row_h } else { target };
+                let mut x = 4.0;
+                for k in i..j {
+                    let w = aspects[k].max(0.05) * h;
+                    out.cells[k] = Rect::from_min_size(pos2(x, y), vec2(w, h));
+                    x += w + gap;
+                }
+                y += h + gap;
+                i = j;
+            }
+        }
+        if headed {
+            y += 8.0;
+        }
+    }
+    out.height = y;
+    out
+}
+
+/// A date header: "Wednesday, 30 September 2026 · 12 photos". Clicking it selects the group
+/// (Cmd/Shift: adds to the selection).
+fn group_header(app: &mut LightcraftApp, ui: &mut egui::Ui, run: &DateRun, ids: &[PhotoId], r: Rect, pinned: bool) {
+    let t = Tokens::get(ui.ctx());
+    let resp = ui.interact(r, egui::Id::new(("group-header", run.start, pinned)), Sense::click());
+    if !pinned {
+        register(ui.ctx(), format!("group:{}", if run.key.is_empty() { "unknown" } else { &run.key }), r);
+    }
+    let p = ui.painter();
+    if pinned {
+        p.rect_filled(r, 0.0, t.canvas);
+        p.hline(r.x_range(), r.bottom(), Stroke::new(1.0, t.divider));
+    }
+    let g = p.layout_no_wrap(run.label.clone(), t.semibold(15.0), if resp.hovered() { t.text } else { t.text_label });
+    let x = r.left() + 8.0;
+    let gw = g.size().x;
+    p.galley(pos2(x, r.center().y - g.size().y / 2.0), g, t.text);
+    let n = run.count;
+    p.text(pos2(x + gw + 10.0, r.center().y), Align2::LEFT_CENTER, format!("· {n} photo{}", if n == 1 { "" } else { "s" }), t.font(12.5), t.text_dim);
+    if resp.clicked() {
+        let group: Vec<u64> = ids[run.start..(run.start + run.count).min(ids.len())].iter().map(|p| p.0).collect();
+        let m = ui.input(|i| i.modifiers);
+        let mode = if m.command || m.shift { "add" } else { "replace" };
+        let _ = app.run("library.select", json!({"ids": group, "mode": mode}));
+    }
 }
 
 /// Request a grid/filmstrip thumbnail at `priority`. An unedited raw without a thumbnail texture
@@ -372,5 +481,71 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     ui.separator();
     if ui.button("Delete Photo").clicked() {
         let _ = app.run("photo.delete", json!({}));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ungrouped_justified_rows_fill_the_width() {
+        let aspects = [1.5f32, 1.5, 0.66, 1.0, 1.5, 1.5, 1.5];
+        let l = layout(&aspects, &[], 600.0, 150.0, false);
+        assert!(l.headers.is_empty());
+        assert_eq!(l.cells.len(), aspects.len());
+        // full rows end at the right edge; rows are at most the target height
+        let first_row: Vec<&Rect> = l.cells.iter().filter(|c| (c.top() - l.cells[0].top()).abs() < 0.01).collect();
+        assert!(first_row.len() >= 2);
+        assert!((first_row.last().unwrap().right() - 604.0).abs() < 0.5, "{first_row:?}");
+        assert!(first_row.iter().all(|c| c.height() <= 150.0 + 0.01));
+        let last = l.cells.last().unwrap();
+        assert!(last.right() <= 604.0 + 0.5);
+        assert!((l.height - (last.bottom() + 6.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn groups_start_new_rows_below_their_headers() {
+        let aspects = [1.5f32; 7];
+        let l = layout(&aspects, &[(0, 2), (2, 5)], 1000.0, 200.0, false);
+        assert_eq!(l.headers.len(), 2);
+        assert_eq!(l.headers[0].top(), 4.0);
+        assert_eq!(l.headers[0].height(), HEADER_H);
+        // group 1: two photos in a short row below its header (not stretched)
+        assert_eq!(l.cells[0].top(), l.headers[0].bottom());
+        assert!((l.cells[0].height() - 200.0).abs() < 0.01);
+        assert_eq!(l.cells[1].top(), l.cells[0].top());
+        // group 2 starts on a new row below its own header, after group 1's photos
+        assert!(l.headers[1].top() >= l.cells[1].bottom());
+        assert_eq!(l.cells[2].top(), l.headers[1].bottom());
+        assert!((l.cells[2].left() - 4.0).abs() < 0.01, "a group's first photo starts the row");
+        for c in &l.cells[2..] {
+            assert!(c.top() >= l.headers[1].bottom());
+        }
+        // every photo has a cell; nothing overlaps
+        for (i, a) in l.cells.iter().enumerate() {
+            assert!(a.width() > 0.0);
+            for b in &l.cells[i + 1..] {
+                assert!(!a.shrink(0.5).intersects(b.shrink(0.5)), "{a:?} {b:?}");
+            }
+            for h in &l.headers {
+                assert!(!a.shrink(0.5).intersects(*h));
+            }
+        }
+    }
+
+    #[test]
+    fn square_grid_groups_and_auto_levels() {
+        let l = layout(&[1.0; 5], &[(0, 3), (3, 2)], 400.0, 100.0, true);
+        // 4 columns: group 1 fills 3 cells of a row, group 2 starts a new row
+        assert_eq!(l.cells[0].top(), l.cells[2].top());
+        assert_eq!(l.cells[3].left(), 4.0);
+        assert!(l.cells[3].top() > l.cells[0].bottom() + HEADER_H - 1.0);
+        assert!((l.cells[0].width() - l.cells[0].height()).abs() < 0.01);
+        assert_eq!(resolve_group(GroupBy::Auto, 220.0), GroupBy::Day);
+        assert_eq!(resolve_group(GroupBy::Auto, 120.0), GroupBy::Month);
+        assert_eq!(resolve_group(GroupBy::Auto, 90.0), GroupBy::Year);
+        assert_eq!(resolve_group(GroupBy::None, 220.0), GroupBy::None);
+        assert_eq!(resolve_group(GroupBy::Year, 400.0), GroupBy::Year);
     }
 }

@@ -63,7 +63,6 @@ Ordered by tier, then user value, then (low) effort. Take the first one nobody i
    Noise / Moiré / Defringe sliders, which are stored but not rendered. High value, medium effort.
 4. **LR-REM-SPOT-EDIT + LR-REM-BRUSH-PARAMS** (P0) — select a spot pin, move target/source, delete with ⌫,
    feather/opacity sliders, `[`/`]` size keys. Medium effort.
-5. **LR-VIEW-PHOTOGRID** (P0) — group the justified grid by capture date with headers. Low–medium effort.
 6. **LR-PRE-CREATE + LR-PRE-PANEL + LR-BEHAV-PREVIEW-HOVER** (P0/P1) — per-group checkboxes in Create Preset;
     live preview while hovering presets/profiles/versions. Medium effort.
 7. **LR-PROF-DROPDOWN** (P0) — favourites/recent in the profile menu (and later a browser, LR-PROF-BROWSER).
@@ -171,8 +170,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-VIEW-PHOTOGRID | Justified photo grid | P0 | 🟡 | `cmd:view.photoGrid`, `crates/ui-egui/src/panels/grid.rs` | no grouping by date |
-| LR-VIEW-SQUAREGRID | Square grid | P0 | ✅ | `cmd:view.squareGrid` | |
+| LR-VIEW-PHOTOGRID | Justified photo grid | P0 | ✅ | `cmd:view.photoGrid`, `cmd:library.groups`, `cmd:library.sort` (`group`), `crates/ui-egui/src/panels/grid.rs`, `crates/catalog/src/dates.rs` | grouped by capture / import / edit date (day headers “Wednesday, 30 September 2026 · 12 photos”, months or years when zoomed out, or a fixed day/month/year/none choice in the sort menu); sticky header; clicking a header selects its photos; stacks never split |
+| LR-VIEW-SQUAREGRID | Square grid | P0 | ✅ | `cmd:view.squareGrid` | same date headers as the photo grid |
 | LR-VIEW-DETAIL | Single-photo view | P0 | ✅ | `cmd:view.detail`, `crates/ui-egui/src/panels/detail.rs` | |
 | LR-VIEW-EDIT | Edit view | P0 | ✅ | `cmd:panel.edit` | |
 | LR-VIEW-FULLSCREEN | Full-screen preview | P1 | ⬜ | | |

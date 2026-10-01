@@ -88,7 +88,7 @@ fn filter_search_sort() {
 
     let all = c.query(&Filter::default(), &Sort::default());
     assert_eq!(all, vec![a, b, d], "newest first");
-    let asc = c.query(&Filter::default(), &Sort { key: SortKey::FileName, ascending: true });
+    let asc = c.query(&Filter::default(), &Sort { key: SortKey::FileName, ascending: true, ..Default::default() });
     assert_eq!(asc, vec![b, a, d]);
     assert_eq!(c.query(&Filter { rating: 4, ..Default::default() }, &Sort::default()), vec![b]);
     assert_eq!(c.query(&Filter { flag: Some(Flag::Reject), ..Default::default() }, &Sort::default()), vec![d]);

@@ -183,6 +183,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 }
 
 fn sort_menu(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    use lightcraft_catalog::GroupBy;
     use lightcraft_catalog::SortKey::*;
     let cur = app.session.sort;
     ui.label(egui::RichText::new("Sort by").weak());
@@ -204,5 +205,18 @@ fn sort_menu(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     if ui.selectable_label(!cur.ascending, "Descending").clicked() {
         let _ = app.run("library.sort", json!({"ascending": false}));
+    }
+    ui.separator();
+    ui.label(egui::RichText::new("Group by date").weak());
+    for (label, g, k) in [
+        ("Automatic", GroupBy::Auto, "auto"),
+        ("Day", GroupBy::Day, "day"),
+        ("Month", GroupBy::Month, "month"),
+        ("Year", GroupBy::Year, "year"),
+        ("None", GroupBy::None, "none"),
+    ] {
+        if ui.selectable_label(cur.group == g, label).clicked() {
+            let _ = app.run("library.sort", json!({"group": k}));
+        }
     }
 }

@@ -1,7 +1,7 @@
 //! Library commands: view source, filter/sort, selection, ratings/flags/labels, rotate, delete,
 //! metadata, albums, import.
 
-use lightcraft_catalog::{Album, AlbumId, ColorLabel, Flag, Op, PhotoId, Sort, SortKey};
+use lightcraft_catalog::{Album, AlbumId, ColorLabel, Flag, GroupBy, Op, PhotoId, Sort, SortKey};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, has_active, has_selection, ok, str_param};
@@ -130,15 +130,35 @@ pub fn specs() -> Vec<CommandSpec> {
             "Sort",
             ["View", "Sort"],
             None,
-            "{key: captureDate|importDate|editDate|fileName|rating|fileSize, ascending?: bool}",
+            "{key?: captureDate|importDate|editDate|fileName|rating|fileSize, ascending?: bool, group?: auto|none|day|month|year}",
             always,
             |s, p| {
                 let key: SortKey = match p.get("key") {
                     Some(k) => serde_json::from_value(k.clone()).map_err(|e| bad("library.sort", e.to_string()))?,
                     None => s.sort.key,
                 };
-                s.sort = Sort { key, ascending: bool_or(p, "ascending", s.sort.ascending) };
+                let group = match str_param(p, "group") {
+                    Some(g) => GroupBy::parse(g).ok_or_else(|| bad("library.sort", "group must be auto|none|day|month|year"))?,
+                    None => s.sort.group,
+                };
+                s.sort = Sort { key, ascending: bool_or(p, "ascending", s.sort.ascending), group };
                 ok()
+            }
+        ),
+        cmd!(
+            query "library.groups",
+            "Date Groups",
+            [],
+            None,
+            "{by?: day|month|year (default: the sort's grouping; auto = day)} → [{key, label, start, count}] date headers of the grid",
+            always,
+            |s, p| {
+                let by = match str_param(p, "by") {
+                    Some(g) => GroupBy::parse(g).ok_or_else(|| bad("library.groups", "by must be auto|none|day|month|year"))?,
+                    None => s.sort.group,
+                };
+                let vis = s.visible_cloned();
+                Ok(serde_json::to_value(s.catalog.date_runs(&vis, s.sort.key, by)).unwrap_or_default())
             }
         ),
         // ---- selection

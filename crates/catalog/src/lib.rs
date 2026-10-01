@@ -7,6 +7,7 @@
 //! - **determinism**: replaying the log reproduces the state exactly (property-tested).
 #![forbid(unsafe_code)]
 
+pub mod dates;
 pub mod journal;
 pub mod model;
 pub mod query;
@@ -16,6 +17,7 @@ pub mod store;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+pub use dates::{DateRun, GroupBy};
 pub use journal::{Journal, LoadReport, SnapshotPolicy};
 use lightcraft_develop::DevelopSettings;
 pub use model::*;

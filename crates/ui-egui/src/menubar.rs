@@ -288,6 +288,16 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
             v.push(MenuNode::Separator);
             v.push(item("library.sort", json!({"ascending": true}), "Ascending", None, true, Some(cur.ascending)));
             v.push(item("library.sort", json!({"ascending": false}), "Descending", None, true, Some(!cur.ascending)));
+            v.push(MenuNode::Separator);
+            use lightcraft_catalog::GroupBy;
+            let groups = [
+                ("Group by Date: Automatic", GroupBy::Auto, "auto"),
+                ("Group by Day", GroupBy::Day, "day"),
+                ("Group by Month", GroupBy::Month, "month"),
+                ("Group by Year", GroupBy::Year, "year"),
+                ("No Date Groups", GroupBy::None, "none"),
+            ];
+            v.extend(groups.into_iter().map(|(label, g, k)| item("library.sort", json!({"group": k}), label, None, true, Some(cur.group == g))));
             v
         }
         "Add to Album" => {
