@@ -80,10 +80,15 @@ pub struct LightcraftApp {
     pub widgets: Vec<(String, egui::Rect)>,
     /// In-progress on-canvas gesture (brush stroke points, gradient drag…).
     pub gesture: Option<panels::detail::Gesture>,
+    /// What the loupe drew last frame: photo and source ("render", "cached", "embedded", "small",
+    /// "thumb", "none").
+    pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
 }
 
 impl LightcraftApp {
     pub fn new(session: Session, services: Services) -> Self {
+        // GPU device + kernels off the UI thread, before the first photo is opened
+        lightcraft_engine::gpu::warm_up();
         Self {
             session,
             ui: UiState::default(),
@@ -105,6 +110,7 @@ impl LightcraftApp {
             image_rect: None,
             widgets: vec![],
             gesture: None,
+            loupe_shown: None,
         }
     }
 

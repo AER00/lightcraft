@@ -74,7 +74,19 @@ so CPU numbers are pessimistic; the GPU numbers are less affected):
 | export render 6000×4000 | 1037–1414 ms | 291–330 ms |
 
 GPU timings include the readback of the 8-bit result and the histogram. Device creation + kernel
-compilation: ~0.4 s once per process (lazily, on the first GPU render).
+compilation: ~0.4 s once per process — the desktop app starts it on a background thread at launch
+(`lightcraft_gpu::warm_up`), so the first loupe render doesn't wait for it; other processes create
+the device on their first GPU render. `lightcraft_gpu::ready()` asks without blocking.
+
+## Opening a photo (M5.4)
+- The loupe shows a stand-in at once (`media::QuickJob`): the photo's cached view render for its
+  current settings, else (raws with their import look) the embedded camera JPEG, else a
+  thumbnail-level render; the full render replaces it in place.
+- Raw sources for previews (2560 px) and thumbnails are binned straight from the mosaic
+  (`RawImage::develop_binned`, 2× for a 24 MP preview); only exports / 1:1 demosaic at full size.
+- The next and previous photos in filmstrip order are prepared in the background once the current
+  one is rendered (decoded source kept, view render cached): stepping through photos shows the
+  developed image in ~50 ms.
 
 ## Open items
 - Keep the loupe texture on the GPU (render into an `egui-wgpu` texture on eframe's device instead of

@@ -351,9 +351,8 @@ pub(crate) fn is_bw(s: &DevelopSettings) -> bool {
     s.treatment == Treatment::Bw || s.profile.id == "lc.mono"
 }
 
-/// Parallel map over output rows with index.
 /// `LIGHTCRAFT_PROFILE` is set: print per-stage timings to stderr.
-pub(crate) fn profiling() -> bool {
+pub fn profiling() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("LIGHTCRAFT_PROFILE").is_some())
 }

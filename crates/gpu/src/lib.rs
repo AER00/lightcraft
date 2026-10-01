@@ -56,12 +56,37 @@ fn env_disabled() -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+static GPU: std::sync::OnceLock<Option<ctx::Gpu>> = std::sync::OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn device() -> Option<&'static ctx::Gpu> {
-    static GPU: std::sync::OnceLock<Option<ctx::Gpu>> = std::sync::OnceLock::new();
     if env_disabled() {
         return None;
     }
     GPU.get_or_init(|| std::panic::catch_unwind(ctx::Gpu::new).ok().flatten()).as_ref()
+}
+
+/// Create the device and compile the kernels on a background thread now (app start), so the
+/// first render doesn't wait ~0.3–0.4 s for it and the UI thread never does.
+pub fn warm_up() {
+    #[cfg(not(target_arch = "wasm32"))]
+    if !env_disabled() && GPU.get().is_none() {
+        let _ = std::thread::Builder::new().name("lc-gpu-init".into()).spawn(|| {
+            let _ = device();
+        });
+    }
+}
+
+/// Has device creation finished (successfully or not)? Never blocks — for status displays.
+pub fn ready() -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        env_disabled() || GPU.get().is_some()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        true
+    }
 }
 
 /// Whether a usable GPU adapter exists and GPU rendering is enabled (creates the device on first

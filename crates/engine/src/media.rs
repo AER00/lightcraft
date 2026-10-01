@@ -10,6 +10,11 @@
 //! disk cache in the library's `thumbs/` folder), keyed by the photo's content hash, the develop
 //! settings hash, the size and [`RENDER_CACHE_VERSION`] — so reopening a library shows its grid
 //! without decoding a single original, and an edit simply produces a new key.
+//!
+//! Opening a photo shows something at once ([`QuickJob`]): the loupe's last render for the current
+//! settings (kept in the same cache under a size-independent "view" key), else the camera's
+//! embedded JPEG for an unedited raw, else a thumbnail-level render — while the real render is
+//! prepared. Grid thumbnails of unedited raws likewise start from the embedded preview.
 
 use std::sync::Arc;
 
@@ -17,7 +22,7 @@ use lightcraft_catalog::{MediaKind, Photo, PhotoId, Source};
 use lightcraft_develop::DevelopSettings;
 use lightcraft_pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
 use lightcraft_preview::{Hash128, Hasher128, Lru, PreviewCache};
-use lightcraft_raster::{Histogram, Rgb32f};
+use lightcraft_raster::{Histogram, Rgb32f, Rgba8};
 use serde::{Deserialize, Serialize};
 
 /// Bump when the pipeline's output changes, to invalidate cached thumbnails.
@@ -62,6 +67,10 @@ impl SourceLevel {
 /// Decodes a file into a linear Rec.2020 image no larger than `max_edge` (set by the app).
 pub type FileLoader = Arc<dyn Fn(&str, usize) -> Result<(Rgb32f, SourceInfo), String> + Send + Sync>;
 
+/// A raw file's embedded (camera-rendered) preview as display sRGB, oriented, no larger than
+/// `max_edge` (set by the app). `None`: no usable preview.
+pub type PreviewLoader = Arc<dyn Fn(&str, usize) -> Option<Rgba8> + Send + Sync>;
+
 #[derive(Clone)]
 pub enum SourceRef {
     Loaded(Arc<Rgb32f>),
@@ -92,6 +101,7 @@ pub struct MediaCache {
     pub preview_capacity: usize,
     pub file_loader: Option<FileLoader>,
     pub file_probe: Option<FileProbe>,
+    pub preview_loader: Option<PreviewLoader>,
     scenes: Vec<lightcraft_scenes::Scene>,
     /// Rendered thumbnails (memory, plus disk once a library is attached).
     pub rendered: Arc<PreviewCache>,
@@ -106,6 +116,7 @@ impl Default for MediaCache {
             preview_capacity: 0,
             file_loader: None,
             file_probe: None,
+            preview_loader: None,
             scenes: Vec::new(),
             rendered: Arc::new(PreviewCache::memory(RENDERED_MEM_BYTES)),
         }
@@ -207,6 +218,8 @@ pub struct RenderJob {
     /// Intermediate results of this view's previous renders (set by the frontend for the loupe):
     /// slider drags then only redo the stages the changed setting feeds.
     pub stages: Option<Arc<StageCache>>,
+    /// Keep a full-quality result here as the photo's view preview ([`crate::Session::loupe_job`]).
+    pub view_cache: Option<(Arc<PreviewCache>, Hash128)>,
 }
 
 pub struct RenderResult {
@@ -216,6 +229,8 @@ pub struct RenderResult {
     pub rendered: Result<Rendered, String>,
     /// A source that was loaded by this job (to be inserted into the cache).
     pub loaded: Option<Arc<Rgb32f>>,
+    /// Set for a [`QuickJob`]'s stand-in: where the image came from.
+    pub quick: Option<QuickSource>,
 }
 
 impl RenderJob {
@@ -240,7 +255,14 @@ impl RenderJob {
         {
             let image = Arc::unwrap_or_clone(img);
             let histogram = Histogram::of_srgb8(&image);
-            return RenderResult { photo: self.photo, level: self.level, key: self.key, rendered: Ok(Rendered { image, histogram }), loaded: None };
+            return RenderResult {
+                photo: self.photo,
+                level: self.level,
+                key: self.key,
+                rendered: Ok(Rendered { image, histogram }),
+                loaded: None,
+                quick: None,
+            };
         }
         let was_loaded = matches!(self.source, SourceRef::Loaded(_));
         match self.source.load() {
@@ -252,9 +274,21 @@ impl RenderJob {
                 if let Some((cache, key)) = &self.cache {
                     cache.put(*key, Arc::new(rendered.image.clone()));
                 }
-                RenderResult { photo: self.photo, level: self.level, key: self.key, rendered: Ok(rendered), loaded: (!was_loaded).then_some(src) }
+                if let Some((cache, key)) = &self.view_cache
+                    && self.request.quality == Quality::Full
+                {
+                    cache.put_deferred(*key, Arc::new(rendered.image.clone()));
+                }
+                RenderResult {
+                    photo: self.photo,
+                    level: self.level,
+                    key: self.key,
+                    rendered: Ok(rendered),
+                    loaded: (!was_loaded).then_some(src),
+                    quick: None,
+                }
             }
-            Err(e) => RenderResult { photo: self.photo, level: self.level, key: self.key, rendered: Err(e), loaded: None },
+            Err(e) => RenderResult { photo: self.photo, level: self.level, key: self.key, rendered: Err(e), loaded: None, quick: None },
         }
     }
 }
@@ -269,6 +303,58 @@ pub fn develop(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &
     match stages {
         Some(st) => lightcraft_pipeline::render_cached(src, info, s, req, st),
         None => lightcraft_pipeline::render(src, info, s, req),
+    }
+}
+
+/// Where a [`QuickJob`]'s stand-in image came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QuickSource {
+    /// The photo's own develop render for its current settings (cached view or thumbnail render).
+    Cached,
+    /// The camera's embedded JPEG (unedited raws).
+    Embedded,
+    /// A thumbnail-level develop render made for the occasion.
+    Small,
+}
+
+/// Something to show *now* for a photo while its real render is prepared. Tried in order: cached
+/// renders, the embedded preview of an unedited raw, a thumbnail-level render.
+#[derive(Clone)]
+pub struct QuickJob {
+    pub photo: PhotoId,
+    pub key: u64,
+    /// Cached renders to try first, in order: (cache, key).
+    pub cached: Vec<(Arc<PreviewCache>, Hash128)>,
+    /// Embedded preview of an unedited raw: (path, loader, max edge).
+    pub embedded: Option<(String, PreviewLoader, usize)>,
+    /// Last resort: run this thumbnail job.
+    pub small: Option<Box<RenderJob>>,
+}
+
+impl QuickJob {
+    pub fn run(self) -> RenderResult {
+        let (photo, key) = (self.photo, self.key);
+        let done = |rendered: Result<Rendered, String>, quick| RenderResult { photo, level: SourceLevel::Thumb, key, rendered, loaded: None, quick };
+        let rendered = |image: Rgba8| {
+            let histogram = Histogram::of_srgb8(&image);
+            Ok(Rendered { image, histogram })
+        };
+        for (cache, k) in &self.cached {
+            if let Some(img) = cache.get(*k) {
+                return done(rendered(Arc::unwrap_or_clone(img)), Some(QuickSource::Cached));
+            }
+        }
+        if let Some((path, loader, edge)) = &self.embedded
+            && let Some(image) = loader(path, *edge)
+        {
+            return done(rendered(image), Some(QuickSource::Embedded));
+        }
+        if let Some(job) = self.small {
+            let r = job.run();
+            return RenderResult { key, quick: Some(QuickSource::Small), ..r };
+        }
+        done(Err("no quick preview".into()), None)
     }
 }
 
@@ -325,7 +411,71 @@ impl crate::Session {
             let k = Hasher128::new().str(&content_key(&p)).u64(settings.hash64()).u64(b as u64).u64(RENDER_CACHE_VERSION).finish();
             (self.media.rendered.clone(), k)
         });
-        Some(RenderJob { photo: id, level, source, origin: p.source.clone(), info: source_info(&p), settings, request, key, cache, stages: None })
+        Some(RenderJob {
+            photo: id,
+            level,
+            source,
+            origin: p.source.clone(),
+            info: source_info(&p),
+            settings,
+            request,
+            key,
+            cache,
+            stages: None,
+            view_cache: None,
+        })
+    }
+
+    /// Size-independent cache key of a photo's view render (loupe) for its current settings.
+    fn view_key(p: &Photo, apply_crop: bool) -> Hash128 {
+        Hasher128::new().str(&content_key(p)).str("view").u64(p.develop.hash64()).u64(apply_crop as u64).u64(RENDER_CACHE_VERSION).finish()
+    }
+
+    /// The loupe's render job: like [`Self::render_job`], and a full-quality result is kept as the
+    /// photo's view preview (memory, and disk with a library) for [`Self::quick_view_job`].
+    pub fn loupe_job(&mut self, id: PhotoId, max_w: usize, max_h: usize, apply_crop: bool) -> Option<RenderJob> {
+        let mut job = self.render_job(id, max_w, max_h, false, apply_crop)?;
+        let p = self.catalog.photo(id)?;
+        job.view_cache = Some((self.media.rendered.clone(), Self::view_key(p, apply_crop)));
+        Some(job)
+    }
+
+    /// The embedded preview of an unedited raw (path, loader), when the app installed a loader.
+    fn embedded_of(&self, p: &Photo) -> Option<(String, PreviewLoader)> {
+        match (&p.source, &self.media.preview_loader) {
+            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw && crate::import::has_import_look(p) => Some((path.clone(), l.clone())),
+            _ => None,
+        }
+    }
+
+    /// Something to show in the loupe right away for `id` (see [`QuickJob`]): its cached view
+    /// render, else the embedded preview of an unedited raw, else a cached or fresh thumbnail.
+    pub fn quick_view_job(&mut self, id: PhotoId, max_edge: usize, apply_crop: bool) -> Option<QuickJob> {
+        let p = self.catalog.photo(id)?.clone();
+        let small = self.thumb_job(id, THUMB_SIZES[THUMB_SIZES.len() - 1])?;
+        // (the thumbnail job itself starts with the cached thumbnail, after the sharper embedded preview)
+        let cached = vec![(self.media.rendered.clone(), Self::view_key(&p, apply_crop))];
+        let h = Hasher128::new().str(&content_key(&p)).str("quick").u64(p.develop.hash64()).u64(apply_crop as u64).finish();
+        let key = h.0 as u64;
+        let embedded = self.embedded_of(&p).map(|(path, l)| (path, l, max_edge.clamp(1, SourceLevel::Preview.max_edge())));
+        Some(QuickJob { photo: id, key, cached, embedded, small: apply_crop.then(|| Box::new(small)) })
+    }
+
+    /// A first grid thumbnail for an unedited raw: the cached render for `job` (the real
+    /// thumbnail job, from [`Self::thumb_job`]) if there is one — then the result carries
+    /// [`QuickSource::Cached`] and `job.key` and is final — else its embedded preview. `None` for
+    /// other photos (render them directly).
+    pub fn quick_thumb_job(&mut self, job: &RenderJob) -> Option<QuickJob> {
+        let p = self.catalog.photo(job.photo)?.clone();
+        let (path, l) = self.embedded_of(&p)?;
+        let edge = job.request.max_w.max(job.request.max_h);
+        Some(QuickJob {
+            photo: job.photo,
+            key: job.key,
+            cached: job.cache.clone().into_iter().collect(),
+            embedded: Some((path, l, edge)),
+            small: None,
+        })
     }
 
     /// Accept a finished job's loaded source into the cache.

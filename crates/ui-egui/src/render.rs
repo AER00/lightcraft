@@ -7,12 +7,18 @@
 //! disk) before rendering. On wasm the jobs run inline, one per frame, unless the host installs a
 //! [`RenderOffload`] (the browser build's Web Workers): then queued jobs are handed to it as it has
 //! room, and its results are collected every frame.
+//!
+//! Stand-ins ([`QuickJob`]s, once per photo and settings): [`Slot::Preview`] holds what the loupe
+//! shows until [`Slot::Main`] has the photo's render (cached view render, embedded camera JPEG or
+//! a thumbnail render); [`Slot::ThumbQuick`] holds a raw's embedded preview in the grid until its
+//! rendered thumbnail arrives (a cached thumbnail found by the quick job becomes the
+//! [`Slot::Thumb`] texture directly).
 
 use std::collections::HashMap;
 
 use lightcraft_catalog::PhotoId;
 use lightcraft_engine::Session;
-use lightcraft_engine::media::{RenderJob, RenderResult};
+use lightcraft_engine::media::{QuickJob, QuickSource, RenderJob, RenderResult};
 use lightcraft_engine::pipeline::StageCache;
 use lightcraft_preview::JobPool;
 use lightcraft_raster::Histogram;
@@ -21,9 +27,16 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Slot {
     Thumb(PhotoId),
+    /// A thumbnail's stand-in (embedded preview of an unedited raw).
+    ThumbQuick(PhotoId),
     Main,
+    /// The loupe's stand-in until `Main` has the photo.
+    Preview,
     Before,
     Compare(u8),
+    /// Background preparation of a neighbouring photo (no texture: its decoded source and view
+    /// render are cached by the engine). 0 = next, 1 = previous.
+    Prefetch(u8),
 }
 
 pub struct Tex {
@@ -33,6 +46,8 @@ pub struct Tex {
     pub size: [usize; 2],
     pub histogram: Option<Histogram>,
     pub ms: f64,
+    /// Set for stand-ins: where the image came from.
+    pub quick: Option<QuickSource>,
     /// CPU copy of the pixels (only with [`Renderer::keep_pixels`]; for headless screenshots).
     pub pixels: Option<std::sync::Arc<egui::ColorImage>>,
 }
@@ -71,6 +86,10 @@ pub struct Renderer {
     pub keep_pixels: bool,
     /// Per-view intermediate results (loupe and "before"), so slider drags redo only what changed.
     stages: HashMap<Slot, Arc<StageCache>>,
+    /// Slot → key of the last quick job requested for it (each is tried once).
+    quick_tried: HashMap<Slot, u64>,
+    /// Prefetch slot → key of the last job submitted (each runs once).
+    prefetched: HashMap<Slot, u64>,
 }
 
 impl Default for Renderer {
@@ -87,6 +106,8 @@ impl Default for Renderer {
             completed: 0,
             keep_pixels: false,
             stages: HashMap::new(),
+            quick_tried: HashMap::new(),
+            prefetched: HashMap::new(),
         }
     }
 }
@@ -131,6 +152,39 @@ impl Renderer {
         self.pool.submit(slot, key, priority, Box::new(move || job.run()));
     }
 
+    /// Request a stand-in for `slot` (once per job key).
+    pub fn request_quick(&mut self, slot: Slot, job: QuickJob, priority: u32) {
+        if self.quick_tried.get(&slot) == Some(&job.key) {
+            return;
+        }
+        self.quick_tried.insert(slot, job.key);
+        self.pending.insert(slot, (job.key, priority));
+        let key = job.key;
+        self.pool.submit(slot, key, priority, Box::new(move || job.run()));
+    }
+
+    /// Prepare a photo in the background (a [`Slot::Prefetch`] job runs once per key; a newer one
+    /// replaces it while queued). Memory stays bounded by the engine's source caches.
+    pub fn prefetch(&mut self, slot: Slot, job: RenderJob, priority: u32) {
+        if self.prefetched.get(&slot) == Some(&job.key) {
+            return;
+        }
+        self.prefetched.insert(slot, job.key);
+        self.pending.insert(slot, (job.key, priority));
+        let key = job.key;
+        self.pool.submit(slot, key, priority, Box::new(move || job.run()));
+    }
+
+    /// Is a request for `slot` queued or running?
+    pub fn is_pending(&self, slot: Slot) -> bool {
+        self.pending.contains_key(&slot)
+    }
+
+    /// The texture to show for a grid/filmstrip thumbnail: the rendered one, else its stand-in.
+    pub fn thumb(&self, id: PhotoId) -> Option<&Tex> {
+        self.textures.get(&Slot::Thumb(id)).or_else(|| self.textures.get(&Slot::ThumbQuick(id)))
+    }
+
     pub fn queued(&self) -> usize {
         self.pool.queued() + self.queue.len()
     }
@@ -154,7 +208,7 @@ impl Renderer {
 
     /// Thumbnail textures currently loaded.
     pub fn thumb_textures(&self) -> usize {
-        self.textures.keys().filter(|s| matches!(s, Slot::Thumb(_))).count()
+        self.textures.keys().filter(|s| matches!(s, Slot::Thumb(_) | Slot::ThumbQuick(_))).count()
     }
 
     /// Collect finished jobs into textures. Returns true if anything changed.
@@ -177,7 +231,7 @@ impl Renderer {
         }
         self.dispatch();
         let mut changed = false;
-        for (slot, r, ms) in finished {
+        for (mut slot, r, ms) in finished {
             session.accept(&r);
             self.completed += 1;
             if self.pending.get(&slot).is_some_and(|p| p.0 == r.key) {
@@ -186,6 +240,21 @@ impl Renderer {
             let Ok(rendered) = r.rendered else {
                 continue;
             };
+            if matches!(slot, Slot::Prefetch(_)) {
+                continue;
+            }
+            if let Slot::ThumbQuick(id) = slot {
+                if self.textures.contains_key(&Slot::Thumb(id)) {
+                    continue; // the real thumbnail won the race
+                }
+                if r.quick == Some(QuickSource::Cached) {
+                    // the photo's own cached thumbnail: final
+                    slot = Slot::Thumb(id);
+                }
+            }
+            if let Slot::Thumb(id) = slot {
+                self.textures.remove(&Slot::ThumbQuick(id));
+            }
             let img = &rendered.image;
             let color = std::sync::Arc::new(egui::ColorImage::from_rgba_unmultiplied([img.width, img.height], &img.as_bytes()));
             let pixels = self.keep_pixels.then(|| color.clone());
@@ -199,12 +268,22 @@ impl Renderer {
                     t.size = [img.width, img.height];
                     t.histogram = Some(rendered.histogram);
                     t.ms = ms;
+                    t.quick = r.quick;
                 }
                 None => {
                     let tex = ctx.load_texture(name, color, egui::TextureOptions::LINEAR);
                     self.textures.insert(
                         slot,
-                        Tex { key: r.key, photo: r.photo, tex, size: [img.width, img.height], histogram: Some(rendered.histogram), ms, pixels },
+                        Tex {
+                            key: r.key,
+                            photo: r.photo,
+                            tex,
+                            size: [img.width, img.height],
+                            histogram: Some(rendered.histogram),
+                            ms,
+                            quick: r.quick,
+                            pixels,
+                        },
                     );
                 }
             }
@@ -228,11 +307,12 @@ impl Renderer {
     /// thumbnail jobs for photos that scrolled out of `keep`.
     pub fn evict_thumbs(&mut self, keep: &std::collections::HashSet<PhotoId>, max: usize) {
         let dropped = self.pool.reprioritize(|s, p| match s {
-            Slot::Thumb(id) if !keep.contains(id) && p <= 10 => None,
+            Slot::Thumb(id) | Slot::ThumbQuick(id) if !keep.contains(id) && p <= 11 => None,
             _ => Some(p),
         });
         for s in dropped {
             self.pending.remove(&s);
+            self.quick_tried.remove(&s);
         }
         let pending = &mut self.pending;
         self.queue.retain(|q| match q.slot {
@@ -242,10 +322,11 @@ impl Renderer {
             }
             _ => true,
         });
-        let thumbs = self.textures.keys().filter(|s| matches!(s, Slot::Thumb(_))).count();
+        let thumbs = self.thumb_textures();
         if thumbs <= max {
             return;
         }
-        self.textures.retain(|s, _| !matches!(s, Slot::Thumb(id) if !keep.contains(id)));
+        self.textures.retain(|s, _| !matches!(s, Slot::Thumb(id) | Slot::ThumbQuick(id) if !keep.contains(id)));
+        self.quick_tried.retain(|s, _| !matches!(s, Slot::ThumbQuick(id) if !keep.contains(id)));
     }
 }

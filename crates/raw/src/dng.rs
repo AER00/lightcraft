@@ -14,7 +14,7 @@ pub(crate) fn raw_ifd(tiff: &Tiff) -> Option<&Ifd> {
         .into_iter()
         .filter(|i| i.u32(t::NEW_SUBFILE_TYPE).unwrap_or(0) == 0)
         .filter(|i| matches!(i.u16(t::PHOTOMETRIC), Some(photometric::CFA) | Some(photometric::LINEAR_RAW)))
-        .max_by_key(|i| i.u64(t::IMAGE_WIDTH).unwrap_or(0) * i.u64(t::IMAGE_LENGTH).unwrap_or(0))
+        .max_by_key(|i| i.u64(t::IMAGE_WIDTH).unwrap_or(0).saturating_mul(i.u64(t::IMAGE_LENGTH).unwrap_or(0)))
 }
 
 fn mat3(v: Option<Vec<f64>>) -> Option<Mat3> {
