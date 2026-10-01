@@ -2145,6 +2145,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-merge"
+version = "0.1.0"
+dependencies = [
+ "lightcraft-codecs",
+ "lightcraft-color",
+ "lightcraft-geom",
+ "lightcraft-meta",
+ "lightcraft-raster",
+ "lightcraft-raw",
+ "lightcraft-scenes",
+ "rayon",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "lightcraft-meta"
 version = "0.1.0"
 dependencies = [
