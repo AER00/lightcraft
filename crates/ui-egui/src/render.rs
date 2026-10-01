@@ -43,6 +43,8 @@ pub enum Slot {
     /// The loupe while hovering a preset or profile: the photo with the hovered look (nothing is
     /// committed).
     Hover,
+    /// An import candidate's thumbnail in the import review dialog (by index).
+    Import(u32),
 }
 
 pub struct Tex {
@@ -433,6 +435,12 @@ impl Renderer {
     /// CPU copies of the current textures by id (see [`Self::keep_pixels`]).
     pub fn cpu_textures(&self) -> HashMap<egui::TextureId, crate::softpaint::CpuTexture> {
         self.textures.values().filter_map(|t| Some((t.tex.id(), crate::softpaint::CpuTexture::linear(t.pixels.clone()?)))).collect()
+    }
+
+    /// Drop the import review thumbnails (a new review, or the dialog closed).
+    pub fn forget_imports(&mut self) {
+        self.textures.retain(|s, _| !matches!(s, Slot::Import(_)));
+        self.quick_tried.retain(|s, _| !matches!(s, Slot::Import(_)));
     }
 
     /// Drop thumbnails that aren't in `keep` (bounded memory for huge libraries), and queued

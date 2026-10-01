@@ -23,6 +23,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
         Dialog::Rename { .. } => "Rename Photos",
+        Dialog::Import { .. } => "Add Photos",
         Dialog::LabelNames { .. } => "Edit Color Label Names",
         Dialog::CaptureTime { .. } => "Edit Capture Time",
         Dialog::RenameKeyword { .. } => "Rename Keyword",
@@ -42,7 +43,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         .resizable(false)
         .frame(frame)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .default_width(380.0)
+        .default_width(if matches!(dlg, Dialog::Import { .. }) { 760.0 } else { 380.0 })
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             match &mut dlg {
@@ -322,6 +323,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     field(ui, "Folder", |ui| ui.add(egui::TextEdit::singleline(dir).desired_width(f32::INFINITY)));
                 }
                 Dialog::Merge { opts } => crate::merge::body(app, ui, opts),
+                Dialog::Import { opts } => crate::import::body(app, ui, opts),
                 Dialog::About => {
                     ui.label(egui::RichText::new("LightCraft").font(t.semibold(20.0)).color(t.text));
                     ui.label(format!("Version {} — a clean-room, pure-Rust photo library and raw developer.", env!("CARGO_PKG_VERSION")));
@@ -368,7 +370,13 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 if !informational && ui.button("Cancel").clicked() {
                     close = true;
                 }
-                let ok = match dlg {
+                let add_label;
+                let ok = match &dlg {
+                    Dialog::Import { opts } => {
+                        let n = opts.selected_paths().len();
+                        add_label = format!("Add {n} Photo{}", if n == 1 { "" } else { "s" });
+                        add_label.as_str()
+                    }
                     Dialog::Merge { .. } => "Merge",
                     _ if informational => "Close",
                     _ => "OK",
@@ -451,6 +459,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }),
         ),
         Dialog::Merge { opts } => crate::merge::start_final(app, opts),
+        Dialog::Import { opts } => crate::import::start(app, opts),
         Dialog::About | Dialog::Shortcuts => Ok(serde_json::Value::Null),
     }
 }

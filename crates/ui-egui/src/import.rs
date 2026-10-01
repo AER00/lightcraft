@@ -1,0 +1,353 @@
+//! The import review dialog (File → Add Photos…): the files found under the chosen files and
+//! folders as a grid of thumbnails with checkboxes (duplicates marked and unchecked), the
+//! destination (add in place / copy into the library's dated `Originals/` folders), an album
+//! (existing or new), a preset and keywords to apply. Importing runs in small batches, one per
+//! frame, with a progress window; the whole import is one undo step.
+
+use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
+use lightcraft_engine::import::ImportCandidate;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+use crate::LightcraftApp;
+use crate::render::Slot;
+use crate::theme::Tokens;
+use crate::widgets::register;
+
+/// Files per batch (one batch per frame, so the progress window updates).
+const BATCH: usize = 8;
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ImportDialog {
+    pub candidates: Vec<ImportCandidate>,
+    pub checked: Vec<bool>,
+    /// Copy into the library (else add in place).
+    pub copy: bool,
+    /// Existing album to add to.
+    pub album: Option<u64>,
+    /// …or a new album with this name.
+    pub new_album: String,
+    /// Preset id ("" = none).
+    pub preset: String,
+    /// Comma-separated keywords.
+    pub keywords: String,
+}
+
+impl ImportDialog {
+    pub fn new(candidates: Vec<ImportCandidate>) -> Self {
+        let checked = candidates.iter().map(|c| c.duplicate.is_none() && c.error.is_none()).collect();
+        ImportDialog { candidates, checked, ..Default::default() }
+    }
+    pub fn importable(&self, i: usize) -> bool {
+        self.candidates.get(i).is_some_and(|c| c.duplicate.is_none() && c.error.is_none())
+    }
+    pub fn selected_paths(&self) -> Vec<String> {
+        self.candidates
+            .iter()
+            .zip(&self.checked)
+            .filter(|(c, on)| **on && c.duplicate.is_none() && c.error.is_none())
+            .map(|(c, _)| c.path.clone())
+            .collect()
+    }
+    fn keywords(&self) -> Vec<String> {
+        self.keywords.split(',').map(str::trim).filter(|k| !k.is_empty()).map(str::to_string).collect()
+    }
+}
+
+/// A running import (see the module docs).
+#[derive(Debug, Default)]
+pub struct ImportTask {
+    queue: Vec<String>,
+    pub total: usize,
+    pub done: usize,
+    params: Value,
+    pub imported: usize,
+    pub duplicates: usize,
+    pub failed: usize,
+    undo0: usize,
+    first: Option<u64>,
+}
+
+/// Scan `paths` and open the review dialog. Returns the candidate counts.
+pub fn open(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String> {
+    let r = app.session.execute("library.importPreview", &json!({"paths": paths})).map_err(|e| e.to_string())?;
+    let candidates: Vec<ImportCandidate> = serde_json::from_value(r["candidates"].clone()).unwrap_or_default();
+    if candidates.is_empty() {
+        app.toast(&egui::Context::default(), "No photos found");
+        return Ok(json!({"candidates": 0}));
+    }
+    app.renderer.forget_imports();
+    let d = ImportDialog::new(candidates);
+    let out = json!({"candidates": d.candidates.len(), "duplicates": r["duplicates"]});
+    app.ui.dialog = Some(crate::state::Dialog::Import { opts: Box::new(d) });
+    Ok(out)
+}
+
+/// Start importing the dialog's checked files (the dialog's OK / `ui.dialog.confirm`).
+pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String> {
+    let queue = d.selected_paths();
+    if queue.is_empty() {
+        return Err("no photos selected".into());
+    }
+    let undo0 = app.session.undo.len();
+    let mut album = d.album;
+    if album.is_none() && !d.new_album.trim().is_empty() {
+        let r = app.session.execute("album.create", &json!({"name": d.new_album.trim()})).map_err(|e| e.to_string())?;
+        album = r["id"].as_u64();
+    }
+    let mut params = json!({"mode": if d.copy { "copy" } else { "add" }, "keywords": d.keywords()});
+    if let Some(a) = album {
+        params["album"] = json!(a);
+    }
+    if !d.preset.is_empty() {
+        params["preset"] = json!(d.preset);
+    }
+    let total = queue.len();
+    app.import = Some(ImportTask { queue, total, params, undo0, ..Default::default() });
+    app.renderer.forget_imports();
+    Ok(json!({"importing": total}))
+}
+
+/// Run one batch of the import in progress (called every frame).
+pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let Some(task) = app.import.as_mut() else { return };
+    let n = task.queue.len().min(BATCH);
+    let batch: Vec<String> = task.queue.drain(..n).collect();
+    let mut p = task.params.clone();
+    p["paths"] = json!(batch);
+    let r = app.session.execute("library.import", &p);
+    let task = app.import.as_mut().expect("import task");
+    task.done += n;
+    match r {
+        Ok(v) => {
+            let len = |k: &str| v[k].as_array().map_or(0, Vec::len);
+            task.imported += len("imported");
+            task.duplicates += len("duplicates");
+            task.failed += len("failed");
+            if task.first.is_none() {
+                task.first = v["imported"].as_array().and_then(|a| a.first()).and_then(Value::as_u64);
+            }
+        }
+        Err(e) => {
+            log::warn!("import: {e}");
+            task.failed += n;
+        }
+    }
+    ctx.request_repaint();
+    if !task.queue.is_empty() {
+        return;
+    }
+    let task = app.import.take().expect("import task");
+    let steps = app.session.undo.len().saturating_sub(task.undo0);
+    let label = format!("Add {} Photo{}", task.imported, if task.imported == 1 { "" } else { "s" });
+    app.session.merge_undo(steps, &label);
+    if let Some(f) = task.first {
+        let _ = app.run("library.select", json!({"ids": [f]}));
+    }
+    let mut msg = format!("Added {} photo{}", task.imported, if task.imported == 1 { "" } else { "s" });
+    if task.duplicates > 0 {
+        msg.push_str(&format!(" · {} duplicate{} skipped", task.duplicates, if task.duplicates == 1 { "" } else { "s" }));
+    }
+    if task.failed > 0 {
+        msg.push_str(&format!(" · {} not readable", task.failed));
+    }
+    app.toast(ctx, msg);
+}
+
+/// The progress window while an import runs.
+pub fn progress(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let Some(task) = &app.import else { return };
+    let t = Tokens::get(ctx);
+    let frac = task.done as f32 / task.total.max(1) as f32;
+    let text = format!("Adding photos… {} of {}", task.done, task.total);
+    egui::Window::new("Importing").title_bar(false).resizable(false).anchor(Align2::CENTER_BOTTOM, [0.0, -80.0]).fixed_size([340.0, 60.0]).show(
+        ctx,
+        |ui| {
+            ui.label(egui::RichText::new(text).color(t.text));
+            ui.add(egui::ProgressBar::new(frac).desired_width(320.0));
+        },
+    );
+}
+
+/// The dialog body: options, then the candidate grid.
+pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
+    let t = Tokens::get(ui.ctx());
+    let n = d.candidates.len();
+    let dups = d.candidates.iter().filter(|c| c.duplicate.is_some()).count();
+    let sel = d.selected_paths().len();
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(format!("{n} found · {sel} selected")).color(t.text));
+        if dups > 0 {
+            ui.label(egui::RichText::new(format!("· {dups} already in the library")).color(t.text_dim));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if crate::widgets::text_button(ui, "importNone", "Uncheck All", false).clicked() {
+                d.checked.iter_mut().for_each(|c| *c = false);
+            }
+            if crate::widgets::text_button(ui, "importAll", "Check All", false).clicked() {
+                for i in 0..n {
+                    d.checked[i] = d.importable(i);
+                }
+            }
+        });
+    });
+    // candidate grid
+    let cell = 116.0;
+    let avail = ui.available_width();
+    let cols = ((avail + 6.0) / (cell + 6.0)).floor().max(1.0) as usize;
+    let rows = n.div_ceil(cols);
+    egui::ScrollArea::vertical().id_salt("import-grid").max_height(330.0).auto_shrink([false, true]).show_viewport(ui, |ui, viewport| {
+        let (area, _) = ui.allocate_exact_size(vec2(avail, rows as f32 * (cell + 26.0)), Sense::hover());
+        for i in 0..n {
+            let (c, r) = (i % cols, i / cols);
+            let local = Rect::from_min_size(pos2(c as f32 * (cell + 6.0), r as f32 * (cell + 26.0)), vec2(cell, cell + 20.0));
+            if !local.intersects(viewport.expand(cell)) {
+                continue;
+            }
+            let rect = local.translate(area.min.to_vec2());
+            candidate_cell(app, ui, d, i, rect);
+        }
+    });
+    ui.add_space(4.0);
+    // options
+    field(ui, "Destination", |ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        if crate::widgets::text_button(ui, "importAdd", "Add in place", !d.copy).on_hover_text("Reference the files where they are").clicked() {
+            d.copy = false;
+        }
+        let can_copy = app.session.library.as_ref().is_some_and(|l| l.on_disk);
+        let r = ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importCopy", "Copy into library", d.copy)).inner;
+        if r.on_hover_text("Copy into the library's Originals/YYYY/YYYY-MM-DD/ folders").clicked() {
+            d.copy = true;
+        }
+    });
+    let albums: Vec<(u64, String)> = {
+        let mut v: Vec<(u64, String)> =
+            app.session.catalog.albums().filter(|a| !a.folder && !a.is_smart()).map(|a| (a.id.0, a.name.clone())).collect();
+        v.sort_by_key(|(_, n)| n.to_lowercase());
+        v
+    };
+    field(ui, "Album", |ui| {
+        let cur = match d.album {
+            Some(a) => albums.iter().find(|x| x.0 == a).map(|x| x.1.clone()).unwrap_or_default(),
+            None if !d.new_album.is_empty() => "New album".into(),
+            None => "None".into(),
+        };
+        egui::ComboBox::from_id_salt("import-album").selected_text(cur).show_ui(ui, |ui| {
+            if ui.selectable_label(d.album.is_none() && d.new_album.is_empty(), "None").clicked() {
+                d.album = None;
+                d.new_album.clear();
+            }
+            if ui.selectable_label(d.album.is_none() && !d.new_album.is_empty(), "New album…").clicked() {
+                d.album = None;
+                if d.new_album.is_empty() {
+                    d.new_album = "Imported Photos".into();
+                }
+            }
+            for (id, name) in &albums {
+                if ui.selectable_label(d.album == Some(*id), name).clicked() {
+                    d.album = Some(*id);
+                    d.new_album.clear();
+                }
+            }
+        });
+        if d.album.is_none() && !d.new_album.is_empty() {
+            let r = ui.add(egui::TextEdit::singleline(&mut d.new_album).desired_width(f32::INFINITY));
+            register(ui.ctx(), "field:importAlbumName", r.rect);
+        }
+    });
+    field(ui, "Preset", |ui| {
+        let cur = app.session.presets.iter().find(|p| p.id == d.preset).map(|p| p.name.clone()).unwrap_or_else(|| "None".into());
+        egui::ComboBox::from_id_salt("import-preset").selected_text(cur).height(300.0).show_ui(ui, |ui| {
+            if ui.selectable_label(d.preset.is_empty(), "None").clicked() {
+                d.preset.clear();
+            }
+            for p in &app.session.presets {
+                if ui.selectable_label(d.preset == p.id, format!("{} — {}", p.group, p.name)).clicked() {
+                    d.preset = p.id.clone();
+                }
+            }
+        });
+    });
+    field(ui, "Keywords", |ui| {
+        let r = ui.add(egui::TextEdit::singleline(&mut d.keywords).hint_text("comma, separated").desired_width(f32::INFINITY));
+        register(ui.ctx(), "field:importKeywords", r.rect);
+    });
+}
+
+fn candidate_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog, i: usize, rect: Rect) {
+    let t = Tokens::get(ui.ctx());
+    let c = d.candidates[i].clone();
+    let ok = d.importable(i);
+    let img = Rect::from_min_size(rect.min, vec2(rect.width(), rect.width()));
+    let resp = ui.interact(img, egui::Id::new(("import-cell", i)), Sense::click());
+    register(ui.ctx(), format!("import:{i}"), img);
+    let p = ui.painter();
+    p.rect_filled(img, 3.0, Color32::from_gray(30));
+    // thumbnail (background job; the grid only asks for the cells in view)
+    let slot = Slot::Import(i as u32);
+    if !app.renderer.textures.contains_key(&slot)
+        && let Some(job) = app.session.candidate_thumb_job(&c, 192, i as u64)
+    {
+        app.renderer.request_quick(slot, job, 4);
+    }
+    if let Some(tex) = app.renderer.textures.get(&slot) {
+        let [tw, th] = tex.size;
+        let s = ((img.width() - 8.0) / tw as f32).min((img.height() - 8.0) / th as f32);
+        let fit = Rect::from_center_size(img.center(), vec2(tw as f32 * s, th as f32 * s));
+        let tint = if ok { Color32::WHITE } else { Color32::from_gray(110) };
+        p.image(tex.tex.id(), fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
+    }
+    let on = d.checked[i] && ok;
+    if on {
+        p.rect_stroke(img, 3.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+    }
+    // checkbox
+    let cb = Rect::from_min_size(img.min + vec2(6.0, 6.0), vec2(16.0, 16.0));
+    p.rect(cb, 3.0, if on { t.accent } else { Color32::from_black_alpha(150) }, Stroke::new(1.0, Color32::from_gray(200)), StrokeKind::Inside);
+    if on {
+        p.line_segment([cb.left_center() + vec2(3.5, 0.5), cb.center_bottom() + vec2(-1.0, -4.0)], Stroke::new(2.0, Color32::WHITE));
+        p.line_segment([cb.center_bottom() + vec2(-1.0, -4.0), cb.right_top() + vec2(-3.5, 4.0)], Stroke::new(2.0, Color32::WHITE));
+    }
+    let badge = match (&c.duplicate, &c.error) {
+        (Some(r), _) if r == "path" => Some("In library"),
+        (Some(_), _) => Some("Duplicate"),
+        (None, Some(_)) => Some("Unreadable"),
+        _ => None,
+    };
+    if let Some(b) = badge {
+        let g = p.layout_no_wrap(b.to_string(), t.semibold(10.0), Color32::WHITE);
+        let br = Rect::from_min_size(pos2(img.right() - g.size().x - 12.0, img.top() + 6.0), g.size() + vec2(8.0, 4.0));
+        p.rect_filled(br, 3.0, Color32::from_rgba_unmultiplied(170, 60, 50, 220));
+        p.galley(br.min + vec2(4.0, 2.0), g, Color32::WHITE);
+    }
+    let name = if c.name.chars().count() > 18 { format!("{}…", c.name.chars().take(17).collect::<String>()) } else { c.name.clone() };
+    p.text(pos2(rect.left() + 2.0, img.bottom() + 9.0), Align2::LEFT_CENTER, name, t.font(10.5), if ok { t.text_label } else { t.text_dim });
+    let tip = format!(
+        "{}\n{} × {} · {} · {:.1} MB{}",
+        c.path,
+        c.width,
+        c.height,
+        c.format,
+        c.file_size as f64 / 1e6,
+        c.captured.as_deref().map(|d| format!("\n{}", d.replace('T', " "))).unwrap_or_default()
+    );
+    let resp = resp.on_hover_text(tip);
+    if resp.clicked() && ok {
+        d.checked[i] = !d.checked[i];
+    }
+}
+
+/// A labelled row (fixed label column).
+fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let t = Tokens::get(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(vec2(78.0, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.set_min_width(78.0);
+            ui.label(egui::RichText::new(label).color(t.text_label));
+        });
+        add(ui)
+    })
+    .inner
+}

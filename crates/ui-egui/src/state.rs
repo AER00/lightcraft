@@ -178,6 +178,10 @@ pub enum Dialog {
         minutes: i32,
         zone: f32,
     },
+    /// The import review (File → Add Photos…).
+    Import {
+        opts: Box<crate::import::ImportDialog>,
+    },
     /// Edit the colour label names (red, yellow, green, blue, purple; empty = the colour's name).
     LabelNames {
         names: Vec<String>,

@@ -65,8 +65,6 @@ Ordered by tier, then user value, then (low) effort. Take the first one nobody i
    feather/opacity sliders, `[`/`]` size keys. Medium effort.
 7. **LR-PREF-GENERAL + LR-IMP-RAWDEFAULT** (P0/P1) — a Settings dialog: raw defaults (preset or camera-specific),
     XMP prefs, cache, GPU. Medium effort.
-8. **LR-IMP-ADD-DIALOG + LR-IMP-LOCAL** (P0) — an import review grid with per-photo checkboxes and destination
-    album; browse folders before adding. Medium effort.
 9. **LR-EXP-TYPE + LR-EXP-DIM** (P0) — Original (+XMP) and DNG export (writer exists in
     `crates/raw/src/dngwrite.rs`), short edge / width / height / megapixels, "don't enlarge", ppi.
 10. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
@@ -114,16 +112,16 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-IMP-ADD-DIALOG | Add photos/folders | P0 | 🟡 | `cmd:file.addPhotos`, `cmd:library.import` (`mode`, `album`) | file picker + import report; no review grid with per-photo checkboxes / destination album UI |
+| LR-IMP-ADD-DIALOG | Add photos/folders | P0 | ✅ | `cmd:file.addPhotos`, `cmd:library.importPreview`, `cmd:library.import` (`mode`, `album`, `albumName`, `preset`, `keywords`), `crates/ui-egui/src/import.rs` | review dialog: candidate grid with thumbnails and checkboxes (duplicates by path/content marked and unchecked), destination, album (existing/new), preset, keywords; batched import with a progress window; one undo step. Drag-and-drop still imports directly |
 | LR-IMP-DRAGDROP | Drop files/folders to import | P0 | ✅ | `crates/ui-egui/src/lib.rs` (dropped files → `cmd:library.import`) | dropping onto a specific album not supported |
 | LR-IMP-DUPES | Skip duplicates by content | P1 | ✅ | `crates/engine/src/import.rs`, `crates/engine/src/tests_import.rs` | |
 | LR-IMP-DEVICE | Import from camera/card | P1 | ⬜ | | no device detection |
 | LR-IMP-AUTO | Watched-folder auto import | P2 | ⬜ | | |
-| LR-IMP-PRESET | Preset on import | P2 | ⬜ | | |
+| LR-IMP-PRESET | Preset on import | P2 | ✅ | `cmd:library.import` (`preset`) | chosen in the import review; one History entry |
 | LR-IMP-RAWDEFAULT | Raw defaults | P1 | ⬜ | `crates/engine/src/import.rs` | raws get embedded lens corrections on import; no user raw-default setting |
 | LR-IMP-MIGRATE | Migrate other catalogs | OOS | 🚫 | | |
 | LR-IMP-PROFILES | Import profiles & presets | P1 | 🟡 | `cmd:file.importPresets`, `cmd:preset.import` | presets (.lcpreset, XMP `crs:`) only; no profile import; Adobe profile formats are deliberately unsupported |
-| LR-IMP-LOCAL | Work on files in place | P0 | 🟡 | `cmd:library.import` (mode add), `crates/engine/src/sidecar.rs`, `cmd:library.toggleAutoWriteXmp` | files referenced in place with XMP sidecars; no browse-a-folder-without-adding view |
+| LR-IMP-LOCAL | Work on files in place | P0 | 🟡 | `cmd:library.import` (mode add), `cmd:library.importPreview`, `crates/engine/src/sidecar.rs`, `cmd:library.toggleAutoWriteXmp` | files referenced in place with XMP sidecars; the import review shows a folder's photos before adding (“Add in place” or “Copy into library”); no browse-a-folder-without-adding view in the main grid |
 | LR-IMP-SIDECAR-SPLIT | Separate XMP sidecar variants | P2 | ⬜ | `cmd:library.xmpPreferences` | sidecar naming option exists (stem/full), no split sidecars |
 | LR-IMP-FORMATS | Supported formats | P0 | 🟡 | `crates/codecs/src/lib.rs`, `crates/raw/src/lib.rs` | JPEG, PNG, TIFF, WebP, JXL, PSD, GIF, BMP; DNG, CR2, ARW, NEF, RAF, RW2, PEF, ORF. Missing: CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only), HEIC/AVIF decode |
 | LR-IMP-CULL-AT-IMPORT | Culling analysis at import | P2 | ⬜ | | |

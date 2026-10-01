@@ -103,6 +103,8 @@ pub struct Session {
     pub xmp: sidecar::XmpPrefs,
     /// Parameters of the last export (`app.export` params, minus targets), persisted in prefs.json.
     pub last_export: Option<serde_json::Value>,
+    /// File probes from the last import review (`library.importPreview`), reused by the import.
+    pub import_probes: std::collections::HashMap<String, media::ProbeInfo>,
 }
 
 impl Default for Session {
@@ -138,6 +140,7 @@ impl Session {
             library: None,
             xmp: sidecar::XmpPrefs::default(),
             last_export: None,
+            import_probes: Default::default(),
         }
     }
 

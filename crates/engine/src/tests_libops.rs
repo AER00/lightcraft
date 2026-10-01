@@ -258,3 +258,60 @@ fn label_names_set_undo_and_replay() {
     assert_eq!(s.catalog.label_name(lightcraft_catalog::ColorLabel::Green), "Approved");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Import review: `library.importPreview` lists candidates with duplicates marked (nothing is
+/// added); `library.import` takes the checked files with preset, keywords and a new album as one
+/// undo step, and copies into the dated library folders.
+#[test]
+fn import_review_preview_and_options() {
+    let src = temp_dir("imp-src");
+    let lib = temp_dir("imp-lib");
+    write_png(&src.join("a.png"), 1);
+    write_png(&src.join("sub/b.png"), 2);
+    write_png(&src.join("sub/c.png"), 3);
+    std::fs::copy(src.join("a.png"), src.join("sub/a-again.png")).unwrap();
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    // c.png is already in the library
+    s.execute("library.import", &json!({"paths": [src.join("sub/c.png").to_string_lossy()]})).unwrap();
+    let n0 = s.catalog.len();
+    let undo0 = s.undo.len();
+    let pv = s.execute("library.importPreview", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(pv["scanned"], 4, "{pv}");
+    assert_eq!(pv["duplicates"], 2, "{pv}");
+    assert_eq!(s.catalog.len(), n0, "a preview adds nothing");
+    assert_eq!(s.undo.len(), undo0);
+    let cands = pv["candidates"].as_array().unwrap();
+    let dup = |name: &str| cands.iter().find(|c| c["name"] == name).unwrap()["duplicate"].clone();
+    assert_eq!(dup("c.png"), "path");
+    assert_eq!(dup("a-again.png"), "content");
+    assert_eq!(dup("a.png"), json!(null));
+    assert_eq!(cands[0]["width"], 24);
+    // the dialog imports the checked (non-duplicate) files with its options
+    let preset = s.presets.iter().find(|p| p.builtin).unwrap().id.clone();
+    let checked: Vec<String> = cands.iter().filter(|c| c["duplicate"].is_null()).map(|c| c["path"].as_str().unwrap().to_string()).collect();
+    let r = s
+        .execute(
+            "library.import",
+            &json!({"paths": checked, "mode": "copy", "preset": preset, "keywords": ["trip", "family|kids"], "albumName": "Imported Trip"}),
+        )
+        .unwrap();
+    assert_eq!(r["imported"].as_array().unwrap().len(), 2, "{r}");
+    let album = lightcraft_catalog::AlbumId(r["album"].as_u64().unwrap());
+    assert_eq!(s.catalog.album(album).unwrap().name, "Imported Trip");
+    assert_eq!(s.catalog.album_count(album), 2);
+    for id in r["imported"].as_array().unwrap() {
+        let p = s.catalog.photo(lightcraft_catalog::PhotoId(id.as_u64().unwrap())).unwrap();
+        assert_eq!(p.meta.keywords, ["trip", "family|kids"]);
+        assert!(p.history.last().unwrap().label.starts_with("Preset: "), "preset applied with a History entry");
+        let lightcraft_catalog::Source::File { path } = &p.source else { panic!() };
+        assert!(std::path::Path::new(path).starts_with(lib.join("Originals")), "{path}");
+    }
+    assert_eq!(s.undo.len(), undo0 + 1, "import + album = one undo step");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.len(), n0);
+    assert!(s.catalog.album(album).is_none());
+    assert!(s.execute("library.import", &json!({"paths": ["/nope"], "preset": "no-such"})).is_err());
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&lib);
+}

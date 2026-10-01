@@ -2329,6 +2329,7 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "lightcraft-catalog",
+ "lightcraft-codecs",
  "lightcraft-color",
  "lightcraft-develop",
  "lightcraft-engine",

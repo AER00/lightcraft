@@ -400,7 +400,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             if paths.is_empty() {
                 return Some(Ok(Value::Null));
             }
-            return Some(app.session.execute("library.import", &json!({"paths": paths})).map_err(|e| e.to_string()));
+            // review first: the import dialog lists what was found
+            crate::import::open(app, paths)
         }
         "file.importPresets" => {
             let paths = match p.get("paths").and_then(Value::as_array) {

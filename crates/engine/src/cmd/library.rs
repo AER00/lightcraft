@@ -11,6 +11,10 @@ fn album_param(p: &Value, key: &str, c: &str) -> Result<AlbumId> {
     p.get(key).and_then(Value::as_u64).map(AlbumId).ok_or_else(|| bad(c, format!("missing album `{key}`")))
 }
 
+fn strs(p: &Value, key: &str) -> Vec<String> {
+    p.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
+}
+
 fn ids_param(p: &Value) -> Option<Vec<PhotoId>> {
     p.get("ids").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(PhotoId).collect())
 }
@@ -429,18 +433,31 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         // ---- import
         cmd!(
+            query "library.importPreview",
+            "Review Import",
+            [],
+            None,
+            "{paths: [file or folder (recursive)]} → {candidates: [{path, name, format, kind, width, height, fileSize, captured, duplicate?: path|content, existing?, error?}], duplicates, scanned} — nothing is added",
+            always,
+            |s, p| {
+                let paths = strs(p, "paths");
+                if paths.is_empty() {
+                    return Err(bad("library.importPreview", "no paths"));
+                }
+                let c = crate::import::scan(s, &paths);
+                let dups = c.iter().filter(|c| c.duplicate.is_some()).count();
+                Ok(json!({"scanned": c.len(), "duplicates": dups, "candidates": c}))
+            }
+        ),
+        cmd!(
             "library.import",
             "Add Photos…",
             ["File"],
             Some("Cmd+Shift+I"),
-            "{paths: [file or folder (recursive)], mode?: add|copy (copy into the library's Originals/), album?: albumId} → {imported, duplicates, failed}",
+            "{paths: [file or folder (recursive)], mode?: add|copy (add = reference the files in place; copy = into the library's Originals/YYYY/YYYY-MM-DD/), album?: albumId, albumName?: new album, preset?: presetId, keywords?: [..]} → {imported, duplicates, failed, album?}",
             always,
             |s, p| {
-                let paths: Vec<String> = p
-                    .get("paths")
-                    .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
-                    .unwrap_or_default();
+                let paths = strs(p, "paths");
                 if paths.is_empty() {
                     return Err(bad("library.import", "no paths"));
                 }
@@ -449,16 +466,42 @@ pub fn specs() -> Vec<CommandSpec> {
                     "copy" => crate::import::ImportMode::Copy,
                     other => return Err(bad("library.import", format!("unknown mode `{other}` (add|copy)"))),
                 };
-                let report = crate::import::import(s, &paths, mode)?;
-                if let Some(a) = p.get("album").and_then(Value::as_u64)
-                    && !report.imported.is_empty()
+                let preset = match str_param(p, "preset").filter(|x| !x.is_empty()) {
+                    Some(id) => {
+                        Some(s.presets.iter().find(|x| x.id == id).cloned().ok_or_else(|| bad("library.import", format!("unknown preset `{id}`")))?)
+                    }
+                    None => None,
+                };
+                let mut album = p.get("album").and_then(Value::as_u64);
+                if let Some(a) = album
+                    && s.catalog.album(AlbumId(a)).is_none_or(|al| al.folder || al.is_smart())
                 {
-                    s.execute("album.addPhotos", &json!({"id": a, "ids": report.imported}))?;
+                    return Err(bad("library.import", "album must be a regular album"));
                 }
-                if let Some(f) = report.imported.first() {
+                let opts = crate::import::ImportOptions { mode, preset, keywords: strs(p, "keywords") };
+                let undo0 = s.undo.len();
+                let mut report = serde_json::to_value(crate::import::import_with(s, &paths, &opts)?).unwrap_or_default();
+                let imported: Vec<u64> = report["imported"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
+                if album.is_none()
+                    && let Some(name) = str_param(p, "albumName").map(str::trim).filter(|n| !n.is_empty())
+                    && !imported.is_empty()
+                {
+                    let r = s.execute("album.create", &json!({"name": name}))?;
+                    album = r["id"].as_u64();
+                }
+                if let Some(a) = album
+                    && !imported.is_empty()
+                {
+                    s.execute("album.addPhotos", &json!({"id": a, "ids": imported}))?;
+                    report["album"] = json!(a);
+                }
+                // one undo step for the whole import
+                let n = s.undo.len().saturating_sub(undo0);
+                s.merge_undo(n, &format!("Add {} Photo{}", imported.len(), if imported.len() == 1 { "" } else { "s" }));
+                if let Some(f) = imported.first() {
                     s.selection = Selection::single(PhotoId(*f));
                 }
-                Ok(serde_json::to_value(&report).unwrap_or_default())
+                Ok(report)
             }
         ),
         // ---- persistence

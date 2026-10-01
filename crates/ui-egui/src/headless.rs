@@ -171,7 +171,11 @@ impl Headless {
 
     /// Is anything still in progress (renders, queued input)?
     pub fn busy(&self) -> bool {
-        self.app.renderer.in_flight() > 0 || self.app.merge.busy() || !self.app.synthetic.is_empty() || !self.events.is_empty()
+        self.app.renderer.in_flight() > 0
+            || self.app.merge.busy()
+            || self.app.import.is_some()
+            || !self.app.synthetic.is_empty()
+            || !self.events.is_empty()
     }
 
     /// Run frames until nothing is pending (renders finished, input consumed) for a few frames in
@@ -598,6 +602,59 @@ mod tests {
         h.request("ui.clickWidget", json!({"id": "label:green"}), t);
         assert_eq!(h.app.session.catalog.photo(id).unwrap().label, None, "clicking the current label clears it");
         h.settle(SETTLE);
+    }
+
+    /// File → Add Photos… opens the import review: candidates with thumbnails, the duplicate is
+    /// unchecked; unchecking a cell and confirming imports the rest in batches, into a new album
+    /// with keywords, as one undo step.
+    #[test]
+    fn import_review_dialog() {
+        let dir = std::env::temp_dir().join(format!("lc-ui-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..5u8 {
+            let (w, h) = (40usize, 30usize);
+            let data: Vec<[u8; 4]> = (0..w * h).map(|k| [(k % w * 6) as u8, i * 40, (k / w * 8) as u8, 255]).collect();
+            let img = lightcraft_raster::Rgba8 { width: w, height: h, data };
+            let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+            std::fs::write(dir.join(format!("img{i}.png")), png).unwrap();
+        }
+        std::fs::copy(dir.join("img0.png"), dir.join("img0-copy.png")).unwrap();
+        let services = crate::Services { png: None, ..Default::default() };
+        let mut app = LightcraftApp::new(lightcraft_engine::Session::with_demo().with_fs(), services);
+        app.ui.view = crate::state::ViewMode::PhotoGrid;
+        let mut h = Headless::new(app, [1300.0, 900.0], 1.0);
+        let t = Duration::from_secs(10);
+        let n0 = h.app.session.catalog.len();
+        let undo0 = h.app.session.undo.len();
+        let r = h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [dir.to_string_lossy()]}}), t);
+        assert_eq!(r["result"]["candidates"], 6, "{r}");
+        assert_eq!(r["result"]["duplicates"], 1, "{r}");
+        h.settle(SETTLE);
+        assert!(h.app.renderer.textures.keys().filter(|s| matches!(s, crate::render::Slot::Import(_))).count() >= 5, "thumbnails");
+        // uncheck the first photo; name a new album and keywords
+        let r = h.request("ui.clickWidget", json!({"id": "import:0"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        if let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog {
+            assert_eq!(opts.selected_paths().len(), 4, "duplicate and unchecked photo left out");
+            opts.new_album = "Card 1".into();
+            opts.keywords = "cardone, 2026".into();
+        } else {
+            panic!("no import dialog");
+        }
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert!(h.app.import.is_none(), "finished");
+        assert_eq!(h.app.session.catalog.len(), n0 + 4);
+        let album = h.app.session.catalog.albums().find(|a| a.name == "Card 1").expect("album").id;
+        assert_eq!(h.app.session.catalog.album_count(album), 4);
+        assert!(h.app.session.catalog.photos().filter(|p| p.meta.keywords.contains(&"cardone".to_string())).count() == 4);
+        assert_eq!(h.app.session.undo.len(), undo0 + 1, "one undo step");
+        h.request("engine.execute", json!({"command": "edit.undo"}), t);
+        assert_eq!(h.app.session.catalog.len(), n0);
+        h.settle(SETTLE);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

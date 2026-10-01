@@ -8,6 +8,7 @@
 pub mod control;
 pub mod headless;
 pub mod icons;
+pub mod import;
 pub mod menubar;
 pub mod menus;
 pub mod merge;
@@ -94,6 +95,8 @@ pub struct LightcraftApp {
     pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
     /// Photo Merge dialog previews and background merges.
     pub merge: merge::MergeState,
+    /// An import in progress (the import review dialog's batches).
+    pub import: Option<import::ImportTask>,
     /// The look the loupe shows while the pointer rests on a preset or profile (set by the
     /// panels each frame; nothing is committed, no history entry).
     pub hover_preview: Option<HoverPreview>,
@@ -127,6 +130,7 @@ impl LightcraftApp {
             gesture: None,
             loupe_shown: None,
             merge: merge::MergeState::default(),
+            import: None,
             hover_preview: None,
         }
     }
@@ -305,6 +309,7 @@ impl LightcraftApp {
         }
         self.renderer.poll(ctx, &mut self.session);
         merge::poll(self, ctx);
+        import::tick(self, ctx);
         self.session.persist_if_dirty();
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);
@@ -370,6 +375,7 @@ impl LightcraftApp {
             state::ViewMode::Survey => panels::compare::show_survey(self, ui),
         });
         panels::dialogs::show(self, &ctx);
+        import::progress(self, &ctx);
         panels::toast(self, &ctx);
         self.widgets = widgets::take_registry(&ctx);
         self.perf.frame_ms = now_ms() - t0;
