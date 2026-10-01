@@ -22,19 +22,24 @@ pub fn white_balance(img: &mut Rgb32f, info: &SourceInfo, s: &DevelopSettings) {
     wb_gain(img, info, s, 1.0);
 }
 
-fn wb_gain(img: &mut Rgb32f, info: &SourceInfo, s: &DevelopSettings, gain: f32) {
+/// The white-balance matrix (linear Rec.2020, luminance-preserving) for the settings, or `None`
+/// when the as-shot white is kept.
+pub fn wb_matrix_for(info: &SourceInfo, s: &DevelopSettings) -> Option<[[f32; 3]; 3]> {
     let (t, tint) = effective_wb(info, s);
-    let m = if (t - info.as_shot_temp).abs() < 1e-6 && (tint - info.as_shot_tint).abs() < 1e-6 {
-        None
-    } else {
-        let set = wb_matrix(&REC2020, temp_tint_to_xy(t, tint));
-        let shot = wb_matrix(&REC2020, temp_tint_to_xy(info.as_shot_temp, info.as_shot_tint));
-        let m = set.mul(&shot.inverse().unwrap_or(lightcraft_color::Mat3::IDENTITY));
-        // Normalize so neutral luminance is preserved (WB shouldn't change exposure).
-        let g = m.apply([1.0, 1.0, 1.0]);
-        let y = g[0] * 0.2627 + g[1] * 0.6780 + g[2] * 0.0593;
-        Some(m.mul(&lightcraft_color::Mat3::diag(1.0 / y, 1.0 / y, 1.0 / y)).to_f32())
-    };
+    if (t - info.as_shot_temp).abs() < 1e-6 && (tint - info.as_shot_tint).abs() < 1e-6 {
+        return None;
+    }
+    let set = wb_matrix(&REC2020, temp_tint_to_xy(t, tint));
+    let shot = wb_matrix(&REC2020, temp_tint_to_xy(info.as_shot_temp, info.as_shot_tint));
+    let m = set.mul(&shot.inverse().unwrap_or(lightcraft_color::Mat3::IDENTITY));
+    // Normalize so neutral luminance is preserved (WB shouldn't change exposure).
+    let g = m.apply([1.0, 1.0, 1.0]);
+    let y = g[0] * 0.2627 + g[1] * 0.6780 + g[2] * 0.0593;
+    Some(m.mul(&lightcraft_color::Mat3::diag(1.0 / y, 1.0 / y, 1.0 / y)).to_f32())
+}
+
+fn wb_gain(img: &mut Rgb32f, info: &SourceInfo, s: &DevelopSettings, gain: f32) {
+    let m = wb_matrix_for(info, s);
     let w = img.width;
     for_rows(&mut img.data, w, |_, row| {
         for p in row.iter_mut() {
@@ -96,7 +101,7 @@ fn guided_apply(p: &Plane, a: &Plane, b: &Plane) -> Plane {
 /// large windows at a fraction of the cost.
 pub fn guided_fast(p: &Plane, sigma: f32, eps: f32) -> Plane {
     use lightcraft_raster::resample::{Filter, resize};
-    let s = (sigma / 3.0).floor().clamp(1.0, 16.0) as usize;
+    let s = guided_fast_step(sigma);
     if s <= 1 {
         return guided(p, sigma, eps);
     }
@@ -107,28 +112,57 @@ pub fn guided_fast(p: &Plane, sigma: f32, eps: f32) -> Plane {
     guided_apply(p, &up(&ma), &up(&mb))
 }
 
+/// Subsampling step of [`guided_fast`] for `sigma` (1 = no subsampling: the plain guided filter).
+pub fn guided_fast_step(sigma: f32) -> usize {
+    (sigma / 3.0).floor().clamp(1.0, 16.0) as usize
+}
+
+/// Luminance noise reduction: guided filter of log luminance (`sigma` px, `eps`), blended by `k`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NrLum {
+    pub sigma: f32,
+    pub eps: f32,
+    pub k: f32,
+}
+
+/// Colour noise reduction: chromaticity blurred by `sigma` px, mixed in by `t`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NrColor {
+    pub sigma: f32,
+    pub t: f32,
+}
+
+/// Noise-reduction parameters at an output long edge of `out_long` px (see [`denoise`]).
+pub fn nr_params(s: &DevelopSettings, src_long: usize, out_long: usize) -> (Option<NrLum>, Option<NrColor>) {
+    let lum = (s.detail.nr_luminance / 100.0) as f32;
+    let col = (s.detail.nr_color / 100.0) as f32;
+    let scale = (out_long as f32 / src_long.max(1) as f32).clamp(0.05, 1.0);
+    let l = (lum > 0.0).then(|| {
+        let detail = (s.detail.nr_detail / 100.0) as f32;
+        NrLum { sigma: (1.0 + 2.5 * lum) * scale.max(0.4), eps: 0.002 + lum * lum * 0.25 * (1.0 - 0.7 * detail), k: lum.sqrt() }
+    });
+    let c = (col > 0.0).then(|| {
+        let sigma = (1.5 + 6.0 * col) * scale.max(0.35) * (1.0 + (s.detail.nr_color_smoothness / 100.0) as f32);
+        let keep = (s.detail.nr_color_detail / 100.0) as f32 * 0.5;
+        NrColor { sigma, t: col * (1.0 - keep) }
+    });
+    (l, c)
+}
+
 /// Noise reduction at output resolution: luminance via an edge-aware self-guided filter on
 /// log-luminance, colour by blurring chromaticity (rgb / Y) and re-applying the original luminance.
 /// Radii scale with how much the source was downsampled (preview noise is already averaged out).
 pub fn denoise(img: &mut Rgb32f, s: &DevelopSettings, src_long: usize, out_long: usize) {
-    let lum = (s.detail.nr_luminance / 100.0) as f32;
-    let col = (s.detail.nr_color / 100.0) as f32;
-    if lum <= 0.0 && col <= 0.0 {
-        return;
-    }
-    let scale = (out_long as f32 / src_long.max(1) as f32).clamp(0.05, 1.0);
+    let (lum, col) = nr_params(s, src_long, out_long);
     let w = img.width;
-    if lum > 0.0 {
+    if let Some(nr) = lum {
         let _t = crate::profiling().then(std::time::Instant::now);
         let l = img.map(log_lum);
-        let detail = (s.detail.nr_detail / 100.0) as f32;
-        let eps = 0.002 + lum * lum * 0.25 * (1.0 - 0.7 * detail);
-        let f = guided(&l, (1.0 + 2.5 * lum) * scale.max(0.4), eps);
-        let k = lum.sqrt();
+        let f = guided(&l, nr.sigma, nr.eps);
         for_rows(&mut img.data, w, |y, row| {
             for (x, p) in row.iter_mut().enumerate() {
                 let i = y * w + x;
-                let d = (f.data[i] - l.data[i]) * k;
+                let d = (f.data[i] - l.data[i]) * nr.k;
                 let g = d.exp2();
                 *p = p.map(|v| v * g);
             }
@@ -137,23 +171,20 @@ pub fn denoise(img: &mut Rgb32f, s: &DevelopSettings, src_long: usize, out_long:
             eprintln!("    nr luminance: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
         }
     }
-    if col > 0.0 {
+    if let Some(nr) = col {
         let _t = crate::profiling().then(std::time::Instant::now);
         let chroma = img.map(|c| {
             let y = luminance_2020(c).max(1e-6);
             [c[0] / y, c[1] / y, c[2] / y]
         });
-        let sigma = (1.5 + 6.0 * col) * scale.max(0.35) * (1.0 + (s.detail.nr_color_smoothness / 100.0) as f32);
-        let b = gaussian(&chroma, sigma);
-        let keep = (s.detail.nr_color_detail / 100.0) as f32 * 0.5;
+        let b = gaussian(&chroma, nr.sigma);
         for_rows(&mut img.data, w, |y, row| {
             for (x, p) in row.iter_mut().enumerate() {
                 let i = y * w + x;
                 let yl = luminance_2020(*p);
                 let c0 = chroma.data[i];
                 let cb = b.data[i];
-                let t = col * (1.0 - keep);
-                *p = [0, 1, 2].map(|k| ((c0[k] + (cb[k] - c0[k]) * t) * yl).max(0.0));
+                *p = [0, 1, 2].map(|k| ((c0[k] + (cb[k] - c0[k]) * nr.t) * yl).max(0.0));
             }
         });
         if let Some(t) = _t {
@@ -191,32 +222,60 @@ fn plane_at(slot: &mut Option<(u32, Arc<Plane>)>, sigma: f32, f: impl FnOnce() -
     }
 }
 
-/// The spatial planes the per-pixel stage needs for `img` (white-balanced, before exposure),
-/// reusing whatever `planes` already holds for it. Missing planes are computed side by side (each
-/// one alone scales poorly: the guided filters work on small subsampled grids).
-pub(crate) fn prepare(img: Arc<Rgb32f>, s: &DevelopSettings, frame: &Frame, px_per_long: f64, q: Quality, planes: &mut Planes) -> Prepared {
-    let log_l = planes.log_l.get_or_insert_with(|| Arc::new(timed("log_l", || img.map(log_lum)))).clone();
+/// Guided-filter epsilons (EV²) of the highlights/shadows base and the clarity band.
+pub const BASE_EPS: f32 = 0.35;
+pub const CLARITY_EPS: f32 = 0.8;
+
+/// Dark channel of a pixel (dehaze).
+#[inline]
+pub fn dark_of(c: [f32; 3]) -> f32 {
+    c[0].min(c[1]).min(c[2])
+}
+
+/// Radii (px) of the spatial planes the settings need (`None` = not needed).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PlaneSigmas {
+    /// Edge-aware base for highlights/shadows (fast guided filter, [`BASE_EPS`]).
+    pub base: Option<f32>,
+    /// Clarity band (fast guided filter, [`CLARITY_EPS`]).
+    pub clarity: Option<f32>,
+    /// Texture / sharpening band (Gaussian).
+    pub texture: Option<f32>,
+    /// Dehaze dark channel (Gaussian).
+    pub dark: Option<f32>,
+}
+
+pub fn plane_sigmas(s: &DevelopSettings, px_per_long: f64, q: Quality) -> PlaneSigmas {
     let ppl = px_per_long as f32;
     let local_any = |f: fn(&lightcraft_develop::LocalAdjustments) -> f64| s.masks.iter().any(|m| f(&m.adjust) != 0.0);
     let tone_active =
         s.light.highlights != 0.0 || s.light.shadows != 0.0 || s.masks.iter().any(|m| m.adjust.highlights != 0.0 || m.adjust.shadows != 0.0);
     // Edge-aware base at ~1.5% of the long edge (EV² epsilon: edges of > ~0.6 EV are preserved).
-    let base_sigma = tone_active.then(|| {
+    let base = tone_active.then(|| {
         let sigma = (0.015 * ppl).max(1.0);
         if q == Quality::Draft { sigma.min(24.0) } else { sigma }
     });
-    let clarity_sigma = (s.effects.clarity != 0.0 || local_any(|a| a.clarity)).then(|| (0.012 * ppl).max(1.0));
-    let texture_sigma = (s.effects.texture != 0.0 || s.detail.sharpen_amount != 0.0 || local_any(|a| a.texture) || local_any(|a| a.sharpness))
+    let clarity = (s.effects.clarity != 0.0 || local_any(|a| a.clarity)).then(|| (0.012 * ppl).max(1.0));
+    let texture = (s.effects.texture != 0.0 || s.detail.sharpen_amount != 0.0 || local_any(|a| a.texture) || local_any(|a| a.sharpness))
         .then(|| (0.0018 * ppl).max(0.6));
-    let dark_sigma = (s.effects.dehaze != 0.0 || local_any(|a| a.dehaze)).then(|| (0.02 * ppl).max(1.0));
+    let dark = (s.effects.dehaze != 0.0 || local_any(|a| a.dehaze)).then(|| (0.02 * ppl).max(1.0));
+    PlaneSigmas { base, clarity, texture, dark }
+}
+
+/// The spatial planes the per-pixel stage needs for `img` (white-balanced, before exposure),
+/// reusing whatever `planes` already holds for it. Missing planes are computed side by side (each
+/// one alone scales poorly: the guided filters work on small subsampled grids).
+pub(crate) fn prepare(img: Arc<Rgb32f>, s: &DevelopSettings, frame: &Frame, px_per_long: f64, q: Quality, planes: &mut Planes) -> Prepared {
+    let log_l = planes.log_l.get_or_insert_with(|| Arc::new(timed("log_l", || img.map(log_lum)))).clone();
+    let PlaneSigmas { base: base_sigma, clarity: clarity_sigma, texture: texture_sigma, dark: dark_sigma } = plane_sigmas(s, px_per_long, q);
 
     let Planes { base: sb, clarity: sc, texture: st, dark: sd, .. } = planes;
     let l = &log_l;
     let (base, (clarity_blur, (texture_blur, dark))) = par_join(
-        || base_sigma.map(|sg| plane_at(sb, sg, || timed("base", || guided_fast(l, sg, 0.35)))),
+        || base_sigma.map(|sg| plane_at(sb, sg, || timed("base", || guided_fast(l, sg, BASE_EPS)))),
         || {
             par_join(
-                || clarity_sigma.map(|sg| plane_at(sc, sg, || timed("clarity", || guided_fast(l, sg, 0.8)))),
+                || clarity_sigma.map(|sg| plane_at(sc, sg, || timed("clarity", || guided_fast(l, sg, CLARITY_EPS)))),
                 || {
                     par_join(
                         || texture_sigma.map(|sg| plane_at(st, sg, || timed("texture", || gaussian(l, sg)))),
@@ -224,7 +283,7 @@ pub(crate) fn prepare(img: Arc<Rgb32f>, s: &DevelopSettings, frame: &Frame, px_p
                             dark_sigma.map(|sg| match sd {
                                 Some((k, d, air)) if *k == sg.to_bits() => (d.clone(), *air),
                                 _ => {
-                                    let d = timed("dehaze", || Arc::new(gaussian(&img.map(|c| c[0].min(c[1]).min(c[2])), sg)));
+                                    let d = timed("dehaze", || Arc::new(gaussian(&img.map(dark_of), sg)));
                                     let air = airlight(&d);
                                     *sd = Some((sg.to_bits(), d.clone(), air));
                                     (d, air)
@@ -242,14 +301,20 @@ pub(crate) fn prepare(img: Arc<Rgb32f>, s: &DevelopSettings, frame: &Frame, px_p
         None => (None, 1.0),
     };
     let ev = s.light.exposure as f32;
-    let gain = 2f32.powf(ev);
     let masks = timed("masks", || masks::evaluate(&s.masks, frame, img.width, img.height, &img, &log_l, ev));
-    Prepared { img, log_l, base, clarity_blur, texture_blur, dark, air, masks, ev, gain, px_per_long }
+    Prepared { img, log_l, base, clarity_blur, texture_blur, dark, air, masks, px_per_long }
 }
+
+/// The airlight is estimated from every `AIRLIGHT_STEP`-th value of the dark channel.
+pub const AIRLIGHT_STEP: usize = 7;
 
 /// Airlight estimate: bright end of the dark channel.
 pub fn airlight(dark: &Plane) -> f32 {
-    let mut v: Vec<f32> = dark.data.iter().step_by(7).copied().collect();
+    airlight_of(dark.data.iter().step_by(AIRLIGHT_STEP).copied().collect())
+}
+
+/// Airlight from the sampled dark-channel values (see [`airlight`]): their 99.5th percentile.
+pub fn airlight_of(mut v: Vec<f32>) -> f32 {
     if v.is_empty() {
         return 1.0;
     }

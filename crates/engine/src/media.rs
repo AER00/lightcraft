@@ -245,10 +245,10 @@ impl RenderJob {
         let was_loaded = matches!(self.source, SourceRef::Loaded(_));
         match self.source.load() {
             Ok(src) => {
-                let rendered = match &self.stages {
-                    Some(st) => lightcraft_pipeline::render_cached(&src, &self.info, &self.settings, &self.request, st),
-                    None => lightcraft_pipeline::render(&src, &self.info, &self.settings, &self.request),
-                };
+                // Thumbnails (many small jobs side by side) stay on the CPU; views and exports use
+                // the GPU when there is one.
+                let gpu = self.cache.is_none();
+                let rendered = develop(&src, &self.info, &self.settings, &self.request, self.stages.as_deref(), gpu);
                 if let Some((cache, key)) = &self.cache {
                     cache.put(*key, Arc::new(rendered.image.clone()));
                 }
@@ -256,6 +256,19 @@ impl RenderJob {
             }
             Err(e) => RenderResult { photo: self.photo, level: self.level, key: self.key, rendered: Err(e), loaded: None },
         }
+    }
+}
+
+/// Render `src`: on the GPU when `gpu` is set and a GPU is available (`lightcraft_gpu`), else on
+/// the CPU, reusing `stages` either way. Both produce the same image within 1–3 LSB (see
+/// `docs/gpu-pipeline.md`); `LIGHTCRAFT_GPU=0` or [`lightcraft_gpu::set_enabled`] forces the CPU.
+pub fn develop(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, stages: Option<&StageCache>, gpu: bool) -> Rendered {
+    if gpu && let Some(r) = lightcraft_gpu::render(src, info, s, req, stages) {
+        return r;
+    }
+    match stages {
+        Some(st) => lightcraft_pipeline::render_cached(src, info, s, req, st),
+        None => lightcraft_pipeline::render(src, info, s, req),
     }
 }
 

@@ -202,6 +202,10 @@ lightcraft --control 7980 ~/Pictures/trip
   instead of clipping, a filmic shoulder for raw and pixel-exact pass-through for JPEGs you haven't touched.
 - **Resolution-independent edits.** Radii and brush sizes are relative to the image, so a 400 px preview, your
   5K display and a 60 MP export look the same.
+- **GPU-accelerated, CPU-exact.** The whole develop pipeline runs as wgpu compute kernels (Metal / Vulkan / DX12),
+  checked against the CPU pipeline to within 1/255. On a 24 MP raw (Apple M4 Pro): a slider update re-renders in
+  ~4 ms, a cold 2.5 MP loupe in ~30 ms, and a full-size export in ~0.3 s including a parallel JPEG encode.
+  Without a GPU the same pipeline runs on all CPU cores, redoing only the stages a slider affects.
 - **Background rendering.** A worker pool renders the loupe, before/after and every visible thumbnail off the UI
   thread; drafts during drags, full quality on release.
 - **Local-first.** No account, no cloud, no telemetry, no subscription. Your catalog is an append-only log of
@@ -229,7 +233,7 @@ LightCraft is young and moving fast — see the [roadmap](ROADMAP.md) for estima
 | MCP server (headless or live app, persistent libraries), CLI, control channel | ✅ |
 | XMP sidecars (read/write, auto-write), reading `crs:` develop settings, preset files (`.lcpreset`, XMP presets) | ✅ |
 | Optics (distortion, vignetting, auto + manual CA, defringe, DNG-embedded lens corrections), Geometry (transforms, Constrain Crop), Upright (Auto/Level/Vertical/Full/Guided) | ✅ · camera lens profiles (our own) ⬜ |
-| GPU pipeline | 🚧 |
+| GPU pipeline (wgpu compute, CPU-exact within 1/255) with CPU fallback | ✅ · WebGPU in the browser 🚧 |
 | Web build (same UI in the browser via WASM; in-memory imports, export downloads) | ✅ · persistence, workers 🚧 |
 
 <br>

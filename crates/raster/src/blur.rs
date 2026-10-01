@@ -4,7 +4,7 @@ use crate::resample::Pixel;
 use crate::{Image, par_rows};
 
 /// Box radii approximating a Gaussian of `sigma` with 3 passes (Kovesi / Wells).
-fn box_radii(sigma: f32) -> [usize; 3] {
+pub fn box_radii(sigma: f32) -> [usize; 3] {
     let n = 3.0f32;
     let w_ideal = (12.0 * sigma * sigma / n + 1.0).sqrt();
     let mut wl = w_ideal.floor() as i32;
@@ -40,7 +40,7 @@ fn box_row<T: Pixel>(row: &mut [T], tmp: &mut Vec<T>, r: usize) {
 }
 
 /// Rows per parallel band in the vertical pass (each band re-primes its running sums).
-const BAND: usize = 32;
+pub const BAND: usize = 32;
 
 /// One vertical box pass `src → dst` (clamped edges): a running sum per column, vectorized across
 /// the row, parallel over horizontal bands. Cache-friendly — no transposes.

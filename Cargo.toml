@@ -21,6 +21,7 @@ lightcraft-meta = { path = "crates/meta" }
 lightcraft-develop = { path = "crates/develop" }
 lightcraft-scenes = { path = "crates/scenes" }
 lightcraft-pipeline = { path = "crates/pipeline" }
+lightcraft-gpu = { path = "crates/gpu" }
 lightcraft-catalog = { path = "crates/catalog" }
 lightcraft-preview = { path = "crates/preview" }
 lightcraft-engine = { path = "crates/engine" }
@@ -56,6 +57,10 @@ image-webp = "0.2"
 moxcms = { version = "0.9", default-features = false, features = ["lut"] }
 jxl-oxide = { version = "0.12", default-features = false }
 ravif = { version = "0.13", default-features = false, features = ["threading"] } # no "asm": it needs nasm (non-Rust)
+
+# gpu (crates/gpu; native backends only, no GL: everything stays pure Rust)
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "dx12", "wgsl"] }
+pollster = "1"
 
 # ui
 egui = "0.36"

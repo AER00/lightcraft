@@ -77,7 +77,7 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "selection": app.session.selection.ids.iter().map(|p| p.0).collect::<Vec<_>>(),
         "activeMask": app.session.active_mask,
         "widgetCount": app.widgets.len(),
-        "perf": {"frameMs": app.perf.frame_ms, "fps": app.perf.fps, "lastRenderMs": app.renderer.last_main_ms, "renderQueue": app.renderer.queued(), "rendersInFlight": app.renderer.in_flight(), "rendersDone": app.renderer.completed, "thumbTextures": app.renderer.thumb_textures()},
+        "perf": {"frameMs": app.perf.frame_ms, "fps": app.perf.fps, "lastRenderMs": app.renderer.last_main_ms, "renderQueue": app.renderer.queued(), "rendersInFlight": app.renderer.in_flight(), "rendersDone": app.renderer.completed, "thumbTextures": app.renderer.thumb_textures(), "gpu": lightcraft_engine::gpu::available().then(lightcraft_engine::gpu::adapter_name).flatten()},
         "status": app.ui.status,
     })
 }

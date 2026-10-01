@@ -177,37 +177,48 @@ impl Frame {
         Point::new(p.x * self.ow / l, p.y * self.oh / l)
     }
 
+    /// How [`Frame::sample`] resamples a (EXIF-oriented) source of `src_w × src_h` into `w × h`.
+    pub fn sample_plan(&self, src_w: usize, src_h: usize, w: usize, h: usize) -> SamplePlan {
+        let (ow, oh) = if self.orient.swaps_axes() { (src_h, src_w) } else { (src_w, src_h) };
+        let crop_px = self.crop.rect_px(self.ow, self.oh);
+        let k = crop_px.width() / w as f64;
+        let prefilter = (k > 1.25).then(|| (((ow as f64 / k).round() as usize).max(1), ((oh as f64 / k).round() as usize).max(1)));
+        let (bw, bh) = prefilter.unwrap_or((ow, oh));
+        let (sx, sy) = (bw as f64 / ow as f64, bh as f64 / oh as f64);
+        let mode = if self.warp.is_some() {
+            SampleMode::Warp(self.out_to_oriented(w, h))
+        } else if self.crop.is_identity() && !self.flip_h && !self.flip_v && bw == w && bh == h {
+            SampleMode::Copy
+        } else {
+            SampleMode::Affine(Affine::scale(sx, sy) * self.out_to_oriented(w, h))
+        };
+        SamplePlan { ow, oh, prefilter, sx, sy, mode }
+    }
+
     /// Sample the source into a `w × h` output buffer: orientation, crop, rotation, flips — one
     /// bilinear resample from a pre-filtered (area-downscaled) copy, so minification never aliases.
     pub fn sample(&self, src: &Rgb32f, w: usize, h: usize) -> Rgb32f {
         let oriented = if self.orient == Orientation::Normal { None } else { Some(src.oriented(self.orient)) };
         let o = oriented.as_ref().unwrap_or(src);
-        let crop_px = self.crop.rect_px(self.ow, self.oh);
-        let k = crop_px.width() / w as f64;
-        let (base, s) = if k > 1.25 {
-            let nw = ((o.width as f64 / k).round() as usize).max(1);
-            let nh = ((o.height as f64 / k).round() as usize).max(1);
-            (resize(o, nw, nh, Filter::Mitchell), nw as f64 / o.width as f64)
-        } else {
-            (o.clone(), 1.0)
+        let plan = self.sample_plan(src.width, src.height, w, h);
+        let base = match plan.prefilter {
+            Some((nw, nh)) => std::borrow::Cow::Owned(resize(o, nw, nh, Filter::Mitchell)),
+            None => std::borrow::Cow::Borrowed(o),
         };
-        let (sx, sy) = (s, base.height as f64 / o.height as f64);
-        if let Some(wp) = &self.warp {
-            return sample_warped(&base, sx, sy, wp, self.out_to_oriented(w, h), w, h);
-        }
-        let xf = Affine::scale(sx, sy) * self.out_to_oriented(w, h);
-        let identity_like = self.crop.is_identity() && !self.flip_h && !self.flip_v && base.width == w && base.height == h;
-        if identity_like {
-            return base;
-        }
-        let mut out = Rgb32f::new(w, h);
-        par_rows(&mut out.data, w, |y, row| {
-            for (x, px) in row.iter_mut().enumerate() {
-                let p = xf.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
-                *px = base.sample_bilinear(p.x as f32, p.y as f32);
+        match plan.mode {
+            SampleMode::Copy => base.into_owned(),
+            SampleMode::Warp(o2t) => sample_warped(&base, plan.sx, plan.sy, self.warp.as_ref().expect("warp"), o2t, w, h),
+            SampleMode::Affine(xf) => {
+                let mut out = Rgb32f::new(w, h);
+                par_rows(&mut out.data, w, |y, row| {
+                    for (x, px) in row.iter_mut().enumerate() {
+                        let p = xf.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
+                        *px = base.sample_bilinear(p.x as f32, p.y as f32);
+                    }
+                });
+                out
             }
-        });
-        out
+        }
     }
 
     /// The crop rectangle as a quad in normalized oriented coordinates (for overlays).
@@ -219,6 +230,30 @@ impl Frame {
             Point::new(q.x / self.ow, q.y / self.oh)
         })
     }
+}
+
+/// How a render resamples its source (see [`Frame::sample_plan`]).
+#[derive(Clone, Debug)]
+pub struct SamplePlan {
+    /// Oriented source size.
+    pub ow: usize,
+    pub oh: usize,
+    /// Size of the Mitchell prefilter (area downscale before the bilinear resample), if any.
+    pub prefilter: Option<(usize, usize)>,
+    /// Oriented-source px → prefiltered px.
+    pub sx: f64,
+    pub sy: f64,
+    pub mode: SampleMode,
+}
+
+#[derive(Clone, Debug)]
+pub enum SampleMode {
+    /// The (prefiltered) oriented source is the output.
+    Copy,
+    /// Bilinear through this affine (output px → prefiltered px).
+    Affine(Affine),
+    /// Through the warp; the affine maps output px → transformed px.
+    Warp(Affine),
 }
 
 /// The perspective homography of the settings (Upright, then the manual Transform sliders), lens-corrected →

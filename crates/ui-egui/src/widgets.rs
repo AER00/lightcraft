@@ -267,6 +267,41 @@ pub fn text_button(ui: &mut Ui, id: &str, label: &str, active: bool) -> Response
     resp
 }
 
+/// A segmented control: `labels` share the available width equally, `per_row` per row. Each segment is
+/// addressable as `button:{id}-{key}` (keys parallel to labels). Returns the clicked index.
+pub fn segmented(ui: &mut Ui, id: &str, items: &[(&str, &str)], active: Option<usize>, per_row: usize) -> Option<usize> {
+    let t = Tokens::get(ui.ctx());
+    let per_row = per_row.max(1);
+    let gap = 4.0;
+    let w = ui.available_width();
+    let seg_w = ((w - gap * (per_row as f32 - 1.0)) / per_row as f32).max(24.0);
+    let mut clicked = None;
+    for (row_i, row) in items.chunks(per_row).enumerate() {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (j, (label, key)) in row.iter().enumerate() {
+                let i = row_i * per_row + j;
+                let (r, resp) = ui.allocate_exact_size(vec2(seg_w, 24.0), Sense::click());
+                register(ui.ctx(), format!("button:{id}-{key}"), r);
+                let fill = if active == Some(i) {
+                    t.pressed
+                } else if resp.hovered() {
+                    t.hover
+                } else {
+                    t.button
+                };
+                let p = ui.painter();
+                p.rect(r, CornerRadius::same(4), fill, Stroke::new(1.0, t.button_border), StrokeKind::Inside);
+                p.text(r.center(), Align2::CENTER_CENTER, *label, t.semibold(11.5), t.text);
+                if resp.clicked() {
+                    clicked = Some(i);
+                }
+            }
+        });
+    }
+    clicked
+}
+
 /// An icon-only button. `active` draws the selected background (tool strip).
 pub fn icon_button(ui: &mut Ui, id: &str, icon: Icon, size: egui::Vec2, active: bool, enabled: bool, tooltip: &str) -> Response {
     let t = Tokens::get(ui.ctx());

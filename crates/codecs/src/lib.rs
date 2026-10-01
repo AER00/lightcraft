@@ -18,6 +18,7 @@ pub mod encode;
 pub mod exif;
 pub mod icc;
 mod jpeg;
+pub mod jpeg_par;
 #[cfg(feature = "jxl")]
 mod jxl;
 mod other;
