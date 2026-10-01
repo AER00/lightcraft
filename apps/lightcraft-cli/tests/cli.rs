@@ -98,3 +98,40 @@ fn commands_subcommand_lists_registry() {
     let o = Command::new(BIN).arg("controls").output().unwrap();
     assert!(String::from_utf8_lossy(&o.stdout).contains("light.exposure"));
 }
+
+#[test]
+fn snapshot_subcommand_renders_the_ui_headlessly() {
+    let script = tmp("snap.jsonl");
+    let a = tmp("snap-grid.png");
+    let b = tmp("snap-export.png");
+    std::fs::write(
+        &script,
+        format!(
+            "# comment\n{}\n{}\n{}\n{}\n",
+            json!({"method": "ui.set", "params": {"view": "photoGrid"}}),
+            json!({"method": "ui.screenshot"}),
+            json!({"method": "engine.execute", "params": {"command": "dialog.export"}}),
+            json!({"method": "ui.screenshot", "params": {"path": b.to_str().unwrap()}}),
+        ),
+    )
+    .unwrap();
+    let o = Command::new(BIN)
+        .args(["snapshot", "--demo", "--script", script.to_str().unwrap(), "-o", a.to_str().unwrap(), "--size", "640x400"])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let replies: Vec<Value> = String::from_utf8_lossy(&o.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(replies.len(), 4);
+    assert!(replies.iter().all(|r| r["ok"] == true), "{replies:?}");
+    for (p, dimmed) in [(&a, false), (&b, true)] {
+        let d = lightcraft_codecs::decode(&std::fs::read(p).unwrap(), Default::default()).unwrap();
+        assert_eq!((d.width, d.height), (640, 400));
+        // the export dialog dims everything around it
+        assert_eq!(mean(p) < mean(&a) - 2.0, dimmed, "{}", p.display());
+    }
+    // no script: one settled screenshot, at 2× scale
+    let o = Command::new(BIN).args(["snapshot", "-o", a.to_str().unwrap(), "--size", "320x240", "--scale", "2"]).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let d = lightcraft_codecs::decode(&std::fs::read(&a).unwrap(), Default::default()).unwrap();
+    assert_eq!((d.width, d.height), (640, 480));
+}

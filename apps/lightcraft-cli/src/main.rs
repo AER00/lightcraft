@@ -3,6 +3,7 @@
 //! ```text
 //! lightcraft-cli mcp [--connect [ADDR]] [--demo] [--compact] [FILES/FOLDERS…]
 //! lightcraft-cli render <in> -o <out> [--set control=value]… [--settings FILE.json] [--preset ID] [--size N] [--quality Q]
+//! lightcraft-cli snapshot [--library DIR | --demo] [--script FILE.jsonl] [-o OUT.png] [--size WxH] [--scale S] [FILES…]
 //! lightcraft-cli commands [--json]
 //! lightcraft-cli controls [--json]
 //! ```
@@ -33,6 +34,18 @@ USAGE:
         --preset ID          apply a preset (see `commands`/presets.list)
         --size N             long edge in pixels (default: full size)
         --quality Q          JPEG quality 1..100 (default 92)
+  lightcraft-cli snapshot [OPTIONS] [FILES/FOLDERS…]
+      Run the full app UI headlessly (no window, no GPU: CPU-rasterized egui) and write PNGs.
+      Options:
+        --demo            the procedural demo library (default unless --library or FILES)
+        --library DIR     open (or create) a LightCraft library
+        --script FILE     JSON-lines control-protocol requests (docs/control-protocol.md), one
+                          per line: {\"method\": \"ui.set\", \"params\": {\"view\": \"detail\"}}.
+                          Replies go to stdout. `ui.screenshot` without a path writes -o (then
+                          OUT-2.png, OUT-3.png…); `ui.settle {timeoutMs?}` waits for renders.
+        -o, --output OUT  PNG path (a final screenshot is written here if the script took none)
+        --size WxH        window size in points (default 1600x1000)
+        --scale S         pixels per point (default 1)
   lightcraft-cli commands [--json]   list every command id with its parameters
   lightcraft-cli controls [--json]   list every develop control id with its range
   lightcraft-cli --version | --help
@@ -43,6 +56,7 @@ fn main() -> ExitCode {
     let r = match args.first().map(String::as_str) {
         Some("mcp") => mcp(&args[1..]),
         Some("render") => render(&args[1..]),
+        Some("snapshot") => snapshot(&args[1..]),
         Some("commands") => commands(&args[1..]),
         Some("controls") => controls(&args[1..]),
         Some("--version" | "-V" | "version") => {
@@ -194,6 +208,139 @@ fn render(args: &[String]) -> Result<(), String> {
     let img = s.render_now(lightcraft_engine::catalog::PhotoId(id), edge, edge)?.image;
     write_image(Path::new(&output), &img, quality)?;
     eprintln!("lightcraft-cli: wrote {output} ({}×{})", img.width, img.height);
+    Ok(())
+}
+
+fn snapshot(args: &[String]) -> Result<(), String> {
+    use lightcraft_ui_egui::headless::Headless;
+    use std::time::{Duration, Instant};
+    let mut library: Option<String> = None;
+    let mut script: Option<String> = None;
+    let mut output: Option<String> = None;
+    let mut size = [1600.0f32, 1000.0];
+    let mut scale = 1.0f32;
+    let mut files = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--demo" => {}
+            "--library" => library = Some(take_value(args, &mut i, "--library")?.to_string()),
+            "--script" => script = Some(take_value(args, &mut i, "--script")?.to_string()),
+            "-o" | "--output" => output = Some(take_value(args, &mut i, "-o")?.to_string()),
+            "--size" => {
+                let v = take_value(args, &mut i, "--size")?;
+                let (w, h) = v.split_once(['x', 'X']).ok_or("--size expects WxH, e.g. 1600x1000")?;
+                size = [w.trim().parse().map_err(|_| "--size: bad width")?, h.trim().parse().map_err(|_| "--size: bad height")?];
+            }
+            "--scale" => scale = take_value(args, &mut i, "--scale")?.parse().map_err(|_| "--scale expects a number")?,
+            a if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
+            f => files.push(f.to_string()),
+        }
+        i += 1;
+    }
+    if script.is_none() && output.is_none() {
+        return Err("snapshot: give -o OUT.png and/or --script FILE".into());
+    }
+    if !(scale > 0.0 && size[0] >= 1.0 && size[1] >= 1.0) {
+        return Err("snapshot: bad --size/--scale".into());
+    }
+    let t0 = Instant::now();
+    let mut session = match &library {
+        Some(dir) => {
+            let mut s = Session::new().with_fs();
+            s.open_library(dir, false).map_err(|e| format!("{dir}: {e}"))?;
+            s
+        }
+        None if files.is_empty() => Session::with_demo().with_fs(),
+        None => Session::new().with_fs(),
+    };
+    if !files.is_empty() {
+        session.execute("library.import", &json!({"paths": expand_paths(&files)})).map_err(|e| e.to_string())?;
+    }
+    let services = lightcraft_ui_egui::Services {
+        write: Some(Box::new(|p: &str, b: &[u8]| {
+            if let Some(dir) = Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(p, b).map_err(|e| format!("{p}: {e}"))
+        })),
+        png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
+            lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
+        })),
+        ..Default::default()
+    };
+    let app = lightcraft_ui_egui::LightcraftApp::new(session, services);
+    let mut h = Headless::new(app, size, scale);
+    let timeout = Duration::from_secs(60);
+    let mut shots = 0usize;
+    let next_path = |shots: &mut usize| -> Option<String> {
+        let out = output.as_deref()?;
+        *shots += 1;
+        if *shots == 1 {
+            return Some(out.to_string());
+        }
+        let p = Path::new(out);
+        let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let ext = p.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_else(|| "png".into());
+        Some(p.with_file_name(format!("{stem}-{shots}.{ext}")).to_string_lossy().to_string())
+    };
+    let mut wrote_output = false;
+    if let Some(script) = &script {
+        let text = std::fs::read_to_string(script).map_err(|e| format!("{script}: {e}"))?;
+        let mut out = std::io::stdout().lock();
+        for (n, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+                continue;
+            }
+            let msg: Value = serde_json::from_str(line).map_err(|e| format!("{script}:{}: {e}", n + 1))?;
+            let id = msg.get("id").cloned().unwrap_or(json!(n + 1));
+            let method = msg.get("method").and_then(Value::as_str).unwrap_or("").to_string();
+            let mut params = msg.get("params").cloned().unwrap_or(json!({}));
+            let ts = Instant::now();
+            let mut reply = match method.as_str() {
+                "ui.settle" => {
+                    let ms = params.get("timeoutMs").and_then(Value::as_u64).unwrap_or(20_000);
+                    json!({"ok": true, "result": {"settled": h.settle(Duration::from_millis(ms))}})
+                }
+                "ui.screenshot" => {
+                    if params.get("path").and_then(Value::as_str).is_none() {
+                        match next_path(&mut shots) {
+                            Some(p) => {
+                                wrote_output = true;
+                                params["path"] = json!(p);
+                            }
+                            None => return Err(format!("{script}:{}: ui.screenshot needs a `path` (or give -o)", n + 1)),
+                        }
+                    }
+                    h.request(&method, params, timeout)
+                }
+                _ => h.request(&method, params, timeout),
+            };
+            if let Some(o) = reply.as_object_mut() {
+                o.insert("id".into(), id);
+            }
+            writeln!(out, "{reply}").map_err(|e| e.to_string())?;
+            if method == "ui.screenshot" {
+                eprintln!(
+                    "lightcraft-cli snapshot: {} ({:.0} ms)",
+                    reply["result"]["path"].as_str().unwrap_or("?"),
+                    ts.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            if h.quit_requested() {
+                break;
+            }
+        }
+    }
+    if !wrote_output && let Some(path) = next_path(&mut shots) {
+        let r = h.request("ui.screenshot", json!({"path": path}), timeout);
+        if r["ok"] != true {
+            return Err(format!("screenshot failed: {}", r["error"]));
+        }
+        eprintln!("lightcraft-cli snapshot: wrote {path} ({}×{})", r["result"]["width"], r["result"]["height"]);
+    }
+    eprintln!("lightcraft-cli snapshot: done in {:.2} s ({} frames)", t0.elapsed().as_secs_f64(), h.frames());
     Ok(())
 }
 

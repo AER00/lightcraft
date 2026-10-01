@@ -6,11 +6,13 @@
 #![forbid(unsafe_code)]
 
 pub mod control;
+pub mod headless;
 pub mod icons;
 pub mod menus;
 pub mod panels;
 pub mod render;
 pub mod shortcuts;
+pub mod softpaint;
 pub mod state;
 pub mod theme;
 pub mod widgets;
@@ -59,10 +61,13 @@ pub struct LightcraftApp {
     pub integrated_titlebar: bool,
     /// The host installed a native menu bar.
     pub native_menu: bool,
+    /// The host is [`headless::Headless`] (it answers viewport screenshot commands itself).
+    pub headless_host: bool,
     control_rx: Option<Receiver<ControlRequest>>,
-    pending_screenshots: Vec<(u64, Option<String>, Sender<ControlResponse>)>,
-    queued_screenshots: Vec<(u64, f64, u32)>,
+    pending_screenshots: Vec<PendingShot>,
     screenshot_token: u64,
+    /// Offscreen context for headless screenshots of the windowed app.
+    shadow: Option<headless::HeadlessView>,
     /// Synthetic input events (from the control channel) injected one step per frame.
     pub synthetic: Vec<egui::Event>,
     styled: bool,
@@ -87,10 +92,11 @@ impl LightcraftApp {
             perf: Perf::default(),
             integrated_titlebar: false,
             native_menu: false,
+            headless_host: false,
             control_rx: None,
             pending_screenshots: vec![],
-            queued_screenshots: vec![],
             screenshot_token: 0,
+            shadow: None,
             synthetic: vec![],
             styled: false,
             fonts_ready: false,
@@ -104,6 +110,8 @@ impl LightcraftApp {
 
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
         self.control_rx = Some(rx);
+        // keep CPU copies of photo textures so `ui.screenshot {"headless": true}` can draw them
+        self.renderer.keep_pixels = true;
         self
     }
 
@@ -133,33 +141,93 @@ impl LightcraftApp {
                 control::Outcome::Done(v) => {
                     let _ = reply.send(v);
                 }
-                control::Outcome::Screenshot { path } => {
+                control::Outcome::Screenshot { path, headless } => {
                     self.screenshot_token += 1;
-                    let token = self.screenshot_token;
-                    self.queued_screenshots.push((token, now_ms() + 120.0, 0));
-                    self.pending_screenshots.push((token, path, reply));
+                    let now = now_ms();
+                    self.pending_screenshots.push(PendingShot {
+                        token: self.screenshot_token,
+                        path,
+                        reply,
+                        headless: headless && !self.headless_host,
+                        not_before: now + 120.0,
+                        deadline: now + SCREENSHOT_SETTLE_MS,
+                        frames: 0,
+                        sent_at: None,
+                    });
                 }
             }
         }
         self.control_rx = Some(rx);
     }
 
+    /// Advance pending screenshots: wait (≥ 3 frames, ≥ 120 ms) until no renders are in flight
+    /// (or a timeout), then capture — via the host's compositor, or headlessly
+    /// ([`Self::headless_screenshot`]) when asked or when the compositor delivers nothing.
     fn issue_screenshots(&mut self, ctx: &egui::Context) {
+        if self.pending_screenshots.is_empty() {
+            return;
+        }
         let now = now_ms();
-        let busy = self.renderer.queued() > 0;
-        self.queued_screenshots.retain_mut(|(token, at, frames)| {
-            *frames += 1;
-            // wait for pending renders (up to ~3 s) so screenshots show finished pixels
-            if now >= *at && *frames >= 3 && (!busy || *frames > 180) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(*token)));
-                false
+        let busy = self.renderer.in_flight() > 0;
+        let mut shots = std::mem::take(&mut self.pending_screenshots);
+        let mut shadow_ticked = false;
+        shots.retain_mut(|s| {
+            if let Some(sent) = s.sent_at {
+                if now - sent < SCREENSHOT_FALLBACK_MS || self.headless_host {
+                    return true;
+                }
+                // The compositor delivered nothing (display asleep, window occluded): go headless.
+                log::warn!("ui.screenshot: no frame from the compositor after {SCREENSHOT_FALLBACK_MS} ms; rendering headlessly");
+                s.sent_at = None;
+                s.headless = true;
+                s.deadline = now + SCREENSHOT_SETTLE_MS;
+            }
+            s.frames += 1;
+            let ready = now >= s.not_before && s.frames >= 3 && (!busy || now > s.deadline);
+            if s.headless {
+                // The shadow frame requests the renders the UI needs, even while the window shows nothing.
+                let img = if ready || !shadow_ticked { self.headless_screenshot(ctx, ready) } else { None };
+                shadow_ticked = true;
+                if let Some(img) = img {
+                    let _ = s.reply.send(control::save_screenshot(self, &img, s.path.as_deref()));
+                    return false;
+                }
+                true
             } else {
+                if ready {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(s.token)));
+                    s.sent_at = Some(now);
+                }
                 true
             }
         });
-        if !self.queued_screenshots.is_empty() || !self.pending_screenshots.is_empty() {
+        shots.append(&mut self.pending_screenshots);
+        self.pending_screenshots = shots;
+        if !self.pending_screenshots.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
+    }
+
+    /// Draw the UI into an offscreen context at the window's size; with `capture`, rasterize it
+    /// on the CPU (photo textures come from the renderer's CPU copies).
+    pub fn headless_screenshot(&mut self, main: &egui::Context, capture: bool) -> Option<egui::ColorImage> {
+        let mut view = self.shadow.take().unwrap_or_default();
+        let size = main.input(|i| i.content_rect()).size();
+        let size = if size.x >= 1.0 && size.y >= 1.0 { size } else { egui::vec2(1600.0, 1000.0) };
+        let ppp = main.pixels_per_point();
+        let time = main.input(|i| i.time);
+        if view.frames() == 0 {
+            // warm-up pass: activates our fonts (pending font definitions live in `Memory`, which
+            // is replaced below)
+            view.run(headless::HeadlessView::raw_input(size, ppp, time, vec![]), |_| {});
+        }
+        // same scroll offsets, open sections, style… as the window
+        let memory = main.memory(|m| m.clone());
+        view.ctx.memory_mut(|m| *m = memory);
+        view.run(headless::HeadlessView::raw_input(size, ppp, time, vec![]), |ui| self.ui(ui));
+        let img = capture.then(|| view.paint(&self.renderer.cpu_textures()));
+        self.shadow = Some(view);
+        img
     }
 
     fn collect_screenshots(&mut self, ctx: &egui::Context) {
@@ -180,9 +248,9 @@ impl LightcraftApp {
                 .collect()
         });
         for (token, image) in events {
-            if let Some(i) = self.pending_screenshots.iter().position(|(t, _, _)| *t == token) {
-                let (_, path, reply) = self.pending_screenshots.remove(i);
-                let _ = reply.send(control::save_screenshot(self, &image, path.as_deref()));
+            if let Some(i) = self.pending_screenshots.iter().position(|s| s.token == token) {
+                let s = self.pending_screenshots.remove(i);
+                let _ = s.reply.send(control::save_screenshot(self, &image, s.path.as_deref()));
             }
         }
     }
@@ -271,6 +339,24 @@ impl LightcraftApp {
         self.widgets = widgets::take_registry(&ctx);
         self.perf.frame_ms = now_ms() - t0;
     }
+}
+
+/// How long a screenshot waits for in-flight renders.
+const SCREENSHOT_SETTLE_MS: f64 = 3000.0;
+/// How long a windowed screenshot waits for the compositor before falling back to headless.
+const SCREENSHOT_FALLBACK_MS: f64 = 2000.0;
+
+/// A `ui.screenshot` request in progress.
+struct PendingShot {
+    token: u64,
+    path: Option<String>,
+    reply: Sender<ControlResponse>,
+    headless: bool,
+    not_before: f64,
+    deadline: f64,
+    frames: u32,
+    /// When the viewport screenshot command went out.
+    sent_at: Option<f64>,
 }
 
 /// Wall-clock milliseconds since the Unix epoch (`web-time` maps to `Date.now()` on the web).

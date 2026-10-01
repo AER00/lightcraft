@@ -125,7 +125,7 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 ("Golden", crate::state::CropOverlay::Golden),
                 ("None", crate::state::CropOverlay::None),
             ] {
-                if ui.selectable_label(app.ui.crop_overlay == o, label).clicked() {
+                if text_button(ui, &format!("cropOverlay-{}", label.to_lowercase()), label, app.ui.crop_overlay == o).clicked() {
                     app.ui.crop_overlay = o;
                 }
             }

@@ -31,6 +31,31 @@ mode ([mcp.md](mcp.md)) is a thin layer over this channel. Implementation:
 | `ui.set` | partial UI state, e.g. `{"view": "detail"}` | Resulting UI state |
 | `ui.dialog.confirm` / `ui.dialog.cancel` | — | Close the open dialog |
 | `ui.resize` | `{width, height}` | Resize the window |
-| `ui.screenshot` | `{path?}` | `{path, width, height}` once the frame (with finished renders) is captured |
+| `ui.screenshot` | `{path?, headless?}` | `{path, width, height}` once the frame (with finished renders) is captured. `headless: true` draws the UI on the CPU (no compositor needed); a windowed capture that gets no frame within 2 s falls back to headless automatically |
 | `ui.render` | `{id?, size?, path?}` | Render a photo (PNG to `path`), `{width, height}` |
 | `app.quit` | — | Close the app |
+
+## Headless rendering (no window, no GPU)
+
+The egui UI can be rasterized on the CPU (`crates/ui-egui/src/softpaint.rs`, driven by
+`crates/ui-egui/src/headless.rs`): same tessellation, gamma-space premultiplied blending and
+scissor clipping as egui's GPU backends, so the image matches the window (minus GPU dithering).
+
+- **In the running app:** `{"method": "ui.screenshot", "params": {"path": "a.png", "headless": true}}`.
+  The UI is drawn into an offscreen context from the app's logic tick, which keeps running when the
+  window is occluded or the display sleeps/locks. Windowed screenshots fall back to this after 2 s.
+- **Without any app window:** `lightcraft-cli snapshot` runs a whole app session headlessly and
+  answers the same control requests (same handler) from a JSON-lines script:
+
+```text
+lightcraft-cli snapshot --demo -o grid.png --size 1600x1000 [--scale 2]
+lightcraft-cli snapshot --library DIR --script tour.jsonl -o shot.png
+```
+
+  `tour.jsonl` holds one request per line (`#` comments allowed), e.g.
+  `{"method": "ui.set", "params": {"view": "detail", "right": "edit", "openSections": ["optics"]}}`
+  then `{"method": "ui.screenshot"}`. Replies are printed to stdout. A `ui.screenshot` without
+  `path` writes `-o` (then `OUT-2.png`, `OUT-3.png`, …); `ui.settle {timeoutMs?}` waits until no
+  renders are in flight. Each request runs frames until it is answered and its injected input
+  (clicks, keys, drags) has played out. Widget ids for `ui.clickWidget` come from `ui.widgets`
+  (e.g. `button:upright-auto`). A 1600×1000 demo snapshot takes ~1–2 s (debug build).

@@ -29,6 +29,8 @@ pub struct Tex {
     pub size: [usize; 2],
     pub histogram: Option<Histogram>,
     pub ms: f64,
+    /// CPU copy of the pixels (only with [`Renderer::keep_pixels`]; for headless screenshots).
+    pub pixels: Option<std::sync::Arc<egui::ColorImage>>,
 }
 
 pub struct Renderer {
@@ -39,12 +41,22 @@ pub struct Renderer {
     pub last_main_ms: f64,
     /// Jobs finished since start (for inspect/perf).
     pub completed: u64,
+    /// Keep a CPU copy of every texture so the UI can be rasterized headlessly (set when the app
+    /// is driven by the control channel).
+    pub keep_pixels: bool,
 }
 
 impl Default for Renderer {
     fn default() -> Self {
         let threads = if cfg!(target_arch = "wasm32") { 0 } else { JobPool::<Slot, RenderResult>::default_threads().min(6) };
-        Renderer { pool: JobPool::new(threads), pending: HashMap::new(), textures: HashMap::new(), last_main_ms: 0.0, completed: 0 }
+        Renderer {
+            pool: JobPool::new(threads),
+            pending: HashMap::new(),
+            textures: HashMap::new(),
+            last_main_ms: 0.0,
+            completed: 0,
+            keep_pixels: false,
+        }
     }
 }
 
@@ -107,11 +119,13 @@ impl Renderer {
                 continue;
             };
             let img = &rendered.image;
-            let color = egui::ColorImage::from_rgba_unmultiplied([img.width, img.height], &img.as_bytes());
+            let color = std::sync::Arc::new(egui::ColorImage::from_rgba_unmultiplied([img.width, img.height], &img.as_bytes()));
+            let pixels = self.keep_pixels.then(|| color.clone());
             let name = format!("{slot:?}");
             match self.textures.get_mut(&slot) {
                 Some(t) => {
                     t.tex.set(color, egui::TextureOptions::LINEAR);
+                    t.pixels = pixels;
                     t.key = r.key;
                     t.photo = r.photo;
                     t.size = [img.width, img.height];
@@ -122,7 +136,7 @@ impl Renderer {
                     let tex = ctx.load_texture(name, color, egui::TextureOptions::LINEAR);
                     self.textures.insert(
                         slot,
-                        Tex { key: r.key, photo: r.photo, tex, size: [img.width, img.height], histogram: Some(rendered.histogram), ms },
+                        Tex { key: r.key, photo: r.photo, tex, size: [img.width, img.height], histogram: Some(rendered.histogram), ms, pixels },
                     );
                 }
             }
@@ -135,6 +149,11 @@ impl Renderer {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
         changed
+    }
+
+    /// CPU copies of the current textures by id (see [`Self::keep_pixels`]).
+    pub fn cpu_textures(&self) -> HashMap<egui::TextureId, crate::softpaint::CpuTexture> {
+        self.textures.values().filter_map(|t| Some((t.tex.id(), crate::softpaint::CpuTexture::linear(t.pixels.clone()?)))).collect()
     }
 
     /// Drop thumbnails that aren't in `keep` (bounded memory for huge libraries), and queued
