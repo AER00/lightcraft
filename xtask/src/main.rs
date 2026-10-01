@@ -4,6 +4,7 @@
 //! invoked through `std::process::Command`.
 
 mod assets;
+mod bench;
 mod layers;
 mod stats;
 mod web;
@@ -16,6 +17,9 @@ usage: cargo xtask <command>
 
 commands:
   assets          every image/icon/font/media file is attributed in assets/ATTRIBUTION.md; no Adobe assets
+  bench [FILE] [--strict] [--threshold PCT]
+                  run the render benchmark, append to target/bench/history.jsonl, compare CPU time with
+                  the previous run (default input: corpus/raw/arw-sony-a7m3-compressed.arw)
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates (+ the web app)
   web [--serve [port]] [--dev]
@@ -33,6 +37,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("layers") => cmd_layers(),
         Some("assets") => assets::run(&root()),
+        Some("bench") => bench::run(&root(), &rest),
         Some("wasm") => cmd_wasm(),
         Some("web") => web::run(&rest),
         Some("ci") => cmd_ci(),
