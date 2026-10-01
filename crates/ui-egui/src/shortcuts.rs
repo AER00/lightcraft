@@ -26,13 +26,14 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
             "Shift" => m.shift = true,
             "Alt" => m.alt = true,
             "Ctrl" => m.ctrl = true,
+            // "Delete" means the key labelled ⌫ (egui's Backspace); forward-delete also matches, see `matches`.
+            "Delete" => key = Some(Key::Backspace),
             k => {
                 key = Key::from_name(k).or(match k {
                     "Right" => Some(Key::ArrowRight),
                     "Left" => Some(Key::ArrowLeft),
                     "Up" => Some(Key::ArrowUp),
                     "Down" => Some(Key::ArrowDown),
-                    "Delete" => Some(Key::Backspace),
                     "\\" => Some(Key::Backslash),
                     "/" => Some(Key::Slash),
                     "=" => Some(Key::Equals),
@@ -50,7 +51,10 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
 fn matches(i: &egui::InputState, m: Modifiers, k: Key) -> bool {
     i.events.iter().any(|e| match e {
         egui::Event::Key { key, pressed: true, modifiers, .. } => {
-            *key == k && modifiers.command == m.command && modifiers.shift == m.shift && modifiers.alt == m.alt
+            (*key == k || (k == Key::Backspace && *key == Key::Delete))
+                && modifiers.command == m.command
+                && modifiers.shift == m.shift
+                && modifiers.alt == m.alt
         }
         _ => false,
     })
@@ -117,6 +121,21 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         } else if let Some(l) = f.strip_prefix("label:") {
             let _ = app.run("photo.label", json!({"label": l}));
         } else {
+            // Delete acts on what's being edited: the active mask in the Masking panel; never the
+            // photo while retouching (spots are removed from their own panel).
+            if f == "photo.delete" {
+                use crate::state::RightPanel as R;
+                match app.ui.right {
+                    R::Masking => {
+                        if app.session.active_mask.is_some() {
+                            let _ = app.run("mask.delete", json!({}));
+                        }
+                        continue;
+                    }
+                    R::Remove | R::RedEye => continue,
+                    _ => {}
+                }
+            }
             // X is both reject (library) and swap crop aspect (crop tool)
             if f == "photo.reject" && app.ui.right == crate::state::RightPanel::Crop {
                 let _ = app.run("crop.rotateAspect", json!({}));
@@ -140,6 +159,12 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn delete_means_the_backspace_key() {
+        assert_eq!(parse("Delete"), Some((Modifiers::NONE, Key::Backspace)));
+        assert_eq!(parse("Cmd+Delete"), Some((Modifiers::COMMAND, Key::Backspace)));
+    }
     use super::*;
 
     #[test]
