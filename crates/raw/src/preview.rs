@@ -33,6 +33,16 @@ fn is_dct_jpeg(b: &[u8]) -> bool {
 }
 
 fn candidates<'a>(data: &'a [u8], ifd: &Ifd, base: u64, out: &mut Vec<&'a [u8]>) {
+    // whole JPEG files stored as an undefined-type tag value (e.g. Panasonic `JpgFromRaw` 0x002e)
+    for e in &ifd.entries {
+        if matches!(e.value, lightcraft_tiff::Value::Undefined(_))
+            && e.count() > 1024
+            && let Some(s) = data.get(e.offset as usize..(e.offset.saturating_add(e.count() as u64) as usize).min(data.len()))
+            && s.starts_with(&[0xff, 0xd8])
+        {
+            out.push(s);
+        }
+    }
     if let (Some(off), Some(len)) = (ifd.u64(t::JPEG_INTERCHANGE_FORMAT), ifd.u64(t::JPEG_INTERCHANGE_FORMAT_LENGTH)) {
         let off = off.saturating_add(base);
         if let Some(s) = data.get(off as usize..(off.saturating_add(len) as usize).min(data.len())) {
@@ -53,6 +63,13 @@ fn candidates<'a>(data: &'a [u8], ifd: &Ifd, base: u64, out: &mut Vec<&'a [u8]>)
 
 /// The largest embedded JPEG preview, if any.
 pub fn embedded_preview(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.starts_with(b"FUJIFILMCCD-RAW") {
+        let j = crate::vendor::raf::header(bytes).ok()?.jpeg?;
+        return is_dct_jpeg(j).then(|| trim_eoi(j).to_vec());
+    }
+    if crate::probe(bytes) == Some(crate::RawFormat::Cr3) {
+        return cr3_preview(bytes).map(|j| trim_eoi(j).to_vec());
+    }
     let tiff = Tiff::parse(bytes).ok()?;
     let mut found: Vec<&[u8]> = Vec::new();
     for ifd in tiff.all_ifds() {
@@ -72,11 +89,45 @@ pub fn embedded_preview(bytes: &[u8]) -> Option<Vec<u8>> {
             }
         }
     }
-    found.into_iter().filter(|s| is_dct_jpeg(s)).max_by_key(|s| s.len()).map(|s| {
-        // trim trailing garbage after EOI when the length over-reports
-        let end = s.windows(2).rposition(|w| w == [0xff, 0xd9]).map(|p| p + 2).unwrap_or(s.len());
-        s[..end].to_vec()
-    })
+    // Olympus: CameraSettings preview
+    if let Some(p) = crate::vendor::orf::preview(bytes) {
+        found.push(p);
+    }
+    found.into_iter().filter(|s| is_dct_jpeg(s)).max_by_key(|s| s.len()).map(|s| trim_eoi(s).to_vec())
+}
+
+/// Canon CR3 (ISO base media file): the `PRVW` box (Laurent Clévy's CR3 notes; layout confirmed on a CC0
+/// sample) is `u32 size, "PRVW", u32 0, u16 ?, u16 width, u16 height, u16 ?, u32 jpeg length, JPEG`; the smaller
+/// `THMB` box has the same shape. Returns the larger valid one.
+fn cr3_preview(bytes: &[u8]) -> Option<&[u8]> {
+    let mut best: Option<&[u8]> = None;
+    for tag in [b"PRVW", b"THMB"] {
+        let mut from = 0;
+        while let Some(i) = bytes.get(from..).and_then(|s| s.windows(4).position(|w| w == tag)).map(|p| p + from) {
+            from = i + 4;
+            let Some(start) = i.checked_sub(4) else { continue };
+            let be32 = |at: usize| bytes.get(at..at + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]) as usize);
+            let (Some(size), Some(len)) = (be32(start), be32(start + 20)) else { continue };
+            let j = start + 24;
+            if len < 4 || j + len > start + size.max(24) || j + len > bytes.len() {
+                continue;
+            }
+            let jpeg = &bytes[j..j + len];
+            if is_dct_jpeg(jpeg) {
+                if best.is_none_or(|b| b.len() < jpeg.len()) {
+                    best = Some(jpeg);
+                }
+                break;
+            }
+        }
+    }
+    best
+}
+
+/// Trim trailing garbage after the last EOI when a stored length over-reports.
+fn trim_eoi(s: &[u8]) -> &[u8] {
+    let end = s.windows(2).rposition(|w| w == [0xff, 0xd9]).map(|p| p + 2).unwrap_or(s.len());
+    &s[..end]
 }
 
 #[cfg(test)]
@@ -117,5 +168,16 @@ mod tests {
         let bytes = TiffWriter::default().write(&[ifd0]).unwrap();
         assert_eq!(embedded_preview(&bytes).unwrap(), big);
         assert!(embedded_preview(b"nope").is_none());
+        // CR3: a PRVW box after the ftyp
+        let mut cr3 = b"\0\0\0\x18ftypcrx \0\0\0\x01crx isom".to_vec();
+        let j = fake_jpeg(300);
+        cr3.extend_from_slice(&((24 + j.len()) as u32).to_be_bytes());
+        cr3.extend_from_slice(b"PRVW\0\0\0\0\0\x01\x06\x54\x04\x38\0\x01");
+        cr3.extend_from_slice(&(j.len() as u32).to_be_bytes());
+        cr3.extend_from_slice(&j);
+        assert_eq!(embedded_preview(&cr3).unwrap(), j);
+        for n in 0..cr3.len() {
+            let _ = embedded_preview(&cr3[..n]);
+        }
     }
 }

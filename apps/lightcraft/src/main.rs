@@ -78,12 +78,36 @@ fn services() -> Services {
     Services {
         pick_files: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .add_filter("Photos", &["jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "nef", "arw", "psd", "jxl", "gif", "bmp"])
+                .add_filter(
+                    "Photos",
+                    &[
+                        "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "cr3", "nef", "nrw", "arw", "raf", "orf", "rw2", "pef", "psd",
+                        "jxl", "gif", "bmp",
+                    ],
+                )
                 .pick_files()
                 .unwrap_or_default()
                 .into_iter()
                 .map(|p| p.to_string_lossy().to_string())
                 .collect()
+        })),
+        pick_preset_files: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .set_title("Import Presets")
+                .add_filter("Presets", &["lcpreset", "xmp"])
+                .pick_files()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect()
+        })),
+        save_preset_file: Some(Box::new(|name: &str| {
+            rfd::FileDialog::new()
+                .set_title("Export Presets")
+                .add_filter("LightCraft Preset", &["lcpreset"])
+                .set_file_name(name)
+                .save_file()
+                .map(|p| p.to_string_lossy().to_string())
         })),
         write: Some(Box::new(|p: &str, b: &[u8]| {
             if let Some(dir) = std::path::Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {

@@ -224,9 +224,10 @@ LightCraft is young and moving fast — see the [roadmap](ROADMAP.md) for estima
 | RAW: DNG, CR2, ARW, NEF (uncompressed) | ✅ · compressed NEF, CR3, RAF, ORF, RW2, PEF… 🚧 |
 | Detail: sharpening, luminance + colour noise reduction | ✅ · AI Denoise, Super Resolution ⬜ |
 | Remove / Heal / Clone spots (auto source) | ✅ · content-aware fill (PatchMatch), Red Eye 🚧 |
-| Export: JPEG / PNG / TIFF / WebP / AVIF, sizing, file-size limit, output sharpening, naming, batch | ✅ · metadata policy, watermark, DNG ⬜ |
-| MCP server, CLI, control channel | ✅ |
-| Optics, Geometry/Upright, GPU pipeline, persistent library | 🚧 |
+| Export: JPEG / PNG / TIFF / WebP / AVIF, sizing, file-size limit, output sharpening, naming, batch, metadata policy, text watermark | ✅ · DNG export, image watermark ⬜ |
+| Library persistence (crash-safe op log + snapshots), disk thumbnail cache, import with duplicate detection | ✅ |
+| MCP server (headless or live app, persistent libraries), CLI, control channel | ✅ |
+| Optics, Geometry/Upright, XMP sidecars, GPU pipeline | 🚧 |
 | Web build (same UI in the browser via WASM; in-memory imports, export downloads) | ✅ · persistence, workers 🚧 |
 
 <br>

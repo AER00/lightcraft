@@ -3,6 +3,10 @@
 pub mod arw;
 pub mod cr2;
 pub mod nef;
+pub mod orf;
+pub mod pef;
+pub mod raf;
+pub mod rw2;
 
 use crate::{BlackLevel, Rect};
 use std::ops::Range;
@@ -30,13 +34,17 @@ pub(crate) fn black_from_columns(data: &[u16], width: usize, cols: Range<usize>,
 /// otherwise the full `bits` range.
 pub(crate) fn white_from_data(data: &[u16], bits: u32) -> f32 {
     let full = ((1u32 << bits.clamp(1, 16)) - 1) as f32;
-    let Some(&mx) = data.iter().max() else { return full };
+    // samples above the nominal range are padding / invalid (e.g. 0xFFFF fill), not saturation
+    let Some(&mx) = data.iter().filter(|&&v| v as f32 <= full).max() else { return full };
     let band = (mx / 256).max(1);
     let near = mx.saturating_sub(band);
     let below = near.saturating_sub(band);
     let step = (data.len() / 2_000_000).max(1);
     let (mut top, mut under) = (0usize, 0usize);
     for &v in data.iter().step_by(step) {
+        if v as f32 > full {
+            continue;
+        }
         if v >= near {
             top += 1;
         } else if v >= below {
@@ -48,7 +56,7 @@ pub(crate) fn white_from_data(data: &[u16], bits: u32) -> f32 {
         // plateau: use its lower edge so everything at saturation maps to ≥ 1.0
         near as f32
     } else {
-        full.max(mx as f32)
+        full
     }
 }
 

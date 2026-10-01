@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cmd;
+pub mod crs;
 pub mod demo;
 pub mod export;
 pub mod files;
@@ -18,6 +19,7 @@ pub mod import;
 pub mod library;
 pub mod media;
 pub mod presets;
+pub mod sidecar;
 mod view;
 
 use std::sync::Arc;
@@ -90,6 +92,8 @@ pub struct Session {
     pub active_mask: Option<u32>,
     /// The persistent library this session writes to (`None` = in-memory only).
     pub library: Option<library::Library>,
+    /// XMP sidecar preferences (persisted with the library).
+    pub xmp: sidecar::XmpPrefs,
 }
 
 impl Default for Session {
@@ -121,6 +125,7 @@ impl Session {
             depth: 0,
             active_mask: None,
             library: None,
+            xmp: sidecar::XmpPrefs::default(),
         }
     }
 
@@ -137,6 +142,7 @@ impl Session {
         (spec.enabled)(self).map_err(|why| EngineError::Disabled(id.to_string(), why))?;
         let empty = Value::Object(Default::default());
         let params = if params.is_null() { &empty } else { params };
+        let log_start = self.pending_log.len();
         self.depth += 1;
         let r = (spec.run)(self, params);
         self.depth -= 1;
@@ -145,6 +151,9 @@ impl Session {
             if self.journal.len() > 10_000 {
                 self.journal.drain(..1000);
             }
+        }
+        if r.is_ok() && self.depth == 0 && self.xmp.auto_write && self.interaction.is_none() && self.pending_log.len() > log_start {
+            self.auto_write_sidecars(&self.pending_log[log_start..]);
         }
         if self.depth == 0 && self.library.is_some() {
             // Make the command durable before reporting success (on failure the ops stay pending,
@@ -311,3 +320,5 @@ mod tests;
 mod tests_import;
 #[cfg(test)]
 mod tests_library;
+#[cfg(test)]
+mod tests_xmp;

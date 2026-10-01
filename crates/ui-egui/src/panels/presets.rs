@@ -1,5 +1,5 @@
 //! The Presets column (opens to the left of the Edit panel): grouped presets with hover preview,
-//! amount slider, create/favourite.
+//! amount slider, create/favourite, import/export of preset files.
 
 use std::collections::BTreeMap;
 
@@ -31,6 +31,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             {
                 app.ui.dialog = Some(crate::state::Dialog::CreatePreset { name: String::new(), group: "User Presets".into() });
             }
+            let more = icon_button(&mut hdr, "presetMore", Icon::More, vec2(28.0, 28.0), false, true, "More preset options");
+            egui::Popup::menu(&more).show(|ui| {
+                if ui.button("Import Presets…").clicked() {
+                    let _ = app.run("file.importPresets", json!({}));
+                }
+                let any_user = app.session.presets.iter().any(|p| !p.builtin);
+                if ui.add_enabled(any_user, egui::Button::new("Export User Presets…")).clicked() {
+                    let _ = app.run("file.exportPresets", json!({}));
+                }
+            });
             divider(ui);
             // amount slider (applies to the last applied preset)
             let amt_id = egui::Id::new("preset-amount");
@@ -76,6 +86,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     if resp.clicked() {
                         ui.data_mut(|d| d.insert_temp(open_id, !open));
                     }
+                    resp.context_menu(|ui| {
+                        if ui.button("Export Group…").clicked() {
+                            let _ = app.run("file.exportPresets", json!({"group": g}));
+                        }
+                    });
                     if !open {
                         continue;
                     }

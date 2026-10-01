@@ -8,7 +8,9 @@
 //! 4. Skip **duplicates by content** (same bytes already in the library, or twice in this batch).
 //! 5. *Add* in place (the photo points at the original file) or *copy* into the library's
 //!    `Originals/YYYY/YYYY-MM-DD/` folder (names made unique) and point at the copy.
-//! 6. Commit all new photos as one undoable op.
+//! 6. Read each photo's XMP sidecar (or a raw/DNG file's embedded XMP): the sidecar wins for
+//!    metadata and develop settings are restored (see [`crate::sidecar`]).
+//! 7. Commit all new photos as one undoable op.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,8 +23,8 @@ use crate::media::ProbeInfo;
 
 /// File extensions LightCraft imports (lower case).
 pub const EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2", "pef", "psd", "jxl", "gif", "bmp", "heic",
-    "avif",
+    "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "cr3", "nef", "nrw", "arw", "raf", "orf", "rw2", "pef", "psd", "jxl", "gif", "bmp",
+    "heic", "avif",
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -51,6 +53,8 @@ pub struct ImportReport {
     pub failed: Vec<(String, String)>,
     /// Files found after expanding folders.
     pub scanned: usize,
+    /// Photos whose metadata/develop settings were read from an XMP sidecar (or embedded XMP).
+    pub sidecars: usize,
 }
 
 pub fn is_supported(path: &Path) -> bool {
@@ -223,6 +227,20 @@ pub fn import(s: &mut Session, paths: &[String], mode: ImportMode) -> crate::Res
         if p.embedded_lens.is_some() {
             // built-in (file-embedded) lens corrections are on by default, like the camera intended
             std::sync::Arc::make_mut(&mut p.develop).optics.lens_profile = true;
+        }
+        let raw = p.kind == lightcraft_catalog::MediaKind::Raw;
+        let packet = crate::sidecar::find_sidecar(&path, s.xmp.naming)
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .or_else(|| info.xmp.clone().filter(|_| raw));
+        if let Some(x) = packet {
+            match crate::sidecar::parse_sidecar(&x, raw) {
+                Ok(sc) if sc != crate::sidecar::SidecarData::default() => {
+                    crate::sidecar::merge_into(&mut p, &sc, &now);
+                    report.sidecars += 1;
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("import {path}: XMP: {e}"),
+            }
         }
         report.imported.push(id.0);
         ops.push(Op::AddPhoto { photo: Box::new(p) });

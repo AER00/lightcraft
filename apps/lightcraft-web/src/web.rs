@@ -89,6 +89,9 @@ fn services(store: MemStore, ctx: egui::Context) -> Services {
             open_picker(store.clone(), ctx.clone());
             Vec::new() // files arrive asynchronously and are imported on a later frame
         })),
+        // Preset files: browser pickers are asynchronous; not wired on the web yet.
+        pick_preset_files: None,
+        save_preset_file: None,
         write: Some(Box::new(download)),
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()

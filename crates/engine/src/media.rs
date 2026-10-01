@@ -307,6 +307,8 @@ pub struct ProbeInfo {
     pub content_hash: Option<String>,
     /// Lens corrections embedded in the file (DNG opcodes).
     pub embedded_lens: Option<lightcraft_develop::EmbeddedLens>,
+    /// The file's embedded XMP packet (raw/DNG files), for develop settings stored inside the file.
+    pub xmp: Option<String>,
 }
 
 pub type FileProbe = Arc<dyn Fn(&str) -> Result<ProbeInfo, String> + Send + Sync>;

@@ -26,6 +26,14 @@ pub struct Embedded {
 
 /// Sniff the container and collect its metadata blocks. Unknown containers yield an empty result.
 pub fn embedded(bytes: &[u8]) -> Embedded {
+    if bytes.starts_with(b"FUJIFILMCCD-RAW") {
+        // Fujifilm RAF: metadata lives in the embedded JPEG whose (offset, length) are big-endian u32s at byte 84
+        let be = |i: usize| bytes.get(i..i + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]) as usize);
+        return match (be(84), be(88)) {
+            (Some(o), Some(l)) if o > 0 => bytes.get(o..o.saturating_add(l).min(bytes.len())).map(jpeg_segments).unwrap_or_default(),
+            _ => Embedded::default(),
+        };
+    }
     if bytes.starts_with(&[0xff, 0xd8]) {
         jpeg_segments(bytes)
     } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
@@ -292,6 +300,20 @@ mod tests {
         let t = sample_exif(ByteOrder::Big);
         assert_eq!(crate::extract(&t).model.as_deref(), Some("Model X"));
         assert_eq!(embedded(b"not an image"), Embedded::default());
+    }
+
+    #[test]
+    fn raf_reads_its_embedded_jpeg() {
+        let j = sample_jpeg();
+        let mut raf = b"FUJIFILMCCD-RAW 0201FF000000TEST".to_vec();
+        raf.resize(120, 0);
+        raf[84..88].copy_from_slice(&120u32.to_be_bytes());
+        raf[88..92].copy_from_slice(&(j.len() as u32).to_be_bytes());
+        raf.extend_from_slice(&j);
+        assert_eq!(crate::extract(&raf).iso, Some(400));
+        for n in 0..raf.len() {
+            let _ = crate::extract(&raf[..n]);
+        }
     }
 
     #[test]
