@@ -569,6 +569,13 @@ pub fn analyze_source(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings) -> A
     a
 }
 
+/// The rotation (degrees, clockwise +) that levels `src`'s dominant horizon/plumb lines, if they agree
+/// (the consensus rule of Upright Level). Used by the crop panel's Auto straighten.
+pub fn level_degrees(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings) -> Option<f64> {
+    let a = analyze_source(src, info, s);
+    level_angle(&a.vertical, &a.horizontal)
+}
+
 /// The automatic Upright correction for `mode` on `src` (identity for Off and Guided).
 pub fn auto_transform(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, mode: Upright) -> Homography {
     if matches!(mode, Upright::Off | Upright::Guided) {

@@ -331,6 +331,28 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            "crop.autoStraighten",
+            "Auto Straighten",
+            [],
+            None,
+            "{} — level the horizon (or plumb lines) with the crop angle",
+            has_active,
+            |s, _| {
+                let id = active(s, "crop.autoStraighten")?;
+                let src = s.source_now(id, SourceLevel::Preview).map_err(|e| bad("crop.autoStraighten", e))?;
+                let info = s.catalog.photo(id).map(|p| crate::media::source_info(p)).unwrap_or_default();
+                let d = s.develop_of(id).unwrap_or_default();
+                let Some(level) = lightcraft_pipeline::upright::level_degrees(&src, &info, &d) else {
+                    return Ok(json!({"changed": false, "reason": "no dominant horizontal or vertical lines"}));
+                };
+                // Same convention as the crop angle (verified: a horizon descending 6° to the right
+                // comes out level with angle = level ≈ −6°).
+                let angle = level.clamp(-45.0, 45.0);
+                s.execute("crop.straighten", &json!({"angle": (angle * 100.0).round() / 100.0}))?;
+                Ok(json!({"changed": true, "angle": angle}))
+            }
+        ),
+        cmd!(
             "crop.aspect",
             "Crop Aspect",
             [],

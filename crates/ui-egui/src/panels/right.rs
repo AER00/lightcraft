@@ -117,6 +117,17 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         super::edit::apply_slider_out(app, &spec, out, |app, v| app.run("crop.straighten", json!({"angle": v})));
     }
     padded(ui, |ui| {
+        ui.horizontal(|ui| {
+            let on = app.ui.tool == "straighten";
+            if text_button(ui, "straightenTool", "Straighten Tool", on).on_hover_text("Drag along the horizon; double-click for Auto").clicked() {
+                app.ui.tool = if on { String::new() } else { "straighten".into() };
+            }
+            if text_button(ui, "straightenAuto", "Auto", false).clicked() {
+                let _ = app.run("crop.autoStraighten", json!({}));
+            }
+        });
+    });
+    padded(ui, |ui| {
         ui.label("Overlay");
         {
             use crate::state::CropOverlay as O;
