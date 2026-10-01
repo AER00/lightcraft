@@ -133,3 +133,19 @@ fn perf_report() {
     }
     eprintln!("render 2160x1440 from 6 MP: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0 / n as f64);
 }
+
+#[test]
+fn unedited_rendered_source_is_passthrough() {
+    // An sRGB ramp decoded to linear Rec.2020 must render back to (almost) the same 8-bit values.
+    let src8 = lightcraft_raster::Rgba8::from_fn(256, 4, |x, y| [x as u8, (x as u8).wrapping_add(y as u8 * 40), 255 - x as u8, 255]);
+    let m = lightcraft_color::SRGB.to_space(&lightcraft_color::REC2020);
+    let src = src8.to_linear().map(|c| m.apply_f32(c));
+    let r = render(&src, &SourceInfo::default(), &DevelopSettings::default(), &RenderRequest::fit(256, 4)).image;
+    let mut worst = 0i32;
+    for (a, b) in src8.data.iter().zip(&r.data) {
+        for c in 0..3 {
+            worst = worst.max((a[c] as i32 - b[c] as i32).abs());
+        }
+    }
+    assert!(worst <= 3, "max error {worst}");
+}

@@ -293,9 +293,17 @@ fn histogram(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
         }
         p.add(mesh);
-        for (v, c) in &chans {
-            let pts: Vec<Pos2> = (0..256).map(|i| to(i, v[i])).collect();
-            p.add(egui::Shape::line(pts, Stroke::new(1.5, *c)));
+        // greyscale images: the three channels coincide — draw one neutral line
+        let spread: f32 = (0..256).map(|i| (chans[0].0[i] - chans[1].0[i]).abs() + (chans[1].0[i] - chans[2].0[i]).abs()).sum();
+        let total: f32 = chans[1].0.iter().sum::<f32>().max(1.0);
+        if spread / total < 0.02 {
+            let pts: Vec<Pos2> = (0..256).map(|i| to(i, chans[1].0[i])).collect();
+            p.add(egui::Shape::line(pts, Stroke::new(1.5, Color32::from_gray(200))));
+        } else {
+            for (v, c) in &chans {
+                let pts: Vec<Pos2> = (0..256).map(|i| to(i, v[i])).collect();
+                p.add(egui::Shape::line(pts, Stroke::new(1.5, *c)));
+            }
         }
         let (lo, hi) = h.clipping();
         for (on, x, active) in [(lo > 0.003, plot.left() + 12.0, app.ui.show_clipping), (hi > 0.003, plot.right() - 12.0, app.ui.show_clipping)] {

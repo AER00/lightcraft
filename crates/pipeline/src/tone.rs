@@ -3,6 +3,10 @@
 //! Built in the log domain around middle grey (0.18): contrast scales log-exposure about grey,
 //! whites move the shoulder (white point), blacks move the toe. The shoulder is an extended
 //! Reinhard curve so highlights roll off smoothly instead of clipping.
+//!
+//! Rendered (display-referred) sources such as JPEGs use [`ToneMap::display`] instead: identity at
+//! neutral settings (an unedited JPEG renders exactly as the file), with contrast/whites/blacks as
+//! S-curve adjustments in a gamma-2.2 perceptual domain and a short shoulder above 0.95.
 
 pub const GREY: f32 = 0.18;
 const LUT_MIN_EV: f32 = -14.0;
@@ -48,6 +52,40 @@ impl ToneMap {
         ToneMap { lut }
     }
 
+    /// Tone map for display-referred sources: identity at neutral settings.
+    pub fn display(contrast: f64, whites: f64, blacks: f64) -> ToneMap {
+        let c = (contrast / 100.0) as f32;
+        let w = (whites / 100.0) as f32;
+        let b = (blacks / 100.0) as f32;
+        let m = GREY.powf(1.0 / 2.2);
+        let lut = (0..LUT_N)
+            .map(|i| {
+                let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
+                let y = GREY * 2f32.powf(ev);
+                let mut p = y.powf(1.0 / 2.2);
+                if p <= 1.0 {
+                    // S-curve anchored at 0, grey and 1
+                    p += c * 0.35 * (p - m) * (1.0 - (2.0 * p - 1.0).powi(2));
+                    // whites: lift/lower the upper tones; blacks: the lower tones
+                    let up = smooth(0.45, 1.0, p);
+                    p += w * 0.12 * up * (1.0 - p * 0.5);
+                    let lo = 1.0 - smooth(0.0, 0.45, p);
+                    p += b * 0.07 * lo * (p * 2.0).min(1.0);
+                } else {
+                    p += w * 0.12 * 0.5;
+                }
+                let mut o = p.max(0.0).powf(2.2);
+                // short shoulder: slope 1 at 0.95, reaching 1.0 at 1.05
+                if o > 0.95 {
+                    let d = (o - 0.95).min(0.1);
+                    o = 0.95 + d - d * d / 0.2;
+                }
+                o.clamp(0.0, 1.0)
+            })
+            .collect();
+        ToneMap { lut }
+    }
+
     /// Scene luminance → display-linear luminance.
     #[inline]
     pub fn apply(&self, y: f32) -> f32 {
@@ -61,6 +99,11 @@ impl ToneMap {
         let v = self.lut[i] + (self.lut[i + 1] - self.lut[i]) * t;
         if ev < LUT_MIN_EV { v * (y / (GREY * 2f32.powf(LUT_MIN_EV))) } else { v }
     }
+}
+
+fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 #[cfg(test)]
@@ -80,6 +123,26 @@ mod tests {
                 prev = o;
             }
         }
+    }
+
+    #[test]
+    fn display_identity_and_monotone() {
+        let t = ToneMap::display(0.0, 0.0, 0.0);
+        for i in 1..=95 {
+            let y = i as f32 / 100.0;
+            assert!((t.apply(y) - y).abs() < 2e-3, "{y} -> {}", t.apply(y));
+        }
+        for (c, w, b) in [(100.0, 100.0, -100.0), (-100.0, -100.0, 100.0), (60.0, -40.0, 30.0)] {
+            let t = ToneMap::display(c, w, b);
+            let mut prev = -1.0;
+            for i in 0..1000 {
+                let o = t.apply(i as f32 / 500.0);
+                assert!(o >= prev - 1e-5, "{c} {w} {b}");
+                prev = o;
+            }
+        }
+        let c = ToneMap::display(60.0, 0.0, 0.0);
+        assert!(c.apply(0.05) < 0.05 && c.apply(0.7) > 0.7);
     }
 
     #[test]

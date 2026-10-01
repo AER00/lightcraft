@@ -99,9 +99,9 @@ fn grain_noise(x: f32, y: f32, seed: u32) -> f32 {
     a + (b - a) * v
 }
 
-pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, _info: &SourceInfo) -> Rgba8 {
+pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo) -> Rgba8 {
     let (w, h) = (p.img.width, p.img.height);
-    let tone = ToneMap::new(s.light.contrast, s.light.whites, s.light.blacks);
+    let tone = if info.raw { ToneMap::new(s.light.contrast, s.light.whites, s.light.blacks) } else { ToneMap::display(s.light.contrast, s.light.whites, s.light.blacks) };
     let ops = ColorOps::new(s);
     let curves = curve_luts(&s.curve);
     let vig = if s.section_enabled("effects") { vignette(s) } else { None };

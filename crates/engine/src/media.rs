@@ -147,6 +147,10 @@ impl RenderJob {
 }
 
 pub fn source_info(p: &Photo) -> SourceInfo {
+    // Procedural demo scenes are scene-referred HDR (like raw files): use the filmic tone map.
+    if matches!(p.source, Source::Demo { .. }) {
+        return SourceInfo { raw: true, as_shot_temp: 6500.0, as_shot_tint: 0.0 };
+    }
     if p.kind == MediaKind::Raw { SourceInfo { raw: true, as_shot_temp: 5500.0, as_shot_tint: 0.0 } } else { SourceInfo::default() }
 }
 

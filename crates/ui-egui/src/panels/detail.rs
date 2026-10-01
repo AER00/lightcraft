@@ -385,7 +385,8 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     let red = Color32::from_rgba_unmultiplied(230, 30, 40, 90);
     let long = (map.rect.width().max(map.rect.height())) as f64;
     let active = app.session.active_mask;
-    let p = ui.painter();
+    let clip = app.canvas_rect.unwrap_or(map.rect);
+    let p = &ui.painter_at(clip);
     for m in &d.masks {
         let sel = Some(m.id) == active;
         for c in &m.components {

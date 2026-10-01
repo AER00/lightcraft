@@ -87,22 +87,22 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             });
         });
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if text_button(ui, "cropRotateLeft", "Rotate Left", false).clicked() {
                 let _ = app.run("photo.rotateLeft", json!({}));
             }
             if text_button(ui, "cropRotateRight", "Rotate Right", false).clicked() {
                 let _ = app.run("photo.rotateRight", json!({}));
             }
+        });
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
             if text_button(ui, "cropFlipH", "Flip H", d.crop.flip_h).clicked() {
                 let _ = app.run("photo.flipHorizontal", json!({}));
             }
             if text_button(ui, "cropFlipV", "Flip V", d.crop.flip_v).clicked() {
                 let _ = app.run("photo.flipVertical", json!({}));
             }
-        });
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
             if text_button(ui, "cropSwapAspect", "Swap Aspect (X)", false).clicked() {
                 let _ = app.run("crop.rotateAspect", json!({}));
             }
@@ -117,7 +117,7 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         super::edit::apply_slider_out(app, &spec, out, |app, v| app.run("crop.straighten", json!({"angle": v})));
     }
     padded(ui, |ui| {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("Overlay");
             for (label, o) in [
                 ("Thirds", crate::state::CropOverlay::Thirds),
@@ -144,8 +144,8 @@ fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let d = app.session.develop_of(id).unwrap_or_default();
     header(ui, "Remove");
     padded(ui, |ui| {
-        ui.horizontal(|ui| {
-            for (label, tool) in [("Content-Aware Remove", "remove"), ("Heal", "heal"), ("Clone", "clone")] {
+        ui.horizontal_wrapped(|ui| {
+            for (label, tool) in [("Remove", "remove"), ("Heal", "heal"), ("Clone", "clone")] {
                 if text_button(ui, &format!("removeMode-{tool}"), label, app.ui.tool == tool).clicked() {
                     app.ui.tool = tool.into();
                 }
