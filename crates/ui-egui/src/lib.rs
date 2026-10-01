@@ -94,6 +94,9 @@ pub struct LightcraftApp {
     pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
     /// Photo Merge dialog previews and background merges.
     pub merge: merge::MergeState,
+    /// The look the loupe shows while the pointer rests on a preset or profile (set by the
+    /// panels each frame; nothing is committed, no history entry).
+    pub hover_preview: Option<HoverPreview>,
 }
 
 impl LightcraftApp {
@@ -124,6 +127,7 @@ impl LightcraftApp {
             gesture: None,
             loupe_shown: None,
             merge: merge::MergeState::default(),
+            hover_preview: None,
         }
     }
 
@@ -340,6 +344,8 @@ impl LightcraftApp {
             return;
         }
         let t0 = now_ms();
+        // panels set it again this frame while the pointer rests on a preset or profile
+        self.hover_preview = None;
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
         // right panels and left panel run to the bottom; the bottom bar sits between them).
         panels::topbar::show(self, ui);
@@ -395,6 +401,15 @@ pub fn now_ms() -> f64 {
 }
 
 /// Whether the settings render in black & white.
+/// A temporary look for the loupe (hovering a preset or profile).
+#[derive(Clone, Debug, PartialEq)]
+pub struct HoverPreview {
+    /// What is previewed (e.g. "Preset: Warm Glow").
+    pub label: String,
+    /// The photo's settings with the look applied.
+    pub settings: lightcraft_develop::DevelopSettings,
+}
+
 pub fn is_bw(d: &lightcraft_develop::DevelopSettings) -> bool {
-    d.treatment == lightcraft_develop::Treatment::Bw || d.profile.id == "lc.mono"
+    d.treatment == lightcraft_develop::Treatment::Bw || d.profile.id == "lc.mono" || d.profile.id.starts_with("lc.bw.")
 }

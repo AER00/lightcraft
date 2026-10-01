@@ -345,6 +345,96 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// Profile browser: live variant thumbnails, hover previews in the loupe without touching the
+    /// photo or its history, click applies, the star toggles the favourite.
+    #[test]
+    fn profile_browser_previews_on_hover_and_applies_on_click() {
+        let mut h = demo([1400.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        let r = h.request("engine.execute", json!({"command": "panel.profiles"}), t);
+        assert_eq!(r["result"]["open"], true, "{r}");
+        h.settle(SETTLE);
+        let id = h.app.session.active().unwrap();
+        let photo = |h: &Headless| h.app.session.catalog.photo(id).unwrap().clone();
+        let before = photo(&h);
+        assert!(h.app.renderer.variant_textures() >= 6, "variant thumbnails rendered: {}", h.app.renderer.variant_textures());
+        // hover: the loupe shows the look, nothing is committed
+        let r = h.request("ui.hoverWidget", json!({"id": "profileCell:lc.vivid"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        h.step();
+        assert_eq!(h.app.hover_preview.as_ref().map(|p| p.label.as_str()), Some("Profile: Vivid"));
+        assert_eq!(h.app.loupe_shown.map(|l| l.1), Some("hover"));
+        let hover = h.app.renderer.textures.get(&crate::render::Slot::Hover).expect("hover render");
+        assert_eq!(hover.photo, id);
+        let after = photo(&h);
+        assert_eq!((after.develop.clone(), after.history.len()), (before.develop.clone(), before.history.len()), "hover leaves the photo alone");
+        assert_eq!(h.app.session.undo.len(), 0);
+        // moving away ends the preview
+        h.request("ui.move", json!({"x": 5, "y": 500}), t);
+        h.step();
+        assert!(h.app.hover_preview.is_none());
+        // click applies (one history step); the star toggles the favourite
+        h.request("ui.clickWidget", json!({"id": "profileCell:lc.vivid"}), t);
+        assert_eq!(photo(&h).develop.profile.id, "lc.vivid");
+        assert_eq!(photo(&h).history.len(), before.history.len() + 1);
+        h.request("ui.clickWidget", json!({"id": "profileStar:lc.portrait"}), t);
+        assert_eq!(h.app.session.profile_favorites, ["lc.portrait"]);
+        assert_eq!(photo(&h).develop.profile.id, "lc.vivid", "the star doesn't apply");
+        h.settle(SETTLE);
+    }
+
+    /// Presets column: resting on a preset previews it in the loupe without a history entry;
+    /// thumbnails are variant renders; Create Preset includes only the checked groups.
+    #[test]
+    fn preset_hover_previews_and_create_preset_groups() {
+        let mut h = demo([1400.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.request("engine.execute", json!({"command": "panel.presets"}), t);
+        h.settle(SETTLE);
+        let id = h.app.session.active().unwrap();
+        let photo = |h: &Headless| h.app.session.catalog.photo(id).unwrap().clone();
+        let before = photo(&h);
+        h.request("ui.hoverWidget", json!({"id": "preset:lc.bw-high-contrast"}), t);
+        h.settle(SETTLE);
+        h.step();
+        assert_eq!(h.app.hover_preview.as_ref().map(|p| p.label.as_str()), Some("Preset: High Contrast B&W"));
+        assert_eq!(h.app.loupe_shown.map(|l| l.1), Some("hover"));
+        let after = photo(&h);
+        assert_eq!(after.develop, before.develop);
+        assert_eq!(after.history.len(), before.history.len(), "no history entry while hovering");
+        assert!(h.app.session.undo.is_empty());
+        // thumbnails: variant textures for the visible presets
+        h.app.ui.preset_thumbs = true;
+        h.request("ui.move", json!({"x": 5, "y": 500}), t);
+        h.settle(SETTLE);
+        h.step();
+        assert!(h.app.hover_preview.is_none());
+        assert!(h.app.renderer.variant_textures() >= 5, "{}", h.app.renderer.variant_textures());
+        // Create Preset with a group checklist: untick Light, keep Effects
+        h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": 0.5}}), t);
+        h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "effects.clarity", "value": 25}}), t);
+        h.app.ui.dialog = Some(crate::state::Dialog::create_preset());
+        h.step();
+        h.step();
+        let r = h.request("ui.clickWidget", json!({"id": "presetInclude:light"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        match &h.app.ui.dialog {
+            Some(crate::state::Dialog::CreatePreset { groups, .. }) => {
+                assert!(!groups.iter().any(|g| g == "light") && groups.iter().any(|g| g == "effects"), "{groups:?}");
+                assert!(!groups.iter().any(|g| g == "crop" || g == "masks"), "crop and masks off by default");
+            }
+            d => panic!("dialog: {d:?}"),
+        }
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let p = h.app.session.presets.iter().find(|p| !p.builtin).expect("created").clone();
+        assert!(p.settings.get("light").is_none() && p.settings["effects"]["clarity"] == 25.0, "{}", p.settings);
+        h.settle(SETTLE);
+    }
+
     /// The filter bar drives `library.filter` and saves the view as a smart album.
     #[test]
     fn filter_bar_filters_and_saves_a_smart_album() {

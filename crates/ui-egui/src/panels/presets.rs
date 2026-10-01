@@ -1,16 +1,21 @@
-//! The Presets column (opens to the left of the Edit panel): grouped presets with hover preview,
-//! amount slider, create/favourite, import/export of preset files.
+//! The Presets column (opens to the left of the Edit panel): grouped presets with hover preview
+//! (the loupe shows the photo with the preset while the pointer rests on it; nothing is
+//! committed), optional live thumbnails, amount slider, create/favourite, import/export of preset
+//! files.
 
 use std::collections::BTreeMap;
 
-use egui::{Align2, Rect, Sense, pos2, vec2};
-use lightcraft_develop::{ControlSpec, Section, Track};
+use egui::{Align2, Color32, Rect, Sense, pos2, vec2};
+use lightcraft_develop::{ControlSpec, Preset, Section, Track};
 use serde_json::json;
 
-use crate::LightcraftApp;
 use crate::icons::{Icon, paint};
 use crate::theme::Tokens;
 use crate::widgets::{divider, icon_button, register, slider};
+use crate::{HoverPreview, LightcraftApp};
+
+/// Long edge of preset thumbnails (px).
+const THUMB_EDGE: usize = 128;
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
@@ -29,10 +34,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             );
             if icon_button(&mut hdr, "presetCreate", Icon::Plus, vec2(28.0, 28.0), false, app.session.active().is_some(), "Create Preset…").clicked()
             {
-                app.ui.dialog = Some(crate::state::Dialog::CreatePreset { name: String::new(), group: "User Presets".into() });
+                app.ui.dialog = Some(crate::state::Dialog::create_preset());
             }
             let more = icon_button(&mut hdr, "presetMore", Icon::More, vec2(28.0, 28.0), false, true, "More preset options");
             egui::Popup::menu(&more).show(|ui| {
+                let r = ui.checkbox(&mut app.ui.preset_thumbs, "Show Thumbnails");
+                register(ui.ctx(), "presetMenu:thumbnails", r.rect);
+                ui.separator();
                 if ui.button("Import Presets…").clicked() {
                     let _ = app.run("file.importPresets", json!({}));
                 }
@@ -66,10 +74,14 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
                 divider(ui);
             }
+            let active = app.session.active();
+            let current = active.and_then(|id| app.session.develop_of(id)).map(|d| (*d).clone());
+            let thumbs = app.ui.preset_thumbs && active.is_some();
+            let row_h = if thumbs { 54.0 } else { 26.0 };
             egui::ScrollArea::vertical().id_salt("presets-scroll").auto_shrink([false, false]).show(ui, |ui| {
-                let mut groups: BTreeMap<String, Vec<(String, String, bool)>> = BTreeMap::new();
+                let mut groups: BTreeMap<String, Vec<Preset>> = BTreeMap::new();
                 for p in &app.session.presets {
-                    groups.entry(p.group.clone()).or_default().push((p.id.clone(), p.name.clone(), p.favorite));
+                    groups.entry(p.group.clone()).or_default().push(p.clone());
                 }
                 for (g, items) in groups {
                     let open_id = egui::Id::new(("preset-group", &g));
@@ -94,16 +106,29 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     if !open {
                         continue;
                     }
-                    for (pid, name, fav) in items {
-                        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+                    for pr in items {
+                        let (pid, name, fav) = (pr.id.clone(), pr.name.clone(), pr.favorite);
+                        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
                         register(ui.ctx(), format!("preset:{pid}"), r);
-                        let active = last.as_ref().is_some_and(|(l, _)| *l == pid);
-                        if active {
+                        let is_last = last.as_ref().is_some_and(|(l, _)| *l == pid);
+                        if is_last {
                             ui.painter().rect_filled(r, 0.0, t.tool_active);
                         } else if resp.hovered() {
                             ui.painter().rect_filled(r, 0.0, t.hover.gamma_multiply(0.7));
                         }
-                        ui.painter().text(pos2(r.left() + 40.0, r.center().y), Align2::LEFT_CENTER, &name, t.font(13.0), t.text_label);
+                        let look = if thumbs || resp.hovered() { current.as_ref().map(|d| pr.apply(d, 1.0)) } else { None };
+                        let mut text_x = r.left() + 40.0;
+                        if thumbs && let (Some(id), Some(s)) = (active, look.as_ref()) {
+                            let tr = Rect::from_min_size(pos2(r.left() + 36.0, r.top() + 5.0), vec2(66.0, row_h - 10.0));
+                            ui.painter().rect_filled(tr, 2.0, t.canvas);
+                            if let Some(job) = app.session.variant_job(id, s, THUMB_EDGE)
+                                && let Some(tex) = app.renderer.variant(job)
+                            {
+                                ui.painter().image(tex.tex.id(), tr, cover_uv(tr, tex.size), Color32::WHITE);
+                            }
+                            text_x = tr.right() + 10.0;
+                        }
+                        ui.painter().text(pos2(text_x, r.center().y), Align2::LEFT_CENTER, &name, t.font(13.0), t.text_label);
                         if fav {
                             paint(
                                 ui.painter(),
@@ -111,6 +136,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                                 Icon::StarFilled,
                                 t.star,
                             );
+                        }
+                        // resting on a preset previews it in the loupe (no history entry)
+                        if resp.hovered()
+                            && let Some(s) = look
+                        {
+                            app.hover_preview = Some(HoverPreview { label: format!("Preset: {name}"), settings: s });
                         }
                         if resp.clicked() {
                             let _ = app.run("preset.apply", json!({"id": pid, "amount": 100}));
@@ -130,4 +161,17 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 ui.add_space(30.0);
             });
         });
+}
+
+/// The part of a `size` image that covers `r` (centre crop), as texture coordinates.
+pub fn cover_uv(r: Rect, size: [usize; 2]) -> Rect {
+    let a = size[0] as f32 / size[1].max(1) as f32;
+    let ra = r.width() / r.height().max(1.0);
+    if a > ra {
+        let f = ra / a;
+        Rect::from_min_max(pos2((1.0 - f) / 2.0, 0.0), pos2((1.0 + f) / 2.0, 1.0))
+    } else {
+        let f = a / ra;
+        Rect::from_min_max(pos2(0.0, (1.0 - f) / 2.0), pos2(1.0, (1.0 + f) / 2.0))
+    }
 }

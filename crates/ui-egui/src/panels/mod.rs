@@ -10,6 +10,7 @@ pub mod grid;
 pub mod left;
 pub mod masking;
 pub mod presets;
+pub mod profiles;
 pub mod right;
 pub mod strip;
 pub mod topbar;

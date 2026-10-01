@@ -170,6 +170,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let job = job.with_overlay(view_overlay(app, &d));
         app.renderer.request(Slot::Main, job, 100);
     }
+    // hovering a preset or profile: the photo with that look, shown instead of the loupe render
+    // once it is ready (nothing is committed)
+    let hover_key = match app.hover_preview.clone() {
+        Some(h) if !interacting => app.session.preview_job(id, rw.max(8), rh.max(8), !crop_tool, &h.settings).map(|job| {
+            let key = job.key;
+            app.renderer.request(Slot::Hover, job, 105);
+            (key, h.label)
+        }),
+        _ => None,
+    };
     // once this photo is on screen: prepare its neighbours in filmstrip order (source decoded and
     // kept, view render cached) so stepping to them is instant
     if !interacting && !app.renderer.is_pending(Slot::Main) && app.renderer.textures.get(&Slot::Main).is_some_and(|t| t.photo == id) {
@@ -230,6 +240,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     } else if show_before {
         shown = draw(Slot::Before, img_rect);
         p.text(pos2(img_rect.left() + 8.0, img_rect.top() + 14.0), Align2::LEFT_CENTER, "Before", t.font(12.0), t.text);
+    } else if let Some((key, label)) = &hover_key
+        && let Some(tex) = app.renderer.textures.get(&Slot::Hover).filter(|t| t.photo == id && t.key == *key)
+    {
+        p.image(tex.tex.id(), img_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        let g = p.layout_no_wrap(label.clone(), t.font(12.0), Color32::WHITE);
+        let bg = Rect::from_min_size(img_rect.left_top() + vec2(8.0, 8.0), g.size() + vec2(16.0, 8.0));
+        p.rect_filled(bg, 4.0, Color32::from_black_alpha(160));
+        p.galley(bg.min + vec2(8.0, 4.0), g, Color32::WHITE);
+        shown = "hover";
     } else {
         shown = draw(Slot::Main, img_rect);
         if shown == "none" {

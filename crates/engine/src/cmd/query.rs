@@ -143,7 +143,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "presets.list", "List Presets", [], None, "{}", always, |s, _| {
             Ok(Value::Array(s.presets.iter().map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": p.favorite, "builtin": p.builtin})).collect()))
         }),
-        cmd!(query "profiles.list", "List Profiles", [], None, "{}", always, |_, _| Ok(serde_json::to_value(crate::presets::PROFILES).unwrap_or_default())),
+        cmd!(query "profiles.list", "List Profiles", [], None, "{} — every profile with its group and favourite flag", always, |s, _| {
+            Ok(Value::Array(
+                crate::presets::PROFILES
+                    .iter()
+                    .map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": s.profile_favorites.iter().any(|f| f == p.id)}))
+                    .collect(),
+            ))
+        }),
+        cmd!(query "profiles.menu", "Profile Menu", [], None, "{} — favourites, recent (newest first) and groups", always, |s, _| Ok(s.profile_menu())),
         cmd!(query "history.list", "List History", [], None, "{id?}", has_active, |s, p| {
             let id = photo_arg(s, p, "history.list")?;
             let ph = s.catalog.photo(id).ok_or_else(|| bad("history.list", "no such photo"))?;
@@ -157,6 +165,18 @@ pub fn specs() -> Vec<CommandSpec> {
                 lightcraft_gpu::set_enabled(on);
             }
             Ok(json!({"enabled": lightcraft_gpu::enabled(), "available": lightcraft_gpu::available(), "adapter": lightcraft_gpu::adapter_name()}))
+        }),
+        cmd!(query "library.memory", "Memory Usage", [], None, "{} — bytes held by each cache (decoded sources, rendered previews, GPU buffers; heap when instrumented)", always, |s, _| {
+            Ok(serde_json::to_value(s.memory_report()).unwrap_or_default())
+        }),
+        cmd!(query "app.memoryBudget", "Memory Budget", [], None, "{mb?: number} — set the memory budget shared by the caches (default: a quarter of RAM, at most 1536 MB); returns the report", always, |s, p| {
+            if let Some(mb) = p.get("mb").and_then(Value::as_f64) {
+                if !(64.0..=1_048_576.0).contains(&mb) {
+                    return Err(bad("app.memoryBudget", "mb must be 64..1048576"));
+                }
+                s.set_memory_budget((mb * 1048576.0) as usize);
+            }
+            Ok(serde_json::to_value(s.memory_report()).unwrap_or_default())
         }),
         cmd!(query "journal.list", "Command Journal", [], None, "{limit?}", always, |s, p| {
             let lim = p.get("limit").and_then(Value::as_u64).unwrap_or(100) as usize;

@@ -36,7 +36,7 @@ fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
 
 /// Lens corrections embedded in a DNG's `OpcodeList3` (`WarpRectilinear`, `FixVignetteRadial`), re-expressed for
 /// the default-cropped, EXIF-oriented image. These are the only "profile" corrections LightCraft applies.
-pub fn embedded_lens(raw: &lightcraft_raw::RawImage) -> Option<lightcraft_develop::EmbeddedLens> {
+pub fn embedded_lens(raw: &lightcraft_raw::RawInfo) -> Option<lightcraft_develop::EmbeddedLens> {
     use lightcraft_develop::{EmbeddedLens, EmbeddedVignette, EmbeddedWarp};
     use lightcraft_geom::Point;
     let (aw, ah) = (raw.active_area.width as f64, raw.active_area.height as f64);
@@ -86,13 +86,14 @@ fn ext_upper(name: &str) -> String {
     std::path::Path::new(name).extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_default()
 }
 
-/// Probe a file's bytes: kind, dimensions (oriented), metadata.
+/// Probe a file's bytes: kind, dimensions (oriented), metadata. Raws are described from their
+/// headers ([`lightcraft_raw::probe_info`]): no pixel data is decompressed.
 pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
     let content_hash = Some(lightcraft_preview::hash_bytes(bytes).to_string());
     let m = lightcraft_meta::extract(bytes);
     let (meta, captured) = meta_of(&m);
     if lightcraft_raw::probe(bytes).is_some() {
-        let raw = match lightcraft_raw::decode(bytes) {
+        let raw = match lightcraft_raw::probe_info(bytes) {
             Ok(r) => r,
             Err(lightcraft_raw::RawError::Unsupported(why)) => {
                 // a raw variant we can't decode yet: describe it from its embedded preview
@@ -120,7 +121,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         if raw.orientation.swaps_axes() {
             std::mem::swap(&mut w, &mut h);
         }
-        let (t, tint) = xy_to_temp_tint(lightcraft_raw::color::as_shot_white_xy(&raw));
+        let (t, tint) = xy_to_temp_tint(lightcraft_raw::color::as_shot_white_xy_of(&raw));
         let as_shot_wb = Some((t.round(), tint.round()));
         let embedded_lens = embedded_lens(&raw);
         return Ok(ProbeInfo {
@@ -190,21 +191,28 @@ pub fn bin_factor(raw: &lightcraft_raw::RawImage, max_edge: usize) -> Option<usi
 /// instead of each one waking the pool from outside and waiting for it (which costs more than the
 /// loops themselves when the machine is busy).
 pub fn load_bytes(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
-    rayon::scope(|_| load_bytes_now(bytes, max_edge))
+    rayon::scope(|_| load_bytes_now(std::borrow::Cow::Borrowed(bytes), max_edge))
 }
 
-fn load_bytes_now(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
-    if lightcraft_raw::probe(bytes).is_some() {
-        let mut raw = match lightcraft_raw::decode(bytes) {
+/// [`load_bytes`] taking the file's bytes: a raw file's bytes are freed as soon as it is decoded
+/// (less memory held while it is developed).
+pub fn load_vec(bytes: Vec<u8>, max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
+    rayon::scope(move |_| load_bytes_now(std::borrow::Cow::Owned(bytes), max_edge))
+}
+
+fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
+    if lightcraft_raw::probe(&bytes).is_some() {
+        let mut raw = match lightcraft_raw::decode(&bytes) {
             Ok(r) => r,
             Err(lightcraft_raw::RawError::Unsupported(why)) => {
                 // show the camera's embedded JPEG (rendered, not raw) until the variant is supported
-                return load_embedded_preview(bytes, max_edge).ok_or(format!("unsupported raw ({why}) without an embedded preview"));
+                return load_embedded_preview(&bytes, max_edge).ok_or(format!("unsupported raw ({why}) without an embedded preview"));
             }
             Err(e) => return Err(e.to_string()),
         };
+        drop(bytes);
         // Embedded lens corrections are applied by the pipeline ("Enable Profile Corrections"), not baked in.
-        let lens = embedded_lens(&raw);
+        let lens = embedded_lens(&raw.info());
         raw.opcodes.list3.retain(|op| !is_lens_opcode(op));
         // Previews and thumbnails bin the mosaic straight to (about) the size they need; only
         // larger levels (exports, 1:1) demosaic the whole sensor.
@@ -220,6 +228,8 @@ fn load_bytes_now(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo),
                 raw.develop(method).map_err(|e| e.to_string())?
             }
         };
+        // the samples aren't needed any more (the colour model below reads only the tags)
+        raw.data = lightcraft_raw::RawData::U16(Vec::new());
         let mut stages = vec![("develop", t0.elapsed())];
         let xy = lightcraft_raw::color::as_shot_white_xy(&raw);
         let t = lightcraft_raw::color::camera_transform(&raw, xy);
@@ -229,7 +239,7 @@ fn load_bytes_now(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo),
         let m = t.matrix.to_f32();
         let gain = 2f32.powf(t.baseline_exposure as f32);
         let wb = t.wb;
-        let img = img.map(|p| {
+        img.map_in_place(|p| {
             let c = [p[0] * wb[0], p[1] * wb[1], p[2] * wb[2]];
             [
                 ((m[0][0] * c[0] + m[0][1] * c[1] + m[0][2] * c[2]) * gain).max(0.0),
@@ -240,7 +250,7 @@ fn load_bytes_now(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo),
         stages.push(("colour", t0.elapsed()));
         let img = fit(&img, max_edge, max_edge, Filter::Box);
         stages.push(("fit", t0.elapsed()));
-        let img = img.oriented(raw.orientation);
+        let img = img.into_oriented(raw.orientation);
         stages.push(("orient", t0.elapsed()));
         if lightcraft_pipeline::profiling() {
             let mut prev = std::time::Duration::ZERO;
@@ -257,10 +267,11 @@ fn load_bytes_now(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo),
         let (temp, tint) = xy_to_temp_tint(xy);
         return Ok((img, SourceInfo { raw: true, as_shot_temp: temp.round(), as_shot_tint: tint.round(), lens }));
     }
-    let d = lightcraft_codecs::decode(bytes, lightcraft_codecs::DecodeOptions::fit(max_edge as u32, max_edge as u32)).map_err(|e| e.to_string())?;
+    let d = lightcraft_codecs::decode(&bytes, lightcraft_codecs::DecodeOptions::fit(max_edge as u32, max_edge as u32)).map_err(|e| e.to_string())?;
+    drop(bytes);
     let img = d.to_working();
     let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
-    Ok((img.oriented(Orientation::from_exif(d.orientation)), SourceInfo::default()))
+    Ok((img.into_oriented(Orientation::from_exif(d.orientation)), SourceInfo::default()))
 }
 
 /// Orientation for an embedded preview: its own EXIF orientation when it has one, else the raw file's.
@@ -310,12 +321,27 @@ pub fn fs_preview_loader() -> PreviewLoader {
 }
 
 /// Filesystem-backed hooks (native). On the web the host installs bytes-based hooks instead.
+///
+/// Their working memory is bounded by [`crate::memory::work_gate`]: background loads (grid
+/// thumbnails, neighbour prefetch: [`crate::memory::in_background`]) and import probes wait while
+/// too much is in flight, each counting its file's size times the expansion of decoding it;
+/// interactive loads (the loupe, exports) never wait — they are counted, so background work
+/// yields to them.
 pub fn fs_hooks() -> (FileLoader, FileProbe) {
     let loader: FileLoader = Arc::new(|path: &str, max_edge: usize| {
+        let len = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
+        let weight = len * if max_edge <= crate::media::SourceLevel::Thumb.max_edge() { 3 } else { 6 };
+        let gate = crate::memory::work_gate();
+        let _permit = if crate::memory::is_background() { gate.acquire(weight) } else { gate.acquire_urgent(weight) };
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-        load_bytes(&bytes, max_edge)
+        let r = load_vec(bytes, max_edge);
+        // the file, the samples and the intermediate images are gone: give their pages back
+        crate::memory::release();
+        r
     });
     let probe: FileProbe = Arc::new(|path: &str| {
+        let len = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
+        let _permit = crate::memory::work_gate().acquire(len);
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
         probe_bytes(path, &bytes)
     });

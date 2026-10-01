@@ -126,14 +126,22 @@ pub fn neutral_to_xy(color: &ColorData, neutral: [f64; 3]) -> Xy {
 
 /// The as-shot white point: `AsShotWhiteXY`, `AsShotNeutral`, vendor multipliers, else D65.
 pub fn as_shot_white_xy(raw: &RawImage) -> Xy {
-    let c = &raw.color;
+    as_shot_white(&raw.color, raw.wb_multipliers)
+}
+
+/// [`as_shot_white_xy`] from a header-only [`crate::RawInfo`].
+pub fn as_shot_white_xy_of(info: &crate::RawInfo) -> Xy {
+    as_shot_white(&info.color, info.wb_multipliers)
+}
+
+fn as_shot_white(c: &ColorData, wb_multipliers: Option<[f32; 3]>) -> Xy {
     if let Some(xy) = c.as_shot_white_xy {
         return xy;
     }
     if let Some(n) = c.as_shot_neutral {
         return neutral_to_xy(c, n);
     }
-    if let Some(m) = raw.wb_multipliers.filter(|m| m.iter().all(|v| *v > 0.0 && v.is_finite())) {
+    if let Some(m) = wb_multipliers.filter(|m| m.iter().all(|v| *v > 0.0 && v.is_finite())) {
         return neutral_to_xy(c, [1.0 / m[0] as f64, 1.0 / m[1] as f64, 1.0 / m[2] as f64]);
     }
     D65

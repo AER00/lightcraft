@@ -77,10 +77,21 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "selection": app.session.selection.ids.iter().map(|p| p.0).collect::<Vec<_>>(),
         "activeMask": app.session.active_mask,
         "widgetCount": app.widgets.len(),
-        "perf": {"frameMs": app.perf.frame_ms, "fps": app.perf.fps, "lastRenderMs": app.renderer.last_main_ms, "renderQueue": app.renderer.queued(), "rendersInFlight": app.renderer.in_flight(), "mergeRunning": app.merge.busy(), "lastMerge": app.merge.last_result, "rendersDone": app.renderer.completed, "thumbTextures": app.renderer.thumb_textures(), "gpu": (lightcraft_engine::gpu::ready() && lightcraft_engine::gpu::available()).then(lightcraft_engine::gpu::adapter_name).flatten()},
+        "perf": {"frameMs": app.perf.frame_ms, "fps": app.perf.fps, "lastRenderMs": app.renderer.last_main_ms, "renderQueue": app.renderer.queued(), "rendersInFlight": app.renderer.in_flight(), "mergeRunning": app.merge.busy(), "lastMerge": app.merge.last_result, "rendersDone": app.renderer.completed, "thumbTextures": app.renderer.thumb_textures(), "variantTextures": app.renderer.variant_textures(), "gpu": (lightcraft_engine::gpu::ready() && lightcraft_engine::gpu::available()).then(lightcraft_engine::gpu::adapter_name).flatten()},
         "loupe": app.loupe_shown.map(|(p, src)| json!({"photo": p.0, "source": src, "pending": app.renderer.is_pending(crate::render::Slot::Main)})),
+        "hoverPreview": app.hover_preview.as_ref().map(|h| h.label.clone()),
         "status": app.ui.status,
+        "memory": memory(app),
     })
+}
+
+/// Bytes held by the engine's caches and the renderer's (`ui.inspect` → `memory`).
+pub fn memory(app: &LightcraftApp) -> Value {
+    let mut v = serde_json::to_value(app.session.memory_report()).unwrap_or_default();
+    if let (Some(o), Value::Object(r)) = (v.as_object_mut(), app.renderer.memory()) {
+        o.extend(r);
+    }
+    v
 }
 
 fn modifiers(p: &Value) -> egui::Modifiers {
@@ -143,13 +154,15 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
                 app.widgets.iter().filter(|(id, _)| id.contains(filter)).map(|(id, r)| json!({"id": id, "rect": rect_json(*r)})).collect(),
             ))
         }
-        "ui.clickWidget" | "ui.dragWidget" => {
+        "ui.clickWidget" | "ui.dragWidget" | "ui.hoverWidget" => {
             let Some(id) = s("id") else { return err("missing `id`") };
             let Some(r) = widget_rect(app, id) else { return err(format!("no widget `{id}` on screen (see ui.widgets)")) };
             let m = modifiers(p);
             // optional relative position inside the widget (0..1)
             let at = egui::pos2(r.left() + r.width() * f("fx").unwrap_or(0.5) as f32, r.top() + r.height() * f("fy").unwrap_or(0.5) as f32);
-            if req.method == "ui.clickWidget" {
+            if req.method == "ui.hoverWidget" {
+                app.synthetic.push(egui::Event::PointerMoved(at));
+            } else if req.method == "ui.clickWidget" {
                 let n = p.get("count").and_then(Value::as_u64).unwrap_or(1);
                 app.synthetic.push(egui::Event::PointerMoved(at));
                 for _ in 0..n {

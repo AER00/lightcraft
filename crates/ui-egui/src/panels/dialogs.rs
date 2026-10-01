@@ -223,26 +223,13 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         confirm = true;
                     }
                 }
-                Dialog::CreatePreset { name, group } => {
+                Dialog::CreatePreset { name, group, groups } => {
                     ui.add(egui::TextEdit::singleline(name).hint_text("Preset name").desired_width(f32::INFINITY));
                     ui.add(egui::TextEdit::singleline(group).hint_text("Group").desired_width(f32::INFINITY));
-                    ui.label(egui::RichText::new("Includes the current settings except crop, masks and remove.").color(t.text_dim));
+                    ui.label(egui::RichText::new("Settings to include").color(t.text_dim));
+                    group_checklist(ui, "presetInclude", groups);
                 }
-                Dialog::CopySettings { groups } => {
-                    ui.columns(2, |cols| {
-                        for (i, g) in SettingsGroup::ALL.iter().enumerate() {
-                            let key = serde_json::to_value(g).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-                            let mut on = groups.contains(&key);
-                            if cols[i % 2].checkbox(&mut on, g.label()).changed() {
-                                if on {
-                                    groups.push(key);
-                                } else {
-                                    groups.retain(|x| *x != key);
-                                }
-                            }
-                        }
-                    });
-                }
+                Dialog::CopySettings { groups } => group_checklist(ui, "copyGroup", groups),
                 Dialog::Export { opts, long_edge, limit_kb, dir } => {
                     use lightcraft_engine::export::{Anchor as P, ExportFormat as F, MetadataPolicy as M, SharpenAmount as A, SharpenFor as S};
                     let n = app.session.selection.ids.len().max(1);
@@ -446,9 +433,14 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),
         Dialog::NewSmartAlbum { name } => app.run("album.createSmart", json!({"name": if name.trim().is_empty() { "Smart Album" } else { name }})),
-        Dialog::CreatePreset { name, group } => {
-            app.run("preset.create", json!({"name": if name.is_empty() { "My Preset" } else { name }, "group": group}))
-        }
+        Dialog::CreatePreset { name, group, groups } => app.run(
+            "preset.create",
+            json!({
+                "name": if name.trim().is_empty() { "My Preset" } else { name },
+                "group": if group.trim().is_empty() { "User Presets" } else { group },
+                "groups": groups,
+            }),
+        ),
         Dialog::CopySettings { groups } => app.run("develop.copy", json!({"groups": groups})),
         Dialog::Export { opts, long_edge, limit_kb, dir } => app.run(
             "app.export",
@@ -464,6 +456,38 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
 }
 
 // ------------------------------------------------------------------------------------------ dialog widgets
+
+/// Two columns of settings-group checkboxes (Copy Settings, Create Preset) plus All / None.
+fn group_checklist(ui: &mut egui::Ui, tag: &str, groups: &mut Vec<String>) {
+    let key_of = |g: &SettingsGroup| serde_json::to_value(g).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    ui.columns(2, |cols| {
+        for (i, g) in SettingsGroup::ALL.iter().enumerate() {
+            let key = key_of(g);
+            let mut on = groups.contains(&key);
+            let r = cols[i % 2].checkbox(&mut on, g.label());
+            crate::widgets::register(&r.ctx, format!("{tag}:{key}"), r.rect);
+            if r.changed() {
+                if on {
+                    groups.push(key);
+                } else {
+                    groups.retain(|x| *x != key);
+                }
+            }
+        }
+    });
+    ui.horizontal(|ui| {
+        let all = ui.small_button("All");
+        crate::widgets::register(ui.ctx(), format!("{tag}:all"), all.rect);
+        if all.clicked() {
+            *groups = SettingsGroup::ALL.iter().map(key_of).collect();
+        }
+        let none = ui.small_button("None");
+        crate::widgets::register(ui.ctx(), format!("{tag}:none"), none.rect);
+        if none.clicked() {
+            groups.clear();
+        }
+    });
+}
 
 /// Width of the label column in dialogs.
 const LABEL_W: f32 = 78.0;
