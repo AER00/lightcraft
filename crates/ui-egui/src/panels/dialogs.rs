@@ -105,7 +105,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 Dialog::About => {
                     ui.label(egui::RichText::new("LightCraft").font(t.semibold(20.0)).color(t.text));
                     ui.label(format!("Version {} — a clean-room, pure-Rust photo library and raw developer.", env!("CARGO_PKG_VERSION")));
-                    ui.label("MIT OR Apache-2.0. Fonts: Source Sans 3 (OFL). Icons: original.");
+                    ui.label("MIT OR Apache-2.0. Font: Inter (OFL). Icons: original.");
                 }
                 Dialog::Shortcuts => {
                     egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
