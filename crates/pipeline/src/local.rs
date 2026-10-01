@@ -8,7 +8,7 @@ use lightcraft_raster::blur::gaussian;
 use lightcraft_raster::{Plane, Rgb32f};
 
 use crate::geometry::Frame;
-use crate::{Prepared, Quality, SourceInfo, for_rows, masks};
+use crate::{Prepared, Quality, SourceInfo, for_rows, masks, timed};
 
 /// White balance (relative to the source's as-shot white) and exposure, in place.
 pub fn scene_linear_pre(img: &mut Rgb32f, info: &SourceInfo, s: &DevelopSettings) {
@@ -120,6 +120,7 @@ pub fn denoise(img: &mut Rgb32f, s: &DevelopSettings, src_long: usize, out_long:
     let scale = (out_long as f32 / src_long.max(1) as f32).clamp(0.05, 1.0);
     let w = img.width;
     if lum > 0.0 {
+        let _t = crate::profiling().then(std::time::Instant::now);
         let l = img.map(log_lum);
         let detail = (s.detail.nr_detail / 100.0) as f32;
         let eps = 0.002 + lum * lum * 0.25 * (1.0 - 0.7 * detail);
@@ -133,8 +134,12 @@ pub fn denoise(img: &mut Rgb32f, s: &DevelopSettings, src_long: usize, out_long:
                 *p = p.map(|v| v * g);
             }
         });
+        if let Some(t) = _t {
+            eprintln!("    nr luminance: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
+        }
     }
     if col > 0.0 {
+        let _t = crate::profiling().then(std::time::Instant::now);
         let chroma = img.map(|c| {
             let y = luminance_2020(c).max(1e-6);
             [c[0] / y, c[1] / y, c[2] / y]
@@ -152,6 +157,9 @@ pub fn denoise(img: &mut Rgb32f, s: &DevelopSettings, src_long: usize, out_long:
                 *p = [0, 1, 2].map(|k| ((c0[k] + (cb[k] - c0[k]) * t) * yl).max(0.0));
             }
         });
+        if let Some(t) = _t {
+            eprintln!("    nr colour: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
+        }
     }
 }
 
@@ -160,7 +168,7 @@ pub fn log_lum(c: [f32; 3]) -> f32 {
 }
 
 pub fn prepare(img: Rgb32f, s: &DevelopSettings, frame: &Frame, px_per_long: f64, q: Quality) -> Prepared {
-    let log_l = img.map(log_lum);
+    let log_l = timed("log_l", || img.map(log_lum));
     let ppl = px_per_long as f32;
     let tone_active =
         s.light.highlights != 0.0 || s.light.shadows != 0.0 || s.masks.iter().any(|m| m.adjust.highlights != 0.0 || m.adjust.shadows != 0.0);
@@ -168,19 +176,25 @@ pub fn prepare(img: Rgb32f, s: &DevelopSettings, frame: &Frame, px_per_long: f64
         // Edge-aware base at ~1.5% of the long edge (EV² epsilon: edges of > ~0.6 EV are preserved).
         let sigma = (0.015 * ppl).max(1.0);
         let sigma = if q == Quality::Draft { sigma.min(24.0) } else { sigma };
-        guided_fast(&log_l, sigma, 0.35)
+        timed("base", || guided_fast(&log_l, sigma, 0.35))
     } else {
         log_l.clone()
     };
     let local_any = |f: fn(&lightcraft_develop::LocalAdjustments) -> f64| s.masks.iter().any(|m| f(&m.adjust) != 0.0);
-    let clarity_blur = (s.effects.clarity != 0.0 || local_any(|a| a.clarity)).then(|| guided_fast(&log_l, (0.012 * ppl).max(1.0), 0.8));
+    let clarity_blur =
+        (s.effects.clarity != 0.0 || local_any(|a| a.clarity)).then(|| timed("clarity", || guided_fast(&log_l, (0.012 * ppl).max(1.0), 0.8)));
     let texture_blur = (s.effects.texture != 0.0 || s.detail.sharpen_amount != 0.0 || local_any(|a| a.texture) || local_any(|a| a.sharpness))
-        .then(|| gaussian(&log_l, (0.0018 * ppl).max(0.6)));
+        .then(|| timed("texture", || gaussian(&log_l, (0.0018 * ppl).max(0.6))));
     let dark = (s.effects.dehaze != 0.0 || local_any(|a| a.dehaze)).then(|| {
+        let _t = crate::profiling().then(std::time::Instant::now);
         let min_c = img.map(|c| c[0].min(c[1]).min(c[2]));
-        gaussian(&min_c, (0.02 * ppl).max(1.0))
+        let d = gaussian(&min_c, (0.02 * ppl).max(1.0));
+        if let Some(t) = _t {
+            eprintln!("    dehaze: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
+        }
+        d
     });
-    let masks = masks::evaluate(&s.masks, frame, img.width, img.height, &img, &log_l);
+    let masks = timed("masks", || masks::evaluate(&s.masks, frame, img.width, img.height, &img, &log_l));
     Prepared { img, log_l, base, clarity_blur, texture_blur, dark, masks, px_per_long }
 }
 

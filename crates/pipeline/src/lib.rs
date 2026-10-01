@@ -139,6 +139,23 @@ pub(crate) fn is_bw(s: &DevelopSettings) -> bool {
 }
 
 /// Parallel map over output rows with index.
+/// `LIGHTCRAFT_PROFILE` is set: print per-stage timings to stderr.
+pub(crate) fn profiling() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LIGHTCRAFT_PROFILE").is_some())
+}
+
+/// Run `f`, printing its duration under `LIGHTCRAFT_PROFILE`.
+pub(crate) fn timed<R>(what: &str, f: impl FnOnce() -> R) -> R {
+    if !profiling() {
+        return f();
+    }
+    let t = std::time::Instant::now();
+    let r = f();
+    eprintln!("    {what}: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
+    r
+}
+
 pub(crate) fn for_rows<T: Send>(data: &mut [T], w: usize, f: impl Fn(usize, &mut [T]) + Sync + Send) {
     par_rows(data, w, f)
 }
