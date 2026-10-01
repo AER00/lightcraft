@@ -294,6 +294,9 @@ impl Session {
                     self.visible.reverse();
                 }
             }
+            if self.source != LibrarySource::RecentlyDeleted {
+                self.visible = self.catalog.arrange_stacks(&self.visible);
+            }
             self.visible_key = Some(key);
         }
         &self.visible

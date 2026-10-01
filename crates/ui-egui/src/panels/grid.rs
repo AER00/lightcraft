@@ -106,6 +106,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ui.data_mut(|d| d.insert_temp(key, active));
         if last != active { active.and_then(|a| cells.iter().find(|c| c.id == a).map(|c| c.rect)) } else { None }
     };
+    let stacks = app.session.catalog.stack_index();
     let mut visible_ids = HashSet::new();
     egui::ScrollArea::vertical().id_salt("grid-scroll").auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
         let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), total_h), Sense::hover());
@@ -122,6 +123,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let r = c.rect.translate(origin.to_vec2());
             let onscreen = c.rect.intersects(viewport);
             cell(app, ui, c.id, r, square, onscreen, ppp);
+            if let Some((sid, pos)) = stacks.get(&c.id) {
+                stack_badge(app, ui, c.id, *sid, *pos, r, square);
+            }
         }
     });
     app.renderer.evict_thumbs(&visible_ids, 600);
@@ -216,6 +220,36 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     resp.context_menu(|ui| context_menu(app, ui, id));
 }
 
+/// Stack badge at the cell's top-left: the photo count on a collapsed stack's top, `i/n` on the
+/// members of an expanded stack. Clicking it expands/collapses the stack.
+pub fn stack_badge(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, sid: lightcraft_catalog::StackId, pos: usize, r: Rect, square: bool) {
+    let t = Tokens::get(ui.ctx());
+    let Some(st) = app.session.catalog.stack(sid) else { return };
+    let n = st.photos.len();
+    let collapsed = st.collapsed;
+    let text = if collapsed { n.to_string() } else { format!("{}/{n}", pos + 1) };
+    let p = ui.painter();
+    let g = p.layout_no_wrap(text, t.semibold(11.0), Color32::WHITE);
+    let origin = if square { r.min + vec2(10.0, 26.0) } else { r.min + vec2(5.0, 5.0) };
+    let br = Rect::from_min_size(origin, vec2(g.size().x + 30.0, 20.0));
+    let resp = ui.interact(br, egui::Id::new(("stack-badge", id.0)), Sense::click()).on_hover_text(if collapsed {
+        "Stack — click to expand (S)"
+    } else {
+        "Stack — click to collapse (S)"
+    });
+    register(ui.ctx(), format!("stack:{}", id.0), br);
+    let fill = if resp.hovered() { Color32::from_black_alpha(220) } else { Color32::from_black_alpha(165) };
+    p.rect_filled(br, 10.0, fill);
+    if pos == 0 && !collapsed {
+        p.rect_stroke(br, 10.0, Stroke::new(1.0, t.accent), StrokeKind::Inside);
+    }
+    paint(p, Rect::from_min_size(br.min + vec2(6.0, 3.0), vec2(14.0, 14.0)), Icon::Stack, Color32::WHITE);
+    p.galley(pos2(br.min.x + 24.0, br.center().y - g.size().y / 2.0), g, Color32::WHITE);
+    if resp.clicked() {
+        let _ = app.run("stack.toggle", json!({"ids": [id.0]}));
+    }
+}
+
 pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if !app.session.selection.contains(id) {
         let _ = app.run("library.select", json!({"ids": [id.0]}));
@@ -244,6 +278,25 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             if ui.button(name).clicked() {
                 let _ = app.run("album.addPhotos", json!({"id": aid}));
             }
+        }
+    });
+    ui.menu_button("Stack", |ui| {
+        let stacked = app.session.catalog.stack_of(id).is_some();
+        let several = app.session.selection.ids.len() > 1;
+        for (label, cmd, on) in [
+            ("Group into Stack", "stack.group", several),
+            ("Ungroup Stack", "stack.ungroup", stacked),
+            ("Remove from Stack", "stack.remove", stacked),
+            ("Set as Top of Stack", "stack.setTop", stacked),
+            ("Expand/Collapse Stack", "stack.toggle", stacked),
+        ] {
+            if ui.add_enabled(on, egui::Button::new(label)).clicked() {
+                let _ = app.run(cmd, json!({}));
+            }
+        }
+        ui.separator();
+        if ui.button("Auto-Stack by Capture Time…").clicked() {
+            let _ = app.run("dialog.autoStack", json!({}));
         }
     });
     ui.separator();

@@ -13,6 +13,30 @@ pub struct PhotoId(pub u64);
 #[serde(transparent)]
 pub struct AlbumId(pub u64);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct StackId(pub u64);
+
+/// A stack: photos grouped under a top photo (bursts, brackets, merge results with their sources).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Stack {
+    pub id: StackId,
+    /// Members in stack order; `photos[0]` is the top of the stack. At least two.
+    pub photos: Vec<PhotoId>,
+    /// Collapsed stacks show only their top photo in the grid.
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
+impl Stack {
+    pub fn top(&self) -> PhotoId {
+        self.photos[0]
+    }
+    pub fn position(&self, id: PhotoId) -> Option<usize> {
+        self.photos.iter().position(|p| *p == id)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MediaKind {

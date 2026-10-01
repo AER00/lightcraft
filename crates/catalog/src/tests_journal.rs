@@ -26,7 +26,7 @@ fn op_for(c: &mut Catalog, kind: u8, a: u8, b: u8) -> Op {
         text: if b.is_multiple_of(5) { format!("{}", b % 10) } else { String::new() },
         ..Default::default()
     };
-    match kind % 12 {
+    match kind % 15 {
         0 | 1 => {
             let id = c.alloc_photo_id();
             let mut p = Photo::new(id, Source::File { path: format!("/p/{}.jpg", id.0) }, &format!("{}.jpg", id.0), "JPEG", 60, 40, "2026-01-01");
@@ -61,6 +61,12 @@ fn op_for(c: &mut Catalog, kind: u8, a: u8, b: u8) -> Op {
             Op::AddAlbum { album: Album { smart: Some(Box::new(rules(b))), ..Album::new(id, format!("Smart {b}")) } }
         }
         11 => Op::SetAlbumRules { id: aid, rules: Box::new(rules(b)) },
+        12 => {
+            let members: Vec<PhotoId> = photos.iter().copied().filter(|p| (p.0 + b as u64).is_multiple_of(4)).collect();
+            c.group_ops(pid, &members, b.is_multiple_of(2)).unwrap_or(Op::Batch { ops: vec![] })
+        }
+        13 => Op::Batch { ops: c.remove_from_stacks_ops(&[pid]) },
+        14 => c.set_top_ops(pid).unwrap_or(Op::Batch { ops: vec![] }),
         _ => c.delete_permanently_ops(pid),
     }
 }

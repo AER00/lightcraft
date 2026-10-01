@@ -127,6 +127,10 @@ pub enum Dialog {
         id: u64,
         name: String,
     },
+    /// Auto-stack by capture time: the largest gap between consecutive shots, in seconds.
+    AutoStack {
+        gap: f32,
+    },
     /// Save the current view (source + filter) as a smart album.
     NewSmartAlbum {
         name: String,

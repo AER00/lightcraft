@@ -46,6 +46,7 @@ pub enum Icon {
     Minus,
     Album,
     SmartAlbum,
+    Stack,
     Folder,
     Photos,
     Clock,
@@ -302,6 +303,11 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Album => {
             pen.rect(3.0, 5.0, 15.0, 17.0, 1.0);
             pen.line(&[(6.0, 2.5), (17.5, 2.5), (17.5, 14.0)]);
+        }
+        Stack => {
+            pen.rect(2.5, 7.0, 13.5, 17.5, 1.0);
+            pen.line(&[(5.0, 4.5), (16.0, 4.5), (16.0, 14.5)]);
+            pen.line(&[(7.5, 2.0), (18.5, 2.0), (18.5, 11.5)]);
         }
         SmartAlbum => {
             pen.rect(3.0, 5.0, 15.0, 17.0, 1.0);

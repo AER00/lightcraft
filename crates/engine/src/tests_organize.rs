@@ -78,3 +78,55 @@ fn smart_album_from_smart_album_view_keeps_its_rules() {
     assert_eq!((r.flag, r.rating, r.album), (Some(Flag::Pick), 3, None));
     assert_eq!(s.source, LibrarySource::Album(lightcraft_catalog::AlbumId(id)));
 }
+
+#[test]
+fn stacks_group_collapse_and_replay() {
+    let dir = temp_dir("stacks");
+    let mut s = open(&dir);
+    let vis = s.visible_cloned();
+    let n = vis.len();
+    let (a, b, c) = (vis[2], vis[3], vis[4]);
+    s.execute("library.select", &json!({"ids": [a.0, b.0, c.0], "active": b.0})).unwrap();
+    let r = s.execute("stack.group", &json!({})).unwrap();
+    assert_eq!(r["count"], 3);
+    // collapsed by default: the top (the active photo) stands for the stack
+    let v = s.visible_cloned();
+    assert_eq!(v.len(), n - 2);
+    assert!(v.contains(&b) && !v.contains(&a) && !v.contains(&c));
+    assert_eq!(s.selection.active, Some(b));
+    let info = s.execute("photo.inspect", &json!({"id": a.0})).unwrap();
+    assert_eq!(info["stack"]["photos"], json!([b.0, a.0, c.0]));
+    // expand: members follow the top
+    s.execute("stack.toggle", &json!({})).unwrap();
+    let v = s.visible_cloned();
+    let i = v.iter().position(|x| *x == b).unwrap();
+    assert_eq!(&v[i..i + 3], &[b, a, c]);
+    // set top, collapse with a member active → active moves to the visible top
+    s.execute("library.select", &json!({"ids": [c.0]})).unwrap();
+    s.execute("stack.setTop", &json!({})).unwrap();
+    s.execute("library.select", &json!({"ids": [a.0]})).unwrap();
+    s.execute("stack.toggle", &json!({})).unwrap();
+    assert_eq!(s.selection.active, Some(c));
+    // remove from stack; undo
+    s.execute("stack.remove", &json!({"ids": [a.0]})).unwrap();
+    assert_eq!(s.catalog.stack_of(c).unwrap().photos, vec![c, b]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.stack_of(c).unwrap().photos.len(), 3);
+    // auto-stack the rest of the view: a huge gap groups everything unstacked
+    let pre = s.execute("stack.auto", &json!({"gap": 1e9, "preview": true})).unwrap();
+    assert_eq!(pre["stacks"], 1);
+    assert_eq!(s.catalog.stacks().count(), 1, "preview changes nothing");
+    s.execute("stack.auto", &json!({"gap": 1e9})).unwrap();
+    assert_eq!(s.catalog.stacks().count(), 2);
+    assert_eq!(s.visible_cloned().len(), 2);
+    s.execute("stack.expandAll", &json!({})).unwrap();
+    assert_eq!(s.visible_cloned().len(), n);
+    let expect = s.catalog.to_snapshot();
+    drop(s);
+    let mut s2 = open(&dir);
+    assert_eq!(s2.catalog.to_snapshot(), expect);
+    s2.execute("library.select", &json!({"ids": [b.0]})).unwrap();
+    s2.execute("stack.ungroup", &json!({})).unwrap();
+    assert_eq!(s2.catalog.stacks().count(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}

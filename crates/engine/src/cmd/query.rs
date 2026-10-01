@@ -102,6 +102,14 @@ pub fn specs() -> Vec<CommandSpec> {
             let mut v = serde_json::to_value(ph.as_ref()).unwrap_or_default();
             v["albums"] = json!(s.catalog.albums_of(id).iter().map(|a| a.0).collect::<Vec<_>>());
             v["history"] = json!(ph.history.iter().map(|h| h.label.clone()).collect::<Vec<_>>());
+            if let Some(st) = s.catalog.stack_of(id) {
+                v["stack"] = json!({
+                    "id": st.id.0,
+                    "photos": st.photos.iter().map(|p| p.0).collect::<Vec<_>>(),
+                    "position": st.position(id),
+                    "collapsed": st.collapsed,
+                });
+            }
             Ok(v)
         }),
         cmd!(query "develop.get", "Get Develop Settings", [], None, "{id?}", always, |s, p| {

@@ -54,6 +54,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.newAlbum", "New Album…", Some("Cmd+N"), "File"),
     ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
+    ("dialog.autoStack", "Auto-Stack by Capture Time…", None, "Photo>Stack"),
     ("dialog.copySettings", "Choose Edit Settings to Copy…", Some("Cmd+Shift+C"), "Photo"),
     ("dialog.export", "Export…", Some("Cmd+Shift+E"), "File"),
     ("file.addPhotos", "Add Photos…", Some("Cmd+Shift+I"), "File"),
@@ -267,6 +268,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: false });
             Ok(Value::Null)
         }
+        "dialog.autoStack" => {
+            app.ui.dialog = Some(Dialog::AutoStack { gap: p.get("gap").and_then(Value::as_f64).unwrap_or(60.0) as f32 });
+            Ok(Value::Null)
+        }
         "dialog.newSmartAlbum" => {
             app.ui.dialog = Some(Dialog::NewSmartAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into() });
             Ok(Value::Null)
@@ -389,7 +394,7 @@ pub fn menu_entries(app: &LightcraftApp) -> Vec<MenuEntry> {
         .map(|(id, label, sc, m)| MenuEntry {
             id: id.to_string(),
             label: label.to_string(),
-            menu: vec![m.to_string()],
+            menu: m.split('>').map(str::to_string).collect(),
             shortcut: sc.map(str::to_string),
             enabled: ui_enabled(app, id),
         })
