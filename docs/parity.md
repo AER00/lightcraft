@@ -39,16 +39,16 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 3 | 6 | 9 | 0 | 1/7 (14%) | 2/7 (29%) |
+| S. Export (EXP) | 4 | 6 | 8 | 0 | 2/7 (29%) | 2/7 (29%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 0 | 3 | 5 | 3 | 0/1 (0%) | 0/4 (0%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 10 | 2 | 5 | 1 | 7/8 (88%) | 3/5 (60%) |
-| Y. Menus | 38 | 21 | 26 | 8 | 33/47 (70%) | 3/23 (13%) |
-| Z. Keyboard shortcuts (desktop) | 44 | 14 | 22 | 1 | 39/52 (75%) | 5/23 (22%) |
+| Y. Menus | 41 | 20 | 24 | 8 | 36/47 (77%) | 3/23 (13%) |
+| Z. Keyboard shortcuts (desktop) | 44 | 16 | 20 | 1 | 39/52 (75%) | 5/23 (22%) |
 | Lightroom Classic extras | 1 | 17 | 61 | 9 | — | 1/21 (5%) |
-| **Total** | 178 | 110 | 212 | 37 | 143/198 (72%) | 32/144 (22%) |
+| **Total** | 182 | 111 | 207 | 37 | 147/198 (74%) | 32/144 (22%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -123,11 +123,10 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Select None | ⌘⇧A (+ ⌘D) | ⌘D | — |
 
 **Still missing / broken:**
-- No command yet: F full-screen preview, ⇧⌘F window full screen, ⌘E export with previous, ⇧⌘V paste selected,
+- No command yet: F full-screen preview, ⇧⌘F window full screen, ⇧⌘V paste selected,
   ⌘, settings, ⌘F focus search, ⌘G / ⇧⌘G stacks, ⌥Y top/bottom before/after, A visualize spots, `[` `]` / ⇧`[` ⇧`]`
   brush size/feather, ⌃H / ⌃M merges, F1 help, ⇧6–9 label + advance.
-- `⇧⌘N` is bound to `album.create`, which needs a name: the key does nothing (needs a "New Folder…" dialog command).
-- `⌫` always deletes the photo, even while a mask or spot is selected (Lightroom deletes the selected pin).
+- `⌫` in the Masking panel deletes the active mask; spots have no pin selection yet (⌫ does nothing in Remove).
 - `H` opens Remove; Lightroom also uses it (Classic) to hide pins — no pin toggle yet.
 - ⌘M / ⌘H / ⌘Q / ⌘W rely on the platform window defaults (unverified).
 
@@ -458,7 +457,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EXP-WATERMARK | Watermark | P1 | 🟡 | `crates/engine/src/export.rs` (`Watermark`) | text only; no graphic watermark |
 | LR-EXP-NAMING | File naming | P1 | 🟡 | `cmd:app.export` (`naming`: `{name}`, `{seq}`) | no date tokens, custom start number |
 | LR-EXP-LOCATION | Destination folder | P0 | 🟡 | `crates/ui-egui/src/panels/dialogs.rs` (folder field) | no folder picker, subfolder or name-conflict policy |
-| LR-EXP-PREVIOUS | Export with previous settings | P0 | ⬜ | | |
+| LR-EXP-PREVIOUS | Export with previous settings | P0 | ✅ | `cmd:app.exportPrevious`, `cmd:dialog.export` | last options persist in prefs.json; dialog prefilled; no named export presets yet |
 | LR-EXP-DNGOPT | DNG options | P2 | ⬜ | | |
 | LR-EXP-ORIGINAL | Original + XMP | P1 | ⬜ | | |
 | LR-EXP-PHOTOS | Export to the system photo library | P2 | ⬜ | | |
@@ -547,15 +546,15 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-FILE-ADDFOLDER | Add Folder… | P0 | 🟡 | `cmd:library.import` (folders, recursive) | no folder picker entry |
 | MENU-FILE-MIGRATE | Migrate photos | OOS | 🚫 | | |
 | MENU-FILE-NEWALBUM | New Album… | P0 | ✅ | `cmd:dialog.newAlbum` | |
-| MENU-FILE-NEWFOLDER | New Folder… | P0 | 🟡 | `crates/ui-egui/src/panels/left.rs` ("Create Folder…") | no menu command; ⇧⌘N is bound to `album.create` which needs a name |
+| MENU-FILE-NEWFOLDER | New Folder… | P0 | ✅ | `cmd:dialog.newFolder` | ⇧⌘N |
 | MENU-FILE-NEWSMART | New Smart Album… | P1 | ⬜ | | |
 | MENU-FILE-IMPORTPROFILES | Import Profiles & Presets… | P1 | 🟡 | `cmd:file.importPresets` | presets only |
 | MENU-FILE-EXPORT | Export… | P0 | ✅ | `cmd:dialog.export` | |
-| MENU-FILE-EXPORTPREV | Export with Previous | P0 | ⬜ | | |
+| MENU-FILE-EXPORTPREV | Export with Previous | P0 | ✅ | `cmd:app.exportPrevious` | ⌥⇧⌘E |
 | MENU-FILE-EXPORTPRESETS | Export preset submenu | P0 | ⬜ | | |
 | MENU-FILE-SHARE | Share / get link / invite | OOS | 🚫 | | |
 | MENU-FILE-PHOTOSHOP | Edit in external editor | P2 | ⬜ | | |
-| MENU-FILE-SHOWFINDER | Show in Finder | P0 | ⬜ | | |
+| MENU-FILE-SHOWFINDER | Show in Finder | P0 | ✅ | `cmd:app.showInFinder` | ⌘R; Explorer on Windows, the folder on Linux; disabled for demo scenes and on the web |
 | MENU-FILE-OFFLINE | Store album locally | P2 | 🚫 | | not applicable: local-first |
 | MENU-FILE-CLOSE | Close Window | P1 | 🟡 | | platform window defaults (unverified) |
 | MENU-EDIT-UNDO | Undo | P0 | ✅ | `cmd:edit.undo` | label does not name the step |
@@ -666,7 +665,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-SHOWORIGINAL | Show original — \ | P0 | ✅ | `cmd:view.showOriginal` | |
 | KEY-TOGGLEZOOM | Toggle zoom — Space | P0 | ✅ | `cmd:view.zoomToggle` | Space is a secondary binding (primary Z) |
 | KEY-MASKCOLOR | Cycle mask colour — ⇧O | P1 | ⬜ | | ⇧O cycles crop overlays |
-| KEY-EXPORTPREV | Export with previous — ⌘E | P0 | ⬜ | | no command |
+| KEY-EXPORTPREV | Export with previous — ⌘E | P0 | 🟡 | `cmd:app.exportPrevious` | bound to ⌥⇧⌘E (Classic); ⌘E not bound |
 | KEY-EXPORTDIALOG | Export dialog — ⇧E | P0 | ✅ | `cmd:dialog.export` | secondary binding (primary ⌘⇧E) |
 | KEY-ENTERFULLSCREEN | Window full screen — ⇧⌘F | P1 | ⬜ | | |
 | KEY-STACK | Group / ungroup stack — ⌘G / ⇧⌘G | P1 | ⬜ | | |
@@ -715,7 +714,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-VIDEO-PLAY | Play/pause video — Space | P1 | ⬜ | | |
 | KEY-ESC | Leave tool / view — Esc | P0 | ✅ | `cmd:view.back` | |
 | KEY-COMMIT | Commit tool — Return | P1 | 🟡 | | edits apply live; no explicit commit step |
-| KEY-DELETE-PIN | Delete selected pin — ⌫ | P0 | ⬜ | | ⌫ deletes the photo |
+| KEY-DELETE-PIN | Delete selected pin — ⌫ | P0 | 🟡 | `cmd:mask.delete` | ⌫ deletes the active mask in the Masking panel and never the photo while retouching; no spot pin selection yet |
 | KEY-HIDEPINS | Hide pins — H | P2 | ⬜ | | H = Remove panel |
 
 ## Lightroom Classic extras
