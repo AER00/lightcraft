@@ -23,6 +23,11 @@ pub enum Gesture {
     Spot {
         points: Vec<Point>,
     },
+    /// Remove tool: dragging spot `spot`'s target (or its source).
+    SpotMove {
+        spot: usize,
+        source: bool,
+    },
     CropHandle {
         handle: u8,
         start: lightcraft_geom::Rect,
@@ -795,19 +800,89 @@ fn pin(p: &egui::Painter, c: Pos2, sel: bool) {
 
 // ------------------------------------------------------------------------ remove
 
+/// The Remove tool on the photo: every spot's outline and pin (the selected one with its source),
+/// click a pin to select its spot, drag a target or source to move it, paint elsewhere to add one.
 fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, d: &DevelopSettings) {
     let long = (map.rect.width().max(map.rect.height())) as f64;
-    let p = ui.painter();
-    for s in &d.spots {
+    let p = ui.painter_at(app.canvas_rect.unwrap_or(map.rect));
+    let active = app.session.active_spot.filter(|i| *i < d.spots.len());
+    // (spot, is source, screen centre, radius) of everything that can be grabbed
+    let mut grips: Vec<(usize, bool, Pos2, f32)> = Vec::new();
+    for (i, s) in d.spots.iter().enumerate() {
         let r = (s.size * long) as f32;
+        let sel = Some(i) == active;
+        let col = Color32::from_white_alpha(if sel { 230 } else { 150 });
         for q in &s.points {
-            p.circle_stroke(map.screen(*q), r, Stroke::new(1.0, Color32::from_white_alpha(200)));
+            p.circle_stroke(map.screen(*q), r, Stroke::new(if sel { 1.5 } else { 1.0 }, col));
         }
+        let Some(&t) = s.points.first() else { continue };
+        let tq = map.screen(t);
+        if let Some(o) = s.source_offset.filter(|_| sel) {
+            let sq = map.screen(Point::new(t.x + o.x, t.y + o.y));
+            for q in &s.points {
+                p.circle_stroke(map.screen(Point::new(q.x + o.x, q.y + o.y)), r, Stroke::new(1.0, Color32::from_white_alpha(170)));
+            }
+            let dir = (tq - sq).normalized();
+            p.arrow(sq + dir * r, (tq - sq) - dir * (2.0 * r).min((tq - sq).length()), Stroke::new(1.0, Color32::from_white_alpha(200)));
+            register(ui.ctx(), format!("spotSource:{i}"), Rect::from_center_size(sq, vec2(14.0, 14.0)));
+            grips.push((i, true, sq, r));
+        }
+        pin(&p, tq, sel);
+        register(ui.ctx(), format!("spotPin:{i}"), Rect::from_center_size(tq, vec2(14.0, 14.0)));
+        grips.push((i, false, tq, r));
     }
     let r = (app.ui.remove_size as f64 * long) as f32;
+    // a target or source under `q`: the selected spot's first, then the nearest pin
+    let hit = |q: Pos2| {
+        grips
+            .iter()
+            .filter(|g| g.2.distance(q) < g.3.max(8.0))
+            .min_by(|a, b| {
+                (Some(a.0) != active, a.2.distance(q)).partial_cmp(&(Some(b.0) != active, b.2.distance(q))).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .copied()
+    };
+    let hover = resp.hover_pos().and_then(hit);
     if let Some(h) = resp.hover_pos() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::None);
-        p.circle_stroke(h, r, Stroke::new(1.0, Color32::WHITE));
+        if hover.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        } else {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+            p.circle_stroke(h, r, Stroke::new(1.0, Color32::WHITE));
+            p.circle_stroke(h, r * (1.0 - app.ui.remove_feather / 100.0).max(0.05), Stroke::new(1.0, Color32::from_white_alpha(110)));
+        }
+    }
+    let press = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos());
+    if resp.drag_started()
+        && let Some((spot, source, ..)) = press.and_then(hit)
+    {
+        if Some(spot) != active {
+            let _ = app.run("spot.select", json!({"index": spot}));
+        }
+        let _ = app.run("develop.beginInteraction", json!({"label": "Edit Spot"}));
+        app.gesture = Some(Gesture::SpotMove { spot, source });
+    }
+    if let Some(Gesture::SpotMove { spot, source }) = app.gesture.clone() {
+        if resp.dragged()
+            && let Some(q) = resp.interact_pointer_pos()
+        {
+            let (n, n0) = (map.norm(q), map.norm(q - resp.drag_delta()));
+            let dn = [n.x - n0.x, n.y - n0.y];
+            if dn != [0.0, 0.0] {
+                let _ = app.run("spot.update", json!({"index": spot, if source { "moveSource" } else { "move" }: dn}));
+            }
+        }
+        if resp.drag_stopped() {
+            app.gesture = None;
+            let _ = app.run("develop.endInteraction", json!({}));
+        }
+        return;
+    }
+    if resp.clicked()
+        && let Some((spot, ..)) = press.and_then(hit)
+    {
+        let _ = app.run("spot.select", json!({"index": spot}));
+        return;
     }
     if let Some(q) = resp.interact_pointer_pos()
         && (resp.drag_started() || resp.dragged() || resp.clicked())
@@ -832,7 +907,10 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
             _ => "remove",
         };
         let pts: Vec<[f64; 2]> = points.iter().map(|q| [q.x, q.y]).collect();
-        let _ = app.run("spot.add", json!({"mode": mode, "points": pts, "size": app.ui.remove_size}));
+        let _ = app.run(
+            "spot.add",
+            json!({"mode": mode, "points": pts, "size": app.ui.remove_size, "feather": app.ui.remove_feather, "opacity": app.ui.remove_opacity}),
+        );
     }
 }
 

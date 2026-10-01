@@ -63,6 +63,11 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("tool.radial", "Radial Gradient", Some("R"), "Window>Tools"),
     ("tool.wbPicker", "White Balance Selector", Some("W"), "Window>Tools"),
     ("tool.none", "No Tool", None, ""),
+    // brush size / feather of the active brush (Masking brush, Remove tool and its selected spot)
+    ("brush.smaller", "Decrease Brush Size", Some("["), "Window>Tools"),
+    ("brush.larger", "Increase Brush Size", Some("]"), "Window>Tools"),
+    ("brush.featherLess", "Decrease Brush Feather", Some("Shift+["), "Window>Tools"),
+    ("brush.featherMore", "Increase Brush Feather", Some("Shift+]"), "Window>Tools"),
     ("dialog.newAlbum", "New Album…", Some("Cmd+N"), "File"),
     ("dialog.newFolder", "New Folder…", Some("Cmd+Shift+N"), "File"),
     ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
@@ -98,6 +103,30 @@ fn panel(app: &mut LightcraftApp, ctx: &egui::Context, p: RightPanel, name: &str
         app.ui.tool.clear();
     }
     let _ = app.session.end_interaction();
+}
+
+/// `[` / `]` (size ×`k`) and ⇧`[` / ⇧`]` (feather +`df`) for the brush in use: the Remove tool's
+/// (and its selected spot's) or the Masking brush's.
+fn adjust_brush(app: &mut LightcraftApp, k: f32, df: f32) -> Value {
+    if app.ui.right == RightPanel::Remove {
+        app.ui.remove_size = (app.ui.remove_size * k).clamp(0.001, 0.25);
+        app.ui.remove_feather = (app.ui.remove_feather + df).clamp(0.0, 100.0);
+        if app.session.active_spot.is_some() {
+            let mut p = json!({});
+            if k != 1.0 {
+                p["size"] = json!(app.ui.remove_size);
+            }
+            if df != 0.0 {
+                p["feather"] = json!(app.ui.remove_feather);
+            }
+            let _ = app.run("spot.update", p);
+        }
+        json!({"size": app.ui.remove_size, "feather": app.ui.remove_feather})
+    } else {
+        app.ui.brush_size = (app.ui.brush_size * k).clamp(0.002, 0.5);
+        app.ui.brush_feather = (app.ui.brush_feather + df).clamp(0.0, 100.0);
+        json!({"size": app.ui.brush_size, "feather": app.ui.brush_feather})
+    }
 }
 
 /// An sRGB colour from `"#rrggbb"` or `[r, g, b]` (0..255).
@@ -251,6 +280,15 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             let [r, g, b] = app.ui.mask_overlay_color;
             Ok(json!({"color": format!("#{r:02x}{g:02x}{b:02x}"), "opacity": app.ui.mask_overlay_opacity}))
+        }
+        "brush.smaller" | "brush.larger" | "brush.featherLess" | "brush.featherMore" => {
+            let (k, df) = match id {
+                "brush.smaller" => (1.0 / 1.2, 0.0),
+                "brush.larger" => (1.2, 0.0),
+                "brush.featherLess" => (1.0, -10.0),
+                _ => (1.0, 10.0),
+            };
+            Ok(adjust_brush(app, k, df))
         }
         "view.maskPins" => {
             app.ui.mask_pins = p.get("show").and_then(Value::as_bool).unwrap_or(!app.ui.mask_pins);

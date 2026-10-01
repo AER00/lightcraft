@@ -15,6 +15,9 @@ pub const ALIASES: &[(&str, &str, &str)] = &[
     ("Shift+M", "version.create", "{}"),
     ("Shift+X", "photo.flag", r#"{"flag": "reject", "advance": true}"#),
     ("Shift+U", "photo.flag", r#"{"flag": "none", "advance": true}"#),
+    // Shift+[ / Shift+] arrive as { / } on most layouts
+    ("Shift+{", "brush.featherLess", "{}"),
+    ("Shift+}", "brush.featherMore", "{}"),
 ];
 
 pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
@@ -167,7 +170,13 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                         }
                         continue;
                     }
-                    R::Remove | R::RedEye => continue,
+                    R::Remove => {
+                        if app.session.active_spot.is_some() {
+                            let _ = app.run("spot.delete", json!({}));
+                        }
+                        continue;
+                    }
+                    R::RedEye => continue,
                     _ => {}
                 }
             }
@@ -177,6 +186,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 continue;
             }
             if f == "crop.rotateAspect" && app.ui.right != crate::state::RightPanel::Crop {
+                continue;
+            }
+            // / refreshes the selected spot's source in the Remove tool (the filmstrip elsewhere)
+            if f == "view.filmstrip" && app.ui.right == crate::state::RightPanel::Remove && app.session.active_spot.is_some() {
+                let _ = app.run("spot.refreshSource", json!({}));
                 continue;
             }
             // Shift+O cycles the mask overlay mode while masking (the crop overlay elsewhere)

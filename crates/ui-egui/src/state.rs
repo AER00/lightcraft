@@ -121,7 +121,10 @@ pub struct UiState {
     pub brush_erase: bool,
     /// Brush Auto Mask: dabs stick to areas like the one under the brush centre.
     pub brush_auto_mask: bool,
+    /// Remove tool brush: size (fraction of the long edge), feather and opacity (0..100).
     pub remove_size: f32,
+    pub remove_feather: f32,
+    pub remove_opacity: f32,
     /// Selected Point Color sample.
     pub point_color: usize,
     /// Point Color "Visualize range": the selected sample's range in colour, the rest grey.
@@ -224,6 +227,8 @@ impl Default for UiState {
             brush_erase: false,
             brush_auto_mask: false,
             remove_size: 0.02,
+            remove_feather: 50.0,
+            remove_opacity: 100.0,
             point_color: 0,
             point_color_visualize: false,
             eye: 0,

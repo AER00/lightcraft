@@ -91,6 +91,8 @@ pub struct Session {
     depth: u32,
     /// Selected mask (Masking panel), by mask id.
     pub active_mask: Option<u32>,
+    /// Selected spot (Remove panel), by index into the active photo's spots.
+    pub active_spot: Option<usize>,
     /// The persistent library this session writes to (`None` = in-memory only).
     pub library: Option<library::Library>,
     /// XMP sidecar preferences (persisted with the library).
@@ -127,6 +129,7 @@ impl Session {
             clock: Box::new(|| "2026-09-30T12:00:00".to_string()),
             depth: 0,
             active_mask: None,
+            active_spot: None,
             library: None,
             xmp: sidecar::XmpPrefs::default(),
             last_export: None,
@@ -345,5 +348,7 @@ mod tests_library;
 mod tests_merge;
 #[cfg(test)]
 mod tests_organize;
+#[cfg(test)]
+mod tests_spots;
 #[cfg(test)]
 mod tests_xmp;

@@ -89,6 +89,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 "selection": s.selection,
                 "visibleCount": n,
                 "activeMask": s.active_mask,
+                "activeSpot": s.active_spot,
                 "undo": s.undo.last().map(|u| u.label.clone()),
                 "redo": s.redo.last().map(|u| u.label.clone()),
                 "clipboard": s.clipboard.is_some(),

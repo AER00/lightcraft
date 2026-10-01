@@ -29,7 +29,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | F. Edit panel — global adjustments (EDIT) | 36 | 2 | 10 | 1 | 28/28 (100%) | 8/14 (57%) |
 | G. Profiles (PROF) | 3 | 1 | 6 | 0 | 2/3 (67%) | 1/3 (33%) |
 | H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
-| I. Remove / healing (REM) | 3 | 3 | 4 | 2 | 2/4 (50%) | 1/3 (33%) |
+| I. Remove / healing (REM) | 5 | 1 | 4 | 2 | 4/4 (100%) | 1/3 (33%) |
 | J. Red eye (EYE) | 0 | 0 | 2 | 0 | — | 0/1 (0%) |
 | K. Masking (MASK) | 10 | 6 | 7 | 0 | 7/8 (88%) | 3/5 (60%) |
 | L. Presets (PRE) | 1 | 4 | 2 | 1 | 0/2 (0%) | 1/2 (50%) |
@@ -48,7 +48,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 46 | 18 | 21 | 8 | 37/47 (79%) | 7/23 (30%) |
 | Z. Keyboard shortcuts (desktop) | 46 | 16 | 18 | 1 | 39/52 (75%) | 7/23 (30%) |
 | Lightroom Classic extras | 4 | 19 | 56 | 9 | — | 3/21 (14%) |
-| **Total** | 212 | 99 | 189 | 37 | 155/198 (78%) | 49/144 (34%) |
+| **Total** | 214 | 97 | 189 | 37 | 157/198 (79%) | 49/144 (34%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -57,8 +57,6 @@ Ordered by tier, then user value, then (low) effort. Take the first one nobody i
 
 1. **LR-EXP-COLORSPACE** (P0) — export is sRGB only. Add Display P3 / Adobe RGB-compatible / ProPhoto-compatible /
    Rec.2020 output (our own primaries + ICC from `crates/codecs/src/icc.rs`). High value, low–medium effort.
-4. **LR-REM-SPOT-EDIT + LR-REM-BRUSH-PARAMS** (P0) — select a spot pin, move target/source, delete with ⌫,
-   feather/opacity sliders, `[`/`]` size keys. Medium effort.
 5. **LR-VIEW-PHOTOGRID** (P0) — group the justified grid by capture date with headers. Low–medium effort.
 6. **LR-PRE-CREATE + LR-PRE-PANEL + LR-BEHAV-PREVIEW-HOVER** (P0/P1) — per-group checkboxes in Create Preset;
     live preview while hovering presets/profiles/versions. Medium effort.
@@ -307,8 +305,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-REM-CLONE | Clone | P0 | ✅ | `cmd:spot.add` (`mode: clone`) | |
 | LR-REM-GEN | Generative remove | OOS | 🚫 | | |
 | LR-REM-DETECT | Object detection for remove | P2 | ⬜ | | |
-| LR-REM-BRUSH-PARAMS | Brush size / feather / opacity | P0 | 🟡 | `cmd:spot.add` (`size`, `feather`, `opacity`), `crates/ui-egui/src/panels/right.rs` | UI has size only; no `[` `]` keys |
-| LR-REM-SPOT-EDIT | Edit existing spots | P0 | 🟡 | `cmd:spot.delete` | no pin selection, no moving target/source, ⌫ deletes the photo instead |
+| LR-REM-BRUSH-PARAMS | Brush size / feather / opacity | P0 | ✅ | `cmd:spot.add` (`size`, `feather`, `opacity`), `cmd:brush.smaller`, `cmd:brush.larger`, `cmd:brush.featherLess`, `cmd:brush.featherMore`, `crates/ui-egui/src/panels/right.rs` | Size / Feather / Opacity sliders (for new spots and the selected one); `[` `]` size, ⇧`[` ⇧`]` feather (also the Masking brush) |
+| LR-REM-SPOT-EDIT | Edit existing spots | P0 | ✅ | `cmd:spot.select`, `cmd:spot.update`, `cmd:spot.refreshSource`, `cmd:spot.delete` | click a pin to select, drag target or source, ⌫ deletes the selected spot, `/` picks another source; automatic sources are resolved when the spot is added |
 | LR-REM-VISUALIZE | Visualize spots | P1 | ⬜ | | |
 | LR-REM-PEOPLE | Remove people (generative) | OOS | 🚫 | | |
 | LR-REM-REFLECT | Remove reflections | P2 | ⬜ | | |

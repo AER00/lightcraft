@@ -213,20 +213,59 @@ fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(4.0);
         ui.label(egui::RichText::new("Paint over a distraction on the photo to remove it.").color(Tokens::get(ui.ctx()).text_dim));
     });
-    let spec = lightcraft_develop::ControlSpec {
-        id: "ui.removeSize",
-        label: "Size",
+    // brush settings; with a spot selected they edit that spot too
+    let sel = app.session.active_spot.and_then(|i| d.spots.get(i).map(|sp| (i, sp.clone())));
+    if let Some((i, sp)) = &sel {
+        (app.ui.remove_size, app.ui.remove_feather, app.ui.remove_opacity) = (sp.size as f32, sp.feather as f32, sp.opacity as f32);
+        divider(ui);
+        let mode = match sp.mode {
+            lightcraft_develop::SpotMode::Heal => "Heal",
+            lightcraft_develop::SpotMode::Clone => "Clone",
+            lightcraft_develop::SpotMode::Remove => "Remove",
+        };
+        super::edit::sub_title(ui, &format!("{mode} spot {} of {}", i + 1, d.spots.len()));
+    }
+    let plain = |id: &'static str, label: &'static str, min: f64, max: f64, default: f64| lightcraft_develop::ControlSpec {
+        id,
+        label,
         section: lightcraft_develop::Section::Detail,
-        min: 1.0,
-        max: 100.0,
-        default: 20.0,
+        min,
+        max,
+        default,
         step: 1.0,
         decimals: 0,
         track: lightcraft_develop::Track::Plain,
     };
-    let out = slider(ui, &spec, (app.ui.remove_size * 1000.0) as f64, true, None);
-    if let Some(v) = out.value {
-        app.ui.remove_size = (v / 1000.0) as f32;
+    let sliders = [
+        (plain("ui.removeSize", "Size", 1.0, 250.0, 20.0), "size", (app.ui.remove_size * 1000.0) as f64),
+        (plain("ui.removeFeather", "Feather", 0.0, 100.0, 50.0), "feather", app.ui.remove_feather as f64),
+        (plain("ui.removeOpacity", "Opacity", 0.0, 100.0, 100.0), "opacity", app.ui.remove_opacity as f64),
+    ];
+    for (spec, key, v) in sliders {
+        let out = slider(ui, &spec, v, true, None);
+        let scale = if key == "size" { 1000.0 } else { 1.0 };
+        if let Some(v) = out.value {
+            match key {
+                "size" => app.ui.remove_size = (v / scale) as f32,
+                "feather" => app.ui.remove_feather = v as f32,
+                _ => app.ui.remove_opacity = v as f32,
+            }
+        }
+        if sel.is_some() {
+            super::edit::apply_slider_out(app, &spec, out, |app, v| app.run("spot.update", json!({key: v / scale})));
+        }
+    }
+    if sel.is_some() {
+        padded(ui, |ui| {
+            ui.horizontal(|ui| {
+                if text_button(ui, "spotRefresh", "Refresh Source (/)", false).clicked() {
+                    let _ = app.run("spot.refreshSource", json!({}));
+                }
+                if text_button(ui, "spotDelete", "Delete (⌫)", false).clicked() {
+                    let _ = app.run("spot.delete", json!({}));
+                }
+            });
+        });
     }
     // Visualize Spots (A): a black/white high-pass view that makes dust and specks stand out
     padded(ui, |ui| {

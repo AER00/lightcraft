@@ -101,6 +101,8 @@ fn key_from(name: &str) -> Option<egui::Key> {
         "tab" => Some(egui::Key::Tab),
         "\\" | "backslash" => Some(egui::Key::Backslash),
         "/" | "slash" => Some(egui::Key::Slash),
+        "[" => Some(egui::Key::OpenBracket),
+        "]" => Some(egui::Key::CloseBracket),
         _ => None,
     })
 }
