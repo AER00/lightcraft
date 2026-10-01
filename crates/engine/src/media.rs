@@ -102,6 +102,8 @@ pub struct MediaCache {
     pub file_loader: Option<FileLoader>,
     pub file_probe: Option<FileProbe>,
     pub preview_loader: Option<PreviewLoader>,
+    /// Reads a photo file's bytes (Photo Merge); `None` = the local file system.
+    pub file_bytes: Option<crate::merge::ByteReader>,
     scenes: Vec<lightcraft_scenes::Scene>,
     /// Rendered thumbnails (memory, plus disk once a library is attached).
     pub rendered: Arc<PreviewCache>,
@@ -117,6 +119,7 @@ impl Default for MediaCache {
             file_loader: None,
             file_probe: None,
             preview_loader: None,
+            file_bytes: None,
             scenes: Vec::new(),
             rendered: Arc::new(PreviewCache::memory(RENDERED_MEM_BYTES)),
         }

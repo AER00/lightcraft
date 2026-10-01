@@ -2035,6 +2035,7 @@ dependencies = [
  "lightcraft-codecs",
  "lightcraft-engine",
  "lightcraft-mcp",
+ "lightcraft-merge",
  "lightcraft-raster",
  "lightcraft-ui-egui",
  "serde_json",
@@ -2097,6 +2098,7 @@ dependencies = [
  "lightcraft-develop",
  "lightcraft-geom",
  "lightcraft-gpu",
+ "lightcraft-merge",
  "lightcraft-meta",
  "lightcraft-pipeline",
  "lightcraft-preview",
@@ -2143,6 +2145,22 @@ dependencies = [
  "lightcraft-raster",
  "log",
  "serde_json",
+]
+
+[[package]]
+name = "lightcraft-merge"
+version = "0.1.0"
+dependencies = [
+ "lightcraft-codecs",
+ "lightcraft-color",
+ "lightcraft-geom",
+ "lightcraft-meta",
+ "lightcraft-raster",
+ "lightcraft-raw",
+ "lightcraft-scenes",
+ "rayon",
+ "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

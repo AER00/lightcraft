@@ -9,6 +9,7 @@ pub mod control;
 pub mod headless;
 pub mod icons;
 pub mod menus;
+pub mod merge;
 pub mod panels;
 pub mod render;
 pub mod shortcuts;
@@ -87,6 +88,8 @@ pub struct LightcraftApp {
     /// What the loupe drew last frame: photo and source ("render", "cached", "embedded", "small",
     /// "thumb", "none").
     pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
+    /// Photo Merge dialog previews and background merges.
+    pub merge: merge::MergeState,
 }
 
 impl LightcraftApp {
@@ -115,6 +118,7 @@ impl LightcraftApp {
             widgets: vec![],
             gesture: None,
             loupe_shown: None,
+            merge: merge::MergeState::default(),
         }
     }
 
@@ -178,7 +182,7 @@ impl LightcraftApp {
             return;
         }
         let now = now_ms();
-        let busy = self.renderer.in_flight() > 0;
+        let busy = self.renderer.in_flight() > 0 || self.merge.busy();
         let mut shots = std::mem::take(&mut self.pending_screenshots);
         let mut shadow_ticked = false;
         shots.retain_mut(|s| {
@@ -235,7 +239,13 @@ impl LightcraftApp {
         let memory = main.memory(|m| m.clone());
         view.ctx.memory_mut(|m| *m = memory);
         view.run(headless::HeadlessView::raw_input(size, ppp, time, vec![]), |ui| self.ui(ui));
-        let img = capture.then(|| view.paint(&self.renderer.cpu_textures()));
+        let img = capture.then(|| {
+            let mut tex = self.renderer.cpu_textures();
+            if let (Some((t, ..)), Some(px)) = (&self.merge.preview, &self.merge.preview_pixels) {
+                tex.insert(t.id(), crate::softpaint::CpuTexture::linear(px.clone()));
+            }
+            view.paint(&tex)
+        });
         self.shadow = Some(view);
         img
     }
@@ -285,6 +295,7 @@ impl LightcraftApp {
             ctx.request_repaint();
         }
         self.renderer.poll(ctx, &mut self.session);
+        merge::poll(self, ctx);
         self.session.persist_if_dirty();
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);

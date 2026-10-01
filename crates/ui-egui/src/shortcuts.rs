@@ -51,10 +51,11 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
 fn matches(i: &egui::InputState, m: Modifiers, k: Key) -> bool {
     i.events.iter().any(|e| match e {
         egui::Event::Key { key, pressed: true, modifiers, .. } => {
-            (*key == k || (k == Key::Backspace && *key == Key::Delete))
-                && modifiers.command == m.command
-                && modifiers.shift == m.shift
-                && modifiers.alt == m.alt
+            // `Ctrl` is the physical Control key (on macOS distinct from Cmd; elsewhere Cmd = Ctrl);
+            // "Delete" (⌫ = Backspace) also matches forward-delete
+            let ctrl_ok = if m.ctrl { modifiers.ctrl } else { !modifiers.ctrl || modifiers.command };
+            let cmd_ok = m.ctrl || modifiers.command == m.command;
+            (*key == k || (k == Key::Backspace && *key == Key::Delete)) && ctrl_ok && cmd_ok && modifiers.shift == m.shift && modifiers.alt == m.alt
         }
         _ => false,
     })

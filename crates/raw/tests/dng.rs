@@ -107,6 +107,40 @@ fn writer_roundtrip_all_layouts() {
 }
 
 #[test]
+fn deflate_roundtrips_integer_and_float() {
+    for (w, h) in [(64, 48), (70, 45)] {
+        for cfa in [Some(Cfa::bayer("RGGB").unwrap()), None] {
+            let cpp = if cfa.is_some() { 1 } else { 3 };
+            let raw = synthetic(w, h, cfa, cpp);
+            for order in [ByteOrder::Little, ByteOrder::Big] {
+                let bytes =
+                    write_dng(&raw, &DngWriteOptions { compression: DngCompression::Deflate { tile: 32, half: false }, order, xmp: None }).unwrap();
+                assert_same(&raw, &decode(&bytes).unwrap());
+            }
+        }
+    }
+    // linear float data: 32-bit exact, 16-bit within half precision
+    let mut raw = synthetic(70, 45, None, 3);
+    let vals: Vec<f32> = (0..70 * 45 * 3).map(|i| ((i % 97) as f32 / 97.0).powi(3) * 0.9 + 1e-4).collect();
+    raw.data = RawData::F32(vals.clone());
+    raw.black = BlackLevel::uniform(0.0);
+    raw.white = vec![1.0];
+    for half in [false, true] {
+        let bytes = write_dng(&raw, &DngWriteOptions { compression: DngCompression::Deflate { tile: 32, half }, ..Default::default() }).unwrap();
+        let back = decode(&bytes).unwrap();
+        let RawData::F32(b) = &back.data else { panic!("float data expected") };
+        for (a, b) in vals.iter().zip(b) {
+            let tol = if half { a * 1e-3 + 1e-7 } else { 0.0 };
+            assert!((a - b).abs() <= tol, "{a} vs {b} (half: {half})");
+        }
+    }
+    assert_eq!(lightcraft_raw::dngwrite::f32_to_f16(1.0), 0x3c00);
+    assert_eq!(lightcraft_raw::dngwrite::f32_to_f16(-2.0), 0xc000);
+    assert_eq!(lightcraft_raw::dngwrite::f32_to_f16(1e9), 0x7c00);
+    assert_eq!(lightcraft_raw::dngwrite::f32_to_f16(2f32.powi(-24)), 0x0001);
+}
+
+#[test]
 fn normalized_and_develop() {
     let mut raw = synthetic(40, 30, Some(Cfa::bayer("RGGB").unwrap()), 1);
     let n = raw.normalized().unwrap();
