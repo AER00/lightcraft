@@ -3,6 +3,7 @@
 //! app, CLI, MCP and the web build share it; writing the file is the caller's job.
 
 use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, NamedSpace, TiffCompression, encode, icc};
+use lightcraft_meta::{DateTime, Gps, Metadata};
 use lightcraft_raster::Rgba8;
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +60,21 @@ pub enum SharpenAmount {
     High,
 }
 
+/// Which metadata is embedded in exported files.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MetadataPolicy {
+    /// Everything we know: camera, capture settings, lens, location, title, caption, keywords, copyright.
+    #[default]
+    All,
+    /// Everything except camera/lens make, model and capture settings.
+    AllExceptCamera,
+    /// Copyright and creator only.
+    Copyright,
+    /// Nothing (the sRGB profile is still embedded).
+    None,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ExportOptions {
@@ -73,6 +89,9 @@ pub struct ExportOptions {
     pub sharpen_amount: SharpenAmount,
     /// File name template: `{name}` (original stem), `{seq}` (1-based, zero-padded to 3), `{ext}` is appended.
     pub naming: String,
+    pub metadata: MetadataPolicy,
+    /// Strip GPS / location even when the policy would include it.
+    pub remove_location: bool,
 }
 
 impl Default for ExportOptions {
@@ -85,6 +104,8 @@ impl Default for ExportOptions {
             sharpen: SharpenFor::None,
             sharpen_amount: SharpenAmount::Standard,
             naming: "{name}".into(),
+            metadata: MetadataPolicy::All,
+            remove_location: false,
         }
     }
 }
@@ -107,6 +128,8 @@ impl ExportOptions {
             sharpen: enm(p, "sharpen").unwrap_or(d.sharpen),
             sharpen_amount: enm(p, "sharpenAmount").unwrap_or(d.sharpen_amount),
             naming: s("naming").map_or(d.naming, str::to_string),
+            metadata: enm(p, "metadata").unwrap_or(d.metadata),
+            remove_location: p.get("removeLocation").and_then(Value::as_bool).unwrap_or(d.remove_location),
         }
     }
 
@@ -171,10 +194,17 @@ pub fn output_sharpen(img: &mut Rgba8, target: SharpenFor, amount: SharpenAmount
 /// Encode a rendered (display-referred sRGB) image according to `o`. Resizing to `long_edge` is the
 /// caller's job (render at that size); sharpening is applied here.
 pub fn encode_image(img: &Rgba8, o: &ExportOptions) -> Result<Vec<u8>, String> {
+    encode_with_metadata(img, o, None)
+}
+
+/// Like [`encode_image`], embedding `meta` (already filtered by the policy) as EXIF + XMP.
+pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
     let mut img = img.clone();
     output_sharpen(&mut img, o.sharpen, o.sharpen_amount);
     let profile = icc::write_named(NamedSpace::Srgb);
-    let meta = EncodeMeta { icc: Some(&profile), ..Default::default() };
+    let exif = meta.map(lightcraft_meta::write_exif);
+    let xmp = meta.map(|m| lightcraft_meta::write_xmp(m, None));
+    let meta = EncodeMeta { icc: Some(&profile), exif: exif.as_deref(), xmp: xmp.as_deref() };
     let e = EncodeImage::rgba8(&img);
     let r = match o.format {
         ExportFormat::Jpeg => {
@@ -212,6 +242,47 @@ pub fn encode_image(img: &Rgba8, o: &ExportOptions) -> Result<Vec<u8>, String> {
     r.map_err(|e| e.to_string())
 }
 
+/// Parse a shutter speed such as `1/250`, `0.5` or `2"` into seconds.
+fn parse_shutter(s: &str) -> Option<f64> {
+    let s = s.trim().trim_end_matches(['s', '"']).trim();
+    match s.split_once('/') {
+        Some((n, d)) => Some(n.trim().parse::<f64>().ok()? / d.trim().parse::<f64>().ok()?),
+        None => s.parse().ok(),
+    }
+    .filter(|v: &f64| v.is_finite() && *v > 0.0)
+}
+
+/// The metadata to embed for `photo` under `o.metadata` / `o.remove_location`. `None` = embed nothing.
+pub fn export_metadata(photo: &lightcraft_catalog::Photo, o: &ExportOptions) -> Option<Metadata> {
+    let m = &photo.meta;
+    let text = |s: &str| (!s.trim().is_empty()).then(|| s.to_string());
+    let mut out = Metadata { copyright: text(&m.copyright), artist: text(&m.creator), software: Some("LightCraft".into()), ..Default::default() };
+    match o.metadata {
+        MetadataPolicy::None => return None,
+        MetadataPolicy::Copyright => return Some(out),
+        MetadataPolicy::All | MetadataPolicy::AllExceptCamera => {}
+    }
+    out.title = text(&m.title);
+    out.caption = text(&m.caption);
+    out.keywords = m.keywords.clone();
+    out.capture_time = photo.captured.as_deref().and_then(DateTime::parse_iso);
+    out.rating = (photo.rating > 0).then_some(photo.rating as i8);
+    // Pixels are exported upright: orientation is baked in.
+    out.orientation = Some(lightcraft_meta::Orientation::Normal);
+    if !o.remove_location {
+        out.gps = m.gps.map(|(latitude, longitude)| Gps { latitude, longitude, altitude: None });
+    }
+    if o.metadata == MetadataPolicy::All {
+        out.model = text(&m.camera);
+        out.lens_model = text(&m.lens);
+        out.focal_length = m.focal_mm.map(f64::from);
+        out.f_number = m.aperture.map(f64::from);
+        out.exposure_time = parse_shutter(&m.shutter);
+        out.iso = m.iso;
+    }
+    Some(out)
+}
+
 /// One exported file.
 pub struct Exported {
     pub file_name: String,
@@ -226,8 +297,9 @@ pub fn export_photo(session: &mut crate::Session, id: lightcraft_catalog::PhotoI
     let stem = p.file_name.rsplit_once('.').map_or(p.file_name.as_str(), |(a, _)| a).to_string();
     let full = p.width.max(p.height).max(1) as usize;
     let size = o.long_edge.map_or(full, |l| l as usize);
+    let meta = export_metadata(p, o);
     let r = session.render_now(id, size, size)?;
-    let bytes = encode_image(&r.image, o)?;
+    let bytes = encode_with_metadata(&r.image, o, meta.as_ref())?;
     Ok(Exported { file_name: o.file_name(&stem, seq), bytes, width: r.image.width, height: r.image.height })
 }
 
@@ -273,6 +345,32 @@ mod tests {
         }
         output_sharpen(&mut img, SharpenFor::Matte, SharpenAmount::High);
         assert!(img.data[3][0] < 80 && img.data[4][0] > 170);
+    }
+
+    #[test]
+    fn metadata_policies() {
+        use lightcraft_catalog::{Photo, PhotoId, Source};
+        let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.jpg", "jpeg", 10, 10, "2026-09-30T00:00:00");
+        p.meta.camera = "Synthetic X2".into();
+        p.meta.copyright = "(c) Me".into();
+        p.meta.shutter = "1/250".into();
+        p.meta.gps = Some((43.0, -110.0));
+        let all = export_metadata(&p, &ExportOptions::default()).unwrap();
+        assert_eq!(all.model.as_deref(), Some("Synthetic X2"));
+        assert!((all.exposure_time.unwrap() - 0.004).abs() < 1e-9);
+        assert!(all.gps.is_some());
+        let o = ExportOptions { metadata: MetadataPolicy::AllExceptCamera, remove_location: true, ..Default::default() };
+        let m = export_metadata(&p, &o).unwrap();
+        assert!(m.model.is_none() && m.gps.is_none() && m.copyright.is_some());
+        let c = export_metadata(&p, &ExportOptions { metadata: MetadataPolicy::Copyright, ..Default::default() }).unwrap();
+        assert!(c.model.is_none() && c.gps.is_none() && c.copyright.as_deref() == Some("(c) Me"));
+        assert!(export_metadata(&p, &ExportOptions { metadata: MetadataPolicy::None, ..Default::default() }).is_none());
+        // embedded and readable back from the JPEG
+        let jpg = encode_with_metadata(&test_image(), &ExportOptions::default(), Some(&all)).unwrap();
+        let back = lightcraft_meta::extract(&jpg);
+        assert_eq!(back.model.as_deref(), Some("Synthetic X2"));
+        assert_eq!(back.copyright.as_deref(), Some("(c) Me"));
+        assert!(back.gps.is_some());
     }
 
     #[test]

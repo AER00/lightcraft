@@ -94,6 +94,21 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         });
                     }
                     ui.horizontal(|ui| {
+                        use lightcraft_engine::export::MetadataPolicy as M;
+                        ui.label("Metadata");
+                        for (v, l) in
+                            [(M::All, "All"), (M::AllExceptCamera, "All except camera"), (M::Copyright, "Copyright only"), (M::None, "None")]
+                        {
+                            ui.selectable_value(&mut opts.metadata, v, l);
+                        }
+                    });
+                    if !matches!(
+                        opts.metadata,
+                        lightcraft_engine::export::MetadataPolicy::None | lightcraft_engine::export::MetadataPolicy::Copyright
+                    ) {
+                        ui.checkbox(&mut opts.remove_location, "Remove location info");
+                    }
+                    ui.horizontal(|ui| {
                         ui.label("File name");
                         ui.add(egui::TextEdit::singleline(&mut opts.naming).hint_text("{name}-{seq}").desired_width(f32::INFINITY));
                     });
@@ -170,6 +185,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             json!({
                 "format": opts.format, "quality": opts.quality, "longEdge": long_edge, "limitKb": limit_kb,
                 "sharpen": opts.sharpen, "sharpenAmount": opts.sharpen_amount, "naming": opts.naming, "dir": dir,
+                "metadata": opts.metadata, "removeLocation": opts.remove_location,
             }),
         ),
         Dialog::About | Dialog::Shortcuts => Ok(serde_json::Value::Null),

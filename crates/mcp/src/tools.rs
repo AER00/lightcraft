@@ -185,7 +185,9 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
                 "limitKb": {"type": "integer", "description": "JPEG: largest quality that fits this many KB"},
                 "sharpen": {"type": "string", "enum": ["none", "screen", "matte", "glossy"]},
                 "sharpenAmount": {"type": "string", "enum": ["low", "standard", "high"]},
-                "naming": {"type": "string", "description": "e.g. {name}-{seq}"}
+                "naming": {"type": "string", "description": "e.g. {name}-{seq}"},
+                "metadata": {"type": "string", "enum": ["all", "allExceptCamera", "copyright", "none"]},
+                "removeLocation": {"type": "boolean"}
             }),
             &[],
         ),
@@ -515,7 +517,23 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
             exec(
                 b,
                 "app.export",
-                obj(args, &["ids", "path", "dir", "format", "longEdge", "quality", "limitKb", "sharpen", "sharpenAmount", "naming"]),
+                obj(
+                    args,
+                    &[
+                        "ids",
+                        "path",
+                        "dir",
+                        "format",
+                        "longEdge",
+                        "quality",
+                        "limitKb",
+                        "sharpen",
+                        "sharpenAmount",
+                        "naming",
+                        "metadata",
+                        "removeLocation",
+                    ],
+                ),
             )
         })),
         "screenshot" => screenshot(b, args),
