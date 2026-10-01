@@ -80,3 +80,14 @@ Values pass through our control specs, so anything outside our slider ranges get
 
 **Not mapped:** camera profiles and looks (`CameraProfile`, `Look`; we have our own profile set), local adjustments
 (masks, gradients, brushes), spot removal, red eye, lens blur, process-version 2010 field names, and AI features.
+
+## Preset files
+
+| | |
+|---|---|
+| Ours: `.lcpreset` | JSON `{"format": "lightcraft.preset", "version": 1, "presets": [{id, name, group, settings}]}`, where `settings` is a partial develop-settings object (only the groups the preset includes). A file can hold one preset or many, and every preset keeps its group. Import also accepts a bare preset object or an array of them. |
+| Export | `preset.export {path, ids?, group?}`: all user presets by default, or the given ids or one group. In the app: File ▸ Export Presets…, Presets panel ▸ ⋯ ▸ Export User Presets…, or right-click a group ▸ Export Group…. |
+| Import | `preset.import {paths}`: files or folders (recursive), `.lcpreset` and `.xmp`. In the app: File ▸ Import Presets…, or Presets panel ▸ ⋯ ▸ Import Presets…. A preset that's already there (same name, group and settings) is skipped. If an id clashes, the import gets a fresh `user.*` id, and built-in presets are never replaced. |
+| XMP presets | Read with the `crs:` table above, with `crs:Name` as the name (falling back to the file name) and `crs:Group` as the group (falling back to "Imported Presets"). Only the fields the preset sets are included, so applying it leaves everything else alone and the Amount slider scales it like any other preset. We only read XMP presets; we don't write them. |
+
+LightCraft ships no third-party presets. Its built-in presets are its own values (`crates/engine/src/presets.rs`).

@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use lightcraft_develop::MIXER_BANDS;
+use lightcraft_develop::{MIXER_BANDS, Preset};
 use serde_json::{Map, Value, json};
 
 /// Properties keyed `prefix:name` (as produced by [`lightcraft_meta::parse_xmp`]).
@@ -300,6 +300,22 @@ pub fn to_partial(props: &Props, raw: Option<bool>) -> Value {
     out
 }
 
+/// Read an XMP preset (`crs:` fields + `crs:Name` / `crs:Group`) into one of our presets.
+/// Returns `None` when the packet has no adjustments we understand.
+pub fn preset_from_xmp(xmp: &str, fallback_name: &str) -> Option<Preset> {
+    let d = lightcraft_meta::parse_xmp(xmp).ok()?;
+    let props = &d.properties;
+    let settings = to_partial(props, None);
+    if settings.as_object().is_none_or(Map::is_empty) {
+        return None;
+    }
+    let name = first(props, "crs:Name").unwrap_or(fallback_name).to_string();
+    let group = first(props, "crs:Group").unwrap_or("Imported Presets").to_string();
+    let uuid = first(props, "crs:UUID").map(|u| u.to_ascii_lowercase());
+    let id = format!("user.xmp.{}", uuid.unwrap_or_else(|| crate::presets::slug(&format!("{group}-{name}"))));
+    Some(Preset { id, name, group, settings, favorite: false, builtin: false })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,5 +426,21 @@ mod tests {
         let bookkeeping = r#"<rdf:Description xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
              xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Version="1" crs:HasSettings="True"/>"#;
         assert!(!has_adjustments(&props(bookkeeping)));
+    }
+
+    #[test]
+    fn xmp_preset_with_name_and_group() {
+        // Written for this test: a minimal preset-shaped packet with localized name/group.
+        let x = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+             crs:PresetType="Normal" crs:UUID="0123ABCD" crs:Contrast2012="+25" crs:SupportsAmount="True">
+            <crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Punchy Test</rdf:li></rdf:Alt></crs:Name>
+            <crs:Group><rdf:Alt><rdf:li xml:lang="x-default">My Looks</rdf:li></rdf:Alt></crs:Group>
+          </rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        let p = preset_from_xmp(x, "file").unwrap();
+        assert_eq!((p.name.as_str(), p.group.as_str(), p.id.as_str()), ("Punchy Test", "My Looks", "user.xmp.0123abcd"));
+        assert_eq!(p.settings, json!({"light": {"contrast": 25.0}}));
+        assert!(!p.builtin);
+        assert!(preset_from_xmp("<x/>", "f").is_none());
     }
 }

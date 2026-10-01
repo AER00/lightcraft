@@ -1,8 +1,140 @@
-//! Built-in presets and profiles. All values are our own (no third-party preset content).
+//! Built-in presets and profiles (all values are our own; no third-party preset content), and
+//! preset files: our `.lcpreset` JSON (import + export, groups preserved) and XMP presets
+//! (`crs:` fields, read only — see [`crate::crs`]).
+
+use std::path::Path;
 
 use lightcraft_develop::Preset;
-use serde::Serialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+use crate::Session;
+
+/// File extension of LightCraft preset files.
+pub const LCPRESET_EXT: &str = "lcpreset";
+/// The `format` tag of a `.lcpreset` file.
+pub const LCPRESET_FORMAT: &str = "lightcraft.preset";
+
+/// A `.lcpreset` file: one or more presets with their groups.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PresetFile {
+    pub format: String,
+    pub version: u32,
+    pub presets: Vec<Preset>,
+}
+
+/// Lower-case ASCII slug for ids (`"Warm & Soft"` → `warm-soft`).
+pub fn slug(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.ends_with('-') && !out.is_empty() {
+            out.push('-');
+        }
+    }
+    let out = out.trim_end_matches('-').to_string();
+    if out.is_empty() { "preset".into() } else { out }
+}
+
+/// Serialise presets as a `.lcpreset` file (favourite/built-in flags are not exported).
+pub fn to_lcpreset(presets: &[Preset]) -> String {
+    let presets = presets.iter().map(|p| Preset { favorite: false, builtin: false, ..p.clone() }).collect();
+    serde_json::to_string_pretty(&PresetFile { format: LCPRESET_FORMAT.into(), version: 1, presets }).unwrap_or_default()
+}
+
+/// Read a preset file by name: `.lcpreset` (a [`PresetFile`], a bare preset object or an array of
+/// presets) or `.xmp` (a `crs:` preset).
+pub fn parse_preset_file(name: &str, bytes: &[u8]) -> Result<Vec<Preset>, String> {
+    let stem = Path::new(name).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Preset".into());
+    let ext = Path::new(name).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.trim_start_matches('\u{feff}');
+    if ext == "xmp" || (ext != LCPRESET_EXT && text.trim_start().starts_with('<')) {
+        return crate::crs::preset_from_xmp(text, &stem).map(|p| vec![p]).ok_or_else(|| "no develop settings in this XMP file".into());
+    }
+    let v: Value = serde_json::from_str(text).map_err(|e| format!("not a preset file: {e}"))?;
+    let list = match &v {
+        Value::Object(o) if o.contains_key("presets") => {
+            let f: PresetFile = serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
+            if f.format != LCPRESET_FORMAT {
+                return Err(format!("unknown preset format `{}`", f.format));
+            }
+            f.presets
+        }
+        Value::Array(_) => serde_json::from_value(v).map_err(|e| e.to_string())?,
+        _ => vec![serde_json::from_value(v).map_err(|e| e.to_string())?],
+    };
+    let mut out = Vec::new();
+    for mut p in list {
+        if !p.settings.is_object() {
+            return Err(format!("preset `{}` has no settings object", p.name));
+        }
+        p.builtin = false;
+        p.favorite = false;
+        if p.name.trim().is_empty() {
+            p.name = stem.clone();
+        }
+        if p.group.trim().is_empty() {
+            p.group = "Imported Presets".into();
+        }
+        out.push(p);
+    }
+    Ok(out)
+}
+
+/// Expand files/folders (recursively) into preset files (`.lcpreset`, `.xmp`).
+pub fn expand_preset_paths(paths: &[String]) -> Vec<String> {
+    fn walk(p: &Path, out: &mut Vec<String>, top: bool) {
+        if p.is_dir() {
+            let Ok(rd) = std::fs::read_dir(p) else { return };
+            let mut v: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+            v.sort();
+            for c in v {
+                if !c.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
+                    walk(&c, out, false);
+                }
+            }
+        } else {
+            let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+            if top || ext == LCPRESET_EXT || ext == "xmp" {
+                out.push(p.to_string_lossy().to_string());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for p in paths {
+        walk(Path::new(p), &mut out, true);
+    }
+    out
+}
+
+impl Session {
+    /// Add imported presets. Identical presets (same name, group and settings) already present are
+    /// skipped; id clashes get a fresh id. Returns the ids added.
+    pub fn add_presets(&mut self, presets: Vec<Preset>) -> Vec<String> {
+        let mut added = Vec::new();
+        for mut p in presets {
+            if self.presets.iter().any(|q| q.name == p.name && q.group == p.group && q.settings == p.settings) {
+                continue;
+            }
+            if p.id.trim().is_empty() || p.id.starts_with("lc.") || self.presets.iter().any(|q| q.id == p.id) {
+                let base = format!("user.{}", slug(&format!("{}-{}", p.group, p.name)));
+                let mut id = base.clone();
+                let mut n = 2;
+                while self.presets.iter().any(|q| q.id == id) {
+                    id = format!("{base}-{n}");
+                    n += 1;
+                }
+                p.id = id;
+            }
+            p.builtin = false;
+            added.push(p.id.clone());
+            self.presets.push(p);
+        }
+        added
+    }
+}
 
 fn p(group: &str, id: &str, name: &str, settings: serde_json::Value) -> Preset {
     Preset { id: format!("lc.{id}"), name: name.into(), group: group.into(), settings, favorite: false, builtin: true }
@@ -146,5 +278,95 @@ mod tests {
             let out = pr.apply(&base, 1.0);
             assert_ne!(out, base, "{} had no effect", pr.id);
         }
+    }
+
+    #[test]
+    fn slugs() {
+        assert_eq!(slug("Warm & Soft!"), "warm-soft");
+        assert_eq!(slug("  "), "preset");
+        assert_eq!(slug("B&W/Film 2"), "b-w-film-2");
+    }
+
+    fn dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("lc-presets-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn lcpreset_export_import_roundtrip_keeps_groups() {
+        let d = dir("rt");
+        let mut s = Session::with_demo();
+        s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.6})).unwrap();
+        s.execute("preset.create", &json!({"name": "Bright", "group": "Travel"})).unwrap();
+        s.execute("develop.set", &json!({"control": "effects.clarity", "value": 30})).unwrap();
+        s.execute("preset.create", &json!({"name": "Crisp", "group": "Street"})).unwrap();
+        let mine: Vec<Preset> = s.presets.iter().filter(|p| !p.builtin).cloned().collect();
+        assert_eq!(mine.len(), 2);
+        let path = d.join("mine");
+        let r = s.execute("preset.export", &json!({"path": path.to_string_lossy()})).unwrap();
+        assert_eq!(r["count"], 2);
+        let file = d.join("mine.lcpreset");
+        assert!(file.is_file());
+        let one = d.join("travel.lcpreset");
+        s.execute("preset.export", &json!({"path": one.to_string_lossy(), "group": "Travel"})).unwrap();
+        assert!(s.execute("preset.export", &json!({"path": one.to_string_lossy(), "group": "Nope"})).is_err());
+
+        // a fresh session imports both files from the folder; the duplicate is skipped
+        let mut t = Session::new();
+        let r = t.execute("preset.import", &json!({"paths": [d.to_string_lossy()]})).unwrap();
+        assert_eq!(r["imported"].as_array().unwrap().len(), 2, "{r}");
+        assert_eq!(r["skipped"], 1, "{r}");
+        for p in &mine {
+            let q = t.presets.iter().find(|q| q.name == p.name).unwrap();
+            assert_eq!((&q.group, &q.settings, q.builtin), (&p.group, &p.settings, false));
+        }
+        // importing into the session that has them: everything is skipped, nothing duplicated
+        let n = s.presets.len();
+        let r = s.execute("preset.import", &json!({"paths": [file.to_string_lossy()]})).unwrap();
+        assert_eq!((r["skipped"].as_u64(), s.presets.len()), (Some(2), n));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn id_clashes_get_fresh_ids_and_bad_files_are_reported() {
+        let d = dir("clash");
+        let builtin = builtin().remove(0);
+        let mut clash = builtin.clone();
+        clash.settings = json!({"light": {"exposure": 1.0}});
+        std::fs::write(d.join("a.lcpreset"), serde_json::to_string(&clash).unwrap()).unwrap();
+        std::fs::write(d.join("b.lcpreset"), "{not json").unwrap();
+        std::fs::write(d.join("c.lcpreset"), r#"{"format": "other", "version": 1, "presets": []}"#).unwrap();
+        std::fs::write(d.join("notes.txt"), "ignored inside folders").unwrap();
+        let mut s = Session::new();
+        let r = s.execute("preset.import", &json!({"paths": [d.to_string_lossy()]})).unwrap();
+        assert_eq!(r["failed"].as_array().unwrap().len(), 2, "{r}");
+        let id = r["imported"][0]["id"].as_str().unwrap();
+        assert_ne!(id, builtin.id);
+        assert!(id.starts_with("user."));
+        assert!(s.presets.iter().find(|p| p.id == builtin.id).unwrap().builtin, "built-in untouched");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn xmp_preset_file_imports_and_applies() {
+        let d = dir("xmp");
+        // Hand-written for this test (not a third-party preset).
+        let x = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+            crs:PresetType="Normal" crs:Exposure2012="+0.30" crs:Shadows2012="+20" crs:GrainAmount="12">
+            <crs:Group><rdf:Alt><rdf:li xml:lang="x-default">Test Group</rdf:li></rdf:Alt></crs:Group>
+          </rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        std::fs::write(d.join("Soft Lift.xmp"), x).unwrap();
+        let mut s = Session::with_demo();
+        let r = s.execute("preset.import", &json!({"paths": [d.join("Soft Lift.xmp").to_string_lossy()]})).unwrap();
+        let id = r["imported"][0]["id"].as_str().unwrap().to_string();
+        assert_eq!(r["imported"][0]["name"], "Soft Lift", "file name when crs:Name is missing");
+        assert_eq!(r["imported"][0]["group"], "Test Group");
+        s.execute("preset.apply", &json!({"id": id})).unwrap();
+        let dv = s.develop_of(s.active().unwrap()).unwrap();
+        assert_eq!((dv.light.exposure, dv.light.shadows, dv.grain.amount), (0.3, 20.0, 12.0));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

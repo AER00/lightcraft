@@ -56,6 +56,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.copySettings", "Choose Edit Settings to Copy…", Some("Cmd+Shift+C"), "Photo"),
     ("dialog.export", "Export…", Some("Cmd+Shift+E"), "File"),
     ("file.addPhotos", "Add Photos…", Some("Cmd+Shift+I"), "File"),
+    ("file.importPresets", "Import Presets…", None, "File"),
+    ("file.exportPresets", "Export Presets…", None, "File"),
     ("app.about", "About LightCraft", None, "LightCraft"),
     ("app.shortcuts", "Keyboard Shortcuts", Some("Cmd+/"), "Help"),
     ("app.export", "Export Now", None, ""),
@@ -297,6 +299,59 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             return Some(app.session.execute("library.import", &json!({"paths": paths})).map_err(|e| e.to_string()));
         }
+        "file.importPresets" => {
+            let paths = match p.get("paths").and_then(Value::as_array) {
+                Some(a) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+                None => match app.services.pick_preset_files.as_mut() {
+                    Some(f) => f(),
+                    None => return Some(Err("no file dialog on this platform".into())),
+                },
+            };
+            if paths.is_empty() {
+                return Some(Ok(Value::Null));
+            }
+            let r = app.session.execute("preset.import", &json!({"paths": paths})).map_err(|e| e.to_string());
+            if let Ok(v) = &r {
+                let n = v["imported"].as_array().map_or(0, Vec::len);
+                let failed = v["failed"].as_array().map_or(0, Vec::len);
+                let msg = match (n, failed) {
+                    (0, 0) => "No new presets".to_string(),
+                    (n, 0) => format!("Imported {n} preset{}", if n == 1 { "" } else { "s" }),
+                    (n, f) => format!("Imported {n} preset{}, {f} file{} not readable", if n == 1 { "" } else { "s" }, if f == 1 { "" } else { "s" }),
+                };
+                app.toast(&ctx, msg);
+                if n > 0 {
+                    app.ui.presets = true;
+                }
+            }
+            return Some(r);
+        }
+        "file.exportPresets" => {
+            let group = p.get("group").and_then(Value::as_str).map(str::to_string);
+            let path = match p.get("path").and_then(Value::as_str) {
+                Some(x) => Some(x.to_string()),
+                None => {
+                    let name = format!("{}.lcpreset", group.as_deref().unwrap_or("LightCraft Presets"));
+                    match app.services.save_preset_file.as_mut() {
+                        Some(f) => f(&name),
+                        None => return Some(Err("no file dialog on this platform".into())),
+                    }
+                }
+            };
+            let Some(path) = path else { return Some(Ok(Value::Null)) };
+            let mut params = json!({"path": path});
+            if let Some(g) = group {
+                params["group"] = json!(g);
+            }
+            if let Some(ids) = p.get("ids") {
+                params["ids"] = ids.clone();
+            }
+            let r = app.session.execute("preset.export", &params).map_err(|e| e.to_string());
+            if let Ok(v) = &r {
+                app.toast(&ctx, format!("Exported {} preset{}", v["count"], if v["count"] == 1 { "" } else { "s" }));
+            }
+            return Some(r);
+        }
         "app.export" => crate::control::export_active(app, p),
         _ => return None,
     };
@@ -307,6 +362,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
     match id {
         s if s.starts_with("panel.") || s.starts_with("tool.") || s.starts_with("section.") => app.session.active().is_some() || s == "panel.close",
         "app.export" | "dialog.export" | "dialog.createPreset" | "dialog.copySettings" => app.session.active().is_some(),
+        "file.exportPresets" => app.session.presets.iter().any(|p| !p.builtin),
         _ => true,
     }
 }

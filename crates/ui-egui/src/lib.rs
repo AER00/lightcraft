@@ -24,6 +24,8 @@ pub use control::{ControlRequest, ControlResponse};
 pub use state::UiState;
 
 pub type PickFiles = Box<dyn FnMut() -> Vec<String>>;
+/// A save dialog: suggested file name → chosen path (`None` = cancelled).
+pub type SaveFile = Box<dyn FnMut(&str) -> Option<String>>;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
 pub type PngEncode = Box<dyn Fn(&lightcraft_raster::Rgba8) -> Vec<u8>>;
 
@@ -32,6 +34,10 @@ pub type PngEncode = Box<dyn Fn(&lightcraft_raster::Rgba8) -> Vec<u8>>;
 pub struct Services {
     /// Show an open dialog for photos; returns paths.
     pub pick_files: Option<PickFiles>,
+    /// Open dialog for preset files (`.lcpreset`, `.xmp`).
+    pub pick_preset_files: Option<PickFiles>,
+    /// Save dialog for an exported `.lcpreset` file.
+    pub save_preset_file: Option<SaveFile>,
     pub write: Option<WriteFn>,
     /// PNG encoder (the host links an image encoder; the UI crate stays codec-free).
     pub png: Option<PngEncode>,
