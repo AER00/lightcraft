@@ -23,6 +23,7 @@ pub mod geometry;
 mod local;
 pub mod masks;
 pub mod profiles;
+pub mod spots;
 mod tone;
 
 use lightcraft_develop::{DevelopSettings, Treatment};
@@ -113,7 +114,8 @@ pub fn render(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &Render
     let px_per_long = frame.px_per_long(w);
 
     local::scene_linear_pre(&mut img, info, s);
-    lap("wb/exposure", &mut t);
+    spots::apply(&mut img, &s.spots, &frame, px_per_long);
+    lap("wb/exposure/spots", &mut t);
     let prep = local::prepare(img, s, &frame, px_per_long, req.quality);
     lap("prepare", &mut t);
     let image = finish::finish(&prep, s, &frame, info);
