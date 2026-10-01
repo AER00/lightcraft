@@ -2025,6 +2025,7 @@ dependencies = [
  "lightcraft-engine",
  "lightcraft-mcp",
  "lightcraft-raster",
+ "lightcraft-ui-egui",
  "serde_json",
 ]
 

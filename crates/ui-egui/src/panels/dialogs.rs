@@ -11,7 +11,11 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let Some(mut dlg) = app.ui.dialog.clone() else { return };
     let t = Tokens::get(ctx);
     let screen = ctx.content_rect();
-    ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("dim"))).rect_filled(screen, 0.0, egui::Color32::from_black_alpha(140));
+    // The backdrop is an area below the dialog window (a bare `Middle` layer painter would be
+    // painted after every area — i.e. over the dialog too).
+    egui::Area::new(egui::Id::new("dialog-dim")).order(egui::Order::Middle).fixed_pos(screen.min).interactable(false).show(ctx, |ui| {
+        ui.painter().rect_filled(screen, 0.0, egui::Color32::from_black_alpha(140));
+    });
     let mut close = false;
     let mut confirm = false;
     let title = match &dlg {
@@ -24,9 +28,14 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::About => "About LightCraft",
         Dialog::Shortcuts => "Keyboard Shortcuts",
     };
-    egui::Window::new(title).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).default_width(380.0).show(
-        ctx,
-        |ui| {
+    let frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::symmetric(16, 12));
+    let shown = egui::Window::new(title)
+        .collapsible(false)
+        .resizable(false)
+        .frame(frame)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .default_width(380.0)
+        .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             match &mut dlg {
                 Dialog::NewAlbum { name, .. } | Dialog::RenameAlbum { name, .. } => {
@@ -177,8 +186,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     }
                 }
             });
-        },
-    );
+        });
+    if let Some(w) = shown {
+        ctx.move_to_top(w.response.layer_id);
+    }
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         close = true;
     }

@@ -16,8 +16,7 @@ workspace = true
 [dependencies]
 lightcraft-engine = { workspace = true }
 lightcraft-mcp = { workspace = true }
-serde_json = { workspace = true }
-
-[dev-dependencies]
+lightcraft-ui-egui = { workspace = true }
 lightcraft-codecs = { workspace = true }
 lightcraft-raster = { workspace = true }
+serde_json = { workspace = true }

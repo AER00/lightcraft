@@ -12,7 +12,7 @@
 //!   image coordinates (brush strokes, crop handles…) — mapped to screen and injected as real input
 //! - `ui.key {key, shift?, alt?, cmd?}` / `ui.text {text}` / `ui.scroll {dx, dy}`
 //! - `ui.set {view?, panel?, filmstrip?, leftPanel?, zoom?, …}` / `ui.dialog.confirm|cancel`
-//! - `ui.screenshot {path?}`, `ui.resize {width, height}`, `ui.render {id?, size?, path?}`, `app.quit`
+//! - `ui.screenshot {path?, headless?}` (headless: CPU-rendered, no compositor needed), `ui.resize {width, height}`, `ui.render {id?, size?, path?}`, `app.quit`
 
 use std::sync::mpsc::Sender;
 
@@ -37,7 +37,7 @@ impl ControlRequest {
 
 pub enum Outcome {
     Done(Value),
-    Screenshot { path: Option<String> },
+    Screenshot { path: Option<String>, headless: bool },
 }
 
 fn ok(v: Value) -> Outcome {
@@ -261,7 +261,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
         }
         "ui.screenshot" => {
             ctx.request_repaint();
-            Outcome::Screenshot { path: s("path").map(str::to_string) }
+            Outcome::Screenshot { path: s("path").map(str::to_string), headless: p.get("headless").and_then(Value::as_bool).unwrap_or(false) }
         }
         "ui.render" => {
             let id = p.get("id").and_then(Value::as_u64).map(lightcraft_catalog::PhotoId).or(app.session.active());
