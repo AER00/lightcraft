@@ -88,6 +88,43 @@ fn main() {
     let n: usize = std::env::var("N").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
     let only = std::env::var("ONLY").unwrap_or_default();
     let run = |name: &str| only.is_empty() || only.split(',').any(|o| name.contains(o));
+    if only == "source" {
+        // opening a photo: where the time goes before the first sharp loupe (per file)
+        for path in &args {
+            let bytes = std::fs::read(path).expect("read");
+            println!("{path}");
+            let raw = lightcraft_raw::decode(&bytes).expect("decode");
+            println!("  {}×{} cpp {} cfa {:?}", raw.width, raw.height, raw.cpp, raw.cfa.as_ref().map(|c| c.name()));
+            println!("  {:<36} {}", "raw decode:", best(n, || drop(lightcraft_raw::decode(&bytes).expect("decode"))));
+            println!("  {:<36} {}", "normalize:", best(n, || drop(raw.normalized().expect("norm"))));
+            let norm = raw.normalized().expect("norm");
+            println!("  {:<36} {}", "demosaic AHD:", best(n, || drop(lightcraft_raw::demosaic(&norm, lightcraft_raw::Method::Ahd))));
+            if let Some(k) = lightcraft_engine::files::bin_factor(&raw, 2560) {
+                println!("  {:<36} {}", format!("binned ×{k} (2560 preview):"), best(n, || drop(raw.develop_binned(k, 0.99))));
+                let img = raw.develop_binned(k, 0.99).expect("bin").expect("binnable");
+                let t = lightcraft_raw::color::camera_transform(&raw, lightcraft_raw::color::as_shot_white_xy(&raw));
+                println!(
+                    "  {:<36} {}",
+                    "highlight reconstruct (binned):",
+                    best(n, || {
+                        let mut i = img.clone();
+                        lightcraft_raw::highlight::reconstruct(&mut i, t.wb, 0.99);
+                    })
+                );
+                println!("  {:<36} {}", "clone (binned):", best(n, || drop(img.clone())));
+                println!("  {:<36} {}", "fit 2560 (binned):", best(n, || drop(fit(&img, 2560, 2560, Filter::Box))));
+            }
+            println!("  {:<36} {}", "embedded preview (2560):", best(n, || drop(lightcraft_engine::files::load_embedded_preview(&bytes, 2560))));
+            for edge in [512usize, 2560, usize::MAX] {
+                println!(
+                    "  {:<36} {}",
+                    format!("load_bytes({edge}):"),
+                    best(n, || drop(lightcraft_engine::files::load_bytes(&bytes, edge).expect("load")))
+                );
+            }
+        }
+        return;
+    }
     let (full, info) = match args.first() {
         Some(path) => {
             let bytes = std::fs::read(path).expect("read");

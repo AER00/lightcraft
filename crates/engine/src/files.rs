@@ -167,8 +167,29 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
     })
 }
 
+/// Sensor clip level (normalised) for highlight reconstruction.
+const HIGHLIGHT_CLIP: f32 = 0.99;
+
+/// The largest block size to bin a raw's mosaic by for a source of at most `max_edge` pixels:
+/// the binned image must keep at least 90 % of `max_edge` (a 16 MP sensor still bins 2× for the
+/// 2560 px preview). `None` = demosaic at full size.
+pub fn bin_factor(raw: &lightcraft_raw::RawImage, max_edge: usize) -> Option<usize> {
+    let c = raw.crop.clipped(raw.active_area.width, raw.active_area.height);
+    let long = if c.width > 1 && c.height > 1 { c.width.max(c.height) } else { raw.active_area.width.max(raw.active_area.height) };
+    let need = max_edge.saturating_mul(9) / 10;
+    [8usize, 6, 4, 3, 2].into_iter().find(|&k| long / k >= need.max(1) && raw.can_bin(k))
+}
+
 /// Decode a file into a linear Rec.2020 image no larger than `max_edge`, oriented.
+///
+/// Runs on a rayon worker: its many short parallel loops then start on the worker's own queue
+/// instead of each one waking the pool from outside and waiting for it (which costs more than the
+/// loops themselves when the machine is busy).
 pub fn load_bytes(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
+    rayon::scope(|_| load_bytes_now(bytes, max_edge))
+}
+
+fn load_bytes_now(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
     if lightcraft_raw::probe(bytes).is_some() {
         let mut raw = match lightcraft_raw::decode(bytes) {
             Ok(r) => r,
@@ -181,11 +202,26 @@ pub fn load_bytes(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo),
         // Embedded lens corrections are applied by the pipeline ("Enable Profile Corrections"), not baked in.
         let lens = embedded_lens(&raw);
         raw.opcodes.list3.retain(|op| !is_lens_opcode(op));
-        let method = if max_edge <= 600 { lightcraft_raw::Method::Bilinear } else { lightcraft_raw::Method::Ahd };
-        let mut img = raw.develop(method).map_err(|e| e.to_string())?;
+        // Previews and thumbnails bin the mosaic straight to (about) the size they need; only
+        // larger levels (exports, 1:1) demosaic the whole sensor.
+        let t0 = std::time::Instant::now();
+        let binned = match bin_factor(&raw, max_edge) {
+            Some(k) => raw.develop_binned(k, HIGHLIGHT_CLIP).map_err(|e| e.to_string())?,
+            None => None,
+        };
+        let mut img = match binned {
+            Some(img) => img,
+            None => {
+                let method = if max_edge <= 600 { lightcraft_raw::Method::Bilinear } else { lightcraft_raw::Method::Ahd };
+                raw.develop(method).map_err(|e| e.to_string())?
+            }
+        };
+        let mut stages = vec![("develop", t0.elapsed())];
         let xy = lightcraft_raw::color::as_shot_white_xy(&raw);
         let t = lightcraft_raw::color::camera_transform(&raw, xy);
-        lightcraft_raw::highlight::reconstruct(&mut img, t.wb, 0.99);
+        stages.push(("transform", t0.elapsed()));
+        lightcraft_raw::highlight::reconstruct(&mut img, t.wb, HIGHLIGHT_CLIP);
+        stages.push(("highlights", t0.elapsed()));
         let m = t.matrix.to_f32();
         let gain = 2f32.powf(t.baseline_exposure as f32);
         let wb = t.wb;
@@ -197,7 +233,23 @@ pub fn load_bytes(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo),
                 ((m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2]) * gain).max(0.0),
             ]
         });
-        let img = fit(&img, max_edge, max_edge, Filter::Box).oriented(raw.orientation);
+        stages.push(("colour", t0.elapsed()));
+        let img = fit(&img, max_edge, max_edge, Filter::Box);
+        stages.push(("fit", t0.elapsed()));
+        let img = img.oriented(raw.orientation);
+        stages.push(("orient", t0.elapsed()));
+        if lightcraft_pipeline::profiling() {
+            let mut prev = std::time::Duration::ZERO;
+            let parts: Vec<String> = stages
+                .iter()
+                .map(|(n, t)| {
+                    let d = *t - prev;
+                    prev = *t;
+                    format!("{n} {:.1}", d.as_secs_f64() * 1e3)
+                })
+                .collect();
+            eprintln!("[profile] raw source {}×{} (max {max_edge}, ms after decode): {}", img.width, img.height, parts.join(", "));
+        }
         let (temp, tint) = xy_to_temp_tint(xy);
         return Ok((img, SourceInfo { raw: true, as_shot_temp: temp.round(), as_shot_tint: tint.round(), lens }));
     }

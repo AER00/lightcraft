@@ -5,7 +5,8 @@
 //!   opcode lists, [`Metadata`]); [`embedded_preview`] returns the largest embedded JPEG.
 //! - [`RawImage::normalized`] subtracts black, scales white to 1.0 and crops to the active area (applying DNG
 //!   `OpcodeList1`/`OpcodeList2`); [`demosaic`] turns CFA data into camera-RGB [`Rgb32f`];
-//!   [`RawImage::develop`] does all of it plus `OpcodeList3` and the default crop.
+//!   [`RawImage::develop`] does all of it plus `OpcodeList3` and the default crop; [`RawImage::develop_binned`]
+//!   produces the same at 1/k of the size straight from the mosaic (previews, thumbnails).
 //! - [`color`] implements the DNG colour model (dual-illuminant interpolation, forward matrices, white balance)
 //!   and produces camera → linear Rec.2020 D65 matrices.
 //!
@@ -18,6 +19,7 @@
 //! colour matrix: [`color`] falls back to a documented neutral model. The decoders never panic on malformed input.
 #![forbid(unsafe_code)]
 
+mod binned;
 pub mod color;
 pub mod demosaic;
 mod dng;
