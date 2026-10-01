@@ -35,7 +35,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | L. Presets (PRE) | 1 | 4 | 2 | 1 | 0/2 (0%) | 1/2 (50%) |
 | M. Versions & history (VER) | 3 | 1 | 1 | 0 | 1/1 (100%) | 2/3 (67%) |
 | N. Copy / paste / sync (SYNC) | 4 | 0 | 1 | 0 | 3/3 (100%) | 1/1 (100%) |
-| O. Merge (MERGE) | 0 | 0 | 4 | 0 | — | — |
+| O. Merge (MERGE) | 3 | 0 | 1 | 0 | — | — |
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
@@ -48,7 +48,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 42 | 19 | 24 | 8 | 37/47 (79%) | 3/23 (13%) |
 | Z. Keyboard shortcuts (desktop) | 45 | 16 | 19 | 1 | 39/52 (75%) | 6/23 (26%) |
 | Lightroom Classic extras | 1 | 17 | 61 | 9 | — | 1/21 (5%) |
-| **Total** | 187 | 107 | 206 | 37 | 150/198 (76%) | 34/144 (24%) |
+| **Total** | 190 | 107 | 203 | 37 | 150/198 (76%) | 34/144 (24%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -407,9 +407,9 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-MERGE-HDR | HDR merge | P2 | ⬜ | | |
-| LR-MERGE-PANO | Panorama | P2 | ⬜ | | |
-| LR-MERGE-HDRPANO | HDR panorama | P2 | ⬜ | | |
+| LR-MERGE-HDR | HDR merge | P2 | ✅ | `cmd:merge.hdr`, `cmd:dialog.mergeHdr` | auto align, deghost None–High + overlay, auto settings, float DNG; no Create Stack yet (no stacks), JPEG brackets treated as linear |
+| LR-MERGE-PANO | Panorama | P2 | ✅ | `cmd:merge.panorama`, `cmd:dialog.mergePanorama` | spherical/cylindrical/perspective + auto, boundary warp, auto crop, fill edges (diffusion), DNG; no lens model / 360° wrap |
+| LR-MERGE-HDRPANO | HDR panorama | P2 | ✅ | `cmd:merge.hdrPanorama`, `cmd:dialog.mergeHdrPanorama` | brackets grouped by EXIF |
 | LR-MERGE-HEADLESS | Merge with last settings | P2 | ⬜ | | |
 
 ## P. Enhance (ENH)
