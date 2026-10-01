@@ -152,6 +152,20 @@ fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: boo
     }
 }
 
+const HELP: &str = "\
+lightcraft — photo library + raw developer
+
+USAGE: lightcraft [OPTIONS] [FILES/FOLDERS…]   (files and folders are imported)
+
+OPTIONS:
+  --library DIR    open (or create) this library (default: ~/Pictures/LightCraft Library; env LIGHTCRAFT_LIBRARY)
+  --no-demo        don't seed a new library with the procedural demo photos
+  --memory         throwaway in-memory session (alias --demo); nothing is saved
+  --control PORT   serve the JSON-lines control channel on 127.0.0.1:PORT (env LIGHTCRAFT_CONTROL_PORT;
+                   see docs/control-protocol.md)
+  --version, --help
+";
+
 fn main() -> eframe::Result {
     let mut control_port: Option<u16> = std::env::var("LIGHTCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
     let mut files = Vec::new();
@@ -168,6 +182,14 @@ fn main() -> eframe::Result {
             "--version" => {
                 println!("lightcraft {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
+            }
+            "-h" | "--help" => {
+                print!("{HELP}");
+                return Ok(());
+            }
+            o if o.starts_with("--") => {
+                eprintln!("lightcraft: unknown option `{o}`\n\n{HELP}");
+                std::process::exit(2);
             }
             _ => files.push(a),
         }
