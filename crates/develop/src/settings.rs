@@ -1,7 +1,7 @@
 //! The develop settings schema. Every field has a neutral default; serde uses `#[serde(default)]` so
 //! older/newer files load (unknown fields are ignored, missing fields take defaults).
 
-use lightcraft_geom::{CropGeometry, Orientation, Point};
+use lightcraft_geom::{CropGeometry, Homography, Orientation, Point};
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -493,8 +493,13 @@ pub enum Upright {
 #[serde(default)]
 pub struct Geometry {
     pub upright: Upright,
-    /// Guided Upright guides (normalized image coords), up to 4 line segments.
+    /// Guided Upright guides, up to 4 line segments, in normalized coordinates of the lens-corrected
+    /// (pre-perspective) oriented image.
     pub guides: Vec<(Point, Point)>,
+    /// The automatic Upright correction found by analysis for `upright` (Auto/Level/Vertical/Full), as a
+    /// homography lens-corrected → transformed in centred coordinates (`(p − centre) / (long edge / 2)`).
+    /// Stored so previews and exports use the identical transform; recomputed by `geometry.upright`.
+    pub upright_transform: Option<Homography>,
     pub vertical: f64,
     pub horizontal: f64,
     pub rotate: f64,
@@ -510,6 +515,7 @@ impl Default for Geometry {
         Self {
             upright: Upright::Off,
             guides: Vec::new(),
+            upright_transform: None,
             vertical: 0.0,
             horizontal: 0.0,
             rotate: 0.0,

@@ -223,11 +223,11 @@ impl Frame {
 
 /// The perspective homography of the settings (Upright, then the manual Transform sliders), lens-corrected →
 /// transformed, in centred coordinates.
-pub fn perspective(s: &DevelopSettings, _ow: f64, _oh: f64) -> Homography {
+pub fn perspective(s: &DevelopSettings, ow: f64, oh: f64) -> Homography {
     if !s.section_enabled("geometry") {
         return Homography::IDENTITY;
     }
-    crate::transform::manual(&s.geometry)
+    crate::transform::manual(&s.geometry).mul(&crate::upright::homography(&s.geometry, ow, oh))
 }
 
 /// One resample through the warp: `o2t` maps output px → transformed px, the warp maps those to source px

@@ -28,6 +28,7 @@ pub mod profiles;
 pub mod spots;
 mod tone;
 pub mod transform;
+pub mod upright;
 
 use lightcraft_develop::{DevelopSettings, Treatment};
 use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8, par_rows};
@@ -121,6 +122,7 @@ pub fn render(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &Render
     };
     let mut t = prof.then(std::time::Instant::now);
     let s = &*profiles::effective(s);
+    let s = &*upright::resolve(src, info, s);
     let frame = frame_for(src, info, s, req.apply_crop);
     let (w, h) = frame.fit(req.max_w, req.max_h);
     let mut img = frame.sample(src, w, h);

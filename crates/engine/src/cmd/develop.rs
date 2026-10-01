@@ -1,7 +1,7 @@
 //! Develop commands. All operate on the active photo unless `ids` are given (sync).
 
 use lightcraft_catalog::{Op, PhotoId, Version};
-use lightcraft_develop::{DevelopSettings, Preset, Section, SettingsGroup, Treatment, WbMode, controls};
+use lightcraft_develop::{DevelopSettings, Preset, Section, SettingsGroup, Treatment, Upright, WbMode, controls};
 use lightcraft_geom::{CropGeometry, Point, Rect, crop_fit_angle};
 use serde_json::{Value, json};
 
@@ -382,6 +382,66 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(())
             })
         }),
+        // ---- geometry: Upright
+        cmd!(
+            "geometry.upright",
+            "Upright",
+            [],
+            None,
+            "{mode: off|auto|guided|level|vertical|full} — analyses the photo (line segments → vanishing points) and stores the correction; run again to update after lens changes",
+            has_active,
+            |s, p| {
+                let mode: Upright =
+                    serde_json::from_value(p.get("mode").cloned().unwrap_or(json!("auto"))).map_err(|e| bad("geometry.upright", e.to_string()))?;
+                let id = active(s, "geometry.upright")?;
+                let d = s.develop_of(id).unwrap_or_default();
+                let transform = match mode {
+                    Upright::Off | Upright::Guided => None,
+                    m => {
+                        let src = s.source_now(id, SourceLevel::Preview).map_err(|e| bad("geometry.upright", e))?;
+                        let info = s.catalog.photo(id).map(|p| crate::media::source_info(p)).unwrap_or_default();
+                        Some(lightcraft_pipeline::upright::auto_transform(&src, &info, &d, m))
+                    }
+                };
+                edit(s, "geometry.upright", "Upright", |d| {
+                    d.geometry.upright = mode;
+                    d.geometry.upright_transform = transform;
+                    Ok(())
+                })?;
+                Ok(json!({"mode": mode, "transform": transform}))
+            }
+        ),
+        cmd!(
+            "geometry.guides",
+            "Guided Upright Guides",
+            [],
+            None,
+            "{guides: [[x0,y0,x1,y1], …] (≤ 4, normalized coords of the lens-corrected image), add?: bool (append one guide, dropping the oldest beyond 4)} — switches Upright to Guided",
+            has_active,
+            |s, p| {
+                let parse = |v: &Value| -> Option<(Point, Point)> {
+                    let a: Vec<f64> = v.as_array()?.iter().filter_map(Value::as_f64).collect();
+                    (a.len() == 4 && a.iter().all(|x| x.is_finite())).then(|| (Point::new(a[0], a[1]), Point::new(a[2], a[3])))
+                };
+                let guides: Vec<(Point, Point)> =
+                    p.get("guides").and_then(Value::as_array).map(|a| a.iter().filter_map(parse).collect()).unwrap_or_default();
+                let add = bool_or(p, "add", false);
+                edit(s, "geometry.guides", "Guided Upright", |d| {
+                    if add {
+                        d.geometry.guides.extend(guides);
+                    } else {
+                        d.geometry.guides = guides;
+                    }
+                    let n = d.geometry.guides.len();
+                    if n > 4 {
+                        d.geometry.guides.drain(..n - 4);
+                    }
+                    d.geometry.upright = Upright::Guided;
+                    d.geometry.upright_transform = None;
+                    Ok(())
+                })
+            }
+        ),
         // ---- copy / paste / sync
         cmd!(
             "develop.copy",

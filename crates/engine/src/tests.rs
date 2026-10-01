@@ -166,3 +166,26 @@ fn command_sweep() {
     }
     assert!(s.commands().len() >= 70, "{}", s.commands().len());
 }
+
+#[test]
+fn upright_and_guides_commands() {
+    let mut s = demo();
+    let r = s.execute("geometry.upright", &json!({"mode": "level"})).unwrap();
+    assert_eq!(r["mode"], "level");
+    let d = active_dev(&s);
+    assert_eq!(d.geometry.upright, lightcraft_develop::Upright::Level);
+    assert!(d.geometry.upright_transform.is_some(), "analysis result is stored");
+    s.execute("geometry.upright", &json!({"mode": "off"})).unwrap();
+    assert!(active_dev(&s).geometry.upright_transform.is_none());
+    for i in 0..5 {
+        let x = 0.1 + 0.15 * i as f64;
+        s.execute("geometry.guides", &json!({"guides": [[x, 0.2, x + 0.02, 0.8]], "add": true})).unwrap();
+    }
+    let d = active_dev(&s);
+    assert_eq!(d.geometry.upright, lightcraft_develop::Upright::Guided);
+    assert_eq!(d.geometry.guides.len(), 4, "at most four guides");
+    assert!((d.geometry.guides[0].0.x - 0.25).abs() < 1e-9, "oldest dropped");
+    let id = s.active().unwrap();
+    assert!(s.render_now(id, 160, 160).is_ok());
+    assert!(s.execute("geometry.upright", &json!({"mode": "sideways"})).is_err());
+}

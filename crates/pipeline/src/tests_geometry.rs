@@ -274,3 +274,159 @@ fn transforms_preview_matches_export() {
     let err = mean_abs_diff_downscaled(&small, &big);
     assert!(err < 4.0, "mean abs error {err}");
 }
+
+// ------------------------------------------------------------------------------------------ M4.4 Upright
+
+use crate::upright::{Segment, detect_segments, solve_guided};
+use lightcraft_develop::Upright;
+
+#[test]
+fn segment_detector_finds_known_lines() {
+    // three dark lines at known angles on a light background
+    let lines = [
+        (Point::new(60.0, 40.0), Point::new(80.0, 280.0)),
+        (Point::new(120.0, 300.0), Point::new(420.0, 260.0)),
+        (Point::new(300.0, 30.0), Point::new(440.0, 200.0)),
+    ];
+    let dist = |p: Point, a: Point, b: Point| {
+        let ab = b - a;
+        let t = ((p - a).dot(ab) / ab.dot(ab)).clamp(0.0, 1.0);
+        p.dist(a + ab * t)
+    };
+    let lum = lightcraft_raster::Plane::from_fn(480, 320, |x, y| {
+        let p = Point::new(x as f64 + 0.5, y as f64 + 0.5);
+        let d = lines.iter().map(|(a, b)| dist(p, *a, *b)).fold(f64::MAX, f64::min);
+        (0.15 + 0.7 * ((d - 1.0) / 1.2).clamp(0.0, 1.0)) as f32
+    });
+    let segs = detect_segments(&lum);
+    let l = 240.0;
+    for (a, b) in lines {
+        let want = (b.y - a.y).atan2(b.x - a.x);
+        let len = a.dist(b) / l;
+        let hit = segs.iter().any(|s| {
+            let got = (s.b.y - s.a.y).atan2(s.b.x - s.a.x);
+            let mut d = (got - want).abs() % std::f64::consts::PI;
+            if d > std::f64::consts::FRAC_PI_2 {
+                d = std::f64::consts::PI - d;
+            }
+            d.to_degrees() < 0.7 && s.len() > 0.6 * len
+        });
+        assert!(hit, "line {a:?}–{b:?} not found in {segs:?}");
+    }
+}
+
+/// x of the same dark vertical line at the top, bottom and middle of the output (tracked from the middle).
+fn vertical_line_track(img: &Rgba8, x0: f64) -> Vec<f64> {
+    let mid = line_x(img, img.height / 2 + 7, x0, 14.0);
+    [img.height / 6 + 7, img.height * 5 / 6 - 7].iter().map(|&y| line_x(img, y, mid, 10.0)).chain([mid]).collect()
+}
+
+fn horizontal_line_track(img: &Rgba8, y0: f64) -> Vec<f64> {
+    let mid = line_y(img, img.width / 2 + 7, y0, 14.0);
+    [img.width / 6 + 7, img.width * 5 / 6 - 7].iter().map(|&x| line_y(img, x, mid, 10.0)).chain([mid]).collect()
+}
+
+fn upright_render(src: &Rgb32f, mode: Upright) -> Rgba8 {
+    let mut s = DevelopSettings::default();
+    s.geometry.upright = mode;
+    s.geometry.upright_transform = Some(crate::upright::auto_transform(src, &SourceInfo::default(), &s, mode));
+    render(src, &SourceInfo::default(), &s, &RenderRequest::fit(src.width, src.height)).image
+}
+
+#[test]
+fn upright_vertical_fixes_converging_verticals() {
+    let (w, h) = (720usize, 480usize);
+    // "shot from below" and slightly rolled: the inverse of what the correction should do
+    let shot = lightcraft_develop::Geometry { vertical: 35.0, rotate: -2.0, ..Default::default() };
+    let src = keystoned_grid(w, h, crate::transform::manual(&shot), 48.0);
+    let raw = render(&src, &SourceInfo::default(), &DevelopSettings::default(), &RenderRequest::fit(w, h)).image;
+    let before = vertical_line_track(&raw, 130.0);
+    assert!(spread(&before) > 6.0, "source verticals converge: {before:?}");
+    for mode in [Upright::Vertical, Upright::Auto, Upright::Full] {
+        let img = upright_render(&src, mode);
+        for x0 in [130.0, 360.0, 590.0] {
+            let t = vertical_line_track(&img, x0);
+            assert!(spread(&t) < 1.2, "{mode:?}: line near {x0} at {t:?}");
+        }
+        let t = horizontal_line_track(&img, 240.0);
+        assert!(spread(&t) < 1.5, "{mode:?}: horizontals stay level: {t:?}");
+    }
+}
+
+#[test]
+fn upright_level_straightens_a_tilted_horizon() {
+    let (w, h) = (720usize, 480usize);
+    let shot = lightcraft_develop::Geometry { rotate: 3.5, ..Default::default() };
+    let src = keystoned_grid(w, h, crate::transform::manual(&shot), 48.0);
+    let img = upright_render(&src, Upright::Level);
+    for y0 in [120.0, 240.0, 360.0] {
+        let t = horizontal_line_track(&img, y0);
+        assert!(spread(&t) < 1.2, "line near {y0} at {t:?}");
+    }
+}
+
+#[test]
+fn upright_full_fixes_both_families() {
+    let (w, h) = (720usize, 480usize);
+    let shot = lightcraft_develop::Geometry { vertical: 25.0, horizontal: -25.0, ..Default::default() };
+    let src = keystoned_grid(w, h, crate::transform::manual(&shot), 48.0);
+    let img = upright_render(&src, Upright::Full);
+    for x0 in [200.0, 360.0, 520.0] {
+        let t = vertical_line_track(&img, x0);
+        assert!(spread(&t) < 1.5, "vertical near {x0}: {t:?}");
+    }
+    for y0 in [150.0, 330.0] {
+        let t = horizontal_line_track(&img, y0);
+        assert!(spread(&t) < 1.5, "horizontal near {y0}: {t:?}");
+    }
+}
+
+#[test]
+fn guided_upright_from_two_vertical_guides() {
+    let (w, h) = (720usize, 480usize);
+    let shot = lightcraft_develop::Geometry { vertical: 30.0, ..Default::default() };
+    let fwd = crate::transform::manual(&shot);
+    let src = keystoned_grid(w, h, fwd, 48.0);
+    // guides drawn along two building edges: straight lines of the "true" image, seen through fwd⁻¹
+    let inv = fwd.inverse().unwrap();
+    let l = 360.0;
+    let norm = |p: Point| {
+        let q = inv.apply(p);
+        Point::new((q.x * l + 360.0) / 720.0, (q.y * l + 240.0) / 480.0)
+    };
+    let mut s = DevelopSettings::default();
+    s.geometry.upright = Upright::Guided;
+    s.geometry.guides =
+        vec![(norm(Point::new(-0.5, -0.5)), norm(Point::new(-0.5, 0.5))), (norm(Point::new(0.55, -0.4)), norm(Point::new(0.55, 0.5)))];
+    let img = render(&src, &SourceInfo::default(), &s, &RenderRequest::fit(w, h)).image;
+    for x0 in [180.0, 360.0, 540.0] {
+        let t = vertical_line_track(&img, x0);
+        assert!(spread(&t) < 1.2, "guided: line near {x0} at {t:?}");
+    }
+    // a single guide only levels (rotation): it becomes vertical
+    let one = solve_guided(&[Segment { a: Point::new(0.1, -0.5), b: Point::new(0.12, 0.5) }]);
+    let p = one.apply(Point::new(0.1, -0.5));
+    let q = one.apply(Point::new(0.12, 0.5));
+    assert!((p.x - q.x).abs() < 1e-9, "single vertical guide becomes vertical: {p:?} {q:?}");
+}
+
+#[test]
+fn upright_analysis_is_resolution_independent() {
+    let shot = lightcraft_develop::Geometry { vertical: 30.0, rotate: 1.5, ..Default::default() };
+    let fwd = crate::transform::manual(&shot);
+    let big = keystoned_grid(1200, 800, fwd, 80.0);
+    let small = keystoned_grid(600, 400, fwd, 40.0);
+    let s = DevelopSettings::default();
+    let a = crate::upright::auto_transform(&big, &SourceInfo::default(), &s, Upright::Vertical);
+    let b = crate::upright::auto_transform(&small, &SourceInfo::default(), &s, Upright::Vertical);
+    for p in [Point::new(-1.0, -0.66), Point::new(1.0, -0.66), Point::new(1.0, 0.66), Point::new(-1.0, 0.66)] {
+        assert!(a.apply(p).dist(b.apply(p)) < 0.006, "{:?} vs {:?}", a.apply(p), b.apply(p));
+    }
+    // a setting that names the mode without a stored transform renders like the stored one
+    let mut s1 = DevelopSettings::default();
+    s1.geometry.upright = Upright::Vertical;
+    let lazy = render(&small, &SourceInfo::default(), &s1, &RenderRequest::fit(300, 300)).image;
+    s1.geometry.upright_transform = Some(b);
+    let stored = render(&small, &SourceInfo::default(), &s1, &RenderRequest::fit(300, 300)).image;
+    assert_eq!(lazy.data, stored.data);
+}

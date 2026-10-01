@@ -268,7 +268,8 @@ pub fn estimate_lateral_ca(img: &Rgb32f) -> [f64; 2] {
     v
 }
 
-fn fingerprint(img: &Rgb32f) -> u64 {
+/// Cheap content fingerprint of an image (dimensions + 512 sampled pixels), for analysis caches.
+pub(crate) fn fingerprint(img: &Rgb32f) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ ((img.width as u64) << 32 | img.height as u64);
     let n = img.data.len();
     for i in 0..512usize {

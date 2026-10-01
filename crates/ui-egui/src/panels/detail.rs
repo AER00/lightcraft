@@ -17,12 +17,33 @@ use crate::widgets::register;
 /// An in-progress on-canvas gesture.
 #[derive(Clone, Debug)]
 pub enum Gesture {
-    Brush { points: Vec<Point> },
-    Spot { points: Vec<Point> },
-    CropHandle { handle: u8, start: lightcraft_geom::Rect, angle: f64 },
-    CropRotate { start_angle: f64, a0: f32 },
-    Pan { start: (f32, f32), at: Pos2 },
-    MaskHandle { mask: u32, handle: u8 },
+    Brush {
+        points: Vec<Point>,
+    },
+    Spot {
+        points: Vec<Point>,
+    },
+    CropHandle {
+        handle: u8,
+        start: lightcraft_geom::Rect,
+        angle: f64,
+    },
+    CropRotate {
+        start_angle: f64,
+        a0: f32,
+    },
+    Pan {
+        start: (f32, f32),
+        at: Pos2,
+    },
+    MaskHandle {
+        mask: u32,
+        handle: u8,
+    },
+    /// Guided Upright: a guide being drawn from `a` (normalized transformed coordinates).
+    Guide {
+        a: Point,
+    },
 }
 
 /// Screen ↔ normalized-image mapping for the displayed frame.
@@ -237,6 +258,10 @@ fn general_interaction(
 // ------------------------------------------------------------------------ crop
 
 fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, frame: &Frame, d: &DevelopSettings, id: PhotoId) {
+    if app.ui.tool == "guidedUpright" {
+        guided_overlay(app, ui, resp, map, frame, d);
+        return;
+    }
     let quad = frame_crop_quad(d, frame);
     let pts: Vec<Pos2> = quad.iter().map(|q| map.screen(*q)).collect();
     let p = ui.painter();
@@ -364,6 +389,45 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         let _ = app.run("develop.endInteraction", json!({}));
     }
     let _ = id;
+}
+
+/// Guided Upright: draw up to four guides along lines that should be vertical or horizontal. Guides are
+/// stored in lens-corrected (pre-perspective) coordinates, so they stay attached to the image as it warps.
+fn guided_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, frame: &Frame, d: &DevelopSettings) {
+    let p = ui.painter_at(map.rect.expand(8.0));
+    let col = Color32::from_rgb(255, 196, 40);
+    let draw = |a: Pos2, b: Pos2| {
+        p.line_segment([a, b], Stroke::new(3.0, Color32::from_black_alpha(120)));
+        p.line_segment([a, b], Stroke::new(1.5, col));
+        for q in [a, b] {
+            p.circle_filled(q, 4.0, col);
+            p.circle_stroke(q, 4.0, Stroke::new(1.0, Color32::BLACK));
+        }
+    };
+    for (i, (a, b)) in d.geometry.guides.iter().enumerate() {
+        let (sa, sb) = (map.screen(frame.corrected_to_transformed(*a)), map.screen(frame.corrected_to_transformed(*b)));
+        register(ui.ctx(), format!("uprightGuide:{i}"), Rect::from_two_pos(sa, sb));
+        draw(sa, sb);
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    if resp.drag_started()
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        app.gesture = Some(Gesture::Guide { a: map.norm(q) });
+    }
+    if let (Some(Gesture::Guide { a }), Some(q)) = (&app.gesture, resp.interact_pointer_pos()) {
+        draw(map.screen(*a), q);
+    }
+    if resp.drag_stopped()
+        && let (Some(Gesture::Guide { a }), Some(q)) = (app.gesture.clone(), resp.interact_pointer_pos())
+    {
+        app.gesture = None;
+        let b = map.norm(q);
+        if a.dist(b) > 0.02 {
+            let (ca, cb) = (frame.transformed_to_corrected(a), frame.transformed_to_corrected(b));
+            let _ = app.run("geometry.guides", json!({"guides": [[ca.x, ca.y, cb.x, cb.y]], "add": true}));
+        }
+    }
 }
 
 /// Normalized oriented coords → the straightened (rotated) frame the crop rect lives in.
