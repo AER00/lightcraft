@@ -42,6 +42,9 @@ and often so a crash loses minutes, not hours.
 
 ## Running and looking at the app
 - `cargo run --release -p lightcraft -- --control 7980` opens the desktop app with the JSON-lines control server (see `docs/control-protocol.md`).
+- **Never send OS-level synthetic input** (osascript/System Events keystrokes or clicks, `cliclick`, accessibility
+  automation): it goes to whatever window is frontmost — the user's terminal or other apps. Drive LightCraft only
+  through its control channel (`ui.key`, `ui.pointer`, `ui.clickWidget`, `ui.menu.invoke`) or headless snapshots.
 - For UI work, **look at the result**: drive via the control channel and take `ui.screenshot`, compare with `plan/lightroom/screenshots/`.
 - **Unattended (display asleep/locked, CI, nightly runs): prefer headless snapshots** — no window needed:
   `lightcraft-cli snapshot --demo --script tour.jsonl -o out.png --size 1600x1000` (control-protocol requests,
