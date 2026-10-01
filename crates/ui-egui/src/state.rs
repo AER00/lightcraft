@@ -151,6 +151,16 @@ pub enum Dialog {
         id: u64,
         name: String,
     },
+    /// Edit Capture Time: `mode` "set" (`time`; the others shift along), "shift" (by `days`,
+    /// `hours`, `minutes`) or "zone" (time-zone shift by `zone` hours).
+    CaptureTime {
+        mode: String,
+        time: String,
+        days: i32,
+        hours: i32,
+        minutes: i32,
+        zone: f32,
+    },
     /// Batch rename the selected photos with a file-name template.
     Rename {
         template: String,

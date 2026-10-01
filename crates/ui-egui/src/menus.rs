@@ -77,6 +77,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.export", "Export Now", None, ""),
     ("app.showInFinder", "Show in Finder", Some("Cmd+R"), "Photo"),
     ("dialog.rename", "Rename Photos…", None, "Photo"),
+    ("dialog.captureTime", "Edit Capture Time…", None, "Photo"),
     ("app.exportPrevious", "Export with Previous", Some("Cmd+Alt+Shift+E"), "File"),
 ];
 
@@ -330,6 +331,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.dialog = Some(Dialog::NewSmartAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into() });
             Ok(Value::Null)
         }
+        "dialog.captureTime" => {
+            let time = app.session.active().and_then(|id| app.session.catalog.photo(id)).map(|p| p.date().replace('T', " ")).unwrap_or_default();
+            let mode = p.get("mode").and_then(Value::as_str).unwrap_or("set").to_string();
+            app.ui.dialog =
+                Some(Dialog::CaptureTime { mode, time: time.get(..19).unwrap_or(&time).to_string(), days: 0, hours: 0, minutes: 0, zone: 0.0 });
+            Ok(Value::Null)
+        }
         "dialog.rename" => {
             let template = p.get("template").and_then(Value::as_str).unwrap_or("{name}").to_string();
             app.ui.dialog = Some(Dialog::Rename { template, start: p.get("start").and_then(Value::as_u64).unwrap_or(1) as u32 });
@@ -445,7 +453,9 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
 pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
     match id {
         s if s.starts_with("panel.") || s.starts_with("tool.") || s.starts_with("section.") => app.session.active().is_some() || s == "panel.close",
-        "app.export" | "dialog.export" | "dialog.createPreset" | "dialog.rename" | "dialog.copySettings" => app.session.active().is_some(),
+        "app.export" | "dialog.export" | "dialog.createPreset" | "dialog.rename" | "dialog.captureTime" | "dialog.copySettings" => {
+            app.session.active().is_some()
+        }
         "app.exportPrevious" => app.session.active().is_some() && app.session.last_export.is_some(),
         "app.showInFinder" => {
             app.services.reveal.is_some()

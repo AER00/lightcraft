@@ -2,7 +2,9 @@
 
 use serde_json::{Value, json};
 
-use super::{CommandSpec, bad, cmd, has_selection, str_param};
+use lightcraft_catalog::Op;
+
+use super::{CommandSpec, bad, bool_or, cmd, f64_or, has_selection, str_param};
 use crate::Result;
 
 fn rename_args(s: &crate::Session, p: &Value, c: &str) -> Result<(Vec<lightcraft_catalog::PhotoId>, String, usize)> {
@@ -29,6 +31,54 @@ pub fn specs() -> Vec<CommandSpec> {
                 let plans = s.plan_rename(&ids, &template, start);
                 let n = s.apply_rename(&plans)?;
                 Ok(json!({"renamed": n, "plans": plans}))
+            }
+        ),
+        cmd!(
+            "photo.setCaptureTime",
+            "Edit Capture Time",
+            [],
+            None,
+            "{ids?, time?: `2026-09-30T14:05:00` (the active photo gets it, the others shift by the same amount), each?: bool (every photo gets `time`), shift?: seconds, hours?: time-zone shift in hours} → {changed, captured: [..]}",
+            has_selection,
+            |s, p| {
+                use lightcraft_catalog::dates::{iso_seconds, normalize_iso, shift_iso};
+                let c = "photo.setCaptureTime";
+                let targets: Vec<_> = s.targets(p).into_iter().filter(|id| s.catalog.photo(*id).is_some()).collect();
+                if targets.is_empty() {
+                    return Err(bad(c, "no photos"));
+                }
+                // photos without a capture time start from their import time
+                let base = |s: &crate::Session, id| s.catalog.photo(id).map(|p| p.date().to_string()).unwrap_or_default();
+                let mut delta = (f64_or(p, "shift", 0.0) + f64_or(p, "hours", 0.0) * 3600.0).round() as i64;
+                let mut each: Option<String> = None;
+                if let Some(t) = str_param(p, "time") {
+                    let t = normalize_iso(t).ok_or_else(|| bad(c, format!("`{t}` is not a date (YYYY-MM-DDTHH:MM:SS)")))?;
+                    if bool_or(p, "each", false) {
+                        each = Some(t);
+                    } else {
+                        let anchor = s.active().filter(|a| targets.contains(a)).unwrap_or(targets[0]);
+                        let from = iso_seconds(&base(s, anchor)).ok_or_else(|| bad(c, "the photo's date doesn't parse"))?;
+                        delta += iso_seconds(&t).unwrap_or(from) - from;
+                    }
+                }
+                let mut ops = Vec::new();
+                let mut out = Vec::new();
+                for id in &targets {
+                    let new = match &each {
+                        Some(t) => shift_iso(t, delta),
+                        None => shift_iso(&base(s, *id), delta),
+                    };
+                    let Some(new) = new else { continue };
+                    out.push(json!(new));
+                    if s.catalog.photo(*id).and_then(|p| p.captured.as_deref()) != Some(new.as_str()) {
+                        ops.push(Op::SetCaptured { id: *id, captured: Some(new) });
+                    }
+                }
+                let n = ops.len();
+                if n > 0 {
+                    s.commit("Edit Capture Time", Op::Batch { ops })?;
+                }
+                Ok(json!({"changed": n, "captured": out}))
             }
         ),
     ]

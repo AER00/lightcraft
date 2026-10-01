@@ -456,6 +456,32 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// Info panel → Edit Capture Time…: a time-zone shift moves the selected photos.
+    #[test]
+    fn capture_time_dialog_shifts_time_zone() {
+        let mut h = demo([1200.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let id = h.app.session.visible_cloned()[0];
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [id.0]}}), t);
+        h.request("ui.set", json!({"view": "detail", "right": "info"}), t);
+        let before = h.app.session.catalog.photo(id).unwrap().captured.clone().unwrap();
+        let r = h.request("ui.clickWidget", json!({"id": "button:editCaptureTime"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.request("ui.clickWidget", json!({"id": "button:captureMode-2"}), t);
+        if let Some(crate::state::Dialog::CaptureTime { zone, .. }) = &mut h.app.ui.dialog {
+            *zone = -3.0;
+        } else {
+            panic!("dialog not open: {:?}", h.app.ui.dialog);
+        }
+        h.settle(SETTLE);
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let after = h.app.session.catalog.photo(id).unwrap().captured.clone().unwrap();
+        let secs = lightcraft_catalog::dates::iso_seconds;
+        assert_eq!(secs(&after).unwrap() - secs(&before).unwrap(), -3 * 3600);
+        h.settle(SETTLE);
+    }
+
     #[test]
     fn screenshot_request_is_answered_without_a_window() {
         let mut h = demo([800.0, 500.0]);

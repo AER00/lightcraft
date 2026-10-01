@@ -348,7 +348,13 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     divider(ui);
     header(ui, "Camera");
     let m = &p.meta;
-    label_row(ui, "Captured", p.captured.as_deref().unwrap_or("—"));
+    let cap = p.captured.as_deref().map(|c| c.replace('T', " ")).unwrap_or_else(|| "—".into());
+    label_row(ui, "Captured", &cap);
+    padded(ui, |ui| {
+        if text_button(ui, "editCaptureTime", "Edit Capture Time…", false).clicked() {
+            let _ = app.run("dialog.captureTime", json!({}));
+        }
+    });
     label_row(ui, "Camera", &m.camera);
     label_row(ui, "Lens", &m.lens);
     label_row(ui, "Focal", &m.focal_mm.map(|f| format!("{f:.0} mm")).unwrap_or_default());

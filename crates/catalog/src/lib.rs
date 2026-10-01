@@ -137,6 +137,11 @@ pub enum Op {
         photos: Vec<PhotoId>,
         collapsed: bool,
     },
+    /// Set a photo's capture time (ISO 8601 local time; `None` = unknown).
+    SetCaptured {
+        id: PhotoId,
+        captured: Option<String>,
+    },
     /// Rename a photo: its file name and the source it points to. Applying the op never touches
     /// the disk — the engine moves the file before it commits (and on undo/redo).
     SetFile {
@@ -427,6 +432,15 @@ impl Catalog {
                 let old = Op::SetStack { id, photos: std::mem::replace(&mut s.photos, photos), collapsed: s.collapsed };
                 s.collapsed = collapsed;
                 old
+            }
+            Op::SetCaptured { id, captured } => {
+                if let Some(c) = &captured
+                    && stacks::iso_seconds(c).is_none()
+                {
+                    return Err(CatalogError::Invalid(format!("not a date: {c}")));
+                }
+                let p = self.photo_mut(id)?;
+                Op::SetCaptured { id, captured: std::mem::replace(&mut p.captured, captured) }
             }
             Op::SetFile { id, file_name, source } => {
                 if file_name.trim().is_empty() {

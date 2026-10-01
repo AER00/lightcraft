@@ -75,7 +75,7 @@ Ordered by tier, then user value, then (low) effort. Take the first one nobody i
 12. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
     permissive pure-Rust decoder yet). High value, high effort (clean sources needed).
 13. **LR-VIEW-FULLSCREEN + LR-VIEW-NAVIGATOR + LR-VIEW-INFOOVERLAY** (P1) — view modes. Medium effort.
-14. **LR-LIB-CAPTURETIME + LR-LIB-LABEL UI** (P1) — capture-time edit, label menu/names.
+14. **LR-LIB-LABEL UI** (P1) — label menu/names.
 15. **LR-EXP-BITDEPTH + LR-EXP-COMPRESSION** (P1) — 16-bit TIFF/PNG and TIFF compression choice.
 16. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
 
@@ -157,7 +157,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-REMOVE-ALBUM | Remove from album | P0 | ✅ | `cmd:album.removePhotos` | |
 | LR-LIB-DUPLICATE | Duplicate a photo | P2 | ⬜ | | |
 | LR-LIB-RENAME | Batch rename | P1 | ✅ | `cmd:photo.rename`, `cmd:photo.renamePreview`, `cmd:dialog.rename`, `crates/engine/src/rename.rs` | template tokens {name} {seq:N} {date:%Y%m%d} {camera} {title}; preview; renames files on disk with their XMP sidecars, never overwriting (-1, -2… suffixes), rolls back on failure; undo/redo move the files; virtual copies follow |
-| LR-LIB-CAPTURETIME | Edit capture time | P1 | ⬜ | | `photo.setMeta` has no capture-time field |
+| LR-LIB-CAPTURETIME | Edit capture time | P1 | ✅ | `cmd:photo.setCaptureTime`, `cmd:dialog.captureTime`, `crates/catalog/src/dates.rs` | set (the other selected photos shift by the same amount, or `each`), shift by days/hours/minutes, time-zone shift; one undo step, journaled; Info panel button; no “revert to original capture time” |
 | LR-LIB-SHOWFINDER | Reveal original in file manager | P0 | ⬜ | | |
 | LR-LIB-COVER | Album cover | P2 | ✅ | `cmd:album.setCover` | |
 | LR-LIB-CULL | Assisted culling | P2 | ⬜ | | |
@@ -588,7 +588,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-PHOTO-RESET | Reset edits / crop | P0 | ✅ | `cmd:develop.reset`, `cmd:crop.reset` | |
 | MENU-PHOTO-UPDATEAI | Update AI settings | P2 | ⬜ | | |
 | MENU-PHOTO-RENAME | Rename N photos… | P1 | ✅ | `cmd:dialog.rename` | live “Rename N Photos…” label |
-| MENU-PHOTO-CAPTURETIME | Edit capture time… | P1 | ⬜ | | |
+| MENU-PHOTO-CAPTURETIME | Edit capture time… | P1 | ✅ | `cmd:dialog.captureTime` | |
 | MENU-PHOTO-COVER | Set as album cover | P2 | ✅ | `cmd:album.setCover` | |
 | MENU-PHOTO-DELETE | Delete N photos… | P0 | ✅ | `cmd:photo.delete` | no confirmation; static label |
 | MENU-PHOTO-MOVETOCLOUD | Move/copy to cloud | OOS | 🚫 | | |

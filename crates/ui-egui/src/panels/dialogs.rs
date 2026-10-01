@@ -23,6 +23,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
         Dialog::Rename { .. } => "Rename Photos",
+        Dialog::CaptureTime { .. } => "Edit Capture Time",
         Dialog::RenameKeyword { .. } => "Rename Keyword",
         Dialog::MergeKeywords { .. } => "Merge Keywords",
         Dialog::NewSmartAlbum { .. } => "Create Smart Album",
@@ -72,6 +73,59 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         egui::RichText::new(format!("{n} photo{} now · updates automatically as photos change", if n == 1 { "" } else { "s" }))
                             .color(t.text_dim),
                     );
+                }
+                Dialog::CaptureTime { mode, time, days, hours, minutes, zone } => {
+                    let n = app.session.targets(&json!({})).len();
+                    field(ui, "Change", |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for (i, (label, m)) in [("Set date & time", "set"), ("Shift by", "shift"), ("Time zone", "zone")].iter().enumerate() {
+                            if crate::widgets::text_button(ui, &format!("captureMode-{i}"), label, mode == m).clicked() {
+                                *mode = m.to_string();
+                            }
+                        }
+                    });
+                    let params = match mode.as_str() {
+                        "set" => {
+                            field(ui, "New time", |ui| {
+                                let r = ui.add(egui::TextEdit::singleline(time).hint_text("2026-09-30 14:05:00").desired_width(f32::INFINITY));
+                                crate::widgets::register(ui.ctx(), "field:captureTime", r.rect);
+                            });
+                            json!({"time": time})
+                        }
+                        "shift" => {
+                            field(ui, "Shift", |ui| {
+                                ui.add(egui::DragValue::new(days).suffix(" d"));
+                                ui.add(egui::DragValue::new(hours).suffix(" h"));
+                                ui.add(egui::DragValue::new(minutes).suffix(" min"));
+                            });
+                            json!({"shift": *days as i64 * 86_400 + *hours as i64 * 3600 + *minutes as i64 * 60})
+                        }
+                        _ => {
+                            field(ui, "Hours", |ui| ui.add(egui::DragValue::new(zone).range(-26.0..=26.0).speed(0.25).fixed_decimals(2)));
+                            json!({"hours": zone})
+                        }
+                    };
+                    // preview on the active photo (the others move by the same amount)
+                    let active = app.session.active().and_then(|id| app.session.catalog.photo(id)).map(|p| (p.file_name.clone(), p.date().to_string()));
+                    if let Some((name, cur)) = active {
+                        let delta = match mode.as_str() {
+                            "set" => lightcraft_catalog::dates::normalize_iso(time)
+                                .and_then(|t| Some(lightcraft_catalog::dates::iso_seconds(&t)? - lightcraft_catalog::dates::iso_seconds(&cur)?)),
+                            "shift" => params["shift"].as_i64(),
+                            _ => Some((*zone as f64 * 3600.0).round() as i64),
+                        };
+                        let after = delta.and_then(|d| lightcraft_catalog::dates::shift_iso(&cur, d));
+                        ui.label(
+                            egui::RichText::new(match after {
+                                Some(a) => format!("{name}: {} → {}", cur.replace('T', " "), a.replace('T', " ")),
+                                None => "Enter a date as YYYY-MM-DD HH:MM:SS".into(),
+                            })
+                            .color(t.text_label),
+                        );
+                    }
+                    if n > 1 {
+                        ui.label(egui::RichText::new(format!("All {n} selected photos move by the same amount.")).color(t.text_dim));
+                    }
                 }
                 Dialog::Rename { template, start } => {
                     let n = app.session.targets(&json!({})).len();
@@ -358,6 +412,14 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
     match dlg {
         Dialog::NewAlbum { name, folder } => app.run("album.create", json!({"name": name, "folder": folder, "addSelected": !folder})),
         Dialog::RenameAlbum { id, name } => app.run("album.rename", json!({"id": id, "name": name})),
+        Dialog::CaptureTime { mode, time, days, hours, minutes, zone } => app.run(
+            "photo.setCaptureTime",
+            match mode.as_str() {
+                "set" => json!({"time": time}),
+                "shift" => json!({"shift": *days as i64 * 86_400 + *hours as i64 * 3600 + *minutes as i64 * 60}),
+                _ => json!({"hours": zone}),
+            },
+        ),
         Dialog::Rename { template, start } => app.run("photo.rename", json!({"template": template, "start": start})),
         Dialog::RenameKeyword { from, to } => app.run("keyword.rename", json!({"from": from, "to": to})),
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),

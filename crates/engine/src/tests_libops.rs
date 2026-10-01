@@ -186,3 +186,49 @@ fn rename_demo_photos_in_catalog() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(s.catalog.photo(lightcraft_catalog::PhotoId(ids[0])).unwrap().file_name.starts_with("LC"));
 }
+
+fn captured(s: &Session, id: u64) -> Option<String> {
+    s.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap().captured.clone()
+}
+
+/// Edit Capture Time: set (others shift along), set each, shift by an offset, time-zone shift;
+/// one undo step each; replayed from the op log; the grid order follows.
+#[test]
+fn capture_time_set_shift_undo_and_replay() {
+    let dir = temp_dir("capture");
+    let mut s = Session::new();
+    s.open_library(&dir, true).unwrap();
+    let ids: Vec<u64> = s.visible_cloned().iter().take(3).map(|p| p.0).collect();
+    let before: Vec<Option<String>> = ids.iter().map(|i| captured(&s, *i)).collect();
+    let secs = |t: &Option<String>| lightcraft_catalog::dates::iso_seconds(t.as_deref().unwrap()).unwrap();
+    // set the active photo; the others keep their distance to it
+    s.execute("library.select", &json!({"ids": ids, "active": ids[1]})).unwrap();
+    let r = s.execute("photo.setCaptureTime", &json!({"time": "2020-01-02 03:04:05"})).unwrap();
+    assert_eq!(r["changed"], 3, "{r}");
+    assert_eq!(captured(&s, ids[1]).as_deref(), Some("2020-01-02T03:04:05"));
+    assert_eq!(secs(&captured(&s, ids[0])) - secs(&captured(&s, ids[1])), secs(&before[0]) - secs(&before[1]));
+    // undo restores all three in one step
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(ids.iter().map(|i| captured(&s, *i)).collect::<Vec<_>>(), before);
+    // shift by +1 h 30 min, then a time-zone shift of −2 h
+    s.execute("photo.setCaptureTime", &json!({"shift": 5400})).unwrap();
+    s.execute("photo.setCaptureTime", &json!({"hours": -2})).unwrap();
+    for (i, id) in ids.iter().enumerate() {
+        assert_eq!(secs(&captured(&s, *id)) - secs(&before[i]), 5400 - 7200);
+    }
+    // everybody the same time
+    s.execute("photo.setCaptureTime", &json!({"time": "2026-10-01T08:00:00", "each": true})).unwrap();
+    assert!(ids.iter().all(|i| captured(&s, *i).as_deref() == Some("2026-10-01T08:00:00")));
+    // the grid order (capture date, newest first) follows: they're now the newest photos
+    let vis = s.visible_cloned();
+    assert!(vis[..3].iter().all(|v| ids.contains(&v.0)), "{vis:?}");
+    // invalid dates are refused
+    assert!(s.execute("photo.setCaptureTime", &json!({"time": "2026-02-30 10:00"})).is_err());
+    assert!(s.execute("photo.setCaptureTime", &json!({"time": "yesterday"})).is_err());
+    let expect = s.catalog.to_snapshot();
+    drop(s);
+    let mut s = Session::new();
+    s.open_library(&dir, false).unwrap();
+    assert_eq!(s.catalog.to_snapshot(), expect);
+    let _ = std::fs::remove_dir_all(&dir);
+}
