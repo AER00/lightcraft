@@ -24,18 +24,26 @@ pub fn photo_summary(p: &Photo) -> Value {
         "keywords": p.meta.keywords,
         "camera": p.meta.camera,
         "deleted": p.deleted,
+        "copyOf": p.copy_of.map(|c| c.0),
+        "copyName": p.copy_name,
     })
 }
 
-fn album_json(a: &Album, all: &[Album]) -> Value {
-    json!({
+fn album_json(a: &Album, all: &[Album], cat: &lightcraft_catalog::Catalog) -> Value {
+    let mut v = json!({
         "id": a.id.0,
         "name": a.name,
         "folder": a.folder,
-        "count": a.photos.len(),
+        "count": cat.album_count(a.id),
         "cover": a.cover.map(|c| c.0),
-        "children": all.iter().filter(|c| c.parent == Some(a.id)).map(|c| album_json(c, all)).collect::<Vec<_>>(),
-    })
+        "children": all.iter().filter(|c| c.parent == Some(a.id)).map(|c| album_json(c, all, cat)).collect::<Vec<_>>(),
+    });
+    if let Some(rules) = &a.smart {
+        v["smart"] = json!(true);
+        v["rules"] = serde_json::to_value(rules).unwrap_or_default();
+        v["rulesText"] = json!(rules.describe());
+    }
+    v
 }
 
 fn photo_arg(s: &Session, p: &Value, c: &str) -> crate::Result<PhotoId> {
@@ -88,7 +96,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         cmd!(query "albums.list", "List Albums", [], None, "{}", always, |s, _| {
             let all: Vec<Album> = s.catalog.albums().cloned().collect();
-            Ok(Value::Array(all.iter().filter(|a| a.parent.is_none()).map(|a| album_json(a, &all)).collect()))
+            Ok(Value::Array(all.iter().filter(|a| a.parent.is_none()).map(|a| album_json(a, &all, &s.catalog)).collect()))
         }),
         cmd!(query "photo.inspect", "Inspect Photo", [], None, "{id?}", always, |s, p| {
             let id = photo_arg(s, p, "photo.inspect")?;
@@ -96,6 +104,14 @@ pub fn specs() -> Vec<CommandSpec> {
             let mut v = serde_json::to_value(ph.as_ref()).unwrap_or_default();
             v["albums"] = json!(s.catalog.albums_of(id).iter().map(|a| a.0).collect::<Vec<_>>());
             v["history"] = json!(ph.history.iter().map(|h| h.label.clone()).collect::<Vec<_>>());
+            if let Some(st) = s.catalog.stack_of(id) {
+                v["stack"] = json!({
+                    "id": st.id.0,
+                    "photos": st.photos.iter().map(|p| p.0).collect::<Vec<_>>(),
+                    "position": st.position(id),
+                    "collapsed": st.collapsed,
+                });
+            }
             Ok(v)
         }),
         cmd!(query "develop.get", "Get Develop Settings", [], None, "{id?}", always, |s, p| {
@@ -114,6 +130,13 @@ pub fn specs() -> Vec<CommandSpec> {
                         v["value"] = json!(controls::get(&d, c.id));
                         v
                     })
+                    // indexed controls of the list elements that exist (`pointColor.0.hueShift`, …)
+                    .chain(controls::indexed_instances(&d).into_iter().filter(|(_, c)| sec.is_none_or(|x| x == c.section)).map(|(id, c)| {
+                        let mut v = serde_json::to_value(c).unwrap_or_default();
+                        v["value"] = json!(controls::get(&d, &id));
+                        v["id"] = json!(id);
+                        v
+                    }))
                     .collect(),
             ))
         }),

@@ -1,6 +1,9 @@
 //! Control specs: one table describes every numeric develop slider — id, label, section, range,
 //! default, step, display precision and track style. The UI builds panels from it, MCP exposes it as
 //! a schema, and `get`/`set` address settings by id (e.g. `light.exposure`, `mixer.red.hue`).
+//!
+//! Settings that come in lists (Point Color samples) are *indexed* controls: one template spec in
+//! [`INDEXED`] (`pointColor.hueShift`) addresses every element as `pointColor.<i>.hueShift`.
 
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +25,9 @@ pub enum Section {
     Optics,
     Geometry,
     Profile,
+    Calibration,
+    PointColor,
+    RedEye,
 }
 
 impl Section {
@@ -40,6 +46,9 @@ impl Section {
             Section::Optics => "Optics",
             Section::Geometry => "Geometry",
             Section::Profile => "Profile",
+            Section::Calibration => "Calibration",
+            Section::PointColor => "Point Color",
+            Section::RedEye => "Red Eye",
         }
     }
 }
@@ -103,7 +112,7 @@ macro_rules! controls {
         pub fn get(s: &DevelopSettings, id: &str) -> Option<f64> {
             match id {
                 $( $id => Some(s.$($field).+ as f64), )*
-                _ => None,
+                _ => indexed_get(s, id),
             }
         }
 
@@ -113,7 +122,7 @@ macro_rules! controls {
             let v = spec.clamp(v);
             match id {
                 $( $id => { s.$($field).+ = v as _; true } )*
-                _ => false,
+                _ => indexed_set(s, id, v),
             }
         }
     };
@@ -138,6 +147,7 @@ controls! {
     "curve.splitShadows" => curve.split_shadows, "Shadows split", Curve, 10, 70, 25, 1, 0, Plain;
     "curve.splitMid" => curve.split_mid, "Midtones split", Curve, 20, 80, 50, 1, 0, Plain;
     "curve.splitHighlights" => curve.split_highlights, "Highlights split", Curve, 30, 90, 75, 1, 0, Plain;
+    "curve.refineSaturation" => curve.refine_saturation, "Refine Saturation", Curve, 0, 100, 100, 1, 0, Gradient { from: "#7a7a7a", to: "#d85a3a" };
     "color.vibrance" => color.vibrance, "Vibrance", Color, -100, 100, 0, 1, 0, Gradient { from: "#7a7a7a", to: "#d8406a" };
     "color.saturation" => color.saturation, "Saturation", Color, -100, 100, 0, 1, 0, Gradient { from: "#7a7a7a", to: "#e04a3a" };
     "mixer.red.hue" => mixer.red.hue, "Red Hue", Mixer, -100, 100, 0, 1, 0, Hue { band: 0 };
@@ -227,11 +237,207 @@ controls! {
     "geometry.scale" => geometry.scale, "Scale", Geometry, 50, 150, 100, 1, 0, Plain;
     "geometry.offsetX" => geometry.offset_x, "Offset X", Geometry, -100, 100, 0, 0.1, 1, Centered;
     "geometry.offsetY" => geometry.offset_y, "Offset Y", Geometry, -100, 100, 0, 0.1, 1, Centered;
+    "calibration.shadowsTint" => calibration.shadows_tint, "Shadows Tint", Calibration, -100, 100, 0, 1, 0, Tint;
+    "calibration.redHue" => calibration.red_hue, "Red Hue", Calibration, -100, 100, 0, 1, 0, Gradient { from: "#e0306a", to: "#e08a30" };
+    "calibration.redSat" => calibration.red_sat, "Red Saturation", Calibration, -100, 100, 0, 1, 0, Gradient { from: "#7a7a7a", to: "#e03a3a" };
+    "calibration.greenHue" => calibration.green_hue, "Green Hue", Calibration, -100, 100, 0, 1, 0, Gradient { from: "#b0c030", to: "#30c08a" };
+    "calibration.greenSat" => calibration.green_sat, "Green Saturation", Calibration, -100, 100, 0, 1, 0, Gradient { from: "#7a7a7a", to: "#40b050" };
+    "calibration.blueHue" => calibration.blue_hue, "Blue Hue", Calibration, -100, 100, 0, 1, 0, Gradient { from: "#30a0d0", to: "#8040d0" };
+    "calibration.blueSat" => calibration.blue_sat, "Blue Saturation", Calibration, -100, 100, 0, 1, 0, Gradient { from: "#7a7a7a", to: "#3a60e0" };
     "crop.angle" => crop.geometry.angle, "Straighten", Geometry, -45, 45, 0, 0.01, 2, Centered;
 }
 
+/// Template specs of the indexed controls (`<family>.<field>`; addressed as `<family>.<i>.<field>`).
+pub static INDEXED: &[ControlSpec] = &[
+    ControlSpec {
+        id: "pointColor.hueShift",
+        label: "Hue",
+        section: Section::PointColor,
+        min: -100.0,
+        max: 100.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Rainbow,
+    },
+    ControlSpec {
+        id: "pointColor.satShift",
+        label: "Saturation",
+        section: Section::PointColor,
+        min: -100.0,
+        max: 100.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Gradient { from: "#7a7a7a", to: "#e04a3a" },
+    },
+    ControlSpec {
+        id: "pointColor.lumShift",
+        label: "Luminance",
+        section: Section::PointColor,
+        min: -100.0,
+        max: 100.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Gradient { from: "#202020", to: "#f0f0f0" },
+    },
+    ControlSpec {
+        id: "pointColor.variance",
+        label: "Variance",
+        section: Section::PointColor,
+        min: -100.0,
+        max: 100.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Centered,
+    },
+    ControlSpec {
+        id: "pointColor.range",
+        label: "Range",
+        section: Section::PointColor,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Plain,
+    },
+    ControlSpec {
+        id: "pointColor.hueRange",
+        label: "Hue Range",
+        section: Section::PointColor,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Rainbow,
+    },
+    ControlSpec {
+        id: "pointColor.satRange",
+        label: "Saturation Range",
+        section: Section::PointColor,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Gradient { from: "#7a7a7a", to: "#e04a3a" },
+    },
+    ControlSpec {
+        id: "pointColor.lumRange",
+        label: "Luminance Range",
+        section: Section::PointColor,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Gradient { from: "#202020", to: "#f0f0f0" },
+    },
+    ControlSpec {
+        id: "redEye.pupilSize",
+        label: "Pupil Size",
+        section: Section::RedEye,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Plain,
+    },
+    ControlSpec {
+        id: "redEye.darken",
+        label: "Darken",
+        section: Section::RedEye,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Gradient { from: "#d0d0d0", to: "#101010" },
+    },
+];
+
+/// `pointColor.3.hueShift` → (`pointColor`, 3, `hueShift`).
+fn split_indexed(id: &str) -> Option<(&str, usize, &str)> {
+    let mut it = id.splitn(3, '.');
+    let (fam, i, field) = (it.next()?, it.next()?, it.next()?);
+    Some((fam, i.parse().ok()?, field))
+}
+
+fn indexed_field<'a>(s: &'a mut DevelopSettings, id: &str) -> Option<&'a mut f64> {
+    let (fam, i, field) = split_indexed(id)?;
+    match fam {
+        "pointColor" => {
+            let p = s.point_colors.get_mut(i)?;
+            Some(match field {
+                "hueShift" => &mut p.hue_shift,
+                "satShift" => &mut p.sat_shift,
+                "lumShift" => &mut p.lum_shift,
+                "variance" => &mut p.variance,
+                "range" => &mut p.range,
+                "hueRange" => &mut p.hue_range,
+                "satRange" => &mut p.sat_range,
+                "lumRange" => &mut p.lum_range,
+                _ => return None,
+            })
+        }
+        "redEye" => {
+            let e = s.red_eye.get_mut(i)?;
+            Some(match field {
+                "pupilSize" => &mut e.pupil_size,
+                "darken" => &mut e.darken,
+                _ => return None,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn indexed_get(s: &DevelopSettings, id: &str) -> Option<f64> {
+    // (a clone keeps one accessor for get and set; these lists are tiny)
+    let mut c = DevelopSettings { point_colors: s.point_colors.clone(), red_eye: s.red_eye.clone(), ..DevelopSettings::default() };
+    indexed_field(&mut c, id).map(|v| *v)
+}
+
+fn indexed_set(s: &mut DevelopSettings, id: &str, v: f64) -> bool {
+    match indexed_field(s, id) {
+        Some(f) => {
+            *f = v;
+            true
+        }
+        None => false,
+    }
+}
+
+/// The spec of a control id, including indexed ids (`pointColor.0.hueShift` → the
+/// `pointColor.hueShift` template).
 pub fn find(id: &str) -> Option<&'static ControlSpec> {
-    CONTROLS.iter().find(|c| c.id == id)
+    if let Some(c) = CONTROLS.iter().find(|c| c.id == id) {
+        return Some(c);
+    }
+    let (fam, _, field) = split_indexed(id)?;
+    INDEXED.iter().find(|c| c.id.strip_prefix(fam).and_then(|r| r.strip_prefix('.')) == Some(field))
+}
+
+/// Every indexed control that exists in `s` (id, template spec), e.g. `pointColor.0.hueShift`.
+pub fn indexed_instances(s: &DevelopSettings) -> Vec<(String, &'static ControlSpec)> {
+    let mut out = Vec::new();
+    for spec in INDEXED {
+        let Some((fam, field)) = spec.id.split_once('.') else { continue };
+        let n = match fam {
+            "pointColor" => s.point_colors.len(),
+            "redEye" => s.red_eye.len(),
+            _ => 0,
+        };
+        for i in 0..n {
+            out.push((format!("{fam}.{i}.{field}"), spec));
+        }
+    }
+    out
 }
 
 pub fn in_section(section: Section) -> impl Iterator<Item = &'static ControlSpec> {
@@ -265,6 +471,26 @@ mod tests {
         }
         assert!(!set(&mut s, "nope", 1.0));
         assert_eq!(get(&s, "nope"), None);
+    }
+
+    #[test]
+    fn indexed_controls_address_list_elements() {
+        let mut s = DevelopSettings::default();
+        assert_eq!(get(&s, "pointColor.0.hueShift"), None);
+        assert!(!set(&mut s, "pointColor.0.hueShift", 10.0), "no sample yet");
+        s.point_colors.push(Default::default());
+        s.point_colors.push(Default::default());
+        assert!(set(&mut s, "pointColor.1.hueShift", 250.0));
+        assert_eq!(s.point_colors[1].hue_shift, 100.0, "clamped by the template spec");
+        assert_eq!(get(&s, "pointColor.1.range"), Some(50.0));
+        assert_eq!(find("pointColor.7.lumRange").map(|c| c.id), Some("pointColor.lumRange"));
+        assert!(find("pointColor.x.lumRange").is_none() && find("pointColor.0.nope").is_none());
+        let ids: Vec<String> = indexed_instances(&s).into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids.len(), 2 * INDEXED.iter().filter(|c| c.id.starts_with("pointColor.")).count());
+        for (id, spec) in indexed_instances(&s) {
+            assert!(get(&s, &id).is_some(), "{id}");
+            assert!(spec.min <= spec.default && spec.default <= spec.max);
+        }
     }
 
     #[test]

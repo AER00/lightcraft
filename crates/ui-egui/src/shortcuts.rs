@@ -40,6 +40,7 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
                     "-" => Some(Key::Minus),
                     "[" => Some(Key::OpenBracket),
                     "]" => Some(Key::CloseBracket),
+                    "'" => Some(Key::Quote),
                     _ => None,
                 })
             }
@@ -67,13 +68,15 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         return;
     }
     let mut fire: Vec<String> = Vec::new();
+    // shortcuts the native menu bar handles (it consumes those key presses itself)
+    let native = |sc: &str| app.native_shortcuts.contains(sc);
     let mut aliased: Vec<(&str, serde_json::Value)> = Vec::new();
     ctx.input(|i| {
         let mut ui_keys = Vec::new();
         for (id, _, sc, _) in crate::menus::UI_COMMANDS {
             if let Some((m, k)) = sc.and_then(parse) {
                 ui_keys.push((m, k));
-                if matches(i, m, k) {
+                if !native(sc.unwrap_or_default()) && matches(i, m, k) {
                     fire.push(id.to_string());
                 }
             }
@@ -81,7 +84,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         for c in lightcraft_engine::command_specs() {
             // A UI command bound to the same key wraps the engine command (e.g. `W` opens the
             // White Balance Selector tool rather than sampling without a point): the UI one wins.
-            if let Some((m, k)) = c.shortcut.and_then(parse)
+            if let Some((m, k)) = c.shortcut.filter(|s| !native(s)).and_then(parse)
                 && !ui_keys.contains(&(m, k))
                 && matches(i, m, k)
             {
@@ -89,7 +92,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
         }
         for (sc, id, params) in ALIASES {
-            if let Some((m, k)) = parse(sc)
+            if let Some((m, k)) = parse(sc).filter(|_| !native(sc))
                 && matches(i, m, k)
             {
                 aliased.push((id, serde_json::from_str(params).unwrap_or_default()));
@@ -97,30 +100,61 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
         // rating 0-5, colour labels 6-9 (with Shift: and advance)
         for (n, key) in [Key::Num0, Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5].iter().enumerate() {
-            if matches(i, Modifiers::NONE, *key) {
+            if matches(i, Modifiers::NONE, *key) && !native(&n.to_string()) {
                 fire.push(format!("rate:{n}:0"));
             }
             if matches(i, Modifiers::SHIFT, *key) {
                 fire.push(format!("rate:{n}:1"));
             }
         }
-        for (label, key) in [("red", Key::Num6), ("yellow", Key::Num7), ("green", Key::Num8), ("blue", Key::Num9)] {
-            if matches(i, Modifiers::NONE, key) {
+        for (label, key, sc) in [("red", Key::Num6, "6"), ("yellow", Key::Num7, "7"), ("green", Key::Num8, "8"), ("blue", Key::Num9, "9")] {
+            if matches(i, Modifiers::NONE, key) && !native(sc) {
                 fire.push(format!("label:{label}"));
             }
         }
     });
+    use crate::panels::compare;
+    // rating/flag/label keys: in Compare/Survey they act on the active photo only; Shift+key or
+    // Auto Advance then moves on (next candidate in Compare, next photo elsewhere)
+    let cull = |app: &mut LightcraftApp, id: &str, mut params: serde_json::Value, advance: bool| {
+        compare::target_active(app, &mut params);
+        let ok = app.run(id, params).is_ok();
+        if ok && (advance || app.ui.auto_advance) {
+            compare::advance(app);
+        }
+    };
     for (id, params) in aliased {
-        let _ = app.run(id, params);
+        // flag/rate aliases (Shift+X…) go through the culling path: active photo in Compare/Survey,
+        // `advance` moves to the next candidate there
+        if matches!(id, "photo.flag" | "photo.rate" | "photo.label") {
+            let mut params = params;
+            let advance = params.get("advance").and_then(serde_json::Value::as_bool).unwrap_or(false);
+            if let Some(o) = params.as_object_mut() {
+                o.remove("advance");
+            }
+            cull(app, id, params, advance);
+        } else {
+            let _ = app.run(id, params);
+        }
     }
     for f in fire {
         if let Some(rest) = f.strip_prefix("rate:") {
             let (n, adv) = rest.split_once(':').unwrap_or(("0", "0"));
-            let _ = app.run("photo.rate", json!({"rating": n.parse::<u8>().unwrap_or(0), "advance": adv == "1"}));
+            cull(app, "photo.rate", json!({"rating": n.parse::<u8>().unwrap_or(0)}), adv == "1");
             let label = if n == "0" { "Rating cleared".to_string() } else { format!("Rated {}", "★".repeat(n.parse().unwrap_or(0))) };
             app.toast(ctx, label);
         } else if let Some(l) = f.strip_prefix("label:") {
-            let _ = app.run("photo.label", json!({"label": l}));
+            cull(app, "photo.label", json!({"label": l}), false);
+        } else if compare::culling(app) && (f == "library.next" || f == "library.previous") {
+            let d = if f == "library.next" { 1 } else { -1 };
+            let _ = if app.ui.view == crate::state::ViewMode::Compare { compare::compare_step(app, d) } else { compare::survey_step(app, d) };
+        } else if matches!(f.as_str(), "photo.pick" | "photo.reject" | "photo.unflag") && app.ui.right != crate::state::RightPanel::Crop {
+            cull(app, &f, json!({}), false);
+            match f.as_str() {
+                "photo.pick" => app.toast(ctx, "Flagged as Pick"),
+                "photo.reject" => app.toast(ctx, "Flagged as Reject"),
+                _ => app.toast(ctx, "Unflagged"),
+            }
         } else {
             // Delete acts on what's being edited: the active mask in the Masking panel; never the
             // photo while retouching (spots are removed from their own panel).

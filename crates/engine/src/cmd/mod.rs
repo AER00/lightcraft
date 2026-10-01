@@ -4,11 +4,13 @@
 //! delete), `album.*`, `develop.*` (settings), `crop.*`, `mask.*`, `preset.*`, `version.*`,
 //! `edit.*` (undo/redo), and queries (`catalog.query`, `photo.inspect`, `develop.get`…).
 
+mod color;
 mod develop;
 mod edit;
 mod library;
 mod masks;
 mod merge;
+mod organize;
 mod preset_files;
 mod query;
 mod xmp;
@@ -102,7 +104,9 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(edit::specs());
         v.extend(library::specs());
         v.extend(develop::specs());
+        v.extend(color::specs());
         v.extend(masks::specs());
+        v.extend(organize::specs());
         v.extend(merge::specs());
         v.extend(query::specs());
         v.extend(xmp::specs());

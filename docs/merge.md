@@ -58,6 +58,7 @@ scale in `BaselineExposure`; raw sources keep their DNG colour tags (camera RGB)
 - No camera response calibration for JPEG brackets (sRGB decoding is taken as linear light).
 - Boundary Warp is a separable stretch, not a content-preserving mesh warp; Fill Edges is diffusion,
   not patch synthesis.
-- *Create Stack*: LightCraft has no stacks yet; the result's caption lists its sources.
+- *Create Stack*: the result goes on top of a collapsed stack of its sources (`Catalog::stack_with_ops`); its
+  caption also lists them.
 - Panorama output is limited to `maxMegapixels` (default 40) — blending memory is ~25 bytes/pixel.
 - The browser build has no file access for merges yet.

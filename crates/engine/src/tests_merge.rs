@@ -49,9 +49,17 @@ fn hdr_merge_command_creates_and_imports_a_dng() {
     assert!(d.light.exposure != 0.0 || d.light.highlights != 0.0, "auto settings applied");
     let img = s.render_now(id, 256, 256).unwrap();
     assert_eq!(img.image.width, 256);
+    // Create Stack: the result tops a collapsed stack of its sources, so the grid shows the result
+    let st = s.catalog.stack_of(id).expect("merge result stacked").clone();
+    assert_eq!(st.top(), id);
+    assert_eq!(st.photos[1..].iter().map(|p| p.0).collect::<Vec<_>>(), ids);
+    assert!(st.collapsed);
+    assert_eq!(s.visible_cloned(), vec![id]);
     // the second merge doesn't overwrite the first
     let r2 = s.execute("merge.hdr", &json!({"ids": ids, "autoSettings": false})).unwrap();
     assert!(r2["path"].as_str().unwrap().ends_with("IMG_0-HDR-2.dng"));
+    let id2 = lightcraft_catalog::PhotoId(r2["id"].as_u64().unwrap());
+    assert!(s.catalog.stack_of(id2).is_none(), "no stack without the option");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

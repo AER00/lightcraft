@@ -10,7 +10,10 @@ pub enum ViewMode {
     PhotoGrid,
     SquareGrid,
     Detail,
+    /// Two photos side by side (select | candidate), synced zoom.
     Compare,
+    /// The selected photos tiled.
+    Survey,
 }
 
 /// The right-hand tool/panel shown next to the tool strip.
@@ -111,6 +114,23 @@ pub struct UiState {
     pub brush_flow: f32,
     pub brush_erase: bool,
     pub remove_size: f32,
+    /// Selected Point Color sample.
+    pub point_color: usize,
+    /// Point Color "Visualize range": the selected sample's range in colour, the rest grey.
+    pub point_color_visualize: bool,
+    /// Red Eye panel: selected correction, and whether new ones are pet eyes.
+    pub eye: usize,
+    pub eye_pet: bool,
+    /// Remove tool: Visualize Spots (high-pass black/white view) and its threshold 0..100.
+    pub visualize_spots: bool,
+    pub spots_threshold: f32,
+    /// The library filter bar above the grid.
+    pub filter_bar: bool,
+    /// Culling: after a rating, flag or colour-label key, move to the next photo.
+    pub auto_advance: bool,
+    /// Compare view: (select, candidate) photo ids.
+    #[serde(skip)]
+    pub compare: Option<(u64, u64)>,
     /// Transient toast text and its expiry (seconds of app time).
     #[serde(skip)]
     pub toast: Option<(String, f64)>,
@@ -129,6 +149,14 @@ pub enum Dialog {
     },
     RenameAlbum {
         id: u64,
+        name: String,
+    },
+    /// Auto-stack by capture time: the largest gap between consecutive shots, in seconds.
+    AutoStack {
+        gap: f32,
+    },
+    /// Save the current view (source + filter) as a smart album.
+    NewSmartAlbum {
         name: String,
     },
     CreatePreset {
@@ -183,6 +211,15 @@ impl Default for UiState {
             brush_flow: 60.0,
             brush_erase: false,
             remove_size: 0.02,
+            point_color: 0,
+            point_color_visualize: false,
+            eye: 0,
+            eye_pet: false,
+            visualize_spots: false,
+            spots_threshold: 50.0,
+            auto_advance: false,
+            filter_bar: false,
+            compare: None,
             toast: None,
             status: String::new(),
             dialog: None,

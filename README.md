@@ -224,15 +224,16 @@ Lightroom parity tracker — every feature, menu item and shortcut with its stat
 
 | Area | Status |
 |---|---|
-| Library: albums, folders, ratings, flags, labels, search, sort, grids, filmstrip | ✅ |
-| Light, Color, Effects, Tone Curve, Color Mixer, Color Grading, B&W | ✅ |
+| Library: albums, folders, smart albums, stacks (incl. auto-stack), virtual copies, ratings, flags, labels, filter bar, search, sort, grids, filmstrip | ✅ |
+| Culling: Compare (synced zoom) and Survey views, auto-advance, instant previews | ✅ |
+| Light, Color, Effects (vignette styles), Tone Curve (+ refine saturation, targeted adjustment), Color Mixer (+ targeted), Point Color, Color Grading, Calibration, B&W | ✅ |
 | Masking: brush, linear, radial, luminance/colour range, add/subtract/intersect | ✅ (AI subject/sky use classical heuristics for now) |
-| Crop, straighten, flip, rotate, aspect ratios, overlays | ✅ |
+| Crop, straighten tool + auto straighten, flip, rotate, aspect ratios, overlays | ✅ |
 | Profiles (Color, Neutral, Vivid, Landscape, Portrait, Monochrome — our own looks), presets, versions, history, copy/paste/sync settings | ✅ |
-| Control channel + every widget addressable | ✅ |
+| Native macOS menu bar (generated from the command registry), control channel + every widget addressable, headless UI snapshots | ✅ |
 | RAW: DNG, CR2, ARW, NEF (uncompressed), Fujifilm RAF (Bayer + X-Trans), Panasonic RW2, Pentax PEF, Olympus ORF; embedded previews for every format incl. CR3 | ✅ · compressed NEF/RAF/ORF, CR3 decode 🚧 |
 | Detail: sharpening, luminance + colour noise reduction | ✅ · AI Denoise, Super Resolution ⬜ |
-| Remove / Heal / Clone spots (auto source) | ✅ · content-aware fill (PatchMatch), Red Eye 🚧 |
+| Remove / Heal / Clone spots (auto source), Visualize Spots, Red Eye and Pet Eye (auto pupil detection, catchlight) | ✅ · content-aware fill, spot pin editing 🚧 |
 | Export: JPEG / PNG / TIFF / WebP / AVIF, sizing, file-size limit, output sharpening, naming, batch, metadata policy, text watermark | ✅ · DNG export, image watermark ⬜ |
 | Library persistence (crash-safe op log + snapshots), disk thumbnail cache, import with duplicate detection | ✅ |
 | MCP server (headless or live app, persistent libraries), CLI, control channel | ✅ |

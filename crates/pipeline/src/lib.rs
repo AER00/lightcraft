@@ -30,10 +30,14 @@ pub mod local;
 pub mod masks;
 pub mod optics;
 pub mod profiles;
+pub mod redeye;
 pub mod spots;
 pub mod tone;
 pub mod transform;
 pub mod upright;
+pub mod visualize;
+
+pub use visualize::Overlay;
 
 use lightcraft_develop::{DevelopSettings, Treatment};
 use std::any::Any;
@@ -78,11 +82,13 @@ pub struct RenderRequest {
     pub quality: Quality,
     /// Show the crop frame's content only (true) or the whole uncropped image (crop tool active).
     pub apply_crop: bool,
+    /// A diagnostic view drawn over the result (e.g. Point Color's "visualize range").
+    pub overlay: Overlay,
 }
 
 impl RenderRequest {
     pub fn fit(max_w: usize, max_h: usize) -> Self {
-        Self { max_w, max_h, quality: Quality::Full, apply_crop: true }
+        Self { max_w, max_h, quality: Quality::Full, apply_crop: true, overlay: Overlay::None }
     }
 }
 
@@ -224,14 +230,17 @@ pub struct Plan<'a> {
     pub geo: u64,
     /// Key of the white-balanced, retouched, denoised image (and of the planes computed from it).
     pub lin_key: u64,
+    /// Red eye / pet eye corrections with their detected pupils, in output pixels.
+    pub eyes: Vec<redeye::EyeK>,
 }
 
 /// Resolve `s` against `src` for `req` (see [`Plan`]).
 pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &RenderRequest) -> Plan<'a> {
-    let settings: Cow<'a, DevelopSettings> = match profiles::effective(s) {
+    let mut settings: Cow<'a, DevelopSettings> = match profiles::effective(s) {
         Cow::Borrowed(b) => upright::resolve(src, info, b),
         Cow::Owned(o) => Cow::Owned(upright::resolve(src, info, &o).into_owned()),
     };
+    visualize::adjust_settings(req.overlay, &mut settings);
     let s = &*settings;
     let frame = frame_for(src, info, s, req.apply_crop);
     let (w, h) = frame.fit(req.max_w, req.max_h);
@@ -239,17 +248,19 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     let src_long = src.width.max(src.height);
     let geo = hash_of((format!("{frame:?}"), w, h));
     let (wb_t, wb_tint) = local::effective_wb(info, s);
+    let eyes = redeye::resolve(src, &s.red_eye, s.orientation, &frame, w, h, px_per_long);
     let d = &s.detail;
     let lin_key = hash_of((
         geo,
         [wb_t, wb_tint, info.as_shot_temp, info.as_shot_tint].map(f64::to_bits),
         format!("{:?}", s.spots),
+        format!("{eyes:?}"),
         // defringe runs in this stage
         format!("{:?}", s.optics),
         [d.nr_luminance, d.nr_detail, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits),
         src_long,
     ));
-    Plan { settings, frame, w, h, px_per_long, src_long, geo, lin_key }
+    Plan { settings, frame, w, h, px_per_long, src_long, geo, lin_key, eyes }
 }
 
 /// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal).
@@ -266,6 +277,7 @@ pub fn lin_cpu(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
     local::white_balance(img, info, s);
     optics::defringe(img, s, p.px_per_long / optics::DEFRINGE_REF_LONG);
     spots::apply(img, &s.spots, &p.frame, p.px_per_long);
+    redeye::apply(img, &p.eyes);
 }
 
 /// Render `src` with settings `s`.
@@ -336,6 +348,8 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     lap("finish", &mut t);
     let histogram = Histogram::of_srgb8(&image);
     lap("histogram", &mut t);
+    let mut image = image;
+    visualize::apply(&mut image, req.overlay, &plan);
     Rendered { image, histogram }
 }
 

@@ -30,7 +30,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     RightPanel::Crop => crop(app, ui, id),
                     RightPanel::Remove => remove(app, ui, id),
                     RightPanel::Masking => super::masking::show(app, ui, id),
-                    RightPanel::RedEye => red_eye(app, ui),
+                    RightPanel::RedEye => red_eye(app, ui, id),
                     RightPanel::Info => info(app, ui, id),
                     RightPanel::Keywords => keywords(app, ui, id),
                     RightPanel::Versions => versions(app, ui, id),
@@ -228,6 +228,28 @@ fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if let Some(v) = out.value {
         app.ui.remove_size = (v / 1000.0) as f32;
     }
+    // Visualize Spots (A): a black/white high-pass view that makes dust and specks stand out
+    padded(ui, |ui| {
+        let mut v = app.ui.visualize_spots;
+        if ui.checkbox(&mut v, "Visualize Spots (A)").changed() {
+            app.ui.visualize_spots = v;
+        }
+    });
+    let spec = lightcraft_develop::ControlSpec {
+        id: "ui.spotsThreshold",
+        label: "Threshold",
+        section: lightcraft_develop::Section::Detail,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: lightcraft_develop::Track::Plain,
+    };
+    let out = slider(ui, &spec, app.ui.spots_threshold as f64, app.ui.visualize_spots, None);
+    if let Some(v) = out.value {
+        app.ui.spots_threshold = v as f32;
+    }
     padded(ui, |ui| {
         if !d.spots.is_empty() && text_button(ui, "removeClear", "Delete all spots", false).clicked() {
             for i in (0..d.spots.len()).rev() {
@@ -237,13 +259,58 @@ fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     });
 }
 
-fn red_eye(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+fn red_eye(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
+    let d = app.session.develop_of(id).unwrap_or_default();
     header(ui, "Red Eye");
     padded(ui, |ui| {
-        ui.label("Click and drag over an eye to correct it.");
-        if text_button(ui, "redeyeAuto", "Auto Correct", false).clicked() {
-            app.ui.status = "Red eye correction arrives in M8".into();
+        ui.horizontal_wrapped(|ui| {
+            for (label, pet) in [("Red Eye", false), ("Pet Eye", true)] {
+                if text_button(ui, &format!("eyeMode-{}", if pet { "pet" } else { "red" }), label, app.ui.eye_pet == pet).clicked() {
+                    app.ui.eye_pet = pet;
+                }
+            }
+        });
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("Drag over an eye on the photo; the pupil inside is found automatically.").color(Tokens::get(ui.ctx()).text_dim),
+        );
+    });
+    let n = d.red_eye.len();
+    if n == 0 {
+        return;
+    }
+    if app.ui.eye >= n {
+        app.ui.eye = n - 1;
+    }
+    let i = app.ui.eye;
+    let eye = d.red_eye[i];
+    divider(ui);
+    super::edit::sub_title(ui, &format!("{} {} of {n}", if eye.pet { "Pet Eye" } else { "Red Eye" }, i + 1));
+    for k in ["pupilSize", "darken"] {
+        let cid = format!("redEye.{i}.{k}");
+        let Some(spec) = lightcraft_develop::controls::find(&cid) else { continue };
+        let v = lightcraft_develop::controls::get(&d, &cid).unwrap_or(spec.default);
+        let out = slider(ui, spec, v, true, None);
+        super::edit::apply_slider_out(app, spec, out, |app, v| app.run("develop.set", json!({"control": cid, "value": v})));
+    }
+    padded(ui, |ui| {
+        if eye.pet {
+            let mut on = eye.catchlight.is_some();
+            if ui.checkbox(&mut on, "Add Catchlight").changed() {
+                let _ = app.run("redeye.catchlight", json!({"index": i, "on": on}));
+            }
+            ui.add_space(4.0);
         }
+        ui.horizontal(|ui| {
+            if text_button(ui, "eyeDelete", "Delete", false).clicked() {
+                let _ = app.run("redeye.delete", json!({"index": i}));
+            }
+            if n > 1 && text_button(ui, "eyeDeleteAll", "Delete all", false).clicked() {
+                for k in (0..n).rev() {
+                    let _ = app.run("redeye.delete", json!({"index": k}));
+                }
+            }
+        });
     });
 }
 
@@ -254,8 +321,12 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     padded(ui, |ui| {
         ui.label(egui::RichText::new(&p.file_name).font(t.semibold(14.0)).color(t.text));
         ui.label(egui::RichText::new(format!("{} × {}  ·  {}", p.width, p.height, p.format)).color(t.text_dim));
+        if let Some(name) = &p.copy_name {
+            let of = p.copy_of.and_then(|m| app.session.catalog.photo(m)).map(|m| m.file_name.clone()).unwrap_or_else(|| "a removed photo".into());
+            ui.label(egui::RichText::new(format!("Virtual copy “{name}” of {of}")).color(t.text_label));
+        }
         ui.add_space(8.0);
-        if let Some(r) = crate::widgets::stars(ui, "info", p.rating, 20.0) {
+        if let Some(r) = ui.horizontal(|ui| crate::widgets::stars(ui, "info", p.rating, 20.0)).inner {
             let _ = app.run("photo.rate", json!({"rating": r}));
         }
     });
