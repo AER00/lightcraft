@@ -36,7 +36,7 @@ fn control(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings, id: 
     let Some(spec) = controls::find(id) else { return };
     let v = controls::get(d, id).unwrap_or(spec.default);
     let out = slider(ui, spec, v, enabled, None);
-    apply_slider_out(app, spec, out, |app, v| app.run("develop.set", json!({"control": spec.id, "value": v})));
+    apply_slider_out(app, spec, out, |app, v| app.run("develop.set", json!({"control": id, "value": v})));
 }
 
 /// Relative temperature scale for rendered (non-raw) files: −100..100 ↔ Kelvin via mired shift.
@@ -177,6 +177,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         if open {
             mixer(app, ui, d);
         }
+        if !crate::is_bw(d) {
+            let open = app.ui.flyout_open("pointColor");
+            if flyout_row(ui, "pointColor", "Point Color", Icon::Picker, open).clicked() {
+                app.ui.toggle_flyout("pointColor");
+            }
+            if open {
+                point_color(app, ui, d);
+            }
+        }
         let open = app.ui.flyout_open("grading");
         if flyout_row(ui, "grading", "Color Grading", Icon::Presets, open).clicked() {
             app.ui.toggle_flyout("grading");
@@ -281,10 +290,21 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
         ui.add_space(8.0);
     });
+    // Lightroom Classic's Calibration panel (the cloud app hides it): last, like there.
+    section(app, ui, &d, "calibration", "Calibration", |app, ui, d| {
+        sub_title(ui, "Shadows");
+        control(app, ui, d, "calibration.shadowsTint", true);
+        for (title, k) in [("Red Primary", "red"), ("Green Primary", "green"), ("Blue Primary", "blue")] {
+            sub_title(ui, title);
+            control(app, ui, d, &format!("calibration.{k}Hue"), true);
+            control(app, ui, d, &format!("calibration.{k}Sat"), true);
+        }
+        ui.add_space(8.0);
+    });
     ui.add_space(40.0);
 }
 
-fn sub_title(ui: &mut egui::Ui, title: &str) {
+pub fn sub_title(ui: &mut egui::Ui, title: &str) {
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
     ui.painter().text(pos2(r.left() + 24.0, r.center().y + 4.0), Align2::LEFT_CENTER, title, t.semibold(13.0), t.text_label);
@@ -422,6 +442,9 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
                     app.ui.curve_channel = ch.into();
                 }
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                tat_button(app, ui, "tat:curve", "Targeted adjustment: drag up/down on the photo to adjust the curve there");
+            });
         });
     });
     let ch = app.ui.curve_channel.clone();
@@ -472,6 +495,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         for c in ["curve.highlights", "curve.lights", "curve.darks", "curve.shadows"] {
             control(app, ui, d, c, true);
         }
+        control(app, ui, d, "curve.refineSaturation", true);
         return;
     }
     let pts_of = |d: &DevelopSettings| -> Vec<Point> {
@@ -563,7 +587,17 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         let _ = app.run("develop.endInteraction", json!({}));
     }
     ui.data_mut(|dd| dd.insert_temp(drag_id, dragging));
+    control(app, ui, d, "curve.refineSaturation", true);
     let _ = id;
+}
+
+/// Toggle for a targeted-adjustment tool (`tool` = `tat:<target>`).
+fn tat_button(app: &mut LightcraftApp, ui: &mut egui::Ui, tool: &str, tip: &str) {
+    let active = app.ui.tool == tool;
+    let id = tool.replace(':', "-");
+    if crate::widgets::icon_button(ui, &id, Icon::Target, vec2(26.0, 26.0), active, true, tip).clicked() {
+        app.ui.tool = if active { String::new() } else { tool.to_string() };
+    }
 }
 
 // ------------------------------------------------------------------------------ colour mixer
@@ -589,6 +623,26 @@ fn mixer(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
             }
         });
     });
+    // targeted adjustment: pick the attribute, then drag on the photo
+    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 2 }).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+            paint(ui.painter(), r, Icon::Target, t.icon);
+            let items: &[(&str, &str)] =
+                if crate::is_bw(d) { &[("lum", "B&W Mix")] } else { &[("hue", "Hue"), ("sat", "Saturation"), ("lum", "Luminance")] };
+            for (k, label) in items {
+                let tool = format!("tat:{k}");
+                let active = app.ui.tool == tool;
+                if text_button(ui, &format!("tatMixer-{k}"), label, active)
+                    .on_hover_text("Targeted adjustment: drag up/down on the photo to adjust the colours there")
+                    .clicked()
+                {
+                    app.ui.tool = if active { String::new() } else { tool };
+                }
+            }
+        });
+    });
     let b = bands[sel];
     if crate::is_bw(d) {
         control(app, ui, d, &format!("bw.{b}"), true);
@@ -597,6 +651,77 @@ fn mixer(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
             control(app, ui, d, &format!("mixer.{b}.{k}"), true);
         }
     }
+}
+
+// ------------------------------------------------------------------------------ point color
+
+/// Display colour of an OkLCh sample (lightness, chroma, hue in degrees).
+fn oklch_color(l: f64, c: f64, h_deg: f64) -> Color32 {
+    use lightcraft_color::perceptual::{lch_to_lab, oklab_to_2020};
+    let lin = oklab_to_2020(lch_to_lab([l as f32, c as f32, (h_deg as f32).to_radians()]));
+    let s = lightcraft_color::REC2020.to_space(&lightcraft_color::SRGB).apply_f32(lin);
+    let e = s.map(|v| (lightcraft_color::transfer::linear_to_srgb(v.clamp(0.0, 1.0)) * 255.0).round() as u8);
+    Color32::from_rgb(e[0], e[1], e[2])
+}
+
+/// Point Color: swatches of the samples (+ the eyedropper), the selected sample's shifts and range,
+/// and "Visualize range".
+fn point_color(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
+    let t = Tokens::get(ui.ctx());
+    let n = d.point_colors.len();
+    if app.ui.point_color >= n && n > 0 {
+        app.ui.point_color = n - 1;
+    }
+    let sel = app.ui.point_color;
+    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 8, bottom: 4 }).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
+            let active = app.ui.tool == "pointColor";
+            let full = n >= lightcraft_develop::MAX_POINT_COLORS;
+            if crate::widgets::icon_button(ui, "pointColorPicker", Icon::Picker, vec2(26.0, 26.0), active, !full, "Sample a colour on the photo")
+                .clicked()
+            {
+                app.ui.tool = if active { String::new() } else { "pointColor".into() };
+            }
+            for (i, p) in d.point_colors.iter().enumerate() {
+                let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+                register(ui.ctx(), format!("pointColor:{i}"), r);
+                ui.painter().rect_filled(r.shrink(2.0), 3.0, oklch_color(p.lum, p.chroma, p.hue));
+                if i == sel {
+                    ui.painter().rect_stroke(r, 4.0, Stroke::new(1.5, t.text), egui::StrokeKind::Inside);
+                }
+                if resp.clicked() {
+                    app.ui.point_color = i;
+                }
+            }
+        });
+    });
+    if n == 0 {
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 8 }).show(ui, |ui| {
+            ui.label(egui::RichText::new("Pick a colour on the photo with the eyedropper.").size(12.0).color(t.text_dim));
+        });
+        return;
+    }
+    for k in ["hueShift", "satShift", "lumShift", "variance"] {
+        control(app, ui, d, &format!("pointColor.{sel}.{k}"), true);
+    }
+    sub_title(ui, "Range");
+    for k in ["range", "hueRange", "satRange", "lumRange"] {
+        control(app, ui, d, &format!("pointColor.{sel}.{k}"), true);
+    }
+    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 4, bottom: 8 }).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            let mut v = app.ui.point_color_visualize;
+            if ui.checkbox(&mut v, "Visualize range").changed() {
+                app.ui.point_color_visualize = v;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if text_button(ui, "pointColorDelete", "Delete", false).clicked() {
+                    let _ = app.run("pointColor.delete", json!({"index": sel}));
+                }
+            });
+        });
+    });
 }
 
 // ------------------------------------------------------------------------------ colour grading

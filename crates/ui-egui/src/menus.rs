@@ -29,6 +29,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.clipping", "Show Clipping", Some("J"), "View"),
     ("view.histogram", "Histogram", Some("Cmd+Shift+H"), "View"),
     ("view.maskOverlay", "Show Mask Overlay", Some("O"), "View"),
+    ("view.visualizeSpots", "Visualize Spots", Some("A"), "View"),
     ("view.cropOverlay", "Cycle Crop Overlay", Some("Shift+O"), "View"),
     ("view.back", "Back to Grid", Some("Escape"), "View"),
     ("view.filterBar", "Filter", None, "View"),
@@ -178,6 +179,16 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "view.maskOverlay" => {
             app.ui.mask_overlay = !app.ui.mask_overlay;
+            Ok(Value::Null)
+        }
+        "view.visualizeSpots" => {
+            // like Lightroom's A: opens the Remove tool with the view on, or toggles it there
+            if app.ui.right == RightPanel::Remove {
+                app.ui.visualize_spots = !app.ui.visualize_spots;
+            } else {
+                app.ui.right = RightPanel::Remove;
+                app.ui.visualize_spots = true;
+            }
             Ok(Value::Null)
         }
         "view.cropOverlay" => {

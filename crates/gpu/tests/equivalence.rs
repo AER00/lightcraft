@@ -84,6 +84,23 @@ fn cases() -> Vec<(&'static str, Edit)> {
             s.mixer.orange.hue = 30.0;
             s.mixer.green.lum = 40.0;
         }),
+        ("point color", |s| {
+            use lightcraft_develop::PointColor;
+            s.point_colors = vec![
+                PointColor {
+                    lum: 0.62,
+                    chroma: 0.09,
+                    hue: 60.0,
+                    hue_shift: 40.0,
+                    sat_shift: -30.0,
+                    lum_shift: 20.0,
+                    range: 80.0,
+                    ..Default::default()
+                },
+                PointColor { lum: 0.5, chroma: 0.12, hue: 270.0, variance: -60.0, sat_shift: 40.0, hue_range: 80.0, ..Default::default() },
+                PointColor { lum: 0.4, chroma: 0.01, hue: 0.0, lum_shift: -30.0, ..Default::default() },
+            ];
+        }),
         ("b&w mix", |s| {
             s.treatment = Treatment::Bw;
             s.bw_mix.blue = 60.0;
@@ -101,6 +118,11 @@ fn cases() -> Vec<(&'static str, Edit)> {
             s.curve.shadows = 25.0;
             s.curve.master = vec![Point::new(0.0, 0.05), Point::new(0.5, 0.55), Point::new(1.0, 0.95)];
             s.curve.blue = vec![Point::new(0.0, 0.0), Point::new(0.5, 0.45), Point::new(1.0, 1.0)];
+        }),
+        ("tone curves + refine saturation", |s| {
+            s.curve.master = vec![Point::new(0.0, 0.0), Point::new(0.25, 0.15), Point::new(0.75, 0.88), Point::new(1.0, 1.0)];
+            s.curve.lights = 30.0;
+            s.curve.refine_saturation = 20.0;
         }),
         ("vignette (highlight)", |s| {
             s.vignette.amount = -60.0;
@@ -253,6 +275,14 @@ fn cases() -> Vec<(&'static str, Edit)> {
                 },
             ];
         }),
+        ("calibration", |s| {
+            s.calibration.shadows_tint = 40.0;
+            s.calibration.red_hue = 50.0;
+            s.calibration.red_sat = -30.0;
+            s.calibration.green_hue = -40.0;
+            s.calibration.blue_sat = 60.0;
+            s.calibration.blue_hue = 25.0;
+        }),
         ("spots + defringe (cpu stage)", |s| {
             s.spots = vec![Spot { points: vec![Point::new(0.3, 0.3)], size: 0.03, source_offset: Some(Point::new(0.1, 0.0)), ..Default::default() }];
             s.optics.defringe_purple_amount = 5.0;
@@ -356,4 +386,79 @@ fn cached_renders_match_uncached() {
         let fresh = lightcraft_gpu::render(&src, &info, &s, &req, None).expect("gpu");
         assert_eq!(warm.image, fresh.image, "step {k}");
     }
+}
+
+#[test]
+fn overlays_match() {
+    if !gpu() {
+        return;
+    }
+    // Diagnostic overlays run on the finished 8-bit image, after either renderer.
+    let src = scene(0, 900, 600);
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    let s = DevelopSettings {
+        point_colors: vec![lightcraft_develop::PointColor { lum: 0.6, chroma: 0.05, hue: 300.0, hue_shift: 50.0, range: 90.0, ..Default::default() }],
+        ..Default::default()
+    };
+    let req = RenderRequest { overlay: lightcraft_pipeline::Overlay::PointColorRange(0), ..RenderRequest::fit(640, 640) };
+    check("point color range overlay", &src, &raw, &s, &req);
+    // Visualize Spots is a binary threshold of a high-pass: a 1-LSB difference near the threshold
+    // flips a pixel, so compare the share of differing pixels instead of LSBs.
+    let s = DevelopSettings::default();
+    for t in [20u8, 50, 90] {
+        let req = RenderRequest { overlay: lightcraft_pipeline::Overlay::Spots(t), ..RenderRequest::fit(640, 640) };
+        let cpu = render(&src, &raw, &s, &req).image;
+        let gpu = lightcraft_gpu::render(&src, &raw, &s, &req, None).expect("gpu").image;
+        let differ = cpu.data.iter().zip(&gpu.data).filter(|(a, b)| a != b).count() as f64 / cpu.data.len() as f64;
+        let white = cpu.data.iter().filter(|p| p[0] == 255).count() as f64 / cpu.data.len() as f64;
+        eprintln!("visualize spots t={t:<3}          white {:.3}%  differing {:.4}%", white * 100.0, differ * 100.0);
+        assert!(differ < 0.002, "spots t={t}: {differ}");
+    }
+}
+
+#[test]
+fn red_eye_matches() {
+    if !gpu() {
+        return;
+    }
+    // A face-like patch with a red pupil (left) and a glowing pet pupil (right).
+    let src = Arc::new(Rgb32f::from_fn(800, 400, |x, y| {
+        let d = |cx: f32, cy: f32| ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+        if d(250.0, 200.0) < 20.0 {
+            [0.55, 0.05, 0.04]
+        } else if d(560.0, 190.0) < 24.0 {
+            [0.5, 0.7, 0.3]
+        } else if d(250.0, 200.0) < 40.0 || d(560.0, 190.0) < 45.0 {
+            [0.12, 0.1, 0.08]
+        } else {
+            [0.45, 0.3, 0.22]
+        }
+    }));
+    let info = SourceInfo::default();
+    let eyes = vec![
+        lightcraft_develop::RedEye { center: Point::new(0.31, 0.5), rx: 0.06, ry: 0.05, darken: 70.0, ..Default::default() },
+        lightcraft_develop::RedEye {
+            center: Point::new(0.7, 0.48),
+            rx: 0.06,
+            ry: 0.06,
+            pupil_size: 60.0,
+            pet: true,
+            catchlight: Some(Point::new(-0.35, -0.35)),
+            ..Default::default()
+        },
+    ];
+    let s = DevelopSettings { red_eye: eyes.clone(), ..Default::default() };
+    check("red + pet eye", &src, &info, &s, &RenderRequest::fit(800, 800));
+    let g = lightcraft_gpu::render(&src, &info, &s, &RenderRequest::fit(800, 800), None).expect("gpu").image;
+    let (red, pet) = (g.data[200 * 800 + 250], g.data[190 * 800 + 560]);
+    assert!(red[0] < 80 && red[0].abs_diff(red[1]) < 10, "red pupil fixed on the GPU: {red:?}");
+    assert!(pet[1] < 80 && pet[0].abs_diff(pet[1]) < 5, "pet pupil darkened on the GPU: {pet:?}");
+    check("red + pet eye (small)", &src, &info, &s, &RenderRequest::fit(300, 300));
+    // with a spot the scene-linear stage runs on the CPU (eyes included)
+    let s = DevelopSettings {
+        red_eye: eyes,
+        spots: vec![Spot { points: vec![Point::new(0.1, 0.2)], size: 0.02, source_offset: Some(Point::new(0.05, 0.0)), ..Default::default() }],
+        ..Default::default()
+    };
+    check("red eye + spot (cpu stage)", &src, &info, &s, &RenderRequest::fit(600, 600));
 }

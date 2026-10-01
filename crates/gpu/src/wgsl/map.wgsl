@@ -135,3 +135,49 @@ fn subsample(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroup
     }
     dst[i] = a[i * pu(1u)];
 }
+
+// `redeye::eye_pixel` (a: image). P[1] = width, P[2] = eye count, then EYE_WORDS per eye:
+// cx, cy, r, darken, pet, has catchlight, catchlight x, y, r (output pixels).
+@compute @workgroup_size(256)
+fn redeye_k(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
+    let i = lin_index(g, nw);
+    if (i >= pu(0u)) {
+        return;
+    }
+    let w = pu(1u);
+    let x = f32(i % w) + 0.5;
+    let y = f32(i / w) + 0.5;
+    var c = rgb_a(i);
+    for (var e = 0u; e < pu(2u); e++) {
+        let o = 3u + e * EYE_WORDS;
+        let ex = x - pf(o);
+        let ey = y - pf(o + 1u);
+        let d = sqrt(ex * ex + ey * ey) / pf(o + 2u);
+        var m = 1.0 - sstep(1.0, 1.35, d);
+        if (pf(o + 4u) != 0.0) {
+            m = 1.0 - sstep(0.95, 1.2, d);
+        }
+        let darken = pf(o + 3u);
+        if (m > 0.0) {
+            if (pf(o + 4u) != 0.0) {
+                let k = min(lum2020(c), 0.04) * (1.0 - 0.85 * darken);
+                c = c + (vec3<f32>(k) - c) * m;
+            } else {
+                let red = (c.x - max(c.y, c.z)) / max(c.x, 1e-6);
+                let a = m * sstep(0.25, 0.5, red);
+                let n = 0.5 * (c.y + c.z) * (1.0 - 0.9 * darken);
+                c = c + (vec3<f32>(n) - c) * a;
+            }
+        }
+        if (pf(o + 5u) != 0.0) {
+            let lx = x - pf(o + 6u);
+            let ly = y - pf(o + 7u);
+            let dc = sqrt(lx * lx + ly * ly) / pf(o + 8u);
+            let mc = 1.0 - sstep(0.5, 1.0, dc);
+            if (mc > 0.0) {
+                c = c + (vec3<f32>(0.9) - c) * mc;
+            }
+        }
+    }
+    put_rgb(i, c);
+}

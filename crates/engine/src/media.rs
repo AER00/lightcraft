@@ -246,6 +246,21 @@ impl RenderJob {
         self
     }
 
+    /// Draw a diagnostic overlay over the result (e.g. Point Color's visualized range). Gets its
+    /// own result key.
+    pub fn with_overlay(mut self, overlay: lightcraft_pipeline::Overlay) -> Self {
+        if self.request.overlay != overlay {
+            self.key ^= self.request.overlay.key().wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            self.request.overlay = overlay;
+            self.key ^= overlay.key().wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        }
+        // a diagnostic view (visualized range / spots) must never become the photo's cached preview
+        if overlay != lightcraft_pipeline::Overlay::None {
+            self.view_cache = None;
+        }
+        self
+    }
+
     /// Reuse `stages` across this view's renders.
     pub fn with_stages(mut self, stages: Arc<StageCache>) -> Self {
         self.stages = Some(stages);
@@ -408,7 +423,7 @@ impl crate::Session {
         let level = SourceLevel::for_size(max_w.max(max_h));
         let source = self.media.source_ref(&p, level);
         let settings = if before { Arc::new(lightcraft_pipeline::before_settings(&p.develop)) } else { p.develop.clone() };
-        let request = RenderRequest { max_w, max_h, quality: Quality::Full, apply_crop };
+        let request = RenderRequest { apply_crop, ..RenderRequest::fit(max_w, max_h) };
         let key = settings.hash64() ^ ((max_w as u64) << 40) ^ ((max_h as u64) << 20) ^ (apply_crop as u64) ^ (level as u64) << 60;
         let cache = thumb_bucket.map(|b| {
             let k = Hasher128::new().str(&content_key(&p)).u64(settings.hash64()).u64(b as u64).u64(RENDER_CACHE_VERSION).finish();

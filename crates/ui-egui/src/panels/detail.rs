@@ -48,6 +48,15 @@ pub enum Gesture {
     Guide {
         a: Point,
     },
+    /// Red Eye: an ellipse being dragged from corner `a` (normalized).
+    Eye {
+        a: Point,
+    },
+    /// Targeted adjustment drag from `at` (normalized); `acc` = vertical travel not yet applied.
+    Targeted {
+        at: Point,
+        acc: f32,
+    },
 }
 
 /// Screen ↔ normalized-image mapping for the displayed frame.
@@ -158,6 +167,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     if let Some(job) = app.session.loupe_job(id, rw.max(8), rh.max(8), !crop_tool) {
         let job = if interacting { job.draft() } else { job };
+        let job = job.with_overlay(view_overlay(app, &d));
         app.renderer.request(Slot::Main, job, 100);
     }
     // once this photo is on screen: prepare its neighbours in filmstrip order (source decoded and
@@ -253,6 +263,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         RightPanel::Crop => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
         RightPanel::Masking => mask_overlay(app, ui, &resp, &map, &d),
         RightPanel::Remove => remove_overlay(app, ui, &resp, &map, &d),
+        RightPanel::RedEye => eye_overlay(app, ui, &resp, &map, &d),
         _ => general_interaction(app, ui, &resp, &map, img_rect, canvas, native, aspect),
     }
     resp.context_menu(|ui| super::grid::context_menu(app, ui, id));
@@ -268,6 +279,51 @@ fn quick_name(q: lightcraft_engine::media::QuickSource) -> &'static str {
         QuickSource::Embedded => "embedded",
         QuickSource::Small => "small",
     }
+}
+
+/// Targeted adjustment tool: dragging up/down on the photo raises/lowers the tone-curve region or
+/// the colour-mixer bands under the press point (`develop.targeted`, one call per whole step, all
+/// in one interaction = one undo step).
+fn targeted_drag(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, target: &str) {
+    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    if resp.drag_started()
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        let _ = app.run("develop.beginInteraction", json!({"label": "Targeted Adjustment"}));
+        app.gesture = Some(Gesture::Targeted { at: map.norm(q), acc: 0.0 });
+    }
+    if resp.dragged()
+        && let Some(Gesture::Targeted { at, acc }) = &mut app.gesture
+    {
+        *acc -= resp.drag_delta().y * 0.5;
+        let step = acc.trunc();
+        if step != 0.0 {
+            *acc -= step;
+            let at = *at;
+            let mut p = json!({"target": target, "x": at.x, "y": at.y, "delta": step});
+            if target == "curve" && app.ui.curve_channel != "parametric" {
+                p["channel"] = json!(app.ui.curve_channel);
+            }
+            let _ = app.run("develop.targeted", p);
+        }
+    }
+    if resp.drag_stopped() && matches!(app.gesture, Some(Gesture::Targeted { .. })) {
+        app.gesture = None;
+        let _ = app.run("develop.endInteraction", json!({}));
+    }
+}
+
+/// The diagnostic overlay the loupe shows (Point Color's visualized range).
+fn view_overlay(app: &LightcraftApp, d: &DevelopSettings) -> lightcraft_pipeline::Overlay {
+    use lightcraft_pipeline::Overlay;
+    if app.ui.right == RightPanel::Remove && app.ui.visualize_spots {
+        return Overlay::Spots(app.ui.spots_threshold.clamp(0.0, 100.0).round() as u8);
+    }
+    let edit = app.ui.right == RightPanel::Edit;
+    if edit && app.ui.point_color_visualize && app.ui.flyout_open("pointColor") && app.ui.point_color < d.point_colors.len() {
+        return Overlay::PointColorRange(app.ui.point_color as u8);
+    }
+    Overlay::None
 }
 
 fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
@@ -300,6 +356,23 @@ fn general_interaction(
         {
             let n = map.norm(q);
             let _ = app.run("develop.wbPick", json!({"x": n.x, "y": n.y}));
+            app.ui.tool.clear();
+        }
+        return;
+    }
+    if let Some(target) = app.ui.tool.strip_prefix("tat:").map(str::to_string) {
+        targeted_drag(app, ui, resp, map, &target);
+        return;
+    }
+    if app.ui.tool == "pointColor" {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        if resp.clicked()
+            && let Some(q) = resp.interact_pointer_pos()
+        {
+            let n = map.norm(q);
+            if let Ok(r) = app.run("pointColor.pick", json!({"x": n.x, "y": n.y})) {
+                app.ui.point_color = r["index"].as_u64().unwrap_or(0) as usize;
+            }
             app.ui.tool.clear();
         }
         return;
@@ -722,6 +795,64 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
         };
         let pts: Vec<[f64; 2]> = points.iter().map(|q| [q.x, q.y]).collect();
         let _ = app.run("spot.add", json!({"mode": mode, "points": pts, "size": app.ui.remove_size}));
+    }
+}
+
+// ------------------------------------------------------------------------ red eye
+
+/// Red Eye tool: drag an ellipse over an eye (a new correction), click one to select it.
+fn eye_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, d: &DevelopSettings) {
+    // screen points per long-edge unit
+    let o = map.screen(Point::new(0.0, 0.0));
+    let (sx, sy) = (map.screen(Point::new(1.0, 0.0)).distance(o), map.screen(Point::new(0.0, 1.0)).distance(o));
+    let per_long = sx.max(sy);
+    let p = ui.painter();
+    for (i, e) in d.red_eye.iter().enumerate() {
+        let c = map.screen(e.center);
+        let r = vec2(e.rx as f32 * per_long, e.ry as f32 * per_long);
+        let sel = i == app.ui.eye;
+        let col = if sel { Color32::WHITE } else { Color32::from_white_alpha(150) };
+        p.add(egui::Shape::ellipse_stroke(c, r, Stroke::new(if sel { 1.5 } else { 1.0 }, col)));
+        p.line_segment([c - vec2(4.0, 0.0), c + vec2(4.0, 0.0)], Stroke::new(1.0, col));
+        p.line_segment([c - vec2(0.0, 4.0), c + vec2(0.0, 4.0)], Stroke::new(1.0, col));
+    }
+    if resp.hover_pos().is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
+    if resp.drag_started()
+        && let Some(q) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos())
+    {
+        // from where the button went down (a drag is recognized only after some movement)
+        app.gesture = Some(Gesture::Eye { a: map.norm(q) });
+    }
+    if let Some(Gesture::Eye { a }) = app.gesture
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        let (a, b) = (map.screen(a), q);
+        p.add(egui::Shape::ellipse_stroke(a.lerp(b, 0.5), ((b - a) / 2.0).abs(), Stroke::new(1.0, Color32::WHITE)));
+    }
+    if resp.drag_stopped()
+        && let Some(Gesture::Eye { a }) = app.gesture.take()
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        let (sa, sb) = (map.screen(a), q);
+        let half = ((sb - sa) / 2.0).abs() / per_long;
+        if half.x > 0.002 && half.y > 0.002 {
+            let c = map.norm(sa.lerp(sb, 0.5));
+            let r = app.run("redeye.add", json!({"center": [c.x, c.y], "rx": half.x, "ry": half.y, "pet": app.ui.eye_pet}));
+            if let Ok(v) = r {
+                app.ui.eye = v["index"].as_u64().unwrap_or(0) as usize;
+            }
+        }
+    } else if resp.clicked()
+        && let Some(q) = resp.interact_pointer_pos()
+        && let Some(i) = d.red_eye.iter().position(|e| {
+            let c = map.screen(e.center);
+            let (dx, dy) = ((q.x - c.x) / (e.rx as f32 * per_long).max(4.0), (q.y - c.y) / (e.ry as f32 * per_long).max(4.0));
+            dx * dx + dy * dy <= 1.0
+        })
+    {
+        app.ui.eye = i;
     }
 }
 

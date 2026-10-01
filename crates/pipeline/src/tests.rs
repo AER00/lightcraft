@@ -177,7 +177,7 @@ fn stage_cache_matches_uncached_render_through_a_slider_session() {
     let info = SourceInfo { raw: true, ..Default::default() };
     let cache = StageCache::default();
     let full = RenderRequest::fit(200, 200);
-    let draft = RenderRequest { max_w: 120, max_h: 120, quality: Quality::Draft, apply_crop: true };
+    let draft = RenderRequest { quality: Quality::Draft, ..RenderRequest::fit(120, 120) };
     let mut s = typical_edits();
     // every kind of edit: tone, exposure, spatial amounts, NR, WB, crop, colour — at two sizes
     let steps: Vec<Box<dyn Fn(&mut DevelopSettings)>> = vec![
@@ -229,4 +229,56 @@ fn exposure_after_spatial_filters_equals_exposing_the_source() {
     let b = render(&scaled, &info, &s, &RenderRequest::fit(200, 200)).image;
     let d = max_diff(&a, &b);
     assert!(d <= 2, "max difference {d}");
+}
+
+#[test]
+fn calibration_shifts_colours_but_keeps_greys() {
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let req = RenderRequest::fit(64, 8);
+    // a grey ramp is untouched by the primaries
+    let grey = Rgb32f::from_fn(64, 8, |x, _| [0.002 * 1.12f32.powi(x as i32); 3]);
+    let mut s = DevelopSettings::default();
+    s.calibration.red_hue = 80.0;
+    s.calibration.green_sat = -60.0;
+    let a = render(&grey, &info, &DevelopSettings::default(), &req).image;
+    let b = render(&grey, &info, &s, &req).image;
+    assert!(max_diff(&a, &b) <= 1);
+    // a red patch rotates towards yellow (green rises relative to blue)
+    let red = Rgb32f::filled(16, 16, [0.3, 0.04, 0.03]);
+    let r0 = render(&red, &info, &DevelopSettings::default(), &RenderRequest::fit(16, 16)).image.data[0];
+    let r1 = render(&red, &info, &s, &RenderRequest::fit(16, 16)).image.data[0];
+    assert!(r1[1] as i32 - r1[2] as i32 > r0[1] as i32 - r0[2] as i32 + 5, "{r0:?} -> {r1:?}");
+    // shadows tint: magenta (+) lowers green in a dark grey
+    let dark = Rgb32f::filled(16, 16, [0.01, 0.01, 0.01]);
+    s = DevelopSettings::default();
+    s.calibration.shadows_tint = 100.0;
+    let d = render(&dark, &info, &s, &RenderRequest::fit(16, 16)).image.data[0];
+    assert!(d[1] + 3 < d[0], "{d:?}");
+    // the section toggle disables it
+    s.set_section_enabled("calibration", false);
+    let off = render(&dark, &info, &s, &RenderRequest::fit(16, 16)).image.data[0];
+    assert!(off[1].abs_diff(off[0]) <= 1, "{off:?}");
+}
+
+#[test]
+fn refine_saturation_tames_a_contrast_curve() {
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let src = Rgb32f::filled(16, 16, [0.12, 0.05, 0.03]);
+    let req = RenderRequest::fit(16, 16);
+    let sat = |p: [u8; 4]| p[0] as i32 - p[2] as i32;
+    let mut s = DevelopSettings::default();
+    let flat = render(&src, &info, &s, &req).image.data[0];
+    s.curve.master = vec![
+        lightcraft_geom::Point::new(0.0, 0.0),
+        lightcraft_geom::Point::new(0.3, 0.15),
+        lightcraft_geom::Point::new(0.7, 0.85),
+        lightcraft_geom::Point::new(1.0, 1.0),
+    ];
+    let full = render(&src, &info, &s, &req).image.data[0];
+    s.curve.refine_saturation = 0.0;
+    let refined = render(&src, &info, &s, &req).image.data[0];
+    assert!(sat(full) > sat(refined), "{flat:?} {full:?} {refined:?}");
+    // the curve's tone change stays
+    let y = |p: [u8; 4]| 0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32;
+    assert!((y(full) - y(refined)).abs() < 2.0);
 }
