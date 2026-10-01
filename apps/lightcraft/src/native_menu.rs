@@ -19,6 +19,9 @@ use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu
 use serde_json::Value;
 
 const QUIT: &str = "app.quit";
+/// Keys whose meaning depends on the panel (X = reject or swap crop aspect, ⌫ = delete the photo
+/// or the active mask): left to the egui handler, which knows the context.
+const CONTEXTUAL: &[&str] = &["X", "Delete"];
 /// Shortcuts text fields need while they have focus.
 const TEXT_EDIT: &[&str] = &["Cmd+A", "Cmd+C", "Cmd+V", "Cmd+X", "Cmd+Z", "Cmd+Shift+Z"];
 
@@ -238,7 +241,7 @@ impl NativeMenu {
                     if self.items.contains_key(&key) {
                         continue; // muda ids must be unique
                     }
-                    let accel = shortcut.as_deref().and_then(accelerator);
+                    let accel = shortcut.as_deref().filter(|s| !CONTEXTUAL.contains(s)).and_then(accelerator);
                     let handle = match checked {
                         Some(c) => {
                             let it = CheckMenuItem::with_id(key.clone(), label_text(label), *enabled, *c, accel);
@@ -382,8 +385,8 @@ mod tests {
         for (_, v) in menu_bar(&app) {
             all(&v, &mut scs);
         }
-        for sc in scs {
-            assert!(accelerator(&sc).is_some(), "{sc}");
+        for sc in scs.iter().filter(|s| !CONTEXTUAL.contains(&s.as_str())) {
+            assert!(accelerator(sc).is_some(), "{sc}");
         }
     }
 }

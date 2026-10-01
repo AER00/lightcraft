@@ -94,6 +94,8 @@ pub struct Session {
     pub library: Option<library::Library>,
     /// XMP sidecar preferences (persisted with the library).
     pub xmp: sidecar::XmpPrefs,
+    /// Parameters of the last export (`app.export` params, minus targets), persisted in prefs.json.
+    pub last_export: Option<serde_json::Value>,
 }
 
 impl Default for Session {
@@ -126,6 +128,7 @@ impl Session {
             active_mask: None,
             library: None,
             xmp: sidecar::XmpPrefs::default(),
+            last_export: None,
         }
     }
 

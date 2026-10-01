@@ -7,6 +7,7 @@
 //!   normalised-convolution fill). Fully clipped pixels become neutral at the brightest plausible level.
 
 use lightcraft_raster::Rgb32f;
+use rayon::prelude::*;
 
 /// Clip every channel of `wb ⊙ img` at `min_c(wb_c) · clip` — i.e. at the lowest channel's clip level after WB —
 /// then divide the multipliers back out. `clip` is the sensor clip in normalised units (≈ 1.0).
@@ -28,25 +29,28 @@ fn fill_invalid(w: usize, h: usize, values: &mut [[f32; 3]], valid: &mut [bool])
     let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
     let mut cv = vec![[0f32; 3]; cw * ch];
     let mut cval = vec![false; cw * ch];
-    for y in 0..ch {
-        for x in 0..cw {
-            let (mut s, mut n) = ([0f32; 3], 0);
-            for dy in 0..2 {
-                for dx in 0..2 {
-                    let (sx, sy) = (2 * x + dx, 2 * y + dy);
-                    if sx < w && sy < h && valid[sy * w + sx] {
-                        for c in 0..3 {
-                            s[c] += values[sy * w + sx][c];
+    {
+        let (values, valid) = (&*values, &*valid);
+        cv.par_chunks_mut(cw).zip(cval.par_chunks_mut(cw)).enumerate().for_each(|(y, (vrow, okrow))| {
+            for x in 0..cw {
+                let (mut s, mut n) = ([0f32; 3], 0);
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let (sx, sy) = (2 * x + dx, 2 * y + dy);
+                        if sx < w && sy < h && valid[sy * w + sx] {
+                            for c in 0..3 {
+                                s[c] += values[sy * w + sx][c];
+                            }
+                            n += 1;
                         }
-                        n += 1;
                     }
                 }
+                if n > 0 {
+                    vrow[x] = s.map(|v| v / n as f32);
+                    okrow[x] = true;
+                }
             }
-            if n > 0 {
-                cv[y * cw + x] = s.map(|v| v / n as f32);
-                cval[y * cw + x] = true;
-            }
-        }
+        });
     }
     if cw * ch < w * h {
         fill_invalid(cw, ch, &mut cv, &mut cval);
@@ -54,10 +58,9 @@ fn fill_invalid(w: usize, h: usize, values: &mut [[f32; 3]], valid: &mut [bool])
         // cannot shrink further (1×1): nothing valid anywhere handled above
         return;
     }
-    for y in 0..h {
+    values.par_chunks_mut(w).zip(valid.par_chunks_mut(w)).enumerate().for_each(|(y, (vrow, okrow))| {
         for x in 0..w {
-            let i = y * w + x;
-            if !valid[i] {
+            if !okrow[x] {
                 // bilinear upsample of the coarse level
                 let fx = ((x as f32 + 0.5) / 2.0 - 0.5).clamp(0.0, (cw - 1) as f32);
                 let fy = ((y as f32 + 0.5) / 2.0 - 0.5).clamp(0.0, (ch - 1) as f32);
@@ -71,11 +74,11 @@ fn fill_invalid(w: usize, h: usize, values: &mut [[f32; 3]], valid: &mut [bool])
                     let bot = g(x0, y1)[c] + (g(x1, y1)[c] - g(x0, y1)[c]) * tx;
                     v[c] = top + (bot - top) * ty;
                 }
-                values[i] = v;
-                valid[i] = true;
+                vrow[x] = v;
+                okrow[x] = true;
             }
         }
-    }
+    });
 }
 
 /// Reconstruct partially clipped channels. `clip` is the sensor clip level in normalised units (use slightly
@@ -84,52 +87,56 @@ fn fill_invalid(w: usize, h: usize, values: &mut [[f32; 3]], valid: &mut [bool])
 pub fn reconstruct(img: &mut Rgb32f, wb: [f32; 3], clip: f32) -> usize {
     let (w, h) = (img.width, img.height);
     let n = w * h;
-    let clipped: Vec<[bool; 3]> = img.data.iter().map(|p| [p[0] >= clip, p[1] >= clip, p[2] >= clip]).collect();
-    let count = clipped.iter().filter(|c| c.iter().any(|&b| b)).count();
+    let is_clipped = |p: &[f32; 3]| p[0] >= clip || p[1] >= clip || p[2] >= clip;
+    let count = img.data.par_iter().filter(|p| is_clipped(p)).count();
     if count == 0 {
         return 0;
     }
     // chromaticity (white-balanced ratios to the channel mean) of unclipped pixels
     let mut chroma = vec![[1f32 / 3.0; 3]; n];
     let mut valid = vec![false; n];
-    for i in 0..n {
-        if clipped[i].iter().any(|&b| b) {
-            continue;
+    chroma.par_iter_mut().zip(valid.par_iter_mut()).zip(img.data.par_iter()).for_each(|((r, v), p)| {
+        if is_clipped(p) {
+            return;
         }
-        let p = img.data[i];
         let q = [p[0] * wb[0], p[1] * wb[1], p[2] * wb[2]];
         let s = q[0] + q[1] + q[2];
         if s > 1e-4 {
-            chroma[i] = q.map(|v| v.max(0.0) / s);
-            valid[i] = true;
+            *r = q.map(|v| v.max(0.0) / s);
+            *v = true;
         }
-    }
+    });
     fill_invalid(w, h, &mut chroma, &mut valid);
     let max_level = wb.iter().cloned().fold(0.0f32, f32::max) * clip;
-    for i in 0..n {
-        let cl = clipped[i];
+    img.data.par_iter_mut().zip(chroma.par_iter()).for_each(|(px, r)| {
+        let p = *px;
+        let cl = [p[0] >= clip, p[1] >= clip, p[2] >= clip];
         if !cl.iter().any(|&b| b) {
-            continue;
+            return;
         }
-        let p = img.data[i];
         let q = [p[0] * wb[0], p[1] * wb[1], p[2] * wb[2]];
-        let r = chroma[i];
         // estimate the white-balanced channel sum from the unclipped channels
-        let ests: Vec<f32> = (0..3).filter(|&c| !cl[c] && r[c] > 1e-3).map(|c| q[c] / r[c]).collect();
+        let (mut sum, mut k) = (0f32, 0usize);
+        for c in 0..3 {
+            if !cl[c] && r[c] > 1e-3 {
+                sum += q[c] / r[c];
+                k += 1;
+            }
+        }
         let mut out = q;
-        if ests.is_empty() {
+        if k == 0 {
             let v = q.iter().cloned().fold(0.0f32, f32::max).max(max_level);
             out = [v; 3];
         } else {
-            let sum = ests.iter().sum::<f32>() / ests.len() as f32;
+            let sum = sum / k as f32;
             for c in 0..3 {
                 if cl[c] {
                     out[c] = q[c].max(sum * r[c]);
                 }
             }
         }
-        img.data[i] = [out[0] / wb[0], out[1] / wb[1], out[2] / wb[2]];
-    }
+        *px = [out[0] / wb[0], out[1] / wb[1], out[2] / wb[2]];
+    });
     count
 }
 

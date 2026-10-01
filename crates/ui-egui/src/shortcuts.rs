@@ -5,6 +5,18 @@ use serde_json::json;
 
 use crate::LightcraftApp;
 
+/// Secondary key bindings for commands that already exist: `(shortcut, command id, params JSON)`.
+/// They complement the primary shortcut declared on the command (Lightroom-desktop keys that our
+/// primary keymap assigns elsewhere, see docs/parity.md → Shortcuts). Shown in Help → Keyboard Shortcuts.
+pub const ALIASES: &[(&str, &str, &str)] = &[
+    ("Cmd+D", "library.selectNone", "{}"),
+    ("Shift+E", "dialog.export", "{}"),
+    ("Space", "view.zoomToggle", "{}"),
+    ("Shift+M", "version.create", "{}"),
+    ("Shift+X", "photo.flag", r#"{"flag": "reject", "advance": true}"#),
+    ("Shift+U", "photo.flag", r#"{"flag": "none", "advance": true}"#),
+];
+
 pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
     let mut m = Modifiers::NONE;
     let mut key = None;
@@ -14,13 +26,14 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
             "Shift" => m.shift = true,
             "Alt" => m.alt = true,
             "Ctrl" => m.ctrl = true,
+            // "Delete" means the key labelled ⌫ (egui's Backspace); forward-delete also matches, see `matches`.
+            "Delete" => key = Some(Key::Backspace),
             k => {
                 key = Key::from_name(k).or(match k {
                     "Right" => Some(Key::ArrowRight),
                     "Left" => Some(Key::ArrowLeft),
                     "Up" => Some(Key::ArrowUp),
                     "Down" => Some(Key::ArrowDown),
-                    "Delete" => Some(Key::Backspace),
                     "\\" => Some(Key::Backslash),
                     "/" => Some(Key::Slash),
                     "=" => Some(Key::Equals),
@@ -39,7 +52,10 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
 fn matches(i: &egui::InputState, m: Modifiers, k: Key) -> bool {
     i.events.iter().any(|e| match e {
         egui::Event::Key { key, pressed: true, modifiers, .. } => {
-            *key == k && modifiers.command == m.command && modifiers.shift == m.shift && modifiers.alt == m.alt
+            (*key == k || (k == Key::Backspace && *key == Key::Delete))
+                && modifiers.command == m.command
+                && modifiers.shift == m.shift
+                && modifiers.alt == m.alt
         }
         _ => false,
     })
@@ -53,19 +69,32 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     let mut fire: Vec<String> = Vec::new();
     // shortcuts the native menu bar handles (it consumes those key presses itself)
     let native = |sc: &str| app.native_shortcuts.contains(sc);
+    let mut aliased: Vec<(&str, serde_json::Value)> = Vec::new();
     ctx.input(|i| {
+        let mut ui_keys = Vec::new();
         for (id, _, sc, _) in crate::menus::UI_COMMANDS {
-            if let Some((m, k)) = sc.filter(|s| !native(s)).and_then(parse)
-                && matches(i, m, k)
-            {
-                fire.push(id.to_string());
+            if let Some((m, k)) = sc.and_then(parse) {
+                ui_keys.push((m, k));
+                if !native(sc.unwrap_or_default()) && matches(i, m, k) {
+                    fire.push(id.to_string());
+                }
             }
         }
         for c in lightcraft_engine::command_specs() {
+            // A UI command bound to the same key wraps the engine command (e.g. `W` opens the
+            // White Balance Selector tool rather than sampling without a point): the UI one wins.
             if let Some((m, k)) = c.shortcut.filter(|s| !native(s)).and_then(parse)
+                && !ui_keys.contains(&(m, k))
                 && matches(i, m, k)
             {
                 fire.push(c.id.to_string());
+            }
+        }
+        for (sc, id, params) in ALIASES {
+            if let Some((m, k)) = parse(sc).filter(|_| !native(sc))
+                && matches(i, m, k)
+            {
+                aliased.push((id, serde_json::from_str(params).unwrap_or_default()));
             }
         }
         // rating 0-5, colour labels 6-9 (with Shift: and advance)
@@ -82,12 +111,6 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 fire.push(format!("label:{label}"));
             }
         }
-        // Shift+P/X/U: flag and advance
-        for (id, key) in [("photo.pick", Key::P), ("photo.reject", Key::X), ("photo.unflag", Key::U)] {
-            if matches(i, Modifiers::SHIFT, key) {
-                fire.push(format!("flagadv:{id}"));
-            }
-        }
     });
     use crate::panels::compare;
     // rating/flag/label keys: in Compare/Survey they act on the active photo only; Shift+key or
@@ -99,6 +122,20 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             compare::advance(app);
         }
     };
+    for (id, params) in aliased {
+        // flag/rate aliases (Shift+X…) go through the culling path: active photo in Compare/Survey,
+        // `advance` moves to the next candidate there
+        if matches!(id, "photo.flag" | "photo.rate" | "photo.label") {
+            let mut params = params;
+            let advance = params.get("advance").and_then(serde_json::Value::as_bool).unwrap_or(false);
+            if let Some(o) = params.as_object_mut() {
+                o.remove("advance");
+            }
+            cull(app, id, params, advance);
+        } else {
+            let _ = app.run(id, params);
+        }
+    }
     for f in fire {
         if let Some(rest) = f.strip_prefix("rate:") {
             let (n, adv) = rest.split_once(':').unwrap_or(("0", "0"));
@@ -107,8 +144,6 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             app.toast(ctx, label);
         } else if let Some(l) = f.strip_prefix("label:") {
             cull(app, "photo.label", json!({"label": l}), false);
-        } else if let Some(id) = f.strip_prefix("flagadv:") {
-            cull(app, id, json!({}), true);
         } else if compare::culling(app) && (f == "library.next" || f == "library.previous") {
             let d = if f == "library.next" { 1 } else { -1 };
             let _ = if app.ui.view == crate::state::ViewMode::Compare { compare::compare_step(app, d) } else { compare::survey_step(app, d) };
@@ -120,6 +155,21 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 _ => app.toast(ctx, "Unflagged"),
             }
         } else {
+            // Delete acts on what's being edited: the active mask in the Masking panel; never the
+            // photo while retouching (spots are removed from their own panel).
+            if f == "photo.delete" {
+                use crate::state::RightPanel as R;
+                match app.ui.right {
+                    R::Masking => {
+                        if app.session.active_mask.is_some() {
+                            let _ = app.run("mask.delete", json!({}));
+                        }
+                        continue;
+                    }
+                    R::Remove | R::RedEye => continue,
+                    _ => {}
+                }
+            }
             // X is both reject (library) and swap crop aspect (crop tool)
             if f == "photo.reject" && app.ui.right == crate::state::RightPanel::Crop {
                 let _ = app.run("crop.rotateAspect", json!({}));
@@ -143,6 +193,12 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn delete_means_the_backspace_key() {
+        assert_eq!(parse("Delete"), Some((Modifiers::NONE, Key::Backspace)));
+        assert_eq!(parse("Cmd+Delete"), Some((Modifiers::COMMAND, Key::Backspace)));
+    }
     use super::*;
 
     #[test]
@@ -161,6 +217,54 @@ mod tests {
         for c in lightcraft_engine::command_specs() {
             if let Some(sc) = c.shortcut {
                 assert!(parse(sc).is_some(), "{}: {sc}", c.id);
+            }
+        }
+    }
+
+    #[test]
+    fn aliases_parse_and_target_existing_commands() {
+        let ui: Vec<&str> = crate::menus::UI_COMMANDS.iter().map(|c| c.0).collect();
+        for (sc, id, params) in ALIASES {
+            assert!(parse(sc).is_some(), "{id}: {sc}");
+            assert!(ui.contains(id) || lightcraft_engine::find_command(id).is_some(), "alias {sc} → unknown command {id}");
+            assert!(serde_json::from_str::<serde_json::Value>(params).is_ok(), "alias {sc}: bad params");
+        }
+    }
+
+    /// Engine commands that intentionally share a key and are disambiguated by context in [`handle`].
+    const CONTEXTUAL: &[(&str, &str)] = &[("photo.reject", "crop.rotateAspect")];
+
+    /// No key fires two different actions (a UI command may shadow the engine command it wraps).
+    #[test]
+    fn no_conflicting_bindings() {
+        let mut ui: Vec<((Modifiers, Key), String)> = Vec::new();
+        for (id, _, sc, _) in crate::menus::UI_COMMANDS {
+            if let Some(k) = sc.and_then(parse) {
+                ui.push((k, id.to_string()));
+            }
+        }
+        for (sc, id, _) in ALIASES {
+            ui.push((parse(sc).unwrap(), format!("alias {id}")));
+        }
+        let mut engine: Vec<((Modifiers, Key), &str)> = Vec::new();
+        for c in lightcraft_engine::command_specs() {
+            if let Some(k) = c.shortcut.and_then(parse) {
+                engine.push((k, c.id));
+            }
+        }
+        for (sc, id, _) in ALIASES {
+            let k = parse(sc).unwrap();
+            assert!(!engine.iter().any(|(k2, _)| *k2 == k), "alias {sc} ({id}) shadows an engine shortcut");
+        }
+        for (i, (k, a)) in ui.iter().enumerate() {
+            for (k2, b) in &ui[i + 1..] {
+                assert!(k != k2, "{a} and {b} share a key");
+            }
+        }
+        for (i, (k, a)) in engine.iter().enumerate() {
+            for (k2, b) in &engine[i + 1..] {
+                let contextual = CONTEXTUAL.iter().any(|(x, y)| (x == a && y == b) || (x == b && y == a));
+                assert!(k != k2 || contextual, "{a} and {b} share a key");
             }
         }
     }

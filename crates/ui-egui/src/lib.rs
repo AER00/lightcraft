@@ -31,6 +31,8 @@ pub type PickFiles = Box<dyn FnMut() -> Vec<String>>;
 pub type SaveFile = Box<dyn FnMut(&str) -> Option<String>>;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
 pub type PngEncode = Box<dyn Fn(&lightcraft_raster::Rgba8) -> Vec<u8>>;
+/// Reveal a file in the system file manager (Finder / Explorer / the folder on Linux).
+pub type RevealFn = Box<dyn FnMut(&str) -> Result<(), String>>;
 
 /// Platform services injected by the host app (desktop or web).
 #[derive(Default)]
@@ -44,6 +46,8 @@ pub struct Services {
     pub write: Option<WriteFn>,
     /// PNG encoder (the host links an image encoder; the UI crate stays codec-free).
     pub png: Option<PngEncode>,
+    /// Show a file in the system file manager (desktop only).
+    pub reveal: Option<RevealFn>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -84,10 +88,15 @@ pub struct LightcraftApp {
     pub widgets: Vec<(String, egui::Rect)>,
     /// In-progress on-canvas gesture (brush stroke points, gradient drag…).
     pub gesture: Option<panels::detail::Gesture>,
+    /// What the loupe drew last frame: photo and source ("render", "cached", "embedded", "small",
+    /// "thumb", "none").
+    pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
 }
 
 impl LightcraftApp {
     pub fn new(session: Session, services: Services) -> Self {
+        // GPU device + kernels off the UI thread, before the first photo is opened
+        lightcraft_engine::gpu::warm_up();
         Self {
             session,
             ui: UiState::default(),
@@ -110,6 +119,7 @@ impl LightcraftApp {
             image_rect: None,
             widgets: vec![],
             gesture: None,
+            loupe_shown: None,
         }
     }
 

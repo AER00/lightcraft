@@ -57,6 +57,18 @@ pub struct ImportReport {
     pub sidecars: usize,
 }
 
+/// The develop settings a photo gets on import: raws start from their as-shot white balance with
+/// default sharpening / colour noise reduction, and file-embedded lens corrections on (as the
+/// camera intended).
+pub fn import_defaults(p: &Photo) -> lightcraft_develop::DevelopSettings {
+    p.import_defaults()
+}
+
+/// Does the photo still look as imported (its embedded camera preview is then a fair stand-in)?
+pub fn has_import_look(p: &Photo) -> bool {
+    *p.develop == import_defaults(p)
+}
+
 pub fn is_supported(path: &Path) -> bool {
     path.extension().is_some_and(|e| EXTENSIONS.contains(&e.to_string_lossy().to_lowercase().as_str()))
 }
@@ -223,14 +235,8 @@ pub fn import(s: &mut Session, paths: &[String], mode: ImportMode) -> crate::Res
         p.meta = info.meta;
         p.as_shot_wb = info.as_shot_wb;
         p.content_hash = info.content_hash;
-        if let Some((t, tint)) = info.as_shot_wb {
-            p.develop = std::sync::Arc::new(lightcraft_develop::DevelopSettings::for_raw(t, tint));
-        }
         p.embedded_lens = info.embedded_lens;
-        if p.embedded_lens.is_some() {
-            // built-in (file-embedded) lens corrections are on by default, like the camera intended
-            std::sync::Arc::make_mut(&mut p.develop).optics.lens_profile = true;
-        }
+        p.develop = std::sync::Arc::new(import_defaults(&p));
         let raw = p.kind == lightcraft_catalog::MediaKind::Raw;
         let packet = crate::sidecar::find_sidecar(&path, s.xmp.naming)
             .and_then(|f| std::fs::read_to_string(f).ok())

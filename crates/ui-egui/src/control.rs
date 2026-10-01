@@ -77,7 +77,8 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "selection": app.session.selection.ids.iter().map(|p| p.0).collect::<Vec<_>>(),
         "activeMask": app.session.active_mask,
         "widgetCount": app.widgets.len(),
-        "perf": {"frameMs": app.perf.frame_ms, "fps": app.perf.fps, "lastRenderMs": app.renderer.last_main_ms, "renderQueue": app.renderer.queued(), "rendersInFlight": app.renderer.in_flight(), "rendersDone": app.renderer.completed, "thumbTextures": app.renderer.thumb_textures(), "gpu": lightcraft_engine::gpu::available().then(lightcraft_engine::gpu::adapter_name).flatten()},
+        "perf": {"frameMs": app.perf.frame_ms, "fps": app.perf.fps, "lastRenderMs": app.renderer.last_main_ms, "renderQueue": app.renderer.queued(), "rendersInFlight": app.renderer.in_flight(), "rendersDone": app.renderer.completed, "thumbTextures": app.renderer.thumb_textures(), "gpu": (lightcraft_engine::gpu::ready() && lightcraft_engine::gpu::available()).then(lightcraft_engine::gpu::adapter_name).flatten()},
+        "loupe": app.loupe_shown.map(|(p, src)| json!({"photo": p.0, "source": src, "pending": app.renderer.is_pending(crate::render::Slot::Main)})),
         "status": app.ui.status,
     })
 }
@@ -332,6 +333,14 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
         w(&path, &e.bytes)?;
         out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len()}));
     }
+    // remember for Export with Previous (and to prefill the dialog)
+    let mut last = p.clone();
+    if let Some(o) = last.as_object_mut() {
+        o.remove("ids");
+        o.remove("path");
+    }
+    app.session.last_export = Some(last);
+    let _ = app.session.save_prefs();
     Ok(json!({"files": out}))
 }
 

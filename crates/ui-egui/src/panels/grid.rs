@@ -132,6 +132,26 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let _ = (Color32::BLACK, StrokeKind::Inside, Stroke::NONE);
 }
 
+/// Request a grid/filmstrip thumbnail at `priority`. An unedited raw without a thumbnail texture
+/// first gets a stand-in (its cached thumbnail, else its embedded camera preview), and its real
+/// render then follows in the background.
+pub fn request_thumb(app: &mut LightcraftApp, id: PhotoId, size: usize, priority: u32) {
+    let Some(job) = app.session.thumb_job(id, size) else { return };
+    let quick = if app.renderer.textures.contains_key(&Slot::Thumb(id)) { None } else { app.session.quick_thumb_job(&job) };
+    match quick {
+        Some(q) => {
+            app.renderer.request_quick(Slot::ThumbQuick(id), q, priority + 1);
+            if !app.renderer.is_pending(Slot::ThumbQuick(id)) {
+                app.renderer.request(Slot::Thumb(id), job, BACKGROUND_THUMB_PRIORITY);
+            }
+        }
+        None => app.renderer.request(Slot::Thumb(id), job, priority),
+    }
+}
+
+/// Rendered thumbnails replacing embedded previews: after everything on screen.
+pub const BACKGROUND_THUMB_PRIORITY: u32 = 3;
+
 fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square: bool, onscreen: bool, ppp: f32) {
     let t = Tokens::get(ui.ctx());
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
@@ -148,10 +168,8 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     };
     // thumbnail
     let size = thumb_px(img_rect.width().max(img_rect.height()), ppp);
-    if let Some(job) = app.session.thumb_job(id, size) {
-        app.renderer.request(Slot::Thumb(id), job, if onscreen { 10 } else { 5 });
-    }
-    if let Some(tex) = app.renderer.textures.get(&Slot::Thumb(id)) {
+    request_thumb(app, id, size, if onscreen { 10 } else { 5 });
+    if let Some(tex) = app.renderer.thumb(id) {
         let [tw, th] = tex.size;
         let fit = if square {
             let s = (img_rect.width() / tw as f32).min(img_rect.height() / th as f32);

@@ -292,30 +292,22 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         // ---- albums
-        cmd!(
-            "album.create",
-            "New Album",
-            ["File"],
-            Some("Cmd+Shift+N"),
-            "{name, parent?: folderId, folder?: bool, addSelected?: bool}",
-            always,
-            |s, p| {
-                let name = str_param(p, "name").unwrap_or("Untitled Album").trim().to_string();
-                if name.is_empty() {
-                    return Err(bad("album.create", "empty name"));
-                }
-                let folder = bool_or(p, "folder", false);
-                let parent = p.get("parent").and_then(Value::as_u64).map(AlbumId);
-                let photos = if !folder && bool_or(p, "addSelected", false) { s.targets(&Value::Null) } else { vec![] };
-                let id = s.catalog.alloc_album_id();
-                let cover = photos.first().copied();
-                s.commit(
-                    if folder { "New Folder" } else { "New Album" },
-                    Op::AddAlbum { album: Album { id, name, parent, folder, photos, cover, smart: None } },
-                )?;
-                Ok(json!({"id": id.0}))
+        cmd!("album.create", "New Album", ["File"], None, "{name, parent?: folderId, folder?: bool, addSelected?: bool}", always, |s, p| {
+            let name = str_param(p, "name").unwrap_or("Untitled Album").trim().to_string();
+            if name.is_empty() {
+                return Err(bad("album.create", "empty name"));
             }
-        ),
+            let folder = bool_or(p, "folder", false);
+            let parent = p.get("parent").and_then(Value::as_u64).map(AlbumId);
+            let photos = if !folder && bool_or(p, "addSelected", false) { s.targets(&Value::Null) } else { vec![] };
+            let id = s.catalog.alloc_album_id();
+            let cover = photos.first().copied();
+            s.commit(
+                if folder { "New Folder" } else { "New Album" },
+                Op::AddAlbum { album: Album { id, name, parent, folder, photos, cover, smart: None } },
+            )?;
+            Ok(json!({"id": id.0}))
+        }),
         cmd!(
             "album.createSmart",
             "New Smart Album…",

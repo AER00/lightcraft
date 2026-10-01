@@ -268,7 +268,8 @@ pub fn encode(
     let n = width * height;
     #[cfg(feature = "parallel")]
     use rayon::prelude::*;
-    let ncomp = if gray { 1 } else { 3 };
+    // 4:4:4: Y, Cb, Cr at full resolution in one pass; 4:2:0: Y here, chroma below straight from 2×2 RGB means
+    let ncomp = if gray || hs == 2 { 1 } else { 3 };
     let mut full: Vec<Vec<f32>> = (0..ncomp).map(|_| vec![0f32; n]).collect();
     {
         let rows: Vec<(usize, Vec<&mut [f32]>)> = {
@@ -280,6 +281,12 @@ pub fn encode(
             if gray {
                 for (o, p) in out[0].iter_mut().zip(src.chunks_exact(channels)) {
                     *o = p[0] as f32 - 128.0;
+                }
+                return;
+            }
+            if out.len() == 1 {
+                for (o, p) in out[0].iter_mut().zip(src.chunks_exact(channels)) {
+                    *o = 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32 - 128.0;
                 }
                 return;
             }
@@ -297,25 +304,28 @@ pub fn encode(
     }
     let mut it = full.into_iter();
     let mut planes = vec![Plane { w: width, h: height, data: it.next().unwrap_or_default() }];
-    for c in it {
-        if hs == 1 {
-            planes.push(Plane { w: width, h: height, data: c });
-            continue;
-        }
+    planes.extend(it.map(|c| Plane { w: width, h: height, data: c }));
+    if !gray && hs == 2 {
+        // conversion is linear: average RGB over 2×2 first, then convert once
         let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
-        let mut d = vec![0f32; cw * ch];
-        let down = |(cy, out): (usize, &mut [f32])| {
+        let (mut cb, mut cr) = (vec![0f32; cw * ch], vec![0f32; cw * ch]);
+        let down = |(cy, (ob, or)): (usize, (&mut [f32], &mut [f32]))| {
             let (y0, y1) = (2 * cy, (2 * cy + 1).min(height - 1));
-            for (cx, o) in out.iter_mut().enumerate() {
-                let (x0, x1) = (2 * cx, (2 * cx + 1).min(width - 1));
-                *o = 0.25 * (c[y0 * width + x0] + c[y0 * width + x1] + c[y1 * width + x0] + c[y1 * width + x1]);
+            let (r0, r1) = (&data[y0 * width * channels..], &data[y1 * width * channels..]);
+            for cx in 0..cw {
+                let (x0, x1) = (2 * cx * channels, (2 * cx + 1).min(width - 1) * channels);
+                let s = |k: usize| (r0[x0 + k] as f32 + r0[x1 + k] as f32 + r1[x0 + k] as f32 + r1[x1 + k] as f32) * 0.25;
+                let (r, g, b) = (s(0), s(1), s(2));
+                ob[cx] = -0.168_736 * r - 0.331_264 * g + 0.5 * b;
+                or[cx] = 0.5 * r - 0.418_688 * g - 0.081_312 * b;
             }
         };
         #[cfg(feature = "parallel")]
-        d.par_chunks_mut(cw).enumerate().for_each(down);
+        cb.par_chunks_mut(cw).zip(cr.par_chunks_mut(cw)).enumerate().for_each(down);
         #[cfg(not(feature = "parallel"))]
-        d.chunks_mut(cw).enumerate().for_each(down);
-        planes.push(Plane { w: cw, h: ch, data: d });
+        cb.chunks_mut(cw).zip(cr.chunks_mut(cw)).enumerate().for_each(down);
+        planes.push(Plane { w: cw, h: ch, data: cb });
+        planes.push(Plane { w: cw, h: ch, data: cr });
     }
 
     let ql = scaled_quant(&Q_LUMA, quality);

@@ -248,7 +248,7 @@ impl Workers {
             w.dead = true;
             w.worker.terminate();
             if let Some(b) = w.busy.take() {
-                let r = RenderResult { photo: b.photo, level: b.level, key: b.key, rendered: Err(msg), loaded: None };
+                let r = RenderResult { photo: b.photo, level: b.level, key: b.key, rendered: Err(msg), loaded: None, quick: None };
                 g.done.push((b.slot, r, 0.0));
             }
         }
@@ -308,7 +308,7 @@ impl Workers {
         }
         g.affinity.insert((b.photo, b.level), i);
         g.remote_done += 1;
-        g.done.push((b.slot, RenderResult { photo: b.photo, level: b.level, key: b.key, rendered, loaded: None }, ms));
+        g.done.push((b.slot, RenderResult { photo: b.photo, level: b.level, key: b.key, rendered, loaded: None, quick: None }, ms));
     }
 
     /// The thumbnail index as JSON if it changed since the last call (the host saves it).
@@ -340,7 +340,14 @@ impl RenderOffload for Workers {
         {
             let image = Arc::unwrap_or_clone(img);
             let histogram = Histogram::of_srgb8(&image);
-            let r = RenderResult { photo: job.photo, level: job.level, key: job.key, rendered: Ok(Rendered { image, histogram }), loaded: None };
+            let r = RenderResult {
+                photo: job.photo,
+                level: job.level,
+                key: job.key,
+                rendered: Ok(Rendered { image, histogram }),
+                loaded: None,
+                quick: None,
+            };
             g.done.push((slot, r, 0.0));
             return None;
         }

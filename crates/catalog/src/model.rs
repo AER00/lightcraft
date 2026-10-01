@@ -213,8 +213,21 @@ impl Photo {
             copy_name: None,
         }
     }
+    /// The develop settings import gives this photo (raws: as-shot white balance and the raw
+    /// defaults; embedded lens corrections on when the file has them).
+    pub fn import_defaults(&self) -> DevelopSettings {
+        let mut d = match self.as_shot_wb {
+            Some((t, tint)) => DevelopSettings::for_raw(t, tint),
+            None => DevelopSettings::default(),
+        };
+        if self.embedded_lens.is_some() {
+            d.optics.lens_profile = true;
+        }
+        d
+    }
+    /// Edited by the user: settings differ from what import gave the photo.
     pub fn is_edited(&self) -> bool {
-        !self.develop.is_unedited()
+        *self.develop != self.import_defaults() && !self.develop.is_unedited()
     }
     /// Capture time if known, else import time (sort key).
     pub fn date(&self) -> &str {
@@ -249,5 +262,24 @@ impl Album {
     }
     pub fn is_smart(&self) -> bool {
         self.smart.is_some()
+    }
+}
+
+#[cfg(test)]
+mod edited_tests {
+    use super::*;
+
+    #[test]
+    fn raw_with_import_settings_is_not_edited() {
+        let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.arw", "ARW", 10, 10, "2026-10-01T00:00:00");
+        p.as_shot_wb = Some((5200.0, 4.0));
+        p.develop = Arc::new(p.import_defaults());
+        assert!(!p.is_edited(), "import look counts as unedited");
+        let mut d = (*p.develop).clone();
+        d.light.exposure = 0.5;
+        p.develop = Arc::new(d);
+        assert!(p.is_edited());
+        p.develop = Arc::new(DevelopSettings::default());
+        assert!(!p.is_edited(), "a full reset is unedited too");
     }
 }

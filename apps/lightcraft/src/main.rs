@@ -82,6 +82,19 @@ fn save_prefs(app: &LightcraftApp) {
 
 fn services() -> Services {
     Services {
+        reveal: Some(Box::new(|path: &str| {
+            let status = if cfg!(target_os = "macos") {
+                std::process::Command::new("open").args(["-R", path]).status()
+            } else if cfg!(target_os = "windows") {
+                std::process::Command::new("explorer").arg(format!("/select,{path}")).status()
+            } else {
+                let dir = std::path::Path::new(path).parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| ".".into());
+                std::process::Command::new("xdg-open").arg(dir).status()
+            };
+            status
+                .map_err(|e| e.to_string())
+                .and_then(|s| if s.success() || cfg!(target_os = "windows") { Ok(()) } else { Err(format!("reveal failed: {s}")) })
+        })),
         pick_files: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .add_filter(

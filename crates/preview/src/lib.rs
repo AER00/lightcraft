@@ -63,6 +63,28 @@ impl PreviewCache {
         self.mem.lock().unwrap_or_else(|e| e.into_inner()).insert(key, img, c);
     }
 
+    /// Like [`Self::put`], but the disk write (a JPEG encode) happens on a background thread, so
+    /// the caller (a render about to hand its result to the screen) isn't held up.
+    pub fn put_deferred(self: &Arc<Self>, key: Hash128, img: Arc<Rgba8>) {
+        let c = cost(&img);
+        self.mem.lock().unwrap_or_else(|e| e.into_inner()).insert(key, img.clone(), c);
+        if self.disk.is_none() {
+            return;
+        }
+        let me = self.clone();
+        let write = move || {
+            if let Some(d) = &me.disk {
+                d.put(key, &img);
+            }
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        if std::thread::Builder::new().name("lc-preview-write".into()).spawn(write).is_err() {
+            log::warn!("preview cache: could not start a writer thread");
+        }
+        #[cfg(target_arch = "wasm32")]
+        write();
+    }
+
     /// Drop everything (memory and disk).
     pub fn clear(&self) {
         self.mem.lock().unwrap_or_else(|e| e.into_inner()).clear();
