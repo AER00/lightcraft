@@ -28,6 +28,10 @@ pub enum Gesture {
         start: lightcraft_geom::Rect,
         angle: f64,
     },
+    /// Straighten tool: a line drawn along something that should be level (or plumb).
+    StraightenLine {
+        a: Pos2,
+    },
     CropRotate {
         start_angle: f64,
         a0: f32,
@@ -328,6 +332,10 @@ fn general_interaction(
 fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, frame: &Frame, d: &DevelopSettings, id: PhotoId) {
     if app.ui.tool == "guidedUpright" {
         guided_overlay(app, ui, resp, map, frame, d);
+        return;
+    }
+    if app.ui.tool == "straighten" {
+        straighten_overlay(app, ui, resp);
         return;
     }
     let quad = frame_crop_quad(d, frame);
@@ -790,4 +798,42 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
             }
         }
     });
+}
+
+/// Straighten tool: drag along a horizon (or a vertical) to set the crop angle; double-click = Auto.
+/// The image is shown unrotated in the crop view, so the line's on-screen angle is its image angle.
+fn straighten_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response) {
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    if resp.double_clicked() {
+        let _ = app.run("crop.autoStraighten", json!({}));
+        app.ui.tool.clear();
+        app.gesture = None;
+        return;
+    }
+    if resp.drag_started()
+        && let Some(q) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos())
+    {
+        app.gesture = Some(Gesture::StraightenLine { a: q });
+    }
+    let Some(Gesture::StraightenLine { a }) = app.gesture.clone() else { return };
+    let Some(b) = resp.interact_pointer_pos().or(resp.hover_pos()) else { return };
+    let p = ui.painter();
+    p.line_segment([a, b], Stroke::new(3.0, Color32::from_black_alpha(140)));
+    p.line_segment([a, b], Stroke::new(1.5, Color32::WHITE));
+    if resp.drag_stopped() {
+        app.gesture = None;
+        let v = b - a;
+        if v.length() > 8.0 {
+            let mut deg = v.y.atan2(v.x).to_degrees() as f64;
+            // fold to the nearest axis: a line closer to vertical straightens plumb lines
+            while deg > 45.0 {
+                deg -= 90.0;
+            }
+            while deg < -45.0 {
+                deg += 90.0;
+            }
+            let _ = app.run("crop.straighten", json!({"angle": (-deg * 100.0).round() / 100.0}));
+        }
+        app.ui.tool.clear();
+    }
 }

@@ -26,9 +26,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | C. Views & navigation (VIEW) | 9 | 2 | 6 | 0 | 7/9 (78%) | 1/4 (25%) |
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
 | E. Metadata (META) | 2 | 2 | 2 | 0 | 2/2 (100%) | 0/2 (0%) |
-| F. Edit panel — global adjustments (EDIT) | 35 | 3 | 10 | 1 | 27/28 (96%) | 8/14 (57%) |
+| F. Edit panel — global adjustments (EDIT) | 36 | 2 | 10 | 1 | 28/28 (100%) | 8/14 (57%) |
 | G. Profiles (PROF) | 3 | 1 | 6 | 0 | 2/3 (67%) | 1/3 (33%) |
-| H. Crop & rotate (CROP) | 5 | 4 | 0 | 1 | 5/6 (83%) | 0/3 (0%) |
+| H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
 | I. Remove / healing (REM) | 3 | 3 | 4 | 2 | 2/4 (50%) | 1/3 (33%) |
 | J. Red eye (EYE) | 0 | 0 | 2 | 0 | — | 0/1 (0%) |
 | K. Masking (MASK) | 6 | 10 | 7 | 0 | 4/8 (50%) | 2/5 (40%) |
@@ -48,7 +48,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 46 | 18 | 21 | 8 | 37/47 (79%) | 7/23 (30%) |
 | Z. Keyboard shortcuts (desktop) | 46 | 16 | 18 | 1 | 39/52 (75%) | 7/23 (30%) |
 | Lightroom Classic extras | 4 | 19 | 56 | 9 | — | 3/21 (14%) |
-| **Total** | 202 | 106 | 192 | 37 | 150/198 (76%) | 47/144 (33%) |
+| **Total** | 205 | 103 | 192 | 37 | 152/198 (77%) | 48/144 (33%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -259,7 +259,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-EFFECTS-TEXTURE | Texture | P0 | ✅ | `ctl:effects.texture` | |
 | LR-EDIT-EFFECTS-CLARITY | Clarity | P0 | ✅ | `ctl:effects.clarity` | |
 | LR-EDIT-EFFECTS-DEHAZE | Dehaze | P0 | ✅ | `ctl:effects.dehaze` | |
-| LR-EDIT-EFFECTS-VIGNETTE | Post-crop vignette | P0 | 🟡 | `ctl:vignette.*`, `crates/pipeline/src/finish.rs` | style (highlight / colour priority / paint) rendered but not selectable in the UI |
+| LR-EDIT-EFFECTS-VIGNETTE | Post-crop vignette | P0 | ✅ | `ctl:vignette.*`, `crates/pipeline/src/finish.rs`, `crates/ui-egui/src/panels/edit.rs` | style picker (Highlight / Color / Paint) in the Effects section |
 | LR-EDIT-EFFECTS-GRAIN | Grain | P1 | ✅ | `ctl:grain.*` | |
 | LR-EDIT-DETAIL-SHARPEN | Sharpening | P0 | ✅ | `ctl:detail.sharpenAmount`, `ctl:detail.sharpenRadius`, `ctl:detail.sharpenDetail`, `ctl:detail.sharpenMasking` | no Alt-drag mask preview |
 | LR-EDIT-DETAIL-NR | Luminance noise reduction | P0 | ✅ | `ctl:detail.nrLuminance`, `ctl:detail.nrDetail`, `ctl:detail.nrContrast` | |
@@ -303,8 +303,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 |---|---|---|---|---|---|
 | LR-CROP-RECT | Crop rectangle | P0 | ✅ | `cmd:crop.set`, `crates/ui-egui/src/panels/detail.rs` | |
 | LR-CROP-ASPECT | Aspect ratios | P0 | ✅ | `cmd:crop.aspect`, `cmd:crop.rotateAspect` | no "As Shot"; custom ratio via command params only |
-| LR-CROP-STRAIGHTEN | Straighten tool | P0 | 🟡 | `cmd:crop.straighten` | rotate by dragging outside the crop; no draw-along-horizon tool / double-click auto |
-| LR-CROP-AUTO | Auto straighten | P1 | 🟡 | `cmd:geometry.upright` (`level`) | via Upright Level; no Auto button in the crop panel |
+| LR-CROP-STRAIGHTEN | Straighten tool | P0 | ✅ | `cmd:crop.straighten`, `cmd:crop.autoStraighten` | Straighten Tool button: drag along a horizon/vertical; double-click or Auto levels automatically |
+| LR-CROP-AUTO | Auto straighten | P1 | ✅ | `cmd:crop.autoStraighten` | crop-angle leveling from detected horizon/plumb lines (consensus required) |
 | LR-CROP-ANGLE | Angle slider | P0 | ✅ | `ctl:crop.angle` | |
 | LR-CROP-ROTATE90 | Rotate 90° | P0 | ✅ | `cmd:photo.rotateLeft`, `cmd:photo.rotateRight` | |
 | LR-CROP-FLIP | Flip | P0 | ✅ | `cmd:photo.flipHorizontal`, `cmd:photo.flipVertical` | |

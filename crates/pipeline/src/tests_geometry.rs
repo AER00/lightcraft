@@ -467,3 +467,23 @@ fn debug_upright_scene() {
         eprintln!("{m:?}: {:?}", crate::upright::solve(m, &a).0);
     }
 }
+
+/// Sign convention for Auto straighten: a horizon descending 6° to the right needs crop angle −6°,
+/// which `level_degrees` must report (the crop panel uses it as the crop angle directly).
+#[test]
+fn level_degrees_sign_matches_crop_angle() {
+    let (w, h) = (900usize, 600usize);
+    let t = 6f32.to_radians().tan();
+    let src = Rgb32f::from_fn(w, h, |x, y| {
+        let yh = h as f32 / 2.0 + (x as f32 - w as f32 / 2.0) * t;
+        if (y as f32) < yh {
+            [0.6, 0.7, 0.9]
+        } else if (((y as f32 - yh) / 30.0) as i32) % 2 == 0 {
+            [0.05, 0.1, 0.2]
+        } else {
+            [0.1, 0.2, 0.3]
+        }
+    });
+    let deg = crate::upright::level_degrees(&src, &SourceInfo::default(), &DevelopSettings::default()).expect("lines found");
+    assert!((deg + 6.0).abs() < 0.5, "{deg}");
+}

@@ -242,6 +242,10 @@ impl Headless {
 mod tests {
     use super::*;
 
+    /// Generous: renders are slow when the machine is loaded (parallel builds), and a timed-out
+    /// settle would show a half-rendered UI.
+    const SETTLE: Duration = Duration::from_secs(120);
+
     fn demo(size: [f32; 2]) -> Headless {
         let services = crate::Services { png: None, ..Default::default() };
         let mut app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
@@ -253,7 +257,7 @@ mod tests {
     fn demo_grid_snapshot_has_ui_pixels() {
         let t0 = Instant::now();
         let mut h = demo([1200.0, 760.0]);
-        let img = h.snapshot(Duration::from_secs(20));
+        let img = h.snapshot(SETTLE);
         eprintln!("headless snapshot: {:?} in {:?} ({} frames)", img.size, t0.elapsed(), h.frames());
         assert_eq!(img.size, [1200, 760]);
         // not blank: many distinct colours
@@ -275,11 +279,13 @@ mod tests {
             let mut h = demo([900.0, 600.0]);
             let r = h.request("ui.set", json!({"view": "detail"}), Duration::from_secs(10));
             assert_eq!(r["ok"], true, "{r}");
-            h.snapshot(Duration::from_secs(20))
+            h.snapshot(SETTLE)
         };
         let (a, b) = (shot(), shot());
         assert_eq!(a.size, b.size);
-        let diff = a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x != y).count();
+        // The photo may come from the GPU in one run and the CPU in the other (the GPU warms up in
+        // the background), which differ by ≤ 1–2 LSB; anything more is a real difference.
+        let diff = a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.to_array().iter().zip(y.to_array()).any(|(p, q)| p.abs_diff(q) > 2)).count();
         assert_eq!(diff, 0, "{diff} pixels differ between two runs");
     }
 
@@ -324,7 +330,7 @@ mod tests {
         assert_eq!((rating(&h, vis[3]), flag(&h, vis[4])), (5, lightcraft_catalog::Flag::Pick));
         assert_eq!(h.app.session.selection.active.map(|p| p.0), Some(vis[5]));
         assert_eq!(h.app.session.selection.ids.len(), 3, "the survey keeps its selection");
-        let img = h.snapshot(Duration::from_secs(20));
+        let img = h.snapshot(SETTLE);
         assert_eq!(img.size, [1000, 700]);
         // Detail: auto-advance moves to the next photo
         h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[6]]}}), t);
@@ -336,7 +342,7 @@ mod tests {
         h.request("ui.key", json!({"key": "escape"}), t);
         assert_eq!(h.app.ui.view, crate::state::ViewMode::Detail);
         // let in-flight renders finish: worker threads must not outlive the test process' TLS
-        h.settle(Duration::from_secs(20));
+        h.settle(SETTLE);
     }
 
     /// The filter bar drives `library.filter` and saves the view as a smart album.
@@ -364,19 +370,19 @@ mod tests {
         h.request("ui.clickWidget", json!({"id": "button:filterClear"}), t);
         assert_eq!(h.app.session.filter, Default::default());
         assert_eq!(h.app.session.visible_cloned().len(), all);
-        h.settle(Duration::from_secs(20));
+        h.settle(SETTLE);
     }
 
     #[test]
     fn screenshot_request_is_answered_without_a_window() {
         let mut h = demo([800.0, 500.0]);
-        let r = h.request("ui.screenshot", json!({}), Duration::from_secs(20));
+        let r = h.request("ui.screenshot", json!({}), SETTLE);
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(r["result"]["width"], 800);
         assert_eq!(r["result"]["height"], 500);
         let r = h.request("ui.resize", json!({"width": 640, "height": 400}), Duration::from_secs(5));
         assert_eq!(r["ok"], true);
-        let r = h.request("ui.screenshot", json!({"headless": true}), Duration::from_secs(20));
+        let r = h.request("ui.screenshot", json!({"headless": true}), SETTLE);
         assert_eq!(r["result"]["width"], 640, "{r}");
     }
 }

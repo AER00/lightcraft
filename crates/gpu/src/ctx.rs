@@ -77,14 +77,31 @@ impl Buf {
 impl Drop for Buf {
     fn drop(&mut self) {
         if let Some(b) = self.buf.take() {
-            RETIRED.with(|r| r.borrow_mut().push(b));
+            // during thread teardown the list may already be gone: then the buffer leaks
+            let mut b = Some(b);
+            let _ = RETIRED.try_with(|r| r.0.borrow_mut().extend(b.take()));
+            if let Some(b) = b {
+                std::mem::forget(b);
+            }
+        }
+    }
+}
+
+/// Buffers dropped on a thread since its last submit.
+struct Retired(std::cell::RefCell<Vec<wgpu::Buffer>>);
+
+impl Drop for Retired {
+    /// At thread exit wgpu's own thread-locals may already be destroyed, and dropping a buffer
+    /// then aborts the process: leak the few buffers left instead (the device owns their memory).
+    fn drop(&mut self) {
+        for b in self.0.get_mut().drain(..) {
+            std::mem::forget(b);
         }
     }
 }
 
 thread_local! {
-    /// Buffers dropped on this thread since its last submit.
-    static RETIRED: std::cell::RefCell<Vec<wgpu::Buffer>> = const { std::cell::RefCell::new(Vec::new()) };
+    static RETIRED: Retired = const { Retired(std::cell::RefCell::new(Vec::new())) };
 }
 
 /// Most bytes kept in the free pool.
@@ -233,7 +250,7 @@ impl Gpu {
     /// Submit command buffers, then make the buffers this thread dropped before reusable.
     pub fn submit(&self, cmds: impl IntoIterator<Item = wgpu::CommandBuffer>) {
         self.queue.submit(cmds);
-        let retired = RETIRED.with(|r| std::mem::take(&mut *r.borrow_mut()));
+        let retired = RETIRED.with(|r| std::mem::take(&mut *r.0.borrow_mut()));
         let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
         f.extend(retired);
         let mut total: u64 = f.iter().map(|b| b.size()).sum();
