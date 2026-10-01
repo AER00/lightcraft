@@ -52,6 +52,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("tool.wbPicker", "White Balance Selector", Some("W"), "View"),
     ("tool.none", "No Tool", None, "View"),
     ("dialog.newAlbum", "New Album…", Some("Cmd+N"), "File"),
+    ("dialog.newFolder", "New Folder…", Some("Cmd+Shift+N"), "File"),
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
     ("dialog.copySettings", "Choose Edit Settings to Copy…", Some("Cmd+Shift+C"), "Photo"),
     ("dialog.export", "Export…", Some("Cmd+Shift+E"), "File"),
@@ -61,6 +62,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.about", "About LightCraft", None, "LightCraft"),
     ("app.shortcuts", "Keyboard Shortcuts", Some("Cmd+/"), "Help"),
     ("app.export", "Export Now", None, ""),
+    ("app.showInFinder", "Show in Finder", Some("Cmd+R"), "Photo"),
+    ("app.exportPrevious", "Export with Previous", Some("Cmd+Alt+Shift+E"), "File"),
 ];
 
 fn panel(app: &mut LightcraftApp, ctx: &egui::Context, p: RightPanel, name: &str) {
@@ -262,6 +265,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             Ok(Value::Null)
         }
+        "dialog.newFolder" => {
+            app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: true });
+            Ok(Value::Null)
+        }
         "dialog.newAlbum" => {
             app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: false });
             Ok(Value::Null)
@@ -277,8 +284,15 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "dialog.export" => {
-            app.ui.dialog =
-                Some(Dialog::Export { opts: Default::default(), long_edge: 2048, limit_kb: 0, dir: crate::control::default_export_dir() });
+            let prev = app.session.last_export.clone().unwrap_or_default();
+            let u = |k: &str, d: u64| prev.get(k).and_then(Value::as_u64).unwrap_or(d);
+            let dir = prev.get("dir").and_then(Value::as_str).map(str::to_string).unwrap_or_else(crate::control::default_export_dir);
+            app.ui.dialog = Some(Dialog::Export {
+                opts: lightcraft_engine::export::ExportOptions::from_json(&prev),
+                long_edge: u("longEdge", 2048) as u32,
+                limit_kb: u("limitKb", 0) as u32,
+                dir,
+            });
             Ok(Value::Null)
         }
         "app.about" => {
@@ -353,6 +367,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             return Some(r);
         }
         "app.export" => crate::control::export_active(app, p),
+        "app.showInFinder" => show_in_finder(app),
+        "app.exportPrevious" => match app.session.last_export.clone() {
+            Some(prev) => crate::control::export_active(app, &prev),
+            None => Err("nothing exported yet — use Export…".into()),
+        },
         _ => return None,
     };
     Some(r)
@@ -362,6 +381,15 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
     match id {
         s if s.starts_with("panel.") || s.starts_with("tool.") || s.starts_with("section.") => app.session.active().is_some() || s == "panel.close",
         "app.export" | "dialog.export" | "dialog.createPreset" | "dialog.copySettings" => app.session.active().is_some(),
+        "app.exportPrevious" => app.session.active().is_some() && app.session.last_export.is_some(),
+        "app.showInFinder" => {
+            app.services.reveal.is_some()
+                && app
+                    .session
+                    .active()
+                    .and_then(|id| app.session.catalog.photo(id))
+                    .is_some_and(|p| matches!(p.source, lightcraft_engine::catalog::Source::File { .. }))
+        }
         "file.exportPresets" => app.session.presets.iter().any(|p| !p.builtin),
         _ => true,
     }
@@ -401,4 +429,16 @@ pub fn menu_entries(app: &LightcraftApp) -> Vec<MenuEntry> {
         }
     }
     v
+}
+
+/// Reveal the active photo's original in the system file manager.
+fn show_in_finder(app: &mut LightcraftApp) -> Result<Value, String> {
+    let id = app.session.active().ok_or("no photo selected")?;
+    let path = match app.session.catalog.photo(id).map(|p| p.source.clone()) {
+        Some(lightcraft_engine::catalog::Source::File { path }) => path,
+        _ => return Err("this photo has no file (demo scene)".into()),
+    };
+    let reveal = app.services.reveal.as_mut().ok_or("not available here")?;
+    reveal(&path)?;
+    Ok(json!({"path": path}))
 }

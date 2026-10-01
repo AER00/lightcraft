@@ -330,6 +330,14 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
         w(&path, &e.bytes)?;
         out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len()}));
     }
+    // remember for Export with Previous (and to prefill the dialog)
+    let mut last = p.clone();
+    if let Some(o) = last.as_object_mut() {
+        o.remove("ids");
+        o.remove("path");
+    }
+    app.session.last_export = Some(last);
+    let _ = app.session.save_prefs();
     Ok(json!({"files": out}))
 }
 
