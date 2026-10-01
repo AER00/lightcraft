@@ -3,6 +3,7 @@
 pub mod arw;
 pub mod cr2;
 pub mod nef;
+pub mod raf;
 
 use crate::{BlackLevel, Rect};
 use std::ops::Range;

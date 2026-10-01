@@ -53,6 +53,10 @@ fn candidates<'a>(data: &'a [u8], ifd: &Ifd, base: u64, out: &mut Vec<&'a [u8]>)
 
 /// The largest embedded JPEG preview, if any.
 pub fn embedded_preview(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.starts_with(b"FUJIFILMCCD-RAW") {
+        let j = crate::vendor::raf::header(bytes).ok()?.jpeg?;
+        return is_dct_jpeg(j).then(|| trim_eoi(j).to_vec());
+    }
     let tiff = Tiff::parse(bytes).ok()?;
     let mut found: Vec<&[u8]> = Vec::new();
     for ifd in tiff.all_ifds() {
@@ -72,11 +76,13 @@ pub fn embedded_preview(bytes: &[u8]) -> Option<Vec<u8>> {
             }
         }
     }
-    found.into_iter().filter(|s| is_dct_jpeg(s)).max_by_key(|s| s.len()).map(|s| {
-        // trim trailing garbage after EOI when the length over-reports
-        let end = s.windows(2).rposition(|w| w == [0xff, 0xd9]).map(|p| p + 2).unwrap_or(s.len());
-        s[..end].to_vec()
-    })
+    found.into_iter().filter(|s| is_dct_jpeg(s)).max_by_key(|s| s.len()).map(|s| trim_eoi(s).to_vec())
+}
+
+/// Trim trailing garbage after the last EOI when a stored length over-reports.
+fn trim_eoi(s: &[u8]) -> &[u8] {
+    let end = s.windows(2).rposition(|w| w == [0xff, 0xd9]).map(|p| p + 2).unwrap_or(s.len());
+    &s[..end]
 }
 
 #[cfg(test)]

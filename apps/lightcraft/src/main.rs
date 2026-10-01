@@ -69,7 +69,10 @@ fn services() -> Services {
     Services {
         pick_files: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .add_filter("Photos", &["jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "nef", "arw", "psd", "jxl", "gif", "bmp"])
+                .add_filter(
+                    "Photos",
+                    &["jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "nef", "nrw", "arw", "raf", "psd", "jxl", "gif", "bmp"],
+                )
                 .pick_files()
                 .unwrap_or_default()
                 .into_iter()
@@ -96,7 +99,7 @@ fn collect(path: &std::path::Path, out: &mut Vec<String>) {
     } else if path.extension().is_some_and(|e| {
         matches!(
             e.to_string_lossy().to_lowercase().as_str(),
-            "jpg" | "jpeg" | "png" | "tif" | "tiff" | "webp" | "dng" | "cr2" | "nef" | "arw" | "psd" | "jxl" | "gif" | "bmp"
+            "jpg" | "jpeg" | "png" | "tif" | "tiff" | "webp" | "dng" | "cr2" | "nef" | "nrw" | "arw" | "raf" | "psd" | "jxl" | "gif" | "bmp"
         )
     }) {
         out.push(path.to_string_lossy().to_string());

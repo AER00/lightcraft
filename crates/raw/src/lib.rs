@@ -10,7 +10,8 @@
 //!   and produces camera → linear Rec.2020 D65 matrices.
 //!
 //! Formats: DNG (uncompressed, lossless JPEG, Deflate incl. floating point, tiled/stripped, CFA and LinearRaw),
-//! Canon CR2, Nikon NEF (uncompressed), Sony ARW (uncompressed, lossless). See the crate README for sources and
+//! Canon CR2, Nikon NEF (uncompressed), Sony ARW (uncompressed, lossless), Fujifilm RAF (uncompressed Bayer and
+//! X-Trans). See the crate README for sources and
 //! gaps. The decoders never panic on malformed input.
 #![forbid(unsafe_code)]
 
@@ -80,7 +81,7 @@ pub enum RawFormat {
 impl RawFormat {
     /// Whether [`decode`] supports this container (possibly not every compression inside it).
     pub fn is_supported(self) -> bool {
-        matches!(self, RawFormat::Dng | RawFormat::Cr2 | RawFormat::Nef | RawFormat::Nrw | RawFormat::Arw)
+        matches!(self, RawFormat::Dng | RawFormat::Cr2 | RawFormat::Nef | RawFormat::Nrw | RawFormat::Arw | RawFormat::Raf)
     }
 }
 
@@ -141,6 +142,7 @@ pub fn decode(bytes: &[u8]) -> Result<RawImage> {
         RawFormat::Cr2 => vendor::cr2::decode(bytes),
         RawFormat::Nef | RawFormat::Nrw => vendor::nef::decode(bytes),
         RawFormat::Arw => vendor::arw::decode(bytes),
+        RawFormat::Raf => vendor::raf::decode(bytes),
         other => Err(RawError::Unsupported(format!("{other:?} files are not decoded yet"))),
     }
 }
@@ -487,7 +489,7 @@ mod tests {
         assert_eq!(probe(b"hello world, not a raw"), None);
         assert_eq!(probe(b"\0\0\0\x18ftypcrx \0\0\0\x01"), Some(RawFormat::Cr3));
         assert_eq!(probe(b"FUJIFILMCCD-RAW 0201"), Some(RawFormat::Raf));
-        assert!(matches!(decode(b"FUJIFILMCCD-RAW 0201"), Err(RawError::Unsupported(_))));
+        assert!(decode(b"FUJIFILMCCD-RAW 0201").is_err());
         assert_eq!(decode(b"junk"), Err(RawError::NotRaw));
     }
 }
