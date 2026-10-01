@@ -7,6 +7,7 @@
 mod color;
 mod develop;
 mod edit;
+mod keywords;
 mod library;
 mod masks;
 mod merge;
@@ -107,6 +108,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(color::specs());
         v.extend(masks::specs());
         v.extend(organize::specs());
+        v.extend(keywords::specs());
         v.extend(merge::specs());
         v.extend(query::specs());
         v.extend(xmp::specs());

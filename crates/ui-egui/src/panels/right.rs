@@ -377,24 +377,35 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             for k in &p.meta.keywords {
-                let r = ui.add(egui::Button::new(egui::RichText::new(format!("{k}  ×")).color(t.text_label)).corner_radius(10.0));
+                let r =
+                    ui.add(egui::Button::new(egui::RichText::new(format!("{}  ×", k.replace('|', " › "))).color(t.text_label)).corner_radius(10.0));
                 if r.clicked() {
                     let _ = app.run("photo.setMeta", json!({"removeKeywords": [k]}));
                 }
             }
         });
         ui.add_space(10.0);
-        ui.label(egui::RichText::new("Keywords in library").color(t.text_dim));
-        let all = app.session.catalog.keywords();
-        ui.horizontal_wrapped(|ui| {
-            for (k, n) in all {
-                if !p.meta.keywords.contains(&k)
-                    && ui.add(egui::Button::new(egui::RichText::new(format!("{k} {n}")).color(t.text_dim)).frame(false)).clicked()
-                {
-                    let _ = app.run("photo.setMeta", json!({"addKeywords": [k]}));
+        // suggestions: completions of the typed text, else keywords used together with this
+        // photo's keywords, else the most used ones
+        let typed = ui.data(|d| d.get_temp::<String>(kid).unwrap_or_default());
+        let last = typed.rsplit(',').next().unwrap_or("").trim().to_string();
+        let suggestions = app.session.catalog.keyword_suggestions(&p.meta.keywords, &last, 12);
+        if !suggestions.is_empty() {
+            ui.label(egui::RichText::new("Suggestions").color(t.text_dim));
+            ui.horizontal_wrapped(|ui| {
+                for k in suggestions {
+                    let r = ui
+                        .add(egui::Button::new(egui::RichText::new(format!("+ {}", k.replace('|', " › "))).color(t.text_label)).corner_radius(10.0));
+                    register(ui.ctx(), format!("kwSuggest:{k}"), r.rect);
+                    if r.clicked() {
+                        let _ = app.run("photo.setMeta", json!({"addKeywords": [k]}));
+                        if !last.is_empty() {
+                            ui.data_mut(|d| d.insert_temp(kid, String::new()));
+                        }
+                    }
                 }
-            }
-        });
+            });
+        }
     });
 }
 

@@ -1,7 +1,7 @@
 //! The left "My Photos" panel: library sources, albums tree, and date groups.
 
 use egui::{Align2, Rect, Sense, pos2, vec2};
-use lightcraft_catalog::{Album, AlbumId};
+use lightcraft_catalog::{Album, AlbumId, KeywordNode};
 use lightcraft_engine::LibrarySource;
 use serde_json::json;
 
@@ -108,6 +108,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                         let _ = app.run("library.filter", json!({"date": v}));
                     }
                 }
+                keywords_section(app, ui);
                 ui.add_space(10.0);
                 if row(app, ui, "recentlyDeleted", Icon::Trash, "Recently Deleted", Some(deleted), src == LibrarySource::RecentlyDeleted, 0.0)
                     .clicked()
@@ -164,4 +165,74 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
             let _ = app.run("album.delete", json!({"id": a.id.0}));
         }
     });
+}
+
+/// "Keywords": the library's keyword tree with photo counts (`a|b|c` keywords nest). A click
+/// filters the grid by the keyword (children included), the triangle opens a level, and the
+/// context menu renames, merges or deletes the keyword across the library.
+fn keywords_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let t = Tokens::get(ui.ctx());
+    let tree = app.session.catalog.keyword_tree();
+    if tree.is_empty() {
+        return;
+    }
+    ui.add_space(10.0);
+    let (kr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+    ui.painter().text(pos2(kr.left() + 18.0, kr.center().y), Align2::LEFT_CENTER, "Keywords", t.semibold(13.5), t.text_label);
+    keyword_rows(app, ui, &tree, 0.0);
+}
+
+fn keyword_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[KeywordNode], indent: f32) {
+    let t = Tokens::get(ui.ctx());
+    for n in nodes {
+        let open_id = egui::Id::new(("kw-open", n.path.to_lowercase()));
+        let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(false);
+        let sel = app.session.filter.keyword.as_deref().is_some_and(|k| k.eq_ignore_ascii_case(&n.path));
+        let resp = row(app, ui, &format!("keyword:{}", n.path), Icon::Tag, &n.name, Some(n.count), sel, indent);
+        if !n.children.is_empty() {
+            // disclosure triangle left of the icon
+            let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
+            let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
+            let tr = ui.interact(tri, egui::Id::new(("kw-tri", n.path.to_lowercase())), Sense::click());
+            register(ui.ctx(), format!("keywordToggle:{}", n.path), tri);
+            let col = if tr.hovered() { t.text } else { t.text_dim };
+            let pts = if open {
+                vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
+            } else {
+                vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
+            };
+            ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+            if tr.clicked() {
+                open = !open;
+                ui.data_mut(|d| d.insert_temp(open_id, open));
+            }
+        }
+        let resp = resp.on_hover_text(if n.children.is_empty() { n.path.clone() } else { format!("{} (includes the keywords below it)", n.path) });
+        if resp.clicked() {
+            let v = if sel { serde_json::Value::Null } else { json!(n.path) };
+            let _ = app.run("library.filter", json!({"keyword": v}));
+        }
+        resp.context_menu(|ui| {
+            let has_sel = app.session.active().is_some();
+            if ui.add_enabled(has_sel, egui::Button::new("Add to Selected Photos")).clicked() {
+                let _ = app.run("photo.setMeta", json!({"addKeywords": [n.path]}));
+            }
+            if ui.add_enabled(has_sel, egui::Button::new("Remove from Selected Photos")).clicked() {
+                let _ = app.run("photo.setMeta", json!({"removeKeywords": [n.path]}));
+            }
+            ui.separator();
+            if ui.button("Rename Keyword…").clicked() {
+                app.ui.dialog = Some(crate::state::Dialog::RenameKeyword { from: n.path.clone(), to: n.path.clone() });
+            }
+            if ui.button("Merge into…").clicked() {
+                app.ui.dialog = Some(crate::state::Dialog::MergeKeywords { from: vec![n.path.clone()], into: String::new() });
+            }
+            if ui.button("Delete Keyword").clicked() {
+                let _ = app.run("keyword.delete", json!({"keyword": n.path}));
+            }
+        });
+        if open && !n.children.is_empty() {
+            keyword_rows(app, ui, &n.children, indent + 16.0);
+        }
+    }
 }

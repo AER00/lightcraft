@@ -22,6 +22,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewAlbum { folder: true, .. } => "Create Folder",
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
+        Dialog::RenameKeyword { .. } => "Rename Keyword",
+        Dialog::MergeKeywords { .. } => "Merge Keywords",
         Dialog::NewSmartAlbum { .. } => "Create Smart Album",
         Dialog::AutoStack { .. } => "Auto-Stack by Capture Time",
         Dialog::CreatePreset { .. } => "Create Preset",
@@ -69,6 +71,45 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         egui::RichText::new(format!("{n} photo{} now · updates automatically as photos change", if n == 1 { "" } else { "s" }))
                             .color(t.text_dim),
                     );
+                }
+                Dialog::RenameKeyword { from, to } => {
+                    let n = app.session.catalog.photos().filter(|p| p.meta.keywords.iter().any(|k| lightcraft_catalog::keywords::is_under(k, from))).count();
+                    let r = ui.add(egui::TextEdit::singleline(to).hint_text("New name").desired_width(f32::INFINITY));
+                    crate::widgets::register(ui.ctx(), "field:keywordName", r.rect);
+                    r.request_focus();
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        confirm = true;
+                    }
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Renames “{from}” on {n} photo{} (keywords below it too). Use | for levels, e.g. Travel|Italy. An existing name merges the two.",
+                            if n == 1 { "" } else { "s" }
+                        ))
+                        .color(t.text_dim),
+                    );
+                }
+                Dialog::MergeKeywords { from, into } => {
+                    ui.label(egui::RichText::new(format!("Replace {} with:", from.iter().map(|f| format!("“{f}”")).collect::<Vec<_>>().join(", "))).color(t.text_label));
+                    let r = ui.add(egui::TextEdit::singleline(into).hint_text("Keyword").desired_width(f32::INFINITY));
+                    crate::widgets::register(ui.ctx(), "field:keywordInto", r.rect);
+                    r.request_focus();
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        confirm = true;
+                    }
+                    let options: Vec<String> = app
+                        .session
+                        .catalog
+                        .keyword_suggestions(from, into, 12)
+                        .into_iter()
+                        .filter(|k| !from.iter().any(|f| lightcraft_catalog::keywords::is_under(k, f)))
+                        .collect();
+                    ui.horizontal_wrapped(|ui| {
+                        for k in options {
+                            if ui.add(egui::Button::new(egui::RichText::new(&k).color(t.text_label)).corner_radius(10.0)).clicked() {
+                                *into = k;
+                            }
+                        }
+                    });
                 }
                 Dialog::NewAlbum { name, .. } | Dialog::RenameAlbum { name, .. } => {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text("Name").desired_width(f32::INFINITY));
@@ -280,6 +321,8 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
     match dlg {
         Dialog::NewAlbum { name, folder } => app.run("album.create", json!({"name": name, "folder": folder, "addSelected": !folder})),
         Dialog::RenameAlbum { id, name } => app.run("album.rename", json!({"id": id, "name": name})),
+        Dialog::RenameKeyword { from, to } => app.run("keyword.rename", json!({"from": from, "to": to})),
+        Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),
         Dialog::NewSmartAlbum { name } => app.run("album.createSmart", json!({"name": if name.trim().is_empty() { "Smart Album" } else { name }})),
         Dialog::CreatePreset { name, group } => {

@@ -9,6 +9,7 @@
 
 pub mod dates;
 pub mod journal;
+pub mod keywords;
 pub mod model;
 pub mod query;
 pub mod stacks;
@@ -19,6 +20,7 @@ use std::sync::Arc;
 
 pub use dates::{DateRun, GroupBy};
 pub use journal::{Journal, LoadReport, SnapshotPolicy};
+pub use keywords::KeywordNode;
 use lightcraft_develop::DevelopSettings;
 pub use model::*;
 pub use query::{DateGroup, Filter, RatingOp, Sort, SortKey};

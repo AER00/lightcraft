@@ -66,7 +66,6 @@ Ordered by tier, then user value, then (low) effort. Take the first one nobody i
 6. **LR-PRE-CREATE + LR-PRE-PANEL + LR-BEHAV-PREVIEW-HOVER** (P0/P1) — per-group checkboxes in Create Preset;
     live preview while hovering presets/profiles/versions. Medium effort.
 7. **LR-PROF-DROPDOWN** (P0) — favourites/recent in the profile menu (and later a browser, LR-PROF-BROWSER).
-8. **LR-LIB-KEYWORD** (P0) — rename/delete a keyword library-wide; keyword list in the left panel for browsing.
 9. **LR-PREF-GENERAL + LR-IMP-RAWDEFAULT** (P0/P1) — a Settings dialog: raw defaults (preset or camera-specific),
     XMP prefs, cache, GPU. Medium effort.
 10. **LR-IMP-ADD-DIALOG + LR-IMP-LOCAL** (P0) — an import review grid with per-photo checkboxes and destination
@@ -150,7 +149,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-RATING | Star ratings | P0 | ✅ | `cmd:photo.rate` (`advance`), `crates/ui-egui/src/shortcuts.rs` | |
 | LR-LIB-FLAG | Pick / reject flags | P0 | ✅ | `cmd:photo.pick`, `cmd:photo.reject`, `cmd:photo.unflag`, `cmd:photo.flag` | pick key is P (see Shortcuts); no flag cycle |
 | LR-LIB-LABEL | Colour labels | P1 | 🟡 | `cmd:photo.label`, keys 6–9 in `crates/ui-egui/src/shortcuts.rs` | no label menu/buttons, no purple key, label names not editable |
-| LR-LIB-KEYWORD | Keywords | P0 | 🟡 | `cmd:panel.keywords`, `cmd:photo.setMeta` (`addKeywords`/`removeKeywords`) | no library-wide rename/delete, no keyword browser in the left panel |
+| LR-LIB-KEYWORD | Keywords | P0 | ✅ | `cmd:panel.keywords`, `cmd:photo.setMeta` (`addKeywords`/`removeKeywords`), `cmd:keyword.list`, `cmd:keyword.rename`, `cmd:keyword.delete`, `cmd:keyword.merge`, `cmd:keyword.suggest`, `crates/catalog/src/keywords.rs`, `crates/ui-egui/src/panels/left.rs` | left-panel keyword tree with counts (click filters, children included; context menu rename / merge / delete / add / remove); library-wide ops are one undo step and replay from the op log; suggestions (co-occurring / most used / completions) in the Keywords panel; no keyword drag-and-drop |
 | LR-LIB-PEOPLE | People / faces | P2 | ⬜ | | |
 | LR-LIB-STACK | Stacks | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup`, `cmd:stack.toggle`, `cmd:stack.setTop`, `cmd:stack.remove`, `cmd:stack.auto`, `crates/catalog/src/stacks.rs` | grid/filmstrip count badges, expand/collapse, auto-stack by capture time; no visual-similarity auto-stack |
 | LR-LIB-VERSIONS | Versions | P1 | ✅ | `cmd:version.create` | see section M |
@@ -722,7 +721,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-STACKS | Stacks (full) | P1 | 🟡 | `crates/catalog/src/stacks.rs` | group/ungroup/toggle/top/remove/auto by time; no split stack or move up/down |
 | LRC-LIB-VC | Virtual copies | P1 | ✅ | `cmd:photo.virtualCopy` | ⌘' |
 | LRC-LIB-LABELS | Colour-label sets | P1 | ⬜ | | |
-| LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | ⬜ | | flat keywords only (LR-LIB-KEYWORD) |
+| LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | 🟡 | `crates/catalog/src/keywords.rs`, `cmd:keyword.list` | hierarchical `a\|b\|c` keywords (tree, parent filters include children, rename moves children); no keyword sets or painter |
 | LRC-LIB-METADATA | Metadata panel & presets | P1 | 🟡 | `cmd:photo.setMeta`, `cmd:photo.saveMetadataToFile`, `cmd:photo.readMetadataFromFile` | no metadata presets, capture-time edit, copyright status |
 | LRC-LIB-QUICKDEV | Quick develop | P2 | ⬜ | | |
 | LRC-LIB-PEOPLE | People view | P2 | ⬜ | | |

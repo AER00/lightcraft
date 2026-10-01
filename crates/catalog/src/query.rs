@@ -31,6 +31,7 @@ pub struct Filter {
     pub deleted: bool,
     /// Capture date prefix (`2026`, `2026-04`, `2026-04-12`).
     pub date: Option<String>,
+    /// A keyword; hierarchical keywords match their children too (`travel` finds `travel|italy`).
     pub keyword: Option<String>,
     pub camera: Option<String>,
     /// Lens (case-insensitive substring).
@@ -95,7 +96,7 @@ fn token_matches(p: &Photo, tok: &str) -> bool {
             "focal" => p.meta.focal_mm.is_some_and(|a| cmp(a as f64, val)),
             "camera" => p.meta.camera.to_lowercase().contains(val),
             "lens" => p.meta.lens.to_lowercase().contains(val),
-            "keyword" | "kw" => p.meta.keywords.iter().any(|k| k.to_lowercase() == val),
+            "keyword" | "kw" => p.meta.keywords.iter().any(|k| crate::keywords::is_under(k, val)),
             "type" | "kind" => format!("{:?}", p.kind).eq_ignore_ascii_case(val),
             "edited" => (val == "true" || val == "yes") == p.is_edited(),
             "date" => p.date().starts_with(val),
@@ -202,7 +203,7 @@ impl Filter {
             return false;
         }
         if let Some(k) = &self.keyword
-            && !p.meta.keywords.iter().any(|x| x.eq_ignore_ascii_case(k))
+            && !p.meta.keywords.iter().any(|x| crate::keywords::is_under(x, k))
         {
             return false;
         }

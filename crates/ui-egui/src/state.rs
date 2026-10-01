@@ -151,6 +151,16 @@ pub enum Dialog {
         id: u64,
         name: String,
     },
+    /// Rename a keyword on every photo (children included).
+    RenameKeyword {
+        from: String,
+        to: String,
+    },
+    /// Merge keywords into another one on every photo.
+    MergeKeywords {
+        from: Vec<String>,
+        into: String,
+    },
     /// Auto-stack by capture time: the largest gap between consecutive shots, in seconds.
     AutoStack {
         gap: f32,

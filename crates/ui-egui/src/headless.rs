@@ -399,6 +399,44 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// Keywords: the left-panel tree filters (children included), opens levels, the rename dialog
+    /// renames library-wide, and the Keywords panel adds a suggestion.
+    #[test]
+    fn keyword_list_filters_renames_and_suggests() {
+        // tall: the demo library's own keywords come first in the list
+        let mut h = demo([1300.0, 1800.0]);
+        let t = Duration::from_secs(10);
+        let vis: Vec<u64> = h.app.session.visible_cloned().iter().map(|p| p.0).collect();
+        let ex = |h: &mut Headless, c: &str, p: Value| h.request("engine.execute", json!({"command": c, "params": p}), Duration::from_secs(10));
+        ex(&mut h, "photo.setMeta", json!({"ids": [vis[0], vis[1]], "addKeywords": ["travel|italy"]}));
+        ex(&mut h, "photo.setMeta", json!({"ids": [vis[2]], "addKeywords": ["travel|france"]}));
+        h.request("ui.set", json!({"leftPanel": true}), t);
+        let r = h.request("ui.clickWidget", json!({"id": "source:keyword:travel"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(h.app.session.filter.keyword.as_deref(), Some("travel"));
+        assert_eq!(h.app.session.visible_cloned().len(), 3);
+        // open the level, filter by the child
+        h.request("ui.clickWidget", json!({"id": "keywordToggle:travel"}), t);
+        let r = h.request("ui.clickWidget", json!({"id": "source:keyword:travel|italy"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(h.app.session.visible_cloned().len(), 2);
+        h.app.ui.dialog = Some(crate::state::Dialog::RenameKeyword { from: "travel".into(), to: "trips".into() });
+        h.settle(SETTLE);
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(h.app.session.filter.keyword.as_deref(), Some("trips|italy"));
+        assert_eq!(h.app.session.visible_cloned().len(), 2);
+        // Keywords panel: suggestions co-occurring with the photo's keywords
+        h.request("engine.execute", json!({"command": "library.clearFilter"}), t);
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[1]]}}), t);
+        ex(&mut h, "photo.setMeta", json!({"ids": [vis[0]], "addKeywords": ["gelato"]}));
+        h.request("ui.set", json!({"right": "keywords"}), t);
+        let r = h.request("ui.clickWidget", json!({"id": "kwSuggest:gelato"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(h.app.session.catalog.photo(lightcraft_catalog::PhotoId(vis[1])).unwrap().meta.keywords.contains(&"gelato".to_string()));
+        h.settle(SETTLE);
+    }
+
     #[test]
     fn screenshot_request_is_answered_without_a_window() {
         let mut h = demo([800.0, 500.0]);
