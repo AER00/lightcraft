@@ -196,7 +196,7 @@ lightcraft --control 7980 ~/Pictures/trip
 
 ## Fast, native, private
 
-- **Pure Rust, no C.** Our own RAW decoders (DNG with lossless JPEG, Canon CR2 — more on the way), our own colour
+- **Pure Rust, no C.** Our own RAW decoders (DNG, Canon CR2, Sony ARW, Nikon NEF, Fujifilm RAF incl. X-Trans, Panasonic RW2, Pentax PEF, Olympus ORF), our own colour
   science, our own pipeline. JPEG, PNG, TIFF, WebP, PSD composites and JPEG XL open today.
 - **Scene-referred & wide-gamut.** Linear Rec.2020 float internally, Bradford-adapted white balance, gamut mapping
   instead of clipping, a filmic shoulder for raw and pixel-exact pass-through for JPEGs you haven't touched.
@@ -221,13 +221,14 @@ LightCraft is young and moving fast — see the [roadmap](ROADMAP.md) for estima
 | Crop, straighten, flip, rotate, aspect ratios, overlays | ✅ |
 | Profiles (Color, Neutral, Vivid, Landscape, Portrait, Monochrome — our own looks), presets, versions, history, copy/paste/sync settings | ✅ |
 | Control channel + every widget addressable | ✅ |
-| RAW: DNG, CR2, ARW, NEF (uncompressed) | ✅ · compressed NEF, CR3, RAF, ORF, RW2, PEF… 🚧 |
+| RAW: DNG, CR2, ARW, NEF (uncompressed), Fujifilm RAF (Bayer + X-Trans), Panasonic RW2, Pentax PEF, Olympus ORF; embedded previews for every format incl. CR3 | ✅ · compressed NEF/RAF/ORF, CR3 decode 🚧 |
 | Detail: sharpening, luminance + colour noise reduction | ✅ · AI Denoise, Super Resolution ⬜ |
 | Remove / Heal / Clone spots (auto source) | ✅ · content-aware fill (PatchMatch), Red Eye 🚧 |
 | Export: JPEG / PNG / TIFF / WebP / AVIF, sizing, file-size limit, output sharpening, naming, batch, metadata policy, text watermark | ✅ · DNG export, image watermark ⬜ |
 | Library persistence (crash-safe op log + snapshots), disk thumbnail cache, import with duplicate detection | ✅ |
 | MCP server (headless or live app, persistent libraries), CLI, control channel | ✅ |
-| Optics, Geometry/Upright, XMP sidecars, GPU pipeline | 🚧 |
+| XMP sidecars (read/write, auto-write), reading `crs:` develop settings, preset files (`.lcpreset`, XMP presets) | ✅ |
+| Optics, Geometry/Upright, GPU pipeline | 🚧 |
 | Web build (same UI in the browser via WASM; in-memory imports, export downloads) | ✅ · persistence, workers 🚧 |
 
 <br>
