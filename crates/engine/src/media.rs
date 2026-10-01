@@ -1,7 +1,8 @@
 //! Source proxies and render jobs.
 //!
 //! Sources are decoded (or generated) once per level and cached in memory LRUs: `Thumb` (≤ 512 px
-//! long edge) for the grid and filmstrip, `Preview` (≤ 2560 px) for the loupe. A [`RenderJob`] is
+//! long edge) for the grid and filmstrip, `Preview` (≤ 2560 px) for the loupe, `Full` (native
+//! resolution, the last one only) for exports larger than a preview. A [`RenderJob`] is
 //! self-contained and `Send`: frontends run it on a worker thread; if the source wasn't cached yet
 //! the job loads it and hands it back in the [`RenderResult`] so the cache can keep it.
 //!
@@ -14,13 +15,13 @@ use std::sync::Arc;
 
 use lightcraft_catalog::{MediaKind, Photo, PhotoId, Source};
 use lightcraft_develop::DevelopSettings;
-use lightcraft_pipeline::{RenderRequest, Rendered, SourceInfo};
+use lightcraft_pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
 use lightcraft_preview::{Hash128, Hasher128, Lru, PreviewCache};
 use lightcraft_raster::{Histogram, Rgb32f};
 use serde::{Deserialize, Serialize};
 
 /// Bump when the pipeline's output changes, to invalidate cached thumbnails.
-pub const RENDER_CACHE_VERSION: u64 = 2;
+pub const RENDER_CACHE_VERSION: u64 = 3;
 
 /// Thumbnails render at one of these long edges (so window/cell size changes reuse the cache).
 pub const THUMB_SIZES: [usize; 4] = [128, 256, 384, 512];
@@ -36,6 +37,8 @@ pub const DISK_CACHE_BYTES: u64 = 2 << 30;
 pub enum SourceLevel {
     Thumb,
     Preview,
+    /// The original at its native resolution (exports larger than a preview).
+    Full,
 }
 
 impl SourceLevel {
@@ -43,11 +46,16 @@ impl SourceLevel {
         match self {
             SourceLevel::Thumb => 512,
             SourceLevel::Preview => 2560,
+            SourceLevel::Full => usize::MAX,
         }
     }
     /// Smallest level that can serve an output of `long_edge` pixels.
     pub fn for_size(long_edge: usize) -> SourceLevel {
-        if long_edge <= 520 { SourceLevel::Thumb } else { SourceLevel::Preview }
+        match long_edge {
+            0..=520 => SourceLevel::Thumb,
+            521..=2560 => SourceLevel::Preview,
+            _ => SourceLevel::Full,
+        }
     }
 }
 
@@ -78,6 +86,8 @@ pub struct MediaCache {
     /// Decoded thumbnail-level sources (LRU by bytes).
     thumbs: Lru<PhotoId, Arc<Rgb32f>>,
     previews: Vec<(PhotoId, Arc<Rgb32f>)>,
+    /// The last full-resolution original (exports; one at a time: ~300 MB at 24 MP).
+    full: Option<(PhotoId, Arc<Rgb32f>)>,
     /// How many previews to keep (LRU).
     pub preview_capacity: usize,
     pub file_loader: Option<FileLoader>,
@@ -92,6 +102,7 @@ impl Default for MediaCache {
         MediaCache {
             thumbs: Lru::new(THUMB_SOURCE_BYTES),
             previews: Vec::new(),
+            full: None,
             preview_capacity: 0,
             file_loader: None,
             file_probe: None,
@@ -111,6 +122,7 @@ impl MediaCache {
         match level {
             SourceLevel::Thumb => self.thumbs.get(&id).cloned(),
             SourceLevel::Preview => self.previews.iter().find(|(p, _)| *p == id).map(|(_, a)| a.clone()),
+            SourceLevel::Full => self.full.as_ref().filter(|(p, _)| *p == id).map(|(_, a)| a.clone()),
         }
     }
 
@@ -128,6 +140,7 @@ impl MediaCache {
                     self.previews.remove(0);
                 }
             }
+            SourceLevel::Full => self.full = Some((id, img)),
         }
     }
 
@@ -135,6 +148,9 @@ impl MediaCache {
     pub fn forget(&mut self, id: PhotoId) {
         self.thumbs.remove(&id);
         self.previews.retain(|(p, _)| *p != id);
+        if self.full.as_ref().is_some_and(|(p, _)| *p == id) {
+            self.full = None;
+        }
     }
 
     /// (decoded thumbnail sources, bytes).
@@ -146,17 +162,22 @@ impl MediaCache {
         if let Some(a) = self.get(p.id, level) {
             return SourceRef::Loaded(a);
         }
+        // Procedural scenes have a nominal size: "full" is that size, not unbounded.
+        let max_edge = level.max_edge().min(match (&p.source, level) {
+            (Source::Demo { .. }, SourceLevel::Full) => p.width.max(p.height).max(1) as usize,
+            _ => usize::MAX,
+        });
         match &p.source {
             Source::Demo { scene } => {
                 if self.scenes.is_empty() {
                     self.scenes = lightcraft_scenes::demo_library();
                 }
                 match self.scenes.iter().find(|s| s.id == *scene) {
-                    Some(s) => SourceRef::Demo { scene: Box::new(s.clone()), max_edge: level.max_edge() },
-                    None => SourceRef::File { path: format!("demo:{scene}"), max_edge: level.max_edge(), loader: None },
+                    Some(s) => SourceRef::Demo { scene: Box::new(s.clone()), max_edge },
+                    None => SourceRef::File { path: format!("demo:{scene}"), max_edge, loader: None },
                 }
             }
-            Source::File { path } => SourceRef::File { path: path.clone(), max_edge: level.max_edge(), loader: self.file_loader.clone() },
+            Source::File { path } => SourceRef::File { path: path.clone(), max_edge, loader: self.file_loader.clone() },
         }
     }
 }
@@ -174,6 +195,9 @@ pub struct RenderJob {
     pub key: u64,
     /// Rendered-thumbnail cache and this job's key in it.
     pub cache: Option<(Arc<PreviewCache>, Hash128)>,
+    /// Intermediate results of this view's previous renders (set by the frontend for the loupe):
+    /// slider drags then only redo the stages the changed setting feeds.
+    pub stages: Option<Arc<StageCache>>,
 }
 
 pub struct RenderResult {
@@ -186,6 +210,21 @@ pub struct RenderResult {
 }
 
 impl RenderJob {
+    /// Render at draft quality (interactive drags). Gets its own result key.
+    pub fn draft(mut self) -> Self {
+        if self.request.quality != Quality::Draft {
+            self.request.quality = Quality::Draft;
+            self.key ^= 0x9e37_79b9_7f4a_7c15;
+        }
+        self
+    }
+
+    /// Reuse `stages` across this view's renders.
+    pub fn with_stages(mut self, stages: Arc<StageCache>) -> Self {
+        self.stages = Some(stages);
+        self
+    }
+
     pub fn run(self) -> RenderResult {
         if let Some((cache, key)) = &self.cache
             && let Some(img) = cache.get(*key)
@@ -197,7 +236,10 @@ impl RenderJob {
         let was_loaded = matches!(self.source, SourceRef::Loaded(_));
         match self.source.load() {
             Ok(src) => {
-                let rendered = lightcraft_pipeline::render(&src, &self.info, &self.settings, &self.request);
+                let rendered = match &self.stages {
+                    Some(st) => lightcraft_pipeline::render_cached(&src, &self.info, &self.settings, &self.request, st),
+                    None => lightcraft_pipeline::render(&src, &self.info, &self.settings, &self.request),
+                };
                 if let Some((cache, key)) = &self.cache {
                     cache.put(*key, Arc::new(rendered.image.clone()));
                 }
@@ -255,17 +297,13 @@ impl crate::Session {
         let level = SourceLevel::for_size(max_w.max(max_h));
         let source = self.media.source_ref(&p, level);
         let settings = if before { Arc::new(lightcraft_pipeline::before_settings(&p.develop)) } else { p.develop.clone() };
-        let request = RenderRequest { max_w, max_h, quality: lightcraft_pipeline::Quality::Full, apply_crop };
-        let key = settings.hash64()
-            ^ ((max_w as u64) << 40)
-            ^ ((max_h as u64) << 20)
-            ^ (apply_crop as u64)
-            ^ ((level == SourceLevel::Preview) as u64) << 60;
+        let request = RenderRequest { max_w, max_h, quality: Quality::Full, apply_crop };
+        let key = settings.hash64() ^ ((max_w as u64) << 40) ^ ((max_h as u64) << 20) ^ (apply_crop as u64) ^ (level as u64) << 60;
         let cache = thumb_bucket.map(|b| {
             let k = Hasher128::new().str(&content_key(&p)).u64(settings.hash64()).u64(b as u64).u64(RENDER_CACHE_VERSION).finish();
             (self.media.rendered.clone(), k)
         });
-        Some(RenderJob { photo: id, level, source, info: source_info(&p), settings, request, key, cache })
+        Some(RenderJob { photo: id, level, source, info: source_info(&p), settings, request, key, cache, stages: None })
     }
 
     /// Accept a finished job's loaded source into the cache.
@@ -312,3 +350,29 @@ pub struct ProbeInfo {
 }
 
 pub type FileProbe = Arc<dyn Fn(&str) -> Result<ProbeInfo, String> + Send + Sync>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn levels_cover_sizes_and_large_exports_use_the_original() {
+        assert_eq!(SourceLevel::for_size(256), SourceLevel::Thumb);
+        assert_eq!(SourceLevel::for_size(2560), SourceLevel::Preview);
+        assert_eq!(SourceLevel::for_size(2561), SourceLevel::Full);
+        let mut s = crate::Session::with_demo();
+        let p = s.catalog.photos().next().unwrap().clone();
+        let long = p.width.max(p.height) as usize;
+        assert!(long > 2560, "demo photos are camera-sized");
+        // a full-size export reads the source at its native size, not an upscaled preview
+        let job = s.render_job(p.id, long, long, false, true).unwrap();
+        assert_eq!(job.level, SourceLevel::Full);
+        match &job.source {
+            SourceRef::Demo { max_edge, .. } => assert_eq!(*max_edge, long),
+            _ => panic!("demo source expected"),
+        }
+        let loupe = s.render_job(p.id, 1600, 1600, false, true).unwrap();
+        assert_eq!(loupe.level, SourceLevel::Preview);
+        assert_ne!(loupe.key, s.render_job(p.id, 1600, 1600, false, true).unwrap().draft().key);
+    }
+}

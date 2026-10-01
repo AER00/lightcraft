@@ -37,6 +37,7 @@ proptest = "1"
 bytemuck = { version = "1", features = ["derive"] }
 crc32fast = "1"
 siphasher = "1"
+libc = "0.2" # dev-only: process CPU time in benches
 
 # formats
 quick-xml = "0.38"

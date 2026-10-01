@@ -9,7 +9,7 @@ use lightcraft_raster::Rgba8;
 
 use crate::colorops::ColorOps;
 use crate::geometry::Frame;
-use crate::local::{airlight, log_lum};
+use crate::local::log_lum;
 use crate::tone::ToneMap;
 use crate::{Prepared, SourceInfo, for_rows};
 
@@ -119,7 +119,8 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
     };
     let sharpen = (s.detail.sharpen_amount / 150.0) as f32;
     let sharpen_mask = (s.detail.sharpen_masking / 100.0) as f32;
-    let air = p.dark.as_ref().map(airlight).unwrap_or(1.0);
+    // Planes are pre-exposure: scale the airlight, shift log luminance (see `Prepared`).
+    let (air, air_pre, gain, ev) = (p.air * p.gain, p.air, p.gain, p.ev);
     let grain = (s.grain.amount > 0.0 && s.section_enabled("effects")).then(|| {
         let cell = (0.0006 + (s.grain.size / 100.0) as f32 * 0.0024) * p.px_per_long as f32;
         ((s.grain.amount / 100.0) as f32 * 0.13, cell.max(0.6), (s.grain.roughness / 100.0) as f32, s.grain.seed)
@@ -127,12 +128,15 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
     let out_to_norm = frame.out_to_norm(w, h);
     let aspect = w as f32 / h as f32;
 
+    let srgb = srgb_lut();
     let mut out = Rgba8::new(w, h);
     for_rows(&mut out.data, w, |y, row| {
         for (x, px) in row.iter_mut().enumerate() {
             let i = y * w + x;
-            let mut c = p.img.data[i];
-            let l0 = p.log_l.data[i];
+            let raw = p.img.data[i];
+            let mut c = if gain == 1.0 { raw } else { raw.map(|v| v * gain) };
+            let l_pre = p.log_l.data[i];
+            let l0 = l_pre + ev;
 
             // --- local (mask) contributions
             let (mut l_exp, mut l_temp, mut l_tint, mut l_con, mut l_hl, mut l_sh, mut l_wh, mut l_bl) = (0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -169,7 +173,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             if dz != 0.0
                 && let Some(dark) = &p.dark
             {
-                let d = (dark.data[i] / air).clamp(0.0, 1.0);
+                let d = (dark.data[i] / air_pre).clamp(0.0, 1.0);
                 if dz > 0.0 {
                     let t = (1.0 - 0.95 * dz.min(1.0) * d).max(0.12);
                     c = c.map(|v| ((v - air * (1.0 - t)) / t).max(0.0));
@@ -181,7 +185,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
 
             // --- local exposure / temp / tint
             if l_exp != 0.0 {
-                let g = 2f32.powf(l_exp);
+                let g = l_exp.exp2();
                 c = c.map(|v| v * g);
             }
             if l_temp != 0.0 || l_tint != 0.0 {
@@ -194,7 +198,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             // --- local tone in log luminance
             let l1 = if dz != 0.0 || l_exp != 0.0 { log_lum(c) } else { l0 };
             let shift = l1 - l0;
-            let base = p.base.data[i] + shift;
+            let base = p.base.data[i] + ev + shift;
             let mut delta = 0.0f32;
             let (hh, ss) = (hl + l_hl, sh + l_sh);
             if hh != 0.0 || ss != 0.0 {
@@ -215,7 +219,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             if cl != 0.0
                 && let Some(b) = &p.clarity_blur
             {
-                let det = (l0 - b.data[i]).clamp(-2.5, 2.5);
+                let det = (l_pre - b.data[i]).clamp(-2.5, 2.5);
                 let mid = (-(base / 3.2).powi(2)).exp();
                 delta += cl * 0.85 * det * (0.35 + 0.65 * mid);
             }
@@ -224,7 +228,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             if (tx != 0.0 || sp != 0.0)
                 && let Some(b) = &p.texture_blur
             {
-                let det = l0 - b.data[i];
+                let det = l_pre - b.data[i];
                 let tame = 1.0 - 0.6 * smooth(0.4, 1.6, det.abs());
                 delta += tx * 1.1 * det.clamp(-1.0, 1.0) * tame;
                 if sp != 0.0 {
@@ -233,7 +237,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
                 }
             }
             if delta != 0.0 {
-                let g = 2f32.powf(delta);
+                let g = delta.exp2();
                 c = c.map(|v| v * g);
             }
 
@@ -302,7 +306,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             }
 
             // --- encode, curves, grain
-            let mut e = r.map(|v| linear_to_srgb(v.clamp(0.0, 1.0)));
+            let mut e = r.map(|v| encode_srgb(srgb, v));
             if let Some(l) = &curves {
                 e = [l[0].eval(e[0]), l[1].eval(e[1]), l[2].eval(e[2])];
             }
@@ -322,8 +326,50 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
     out
 }
 
+const SRGB_LUT_N: usize = 4096;
+
+fn srgb_lut() -> &'static [f32; SRGB_LUT_N + 1] {
+    static LUT: std::sync::OnceLock<Box<[f32; SRGB_LUT_N + 1]>> = std::sync::OnceLock::new();
+    LUT.get_or_init(|| {
+        let mut t = Box::new([0.0f32; SRGB_LUT_N + 1]);
+        for (i, v) in t.iter_mut().enumerate() {
+            *v = linear_to_srgb(i as f32 / SRGB_LUT_N as f32);
+        }
+        t
+    })
+}
+
+/// Linear → sRGB-encoded (clamped to 0..1) by an interpolated table: within 2e-5 of the exact
+/// curve (≪ one 8-bit or 10-bit step), several times faster than `powf`.
+#[inline]
+fn encode_srgb(lut: &[f32; SRGB_LUT_N + 1], v: f32) -> f32 {
+    let f = v.clamp(0.0, 1.0) * SRGB_LUT_N as f32;
+    let i = (f as usize).min(SRGB_LUT_N - 1);
+    let t = f - i as f32;
+    lut[i] + (lut[i + 1] - lut[i]) * t
+}
+
 #[inline]
 fn enc(v: f32) -> u8 {
     // `v` is already sRGB-encoded; round to 8 bits.
     (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn srgb_table_matches_the_exact_curve() {
+        let lut = srgb_lut();
+        let mut worst = 0.0f32;
+        for i in 0..=200_000 {
+            // dense near black, where the curve bends most
+            let v = (i as f32 / 200_000.0).powi(3);
+            worst = worst.max((encode_srgb(lut, v) - linear_to_srgb(v)).abs());
+        }
+        assert!(worst < 2e-5, "{worst}");
+        assert_eq!(encode_srgb(lut, -1.0), 0.0);
+        assert!((encode_srgb(lut, 2.0) - 1.0).abs() < 1e-6);
+    }
 }
