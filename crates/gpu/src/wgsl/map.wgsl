@@ -155,12 +155,12 @@ fn redeye_k(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups
         let d = sqrt(ex * ex + ey * ey) / pf(o + 2u);
         var m = 1.0 - sstep(1.0, 1.35, d);
         if (pf(o + 4u) != 0.0) {
-            m = 1.0 - sstep(0.85, 1.1, d);
+            m = 1.0 - sstep(0.95, 1.2, d);
         }
         let darken = pf(o + 3u);
         if (m > 0.0) {
             if (pf(o + 4u) != 0.0) {
-                let k = lum2020(c) * 0.15 * (1.0 - darken);
+                let k = min(lum2020(c), 0.04) * (1.0 - 0.85 * darken);
                 c = c + (vec3<f32>(k) - c) * m;
             } else {
                 let red = (c.x - max(c.y, c.z)) / max(c.x, 1e-6);

@@ -230,6 +230,14 @@ fn red_eye(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let d = app.session.develop_of(id).unwrap_or_default();
     header(ui, "Red Eye");
     padded(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for (label, pet) in [("Red Eye", false), ("Pet Eye", true)] {
+                if text_button(ui, &format!("eyeMode-{}", if pet { "pet" } else { "red" }), label, app.ui.eye_pet == pet).clicked() {
+                    app.ui.eye_pet = pet;
+                }
+            }
+        });
+        ui.add_space(8.0);
         ui.label(
             egui::RichText::new("Drag over an eye on the photo; the pupil inside is found automatically.").color(Tokens::get(ui.ctx()).text_dim),
         );
@@ -253,6 +261,13 @@ fn red_eye(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         super::edit::apply_slider_out(app, spec, out, |app, v| app.run("develop.set", json!({"control": cid, "value": v})));
     }
     padded(ui, |ui| {
+        if eye.pet {
+            let mut on = eye.catchlight.is_some();
+            if ui.checkbox(&mut on, "Add Catchlight").changed() {
+                let _ = app.run("redeye.catchlight", json!({"index": i, "on": on}));
+            }
+            ui.add_space(4.0);
+        }
         ui.horizontal(|ui| {
             if text_button(ui, "eyeDelete", "Delete", false).clicked() {
                 let _ = app.run("redeye.delete", json!({"index": i}));

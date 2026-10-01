@@ -321,6 +321,28 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"index": n - 1}))
             }
         ),
+        cmd!(
+            "redeye.catchlight",
+            "Pet Eye Catchlight",
+            [],
+            None,
+            "{index, on?: bool (default true), offset?: [dx, dy] from the pupil centre in pupil radii (default [-0.35, -0.35])}",
+            has_active,
+            |s, p| {
+                let c = "redeye.catchlight";
+                let i = super::f64_req(p, "index", c)? as usize;
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
+                let eye = dd.red_eye.get_mut(i).ok_or_else(|| bad(c, "no such eye"))?;
+                if !eye.pet {
+                    return Err(bad(c, "catchlights are for pet eyes"));
+                }
+                let off = point(p, "offset").or(eye.catchlight).unwrap_or(Point::new(-0.35, -0.35));
+                eye.catchlight = bool_or(p, "on", true).then(|| Point::new(off.x.clamp(-1.0, 1.0), off.y.clamp(-1.0, 1.0)));
+                s.set_develop(id, dd, "Catchlight")?;
+                ok()
+            }
+        ),
         cmd!("redeye.delete", "Delete Red Eye Correction", [], None, "{index}", has_active, |s, p| {
             let c = "redeye.delete";
             let i = super::f64_req(p, "index", c)? as usize;

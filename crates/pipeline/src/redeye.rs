@@ -161,10 +161,10 @@ pub fn eye_pixel(c: [f32; 3], x: f32, y: f32, eyes: &[EyeK]) -> [f32; 3] {
     for e in eyes {
         let d = ((x - e.cx) * (x - e.cx) + (y - e.cy) * (y - e.cy)).sqrt() / e.r;
         // red: generous disc (the red gate protects the iris); pet: the disc itself is replaced
-        let m = if e.pet { 1.0 - smooth(0.85, 1.1, d) } else { 1.0 - smooth(1.0, 1.35, d) };
+        let m = if e.pet { 1.0 - smooth(0.95, 1.2, d) } else { 1.0 - smooth(1.0, 1.35, d) };
         if m > 0.0 {
             if e.pet {
-                let k = lightcraft_color::luminance_2020(c) * 0.15 * (1.0 - e.darken);
+                let k = lightcraft_color::luminance_2020(c).min(0.04) * (1.0 - 0.85 * e.darken);
                 c = c.map(|v| v + (k - v) * m);
             } else {
                 let red = (c[0] - c[1].max(c[2])) / c[0].max(1e-6);
@@ -263,6 +263,33 @@ mod tests {
             let plain = render(&src, &info, &Default::default(), &RenderRequest::fit(size, size)).image;
             assert_eq!(q, plain.data[(img.height / 2) * img.width + img.width / 10]);
         }
+    }
+
+    #[test]
+    fn pet_eye_finds_the_glow_darkens_it_and_adds_a_catchlight() {
+        use crate::{RenderRequest, SourceInfo, render};
+        // a green-yellow tapetum glow (any colour: pet eyes are found by brightness)
+        let src = eye_image(400, 200, 210.0, 96.0, 14.0, [0.5, 0.7, 0.3]);
+        let eye = RedEye { center: Point::new(0.52, 0.5), rx: 0.1, ry: 0.09, pet: true, ..Default::default() };
+        let p = detect(&src, Orientation::Normal, 400.0, 200.0, &eye);
+        assert!(p.found && (p.center.x - 0.525).abs() < 0.01 && (p.center.y - 0.48).abs() < 0.02, "{p:?}");
+        assert!((p.radius * 400.0 - 14.0).abs() < 3.0, "{}", p.radius * 400.0);
+        // a red pupil is not a glow candidate for red-eye detection when it's green
+        assert!(!detect(&src, Orientation::Normal, 400.0, 200.0, &RedEye { pet: false, ..eye }).found);
+        let info = SourceInfo::default();
+        let mut s = lightcraft_develop::DevelopSettings::default();
+        s.red_eye.push(eye);
+        let img = render(&src, &info, &s, &RenderRequest::fit(400, 400)).image;
+        let at = |img: &lightcraft_raster::Rgba8, x: f64, y: f64| img.data[(y * 200.0) as usize * 400 + (x * 400.0) as usize];
+        let c = at(&img, 0.525, 0.48);
+        assert!(c[1] < 70 && c[0].abs_diff(c[1]) < 4, "dark neutral pupil: {c:?}");
+        // catchlight up-left of the centre
+        s.red_eye[0].catchlight = Some(Point::new(-0.35, -0.35));
+        let img = render(&src, &info, &s, &RenderRequest::fit(400, 400)).image;
+        let r = 14.0 / 400.0;
+        let l = at(&img, 0.525 - 0.35 * r, 0.48 - 0.35 * r * 2.0);
+        assert!(l[0] > 200 && l[1] > 200 && l[2] > 200, "catchlight {l:?}");
+        assert!(at(&img, 0.525 + 0.4 * r, 0.48 + 0.4 * r * 2.0)[1] < 70, "rest of the pupil stays dark");
     }
 
     #[test]

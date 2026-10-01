@@ -80,6 +80,20 @@ fn red_eye_commands_and_controls() {
 }
 
 #[test]
+fn pet_eye_catchlight_command() {
+    let mut s = demo();
+    s.execute("redeye.add", &json!({"center": [0.3, 0.4], "rx": 0.03, "ry": 0.03})).unwrap();
+    s.execute("redeye.add", &json!({"center": [0.6, 0.4], "rx": 0.03, "ry": 0.03, "pet": true})).unwrap();
+    assert!(s.execute("redeye.catchlight", &json!({"index": 0})).is_err(), "red eyes have no catchlight");
+    s.execute("redeye.catchlight", &json!({"index": 1})).unwrap();
+    assert_eq!(active_dev(&s).red_eye[1].catchlight, Some(lightcraft_geom::Point::new(-0.35, -0.35)));
+    s.execute("redeye.catchlight", &json!({"index": 1, "offset": [0.2, -3.0]})).unwrap();
+    assert_eq!(active_dev(&s).red_eye[1].catchlight, Some(lightcraft_geom::Point::new(0.2, -1.0)));
+    s.execute("redeye.catchlight", &json!({"index": 1, "on": false})).unwrap();
+    assert_eq!(active_dev(&s).red_eye[1].catchlight, None);
+}
+
+#[test]
 fn targeted_adjustment_on_curve_and_mixer() {
     let mut s = demo();
     // the bright sky lies in the upper regions of the parametric curve
