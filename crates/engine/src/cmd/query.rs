@@ -24,6 +24,8 @@ pub fn photo_summary(p: &Photo) -> Value {
         "keywords": p.meta.keywords,
         "camera": p.meta.camera,
         "deleted": p.deleted,
+        "copyOf": p.copy_of.map(|c| c.0),
+        "copyName": p.copy_name,
     })
 }
 

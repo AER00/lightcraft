@@ -27,6 +27,7 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
                     "-" => Some(Key::Minus),
                     "[" => Some(Key::OpenBracket),
                     "]" => Some(Key::CloseBracket),
+                    "'" => Some(Key::Quote),
                     _ => None,
                 })
             }

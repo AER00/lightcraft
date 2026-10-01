@@ -1,7 +1,7 @@
 //! Organizing commands: stacks (group, ungroup, set top, expand/collapse, auto-stack by capture
-//! time).
+//! time) and virtual copies.
 
-use lightcraft_catalog::{Op, PhotoId, StackId};
+use lightcraft_catalog::{HistoryStep, Op, PhotoId, Stack, StackId};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, f64_or, has_selection};
@@ -58,8 +58,73 @@ fn set_collapsed(s: &mut Session, stacks: Vec<StackId>, collapsed: bool, label: 
     Ok(json!({"changed": n}))
 }
 
+/// "Copy 3" → 3.
+fn copy_number(name: Option<&str>) -> u32 {
+    name.and_then(|n| n.strip_prefix("Copy ")).and_then(|n| n.trim().parse().ok()).unwrap_or(0)
+}
+
+/// Create one virtual copy of `src`: a new photo sharing its file, with the same settings and
+/// metadata, added to the same albums and stacked right after it (the stack is expanded so the
+/// copy is visible).
+fn virtual_copy(s: &mut Session, src: PhotoId) -> Result<Option<PhotoId>> {
+    let Some(orig) = s.catalog.photo(src).cloned() else { return Ok(None) };
+    let master = orig.copy_of.unwrap_or(src);
+    let n = 1 + s.catalog.photos().filter(|p| p.copy_of == Some(master)).map(|p| copy_number(p.copy_name.as_deref())).max().unwrap_or(0);
+    let id = s.catalog.alloc_photo_id();
+    let mut c = (*orig).clone();
+    c.id = id;
+    c.copy_of = Some(master);
+    c.copy_name = Some(format!("Copy {n}"));
+    c.versions.clear();
+    c.history = vec![HistoryStep { label: "Virtual Copy".into(), settings: c.develop.clone() }];
+    c.deleted = false;
+    let mut ops = vec![Op::AddPhoto { photo: Box::new(c) }];
+    for a in s.catalog.albums().filter(|a| !a.is_smart() && a.photos.contains(&src)) {
+        let mut photos = a.photos.clone();
+        let at = photos.iter().position(|p| *p == src).map_or(photos.len(), |i| i + 1);
+        photos.insert(at, id);
+        ops.push(Op::SetAlbumPhotos { id: a.id, photos });
+    }
+    match s.catalog.stack_of(src).cloned() {
+        Some(st) => {
+            let mut photos = st.photos.clone();
+            let at = st.position(src).map_or(photos.len(), |i| i + 1);
+            photos.insert(at, id);
+            ops.push(Op::SetStack { id: st.id, photos, collapsed: false });
+        }
+        None => {
+            let sid = s.catalog.alloc_stack_id();
+            ops.push(Op::AddStack { stack: Stack { id: sid, photos: vec![src, id], collapsed: false } });
+        }
+    }
+    s.commit("Create Virtual Copy", Op::Batch { ops })?;
+    Ok(Some(id))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        cmd!(
+            "photo.virtualCopy",
+            "Create Virtual Copy",
+            ["Photo"],
+            Some("Cmd+'"),
+            "{ids?} → {ids: [new photo ids]} — a new catalog entry sharing the original file, with independent settings; stacked with its original and named \"Copy N\"",
+            has_selection,
+            |s, p| {
+                let targets = s.targets(p);
+                let mut made = Vec::new();
+                for t in targets {
+                    if let Some(id) = virtual_copy(s, t)? {
+                        made.push(id);
+                    }
+                }
+                s.merge_undo(made.len(), "Create Virtual Copy");
+                if let Some(last) = made.last() {
+                    s.selection = Selection { ids: made.clone(), active: Some(*last) };
+                }
+                Ok(json!({"ids": made.iter().map(|i| i.0).collect::<Vec<_>>()}))
+            }
+        ),
         cmd!(
             "stack.group",
             "Group into Stack",

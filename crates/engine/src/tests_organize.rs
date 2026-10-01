@@ -80,6 +80,52 @@ fn smart_album_from_smart_album_view_keeps_its_rules() {
 }
 
 #[test]
+fn virtual_copies_are_independent_and_persist() {
+    let dir = temp_dir("vc");
+    let mut s = open(&dir);
+    let src = s.visible_cloned()[1];
+    let album = s.execute("album.create", &json!({"name": "Keep", "addSelected": false})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.addPhotos", &json!({"id": album, "ids": [src.0]})).unwrap();
+    s.execute("library.select", &json!({"ids": [src.0]})).unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5})).unwrap();
+    let undo_before = s.undo.len();
+    let r = s.execute("photo.virtualCopy", &json!({})).unwrap();
+    assert_eq!(s.undo.len(), undo_before + 1);
+    let c1 = lightcraft_catalog::PhotoId(r["ids"][0].as_u64().unwrap());
+    let r2 = s.execute("photo.virtualCopy", &json!({"ids": [src.0]})).unwrap();
+    let c2 = lightcraft_catalog::PhotoId(r2["ids"][0].as_u64().unwrap());
+    let (p, a, b) = (s.catalog.photo(src).unwrap().clone(), s.catalog.photo(c1).unwrap().clone(), s.catalog.photo(c2).unwrap().clone());
+    assert_eq!((a.copy_of, a.copy_name.as_deref()), (Some(src), Some("Copy 1")));
+    assert_eq!(b.copy_name.as_deref(), Some("Copy 2"));
+    assert_eq!(a.source, p.source, "shares the original file");
+    assert_eq!(a.develop.light.exposure, 0.5, "starts from the current settings");
+    // a copy of a copy names itself after the master
+    let r3 = s.execute("photo.virtualCopy", &json!({"ids": [c1.0]})).unwrap();
+    let c3 = s.catalog.photo(lightcraft_catalog::PhotoId(r3["ids"][0].as_u64().unwrap())).unwrap().clone();
+    assert_eq!((c3.copy_of, c3.copy_name.as_deref()), (Some(src), Some("Copy 3")));
+    // independent settings
+    s.execute("library.select", &json!({"ids": [c1.0]})).unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": -1.0})).unwrap();
+    assert_eq!(s.catalog.photo(src).unwrap().develop.light.exposure, 0.5);
+    assert_eq!(s.catalog.photo(c1).unwrap().develop.light.exposure, -1.0);
+    // same album, stacked (expanded) with the original, visible in the grid
+    assert!(s.catalog.album(lightcraft_catalog::AlbumId(album)).unwrap().photos.starts_with(&[src, c2, c1, c3.id]));
+    assert_eq!(s.catalog.stack_of(c1).unwrap().photos, vec![src, c2, c1, c3.id]);
+    assert!(s.visible_cloned().contains(&c2));
+    let found = s.execute("catalog.query", &json!({"filter": {"text": "copy:yes"}})).unwrap();
+    assert_eq!(found["total"], 3);
+    // undo removes a copy completely
+    s.execute("edit.undo", &json!({})).unwrap(); // exposure
+    s.execute("edit.undo", &json!({})).unwrap(); // third copy
+    assert!(s.catalog.photo(c3.id).is_none());
+    let expect = s.catalog.to_snapshot();
+    drop(s);
+    let s2 = open(&dir);
+    assert_eq!(s2.catalog.to_snapshot(), expect);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn stacks_group_collapse_and_replay() {
     let dir = temp_dir("stacks");
     let mut s = open(&dir);

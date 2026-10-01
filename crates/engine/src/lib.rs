@@ -182,6 +182,17 @@ impl Session {
         Ok(())
     }
 
+    /// Fold the last `n` undo steps into one (commands that commit step by step because each op
+    /// depends on the state the previous one left).
+    pub fn merge_undo(&mut self, n: usize, label: &str) {
+        if n < 2 || n > self.undo.len() {
+            return;
+        }
+        let tail = self.undo.split_off(self.undo.len() - n);
+        let ops = tail.into_iter().rev().map(|e| e.op).collect();
+        self.undo.push(UndoEntry { label: label.to_string(), op: Op::Batch { ops } });
+    }
+
     /// Apply without recording undo (interactive previews).
     fn apply_silent(&mut self, op: Op) -> Result<()> {
         self.catalog.apply(op)?;

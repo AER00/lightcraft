@@ -198,6 +198,23 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
             paint(p, Rect::from_min_size(pos2(bar.right() - 20.0, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::Sliders, t.text_label);
         }
     }
+    if let Some(name) = &photo.copy_name {
+        // virtual copy: a folded-corner tag at the top right
+        let g = p.layout_no_wrap(name.clone(), t.semibold(10.5), Color32::WHITE);
+        let tr = if square { img_rect.right_top() + vec2(-6.0, 6.0) } else { img_rect.right_top() + vec2(-5.0, 5.0) };
+        let br = Rect::from_min_max(pos2(tr.x - g.size().x - 26.0, tr.y), pos2(tr.x, tr.y + 20.0));
+        p.rect_filled(br, 10.0, Color32::from_black_alpha(165));
+        let c = pos2(br.left() + 13.0, br.center().y);
+        let s = 5.0;
+        p.add(egui::Shape::convex_polygon(
+            vec![c + vec2(-s, -s), c + vec2(s * 0.3, -s), c + vec2(s, -s * 0.3), c + vec2(s, s), c + vec2(-s, s)],
+            Color32::TRANSPARENT,
+            Stroke::new(1.2, Color32::WHITE),
+        ));
+        p.line_segment([c + vec2(s * 0.3, -s), c + vec2(s * 0.3, -s * 0.3)], Stroke::new(1.2, Color32::WHITE));
+        p.line_segment([c + vec2(s * 0.3, -s * 0.3), c + vec2(s, -s * 0.3)], Stroke::new(1.2, Color32::WHITE));
+        p.galley(pos2(br.left() + 22.0, br.center().y - g.size().y / 2.0), g, Color32::WHITE);
+    }
     if photo.flag == Flag::Reject {
         p.rect_filled(img_rect, 0.0, Color32::from_black_alpha(110));
     }
@@ -280,6 +297,9 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
         }
     });
+    if ui.button("Create Virtual Copy").clicked() {
+        let _ = app.run("photo.virtualCopy", json!({}));
+    }
     ui.menu_button("Stack", |ui| {
         let stacked = app.session.catalog.stack_of(id).is_some();
         let several = app.session.selection.ids.len() > 1;

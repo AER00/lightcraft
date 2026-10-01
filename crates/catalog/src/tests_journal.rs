@@ -26,7 +26,7 @@ fn op_for(c: &mut Catalog, kind: u8, a: u8, b: u8) -> Op {
         text: if b.is_multiple_of(5) { format!("{}", b % 10) } else { String::new() },
         ..Default::default()
     };
-    match kind % 15 {
+    match kind % 16 {
         0 | 1 => {
             let id = c.alloc_photo_id();
             let mut p = Photo::new(id, Source::File { path: format!("/p/{}.jpg", id.0) }, &format!("{}.jpg", id.0), "JPEG", 60, 40, "2026-01-01");
@@ -67,6 +67,18 @@ fn op_for(c: &mut Catalog, kind: u8, a: u8, b: u8) -> Op {
         }
         13 => Op::Batch { ops: c.remove_from_stacks_ops(&[pid]) },
         14 => c.set_top_ops(pid).unwrap_or(Op::Batch { ops: vec![] }),
+        15 => match c.photo(pid).cloned() {
+            // a virtual copy: same source, own id, copy_of/copy_name set
+            Some(src) => {
+                let id = c.alloc_photo_id();
+                let mut v = (*src).clone();
+                v.id = id;
+                v.copy_of = Some(pid);
+                v.copy_name = Some(format!("Copy {b}"));
+                Op::AddPhoto { photo: Box::new(v) }
+            }
+            None => Op::Batch { ops: vec![] },
+        },
         _ => c.delete_permanently_ops(pid),
     }
 }

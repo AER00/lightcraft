@@ -174,6 +174,13 @@ pub struct Photo {
     /// "Enable Profile Corrections" is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedded_lens: Option<lightcraft_develop::EmbeddedLens>,
+    /// A virtual copy: the photo it was copied from (it shares that photo's file but has its own
+    /// settings, metadata and history).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_of: Option<PhotoId>,
+    /// Virtual copies' name ("Copy 1").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_name: Option<String>,
 }
 
 impl Photo {
@@ -202,6 +209,8 @@ impl Photo {
             as_shot_wb: None,
             content_hash: None,
             embedded_lens: None,
+            copy_of: None,
+            copy_name: None,
         }
     }
     pub fn is_edited(&self) -> bool {

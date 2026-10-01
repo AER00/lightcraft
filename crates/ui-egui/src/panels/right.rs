@@ -243,8 +243,12 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     padded(ui, |ui| {
         ui.label(egui::RichText::new(&p.file_name).font(t.semibold(14.0)).color(t.text));
         ui.label(egui::RichText::new(format!("{} × {}  ·  {}", p.width, p.height, p.format)).color(t.text_dim));
+        if let Some(name) = &p.copy_name {
+            let of = p.copy_of.and_then(|m| app.session.catalog.photo(m)).map(|m| m.file_name.clone()).unwrap_or_else(|| "a removed photo".into());
+            ui.label(egui::RichText::new(format!("Virtual copy “{name}” of {of}")).color(t.text_label));
+        }
         ui.add_space(8.0);
-        if let Some(r) = crate::widgets::stars(ui, "info", p.rating, 20.0) {
+        if let Some(r) = ui.horizontal(|ui| crate::widgets::stars(ui, "info", p.rating, 20.0)).inner {
             let _ = app.run("photo.rate", json!({"rating": r}));
         }
     });
