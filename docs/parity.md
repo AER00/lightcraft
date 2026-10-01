@@ -21,9 +21,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 <!-- parity:summary -->
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
-| A. Import (IMP) | 2 | 4 | 7 | 1 | 1/4 (25%) | 1/4 (25%) |
+| A. Import (IMP) | 3 | 4 | 6 | 1 | 1/4 (25%) | 2/4 (50%) |
 | B. Library management (LIB) | 12 | 4 | 9 | 2 | 7/9 (78%) | 4/9 (44%) |
-| C. Views & navigation (VIEW) | 9 | 2 | 6 | 0 | 7/9 (78%) | 1/4 (25%) |
+| C. Views & navigation (VIEW) | 12 | 2 | 3 | 0 | 7/9 (78%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
 | E. Metadata (META) | 2 | 2 | 2 | 0 | 2/2 (100%) | 0/2 (0%) |
 | F. Edit panel — global adjustments (EDIT) | 36 | 2 | 10 | 1 | 28/28 (100%) | 8/14 (57%) |
@@ -42,13 +42,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | S. Export (EXP) | 4 | 6 | 8 | 0 | 2/7 (29%) | 2/7 (29%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
-| V. Preferences (PREF) | 0 | 3 | 5 | 3 | 0/1 (0%) | 0/4 (0%) |
+| V. Preferences (PREF) | 4 | 1 | 3 | 3 | 1/1 (100%) | 3/4 (75%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 10 | 2 | 5 | 1 | 7/8 (88%) | 3/5 (60%) |
-| Y. Menus | 46 | 18 | 21 | 8 | 37/47 (79%) | 7/23 (30%) |
-| Z. Keyboard shortcuts (desktop) | 46 | 16 | 18 | 1 | 39/52 (75%) | 7/23 (30%) |
+| Y. Menus | 50 | 18 | 17 | 8 | 38/47 (81%) | 10/23 (43%) |
+| Z. Keyboard shortcuts (desktop) | 49 | 16 | 15 | 1 | 40/52 (77%) | 9/23 (39%) |
 | Lightroom Classic extras | 4 | 19 | 56 | 9 | — | 3/21 (14%) |
-| **Total** | 208 | 103 | 189 | 37 | 152/198 (77%) | 48/144 (33%) |
+| **Total** | 223 | 101 | 176 | 37 | 155/198 (78%) | 60/144 (42%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -68,15 +68,12 @@ Ordered by tier, then user value, then (low) effort. Take the first one nobody i
     live preview while hovering presets/profiles/versions. Medium effort.
 7. **LR-PROF-DROPDOWN** (P0) — favourites/recent in the profile menu (and later a browser, LR-PROF-BROWSER).
 8. **LR-LIB-KEYWORD** (P0) — rename/delete a keyword library-wide; keyword list in the left panel for browsing.
-9. **LR-PREF-GENERAL + LR-IMP-RAWDEFAULT** (P0/P1) — a Settings dialog: raw defaults (preset or camera-specific),
-    XMP prefs, cache, GPU. Medium effort.
 10. **LR-IMP-ADD-DIALOG + LR-IMP-LOCAL** (P0) — an import review grid with per-photo checkboxes and destination
     album; browse folders before adding. Medium effort.
 11. **LR-EXP-TYPE + LR-EXP-DIM** (P0) — Original (+XMP) and DNG export (writer exists in
     `crates/raw/src/dngwrite.rs`), short edge / width / height / megapixels, "don't enlarge", ppi.
 12. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
     permissive pure-Rust decoder yet). High value, high effort (clean sources needed).
-13. **LR-VIEW-FULLSCREEN + LR-VIEW-NAVIGATOR + LR-VIEW-INFOOVERLAY** (P1) — view modes. Medium effort.
 14. **LR-LIB-RENAME + LR-LIB-CAPTURETIME + LR-LIB-LABEL UI** (P1) — batch rename, capture-time edit, label menu/names.
 15. **LR-EXP-BITDEPTH + LR-EXP-COMPRESSION** (P1) — 16-bit TIFF/PNG and TIFF compression choice.
 16. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
@@ -126,7 +123,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-IMP-DEVICE | Import from camera/card | P1 | ⬜ | | no device detection |
 | LR-IMP-AUTO | Watched-folder auto import | P2 | ⬜ | | |
 | LR-IMP-PRESET | Preset on import | P2 | ⬜ | | |
-| LR-IMP-RAWDEFAULT | Raw defaults | P1 | ⬜ | `crates/engine/src/import.rs` | raws get embedded lens corrections on import; no user raw-default setting |
+| LR-IMP-RAWDEFAULT | Raw defaults | P1 | ✅ | `cmd:library.preferences`, `crates/engine/src/import.rs`, `crates/ui-egui/src/panels/settings.rs` | LightCraft default / a preset / per camera (make + model); non-raw default too; the preset look counts as unedited and Reset returns to it |
 | LR-IMP-MIGRATE | Migrate other catalogs | OOS | 🚫 | | |
 | LR-IMP-PROFILES | Import profiles & presets | P1 | 🟡 | `cmd:file.importPresets`, `cmd:preset.import` | presets (.lcpreset, XMP `crs:`) only; no profile import; Adobe profile formats are deliberately unsupported |
 | LR-IMP-LOCAL | Work on files in place | P0 | 🟡 | `cmd:library.import` (mode add), `crates/engine/src/sidecar.rs`, `cmd:library.toggleAutoWriteXmp` | files referenced in place with XMP sidecars; no browse-a-folder-without-adding view |
@@ -175,14 +172,14 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-VIEW-SQUAREGRID | Square grid | P0 | ✅ | `cmd:view.squareGrid` | |
 | LR-VIEW-DETAIL | Single-photo view | P0 | ✅ | `cmd:view.detail`, `crates/ui-egui/src/panels/detail.rs` | |
 | LR-VIEW-EDIT | Edit view | P0 | ✅ | `cmd:panel.edit` | |
-| LR-VIEW-FULLSCREEN | Full-screen preview | P1 | ⬜ | | |
+| LR-VIEW-FULLSCREEN | Full-screen preview | P1 | ✅ | `cmd:view.fullScreenPreview`, `cmd:view.enterFullScreen` | photo on black, arrows step, Esc exits; ⇧⌘F window full screen |
 | LR-VIEW-FILMSTRIP | Filmstrip | P0 | ✅ | `cmd:view.filmstrip` | |
 | LR-VIEW-ZOOM | Zoom & pan | P0 | ✅ | `cmd:view.zoomFit`, `cmd:view.zoom100`, `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle` | steps 25–800 % (not 6–1600 %); Fill only in the bottom bar |
-| LR-VIEW-NAVIGATOR | Navigator mini map | P1 | ⬜ | | |
+| LR-VIEW-NAVIGATOR | Navigator mini map | P1 | ✅ | `cmd:view.navigator`, `crates/ui-egui/src/panels/detail.rs` | shown while zoomed (bottom right); click/drag pans |
 | LR-VIEW-BEFOREAFTER | Before / after | P0 | 🟡 | `cmd:view.showOriginal`, `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | all four layouts; "before" is always the original (no before-state from history) |
 | LR-VIEW-COMPARE | Compare two photos | P1 | ✅ | `cmd:view.compare`, `cmd:compare.swap`, `cmd:compare.makeSelect`, `crates/ui-egui/src/panels/compare.rs` | select / candidate, synced zoom + pan, arrows move the candidate; no zoom-link toggle |
 | LR-VIEW-SURVEY | Survey view [Classic] | P2 | ✅ | `cmd:view.survey`, `crates/ui-egui/src/panels/compare.rs` | selection tiled (≤ 48), keys act on the active photo, hover × removes |
-| LR-VIEW-INFOOVERLAY | Info overlay on the photo | P1 | ⬜ | | |
+| LR-VIEW-INFOOVERLAY | Info overlay on the photo | P1 | ✅ | `cmd:view.infoOverlay` | off / file + date + size / exposure + camera; ⌘I cycles (I in full screen; elsewhere I stays the Info panel) |
 | LR-VIEW-SLIDESHOW | Slideshow | P2 | ⬜ | | |
 | LR-VIEW-SECONDWINDOW | Second display window [Classic] | P2 | ⬜ | | |
 | LR-VIEW-CLIPPING | Clipping indicators | P0 | ✅ | `cmd:view.clipping` | |
@@ -467,11 +464,11 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-PREF-GENERAL | General settings | P0 | ⬜ | `cmd:library.xmpPreferences` | no settings dialog; only XMP preferences (by command) |
-| LR-PREF-LOCALSTORAGE | Storage & cache | P1 | 🟡 | `cmd:library.clearPreviews`, `cmd:library.compact` | bounded thumbnail cache; no UI for size/location |
+| LR-PREF-GENERAL | General settings | P0 | ✅ | `cmd:app.settings`, `cmd:app.openLibrary`, `crates/ui-egui/src/panels/settings.rs` | General / Import / Performance / Interface tabs; app settings in ui.json, library settings in prefs.json |
+| LR-PREF-LOCALSTORAGE | Storage & cache | P1 | ✅ | `cmd:library.preferences`, `cmd:library.clearPreviews`, `cmd:library.compact` | thumbnail cache size + clear in Settings → Performance; library location + Open Library… in General |
 | LR-PREF-ACCOUNT | Account | OOS | 🚫 | | |
-| LR-PREF-INTERFACE | Interface options | P1 | ⬜ | | |
-| LR-PREF-PERFORMANCE | GPU / performance | P1 | 🟡 | `cmd:app.gpu` | by command only |
+| LR-PREF-INTERFACE | Interface options | P1 | ✅ | `cmd:app.settings` | filmstrip names/badges, grid badges (auto/always/never), square-grid names, navigator, info overlay |
+| LR-PREF-PERFORMANCE | GPU / performance | P1 | ✅ | `cmd:app.gpu`, `cmd:app.settings` | GPU on/off, preview size (1600–5120 px), cache size in Settings |
 | LR-PREF-PEOPLE | Face recognition | P2 | ⬜ | | |
 | LR-PREF-WATERMARK | Watermark settings | P1 | 🟡 | `crates/ui-egui/src/panels/dialogs.rs` | per export in the dialog; not saved as a preference |
 | LR-PREF-SHORTCUTS | Shortcut customisation | — | 🚫 | | not customisable in the reference app either; a keymap editor would be an extra |
@@ -520,7 +517,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 |---|---|---|---|---|---|
 | MENU-BAR | Menu bar rendering | P1 | ✅ | `crates/ui-egui/src/menubar.rs`, `apps/lightcraft/src/native_menu.rs` | native macOS menu bar (muda) with live labels/enabled/checked; in-window menus on web/Windows/Linux; ⌫ and X stay egui-handled (contextual), so they show no key in the native menu |
 | MENU-APP-ABOUT | About | P2 | ✅ | `cmd:app.about` | |
-| MENU-APP-SETTINGS | Settings… | P0 | ⬜ | | see LR-PREF-GENERAL |
+| MENU-APP-SETTINGS | Settings… | P0 | ✅ | `cmd:app.settings` | app menu on macOS, Edit menu elsewhere |
 | MENU-APP-UPDATES | Check for updates | P2 | ⬜ | | |
 | MENU-APP-SYNC | Sync status / pause | OOS | 🚫 | | |
 | MENU-APP-SIGNOUT | Sign out | OOS | 🚫 | | |
@@ -554,8 +551,8 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-VIEW-SQUAREGRID | Square Grid | P0 | ✅ | `cmd:view.squareGrid` | |
 | MENU-VIEW-DETAIL | Detail | P0 | ✅ | `cmd:view.detail` | |
 | MENU-VIEW-EDIT | Edit | P0 | ✅ | `cmd:panel.edit` | |
-| MENU-VIEW-FULLSCREENPREVIEW | Full Screen Preview | P1 | ⬜ | | |
-| MENU-VIEW-ENTERFULLSCREEN | Enter Full Screen | P1 | ⬜ | | |
+| MENU-VIEW-FULLSCREENPREVIEW | Full Screen Preview | P1 | ✅ | `cmd:view.fullScreenPreview` | |
+| MENU-VIEW-ENTERFULLSCREEN | Enter Full Screen | P1 | ✅ | `cmd:view.enterFullScreen` | |
 | MENU-VIEW-PHOTOSPANEL | Show/Hide photos panel | P0 | ✅ | `cmd:view.leftPanel` | |
 | MENU-VIEW-FILMSTRIP | Show/Hide filmstrip | P0 | ✅ | `cmd:view.filmstrip` | |
 | MENU-VIEW-INFO | Show/Hide info | P0 | ✅ | `cmd:panel.info` | |
@@ -563,7 +560,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-VIEW-ACTIVITY | Show/Hide activity (comments) | OOS | 🚫 | | our History panel is `panel.activity` |
 | MENU-VIEW-VERSIONS | Show/Hide versions | P1 | ✅ | `cmd:panel.versions` | |
 | MENU-VIEW-HISTOGRAM | Show/Hide histogram | P0 | ✅ | `cmd:view.histogram` | |
-| MENU-VIEW-INFOOVERLAY | Show info overlay | P1 | ⬜ | | |
+| MENU-VIEW-INFOOVERLAY | Show info overlay | P1 | ✅ | `cmd:view.infoOverlay` | cycles |
 | MENU-VIEW-SHOWORIGINAL | Show Original | P0 | ✅ | `cmd:view.showOriginal` | |
 | MENU-VIEW-BEFOREAFTER | Before/After submenu | P0 | ✅ | `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | |
 | MENU-VIEW-ZOOM | Zoom in / out / toggle / fit / 1:1 | P0 | ✅ | `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle`, `cmd:view.zoomFit`, `cmd:view.zoom100` | |
@@ -622,7 +619,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-CROP | Crop & rotate — C | P0 | ✅ | `cmd:panel.crop` | |
 | KEY-DETAIL | Detail — D | P0 | ✅ | `cmd:view.detail` | |
 | KEY-EDIT | Edit — E | P0 | ✅ | `cmd:panel.edit` | |
-| KEY-FULLSCREEN | Full-screen preview — F | P1 | ⬜ | | no command |
+| KEY-FULLSCREEN | Full-screen preview — F | P1 | ✅ | `cmd:view.fullScreenPreview` | |
 | KEY-GRID | Grid — G | P0 | ✅ | `cmd:view.photoGrid` | |
 | KEY-INFO | Info — I | P0 | ✅ | `cmd:panel.info` | |
 | KEY-KEYWORDS | Keywords — K | P0 | ✅ | `cmd:panel.keywords` | |
@@ -636,7 +633,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-SELECTALL | Select all — ⌘A | P0 | ✅ | `cmd:library.selectAll` | |
 | KEY-SELECTNONE | Select none — ⌘D | P0 | ✅ | `cmd:library.selectNone` | secondary binding (primary ⌘⇧A) |
 | KEY-PASTESELECTED | Paste selected — ⇧⌘V | P0 | ⬜ | | no command |
-| KEY-PREFS | Settings — ⌘, | P0 | ⬜ | | no command |
+| KEY-PREFS | Settings — ⌘, | P0 | ✅ | `cmd:app.settings` | |
 | KEY-SEARCH | Search — ⌘F | P0 | ⬜ | | no focus-search command |
 | KEY-VISUALIZESPOTS | Visualize spots — A | P1 | ⬜ | | |
 | KEY-CYCLEOVERLAY | Cycle overlay — O | P0 | 🟡 | `cmd:view.maskOverlay`, `cmd:view.cropOverlay` | O toggles the mask overlay; crop overlays cycle on ⇧O |
@@ -651,7 +648,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-MASKCOLOR | Cycle mask colour — ⇧O | P1 | ⬜ | | ⇧O cycles crop overlays |
 | KEY-EXPORTPREV | Export with previous — ⌘E | P0 | 🟡 | `cmd:app.exportPrevious` | bound to ⌥⇧⌘E (Classic); ⌘E not bound |
 | KEY-EXPORTDIALOG | Export dialog — ⇧E | P0 | ✅ | `cmd:dialog.export` | secondary binding (primary ⌘⇧E) |
-| KEY-ENTERFULLSCREEN | Window full screen — ⇧⌘F | P1 | ⬜ | | |
+| KEY-ENTERFULLSCREEN | Window full screen — ⇧⌘F | P1 | ✅ | `cmd:view.enterFullScreen` | |
 | KEY-STACK | Group / ungroup stack — ⌘G / ⇧⌘G | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup` | also S expand/collapse, ⇧S top of stack |
 | KEY-GUIDEDUPRIGHT | Guided Upright — ⇧G | P1 | 🟡 | `cmd:geometry.upright` | button in the crop panel; ⇧G = Square Grid |
 | KEY-HIDE | Hide / hide others — ⌘H / ⌥⌘H | P1 | 🟡 | | platform default (unverified) |

@@ -11,6 +11,7 @@ mod library;
 mod masks;
 mod merge;
 mod organize;
+mod prefs;
 mod preset_files;
 mod query;
 mod xmp;
@@ -111,6 +112,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(query::specs());
         v.extend(xmp::specs());
         v.extend(preset_files::specs());
+        v.extend(prefs::specs());
         v
     })
 }

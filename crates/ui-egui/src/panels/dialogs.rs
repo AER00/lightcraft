@@ -28,6 +28,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::CopySettings { .. } => "Choose Edit Settings to Copy",
         Dialog::Export { .. } => "Export",
         Dialog::Merge { opts } => opts.title(),
+        Dialog::Settings { .. } => "Settings",
+        Dialog::ConfirmDelete { .. } => "Delete Photos",
         Dialog::About => "About LightCraft",
         Dialog::Shortcuts => "Keyboard Shortcuts",
     };
@@ -189,6 +191,12 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     field(ui, "Folder", |ui| ui.add(egui::TextEdit::singleline(dir).desired_width(f32::INFINITY)));
                 }
                 Dialog::Merge { opts } => crate::merge::body(app, ui, opts),
+                Dialog::Settings { tab } => crate::panels::settings::body(app, ui, tab),
+                Dialog::ConfirmDelete { count } => {
+                    let what = if *count == 1 { "this photo".to_string() } else { format!("these {count} photos") };
+                    ui.label(format!("Move {what} to Recently Deleted?"));
+                    ui.label(egui::RichText::new("They can be restored from Recently Deleted until it is emptied.").color(t.text_dim));
+                }
                 Dialog::About => {
                     ui.label(egui::RichText::new("LightCraft").font(t.semibold(20.0)).color(t.text));
                     ui.label(format!("Version {} — a clean-room, pure-Rust photo library and raw developer.", env!("CARGO_PKG_VERSION")));
@@ -231,12 +239,13 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let informational = matches!(dlg, Dialog::About | Dialog::Shortcuts);
+                let informational = matches!(dlg, Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. });
                 if !informational && ui.button("Cancel").clicked() {
                     close = true;
                 }
                 let ok = match dlg {
                     Dialog::Merge { .. } => "Merge",
+                    Dialog::ConfirmDelete { .. } => "Delete",
                     _ if informational => "Close",
                     _ => "OK",
                 };
@@ -295,7 +304,8 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }),
         ),
         Dialog::Merge { opts } => crate::merge::start_final(app, opts),
-        Dialog::About | Dialog::Shortcuts => Ok(serde_json::Value::Null),
+        Dialog::ConfirmDelete { .. } => app.run("photo.delete", json!({})),
+        Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. } => Ok(serde_json::Value::Null),
     }
 }
 

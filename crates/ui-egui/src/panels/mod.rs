@@ -11,6 +11,7 @@ pub mod left;
 pub mod masking;
 pub mod presets;
 pub mod right;
+pub mod settings;
 pub mod strip;
 pub mod topbar;
 

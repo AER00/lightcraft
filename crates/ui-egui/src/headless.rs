@@ -373,6 +373,126 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// Settings (⌘,): tabs switch, app settings change the UI state, library settings go through
+    /// the engine; the delete confirmation guards ⌫.
+    #[test]
+    fn settings_dialog_by_keyboard_and_clicks() {
+        let mut h = demo([1300.0, 820.0]);
+        let t = Duration::from_secs(10);
+        let r = h.request("ui.key", json!({"key": ",", "cmd": true}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(h.app.ui.dialog, Some(crate::state::Dialog::Settings { tab: "general".into() }));
+        for tab in ["import", "performance", "interface", "general"] {
+            let r = h.request("ui.clickWidget", json!({"id": format!("button:settingsTab-{tab}")}), t);
+            assert_eq!(r["ok"], true, "{tab}: {r}");
+            assert_eq!(h.app.ui.dialog, Some(crate::state::Dialog::Settings { tab: tab.into() }));
+        }
+        // General: confirm before delete, startup view
+        h.request("ui.clickWidget", json!({"id": "check:settings.confirmDelete"}), t);
+        assert!(h.app.ui.settings.confirm_delete);
+        h.request("ui.clickWidget", json!({"id": "button:settingsStartup-2"}), t);
+        assert_eq!(h.app.ui.settings.startup_view, crate::state::StartupView::Detail);
+        // Interface: filmstrip names off, grid badges always
+        h.request("ui.clickWidget", json!({"id": "button:settingsTab-interface"}), t);
+        h.request("ui.clickWidget", json!({"id": "check:settings.filmNames"}), t);
+        assert!(!h.app.ui.settings.film_names);
+        h.request("ui.clickWidget", json!({"id": "button:settingsGridBadges-1"}), t);
+        assert_eq!(h.app.ui.settings.grid_badges, crate::state::GridBadges::Always);
+        // Performance: the thumbnail cache size goes to the library preferences
+        h.request("ui.clickWidget", json!({"id": "button:settingsTab-performance"}), t);
+        h.request("ui.clickWidget", json!({"id": "button:settingsCache-0"}), t);
+        assert_eq!(h.app.session.cache_mb, 512);
+        h.request("ui.clickWidget", json!({"id": "button:settingsPreview-2"}), t);
+        assert_eq!(h.app.ui.settings.preview_edge, 3840);
+        // Import: per-camera defaults
+        h.request("ui.clickWidget", json!({"id": "button:settingsTab-import"}), t);
+        h.request("ui.clickWidget", json!({"id": "check:settings.perCamera"}), t);
+        assert!(h.app.session.import_defaults.per_camera);
+        let img = h.snapshot(SETTLE);
+        assert_eq!(img.size, [1300, 820]);
+        // Escape closes; ⌫ now asks first
+        h.request("ui.key", json!({"key": "escape"}), t);
+        assert_eq!(h.app.ui.dialog, None);
+        let active = h.app.session.active().unwrap();
+        h.request("ui.key", json!({"key": "delete"}), t);
+        assert_eq!(h.app.ui.dialog, Some(crate::state::Dialog::ConfirmDelete { count: 1 }));
+        assert!(!h.app.session.catalog.photo(active).unwrap().deleted);
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(h.app.session.catalog.photo(active).unwrap().deleted);
+        // app settings survive a save/load round trip of the UI state (ui.json)
+        let saved = serde_json::to_string(&h.app.ui).unwrap();
+        let back = serde_json::from_str::<crate::UiState>(&saved).unwrap().sanitized();
+        assert_eq!(back.settings, h.app.ui.settings);
+        assert_eq!(back.view, crate::state::ViewMode::Detail, "startup view applied on load");
+        h.settle(SETTLE);
+    }
+
+    /// F: full-screen preview (arrows step, I cycles the info overlay, Esc exits); ⌘I cycles the
+    /// overlay in Detail; ⇧⌘F asks the host for window full screen.
+    #[test]
+    fn full_screen_preview_and_info_overlay_by_keyboard() {
+        use crate::state::InfoOverlay;
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        let vis: Vec<u64> = h.app.session.visible_cloned().iter().map(|p| p.0).collect();
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[0]]}}), t);
+        h.request("ui.key", json!({"key": "f"}), t);
+        assert!(h.app.ui.fullscreen);
+        h.request("ui.key", json!({"key": "right"}), t);
+        assert_eq!(h.app.session.active().map(|p| p.0), Some(vis[1]));
+        let right = h.app.ui.right;
+        h.request("ui.key", json!({"key": "i"}), t);
+        assert_eq!(h.app.ui.info_overlay, InfoOverlay::Basic);
+        assert_eq!(h.app.ui.right, right, "I doesn't open the Info panel in full screen");
+        let img = h.snapshot(SETTLE);
+        // no chrome: the frame's corners are black
+        for (x, y) in [(2usize, 2usize), (997, 2), (2, 697), (997, 697)] {
+            let c = img.pixels[y * 1000 + x];
+            assert!(c.r() < 8 && c.g() < 8 && c.b() < 8, "({x},{y}) = {c:?}");
+        }
+        assert!(h.app.widgets.iter().any(|(w, _)| w == "canvas:infoOverlay"));
+        h.request("ui.key", json!({"key": "escape"}), t);
+        assert!(!h.app.ui.fullscreen);
+        assert_eq!(h.app.ui.view, crate::state::ViewMode::PhotoGrid, "Esc leaves full screen only, back to where it was entered");
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.request("ui.key", json!({"key": "i", "cmd": true}), t);
+        assert_eq!(h.app.ui.info_overlay, InfoOverlay::Exposure);
+        h.request("ui.key", json!({"key": "i", "cmd": true}), t);
+        assert_eq!(h.app.ui.info_overlay, InfoOverlay::Off);
+        h.request("ui.key", json!({"key": "f", "cmd": true, "shift": true}), t);
+        assert!(h.app.window_is_fullscreen);
+        h.request("ui.key", json!({"key": "f", "cmd": true, "shift": true}), t);
+        assert!(!h.app.window_is_fullscreen);
+        h.settle(SETTLE);
+    }
+
+    /// The Navigator appears when zoomed in; clicking it pans to that point.
+    #[test]
+    fn navigator_pans_the_zoomed_loupe() {
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "none"}), t);
+        h.settle(SETTLE);
+        assert!(!h.app.widgets.iter().any(|(w, _)| w == "canvas:navigator"), "hidden at Fit");
+        h.request("engine.execute", json!({"command": "view.zoom100"}), t);
+        h.settle(SETTLE);
+        assert!(h.app.widgets.iter().any(|(w, _)| w == "canvas:navigator"), "navigator shown when zoomed");
+        h.request("ui.clickWidget", json!({"id": "canvas:navigator", "fx": 0.1, "fy": 0.2}), t);
+        let (u, v) = h.app.ui.pan;
+        assert!((u - 0.1).abs() < 0.03 && (v - 0.2).abs() < 0.03, "pan {:?}", h.app.ui.pan);
+        assert_eq!(h.app.ui.zoom, crate::state::Zoom::Percent(100), "the click didn't reach the loupe (which would zoom out)");
+        h.settle(SETTLE);
+        let nav = h.app.widgets.iter().rev().find(|(w, _)| w == "canvas:navigator").map(|(_, r)| *r).unwrap();
+        let to = nav.min + egui::vec2(nav.width() * 0.8, nav.height() * 0.7);
+        h.request("ui.dragWidget", json!({"id": "canvas:navigator", "fx": 0.5, "fy": 0.5, "toX": to.x, "toY": to.y}), t);
+        let (u, v) = h.app.ui.pan;
+        assert!((u - 0.8).abs() < 0.03 && (v - 0.7).abs() < 0.03, "drag pan {:?}", h.app.ui.pan);
+        h.request("engine.execute", json!({"command": "view.navigator"}), t);
+        h.settle(SETTLE);
+        assert!(!h.app.widgets.iter().any(|(w, _)| w == "canvas:navigator"), "toggled off");
+    }
+
     #[test]
     fn screenshot_request_is_answered_without_a_window() {
         let mut h = demo([800.0, 500.0]);

@@ -54,6 +54,8 @@ const LAYOUT: &[(&str, &[&str])] = &[
         &[
             "file.addPhotos",
             "---",
+            "app.openLibrary",
+            "---",
             "dialog.newAlbum",
             "dialog.newFolder",
             "dialog.newSmartAlbum",
@@ -70,7 +72,19 @@ const LAYOUT: &[(&str, &[&str])] = &[
     ),
     (
         "Edit",
-        &["edit.undo", "edit.redo", "---", "develop.copy", "dialog.copySettings", "develop.paste", "---", "library.selectAll", "library.selectNone"],
+        &[
+            "edit.undo",
+            "edit.redo",
+            "---",
+            "develop.copy",
+            "dialog.copySettings",
+            "develop.paste",
+            "---",
+            "library.selectAll",
+            "library.selectNone",
+            "---",
+            "app.settings",
+        ],
     ),
     (
         "View",
@@ -84,6 +98,11 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "view.leftPanel",
             "view.filmstrip",
             "view.histogram",
+            "view.navigator",
+            "view.infoOverlay",
+            "---",
+            "view.fullScreenPreview",
+            "view.enterFullScreen",
             "---",
             "view.showOriginal",
             "view.beforeAfter",
@@ -202,6 +221,9 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
         "view.beforeAfterSplit" => Some(u.before_after == crate::state::BeforeAfter::Split),
         "view.autoAdvance" => Some(u.auto_advance),
         "view.filterBar" => Some(u.filter_bar),
+        "view.navigator" => Some(u.navigator),
+        "view.fullScreenPreview" => Some(u.fullscreen),
+        "view.enterFullScreen" => Some(app.window_is_fullscreen),
         "panel.edit" => panel(RightPanel::Edit),
         "panel.crop" => panel(RightPanel::Crop),
         "panel.remove" => panel(RightPanel::Remove),
@@ -400,6 +422,9 @@ pub fn run_item(app: &mut LightcraftApp, id: &str, params: Value) -> Result<Valu
     let culling_cmd = matches!(id, "photo.rate" | "photo.flag" | "photo.label" | "photo.pick" | "photo.reject" | "photo.unflag");
     if culling_cmd {
         crate::panels::compare::target_active(app, &mut params);
+    }
+    if id == "photo.delete" && crate::menus::confirm_delete(app) {
+        return Ok(Value::Null);
     }
     let r = app.run(id, params);
     if culling_cmd && r.is_ok() && app.ui.auto_advance {

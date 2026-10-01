@@ -38,6 +38,10 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.cropOverlay", "Cycle Crop Overlay", Some("Shift+O"), "View"),
     ("view.back", "Back to Grid", Some("Escape"), ""),
     ("view.filterBar", "Filter Bar", Some("Shift+F"), "View"),
+    ("view.fullScreenPreview", "Full Screen Preview", Some("F"), "View"),
+    ("view.enterFullScreen", "Enter Full Screen", Some("Cmd+Shift+F"), "View"),
+    ("view.infoOverlay", "Cycle Info Overlay", Some("Cmd+I"), "View"),
+    ("view.navigator", "Navigator", None, "View"),
     ("panel.edit", "Edit", Some("E"), "Window"),
     ("panel.crop", "Crop & Rotate", Some("C"), "Window"),
     ("panel.remove", "Remove", Some("H"), "Window"),
@@ -72,6 +76,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("file.addPhotos", "Add Photos…", Some("Cmd+Shift+I"), "File"),
     ("file.importPresets", "Import Presets…", None, "File"),
     ("file.exportPresets", "Export Presets…", None, "File"),
+    ("app.settings", "Settings…", Some("Cmd+,"), "Edit"),
+    ("app.openLibrary", "Open Library…", None, "File"),
     ("app.about", "About LightCraft", None, "Help"),
     ("app.shortcuts", "Keyboard Shortcuts", Some("Cmd+/"), "Help"),
     ("app.export", "Export Now", None, ""),
@@ -127,6 +133,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "view.back" => {
             if app.ui.dialog.is_some() {
                 app.ui.dialog = None;
+            } else if app.ui.fullscreen {
+                app.ui.fullscreen = false;
             } else if !app.ui.tool.is_empty() {
                 app.ui.tool.clear();
             } else if matches!(app.ui.view, ViewMode::Compare | ViewMode::Survey) {
@@ -136,6 +144,50 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             Ok(Value::Null)
         }
+        "view.fullScreenPreview" => {
+            app.ui.fullscreen = !app.ui.fullscreen;
+            if app.ui.fullscreen {
+                app.ui.zoom = Zoom::Fit;
+                app.ui.tool.clear();
+                let _ = app.session.end_interaction();
+            }
+            Ok(json!({"fullscreen": app.ui.fullscreen}))
+        }
+        "view.enterFullScreen" => {
+            // applied by the host's frame logic (it knows the window's current state)
+            let on = p.get("on").and_then(Value::as_bool);
+            app.ui.window_fullscreen = Some(on.unwrap_or(!app.window_is_fullscreen));
+            Ok(json!({"windowFullscreen": app.ui.window_fullscreen}))
+        }
+        "view.infoOverlay" => {
+            app.ui.info_overlay = match p.get("mode").and_then(Value::as_str) {
+                Some(m) => match serde_json::from_value(json!(m)) {
+                    Ok(v) => v,
+                    Err(_) => return Some(Err(format!("unknown info overlay `{m}` (off|basic|exposure)"))),
+                },
+                None => app.ui.info_overlay.next(),
+            };
+            let label = match app.ui.info_overlay {
+                crate::state::InfoOverlay::Off => "Info Overlay Off",
+                crate::state::InfoOverlay::Basic => "Info Overlay: File",
+                crate::state::InfoOverlay::Exposure => "Info Overlay: Exposure",
+            };
+            app.toast(&ctx, label);
+            Ok(json!({"infoOverlay": app.ui.info_overlay}))
+        }
+        "view.navigator" => {
+            app.ui.navigator = !app.ui.navigator;
+            Ok(json!({"navigator": app.ui.navigator}))
+        }
+        "app.settings" => {
+            let tab = p.get("tab").and_then(Value::as_str).unwrap_or("general");
+            if !crate::panels::settings::TABS.iter().any(|(id, _)| *id == tab) {
+                return Some(Err(format!("unknown settings tab `{tab}` (general|import|performance|interface)")));
+            }
+            app.ui.dialog = Some(Dialog::Settings { tab: tab.into() });
+            Ok(Value::Null)
+        }
+        "app.openLibrary" => crate::panels::settings::open_library(app, p),
         "view.filmstrip" => {
             app.ui.filmstrip = !app.ui.filmstrip;
             Ok(Value::Null)
@@ -451,6 +503,8 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         }
         "file.exportPresets" => app.session.presets.iter().any(|p| !p.builtin),
         "view.compare" => app.session.catalog.len() > 1,
+        "view.fullScreenPreview" | "view.infoOverlay" | "view.navigator" => app.session.active().is_some() || app.ui.fullscreen,
+        "app.openLibrary" => app.services.pick_folder.is_some(),
         "compare.swap" | "compare.makeSelect" => app.ui.view == ViewMode::Compare,
         s if s.starts_with("dialog.merge") => app.session.targets(&serde_json::json!({})).len() >= 2 && app.merge.final_task.is_none(),
         _ => true,
@@ -491,6 +545,20 @@ pub fn menu_entries(app: &LightcraftApp) -> Vec<MenuEntry> {
         }
     }
     v
+}
+
+/// With Settings → General → "Confirm before deleting" on, open the confirmation dialog instead
+/// of deleting; true when it did (the dialog's OK runs `photo.delete`).
+pub fn confirm_delete(app: &mut LightcraftApp) -> bool {
+    if !app.ui.settings.confirm_delete {
+        return false;
+    }
+    let count = app.session.targets(&json!({})).len();
+    if count == 0 {
+        return false;
+    }
+    app.ui.dialog = Some(Dialog::ConfirmDelete { count });
+    true
 }
 
 /// Reveal the active photo's original in the system file manager.

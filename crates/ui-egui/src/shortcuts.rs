@@ -41,6 +41,7 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
                     "[" => Some(Key::OpenBracket),
                     "]" => Some(Key::CloseBracket),
                     "'" => Some(Key::Quote),
+                    "," => Some(Key::Comma),
                     _ => None,
                 })
             }
@@ -156,6 +157,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 _ => app.toast(ctx, "Unflagged"),
             }
         } else {
+            // in the full-screen preview (no panels) I cycles the info overlay instead
+            if f == "panel.info" && app.ui.fullscreen {
+                let _ = app.run("view.infoOverlay", json!({}));
+                continue;
+            }
             // Delete acts on what's being edited: the active mask in the Masking panel; never the
             // photo while retouching (spots are removed from their own panel).
             if f == "photo.delete" {
@@ -169,6 +175,9 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                     }
                     R::Remove | R::RedEye => continue,
                     _ => {}
+                }
+                if crate::menus::confirm_delete(app) {
+                    continue;
                 }
             }
             // X is both reject (library) and swap crop aspect (crop tool)

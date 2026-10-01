@@ -174,6 +174,11 @@ fn foreign_crs_sidecar_on_import_and_read_from_file() {
 }
 
 fn synthetic_dng(xmp: &str) -> Vec<u8> {
+    synthetic_dng_with(Some(xmp), lightcraft_meta::Metadata::default())
+}
+
+/// A tiny Bayer DNG written by our own DNG writer (optional embedded XMP, camera metadata).
+pub(crate) fn synthetic_dng_with(xmp: Option<&str>, metadata: lightcraft_meta::Metadata) -> Vec<u8> {
     use lightcraft_raw::*;
     let (w, h) = (32usize, 24usize);
     let cfa = Cfa::bayer("RGGB").unwrap();
@@ -203,9 +208,9 @@ fn synthetic_dng(xmp: &str) -> Vec<u8> {
         wb_multipliers: None,
         linearized: false,
         opcodes: OpcodeLists::default(),
-        metadata: lightcraft_meta::Metadata::default(),
+        metadata,
     };
-    write_dng(&raw, &DngWriteOptions { xmp: Some(xmp.to_string()), ..Default::default() }).unwrap()
+    write_dng(&raw, &DngWriteOptions { xmp: xmp.map(str::to_string), ..Default::default() }).unwrap()
 }
 
 #[test]

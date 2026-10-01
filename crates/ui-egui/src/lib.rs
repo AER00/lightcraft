@@ -32,6 +32,8 @@ pub type PickFiles = Box<dyn FnMut() -> Vec<String>>;
 pub type SaveFile = Box<dyn FnMut(&str) -> Option<String>>;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
 pub type PngEncode = Box<dyn Fn(&lightcraft_raster::Rgba8) -> Vec<u8>>;
+/// A folder chooser (`None` = cancelled).
+pub type PickFolder = Box<dyn FnMut() -> Option<String>>;
 /// Reveal a file in the system file manager (Finder / Explorer / the folder on Linux).
 pub type RevealFn = Box<dyn FnMut(&str) -> Result<(), String>>;
 
@@ -49,6 +51,8 @@ pub struct Services {
     pub png: Option<PngEncode>,
     /// Show a file in the system file manager (desktop only).
     pub reveal: Option<RevealFn>,
+    /// Choose a folder (Settings → General → Open Library…; desktop only).
+    pub pick_folder: Option<PickFolder>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -94,6 +98,10 @@ pub struct LightcraftApp {
     pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
     /// Photo Merge dialog previews and background merges.
     pub merge: merge::MergeState,
+    /// The window is in full screen (as last reported by the host, or as last requested).
+    pub window_is_fullscreen: bool,
+    /// The GPU preference last applied (`app.gpu`), to apply Settings changes once.
+    gpu_applied: Option<bool>,
 }
 
 impl LightcraftApp {
@@ -124,6 +132,8 @@ impl LightcraftApp {
             gesture: None,
             loupe_shown: None,
             merge: merge::MergeState::default(),
+            window_is_fullscreen: false,
+            gpu_applied: None,
         }
     }
 
@@ -296,6 +306,7 @@ impl LightcraftApp {
         }
         self.last_time = now;
         self.drain_control(ctx);
+        self.apply_settings(ctx);
         if !self.synthetic.is_empty() {
             ctx.request_repaint();
         }
@@ -314,6 +325,21 @@ impl LightcraftApp {
             if !dropped.is_empty() {
                 let _ = self.run("library.import", serde_json::json!({"paths": dropped}));
             }
+        }
+    }
+
+    /// Apply settings that act outside the UI state: GPU rendering and window full screen.
+    fn apply_settings(&mut self, ctx: &egui::Context) {
+        if self.gpu_applied != Some(self.ui.settings.gpu) {
+            self.gpu_applied = Some(self.ui.settings.gpu);
+            let _ = self.session.execute("app.gpu", &serde_json::json!({"enabled": self.ui.settings.gpu}));
+        }
+        if let Some(fs) = ctx.input(|i| i.viewport().fullscreen) {
+            self.window_is_fullscreen = fs;
+        }
+        if let Some(on) = self.ui.window_fullscreen.take() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
+            self.window_is_fullscreen = on;
         }
     }
 
@@ -340,6 +366,15 @@ impl LightcraftApp {
             return;
         }
         let t0 = now_ms();
+        if self.ui.fullscreen {
+            // full-screen preview: the photo alone on black
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(egui::Color32::BLACK)).show(ui, |ui| panels::detail::show(self, ui));
+            panels::dialogs::show(self, &ctx);
+            panels::toast(self, &ctx);
+            self.widgets = widgets::take_registry(&ctx);
+            self.perf.frame_ms = now_ms() - t0;
+            return;
+        }
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
         // right panels and left panel run to the bottom; the bottom bar sits between them).
         panels::topbar::show(self, ui);

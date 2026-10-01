@@ -128,8 +128,15 @@ impl Default for MediaCache {
 
 impl MediaCache {
     /// Keep rendered thumbnails on disk in `dir` as well.
-    pub fn attach_disk_cache(&mut self, dir: &std::path::Path) {
-        self.rendered = Arc::new(PreviewCache::with_disk(RENDERED_MEM_BYTES, dir, DISK_CACHE_BYTES));
+    pub fn attach_disk_cache(&mut self, dir: &std::path::Path, disk_bytes: u64) {
+        self.rendered = Arc::new(PreviewCache::with_disk(RENDERED_MEM_BYTES, dir, disk_bytes));
+    }
+
+    /// Forget every decoded source (photo ids changed meaning, e.g. another library was opened).
+    pub fn clear_sources(&mut self) {
+        self.thumbs = Lru::new(THUMB_SOURCE_BYTES);
+        self.previews.clear();
+        self.full = None;
     }
 
     pub fn get(&mut self, id: PhotoId, level: SourceLevel) -> Option<Arc<Rgb32f>> {

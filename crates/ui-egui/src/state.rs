@@ -75,6 +75,91 @@ pub enum CropOverlay {
     None,
 }
 
+/// Which view the app opens in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StartupView {
+    /// Whatever was showing at quit.
+    #[default]
+    Last,
+    Grid,
+    Detail,
+}
+
+/// When grid cells show their rating / flag / edited badges.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GridBadges {
+    /// On hover, on the selection, and on rated or flagged photos.
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
+/// The loupe's info overlay (Cmd+I cycles; I in the full-screen preview).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum InfoOverlay {
+    #[default]
+    Off,
+    /// File name, capture date and dimensions.
+    Basic,
+    /// File name, camera, lens and exposure (shutter, aperture, ISO, focal length).
+    Exposure,
+}
+
+impl InfoOverlay {
+    pub fn next(self) -> InfoOverlay {
+        match self {
+            InfoOverlay::Off => InfoOverlay::Basic,
+            InfoOverlay::Basic => InfoOverlay::Exposure,
+            InfoOverlay::Exposure => InfoOverlay::Off,
+        }
+    }
+}
+
+/// App-level preferences (Settings dialog). They belong to the app, not a library, and are
+/// saved with the UI state in the app's config folder (`ui.json`, key `settings`); library
+/// preferences (import defaults, XMP, cache size) live in the library's `prefs.json`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AppSettings {
+    /// Library opened at launch when no `--library` is given (empty = the default location).
+    pub library_path: String,
+    pub startup_view: StartupView,
+    /// Ask before moving photos to Recently Deleted (keyboard and menu).
+    pub confirm_delete: bool,
+    /// GPU rendering allowed (`app.gpu`).
+    pub gpu: bool,
+    /// Largest long edge (pixels) the loupe renders at.
+    pub preview_edge: u32,
+    /// Filmstrip: file names above the thumbnails.
+    pub film_names: bool,
+    /// Filmstrip: rating / flag / edited badges on the thumbnails.
+    pub film_badges: bool,
+    /// Grid: when to show the rating / flag / edited badges.
+    pub grid_badges: GridBadges,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        AppSettings {
+            library_path: String::new(),
+            startup_view: StartupView::Last,
+            confirm_delete: false,
+            gpu: true,
+            preview_edge: 2560,
+            film_names: true,
+            film_badges: true,
+            grid_badges: GridBadges::Auto,
+        }
+    }
+}
+
+/// Preview sizes offered in Settings → Performance.
+pub const PREVIEW_EDGES: [u32; 4] = [1600, 2560, 3840, 5120];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
@@ -128,6 +213,17 @@ pub struct UiState {
     pub filter_bar: bool,
     /// Culling: after a rating, flag or colour-label key, move to the next photo.
     pub auto_advance: bool,
+    /// Full-screen preview (F): the photo alone on black, no chrome.
+    pub fullscreen: bool,
+    /// Info overlay on the loupe.
+    pub info_overlay: InfoOverlay,
+    /// Navigator mini map in the loupe while zoomed in.
+    pub navigator: bool,
+    /// App preferences (Settings dialog).
+    pub settings: AppSettings,
+    /// Window full screen requested (⇧⌘F); the host applies it (`None` = no change pending).
+    #[serde(skip)]
+    pub window_fullscreen: Option<bool>,
     /// Compare view: (select, candidate) photo ids.
     #[serde(skip)]
     pub compare: Option<(u64, u64)>,
@@ -177,6 +273,14 @@ pub enum Dialog {
     Merge {
         opts: crate::merge::MergeDialog,
     },
+    /// Settings (preferences): `tab` = general | import | performance | interface.
+    Settings {
+        tab: String,
+    },
+    /// Confirm moving photos to Recently Deleted.
+    ConfirmDelete {
+        count: usize,
+    },
     About,
     Shortcuts,
 }
@@ -218,6 +322,11 @@ impl Default for UiState {
             visualize_spots: false,
             spots_threshold: 50.0,
             auto_advance: false,
+            fullscreen: false,
+            info_overlay: InfoOverlay::Off,
+            navigator: true,
+            settings: AppSettings::default(),
+            window_fullscreen: None,
             filter_bar: false,
             compare: None,
             toast: None,
@@ -256,6 +365,15 @@ impl UiState {
         self.thumb_size = self.thumb_size.clamp(90.0, 480.0);
         self.brush_size = self.brush_size.clamp(0.002, 0.5);
         self.dialog = None;
+        self.fullscreen = false;
+        if !crate::state::PREVIEW_EDGES.contains(&self.settings.preview_edge) {
+            self.settings.preview_edge = AppSettings::default().preview_edge;
+        }
+        match self.settings.startup_view {
+            StartupView::Last => {}
+            StartupView::Grid => self.view = ViewMode::PhotoGrid,
+            StartupView::Detail => self.view = ViewMode::Detail,
+        }
         self
     }
 }

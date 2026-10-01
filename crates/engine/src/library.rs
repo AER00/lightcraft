@@ -5,7 +5,7 @@
 //! LightCraft Library/
 //!   catalog.snap   catalog.log      (lightcraft-catalog journal)
 //!   presets.json   view.json        (user presets + favourites; last source/filter/sort/selection)
-//!   prefs.json     (library preferences: XMP sidecars)
+//!   prefs.json     (library preferences: XMP sidecars, import defaults, cache size, last export)
 //!   thumbs/        (rendered thumbnail cache, safe to delete)
 //!   Originals/     (photos imported with "copy into library")
 //! ```
@@ -96,11 +96,16 @@ impl Library {
 }
 
 #[derive(Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 struct PrefsFile {
     xmp: crate::sidecar::XmpPrefs,
     /// Parameters of the last export (for Export with Previous).
+    #[serde(alias = "last_export")]
     last_export: Option<serde_json::Value>,
+    /// Develop defaults for imported photos.
+    import: crate::import::ImportDefaults,
+    /// Thumbnail disk cache budget (MB, 0 = default).
+    cache_mb: u32,
 }
 
 fn presets_json(presets: &[Preset]) -> String {
@@ -156,6 +161,8 @@ impl Session {
         let prefs = read_json::<PrefsFile>(files.as_mut(), "prefs.json").unwrap_or_default();
         self.xmp = prefs.xmp;
         self.last_export = prefs.last_export;
+        self.import_defaults = prefs.import;
+        self.cache_mb = prefs.cache_mb;
         // view state
         if let Some(v) = read_json::<ViewFile>(files.as_mut(), "view.json") {
             self.source = v.source;
@@ -171,8 +178,10 @@ impl Session {
             self.selection = Selection::single(*first);
         }
         let presets_written = presets_json(&self.presets);
+        // photo ids are per library: drop decoded sources of the previous one
+        self.media.clear_sources();
         if on_disk {
-            self.media.attach_disk_cache(&dir.join("thumbs"));
+            self.media.attach_disk_cache(&dir.join("thumbs"), self.cache_bytes());
         }
         let view_written = self.view_json();
         self.library = Some(Library { dir, on_disk, journal, files, report, last_error: None, presets_written, view_written });
@@ -252,9 +261,31 @@ impl Session {
 
     /// Save the library preferences (no-op for in-memory sessions).
     pub fn save_prefs(&mut self) -> Result<()> {
-        let v = serde_json::to_vec_pretty(&PrefsFile { xmp: self.xmp, last_export: self.last_export.clone() }).unwrap_or_default();
+        let v = serde_json::to_vec_pretty(&PrefsFile {
+            xmp: self.xmp,
+            last_export: self.last_export.clone(),
+            import: self.import_defaults.clone(),
+            cache_mb: self.cache_mb,
+        })
+        .unwrap_or_default();
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         lib.files.write_atomic("prefs.json", &v).map_err(|e| EngineError::Other(format!("prefs: {e}")))
+    }
+
+    /// The thumbnail disk cache budget in bytes ([`Session::cache_mb`], else the default).
+    pub fn cache_bytes(&self) -> u64 {
+        if self.cache_mb == 0 { crate::media::DISK_CACHE_BYTES } else { u64::from(self.cache_mb) << 20 }
+    }
+
+    /// Change the thumbnail disk cache budget (MB, 0 = default): re-attaches the cache, which
+    /// trims it to the new size. Saved with the library preferences.
+    pub fn set_cache_mb(&mut self, mb: u32) -> Result<()> {
+        self.cache_mb = mb;
+        if let Some(lib) = self.library.as_ref().filter(|l| l.on_disk) {
+            let dir = lib.thumbs_dir();
+            self.media.attach_disk_cache(&dir, self.cache_bytes());
+        }
+        self.save_prefs()
     }
 
     /// Compact the log into a snapshot now.
