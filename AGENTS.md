@@ -9,6 +9,9 @@ LightCraft is a clean-room, open-source, pure-Rust photo library + non-destructi
 
 `plan/` is gitignored (local-only).
 
+**Merging agent branches:** merge one branch, run `cargo xtask ci`, fix, commit — then the next. Two individually green
+branches can still break each other (e.g. a new struct field vs. a new constructor).
+
 **Resuming after a crash / another session:** check `git status` on main, `git worktree list`, and each worktree's
 `git log main..HEAD` + `git status` for unmerged commits or uncommitted work before starting anything new. Commit small
 and often so a crash loses minutes, not hours.
