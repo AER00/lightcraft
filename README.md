@@ -174,12 +174,23 @@ lightcraft --control 7980 ~/Pictures/trip
 {"method": "ui.screenshot",    "params": {"path": "after.png"}}
 ```
 
-- **90 engine commands** and **48 UI commands** — list them all with `engine.commands`, read every slider's range,
+- **91 engine commands** and **48 UI commands** — list them all with `engine.commands`, read every slider's range,
   default and current value with `develop.controls`.
+- **MCP server** — `lightcraft-cli mcp` gives Claude (or any MCP client) ~100 tools: import, query, develop, mask,
+  render (returned as an image), export — headless, or attached to the running app with screenshots, clicks and
+  gestures. See [docs/mcp.md](docs/mcp.md).
+
+  ```sh
+  cargo build --release -p lightcraft-cli
+  claude mcp add lightcraft -- "$PWD/target/release/lightcraft-cli" mcp ~/Pictures/shoot          # headless
+  claude mcp add lightcraft-app -- "$PWD/target/release/lightcraft-cli" mcp --connect 127.0.0.1:7980  # live app
+  ```
+- **Scriptable CLI** — `lightcraft-cli render in.dng -o out.jpg --set light.exposure=0.7 --preset …`.
 - **Undo for everything**, including agent actions: a slider drag (or a scripted burst of updates) is one undo step.
 - **Every widget is addressable** (`ui.widgets`) and clickable by name, so agents can operate the real UI, not a
   side door.
 - The screenshots in this README were produced by [`docs/showcase/`](docs/showcase/) scripts, end to end.
+  Protocol reference: [docs/control-protocol.md](docs/control-protocol.md).
 
 <br>
 
@@ -208,12 +219,14 @@ LightCraft is young and moving fast — see the [roadmap](ROADMAP.md) for estima
 | Light, Color, Effects, Tone Curve, Color Mixer, Color Grading, B&W | ✅ |
 | Masking: brush, linear, radial, luminance/colour range, add/subtract/intersect | ✅ (AI subject/sky use classical heuristics for now) |
 | Crop, straighten, flip, rotate, aspect ratios, overlays | ✅ |
-| Presets, versions, history, copy/paste/sync settings | ✅ |
+| Profiles (Color, Neutral, Vivid, Landscape, Portrait, Monochrome — our own looks), presets, versions, history, copy/paste/sync settings | ✅ |
 | Control channel + every widget addressable | ✅ |
-| RAW: DNG, CR2 | ✅ · NEF, ARW, CR3, RAF, ORF, RW2… 🚧 |
-| Detail (sharpening ✅, noise reduction 🚧), Optics, Geometry/Upright | 🚧 |
-| Remove / Heal / Clone, Red Eye | 🚧 (spots are recorded; rendering lands in M8) |
-| Export dialog, MCP server, CLI, GPU pipeline, web build | 🚧 |
+| RAW: DNG, CR2, ARW, NEF (uncompressed) | ✅ · compressed NEF, CR3, RAF, ORF, RW2, PEF… 🚧 |
+| Detail: sharpening, luminance + colour noise reduction | ✅ · AI Denoise, Super Resolution ⬜ |
+| Remove / Heal / Clone spots (auto source) | ✅ · content-aware fill (PatchMatch), Red Eye 🚧 |
+| Export: JPEG / PNG / TIFF / WebP / AVIF, sizing, file-size limit, output sharpening, naming, batch | ✅ · metadata policy, watermark, DNG ⬜ |
+| MCP server, CLI, control channel | ✅ |
+| Optics, Geometry/Upright, GPU pipeline, web build, persistent library | 🚧 |
 
 <br>
 
@@ -224,6 +237,7 @@ git clone https://github.com/storytold/lightcraft && cd lightcraft
 cargo run --release -p lightcraft                       # opens with a procedurally generated demo library
 cargo run --release -p lightcraft -- ~/Pictures/trip    # or point it at your photos (folders are scanned)
 cargo run --release -p lightcraft -- --control 7980     # with the automation channel
+cargo run --release -p lightcraft-cli -- render photo.jpg -o out.jpg --set light.exposure=0.5
 cargo xtask ci                                          # fmt, clippy, tests, layering, wasm checks
 ```
 
@@ -235,7 +249,20 @@ Keyboard: <kbd>G</kbd> grid · <kbd>D</kbd> detail · <kbd>E</kbd> edit · <kbd>
 
 An engine-first Cargo workspace of small, tested crates with enforced layering (`cargo xtask layers`): `geom`,
 `color`, `raster`, `tiff` → `raw`, `codecs`, `meta`, `develop` → `pipeline` → `catalog` → `engine` → `ui-egui`. The
-egui frontend is one swappable crate; nothing below it knows a UI exists.
+egui frontend is one swappable crate; nothing below it knows a UI exists. `mcp` and the apps (`lightcraft`,
+`lightcraft-cli`) sit on top of `engine`.
+
+## Contributing
+
+Humans and agents follow the same rules — read [AGENTS.md](AGENTS.md) first. The short version:
+
+- **Clean-room.** Never read Adobe binaries or GPL raw/photo code (darktable, RawTherapee, LibRaw, rawspeed, dcraw…);
+  work from public specs and black-box observation.
+- **No Adobe assets, ever** — no icons, screenshots, presets, profiles, LUTs or fonts from Adobe products. Every
+  image, icon and font in the repo is original, public domain, Creative Commons, OFL or permissively licensed, and has
+  an entry in [assets/ATTRIBUTION.md](assets/ATTRIBUTION.md) added in the same commit.
+- **Pure Rust**, enforced crate layering, everything is a command, and `cargo xtask ci` green before every commit
+  (one task id per commit).
 
 <br>
 
@@ -258,7 +285,7 @@ Clean-room, pure-Rust creative tools from the same workshop — native on macOS,
 Showcase photographs are public-domain works, used via Wikimedia Commons: Ansel Adams, *The Tetons and the Snake River*
 (1942, U.S. National Archives); Dorothea Lange, *Migrant Mother* (1936, Library of Congress); Bill Anders / NASA,
 *Earthrise* (1968); NASA, *The Blue Marble* (1972). The demo library is procedurally generated by LightCraft. UI font:
-Source Sans 3 (SIL OFL). All icons are original. See [assets/ATTRIBUTION.md](assets/ATTRIBUTION.md).
+Inter (SIL OFL). All icons are original. See [assets/ATTRIBUTION.md](assets/ATTRIBUTION.md).
 
 LightCraft is an independent project and is not affiliated with or endorsed by Adobe. Licence: MIT OR Apache-2.0.
 By the artcraft team.
