@@ -161,6 +161,10 @@ pub enum Dialog {
         minutes: i32,
         zone: f32,
     },
+    /// Edit the colour label names (red, yellow, green, blue, purple; empty = the colour's name).
+    LabelNames {
+        names: Vec<String>,
+    },
     /// Batch rename the selected photos with a file-name template.
     Rename {
         template: String,

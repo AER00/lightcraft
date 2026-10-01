@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
-use lightcraft_catalog::{DateRun, Flag, GroupBy, PhotoId};
+use lightcraft_catalog::{ColorLabel, DateRun, Flag, GroupBy, PhotoId};
 use serde_json::json;
 
 use crate::LightcraftApp;
@@ -312,7 +312,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         p.rect_filled(br, 2.0, Color32::from_gray(26));
         p.galley(br.min + vec2(4.0, 1.5), g, t.text_label);
     }
-    let show_badges = resp.hovered() || selected || photo.rating > 0 || photo.flag != Flag::None;
+    let show_badges = resp.hovered() || selected || photo.rating > 0 || photo.flag != Flag::None || photo.label.is_some();
     if show_badges {
         let bar = Rect::from_min_max(pos2(img_rect.left(), img_rect.bottom() - 24.0), img_rect.right_bottom());
         if resp.hovered() || selected {
@@ -328,8 +328,13 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
             Flag::Reject => paint(p, Rect::from_min_size(pos2(x, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::FlagReject, t.reject),
             Flag::None => {}
         }
+        let mut right = bar.right();
         if photo.is_edited() {
-            paint(p, Rect::from_min_size(pos2(bar.right() - 20.0, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::Sliders, t.text_label);
+            paint(p, Rect::from_min_size(pos2(right - 20.0, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::Sliders, t.text_label);
+            right -= 20.0;
+        }
+        if let Some(l) = photo.label {
+            p.circle(pos2(right - 12.0, bar.center().y), 5.0, label_color(l), Stroke::new(1.0, Color32::from_black_alpha(120)));
         }
     }
     if let Some(name) = &photo.copy_name {
@@ -369,6 +374,32 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         let _ = app.run("view.detail", json!({}));
     }
     resp.context_menu(|ui| context_menu(app, ui, id));
+}
+
+pub use super::filterbar::label_color;
+
+/// "Set Color Label" items (coloured dot + the label's name), shared by context menus.
+pub fn label_menu(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let current = app.session.active().and_then(|id| app.session.catalog.photo(id)).and_then(|p| p.label);
+    for l in ColorLabel::ALL {
+        let name = app.session.catalog.label_name(l);
+        let resp = ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
+            ui.painter().circle_filled(r.center(), 5.0, label_color(l));
+            ui.selectable_label(current == Some(l), name)
+        });
+        if resp.inner.clicked() {
+            let _ = app.run("photo.label", json!({"label": format!("{l:?}").to_lowercase()}));
+            ui.close();
+        }
+    }
+    if ui.selectable_label(current.is_none(), "None").clicked() {
+        let _ = app.run("photo.label", json!({"label": "none"}));
+    }
+    ui.separator();
+    if ui.button("Edit Label Names…").clicked() {
+        let _ = app.run("dialog.labelNames", json!({}));
+    }
 }
 
 /// Stack badge at the cell's top-left: the photo count on a collapsed stack's top, `i/n` on the
@@ -423,6 +454,7 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
         }
     });
+    ui.menu_button("Set Color Label", |ui| label_menu(app, ui));
     ui.menu_button("Add to Album", |ui| {
         let albums: Vec<_> = app.session.catalog.albums().filter(|a| !a.folder && !a.is_smart()).map(|a| (a.id.0, a.name.clone())).collect();
         for (aid, name) in albums {

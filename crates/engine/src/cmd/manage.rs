@@ -2,9 +2,9 @@
 
 use serde_json::{Value, json};
 
-use lightcraft_catalog::Op;
+use lightcraft_catalog::{ColorLabel, Op};
 
-use super::{CommandSpec, bad, bool_or, cmd, f64_or, has_selection, str_param};
+use super::{CommandSpec, always, bad, bool_or, cmd, f64_or, has_selection, str_param};
 use crate::Result;
 
 fn rename_args(s: &crate::Session, p: &Value, c: &str) -> Result<(Vec<lightcraft_catalog::PhotoId>, String, usize)> {
@@ -79,6 +79,37 @@ pub fn specs() -> Vec<CommandSpec> {
                     s.commit("Edit Capture Time", Op::Batch { ops })?;
                 }
                 Ok(json!({"changed": n, "captured": out}))
+            }
+        ),
+        cmd!(query "label.names", "Color Label Names", [], None, "{} → [{label, name, custom}]", always, |s, _| {
+            Ok(json!(ColorLabel::ALL
+                .iter()
+                .map(|l| json!({"label": format!("{l:?}").to_lowercase(), "name": s.catalog.label_name(*l), "custom": s.catalog.custom_label_name(*l)}))
+                .collect::<Vec<_>>()))
+        }),
+        cmd!(
+            "label.setNames",
+            "Edit Color Label Names",
+            [],
+            None,
+            "{names: {red?: name|null, yellow?, green?, blue?, purple?}} — null or empty restores the colour's name",
+            always,
+            |s, p| {
+                let names = p.get("names").and_then(Value::as_object).ok_or_else(|| bad("label.setNames", "missing `names`"))?;
+                let mut ops = Vec::new();
+                for (k, v) in names {
+                    let label = ColorLabel::parse(k).ok_or_else(|| bad("label.setNames", format!("unknown label `{k}`")))?;
+                    let name =
+                        v.as_str().map(str::trim).filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case(&format!("{label:?}"))).map(str::to_string);
+                    if s.catalog.custom_label_name(label) != name.as_deref() {
+                        ops.push(Op::SetLabelName { label, name });
+                    }
+                }
+                let n = ops.len();
+                if n > 0 {
+                    s.commit("Edit Label Names", Op::Batch { ops })?;
+                }
+                Ok(json!({"changed": n}))
             }
         ),
     ]

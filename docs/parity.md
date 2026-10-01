@@ -75,7 +75,6 @@ Ordered by tier, then user value, then (low) effort. Take the first one nobody i
 12. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
     permissive pure-Rust decoder yet). High value, high effort (clean sources needed).
 13. **LR-VIEW-FULLSCREEN + LR-VIEW-NAVIGATOR + LR-VIEW-INFOOVERLAY** (P1) — view modes. Medium effort.
-14. **LR-LIB-LABEL UI** (P1) — label menu/names.
 15. **LR-EXP-BITDEPTH + LR-EXP-COMPRESSION** (P1) — 16-bit TIFF/PNG and TIFF compression choice.
 16. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
 
@@ -148,7 +147,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-TARGET | Target album | P2 | ⬜ | | |
 | LR-LIB-RATING | Star ratings | P0 | ✅ | `cmd:photo.rate` (`advance`), `crates/ui-egui/src/shortcuts.rs` | |
 | LR-LIB-FLAG | Pick / reject flags | P0 | ✅ | `cmd:photo.pick`, `cmd:photo.reject`, `cmd:photo.unflag`, `cmd:photo.flag` | pick key is P (see Shortcuts); no flag cycle |
-| LR-LIB-LABEL | Colour labels | P1 | 🟡 | `cmd:photo.label`, keys 6–9 in `crates/ui-egui/src/shortcuts.rs` | no label menu/buttons, no purple key, label names not editable |
+| LR-LIB-LABEL | Colour labels | P1 | ✅ | `cmd:photo.label`, `cmd:label.setNames`, `cmd:label.names`, `cmd:dialog.labelNames`, keys 6–9 in `crates/ui-egui/src/shortcuts.rs` | Photo menu and grid context menu (coloured, named), Info-panel swatches, label dot in grid cells; editable label names (undoable, journaled); no purple key (as in Lightroom), no custom extra labels |
 | LR-LIB-KEYWORD | Keywords | P0 | ✅ | `cmd:panel.keywords`, `cmd:photo.setMeta` (`addKeywords`/`removeKeywords`), `cmd:keyword.list`, `cmd:keyword.rename`, `cmd:keyword.delete`, `cmd:keyword.merge`, `cmd:keyword.suggest`, `crates/catalog/src/keywords.rs`, `crates/ui-egui/src/panels/left.rs` | left-panel keyword tree with counts (click filters, children included; context menu rename / merge / delete / add / remove); library-wide ops are one undo step and replay from the op log; suggestions (co-occurring / most used / completions) in the Keywords panel; no keyword drag-and-drop |
 | LR-LIB-PEOPLE | People / faces | P2 | ⬜ | | |
 | LR-LIB-STACK | Stacks | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup`, `cmd:stack.toggle`, `cmd:stack.setTop`, `cmd:stack.remove`, `cmd:stack.auto`, `crates/catalog/src/stacks.rs` | grid/filmstrip count badges, expand/collapse, auto-stack by capture time; no visual-similarity auto-stack |
@@ -576,7 +575,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-PHOTO-REMOVEFROMALBUM | Remove from album | P0 | ✅ | `cmd:album.removePhotos` | |
 | MENU-PHOTO-RATE | Rate submenu | P0 | ✅ | `cmd:photo.rate` | |
 | MENU-PHOTO-FLAG | Flag submenu | P0 | ✅ | `cmd:photo.flag` | |
-| MENU-PHOTO-LABEL | Colour label submenu | P1 | 🟡 | `cmd:photo.label` | keys only; no menu, no label editing |
+| MENU-PHOTO-LABEL | Colour label submenu | P1 | ✅ | `cmd:photo.label`, `cmd:dialog.labelNames` | shows custom names; Edit Label Names… |
 | MENU-PHOTO-ROTATE | Rotate left / right | P0 | ✅ | `cmd:photo.rotateLeft`, `cmd:photo.rotateRight` | |
 | MENU-PHOTO-FLIP | Flip horizontal / vertical | P0 | ✅ | `cmd:photo.flipHorizontal`, `cmd:photo.flipVertical` | |
 | MENU-PHOTO-CREATEVERSION | Create Version… | P1 | ✅ | `cmd:version.create` | no name prompt |

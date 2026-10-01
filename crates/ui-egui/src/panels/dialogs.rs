@@ -23,6 +23,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
         Dialog::Rename { .. } => "Rename Photos",
+        Dialog::LabelNames { .. } => "Edit Color Label Names",
         Dialog::CaptureTime { .. } => "Edit Capture Time",
         Dialog::RenameKeyword { .. } => "Rename Keyword",
         Dialog::MergeKeywords { .. } => "Merge Keywords",
@@ -126,6 +127,19 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     if n > 1 {
                         ui.label(egui::RichText::new(format!("All {n} selected photos move by the same amount.")).color(t.text_dim));
                     }
+                }
+                Dialog::LabelNames { names } => {
+                    names.resize(5, String::new());
+                    for (i, l) in lightcraft_catalog::ColorLabel::ALL.iter().enumerate() {
+                        let colour = format!("{l:?}");
+                        field(ui, &colour, |ui| {
+                            let (r, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                            ui.painter().circle_filled(r.center(), 6.0, crate::panels::grid::label_color(*l));
+                            let te = ui.add(egui::TextEdit::singleline(&mut names[i]).hint_text(colour.as_str()).desired_width(f32::INFINITY));
+                            crate::widgets::register(ui.ctx(), format!("field:labelName-{}", colour.to_lowercase()), te.rect);
+                        });
+                    }
+                    ui.label(egui::RichText::new("Names appear in the label menu, the filter bar and the Info panel. Empty = the colour's name.").color(t.text_dim));
                 }
                 Dialog::Rename { template, start } => {
                     let n = app.session.targets(&json!({})).len();
@@ -420,6 +434,13 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
                 _ => json!({"hours": zone}),
             },
         ),
+        Dialog::LabelNames { names } => {
+            let mut m = serde_json::Map::new();
+            for (l, n) in lightcraft_catalog::ColorLabel::ALL.iter().zip(names) {
+                m.insert(format!("{l:?}").to_lowercase(), if n.trim().is_empty() { serde_json::Value::Null } else { json!(n.trim()) });
+            }
+            app.run("label.setNames", json!({"names": m}))
+        }
         Dialog::Rename { template, start } => app.run("photo.rename", json!({"template": template, "start": start})),
         Dialog::RenameKeyword { from, to } => app.run("keyword.rename", json!({"from": from, "to": to})),
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),

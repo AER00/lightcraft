@@ -232,3 +232,29 @@ fn capture_time_set_shift_undo_and_replay() {
     assert_eq!(s.catalog.to_snapshot(), expect);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Colour label names: one undo step, journaled; a colour's own name or empty resets it.
+#[test]
+fn label_names_set_undo_and_replay() {
+    let dir = temp_dir("labels");
+    let mut s = Session::new();
+    s.open_library(&dir, true).unwrap();
+    let r = s.execute("label.setNames", &json!({"names": {"red": "Reject later", "green": "Approved", "blue": "  "}})).unwrap();
+    assert_eq!(r["changed"], 2);
+    let names = s.execute("label.names", &json!({})).unwrap();
+    assert_eq!(names[0], json!({"label": "red", "name": "Reject later", "custom": "Reject later"}));
+    assert_eq!(names[3]["name"], "Blue");
+    assert_eq!(names[3]["custom"], json!(null));
+    s.execute("label.setNames", &json!({"names": {"red": "red"}})).unwrap();
+    assert_eq!(s.catalog.label_name(lightcraft_catalog::ColorLabel::Red), "Red", "the colour's own name resets");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.label_name(lightcraft_catalog::ColorLabel::Red), "Reject later");
+    assert!(s.execute("label.setNames", &json!({"names": {"orange": "x"}})).is_err());
+    let expect = s.catalog.to_snapshot();
+    drop(s);
+    let mut s = Session::new();
+    s.open_library(&dir, false).unwrap();
+    assert_eq!(s.catalog.to_snapshot(), expect);
+    assert_eq!(s.catalog.label_name(lightcraft_catalog::ColorLabel::Green), "Approved");
+    let _ = std::fs::remove_dir_all(&dir);
+}

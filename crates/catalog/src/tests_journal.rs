@@ -67,6 +67,7 @@ fn op_for(c: &mut Catalog, kind: u8, a: u8, b: u8) -> Op {
         }
         13 => Op::Batch { ops: c.remove_from_stacks_ops(&[pid]) },
         14 => c.set_top_ops(pid).unwrap_or(Op::Batch { ops: vec![] }),
+        9 if b.is_multiple_of(5) => Op::SetLabelName { label: ColorLabel::ALL[a as usize % 5], name: (a % 3 != 1).then(|| format!("Label {b}")) },
         9 if b.is_multiple_of(2) => {
             Op::SetFile { id: pid, file_name: format!("Renamed_{b}.jpg"), source: Source::File { path: format!("/p/Renamed_{b}.jpg") } }
         }

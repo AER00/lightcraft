@@ -149,6 +149,11 @@ pub enum Op {
         file_name: String,
         source: Source,
     },
+    /// The name shown for a colour label (`None` = its colour's name).
+    SetLabelName {
+        label: ColorLabel,
+        name: Option<String>,
+    },
     /// Several ops as one step (undo applies the inverses in reverse).
     Batch {
         ops: Vec<Op>,
@@ -165,6 +170,9 @@ pub struct Catalog {
     stacks: BTreeMap<StackId, Stack>,
     #[serde(default)]
     next_stack: u64,
+    /// Custom colour label names.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    label_names: BTreeMap<ColorLabel, String>,
     /// Increments on every applied op.
     #[serde(skip)]
     pub revision: u64,
@@ -258,6 +266,15 @@ impl Catalog {
             return Err(CatalogError::Invalid("smart album rules can't reference another smart album".into()));
         }
         Ok(())
+    }
+
+    /// The name of a colour label: its custom name, else the colour (`Red`).
+    pub fn label_name(&self, l: ColorLabel) -> String {
+        self.label_names.get(&l).cloned().unwrap_or_else(|| format!("{l:?}"))
+    }
+    /// The custom name of a colour label, if any.
+    pub fn custom_label_name(&self, l: ColorLabel) -> Option<&str> {
+        self.label_names.get(&l).map(String::as_str)
     }
 
     // ---- writes
@@ -449,6 +466,14 @@ impl Catalog {
                 let p = self.photo_mut(id)?;
                 let old_name = std::mem::replace(&mut p.file_name, file_name);
                 Op::SetFile { id, file_name: old_name, source: std::mem::replace(&mut p.source, source) }
+            }
+            Op::SetLabelName { label, name } => {
+                let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+                let old = match name {
+                    Some(n) => self.label_names.insert(label, n),
+                    None => self.label_names.remove(&label),
+                };
+                Op::SetLabelName { label, name: old }
             }
             Op::Batch { ops } => {
                 let mut inverses = Vec::with_capacity(ops.len());

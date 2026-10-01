@@ -260,10 +260,14 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 .zip([Some("6"), Some("7"), Some("8"), Some("9"), None])
                 .map(|(l, sc)| {
                     let name = format!("{l:?}");
+                    let label = match app.session.catalog.custom_label_name(*l) {
+                        Some(custom) => format!("{custom} ({name})"),
+                        None => name.clone(),
+                    };
                     item(
                         "photo.label",
                         json!({"label": name.to_lowercase()}),
-                        name,
+                        label,
                         sc,
                         has,
                         Some(active.as_ref().is_some_and(|p| p.label == Some(*l))),
@@ -272,6 +276,8 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 .collect();
             v.push(MenuNode::Separator);
             v.push(item("photo.label", json!({"label": "none"}), "None", None, has, Some(active.as_ref().is_some_and(|p| p.label.is_none()))));
+            v.push(MenuNode::Separator);
+            v.push(item("dialog.labelNames", Value::Null, "Edit Label Names…", None, true, None));
             v
         }
         "Sort" => {

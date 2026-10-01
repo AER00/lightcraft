@@ -77,6 +77,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.export", "Export Now", None, ""),
     ("app.showInFinder", "Show in Finder", Some("Cmd+R"), "Photo"),
     ("dialog.rename", "Rename Photos…", None, "Photo"),
+    ("dialog.labelNames", "Edit Color Label Names…", None, ""),
     ("dialog.captureTime", "Edit Capture Time…", None, "Photo"),
     ("app.exportPrevious", "Export with Previous", Some("Cmd+Alt+Shift+E"), "File"),
 ];
@@ -336,6 +337,12 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             let mode = p.get("mode").and_then(Value::as_str).unwrap_or("set").to_string();
             app.ui.dialog =
                 Some(Dialog::CaptureTime { mode, time: time.get(..19).unwrap_or(&time).to_string(), days: 0, hours: 0, minutes: 0, zone: 0.0 });
+            Ok(Value::Null)
+        }
+        "dialog.labelNames" => {
+            let names =
+                lightcraft_catalog::ColorLabel::ALL.iter().map(|l| app.session.catalog.custom_label_name(*l).unwrap_or("").to_string()).collect();
+            app.ui.dialog = Some(Dialog::LabelNames { names });
             Ok(Value::Null)
         }
         "dialog.rename" => {

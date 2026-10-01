@@ -482,6 +482,34 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// Colour labels: Info-panel swatches set/clear the label, the names dialog renames them and
+    /// the Photo menu shows the names.
+    #[test]
+    fn label_swatches_and_names() {
+        let mut h = demo([1200.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let id = h.app.session.visible_cloned()[0];
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [id.0]}}), t);
+        h.request("ui.set", json!({"view": "detail", "right": "info"}), t);
+        let r = h.request("ui.clickWidget", json!({"id": "label:green"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(h.app.session.catalog.photo(id).unwrap().label, Some(lightcraft_catalog::ColorLabel::Green));
+        h.request("engine.execute", json!({"command": "dialog.labelNames"}), t);
+        if let Some(crate::state::Dialog::LabelNames { names }) = &mut h.app.ui.dialog {
+            names[2] = "Approved".into();
+        } else {
+            panic!("no dialog");
+        }
+        h.settle(SETTLE);
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let tree = h.request("ui.menu.tree", json!({}), t).to_string();
+        assert!(tree.contains("Approved (Green)"), "menu shows the name");
+        h.request("ui.clickWidget", json!({"id": "label:green"}), t);
+        assert_eq!(h.app.session.catalog.photo(id).unwrap().label, None, "clicking the current label clears it");
+        h.settle(SETTLE);
+    }
+
     #[test]
     fn screenshot_request_is_answered_without_a_window() {
         let mut h = demo([800.0, 500.0]);

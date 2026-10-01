@@ -171,7 +171,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     for l in ColorLabel::ALL {
         let on = f.label == Some(l);
         let name = format!("{l:?}").to_lowercase();
-        let resp = toggle(ui, &format!("label-{name}"), on, &format!("{l:?} label"), |p, r, _| {
+        let tip = format!("{} label", app.session.catalog.label_name(l));
+        let resp = toggle(ui, &format!("label-{name}"), on, &tip, |p, r, _| {
             p.circle_filled(r.center(), 5.5, label_color(l));
         });
         if resp.clicked() {

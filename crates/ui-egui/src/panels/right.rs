@@ -329,6 +329,27 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         if let Some(r) = ui.horizontal(|ui| crate::widgets::stars(ui, "info", p.rating, 20.0)).inner {
             let _ = app.run("photo.rate", json!({"rating": r}));
         }
+        ui.add_space(6.0);
+        // colour label: one swatch per label (hover shows its name); clicking the current one clears it
+        ui.horizontal(|ui| {
+            for l in lightcraft_catalog::ColorLabel::ALL {
+                let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+                let key = format!("{l:?}").to_lowercase();
+                register(ui.ctx(), format!("label:{key}"), r);
+                let on = p.label == Some(l);
+                ui.painter().circle_filled(r.center(), if on || resp.hovered() { 8.0 } else { 6.5 }, crate::panels::grid::label_color(l));
+                if on {
+                    ui.painter().circle_stroke(r.center(), 10.0, egui::Stroke::new(1.5, t.text));
+                }
+                let resp = resp.on_hover_text(app.session.catalog.label_name(l));
+                if resp.clicked() {
+                    let _ = app.run("photo.label", json!({"label": if on { "none".to_string() } else { key }}));
+                }
+            }
+            if let Some(l) = p.label {
+                ui.label(egui::RichText::new(app.session.catalog.label_name(l)).color(t.text_label));
+            }
+        });
     });
     divider(ui);
     let mut title = p.meta.title.clone();
