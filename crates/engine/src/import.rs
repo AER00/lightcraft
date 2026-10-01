@@ -194,6 +194,7 @@ pub fn import(s: &mut Session, paths: &[String], mode: ImportMode) -> crate::Res
     }
 
     let probed = probe_all(s, &todo);
+    crate::memory::release();
     let now = (s.clock)();
     let mut ops = Vec::new();
     for (path, info) in todo.into_iter().zip(probed) {

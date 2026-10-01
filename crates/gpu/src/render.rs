@@ -765,6 +765,7 @@ mod tests {
     #[ignore]
     fn bench_kernels() {
         let Some(gpu) = crate::device() else { return };
+        let _scope = crate::ctx::RenderScope::new(gpu);
         let (w, h) = (6000, 4000);
         let src = gpu.upload(&vec![0.5f32; w * h * 3]);
         let time = |name: &str, f: &mut dyn FnMut(&mut Cx<'_>)| {

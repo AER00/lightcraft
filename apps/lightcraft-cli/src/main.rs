@@ -8,6 +8,8 @@
 //! lightcraft-cli controls [--json]
 //! ```
 
+mod alloc_release;
+
 use std::io::{BufReader, Write};
 use std::path::Path;
 use std::process::ExitCode;
@@ -67,6 +69,7 @@ fn main() -> ExitCode {
         });
         dhat::Profiler::builder().file_name(file).build()
     };
+    alloc_release::install();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         Some("mcp") => mcp(&args[1..]),
@@ -337,6 +340,9 @@ fn snapshot(args: &[String]) -> Result<(), String> {
             };
             if let Some(o) = reply.as_object_mut() {
                 o.insert("id".into(), id);
+                // wall time of the request (incl. the frames it ran), and since the start
+                o.insert("ms".into(), json!((ts.elapsed().as_secs_f64() * 1e4).round() / 10.0));
+                o.insert("t".into(), json!((t0.elapsed().as_secs_f64() * 1e4).round() / 10.0));
             }
             writeln!(out, "{reply}").map_err(|e| e.to_string())?;
             if method == "ui.screenshot" {

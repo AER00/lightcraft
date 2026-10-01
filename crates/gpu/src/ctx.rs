@@ -77,9 +77,47 @@ impl Buf {
 
 impl Drop for Buf {
     fn drop(&mut self) {
-        if let Some(b) = self.buf.take() {
-            RETIRED_BYTES.fetch_add(b.0.size(), Ordering::Relaxed);
-            RETIRED.with(|r| r.borrow_mut().push(b));
+        let Some(b) = self.buf.take() else { return };
+        // Outside a render this thread has no commands recorded (only renders record), so the
+        // buffer is reusable at once; without this, buffers dropped on threads that rarely
+        // submit (the UI thread clearing a view's stages) would wait indefinitely.
+        if !IN_RENDER.with(|c| c.get() > 0)
+            && let Some(g) = crate::existing_device()
+        {
+            g.pool([b]);
+            return;
+        }
+        RETIRED_BYTES.fetch_add(b.0.size(), Ordering::Relaxed);
+        RETIRED.with(|r| r.borrow_mut().push(b));
+    }
+}
+
+thread_local! {
+    /// Renders running on this thread (they may hold recorded, unsubmitted commands).
+    static IN_RENDER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Marks a render on this thread; when it ends, the buffers it released join the pool (everything
+/// it recorded has been submitted by then).
+pub(crate) struct RenderScope<'a>(&'a Gpu);
+
+impl<'a> RenderScope<'a> {
+    pub fn new(g: &'a Gpu) -> RenderScope<'a> {
+        IN_RENDER.with(|c| c.set(c.get() + 1));
+        RenderScope(g)
+    }
+}
+
+impl Drop for RenderScope<'_> {
+    fn drop(&mut self) {
+        let outer = IN_RENDER.with(|c| {
+            c.set(c.get().saturating_sub(1));
+            c.get() == 0
+        });
+        if outer {
+            let retired = RETIRED.with(|r| std::mem::take(&mut *r.borrow_mut()));
+            RETIRED_BYTES.fetch_sub(retired.iter().map(|b| b.0.size()).sum(), Ordering::Relaxed);
+            self.0.pool(retired);
         }
     }
 }
@@ -114,8 +152,8 @@ static POOLED: AtomicU64 = AtomicU64::new(0);
 /// Most bytes kept in the free pool (see [`crate::set_pool_limit`]).
 pub(crate) static POOL_LIMIT: AtomicU64 = AtomicU64::new(DEFAULT_POOL_BYTES);
 
-/// Default for the most bytes kept in the free pool.
-pub(crate) const DEFAULT_POOL_BYTES: u64 = 2 << 30;
+/// Default for the most bytes kept in the free pool (apps derive it from their memory budget).
+pub(crate) const DEFAULT_POOL_BYTES: u64 = 256 << 20;
 
 /// Device buffers held by the renderer (bytes).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -259,9 +297,17 @@ impl Gpu {
         let size = (len.max(1) * 4) as u64;
         let recycled = {
             let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
-            let b = f.iter().position(|b| b.0.size() == size).map(|i| f.swap_remove(i));
-            if b.is_some() {
-                POOLED.fetch_sub(size, Ordering::Relaxed);
+            // the smallest pooled buffer that holds `size` with at most 25 % to spare: photos of
+            // slightly different sizes reuse each other's buffers instead of piling up new ones
+            let b = f
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.0.size() >= size && b.0.size() <= size + size / 4)
+                .min_by_key(|(_, b)| b.0.size())
+                .map(|(i, _)| i)
+                .map(|i| f.swap_remove(i));
+            if let Some(b) = &b {
+                POOLED.fetch_sub(b.0.size(), Ordering::Relaxed);
             }
             b
         };
@@ -280,11 +326,24 @@ impl Gpu {
     pub fn submit(&self, cmds: impl IntoIterator<Item = wgpu::CommandBuffer>) {
         self.queue.submit(cmds);
         let retired = RETIRED.with(|r| std::mem::take(&mut *r.borrow_mut()));
-        let bytes: u64 = retired.iter().map(|b| b.0.size()).sum();
-        RETIRED_BYTES.fetch_sub(bytes, Ordering::Relaxed);
-        POOLED.fetch_add(bytes, Ordering::Relaxed);
-        self.free.lock().unwrap_or_else(|e| e.into_inner()).extend(retired);
-        self.trim(POOL_LIMIT.load(Ordering::Relaxed));
+        RETIRED_BYTES.fetch_sub(retired.iter().map(|b| b.0.size()).sum(), Ordering::Relaxed);
+        self.pool(retired);
+    }
+
+    /// Put reusable buffers into the free pool (trimmed to its limit).
+    fn pool(&self, bufs: impl IntoIterator<Item = Tracked>) {
+        let mut added = false;
+        {
+            let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
+            for b in bufs {
+                POOLED.fetch_add(b.0.size(), Ordering::Relaxed);
+                f.push(b);
+                added = true;
+            }
+        }
+        if added {
+            self.trim(POOL_LIMIT.load(Ordering::Relaxed));
+        }
     }
 
     /// Free pooled buffers (oldest first) until at most `keep` bytes stay pooled.

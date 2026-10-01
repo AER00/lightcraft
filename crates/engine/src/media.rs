@@ -94,11 +94,15 @@ impl SourceRef {
 pub struct MediaCache {
     /// Decoded thumbnail-level sources (LRU by bytes).
     thumbs: Lru<PhotoId, Arc<Rgb32f>>,
-    previews: Vec<(PhotoId, Arc<Rgb32f>)>,
+    /// Decoded preview-level sources with their last use ([`lightcraft_preview::next_tick`]).
+    previews: Vec<(PhotoId, Arc<Rgb32f>, u64)>,
     /// The last full-resolution original (exports; one at a time: ~300 MB at 24 MP).
-    full: Option<(PhotoId, Arc<Rgb32f>)>,
+    full: Option<(PhotoId, Arc<Rgb32f>, u64)>,
     /// How many previews to keep (LRU).
     pub preview_capacity: usize,
+    /// Bytes all decoded sources and rendered previews in memory may take together (the cache
+    /// share of [`crate::memory::budget`]); the least recently used entry of any of them goes first.
+    budget: usize,
     pub file_loader: Option<FileLoader>,
     pub file_probe: Option<FileProbe>,
     pub preview_loader: Option<PreviewLoader>,
@@ -109,57 +113,123 @@ pub struct MediaCache {
 
 impl Default for MediaCache {
     fn default() -> Self {
+        let budget = crate::memory::cache_share(crate::memory::budget());
         MediaCache {
-            thumbs: Lru::new(THUMB_SOURCE_BYTES),
+            thumbs: Lru::new(THUMB_SOURCE_BYTES.min(budget)),
             previews: Vec::new(),
             full: None,
             preview_capacity: 0,
+            budget,
             file_loader: None,
             file_probe: None,
             preview_loader: None,
             scenes: Vec::new(),
-            rendered: Arc::new(PreviewCache::memory(RENDERED_MEM_BYTES)),
+            rendered: Arc::new(PreviewCache::memory(rendered_budget(budget))),
         }
     }
+}
+
+/// Memory for rendered previews out of the cache share.
+fn rendered_budget(share: usize) -> usize {
+    RENDERED_MEM_BYTES.min(share / 4)
+}
+
+fn source_bytes(img: &Rgb32f) -> usize {
+    img.data.len() * 12 + 64
 }
 
 impl MediaCache {
     /// Keep rendered thumbnails on disk in `dir` as well.
     pub fn attach_disk_cache(&mut self, dir: &std::path::Path) {
-        self.rendered = Arc::new(PreviewCache::with_disk(RENDERED_MEM_BYTES, dir, DISK_CACHE_BYTES));
+        self.rendered = Arc::new(PreviewCache::with_disk(rendered_budget(self.budget), dir, DISK_CACHE_BYTES));
+    }
+
+    /// Bytes the caches may hold together.
+    pub fn budget(&self) -> usize {
+        self.budget
+    }
+
+    /// Change the bytes the caches may hold together, evicting at once if needed.
+    pub fn set_budget(&mut self, bytes: usize) {
+        self.budget = bytes;
+        self.thumbs.set_budget(THUMB_SOURCE_BYTES.min(bytes));
+        self.rendered.set_mem_budget(rendered_budget(bytes));
+        self.enforce_budget();
+    }
+
+    /// Bytes held by decoded sources and rendered previews in memory.
+    pub fn held(&self) -> usize {
+        let (t, p, f) = self.usage();
+        t.bytes + p.bytes + f.bytes + self.rendered.mem_usage().1
+    }
+
+    /// Evict least recently used entries across the source caches and the rendered previews
+    /// until they fit the budget. The newest preview-level source (the photo on screen, or the
+    /// one just decoded) is never evicted here.
+    pub fn enforce_budget(&mut self) {
+        let mut held = self.held();
+        while held > self.budget {
+            let newest_preview = self.previews.iter().map(|e| e.2).max();
+            let candidates = [
+                self.thumbs.oldest_tick().map(|t| (t, 0)),
+                self.previews.iter().filter(|e| Some(e.2) != newest_preview).map(|e| e.2).min().map(|t| (t, 1)),
+                self.full.as_ref().map(|e| (e.2, 2)),
+                self.rendered.oldest_tick().map(|t| (t, 3)),
+            ];
+            let Some((tick, which)) = candidates.into_iter().flatten().min() else { break };
+            let freed = match which {
+                0 => self.thumbs.pop_oldest(),
+                1 => self.previews.iter().position(|e| e.2 == tick).map(|i| source_bytes(&self.previews.remove(i).1)),
+                2 => self.full.take().map(|e| source_bytes(&e.1)),
+                _ => self.rendered.evict_oldest(),
+            };
+            match freed {
+                Some(b) if b > 0 => held = held.saturating_sub(b),
+                _ => break,
+            }
+        }
     }
 
     pub fn get(&mut self, id: PhotoId, level: SourceLevel) -> Option<Arc<Rgb32f>> {
         match level {
             SourceLevel::Thumb => self.thumbs.get(&id).cloned(),
-            SourceLevel::Preview => self.previews.iter().find(|(p, _)| *p == id).map(|(_, a)| a.clone()),
-            SourceLevel::Full => self.full.as_ref().filter(|(p, _)| *p == id).map(|(_, a)| a.clone()),
+            SourceLevel::Preview => self.previews.iter_mut().find(|e| e.0 == id).map(|e| {
+                e.2 = lightcraft_preview::next_tick();
+                e.1.clone()
+            }),
+            SourceLevel::Full => self.full.as_mut().filter(|e| e.0 == id).map(|e| {
+                e.2 = lightcraft_preview::next_tick();
+                e.1.clone()
+            }),
         }
     }
 
     pub fn insert(&mut self, id: PhotoId, level: SourceLevel, img: Arc<Rgb32f>) {
+        let tick = lightcraft_preview::next_tick();
         match level {
             SourceLevel::Thumb => {
-                let cost = img.width * img.height * 12 + 64;
+                let cost = source_bytes(&img);
                 self.thumbs.insert(id, img, cost);
             }
             SourceLevel::Preview => {
-                self.previews.retain(|(p, _)| *p != id);
-                self.previews.push((id, img));
+                self.previews.retain(|e| e.0 != id);
+                self.previews.push((id, img, tick));
                 let cap = if self.preview_capacity == 0 { 4 } else { self.preview_capacity };
                 while self.previews.len() > cap {
-                    self.previews.remove(0);
+                    let oldest = self.previews.iter().enumerate().min_by_key(|(_, e)| e.2).map(|(i, _)| i).unwrap_or(0);
+                    self.previews.remove(oldest);
                 }
             }
-            SourceLevel::Full => self.full = Some((id, img)),
+            SourceLevel::Full => self.full = Some((id, img, tick)),
         }
+        self.enforce_budget();
     }
 
     /// Forget a photo's decoded sources (e.g. after its file changed).
     pub fn forget(&mut self, id: PhotoId) {
         self.thumbs.remove(&id);
-        self.previews.retain(|(p, _)| *p != id);
-        if self.full.as_ref().is_some_and(|(p, _)| *p == id) {
+        self.previews.retain(|e| e.0 != id);
+        if self.full.as_ref().is_some_and(|e| e.0 == id) {
             self.full = None;
         }
     }
@@ -172,9 +242,8 @@ impl MediaCache {
     /// Decoded sources held: (thumbnail level, preview level, full size).
     pub fn usage(&self) -> (crate::memory::Usage, crate::memory::Usage, crate::memory::Usage) {
         use crate::memory::Usage;
-        let bytes = |i: &Rgb32f| i.data.len() * 12;
-        let previews = Usage::new(self.previews.len(), self.previews.iter().map(|(_, a)| bytes(a)).sum());
-        let full = self.full.as_ref().map(|(_, a)| Usage::new(1, bytes(a))).unwrap_or_default();
+        let previews = Usage::new(self.previews.len(), self.previews.iter().map(|e| source_bytes(&e.1)).sum());
+        let full = self.full.as_ref().map(|e| Usage::new(1, source_bytes(&e.1))).unwrap_or_default();
         (Usage::new(self.thumbs.len(), self.thumbs.cost()), previews, full)
     }
 
@@ -535,6 +604,54 @@ pub type FileProbe = Arc<dyn Fn(&str) -> Result<ProbeInfo, String> + Send + Sync
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn budget_evicts_least_recently_used_across_caches() {
+        let img = |w: usize| Arc::new(Rgb32f::new(w, w));
+        let mut m = MediaCache::default();
+        let mb = 1 << 20;
+        m.set_budget(30 * mb);
+        // 3 previews of 12 MB (1000² × 12 B) don't fit 30 MB: the least recently used goes
+        m.insert(PhotoId(1), SourceLevel::Preview, img(1000));
+        m.insert(PhotoId(2), SourceLevel::Preview, img(1000));
+        assert!(m.get(PhotoId(1), SourceLevel::Preview).is_some()); // 1 is now more recent than 2
+        m.insert(PhotoId(3), SourceLevel::Preview, img(1000));
+        assert!(m.get(PhotoId(2), SourceLevel::Preview).is_none());
+        assert!(m.get(PhotoId(1), SourceLevel::Preview).is_some() && m.get(PhotoId(3), SourceLevel::Preview).is_some());
+        // a thumbnail source and a rendered preview compete in the same budget
+        m.insert(PhotoId(4), SourceLevel::Thumb, img(500));
+        m.rendered.put(Hash128(7), Arc::new(lightcraft_raster::Rgba8::new(1000, 1000)));
+        assert!(m.held() <= 30 * mb, "{}", m.held());
+        // the newest preview (the one on screen) is never evicted, even alone over budget
+        m.set_budget(mb);
+        assert!(m.get(PhotoId(3), SourceLevel::Preview).is_some());
+        assert_eq!(m.usage().1.count, 1);
+        assert_eq!(m.usage().0.count, 0);
+        assert_eq!(m.rendered.mem_usage().0, 0);
+    }
+
+    #[test]
+    fn work_gate_waits_for_room() {
+        use crate::memory::WorkGate;
+        let g = Arc::new(WorkGate::new(100));
+        let a = g.acquire(80);
+        // more than fits waits until `a` is released; urgent work never waits
+        let urgent = g.acquire_urgent(500);
+        assert_eq!(g.usage().0, 580);
+        drop(urgent);
+        let g2 = g.clone();
+        let t = std::thread::spawn(move || {
+            let _b = g2.acquire(50);
+            g2.usage().0
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(g.usage().0, 80, "the second holder is still waiting");
+        drop(a);
+        assert_eq!(t.join().unwrap(), 50);
+        assert_eq!(g.usage().0, 0);
+        // a single holder may exceed the limit
+        drop(g.acquire(1000));
+    }
 
     #[test]
     fn levels_cover_sizes_and_large_exports_use_the_original() {

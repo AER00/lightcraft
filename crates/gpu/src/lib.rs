@@ -66,6 +66,12 @@ pub(crate) fn device() -> Option<&'static ctx::Gpu> {
     GPU.get_or_init(|| std::panic::catch_unwind(ctx::Gpu::new).ok().flatten()).as_ref()
 }
 
+/// The device if it has been created (never creates it).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn existing_device() -> Option<&'static ctx::Gpu> {
+    GPU.get().and_then(|g| g.as_ref())
+}
+
 /// Create the device and compile the kernels on a background thread now (app start), so the
 /// first render doesn't wait ~0.3–0.4 s for it and the UI thread never does.
 pub fn warm_up() {
@@ -183,7 +189,10 @@ pub fn render(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &R
         }
         let gpu = device()?;
         let ext = stages.map(|c| c.extension::<GpuStages>());
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::render(gpu, src, info, s, req, ext.as_deref())));
+        let r = {
+            let _scope = ctx::RenderScope::new(gpu);
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::render(gpu, src, info, s, req, ext.as_deref())))
+        };
         match r {
             // a device error during the render: its result is not trustworthy
             Ok(_) if BROKEN.load(Ordering::Relaxed) => None,

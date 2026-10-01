@@ -552,12 +552,13 @@ impl RawImage {
     pub fn develop(&self, method: Method) -> Result<Rgb32f> {
         let n = self.normalized()?;
         let mut rgb = demosaic(&n, method);
+        drop(n);
         opcodes::apply_list3(&self.opcodes.list3, &mut rgb);
         let c = self.crop.clipped(rgb.width, rgb.height);
         if c.width == 0 || c.height == 0 || (c.x == 0 && c.y == 0 && c.width == rgb.width && c.height == rgb.height) {
             return Ok(rgb);
         }
-        Ok(rgb.crop(c.x, c.y, c.width, c.height))
+        Ok(rgb.into_crop(c.x, c.y, c.width, c.height))
     }
 }
 
