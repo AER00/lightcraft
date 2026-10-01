@@ -60,6 +60,110 @@ pub enum SharpenAmount {
     High,
 }
 
+/// Where a watermark sits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Anchor {
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    Center,
+    Right,
+    BottomLeft,
+    Bottom,
+    #[default]
+    BottomRight,
+}
+
+/// A text watermark, sized relative to the image so every export size looks the same.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Watermark {
+    pub text: String,
+    /// Text height as a fraction of the image's short edge.
+    pub size: f32,
+    /// 0..1.
+    pub opacity: f32,
+    pub anchor: Anchor,
+    /// Margin as a fraction of the short edge.
+    pub inset: f32,
+    /// sRGB colour.
+    pub color: [u8; 3],
+    /// Soft dark drop shadow for legibility on bright areas.
+    pub shadow: bool,
+}
+
+impl Default for Watermark {
+    fn default() -> Self {
+        Self { text: String::new(), size: 0.035, opacity: 0.7, anchor: Anchor::BottomRight, inset: 0.025, color: [255; 3], shadow: true }
+    }
+}
+
+/// Inter SemiBold (OFL, see assets/ATTRIBUTION.md).
+static WATERMARK_FONT: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
+
+/// Draw `wm` onto `img` (straight sRGB alpha blending).
+pub fn draw_watermark(img: &mut Rgba8, wm: &Watermark) {
+    use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
+    let text = wm.text.trim();
+    if text.is_empty() || img.width == 0 || img.height == 0 {
+        return;
+    }
+    let Ok(font) = FontRef::try_from_slice(WATERMARK_FONT) else { return };
+    let short = img.width.min(img.height) as f32;
+    let px = (wm.size.clamp(0.005, 0.5) * short).max(6.0);
+    let sf = font.as_scaled(PxScale::from(px));
+    // Lay out one line.
+    let mut glyphs = Vec::new();
+    let mut x = 0.0f32;
+    let mut prev = None;
+    for ch in text.chars() {
+        let id = sf.glyph_id(ch);
+        if let Some(p) = prev {
+            x += sf.kern(p, id);
+        }
+        glyphs.push(id.with_scale_and_position(px, point(x, sf.ascent())));
+        x += sf.h_advance(id);
+        prev = Some(id);
+    }
+    let (tw, th) = (x, sf.ascent() - sf.descent());
+    let inset = wm.inset.clamp(0.0, 0.4) * short;
+    let (w, h) = (img.width as f32, img.height as f32);
+    use Anchor::*;
+    let ox = match wm.anchor {
+        TopLeft | Left | BottomLeft => inset,
+        Top | Center | Bottom => (w - tw) / 2.0,
+        TopRight | Right | BottomRight => w - inset - tw,
+    };
+    let oy = match wm.anchor {
+        TopLeft | Top | TopRight => inset,
+        Left | Center | Right => (h - th) / 2.0,
+        BottomLeft | Bottom | BottomRight => h - inset - th,
+    };
+    let alpha = wm.opacity.clamp(0.0, 1.0);
+    let mut blend = |gx: i32, gy: i32, cov: f32, col: [u8; 3], a: f32| {
+        if gx < 0 || gy < 0 || gx >= img.width as i32 || gy >= img.height as i32 {
+            return;
+        }
+        let k = (cov * a).clamp(0.0, 1.0);
+        let p = &mut img.data[gy as usize * img.width + gx as usize];
+        for c in 0..3 {
+            p[c] = (p[c] as f32 + (col[c] as f32 - p[c] as f32) * k).round() as u8;
+        }
+    };
+    let passes: &[(f32, [u8; 3], f32)] =
+        if wm.shadow { &[((px * 0.05).max(1.0), [0, 0, 0], 0.45), (0.0, wm.color, 1.0)] } else { &[(0.0, wm.color, 1.0)] };
+    for &(off, col, a) in passes {
+        for g in &glyphs {
+            if let Some(o) = font.outline_glyph(g.clone()) {
+                let b = o.px_bounds();
+                o.draw(|gx, gy, cov| blend((ox + off + b.min.x) as i32 + gx as i32, (oy + off + b.min.y) as i32 + gy as i32, cov, col, a * alpha));
+            }
+        }
+    }
+}
+
 /// Which metadata is embedded in exported files.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,6 +196,8 @@ pub struct ExportOptions {
     pub metadata: MetadataPolicy,
     /// Strip GPS / location even when the policy would include it.
     pub remove_location: bool,
+    /// Text watermark (none when absent or the text is empty).
+    pub watermark: Option<Watermark>,
 }
 
 impl Default for ExportOptions {
@@ -106,6 +212,7 @@ impl Default for ExportOptions {
             naming: "{name}".into(),
             metadata: MetadataPolicy::All,
             remove_location: false,
+            watermark: None,
         }
     }
 }
@@ -130,6 +237,12 @@ impl ExportOptions {
             naming: s("naming").map_or(d.naming, str::to_string),
             metadata: enm(p, "metadata").unwrap_or(d.metadata),
             remove_location: p.get("removeLocation").and_then(Value::as_bool).unwrap_or(d.remove_location),
+            watermark: match p.get("watermark") {
+                Some(Value::String(t)) => Some(Watermark { text: t.clone(), ..Default::default() }),
+                Some(v @ Value::Object(_)) => serde_json::from_value(v.clone()).ok(),
+                _ => None,
+            }
+            .filter(|w: &Watermark| !w.text.trim().is_empty()),
         }
     }
 
@@ -201,6 +314,9 @@ pub fn encode_image(img: &Rgba8, o: &ExportOptions) -> Result<Vec<u8>, String> {
 pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
     let mut img = img.clone();
     output_sharpen(&mut img, o.sharpen, o.sharpen_amount);
+    if let Some(wm) = &o.watermark {
+        draw_watermark(&mut img, wm);
+    }
     let profile = icc::write_named(NamedSpace::Srgb);
     let exif = meta.map(lightcraft_meta::write_exif);
     let xmp = meta.map(|m| lightcraft_meta::write_xmp(m, None));
@@ -371,6 +487,25 @@ mod tests {
         assert_eq!(back.model.as_deref(), Some("Synthetic X2"));
         assert_eq!(back.copyright.as_deref(), Some("(c) Me"));
         assert!(back.gps.is_some());
+    }
+
+    #[test]
+    fn watermark_draws_in_the_anchored_corner_only() {
+        let mut img = Rgba8::new(400, 300);
+        for p in img.data.iter_mut() {
+            *p = [0, 0, 0, 255];
+        }
+        let o = ExportOptions::from_json(&serde_json::json!({"watermark": {"text": "LightCraft", "size": 0.08, "opacity": 1.0, "shadow": false}}));
+        let wm = o.watermark.clone().unwrap();
+        draw_watermark(&mut img, &wm);
+        let lit = |x0: usize, x1: usize, y0: usize, y1: usize| {
+            (y0..y1).flat_map(|y| (x0..x1).map(move |x| (x, y))).filter(|&(x, y)| img.get(x, y)[0] > 128).count()
+        };
+        assert!(lit(200, 400, 225, 300) > 100, "bottom-right has text");
+        assert!(lit(0, 200, 0, 150) == 0, "top-left untouched");
+        // string shorthand
+        assert_eq!(ExportOptions::from_json(&serde_json::json!({"watermark": "© Me"})).watermark.unwrap().text, "© Me");
+        assert!(ExportOptions::from_json(&serde_json::json!({"watermark": ""})).watermark.is_none());
     }
 
     #[test]

@@ -187,7 +187,8 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
                 "sharpenAmount": {"type": "string", "enum": ["low", "standard", "high"]},
                 "naming": {"type": "string", "description": "e.g. {name}-{seq}"},
                 "metadata": {"type": "string", "enum": ["all", "allExceptCamera", "copyright", "none"]},
-                "removeLocation": {"type": "boolean"}
+                "removeLocation": {"type": "boolean"},
+                "watermark": {"description": "Text, or {text, size (fraction of short edge), opacity, anchor (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight), inset, color [r,g,b], shadow}"}
             }),
             &[],
         ),
@@ -532,6 +533,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
                         "naming",
                         "metadata",
                         "removeLocation",
+                        "watermark",
                     ],
                 ),
             )

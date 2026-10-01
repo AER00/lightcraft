@@ -108,6 +108,24 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ) {
                         ui.checkbox(&mut opts.remove_location, "Remove location info");
                     }
+                    let mut wm_on = opts.watermark.is_some();
+                    if ui.checkbox(&mut wm_on, "Watermark").changed() {
+                        opts.watermark = wm_on.then(|| lightcraft_engine::export::Watermark { text: "© ".into(), ..Default::default() });
+                    }
+                    if let Some(wm) = &mut opts.watermark {
+                        use lightcraft_engine::export::Anchor as P;
+                        ui.add(egui::TextEdit::singleline(&mut wm.text).hint_text("© Your Name").desired_width(f32::INFINITY));
+                        ui.horizontal(|ui| {
+                            ui.label("Position");
+                            for (v, l) in [(P::TopLeft, "↖"), (P::TopRight, "↗"), (P::Center, "•"), (P::BottomLeft, "↙"), (P::BottomRight, "↘")]
+                            {
+                                ui.selectable_value(&mut wm.anchor, v, l);
+                            }
+                        });
+                        ui.add(egui::Slider::new(&mut wm.size, 0.01..=0.15).text("Size"));
+                        ui.add(egui::Slider::new(&mut wm.opacity, 0.05..=1.0).text("Opacity"));
+                        ui.checkbox(&mut wm.shadow, "Shadow");
+                    }
                     ui.horizontal(|ui| {
                         ui.label("File name");
                         ui.add(egui::TextEdit::singleline(&mut opts.naming).hint_text("{name}-{seq}").desired_width(f32::INFINITY));
@@ -185,7 +203,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             json!({
                 "format": opts.format, "quality": opts.quality, "longEdge": long_edge, "limitKb": limit_kb,
                 "sharpen": opts.sharpen, "sharpenAmount": opts.sharpen_amount, "naming": opts.naming, "dir": dir,
-                "metadata": opts.metadata, "removeLocation": opts.remove_location,
+                "metadata": opts.metadata, "removeLocation": opts.remove_location, "watermark": opts.watermark,
             }),
         ),
         Dialog::About | Dialog::Shortcuts => Ok(serde_json::Value::Null),
