@@ -30,7 +30,12 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("lr", "http://ns.adobe.com/lightroom/1.0/"),
     ("Iptc4xmpCore", "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/"),
     ("lc", LC_NS),
+    // Read-only: develop settings written by other raw developers (interchange; see docs/xmp-interop.md).
+    ("crs", CRS_NS),
 ];
+
+/// The camera-raw-settings namespace URI (prefix `crs`), read for interchange only.
+pub const CRS_NS: &str = "http://ns.adobe.com/camera-raw-settings/1.0/";
 
 /// XMP read failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -405,6 +410,12 @@ fn sfrac(v: f64) -> String {
 /// Serialise the interchange subset of `meta` (plus `lc_settings`, an opaque JSON string, in `lc:settings`)
 /// as a complete XMP packet.
 pub fn write_xmp(meta: &Metadata, lc_settings: Option<&str>) -> String {
+    let lc: Vec<(&str, &str)> = lc_settings.map(|s| ("settings", s)).into_iter().collect();
+    write_xmp_lc(meta, &lc)
+}
+
+/// Like [`write_xmp`], with any number of simple `lc:<name>` properties (e.g. `settings`, `flag`).
+pub fn write_xmp_lc(meta: &Metadata, lc: &[(&str, &str)]) -> String {
     let mut simple: Vec<(&str, String)> = Vec::new();
     let mut push = |k: &'static str, v: Option<String>| {
         if let Some(v) = v {
@@ -441,19 +452,23 @@ pub fn write_xmp(meta: &Metadata, lc_settings: Option<&str>) -> String {
             push("exif:GPSAltitudeRef", Some(if a < 0.0 { "1" } else { "0" }.into()));
         }
     }
-    push("lc:settings", lc_settings.map(str::to_string));
 
     let mut x = String::new();
     x.push_str("<?xpacket begin=\"\u{feff}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n");
     x.push_str("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"LightCraft\">\n");
     x.push_str(" <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n");
     x.push_str("  <rdf:Description rdf:about=\"\"");
-    for (p, u) in NAMESPACES.iter().skip(2) {
+    for (p, u) in NAMESPACES.iter().skip(2).filter(|(p, _)| *p != "crs") {
         x.push_str(&format!("\n    xmlns:{p}=\"{u}\""));
     }
     x.push_str(">\n");
     for (k, v) in &simple {
         x.push_str(&format!("   <{k}>{}</{k}>\n", escape(v.as_str())));
+    }
+    for (k, v) in lc {
+        if !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            x.push_str(&format!("   <lc:{k}>{}</lc:{k}>\n", escape(*v)));
+        }
     }
     let array = |x: &mut String, k: &str, kind: &str, items: &[String], lang: bool| {
         if items.is_empty() {
@@ -597,6 +612,19 @@ mod tests {
                 let _ = parse_xmp(&x[..n]);
             }
         }
+    }
+
+    #[test]
+    fn lc_extras_and_crs_prefix() {
+        let x = write_xmp_lc(&Metadata::default(), &[("settings", "{\"a\":1}"), ("flag", "pick"), ("bad name", "x")]);
+        assert!(!x.contains("xmlns:crs"), "we never write crs:");
+        let d = parse_xmp(&x).unwrap();
+        assert_eq!(d.lc_settings.as_deref(), Some("{\"a\":1}"));
+        assert_eq!(d.properties["lc:flag"], vec!["pick".to_string()]);
+        assert!(!x.contains("bad name"));
+        let foreign = r#"<rdf:Description xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+            xmlns:cr="http://ns.adobe.com/camera-raw-settings/1.0/" cr:Exposure2012="+0.5"/>"#;
+        assert_eq!(parse_xmp(foreign).unwrap().properties["crs:Exposure2012"], vec!["+0.5".to_string()]);
     }
 
     #[test]

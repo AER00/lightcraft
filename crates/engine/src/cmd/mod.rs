@@ -9,6 +9,7 @@ mod edit;
 mod library;
 mod masks;
 mod query;
+mod xmp;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -101,6 +102,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(develop::specs());
         v.extend(masks::specs());
         v.extend(query::specs());
+        v.extend(xmp::specs());
         v
     })
 }
