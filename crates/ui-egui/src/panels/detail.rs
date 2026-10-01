@@ -245,6 +245,9 @@ fn targeted_drag(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respon
 /// The diagnostic overlay the loupe shows (Point Color's visualized range).
 fn view_overlay(app: &LightcraftApp, d: &DevelopSettings) -> lightcraft_pipeline::Overlay {
     use lightcraft_pipeline::Overlay;
+    if app.ui.right == RightPanel::Remove && app.ui.visualize_spots {
+        return Overlay::Spots(app.ui.spots_threshold.clamp(0.0, 100.0).round() as u8);
+    }
     let edit = app.ui.right == RightPanel::Edit;
     if edit && app.ui.point_color_visualize && app.ui.flyout_open("pointColor") && app.ui.point_color < d.point_colors.len() {
         return Overlay::PointColorRange(app.ui.point_color as u8);

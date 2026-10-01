@@ -3,6 +3,9 @@
 //!
 //! - **Point Color range:** the photo is rendered without that sample's own adjustment; pixels
 //!   inside the sample's range keep their colour, the rest turn grey (weighted by the range).
+//! - **Visualize Spots** (Remove tool): a high-pass of the luminance thresholded to black/white,
+//!   so dust spots and specks stand out as white dots. The scale is relative to the image (the
+//!   same spots show at any preview size); the threshold slider (0..100) raises sensitivity.
 
 use std::borrow::Cow;
 
@@ -22,6 +25,8 @@ pub enum Overlay {
     None,
     /// Point Color sample `i`: its range in colour, everything else grey.
     PointColorRange(u8),
+    /// Visualize Spots with a threshold 0..100 (higher = more sensitive).
+    Spots(u8),
 }
 
 impl Overlay {
@@ -30,6 +35,7 @@ impl Overlay {
         match self {
             Overlay::None => (0, 0.0),
             Overlay::PointColorRange(i) => (1, i as f32),
+            Overlay::Spots(t) => (2, t as f32),
         }
     }
 
@@ -37,6 +43,7 @@ impl Overlay {
     pub fn from_parts(kind: u8, v: f32) -> Overlay {
         match kind {
             1 => Overlay::PointColorRange(v as u8),
+            2 => Overlay::Spots(v.clamp(0.0, 100.0) as u8),
             _ => Overlay::None,
         }
     }
@@ -46,6 +53,7 @@ impl Overlay {
         match self {
             Overlay::None => 0,
             Overlay::PointColorRange(i) => 0x1000 + i as u64,
+            Overlay::Spots(t) => 0x2000 + t as u64,
         }
     }
 }
@@ -71,6 +79,34 @@ pub fn apply(img: &mut Rgba8, o: Overlay, plan: &Plan<'_>) {
                 point_color_range(img, &PointK::new(p));
             }
         }
+        Overlay::Spots(t) => spots(img, t, plan.px_per_long),
+    }
+}
+
+/// Blur radius (Gaussian sigma) of the spot view, as a fraction of the long edge.
+const SPOT_SIGMA: f64 = 0.006;
+
+/// High-pass threshold (encoded luminance) for slider value `t` (0..100): 100 shows the faintest
+/// specks, 0 only strong ones.
+pub fn spot_threshold(t: u8) -> f32 {
+    let k = 1.0 - t.min(100) as f32 / 100.0;
+    0.01 + 0.2 * k * k
+}
+
+fn spots(img: &mut Rgba8, t: u8, ppl: f64) {
+    let (w, h) = (img.width, img.height);
+    if w == 0 || h == 0 {
+        return;
+    }
+    let l = lightcraft_raster::Plane::from_fn(w, h, |x, y| {
+        let p = img.data[y * w + x];
+        (0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32) / 255.0
+    });
+    let b = lightcraft_raster::blur::gaussian(&l, (SPOT_SIGMA * ppl).max(0.8) as f32);
+    let thr = spot_threshold(t);
+    for (i, px) in img.data.iter_mut().enumerate() {
+        let v = if (l.data[i] - b.data[i]).abs() > thr { 255 } else { 0 };
+        *px = [v, v, v, 255];
     }
 }
 
@@ -98,6 +134,31 @@ mod tests {
     use crate::{RenderRequest, SourceInfo, render};
     use lightcraft_develop::PointColor;
     use lightcraft_raster::Rgb32f;
+
+    #[test]
+    fn spots_view_marks_specks_at_any_size() {
+        // a smooth gradient with two small dark specks
+        let src = Rgb32f::from_fn(400, 300, |x, y| {
+            let d = |cx: f32, cy: f32| ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+            let base = 0.1 + 0.3 * x as f32 / 400.0;
+            if d(100.0, 100.0) < 2.5 || d(300.0, 200.0) < 2.5 { [base * 0.5; 3] } else { [base; 3] }
+        });
+        let info = SourceInfo::default();
+        let s = DevelopSettings::default();
+        for size in [400, 200] {
+            let req = RenderRequest { overlay: Overlay::Spots(50), ..RenderRequest::fit(size, size) };
+            let v = render(&src, &info, &s, &req).image;
+            let at = |x: f64, y: f64| v.data[(y * v.height as f64) as usize * v.width + (x * v.width as f64) as usize];
+            assert_eq!(at(0.25, 1.0 / 3.0), [255, 255, 255, 255], "speck at size {size}");
+            assert_eq!(at(0.75, 2.0 / 3.0), [255, 255, 255, 255]);
+            assert_eq!(at(0.5, 0.5), [0, 0, 0, 255], "smooth gradient is black");
+            let white = v.data.iter().filter(|p| p[0] == 255).count() as f64 / v.data.len() as f64;
+            assert!(white < 0.01, "{white}");
+        }
+        assert!(spot_threshold(0) > spot_threshold(50) && spot_threshold(50) > spot_threshold(100));
+        let (k, v) = Overlay::Spots(37).to_parts();
+        assert_eq!(Overlay::from_parts(k, v), Overlay::Spots(37));
+    }
 
     #[test]
     fn point_color_range_keeps_the_selected_colour_only() {

@@ -114,6 +114,9 @@ pub struct UiState {
     /// Red Eye panel: selected correction, and whether new ones are pet eyes.
     pub eye: usize,
     pub eye_pet: bool,
+    /// Remove tool: Visualize Spots (high-pass black/white view) and its threshold 0..100.
+    pub visualize_spots: bool,
+    pub spots_threshold: f32,
     /// Transient toast text and its expiry (seconds of app time).
     #[serde(skip)]
     pub toast: Option<(String, f64)>,
@@ -186,6 +189,8 @@ impl Default for UiState {
             point_color_visualize: false,
             eye: 0,
             eye_pet: false,
+            visualize_spots: false,
+            spots_threshold: 50.0,
             toast: None,
             status: String::new(),
             dialog: None,

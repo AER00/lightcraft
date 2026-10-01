@@ -217,6 +217,28 @@ fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if let Some(v) = out.value {
         app.ui.remove_size = (v / 1000.0) as f32;
     }
+    // Visualize Spots (A): a black/white high-pass view that makes dust and specks stand out
+    padded(ui, |ui| {
+        let mut v = app.ui.visualize_spots;
+        if ui.checkbox(&mut v, "Visualize Spots (A)").changed() {
+            app.ui.visualize_spots = v;
+        }
+    });
+    let spec = lightcraft_develop::ControlSpec {
+        id: "ui.spotsThreshold",
+        label: "Threshold",
+        section: lightcraft_develop::Section::Detail,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: lightcraft_develop::Track::Plain,
+    };
+    let out = slider(ui, &spec, app.ui.spots_threshold as f64, app.ui.visualize_spots, None);
+    if let Some(v) = out.value {
+        app.ui.spots_threshold = v as f32;
+    }
     padded(ui, |ui| {
         if !d.spots.is_empty() && text_button(ui, "removeClear", "Delete all spots", false).clicked() {
             for i in (0..d.spots.len()).rev() {

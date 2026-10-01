@@ -402,6 +402,18 @@ fn overlays_match() {
     };
     let req = RenderRequest { overlay: lightcraft_pipeline::Overlay::PointColorRange(0), ..RenderRequest::fit(640, 640) };
     check("point color range overlay", &src, &raw, &s, &req);
+    // Visualize Spots is a binary threshold of a high-pass: a 1-LSB difference near the threshold
+    // flips a pixel, so compare the share of differing pixels instead of LSBs.
+    let s = DevelopSettings::default();
+    for t in [20u8, 50, 90] {
+        let req = RenderRequest { overlay: lightcraft_pipeline::Overlay::Spots(t), ..RenderRequest::fit(640, 640) };
+        let cpu = render(&src, &raw, &s, &req).image;
+        let gpu = lightcraft_gpu::render(&src, &raw, &s, &req, None).expect("gpu").image;
+        let differ = cpu.data.iter().zip(&gpu.data).filter(|(a, b)| a != b).count() as f64 / cpu.data.len() as f64;
+        let white = cpu.data.iter().filter(|p| p[0] == 255).count() as f64 / cpu.data.len() as f64;
+        eprintln!("visualize spots t={t:<3}          white {:.3}%  differing {:.4}%", white * 100.0, differ * 100.0);
+        assert!(differ < 0.002, "spots t={t}: {differ}");
+    }
 }
 
 #[test]
