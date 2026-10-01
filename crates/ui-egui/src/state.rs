@@ -134,6 +134,8 @@ pub struct AppSettings {
     pub gpu: bool,
     /// Largest long edge (pixels) the loupe renders at.
     pub preview_edge: u32,
+    /// Memory the caches may hold together, in MB (0 = automatic; `app.memoryBudget`).
+    pub memory_mb: u32,
     /// Filmstrip: file names above the thumbnails.
     pub film_names: bool,
     /// Filmstrip: rating / flag / edited badges on the thumbnails.
@@ -150,6 +152,7 @@ impl Default for AppSettings {
             confirm_delete: false,
             gpu: true,
             preview_edge: 2560,
+            memory_mb: 0,
             film_names: true,
             film_badges: true,
             grid_badges: GridBadges::Auto,

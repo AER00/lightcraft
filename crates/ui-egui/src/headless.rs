@@ -404,6 +404,13 @@ mod tests {
         assert_eq!(h.app.session.cache_mb, 512);
         h.request("ui.clickWidget", json!({"id": "button:settingsPreview-2"}), t);
         assert_eq!(h.app.ui.settings.preview_edge, 3840);
+        h.request("ui.clickWidget", json!({"id": "button:settingsMemory-2"}), t);
+        assert_eq!(h.app.ui.settings.memory_mb, 1024);
+        h.step();
+        assert_eq!(lightcraft_engine::memory::budget(), 1024 << 20, "applied through app.memoryBudget");
+        h.request("ui.clickWidget", json!({"id": "button:settingsMemory-0"}), t);
+        h.step();
+        assert_eq!(lightcraft_engine::memory::budget(), lightcraft_engine::memory::default_budget(), "back to automatic");
         // Import: per-camera defaults
         h.request("ui.clickWidget", json!({"id": "button:settingsTab-import"}), t);
         h.request("ui.clickWidget", json!({"id": "check:settings.perCamera"}), t);

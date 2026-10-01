@@ -102,6 +102,8 @@ pub struct LightcraftApp {
     pub window_is_fullscreen: bool,
     /// The GPU preference last applied (`app.gpu`), to apply Settings changes once.
     gpu_applied: Option<bool>,
+    /// The memory budget setting last applied (MB, 0 = automatic).
+    memory_applied: Option<u32>,
 }
 
 impl LightcraftApp {
@@ -134,6 +136,7 @@ impl LightcraftApp {
             merge: merge::MergeState::default(),
             window_is_fullscreen: false,
             gpu_applied: None,
+            memory_applied: None,
         }
     }
 
@@ -334,6 +337,13 @@ impl LightcraftApp {
             self.gpu_applied = Some(self.ui.settings.gpu);
             let _ = self.session.execute("app.gpu", &serde_json::json!({"enabled": self.ui.settings.gpu}));
         }
+        let mb = self.ui.settings.memory_mb;
+        // automatic at startup: leave the engine's default alone
+        if self.memory_applied != Some(mb) && (mb > 0 || self.memory_applied.is_some()) {
+            let mb = if mb == 0 { (lightcraft_engine::memory::default_budget() >> 20) as u32 } else { mb };
+            let _ = self.session.execute("app.memoryBudget", &serde_json::json!({"mb": mb}));
+        }
+        self.memory_applied = Some(mb);
         if let Some(fs) = ctx.input(|i| i.viewport().fullscreen) {
             self.window_is_fullscreen = fs;
         }

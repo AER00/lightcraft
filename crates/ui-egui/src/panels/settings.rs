@@ -264,6 +264,11 @@ fn performance_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         choices(ui, "settingsPreview", &opts, &mut app.ui.settings.preview_edge);
     });
     hint(ui, t, "Largest long edge the Detail view renders at; larger is sharper on big displays but slower.");
+    row(ui, t, "Memory for caches", |ui| {
+        let auto = format!("Automatic ({} MB)", lightcraft_engine::memory::default_budget() >> 20);
+        let opts = [(0u32, auto.as_str()), (512, "512 MB"), (1024, "1 GB"), (2048, "2 GB"), (4096, "4 GB")];
+        choices(ui, "settingsMemory", &opts, &mut app.ui.settings.memory_mb);
+    });
     heading(ui, t, "Thumbnail cache");
     let cur = (app.session.cache_bytes() >> 20) as u32;
     row(ui, t, "Size limit", |ui| {

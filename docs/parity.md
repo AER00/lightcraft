@@ -468,7 +468,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-PREF-LOCALSTORAGE | Storage & cache | P1 | ✅ | `cmd:library.preferences`, `cmd:library.clearPreviews`, `cmd:library.compact` | thumbnail cache size + clear in Settings → Performance; library location + Open Library… in General |
 | LR-PREF-ACCOUNT | Account | OOS | 🚫 | | |
 | LR-PREF-INTERFACE | Interface options | P1 | ✅ | `cmd:app.settings` | filmstrip names/badges, grid badges (auto/always/never), square-grid names, navigator, info overlay |
-| LR-PREF-PERFORMANCE | GPU / performance | P1 | ✅ | `cmd:app.gpu`, `cmd:app.settings` | GPU on/off, preview size (1600–5120 px), cache size in Settings |
+| LR-PREF-PERFORMANCE | GPU / performance | P1 | ✅ | `cmd:app.gpu`, `cmd:app.memoryBudget`, `cmd:app.settings` | GPU on/off, preview size (1600–5120 px), memory budget, thumbnail cache size in Settings |
 | LR-PREF-PEOPLE | Face recognition | P2 | ⬜ | | |
 | LR-PREF-WATERMARK | Watermark settings | P1 | 🟡 | `crates/ui-egui/src/panels/dialogs.rs` | per export in the dialog; not saved as a preference |
 | LR-PREF-SHORTCUTS | Shortcut customisation | — | 🚫 | | not customisable in the reference app either; a keymap editor would be an extra |
