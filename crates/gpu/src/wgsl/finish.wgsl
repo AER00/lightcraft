@@ -117,6 +117,28 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
     return oklab_inv(lab);
 }
 
+// `colorops::calibrate`: primaries matrix, then the shadows tint (luminance kept).
+fn calibrate(c0: vec3<f32>) -> vec3<f32> {
+    var c = c0;
+    if (pu(F_CALIB) != 0u) {
+        let m = array<vec3<f32>, 3>(
+            vec3<f32>(pf(F_CALIB_M), pf(F_CALIB_M + 1u), pf(F_CALIB_M + 2u)),
+            vec3<f32>(pf(F_CALIB_M + 3u), pf(F_CALIB_M + 4u), pf(F_CALIB_M + 5u)),
+            vec3<f32>(pf(F_CALIB_M + 6u), pf(F_CALIB_M + 7u), pf(F_CALIB_M + 8u)),
+        );
+        c = max(mul3(m, c), vec3<f32>(0.0));
+    }
+    let st = pf(F_SHADOW_TINT);
+    if (st != 0.0) {
+        let y0 = lum2020(c);
+        let w = 1.0 - sstep(-5.0, -0.5, log2(max(y0, 1e-7) / 0.18));
+        c.y *= max(1.0 - SHADOW_TINT_K * st * w, 0.0);
+        let y1 = max(lum2020(c), 1e-9);
+        c = c * y0 / y1;
+    }
+    return c;
+}
+
 fn ghash(i: i32, j: i32, seed: u32) -> f32 {
     var v = (bitcast<u32>(i) * GRAIN_H0) ^ (bitcast<u32>(j) * GRAIN_H1) ^ (seed * GRAIN_H2);
     v ^= v >> 13u;
@@ -261,6 +283,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     if (delta != 0.0) {
         c = c * exp2(delta);
+    }
+
+    // --- calibration (scene linear, before the tone map)
+    if (pu(F_CALIB) != 0u || pf(F_SHADOW_TINT) != 0.0) {
+        c = calibrate(c);
     }
 
     // --- tone map on luminance, highlight desaturation

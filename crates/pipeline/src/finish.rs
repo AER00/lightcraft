@@ -145,6 +145,9 @@ pub fn mask_terms(j: &LocalAdjustments) -> [f32; MASK_TERMS] {
 pub struct FinishParams {
     pub tone: ToneMap,
     pub ops: ColorOps,
+    /// Calibration: primaries matrix (row-major, linear Rec.2020) and shadows tint (−1..1).
+    pub calib: Option<[[f32; 3]; 3]>,
+    pub shadow_tint: f32,
     /// Tone curves (parametric ∘ point, per channel) on encoded values, 1024 entries each.
     pub curves: Option<[Lut1; 3]>,
     pub vig: Option<Vig>,
@@ -187,7 +190,10 @@ impl FinishParams {
             let cell = (0.0006 + (s.grain.size / 100.0) as f32 * 0.0024) * px_per_long as f32;
             ((s.grain.amount / 100.0) as f32 * 0.13, cell.max(0.6), (s.grain.roughness / 100.0) as f32, s.grain.seed)
         });
+        let calibration = s.section_enabled("calibration");
         FinishParams {
+            calib: if calibration { crate::colorops::calibration_matrix(&s.calibration) } else { None },
+            shadow_tint: if calibration { (s.calibration.shadows_tint / 100.0) as f32 } else { 0.0 },
             tone: if info.raw {
                 ToneMap::new(s.light.contrast, s.light.whites, s.light.blacks)
             } else {
@@ -328,6 +334,11 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
             if delta != 0.0 {
                 let g = delta.exp2();
                 c = c.map(|v| v * g);
+            }
+
+            // --- calibration (scene linear, before the tone map)
+            if fp.calib.is_some() || fp.shadow_tint != 0.0 {
+                c = crate::colorops::calibrate(c, fp.calib.as_ref(), fp.shadow_tint);
             }
 
             // --- tone map on luminance, highlight desaturation

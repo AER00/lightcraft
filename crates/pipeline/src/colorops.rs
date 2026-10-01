@@ -1,12 +1,12 @@
 //! Colour tools in OkLCh on display-linear Rec.2020 values: vibrance, saturation, the 8-band colour
-//! mixer, B&W mix, and 3-way colour grading.
+//! mixer, B&W mix, and 3-way colour grading; plus the camera-calibration matrix (scene linear).
 
 use std::f32::consts::{PI, TAU};
 use std::sync::OnceLock;
 
 use lightcraft_color::perceptual::{hsv_to_rgb, lab_to_lch, lch_to_lab, oklab_from_2020, oklab_to_2020};
-use lightcraft_color::{REC2020, SRGB};
-use lightcraft_develop::{DevelopSettings, MIXER_HUES};
+use lightcraft_color::{Mat3, REC2020, SRGB};
+use lightcraft_develop::{Calibration, DevelopSettings, MIXER_HUES};
 
 /// OkLCh hue angle (radians) of a pure sRGB colour with HSV hue `deg`.
 pub fn oklch_hue_of_srgb_hue(deg: f64) -> f32 {
@@ -158,6 +158,57 @@ impl ColorOps {
     }
 }
 
+/// Hue rotation (OkLCh radians) of a calibration primary at ±100.
+pub const CALIB_HUE: f32 = 0.5;
+/// Chroma scale of a calibration primary at ±100 (`1 ± CALIB_SAT`).
+pub const CALIB_SAT: f32 = 0.6;
+
+/// The calibration panel's primaries as a white-preserving 3×3 matrix on linear Rec.2020 (row-major):
+/// each primary is rotated in OkLCh hue and scaled in chroma at constant OkLab lightness, then the
+/// columns are rescaled so that neutral (1, 1, 1) maps to itself. `None` when neutral.
+pub fn calibration_matrix(c: &Calibration) -> Option<[[f32; 3]; 3]> {
+    let prim = c.primaries();
+    if prim.iter().all(|(h, s)| *h == 0.0 && *s == 0.0) {
+        return None;
+    }
+    let mut p = [[0.0f64; 3]; 3];
+    for (i, (hue, sat)) in prim.iter().enumerate() {
+        let mut e = [0.0f32; 3];
+        e[i] = 1.0;
+        let [l, ch, h] = lab_to_lch(oklab_from_2020(e));
+        let h2 = h + (hue.clamp(-100.0, 100.0) / 100.0) as f32 * CALIB_HUE;
+        let c2 = ch * (1.0 + (sat.clamp(-100.0, 100.0) / 100.0) as f32 * CALIB_SAT);
+        let q = oklab_to_2020(lch_to_lab([l, c2, h2]));
+        for (r, row) in p.iter_mut().enumerate() {
+            row[i] = q[r] as f64;
+        }
+    }
+    let m = Mat3(p);
+    let k = m.inverse()?.apply([1.0, 1.0, 1.0]);
+    Some(std::array::from_fn(|r| std::array::from_fn(|col| (p[r][col] * k[col]) as f32)))
+}
+
+/// Shadows-tint strength at ±100: the green channel's relative change in deep shadows.
+pub const SHADOW_TINT: f32 = 0.3;
+
+/// Calibration in scene-linear light (before tone mapping): the primaries matrix, then the shadows
+/// tint (green ↔ magenta, weighted towards dark tones, luminance kept).
+#[inline]
+pub fn calibrate(c: [f32; 3], m: Option<&[[f32; 3]; 3]>, shadow_tint: f32) -> [f32; 3] {
+    let mut c = c;
+    if let Some(m) = m {
+        c = std::array::from_fn(|r| (m[r][0] * c[0] + m[r][1] * c[1] + m[r][2] * c[2]).max(0.0));
+    }
+    if shadow_tint != 0.0 {
+        let y0 = lightcraft_color::luminance_2020(c);
+        let w = 1.0 - smooth(-5.0, -0.5, (y0.max(1e-7) / 0.18).log2());
+        c[1] *= (1.0 - SHADOW_TINT * shadow_tint * w).max(0.0);
+        let y1 = lightcraft_color::luminance_2020(c).max(1e-9);
+        c = c.map(|v| v * y0 / y1);
+    }
+    c
+}
+
 #[inline]
 fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
@@ -217,6 +268,36 @@ mod tests {
         let cr = lab_to_lch(oklab_from_2020(ops.apply(red, 0.0, 0.0)))[1];
         assert!(cb < 0.02, "{cb}");
         assert!((cr - cr0).abs() < 0.01);
+    }
+
+    #[test]
+    fn calibration_keeps_white_and_moves_primaries() {
+        assert!(calibration_matrix(&Calibration::default()).is_none());
+        let cal = Calibration { red_hue: 60.0, blue_sat: -50.0, ..Default::default() };
+        let m = calibration_matrix(&cal).unwrap();
+        let grey = calibrate([0.3, 0.3, 0.3], Some(&m), 0.0);
+        assert!(grey.iter().all(|v| (v - 0.3).abs() < 1e-4), "{grey:?}");
+        // red rotates in hue, blue loses chroma
+        let red = [0.4, 0.05, 0.03];
+        let h0 = lab_to_lch(oklab_from_2020(red))[2];
+        let h1 = lab_to_lch(oklab_from_2020(calibrate(red, Some(&m), 0.0)))[2];
+        assert!(h1 - h0 > 0.05, "{h0} -> {h1}");
+        let blue = [0.03, 0.05, 0.4];
+        let c0 = lab_to_lch(oklab_from_2020(blue))[1];
+        let c1 = lab_to_lch(oklab_from_2020(calibrate(blue, Some(&m), 0.0)))[1];
+        assert!(c1 < c0 * 0.97, "{c0} -> {c1}");
+    }
+
+    #[test]
+    fn shadow_tint_targets_shadows() {
+        let dark = calibrate([0.01, 0.01, 0.01], None, 1.0);
+        let bright = calibrate([0.8, 0.8, 0.8], None, 1.0);
+        assert!(dark[1] < dark[0] * 0.85, "magenta shadows: {dark:?}");
+        assert!((bright[1] - bright[0]).abs() < 1e-3, "{bright:?}");
+        let y = |c: [f32; 3]| lightcraft_color::luminance_2020(c);
+        assert!((y(dark) - 0.01).abs() < 1e-5);
+        let green = calibrate([0.01, 0.01, 0.01], None, -1.0);
+        assert!(green[1] > green[0]);
     }
 
     #[test]

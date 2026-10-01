@@ -261,6 +261,15 @@ pub fn to_partial(props: &Props, raw: Option<bool>) -> Value {
     n(o, "DefringeGreenHueLo", "optics.defringe_green_hue_lo");
     n(o, "DefringeGreenHueHi", "optics.defringe_green_hue_hi");
 
+    // ---- Calibration
+    n(o, "ShadowTint", "calibration.shadows_tint");
+    n(o, "RedHue", "calibration.red_hue");
+    n(o, "RedSaturation", "calibration.red_sat");
+    n(o, "GreenHue", "calibration.green_hue");
+    n(o, "GreenSaturation", "calibration.green_sat");
+    n(o, "BlueHue", "calibration.blue_hue");
+    n(o, "BlueSaturation", "calibration.blue_sat");
+
     // ---- Geometry
     n(o, "PerspectiveVertical", "geometry.vertical");
     n(o, "PerspectiveHorizontal", "geometry.horizontal");
@@ -337,6 +346,8 @@ mod tests {
     crs:LuminanceSmoothing="18" crs:ColorNoiseReduction="25" crs:PostCropVignetteAmount="-21"
     crs:PostCropVignetteStyle="2" crs:GrainAmount="15" crs:GrainSize="30" crs:GrainFrequency="60"
     crs:PerspectiveUpright="2" crs:PerspectiveVertical="-10" crs:AutoLateralCA="1" crs:ConvertToGrayscale="False"
+    crs:ShadowTint="-7" crs:RedHue="+12" crs:RedSaturation="+20" crs:GreenHue="-5" crs:GreenSaturation="+3"
+    crs:BlueHue="-15" crs:BlueSaturation="+25"
     crs:HasCrop="True" crs:CropTop="0.1" crs:CropLeft="0.05" crs:CropBottom="0.9" crs:CropRight="0.8" crs:CropAngle="1.5">
    <crs:ToneCurvePV2012>
     <rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>64, 52</rdf:li><rdf:li>192, 205</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq>
@@ -384,6 +395,11 @@ mod tests {
         assert_eq!(s.geometry.vertical, -10.0);
         assert!(s.optics.remove_ca);
         assert_eq!(s.treatment, lightcraft_develop::Treatment::Color);
+        let cal = s.calibration;
+        assert_eq!(
+            (cal.shadows_tint, cal.red_hue, cal.red_sat, cal.green_hue, cal.green_sat, cal.blue_hue, cal.blue_sat),
+            (-7.0, 12.0, 20.0, -5.0, 3.0, -15.0, 25.0)
+        );
         let c = s.crop.geometry;
         assert_eq!((c.rect.x0, c.rect.y0, c.rect.x1, c.rect.y1, c.angle), (0.05, 0.1, 0.8, 0.9, 1.5));
     }

@@ -32,6 +32,8 @@ pub struct DevelopSettings {
     pub red_eye: Vec<RedEye>,
     pub lens_blur: LensBlur,
     pub enhance: Enhance,
+    /// Camera calibration: shadows tint and primary hue/saturation (applied before tone mapping).
+    pub calibration: Calibration,
     /// Section on/off toggles (the "eye" buttons on panel headers): section id → enabled.
     pub disabled_sections: Vec<String>,
 }
@@ -62,6 +64,7 @@ impl Default for DevelopSettings {
             red_eye: Vec::new(),
             lens_blur: LensBlur::default(),
             enhance: Enhance::default(),
+            calibration: Calibration::default(),
             disabled_sections: Vec::new(),
         }
     }
@@ -316,6 +319,31 @@ impl Default for ColorGrading {
 impl ColorGrading {
     pub fn is_neutral(&self) -> bool {
         [self.shadows, self.midtones, self.highlights, self.global].iter().all(|w| w.sat == 0.0 && w.lum == 0.0)
+    }
+}
+
+/// Camera calibration (Lightroom Classic's Calibration panel): a green/magenta tint of the shadows,
+/// and a hue rotation / saturation scale of each working-space primary (−100..100), i.e. a
+/// white-preserving 3×3 matrix applied in scene-linear light before tone mapping.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Calibration {
+    pub shadows_tint: f64,
+    pub red_hue: f64,
+    pub red_sat: f64,
+    pub green_hue: f64,
+    pub green_sat: f64,
+    pub blue_hue: f64,
+    pub blue_sat: f64,
+}
+
+impl Calibration {
+    /// (hue, saturation) of the red, green and blue primaries.
+    pub fn primaries(&self) -> [(f64, f64); 3] {
+        [(self.red_hue, self.red_sat), (self.green_hue, self.green_sat), (self.blue_hue, self.blue_sat)]
+    }
+    pub fn is_neutral(&self) -> bool {
+        *self == Calibration::default()
     }
 }
 

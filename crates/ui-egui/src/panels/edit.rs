@@ -261,6 +261,17 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
         ui.add_space(8.0);
     });
+    // Lightroom Classic's Calibration panel (the cloud app hides it): last, like there.
+    section(app, ui, &d, "calibration", "Calibration", |app, ui, d| {
+        sub_title(ui, "Shadows");
+        control(app, ui, d, "calibration.shadowsTint", true);
+        for (title, k) in [("Red Primary", "red"), ("Green Primary", "green"), ("Blue Primary", "blue")] {
+            sub_title(ui, title);
+            control(app, ui, d, &format!("calibration.{k}Hue"), true);
+            control(app, ui, d, &format!("calibration.{k}Sat"), true);
+        }
+        ui.add_space(8.0);
+    });
     ui.add_space(40.0);
 }
 

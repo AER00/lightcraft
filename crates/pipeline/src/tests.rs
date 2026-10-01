@@ -230,3 +230,32 @@ fn exposure_after_spatial_filters_equals_exposing_the_source() {
     let d = max_diff(&a, &b);
     assert!(d <= 2, "max difference {d}");
 }
+
+#[test]
+fn calibration_shifts_colours_but_keeps_greys() {
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let req = RenderRequest::fit(64, 8);
+    // a grey ramp is untouched by the primaries
+    let grey = Rgb32f::from_fn(64, 8, |x, _| [0.002 * 1.12f32.powi(x as i32); 3]);
+    let mut s = DevelopSettings::default();
+    s.calibration.red_hue = 80.0;
+    s.calibration.green_sat = -60.0;
+    let a = render(&grey, &info, &DevelopSettings::default(), &req).image;
+    let b = render(&grey, &info, &s, &req).image;
+    assert!(max_diff(&a, &b) <= 1);
+    // a red patch rotates towards yellow (green rises relative to blue)
+    let red = Rgb32f::filled(16, 16, [0.3, 0.04, 0.03]);
+    let r0 = render(&red, &info, &DevelopSettings::default(), &RenderRequest::fit(16, 16)).image.data[0];
+    let r1 = render(&red, &info, &s, &RenderRequest::fit(16, 16)).image.data[0];
+    assert!(r1[1] as i32 - r1[2] as i32 > r0[1] as i32 - r0[2] as i32 + 5, "{r0:?} -> {r1:?}");
+    // shadows tint: magenta (+) lowers green in a dark grey
+    let dark = Rgb32f::filled(16, 16, [0.01, 0.01, 0.01]);
+    s = DevelopSettings::default();
+    s.calibration.shadows_tint = 100.0;
+    let d = render(&dark, &info, &s, &RenderRequest::fit(16, 16)).image.data[0];
+    assert!(d[1] + 3 < d[0], "{d:?}");
+    // the section toggle disables it
+    s.set_section_enabled("calibration", false);
+    let off = render(&dark, &info, &s, &RenderRequest::fit(16, 16)).image.data[0];
+    assert!(off[1].abs_diff(off[0]) <= 1, "{off:?}");
+}

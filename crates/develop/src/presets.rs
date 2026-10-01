@@ -32,10 +32,11 @@ pub enum SettingsGroup {
     Spots,
     RedEye,
     LensBlur,
+    Calibration,
 }
 
 impl SettingsGroup {
-    pub const ALL: [SettingsGroup; 19] = [
+    pub const ALL: [SettingsGroup; 20] = [
         SettingsGroup::Profile,
         SettingsGroup::Treatment,
         SettingsGroup::WhiteBalance,
@@ -55,6 +56,7 @@ impl SettingsGroup {
         SettingsGroup::Spots,
         SettingsGroup::RedEye,
         SettingsGroup::LensBlur,
+        SettingsGroup::Calibration,
     ];
 
     /// Groups included by default when copying (Lightroom excludes crop, masks and spots by default).
@@ -86,6 +88,7 @@ impl SettingsGroup {
             SettingsGroup::Spots => "Remove",
             SettingsGroup::RedEye => "Red Eye",
             SettingsGroup::LensBlur => "Lens Blur",
+            SettingsGroup::Calibration => "Calibration",
         }
     }
 
@@ -111,6 +114,7 @@ impl SettingsGroup {
             SettingsGroup::Spots => &["spots"],
             SettingsGroup::RedEye => &["red_eye"],
             SettingsGroup::LensBlur => &["lens_blur"],
+            SettingsGroup::Calibration => &["calibration"],
         }
     }
 }
