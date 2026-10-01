@@ -146,7 +146,7 @@ impl MediaCache {
             SourceLevel::Preview => {
                 self.previews.retain(|(p, _)| *p != id);
                 self.previews.push((id, img));
-                let cap = if self.preview_capacity == 0 { 10 } else { self.preview_capacity };
+                let cap = if self.preview_capacity == 0 { 4 } else { self.preview_capacity };
                 while self.previews.len() > cap {
                     self.previews.remove(0);
                 }
