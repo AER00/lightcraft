@@ -934,6 +934,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "egui_glow",
+ "glow",
  "glutin",
  "glutin-winit",
  "image",
@@ -2182,6 +2183,25 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "web-time",
+]
+
+[[package]]
+name = "lightcraft-web"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "js-sys",
+ "lightcraft-codecs",
+ "lightcraft-engine",
+ "lightcraft-raster",
+ "lightcraft-ui-egui",
+ "log",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

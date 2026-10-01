@@ -61,15 +61,7 @@ impl Default for Renderer {
 }
 
 fn now() -> f64 {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        0.0
-    }
+    crate::now_ms()
 }
 
 impl Renderer {
@@ -142,8 +134,9 @@ impl Renderer {
                 best.map(|b| g.remove(b))
             };
             if let Some((slot, _, job)) = job {
+                let t0 = now();
                 let r = job.run();
-                let _ = self.results_tx.send((slot, r, 0.0));
+                let _ = self.results_tx.send((slot, r, now() - t0));
             }
         }
         let mut changed = false;

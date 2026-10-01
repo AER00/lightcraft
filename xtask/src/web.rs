@@ -1,0 +1,163 @@
+//! `cargo xtask web`: build `apps/lightcraft-web` for wasm32 and bundle it with `wasm-bindgen`
+//! into `<target>/web/` (index.html + lightcraft_web.js + lightcraft_web_bg.wasm).
+//! `--serve [port]` then serves that folder with a tiny static HTTP server (std only).
+
+use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate::{cargo, metadata, root, run as step};
+
+const TARGET: &str = "wasm32-unknown-unknown";
+
+/// The `wasm-bindgen` version pinned in Cargo.lock (the CLI must match it exactly).
+fn locked_bindgen_version() -> Result<String, String> {
+    let lock = std::fs::read_to_string(root().join("Cargo.lock")).map_err(|e| format!("Cargo.lock: {e}"))?;
+    let mut lines = lock.lines();
+    while let Some(l) = lines.next() {
+        if l.trim() == "name = \"wasm-bindgen\""
+            && let Some(v) = lines.next().and_then(|v| v.trim().strip_prefix("version = \""))
+        {
+            return Ok(v.trim_end_matches('"').to_string());
+        }
+    }
+    Err("wasm-bindgen not found in Cargo.lock".into())
+}
+
+fn check_bindgen(want: &str) -> Result<(), String> {
+    let hint = format!("install it with:\n    cargo install wasm-bindgen-cli --version {want} --locked");
+    let out = Command::new("wasm-bindgen").arg("--version").output().map_err(|_| format!("`wasm-bindgen` CLI not found; {hint}"))?;
+    let have = String::from_utf8_lossy(&out.stdout);
+    let have = have.split_whitespace().nth(1).unwrap_or("?");
+    if have != want {
+        return Err(format!("wasm-bindgen CLI is {have} but Cargo.lock has {want}; {hint}"));
+    }
+    Ok(())
+}
+
+pub fn run(args: &[&str]) -> Result<(), String> {
+    let dev = args.contains(&"--dev");
+    let serve = args.iter().position(|a| *a == "--serve").map(|i| args.get(i + 1).and_then(|p| p.parse::<u16>().ok()).unwrap_or(8080));
+
+    let want = locked_bindgen_version()?;
+    check_bindgen(&want)?;
+    let meta = metadata()?;
+    let target_dir = PathBuf::from(meta["target_directory"].as_str().ok_or("cargo metadata: no target_directory")?);
+    let profile = if dev { "dev" } else { "web" };
+
+    let mut c = cargo();
+    c.args(["build", "-p", "lightcraft-web", "--lib", "--target", TARGET, "--profile", profile]);
+    step(c, &format!("cargo build -p lightcraft-web --target {TARGET} --profile {profile}"))?;
+
+    let wasm = target_dir.join(TARGET).join(if dev { "debug" } else { profile }).join("lightcraft_web.wasm");
+    let out = target_dir.join("web");
+    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let mut b = Command::new("wasm-bindgen");
+    b.arg(&wasm).args(["--target", "web", "--no-typescript", "--out-name", "lightcraft_web", "--out-dir"]).arg(&out);
+    if dev {
+        b.arg("--debug");
+    }
+    step(b, &format!("wasm-bindgen {} → {}", wasm.display(), out.display()))?;
+
+    // optional size pass when binaryen is installed
+    let bg = out.join("lightcraft_web_bg.wasm");
+    if !dev && Command::new("wasm-opt").arg("--version").output().is_ok() {
+        let mut o = Command::new("wasm-opt");
+        o.args(["-O2", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-sign-ext", "--enable-mutable-globals"])
+            .arg(&bg)
+            .arg("-o")
+            .arg(&bg);
+        if step(o, "wasm-opt -O2").is_err() {
+            eprintln!("(wasm-opt failed; keeping the unoptimized module)");
+        }
+    }
+    let index = root().join("apps/lightcraft-web/index.html");
+    std::fs::copy(&index, out.join("index.html")).map_err(|e| format!("copy index.html: {e}"))?;
+    let size = std::fs::metadata(&bg).map(|m| m.len()).unwrap_or(0);
+    println!("\nweb build ready: {} ({:.1} MB wasm)", out.display(), size as f64 / 1e6);
+
+    match serve {
+        Some(port) => serve_dir(&out, port),
+        None => {
+            println!("serve it with `cargo xtask web --serve` (or any static HTTP server) and open http://127.0.0.1:8080/");
+            Ok(())
+        }
+    }
+}
+
+fn mime(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "wasm" => "application/wasm",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Serve `dir` on 127.0.0.1:`port` (GET/HEAD only, no directory listing). Blocks.
+fn serve_dir(dir: &Path, port: u16) -> Result<(), String> {
+    let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|e| format!("bind 127.0.0.1:{port}: {e}"))?;
+    println!("serving {} at http://127.0.0.1:{port}/  (Ctrl+C to stop)", dir.display());
+    for stream in listener.incoming().flatten() {
+        if let Err(e) = handle(stream, dir) {
+            eprintln!("http: {e}");
+        }
+    }
+    Ok(())
+}
+
+fn handle(mut stream: TcpStream, dir: &Path) -> std::io::Result<()> {
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    // drain headers
+    let mut h = String::new();
+    while reader.read_line(&mut h)? > 2 {
+        h.clear();
+    }
+    let mut parts = line.split_whitespace();
+    let method = parts.next().unwrap_or("");
+    let target = parts.next().unwrap_or("/");
+    let path = target.split(['?', '#']).next().unwrap_or("/");
+    let rel = path.trim_start_matches('/');
+    let rel = if rel.is_empty() { "index.html" } else { rel };
+    let file = dir.join(rel);
+    let safe = !rel.split('/').any(|c| c == ".." || c.contains('\\'));
+    let (status, body, ctype) = match (method, safe, std::fs::read(&file)) {
+        ("GET" | "HEAD", true, Ok(b)) => ("200 OK", b, mime(&file)),
+        ("GET" | "HEAD", _, _) => ("404 Not Found", b"not found".to_vec(), "text/plain"),
+        _ => ("405 Method Not Allowed", Vec::new(), "text/plain"),
+    };
+    write!(
+        stream,
+        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
+        body.len()
+    )?;
+    if method != "HEAD" {
+        stream.write_all(&body)?;
+    }
+    stream.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bindgen_version_is_locked() {
+        let v = locked_bindgen_version().unwrap();
+        assert!(v.starts_with("0.2."), "{v}");
+    }
+
+    #[test]
+    fn wasm_mime() {
+        assert_eq!(mime(Path::new("a/lightcraft_web_bg.wasm")), "application/wasm");
+        assert_eq!(mime(Path::new("index.html")), "text/html; charset=utf-8");
+    }
+}

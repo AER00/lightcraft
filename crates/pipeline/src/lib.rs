@@ -98,14 +98,14 @@ pub fn output_size(src_w: usize, src_h: usize, s: &DevelopSettings, req: &Render
 /// Render `src` with settings `s`.
 pub fn render(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest) -> Rendered {
     let prof = std::env::var_os("LIGHTCRAFT_PROFILE").is_some();
-    let t0 = std::time::Instant::now();
-    let lap = |what: &str, t: &mut std::time::Instant| {
-        if prof {
+    // `Instant::now()` panics on wasm32-unknown-unknown: only read the clock when profiling.
+    let lap = |what: &str, t: &mut Option<std::time::Instant>| {
+        if let Some(t) = t {
             eprintln!("  {what}: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
             *t = std::time::Instant::now();
         }
     };
-    let mut t = t0;
+    let mut t = prof.then(std::time::Instant::now);
     let s = &*profiles::effective(s);
     let frame = geometry::Frame::new(src.width, src.height, s, req.apply_crop);
     let (w, h) = frame.fit(req.max_w, req.max_h);

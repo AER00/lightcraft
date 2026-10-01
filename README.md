@@ -226,7 +226,8 @@ LightCraft is young and moving fast — see the [roadmap](ROADMAP.md) for estima
 | Remove / Heal / Clone spots (auto source) | ✅ · content-aware fill (PatchMatch), Red Eye 🚧 |
 | Export: JPEG / PNG / TIFF / WebP / AVIF, sizing, file-size limit, output sharpening, naming, batch | ✅ · metadata policy, watermark, DNG ⬜ |
 | MCP server, CLI, control channel | ✅ |
-| Optics, Geometry/Upright, GPU pipeline, web build, persistent library | 🚧 |
+| Optics, Geometry/Upright, GPU pipeline, persistent library | 🚧 |
+| Web build (same UI in the browser via WASM; in-memory imports, export downloads) | ✅ · persistence, workers 🚧 |
 
 <br>
 
@@ -237,9 +238,13 @@ git clone https://github.com/storytold/lightcraft && cd lightcraft
 cargo run --release -p lightcraft                       # opens with a procedurally generated demo library
 cargo run --release -p lightcraft -- ~/Pictures/trip    # or point it at your photos (folders are scanned)
 cargo run --release -p lightcraft -- --control 7980     # with the automation channel
+cargo xtask web --serve                                 # the same app in the browser: http://127.0.0.1:8080/
 cargo run --release -p lightcraft-cli -- render photo.jpg -o out.jpg --set light.exposure=0.5
 cargo xtask ci                                          # fmt, clippy, tests, layering, wasm checks
 ```
+
+The web build needs the `wasm32-unknown-unknown` target and the matching `wasm-bindgen` CLI
+(`cargo xtask web` prints the exact install command); see [docs/web.md](docs/web.md).
 
 Keyboard: <kbd>G</kbd> grid · <kbd>D</kbd> detail · <kbd>E</kbd> edit · <kbd>C</kbd> crop · <kbd>M</kbd> masking ·
 <kbd>Shift</kbd>+<kbd>P</kbd> presets · <kbd>\\</kbd> original · <kbd>Y</kbd> before/after · <kbd>Z</kbd> zoom ·
