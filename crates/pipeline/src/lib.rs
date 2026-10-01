@@ -348,7 +348,7 @@ pub fn before_settings(s: &DevelopSettings) -> DevelopSettings {
 }
 
 pub(crate) fn is_bw(s: &DevelopSettings) -> bool {
-    s.treatment == Treatment::Bw || s.profile.id == "lc.mono"
+    s.treatment == Treatment::Bw || s.profile.id == "lc.mono" || s.profile.id.starts_with("lc.bw.")
 }
 
 /// `LIGHTCRAFT_PROFILE` is set: print per-stage timings to stderr.

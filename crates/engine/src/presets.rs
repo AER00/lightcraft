@@ -263,7 +263,39 @@ pub const PROFILES: &[ProfileInfo] = &[
     ProfileInfo { id: "lc.landscape", name: "Landscape", group: "Basic" },
     ProfileInfo { id: "lc.portrait", name: "Portrait", group: "Basic" },
     ProfileInfo { id: "lc.mono", name: "Monochrome", group: "Basic" },
+    ProfileInfo { id: "lc.film.warm-print", name: "Warm Print", group: "Film" },
+    ProfileInfo { id: "lc.film.cool-fade", name: "Cool Fade", group: "Film" },
+    ProfileInfo { id: "lc.film.golden-hour", name: "Golden Hour", group: "Film" },
+    ProfileInfo { id: "lc.film.faded-slide", name: "Faded Slide", group: "Film" },
+    ProfileInfo { id: "lc.cine.teal-amber", name: "Teal & Amber", group: "Cinematic" },
+    ProfileInfo { id: "lc.cine.night-blue", name: "Night Blue", group: "Cinematic" },
+    ProfileInfo { id: "lc.cine.desert-heat", name: "Desert Heat", group: "Cinematic" },
+    ProfileInfo { id: "lc.cine.neon-dusk", name: "Neon Dusk", group: "Cinematic" },
+    ProfileInfo { id: "lc.muted.matte-soft", name: "Matte Soft", group: "Muted" },
+    ProfileInfo { id: "lc.muted.bleached", name: "Bleached", group: "Muted" },
+    ProfileInfo { id: "lc.muted.pastel-haze", name: "Pastel Haze", group: "Muted" },
+    ProfileInfo { id: "lc.muted.quiet-green", name: "Quiet Green", group: "Muted" },
+    ProfileInfo { id: "lc.bw.mono-rich", name: "Mono Rich", group: "B&W" },
+    ProfileInfo { id: "lc.bw.red-filter", name: "Mono Red Filter", group: "B&W" },
+    ProfileInfo { id: "lc.bw.soft", name: "Mono Soft", group: "B&W" },
+    ProfileInfo { id: "lc.bw.sepia", name: "Sepia Tone", group: "B&W" },
 ];
+
+/// Profile groups in menu/browser order.
+pub fn profile_groups() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for p in PROFILES {
+        if !out.contains(&p.group) {
+            out.push(p.group);
+        }
+    }
+    out
+}
+
+/// A profile by id.
+pub fn profile(id: &str) -> Option<&'static ProfileInfo> {
+    PROFILES.iter().find(|p| p.id == id)
+}
 
 #[cfg(test)]
 mod tests {
@@ -278,6 +310,35 @@ mod tests {
             let out = pr.apply(&base, 1.0);
             assert_ne!(out, base, "{} had no effect", pr.id);
         }
+    }
+
+    #[test]
+    fn every_profile_has_a_look_and_ids_are_unique() {
+        let looks = crate::pipeline::profiles::LOOK_IDS;
+        let mut ids = std::collections::HashSet::new();
+        for p in PROFILES {
+            assert!(ids.insert(p.id), "{}", p.id);
+            assert!(p.id == "lc.color" || looks.contains(&p.id), "{} has no look", p.id);
+        }
+        assert!(PROFILES.len() >= 22);
+        assert_eq!(profile_groups(), ["Basic", "Film", "Cinematic", "Muted", "B&W"]);
+    }
+
+    #[test]
+    fn creative_profiles_render_without_moving_the_sliders() {
+        let mut s = Session::with_demo();
+        let id = s.active().unwrap();
+        s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.4})).unwrap();
+        let before = s.develop_of(id).unwrap();
+        let plain = s.render_now(id, 96, 96).unwrap().image;
+        s.execute("develop.profile", &json!({"id": "lc.cine.teal-amber", "amount": 150})).unwrap();
+        let after = s.develop_of(id).unwrap();
+        assert_eq!((after.profile.id.as_str(), after.profile.amount), ("lc.cine.teal-amber", 150.0));
+        let mut same = (*after).clone();
+        same.profile = before.profile.clone();
+        assert_eq!(same, *before, "only the profile changed");
+        let looked = s.render_now(id, 96, 96).unwrap().image;
+        assert_ne!(plain.as_bytes(), looked.as_bytes());
     }
 
     #[test]

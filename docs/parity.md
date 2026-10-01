@@ -27,7 +27,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | D. Search & filter (FILT) | 2 | 7 | 4 | 0 | 2/4 (50%) | 0/4 (0%) |
 | E. Metadata (META) | 2 | 2 | 2 | 0 | 2/2 (100%) | 0/2 (0%) |
 | F. Edit panel — global adjustments (EDIT) | 36 | 2 | 10 | 1 | 28/28 (100%) | 8/14 (57%) |
-| G. Profiles (PROF) | 3 | 1 | 6 | 0 | 2/3 (67%) | 1/3 (33%) |
+| G. Profiles (PROF) | 4 | 1 | 5 | 0 | 2/3 (67%) | 1/3 (33%) |
 | H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
 | I. Remove / healing (REM) | 3 | 3 | 4 | 2 | 2/4 (50%) | 1/3 (33%) |
 | J. Red eye (EYE) | 0 | 0 | 2 | 0 | — | 0/1 (0%) |
@@ -48,7 +48,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 42 | 19 | 24 | 8 | 37/47 (79%) | 3/23 (13%) |
 | Z. Keyboard shortcuts (desktop) | 45 | 16 | 19 | 1 | 39/52 (75%) | 6/23 (26%) |
 | Lightroom Classic extras | 1 | 17 | 61 | 9 | — | 1/21 (5%) |
-| **Total** | 190 | 107 | 203 | 37 | 150/198 (76%) | 34/144 (24%) |
+| **Total** | 191 | 107 | 202 | 37 | 150/198 (76%) | 34/144 (24%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -297,7 +297,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-PROF-ADOBE | Standard raw looks (own equivalents) | P0 | ✅ | `crates/engine/src/presets.rs` (`PROFILES`), `crates/pipeline/src/profiles.rs` | six own looks: Color, Neutral, Vivid, Landscape, Portrait, Monochrome |
 | LR-PROF-ADAPTIVE | Adaptive profiles | P2 | ⬜ | | |
 | LR-PROF-CAMERA | Camera-matching looks | P2 | ⬜ | | |
-| LR-PROF-CREATIVE | Creative profiles (own) | P2 | ⬜ | | |
+| LR-PROF-CREATIVE | Creative profiles (own) | P2 | ✅ | `cmd:develop.profile`, `crates/pipeline/src/profiles.rs` | 16 own looks in Film / Cinematic / Muted / B&W (tone + point-curve fades, colour grading, mixer / B&W mix); scale with `ctl:profile.amount`; sliders untouched |
 | LR-PROF-LEGACY | Legacy profiles | P2 | ⬜ | | |
 | LR-PROF-NONRAW | Profiles for non-raw files | P0 | ✅ | `cmd:develop.profile` | same looks apply to JPEG/TIFF |
 | LR-PROF-AMOUNT | Profile amount | P1 | ✅ | `ctl:profile.amount` | |
