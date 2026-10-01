@@ -10,6 +10,8 @@
 //! lightcraft-cli controls [--json]
 //! ```
 
+mod alloc_release;
+
 use std::io::{BufReader, Write};
 use std::path::Path;
 use std::process::ExitCode;
@@ -62,7 +64,23 @@ USAGE:
   lightcraft-cli --version | --help
 ";
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 fn main() -> ExitCode {
+    // `--features dhat-heap`: count allocations; the profile is written when `_heap` drops
+    // (LIGHTCRAFT_DHAT_FILE, default dhat-heap.json).
+    #[cfg(feature = "dhat-heap")]
+    let _heap = {
+        let file = std::env::var("LIGHTCRAFT_DHAT_FILE").unwrap_or_else(|_| "dhat-heap.json".into());
+        lightcraft_engine::memory::set_heap_stats(|| {
+            let s = dhat::HeapStats::get();
+            lightcraft_engine::memory::HeapUsage { current: s.curr_bytes as u64, peak: s.max_bytes as u64 }
+        });
+        dhat::Profiler::builder().file_name(file).build()
+    };
+    alloc_release::install();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         Some("mcp") => mcp(&args[1..]),
@@ -374,7 +392,10 @@ fn snapshot(args: &[String]) -> Result<(), String> {
         None => Session::new().with_fs(),
     };
     if !files.is_empty() {
-        session.execute("library.import", &json!({"paths": expand_paths(&files)})).map_err(|e| e.to_string())?;
+        let ti = Instant::now();
+        let r = session.execute("library.import", &json!({"paths": expand_paths(&files)})).map_err(|e| e.to_string())?;
+        let n = r["imported"].as_array().map_or(0, Vec::len);
+        eprintln!("lightcraft-cli snapshot: imported {n} files in {:.0} ms", ti.elapsed().as_secs_f64() * 1e3);
     }
     let services = lightcraft_ui_egui::Services {
         write: Some(Box::new(|p: &str, b: &[u8]| {
@@ -438,6 +459,9 @@ fn snapshot(args: &[String]) -> Result<(), String> {
             };
             if let Some(o) = reply.as_object_mut() {
                 o.insert("id".into(), id);
+                // wall time of the request (incl. the frames it ran), and since the start
+                o.insert("ms".into(), json!((ts.elapsed().as_secs_f64() * 1e4).round() / 10.0));
+                o.insert("t".into(), json!((t0.elapsed().as_secs_f64() * 1e4).round() / 10.0));
             }
             writeln!(out, "{reply}").map_err(|e| e.to_string())?;
             if method == "ui.screenshot" {

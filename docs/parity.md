@@ -32,7 +32,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | I. Remove / healing (REM) | 3 | 3 | 4 | 2 | 2/4 (50%) | 1/3 (33%) |
 | J. Red eye (EYE) | 0 | 0 | 2 | 0 | — | 0/1 (0%) |
 | K. Masking (MASK) | 6 | 10 | 7 | 0 | 4/8 (50%) | 2/5 (40%) |
-| L. Presets (PRE) | 1 | 4 | 2 | 1 | 0/2 (0%) | 1/2 (50%) |
+| L. Presets (PRE) | 3 | 2 | 2 | 1 | 2/2 (100%) | 1/2 (50%) |
 | M. Versions & history (VER) | 3 | 1 | 1 | 0 | 1/1 (100%) | 2/3 (67%) |
 | N. Copy / paste / sync (SYNC) | 4 | 0 | 1 | 0 | 3/3 (100%) | 1/1 (100%) |
 | O. Merge (MERGE) | 3 | 0 | 1 | 0 | — | — |
@@ -44,11 +44,11 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 0 | 3 | 5 | 3 | 0/1 (0%) | 0/4 (0%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 10 | 2 | 5 | 1 | 7/8 (88%) | 3/5 (60%) |
+| X. Cross-cutting behaviours (BEHAV) | 10 | 3 | 4 | 1 | 7/8 (88%) | 3/5 (60%) |
 | Y. Menus | 46 | 18 | 21 | 8 | 37/47 (79%) | 7/23 (30%) |
 | Z. Keyboard shortcuts (desktop) | 46 | 16 | 18 | 1 | 39/52 (75%) | 7/23 (30%) |
 | Lightroom Classic extras | 4 | 19 | 56 | 9 | — | 3/21 (14%) |
-| **Total** | 211 | 102 | 187 | 37 | 153/198 (77%) | 49/144 (34%) |
+| **Total** | 213 | 101 | 186 | 37 | 155/198 (78%) | 49/144 (34%) |
 <!-- /parity:summary -->
 
 ## Top gaps

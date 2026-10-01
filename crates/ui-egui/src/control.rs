@@ -81,7 +81,17 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "loupe": app.loupe_shown.map(|(p, src)| json!({"photo": p.0, "source": src, "pending": app.renderer.is_pending(crate::render::Slot::Main)})),
         "hoverPreview": app.hover_preview.as_ref().map(|h| h.label.clone()),
         "status": app.ui.status,
+        "memory": memory(app),
     })
+}
+
+/// Bytes held by the engine's caches and the renderer's (`ui.inspect` → `memory`).
+pub fn memory(app: &LightcraftApp) -> Value {
+    let mut v = serde_json::to_value(app.session.memory_report()).unwrap_or_default();
+    if let (Some(o), Value::Object(r)) = (v.as_object_mut(), app.renderer.memory()) {
+        o.extend(r);
+    }
+    v
 }
 
 fn modifiers(p: &Value) -> egui::Modifiers {

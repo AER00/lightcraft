@@ -17,8 +17,8 @@
 
 use super::{black_from_columns, white_from_data};
 
-use crate::tiffraw::{Packing, read_image};
-use crate::{BlackLevel, Cfa, ColorData, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
+use crate::tiffraw::{Packing, read_image_in};
+use crate::{BlackLevel, Cfa, ColorData, Mode, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
 use lightcraft_geom::Orientation;
 use lightcraft_tiff::image::chunk_bytes;
 use lightcraft_tiff::{ByteOrder, Tiff, makernote, tags as t};
@@ -184,7 +184,7 @@ fn dark_trimmed(d: &[u16], w: usize, h: usize) -> Rect {
     Rect::new(left, 0, (right - left) & !1, h)
 }
 
-pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
+pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
     let info = ifd0.image()?;
@@ -196,6 +196,13 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
     let make = ifd0.string(t::MAKE).unwrap_or_default();
     let mn =
         tiff.exif().and_then(|e| e.get(t::MAKER_NOTE)).and_then(|e| makernote::parse_makernote(bytes, e.offset, e.count() as u64, tiff.order, &make));
+    let pair = |tag: u16| mn.as_ref().and_then(|m| m.ifd.u64s(tag)).filter(|v| v.len() == 2).map(|v| (v[0] as usize, v[1] as usize));
+    let tagged = match (pair(CROP_ORIGIN), pair(CROP_SIZE)) {
+        (Some((x, y)), Some((cw, ch))) if cw > 0 && ch > 0 && x + cw <= w && y + ch <= hgt => Some(Rect::new(x, y, cw, ch)),
+        _ => None,
+    };
+    // without crop tags the image area is found from the samples (dark borders)
+    let read = if tagged.is_some() { mode } else { Mode::Full };
     let data = match info.compression {
         65535 => {
             let mn = mn.as_ref().ok_or_else(|| RawError::Corrupt("compressed PEF without maker note".into()))?;
@@ -208,21 +215,20 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
             let src = chunk_bytes(bytes, &c)
                 .or_else(|| bytes.get(first.offset as usize..))
                 .ok_or_else(|| RawError::Corrupt("PEF data outside file".into()))?;
-            RawData::U16(decode_huffman(src, &huff, w, hgt, bits)?)
+            if read == Mode::Full { RawData::U16(decode_huffman(src, &huff, w, hgt, bits)?) } else { RawData::U16(Vec::new()) }
         }
         1 => {
             let strip: u64 = info.chunks(bytes.len() as u64).iter().map(|c| c.len).sum();
             let packing = if strip >= (w * hgt * 2) as u64 { Packing::Word16 } else { Packing::Msb };
-            read_image(bytes, &info, tiff.order, packing)?
+            read_image_in(read, bytes, &info, tiff.order, packing)?
         }
         c => return Err(RawError::Unsupported(format!("PEF compression {c}"))),
     };
     let RawData::U16(ref samples) = data else { return Err(RawError::Unsupported("float PEF".into())) };
 
-    let pair = |tag: u16| mn.as_ref().and_then(|m| m.ifd.u64s(tag)).filter(|v| v.len() == 2).map(|v| (v[0] as usize, v[1] as usize));
-    let active = match (pair(CROP_ORIGIN), pair(CROP_SIZE)) {
-        (Some((x, y)), Some((cw, ch))) if cw > 0 && ch > 0 && x + cw <= w && y + ch <= hgt => Rect::new(x, y, cw, ch),
-        _ => dark_trimmed(samples, w, hgt),
+    let active = match tagged {
+        Some(r) => r,
+        None => dark_trimmed(samples, w, hgt),
     };
     let cfa = match (ifd0.u64s(t::CFA_REPEAT_PATTERN_DIM).as_deref(), ifd0.bytes(t::CFA_PATTERN_EP)) {
         (Some([2, 2]), Some(p)) if p.len() == 4 && p.iter().all(|&c| c <= 2) => Cfa { width: 2, height: 2, pattern: p.to_vec() },
@@ -265,7 +271,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
         opcodes: OpcodeLists::default(),
         metadata,
     };
-    img.validate()?;
+    img.validate_for(mode)?;
     Ok(img)
 }
 
