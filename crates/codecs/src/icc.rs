@@ -146,7 +146,46 @@ pub fn write_matrix_trc(space: &RgbSpace, trc: &Trc) -> Vec<u8> {
     };
     p.description = Some(ProfileText::Localizable(vec![LocalizableString::new("en".into(), "US".into(), desc)]));
     p.copyright = Some(ProfileText::Localizable(vec![LocalizableString::new("en".into(), "US".into(), "No copyright, use freely".into())]));
-    p.encode().unwrap_or_default()
+    align_tags(&p.encode().unwrap_or_default())
+}
+
+/// Re-lay a profile's tag data on 4-byte boundaries (ICC.1 §7.3.1). The encoder packs tags back to
+/// back, so a tag of odd length (e.g. a `mluc` description with an odd number of characters)
+/// misaligns every following tag — which some readers (macOS ImageIO for PNG `iCCP`) reject.
+fn align_tags(b: &[u8]) -> Vec<u8> {
+    let be = |i: usize| b.get(i..i + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]) as usize);
+    let Some(n) = be(128) else { return b.to_vec() };
+    let table_end = 132 + 12 * n;
+    let tags: Option<Vec<(usize, usize)>> = (0..n).map(|t| Some((be(132 + 12 * t + 4)?, be(132 + 12 * t + 8)?))).collect();
+    let Some(tags) = tags.filter(|t| table_end <= b.len() && t.iter().all(|&(o, l)| o >= table_end && o + l <= b.len())) else {
+        return b.to_vec();
+    };
+    let mut out = b[..table_end].to_vec();
+    let mut placed: Vec<((usize, usize), usize)> = Vec::new();
+    for (t, &(off, len)) in tags.iter().enumerate() {
+        let new_off = match placed.iter().find(|(k, _)| *k == (off, len)) {
+            // tags sharing data keep sharing it
+            Some(&(_, o)) => o,
+            None => {
+                while !out.len().is_multiple_of(4) {
+                    out.push(0);
+                }
+                let o = out.len();
+                out.extend_from_slice(&b[off..off + len]);
+                placed.push(((off, len), o));
+                o
+            }
+        };
+        out[132 + 12 * t + 4..132 + 12 * t + 8].copy_from_slice(&(new_off as u32).to_be_bytes());
+    }
+    while !out.len().is_multiple_of(4) {
+        out.push(0);
+    }
+    let size = out.len() as u32;
+    out[0..4].copy_from_slice(&size.to_be_bytes());
+    // the profile ID (MD5) would no longer match: clear it (= "not computed")
+    out[84..100].fill(0);
+    out
 }
 
 /// A profile for one of the well-known spaces with its standard curve.
@@ -217,6 +256,23 @@ mod tests {
             match info.kind {
                 IccKind::MatrixTrc { trc, .. } => assert!(trc[0].approx_eq(&n.trc(), 2e-4), "{n:?} {:?}", trc[0]),
                 k => panic!("{k:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn tags_are_aligned() {
+        for n in NamedSpace::ALL {
+            for trc in [n.trc(), Trc::Linear] {
+                let b = write_matrix_trc(&n.rgb_space(), &trc);
+                assert_eq!(b.len() % 4, 0, "{n:?}");
+                assert_eq!(u32::from_be_bytes(b[0..4].try_into().unwrap()) as usize, b.len());
+                let count = u32::from_be_bytes(b[128..132].try_into().unwrap()) as usize;
+                for t in 0..count {
+                    let off = u32::from_be_bytes(b[132 + 12 * t + 4..132 + 12 * t + 8].try_into().unwrap());
+                    assert_eq!(off % 4, 0, "{n:?} tag {t}");
+                }
+                assert!(parse(&b).is_some_and(|i| i.named == Some(n)), "{n:?}");
             }
         }
     }
