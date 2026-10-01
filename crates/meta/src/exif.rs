@@ -253,3 +253,101 @@ pub(crate) mod tests {
         assert_eq!(m.title.as_deref(), Some("From XMP"));
     }
 }
+
+/// Serialise the interchange subset of `meta` as a TIFF-structured Exif block (little-endian, no
+/// `Exif\0\0` prefix): IFD0 (make, model, software, artist, copyright, description, orientation,
+/// date), the Exif IFD (capture settings, lens) and, when present, the GPS IFD.
+pub fn write_exif(meta: &Metadata) -> Vec<u8> {
+    use lightcraft_tiff::writer::{rational, srational};
+    use lightcraft_tiff::{ByteOrder, IfdBuilder, TiffWriter, Value};
+    let ascii = |s: &Option<String>| s.as_ref().filter(|v| !v.is_empty()).map(|v| Value::Ascii(v.clone()));
+    let mut ifd0 = IfdBuilder::new();
+    for (tag, v) in [
+        (t::MAKE, ascii(&meta.make)),
+        (t::MODEL, ascii(&meta.model)),
+        (t::SOFTWARE, ascii(&meta.software)),
+        (t::ARTIST, ascii(&meta.artist)),
+        (t::COPYRIGHT, ascii(&meta.copyright)),
+        (t::IMAGE_DESCRIPTION, ascii(&meta.caption)),
+        (t::DATE_TIME, meta.capture_time.map(|d| Value::Ascii(d.to_exif()))),
+        (t::ORIENTATION, meta.orientation.map(|o| Value::Short(vec![o.to_exif()]))),
+    ] {
+        if let Some(v) = v {
+            ifd0.set(tag, v);
+        }
+    }
+    let mut ex = IfdBuilder::new();
+    ex.set(t::EXIF_VERSION, Value::Undefined(b"0232".to_vec()));
+    let r = |v: Option<f64>| v.filter(|v| v.is_finite() && *v > 0.0).map(|v| Value::Rational(vec![rational(v)]));
+    for (tag, v) in [
+        (t::DATE_TIME_ORIGINAL, meta.capture_time.map(|d| Value::Ascii(d.to_exif()))),
+        (t::EXPOSURE_TIME, r(meta.exposure_time)),
+        (t::F_NUMBER, r(meta.f_number)),
+        (t::FOCAL_LENGTH, r(meta.focal_length)),
+        (t::ISO_SPEED, meta.iso.map(|i| Value::Short(vec![i.min(65_535) as u16]))),
+        (t::LENS_MAKE, ascii(&meta.lens_make)),
+        (t::LENS_MODEL, ascii(&meta.lens_model)),
+        (t::EXPOSURE_BIAS, meta.exposure_bias.map(|v| Value::SRational(vec![srational(v)]))),
+    ] {
+        if let Some(v) = v {
+            ex.set(tag, v);
+        }
+    }
+    ifd0.set_child(t::EXIF_IFD, ex);
+    if let Some(g) = meta.gps {
+        let dms = |v: f64| {
+            let v = v.abs();
+            let d = v.floor();
+            let m = ((v - d) * 60.0).floor();
+            let s = (v - d - m / 60.0) * 3600.0;
+            Value::Rational(vec![(d as u32, 1), (m as u32, 1), ((s * 1000.0).round() as u32, 1000)])
+        };
+        let mut gps = IfdBuilder::new();
+        gps.set(t::GPS_VERSION_ID, Value::Byte(vec![2, 3, 0, 0]));
+        gps.set(t::GPS_LATITUDE_REF, Value::Ascii(if g.latitude < 0.0 { "S" } else { "N" }.into()));
+        gps.set(t::GPS_LATITUDE, dms(g.latitude));
+        gps.set(t::GPS_LONGITUDE_REF, Value::Ascii(if g.longitude < 0.0 { "W" } else { "E" }.into()));
+        gps.set(t::GPS_LONGITUDE, dms(g.longitude));
+        if let Some(a) = g.altitude {
+            gps.set(t::GPS_ALTITUDE_REF, Value::Byte(vec![u8::from(a < 0.0)]));
+            gps.set(t::GPS_ALTITUDE, Value::Rational(vec![rational(a.abs())]));
+        }
+        ifd0.set_child(t::GPS_IFD, gps);
+    }
+    TiffWriter::new(ByteOrder::Little, false).write(&[ifd0]).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+
+    #[test]
+    fn exif_round_trips() {
+        let m = Metadata {
+            make: Some("Synthetic".into()),
+            model: Some("X2".into()),
+            copyright: Some("© 2026 A. Person".into()),
+            artist: Some("A. Person".into()),
+            capture_time: DateTime::parse_iso("2026-09-20T05:40:00"),
+            exposure_time: Some(1.0 / 250.0),
+            f_number: Some(2.8),
+            iso: Some(400),
+            focal_length: Some(35.0),
+            lens_model: Some("35mm F2".into()),
+            gps: Some(Gps { latitude: 43.7904, longitude: -110.6818, altitude: Some(2000.0) }),
+            ..Default::default()
+        };
+        let back = read_exif(&write_exif(&m));
+        assert_eq!(back.make, m.make);
+        assert_eq!(back.model, m.model);
+        assert_eq!(back.copyright, m.copyright);
+        assert_eq!(back.artist, m.artist);
+        assert_eq!(back.capture_time.map(|d| d.to_exif()), m.capture_time.map(|d| d.to_exif()));
+        assert_eq!(back.iso, Some(400));
+        assert!((back.f_number.unwrap() - 2.8).abs() < 1e-6);
+        assert!((back.exposure_time.unwrap() - 0.004).abs() < 1e-9);
+        assert_eq!(back.lens_model, m.lens_model);
+        let g = back.gps.unwrap();
+        assert!((g.latitude - 43.7904).abs() < 1e-5 && (g.longitude + 110.6818).abs() < 1e-5, "{g:?}");
+    }
+}

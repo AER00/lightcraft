@@ -3,6 +3,22 @@
 version = 4
 
 [[package]]
+name = "ab_glyph"
+version = "0.2.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01c0457472c38ea5bd1c3b5ada5e368271cb550be7a4ca4a0b4634e9913f6cc2"
+dependencies = [
+ "ab_glyph_rasterizer",
+ "owned_ttf_parser",
+]
+
+[[package]]
+name = "ab_glyph_rasterizer"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
+
+[[package]]
 name = "accesskit"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -934,6 +950,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "egui_glow",
+ "glow",
  "glutin",
  "glutin-winit",
  "image",
@@ -1991,11 +2008,24 @@ dependencies = [
 name = "lightcraft-catalog"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "lightcraft-develop",
+ "log",
  "proptest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "lightcraft-cli"
+version = "0.1.0"
+dependencies = [
+ "lightcraft-codecs",
+ "lightcraft-engine",
+ "lightcraft-mcp",
+ "lightcraft-raster",
+ "serde_json",
 ]
 
 [[package]]
@@ -2047,6 +2077,7 @@ dependencies = [
 name = "lightcraft-engine"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "lightcraft-catalog",
  "lightcraft-codecs",
  "lightcraft-color",
@@ -2054,6 +2085,7 @@ dependencies = [
  "lightcraft-geom",
  "lightcraft-meta",
  "lightcraft-pipeline",
+ "lightcraft-preview",
  "lightcraft-raster",
  "lightcraft-raw",
  "lightcraft-scenes",
@@ -2069,6 +2101,17 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "serde",
+]
+
+[[package]]
+name = "lightcraft-mcp"
+version = "0.1.0"
+dependencies = [
+ "lightcraft-codecs",
+ "lightcraft-engine",
+ "lightcraft-raster",
+ "log",
+ "serde_json",
 ]
 
 [[package]]
@@ -2096,6 +2139,18 @@ dependencies = [
  "proptest",
  "rayon",
  "serde",
+]
+
+[[package]]
+name = "lightcraft-preview"
+version = "0.1.0"
+dependencies = [
+ "jpeg-encoder",
+ "lightcraft-raster",
+ "log",
+ "siphasher",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -2156,10 +2211,30 @@ dependencies = [
  "lightcraft-engine",
  "lightcraft-geom",
  "lightcraft-pipeline",
+ "lightcraft-preview",
  "lightcraft-raster",
  "log",
  "serde",
  "serde_json",
+ "web-time",
+]
+
+[[package]]
+name = "lightcraft-web"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "js-sys",
+ "lightcraft-codecs",
+ "lightcraft-engine",
+ "lightcraft-raster",
+ "lightcraft-ui-egui",
+ "log",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -2217,6 +2292,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ea1f30cedd69f0a2954655f7188c6a834246d2bcf1e315e2ac40c4b24dc9519"
 dependencies = [
  "cfg-if",
+ "rayon",
 ]
 
 [[package]]
@@ -2807,6 +2883,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "owned_ttf_parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
+dependencies = [
+ "ttf-parser",
+]
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3239,6 +3324,7 @@ dependencies = [
  "loop9",
  "quick-error 2.0.1",
  "rav1e",
+ "rayon",
  "rgb",
 ]
 
@@ -3860,6 +3946,12 @@ checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
 ]
+
+[[package]]
+name = "ttf-parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "type-map"

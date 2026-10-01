@@ -17,37 +17,58 @@ fn box_radii(sigma: f32) -> [usize; 3] {
     std::array::from_fn(|i| (((if (i as i32) < m { wl } else { wu }) - 1) / 2).max(0) as usize)
 }
 
-fn box_h<T: Pixel>(src: &Image<T>, r: usize) -> Image<T> {
-    let w = src.width;
-    let mut out = Image::<T>::new(w, src.height);
-    if r == 0 {
-        return src.clone();
+/// One horizontal box pass over `row` (clamped edges), using `tmp` as scratch.
+#[inline]
+fn box_row<T: Pixel>(row: &mut [T], tmp: &mut Vec<T>, r: usize) {
+    let w = row.len();
+    if r == 0 || w == 0 {
+        return;
     }
+    tmp.clear();
+    tmp.extend_from_slice(row);
+    let s = &tmp[..];
+    let last = w - 1;
     let inv = 1.0 / (2 * r + 1) as f32;
-    par_rows(&mut out.data, w, |y, row| {
-        let s = src.row(y);
-        let at = |i: isize| s[i.clamp(0, w as isize - 1) as usize];
-        let mut acc = T::zero();
-        for i in -(r as isize)..=(r as isize) {
-            acc = acc.madd(at(i), 1.0);
-        }
-        for x in 0..w {
-            row[x] = T::zero().madd(acc, inv);
-            acc = acc.madd(at(x as isize + r as isize + 1), 1.0).madd(at(x as isize - r as isize), -1.0);
-        }
-    });
-    out
+    let mut acc = T::zero();
+    for i in 0..=2 * r {
+        acc = acc.madd(s[i.saturating_sub(r).min(last)], 1.0);
+    }
+    for x in 0..w {
+        row[x] = T::zero().madd(acc, inv);
+        acc = acc.madd(s[(x + r + 1).min(last)], 1.0).madd(s[x.saturating_sub(r)], -1.0);
+    }
 }
 
-fn transpose<T: Pixel>(src: &Image<T>) -> Image<T> {
+/// Rows per parallel band in the vertical pass (each band re-primes its running sums).
+const BAND: usize = 32;
+
+/// One vertical box pass `src → dst` (clamped edges): a running sum per column, vectorized across
+/// the row, parallel over horizontal bands. Cache-friendly — no transposes.
+fn box_v<T: Pixel>(src: &Image<T>, dst: &mut Image<T>, r: usize) {
     let (w, h) = (src.width, src.height);
-    let mut out = Image::<T>::new(h, w);
-    par_rows(&mut out.data, h, |y, row| {
-        for (x, o) in row.iter_mut().enumerate() {
-            *o = src.data[x * w + y];
+    let inv = 1.0 / (2 * r + 1) as f32;
+    let last = h - 1;
+    let row = |y: usize| &src.data[y * w..(y + 1) * w];
+    par_rows(&mut dst.data, w * BAND, |band, out| {
+        let y0 = band * BAND;
+        let mut acc = vec![T::zero(); w];
+        for i in 0..=2 * r {
+            let yy = (y0 + i).saturating_sub(r).min(last);
+            for (a, v) in acc.iter_mut().zip(row(yy)) {
+                *a = a.madd(*v, 1.0);
+            }
+        }
+        for (k, o) in out.chunks_mut(w).enumerate() {
+            let y = y0 + k;
+            for (d, a) in o.iter_mut().zip(&acc) {
+                *d = T::zero().madd(*a, inv);
+            }
+            let (add, sub) = (row((y + r + 1).min(last)), row(y.saturating_sub(r)));
+            for ((a, p), m) in acc.iter_mut().zip(add).zip(sub) {
+                *a = a.madd(*p, 1.0).madd(*m, -1.0);
+            }
         }
     });
-    out
 }
 
 /// Blur with Gaussian `sigma` (pixels). `sigma <= 0.3` returns a copy.
@@ -57,14 +78,21 @@ pub fn gaussian<T: Pixel>(img: &Image<T>, sigma: f32) -> Image<T> {
     }
     let radii = box_radii(sigma);
     let mut a = img.clone();
+    par_rows(&mut a.data, img.width, |_, row| {
+        let mut tmp = Vec::with_capacity(row.len());
+        for r in radii {
+            box_row(row, &mut tmp, r);
+        }
+    });
+    let mut b = Image::<T>::new(img.width, img.height);
     for r in radii {
-        a = box_h(&a, r);
+        if r == 0 {
+            continue;
+        }
+        box_v(&a, &mut b, r);
+        std::mem::swap(&mut a, &mut b);
     }
-    let mut t = transpose(&a);
-    for r in radii {
-        t = box_h(&t, r);
-    }
-    transpose(&t)
+    a
 }
 
 #[cfg(test)]

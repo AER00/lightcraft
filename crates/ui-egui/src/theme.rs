@@ -107,15 +107,13 @@ impl Tokens {
 
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
-    fonts.font_data.insert("SourceSans3".into(), Arc::new(FontData::from_static(include_bytes!("../../../assets/fonts/SourceSans3-Regular.ttf"))));
-    fonts
-        .font_data
-        .insert("SourceSans3-Semibold".into(), Arc::new(FontData::from_static(include_bytes!("../../../assets/fonts/SourceSans3-Semibold.ttf"))));
+    fonts.font_data.insert("Inter".into(), Arc::new(FontData::from_static(include_bytes!("../../../assets/fonts/Inter-Regular.ttf"))));
+    fonts.font_data.insert("Inter-SemiBold".into(), Arc::new(FontData::from_static(include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf"))));
     let fallback: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    let mut prop = vec!["SourceSans3".to_string()];
+    let mut prop = vec!["Inter".to_string()];
     prop.extend(fallback.clone());
     fonts.families.insert(FontFamily::Proportional, prop);
-    let mut semi = vec!["SourceSans3-Semibold".to_string()];
+    let mut semi = vec!["Inter-SemiBold".to_string()];
     semi.extend(fallback);
     fonts.families.insert(FontFamily::Name(FONT_SEMIBOLD.into()), semi);
     ctx.set_fonts(fonts);

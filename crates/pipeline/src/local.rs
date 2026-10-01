@@ -8,7 +8,7 @@ use lightcraft_raster::blur::gaussian;
 use lightcraft_raster::{Plane, Rgb32f};
 
 use crate::geometry::Frame;
-use crate::{Prepared, Quality, SourceInfo, for_rows, masks};
+use crate::{Prepared, Quality, SourceInfo, for_rows, masks, timed};
 
 /// White balance (relative to the source's as-shot white) and exposure, in place.
 pub fn scene_linear_pre(img: &mut Rgb32f, info: &SourceInfo, s: &DevelopSettings) {
@@ -108,12 +108,67 @@ pub fn guided_fast(p: &Plane, sigma: f32, eps: f32) -> Plane {
     q
 }
 
+/// Noise reduction at output resolution: luminance via an edge-aware self-guided filter on
+/// log-luminance, colour by blurring chromaticity (rgb / Y) and re-applying the original luminance.
+/// Radii scale with how much the source was downsampled (preview noise is already averaged out).
+pub fn denoise(img: &mut Rgb32f, s: &DevelopSettings, src_long: usize, out_long: usize) {
+    let lum = (s.detail.nr_luminance / 100.0) as f32;
+    let col = (s.detail.nr_color / 100.0) as f32;
+    if lum <= 0.0 && col <= 0.0 {
+        return;
+    }
+    let scale = (out_long as f32 / src_long.max(1) as f32).clamp(0.05, 1.0);
+    let w = img.width;
+    if lum > 0.0 {
+        let _t = crate::profiling().then(std::time::Instant::now);
+        let l = img.map(log_lum);
+        let detail = (s.detail.nr_detail / 100.0) as f32;
+        let eps = 0.002 + lum * lum * 0.25 * (1.0 - 0.7 * detail);
+        let f = guided(&l, (1.0 + 2.5 * lum) * scale.max(0.4), eps);
+        let k = lum.sqrt();
+        for_rows(&mut img.data, w, |y, row| {
+            for (x, p) in row.iter_mut().enumerate() {
+                let i = y * w + x;
+                let d = (f.data[i] - l.data[i]) * k;
+                let g = 2f32.powf(d);
+                *p = p.map(|v| v * g);
+            }
+        });
+        if let Some(t) = _t {
+            eprintln!("    nr luminance: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
+        }
+    }
+    if col > 0.0 {
+        let _t = crate::profiling().then(std::time::Instant::now);
+        let chroma = img.map(|c| {
+            let y = luminance_2020(c).max(1e-6);
+            [c[0] / y, c[1] / y, c[2] / y]
+        });
+        let sigma = (1.5 + 6.0 * col) * scale.max(0.35) * (1.0 + (s.detail.nr_color_smoothness / 100.0) as f32);
+        let b = gaussian(&chroma, sigma);
+        let keep = (s.detail.nr_color_detail / 100.0) as f32 * 0.5;
+        for_rows(&mut img.data, w, |y, row| {
+            for (x, p) in row.iter_mut().enumerate() {
+                let i = y * w + x;
+                let yl = luminance_2020(*p);
+                let c0 = chroma.data[i];
+                let cb = b.data[i];
+                let t = col * (1.0 - keep);
+                *p = [0, 1, 2].map(|k| ((c0[k] + (cb[k] - c0[k]) * t) * yl).max(0.0));
+            }
+        });
+        if let Some(t) = _t {
+            eprintln!("    nr colour: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
+        }
+    }
+}
+
 pub fn log_lum(c: [f32; 3]) -> f32 {
     (luminance_2020(c).max(1e-7) / crate::tone::GREY).log2()
 }
 
 pub fn prepare(img: Rgb32f, s: &DevelopSettings, frame: &Frame, px_per_long: f64, q: Quality) -> Prepared {
-    let log_l = img.map(log_lum);
+    let log_l = timed("log_l", || img.map(log_lum));
     let ppl = px_per_long as f32;
     let tone_active =
         s.light.highlights != 0.0 || s.light.shadows != 0.0 || s.masks.iter().any(|m| m.adjust.highlights != 0.0 || m.adjust.shadows != 0.0);
@@ -121,19 +176,25 @@ pub fn prepare(img: Rgb32f, s: &DevelopSettings, frame: &Frame, px_per_long: f64
         // Edge-aware base at ~1.5% of the long edge (EV² epsilon: edges of > ~0.6 EV are preserved).
         let sigma = (0.015 * ppl).max(1.0);
         let sigma = if q == Quality::Draft { sigma.min(24.0) } else { sigma };
-        guided_fast(&log_l, sigma, 0.35)
+        timed("base", || guided_fast(&log_l, sigma, 0.35))
     } else {
         log_l.clone()
     };
     let local_any = |f: fn(&lightcraft_develop::LocalAdjustments) -> f64| s.masks.iter().any(|m| f(&m.adjust) != 0.0);
-    let clarity_blur = (s.effects.clarity != 0.0 || local_any(|a| a.clarity)).then(|| guided_fast(&log_l, (0.012 * ppl).max(1.0), 0.8));
+    let clarity_blur =
+        (s.effects.clarity != 0.0 || local_any(|a| a.clarity)).then(|| timed("clarity", || guided_fast(&log_l, (0.012 * ppl).max(1.0), 0.8)));
     let texture_blur = (s.effects.texture != 0.0 || s.detail.sharpen_amount != 0.0 || local_any(|a| a.texture) || local_any(|a| a.sharpness))
-        .then(|| gaussian(&log_l, (0.0018 * ppl).max(0.6)));
+        .then(|| timed("texture", || gaussian(&log_l, (0.0018 * ppl).max(0.6))));
     let dark = (s.effects.dehaze != 0.0 || local_any(|a| a.dehaze)).then(|| {
+        let _t = crate::profiling().then(std::time::Instant::now);
         let min_c = img.map(|c| c[0].min(c[1]).min(c[2]));
-        gaussian(&min_c, (0.02 * ppl).max(1.0))
+        let d = gaussian(&min_c, (0.02 * ppl).max(1.0));
+        if let Some(t) = _t {
+            eprintln!("    dehaze: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
+        }
+        d
     });
-    let masks = masks::evaluate(&s.masks, frame, img.width, img.height, &img, &log_l);
+    let masks = timed("masks", || masks::evaluate(&s.masks, frame, img.width, img.height, &img, &log_l));
     Prepared { img, log_l, base, clarity_blur, texture_blur, dark, masks, px_per_long }
 }
 
@@ -202,5 +263,29 @@ mod fast_tests {
         let b = guided_fast(&p, 12.0, 0.3);
         let err: f32 = a.data.iter().zip(&b.data).map(|(u, v)| (u - v).abs()).sum::<f32>() / a.len() as f32;
         assert!(err < 0.08, "{err}");
+    }
+}
+
+#[cfg(test)]
+mod nr_tests {
+    use super::*;
+
+    #[test]
+    fn luminance_nr_reduces_noise_keeps_mean() {
+        let mut img = Rgb32f::from_fn(64, 64, |x, y| {
+            let n = (((x * 7919 + y * 104729) % 97) as f32 / 97.0 - 0.5) * 0.06;
+            [0.2 + n; 3]
+        });
+        let var = |im: &Rgb32f| {
+            let m = im.data.iter().map(|p| p[1]).sum::<f32>() / im.len() as f32;
+            (im.data.iter().map(|p| (p[1] - m).powi(2)).sum::<f32>() / im.len() as f32, m)
+        };
+        let (v0, m0) = var(&img);
+        let mut s = DevelopSettings::default();
+        s.detail.nr_luminance = 80.0;
+        denoise(&mut img, &s, 64, 64);
+        let (v1, m1) = var(&img);
+        assert!(v1 < v0 * 0.5, "{v0} -> {v1}");
+        assert!((m1 - m0).abs() < 0.01);
     }
 }

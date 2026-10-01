@@ -77,7 +77,7 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "selection": app.session.selection.ids.iter().map(|p| p.0).collect::<Vec<_>>(),
         "activeMask": app.session.active_mask,
         "widgetCount": app.widgets.len(),
-        "perf": {"frameMs": app.perf.frame_ms, "fps": app.perf.fps, "lastRenderMs": app.renderer.last_main_ms, "renderQueue": app.renderer.queued(), "rendersDone": app.renderer.completed},
+        "perf": {"frameMs": app.perf.frame_ms, "fps": app.perf.fps, "lastRenderMs": app.renderer.last_main_ms, "renderQueue": app.renderer.queued(), "rendersInFlight": app.renderer.in_flight(), "rendersDone": app.renderer.completed, "thumbTextures": app.renderer.thumb_textures()},
         "status": app.ui.status,
     })
 }
@@ -289,19 +289,47 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
     }
 }
 
-/// Export the active photo (UI command `app.export`): renders at `longEdge` and writes a PNG/JPEG via services.
+/// Default export folder: `~/Pictures/LightCraft Exports` (falls back to the working directory).
+pub fn default_export_dir() -> String {
+    std::env::var("HOME").map(|h| format!("{h}/Pictures/LightCraft Exports")).unwrap_or_default()
+}
+
+/// Export the selected photos (UI command `app.export`). Params: see
+/// [`lightcraft_engine::export::ExportOptions::from_json`], plus `dir` (output folder) or `path`
+/// (exact output file, single photo), `ids` (default: the selection, else the active photo).
 pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
-    let id = app.session.active().ok_or("no photo selected")?;
-    let size = p.get("longEdge").and_then(Value::as_u64).unwrap_or(3000) as usize;
-    let r = app.session.render_now(id, size, size)?;
-    let name = app.session.catalog.photo(id).map(|p| p.file_name.clone()).unwrap_or_else(|| "export".into());
-    let stem = name.rsplit_once('.').map(|(a, _)| a.to_string()).unwrap_or(name);
-    let path = p.get("path").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("{stem}-lightcraft.png"));
-    let png = app.services.png.as_ref().ok_or("no encoder")?;
-    let bytes = png(&r.image);
-    let w = app.services.write.as_mut().ok_or("no writer")?;
-    w(&path, &bytes)?;
-    Ok(json!({"path": path, "width": r.image.width, "height": r.image.height}))
+    use lightcraft_engine::export::{ExportOptions, export_photo};
+    let mut opts = ExportOptions::from_json(p);
+    if let (Some(path), None) = (p.get("path").and_then(Value::as_str), p.get("format")) {
+        let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
+        opts.format = lightcraft_engine::export::ExportFormat::parse(ext).unwrap_or(opts.format);
+    }
+    let ids: Vec<_> = match p.get("ids").and_then(Value::as_array) {
+        Some(a) => a.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect(),
+        None if !app.session.selection.ids.is_empty() => {
+            // Batch order (and `{seq}`) follows the grid order.
+            let sel: std::collections::HashSet<_> = app.session.selection.ids.iter().copied().collect();
+            let mut v: Vec<_> = app.session.visible().iter().copied().filter(|id| sel.contains(id)).collect();
+            let shown: std::collections::HashSet<_> = v.iter().copied().collect();
+            v.extend(app.session.selection.ids.iter().filter(|id| !shown.contains(id)));
+            v
+        }
+        None => app.session.active().into_iter().collect(),
+    };
+    if ids.is_empty() {
+        return Err("no photo selected".into());
+    }
+    let dir = p.get("dir").and_then(Value::as_str).map(str::to_string).filter(|d| !d.is_empty()).unwrap_or_else(default_export_dir);
+    let exact = p.get("path").and_then(Value::as_str).filter(|_| ids.len() == 1).map(str::to_string);
+    let mut out = Vec::new();
+    for (i, id) in ids.into_iter().enumerate() {
+        let e = export_photo(&mut app.session, id, &opts, i + 1)?;
+        let path = exact.clone().unwrap_or_else(|| if dir.is_empty() { e.file_name.clone() } else { format!("{dir}/{}", e.file_name) });
+        let w = app.services.write.as_mut().ok_or("no writer")?;
+        w(&path, &e.bytes)?;
+        out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len()}));
+    }
+    Ok(json!({"files": out}))
 }
 
 pub fn save_screenshot(app: &mut LightcraftApp, image: &egui::ColorImage, path: Option<&str>) -> Value {

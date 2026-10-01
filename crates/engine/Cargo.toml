@@ -16,6 +16,7 @@ lightcraft-develop = { workspace = true }
 lightcraft-scenes = { workspace = true }
 lightcraft-pipeline = { workspace = true }
 lightcraft-catalog = { workspace = true }
+lightcraft-preview = { workspace = true }
 lightcraft-codecs = { workspace = true }
 lightcraft-raw = { workspace = true }
 lightcraft-meta = { workspace = true }
@@ -23,3 +24,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+ab_glyph = { workspace = true }

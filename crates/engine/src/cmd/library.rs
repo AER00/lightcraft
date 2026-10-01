@@ -364,23 +364,94 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         // ---- import
-        cmd!("library.import", "Add Photos…", ["File"], Some("Cmd+Shift+I"), "{paths: [path], album?: albumId}", always, |s, p| {
-            let paths: Vec<String> = p
-                .get("paths")
-                .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
-                .unwrap_or_default();
-            if paths.is_empty() {
-                return Err(bad("library.import", "no paths"));
+        cmd!(
+            "library.import",
+            "Add Photos…",
+            ["File"],
+            Some("Cmd+Shift+I"),
+            "{paths: [file or folder (recursive)], mode?: add|copy (copy into the library's Originals/), album?: albumId} → {imported, duplicates, failed}",
+            always,
+            |s, p| {
+                let paths: Vec<String> = p
+                    .get("paths")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                    .unwrap_or_default();
+                if paths.is_empty() {
+                    return Err(bad("library.import", "no paths"));
+                }
+                let mode = match str_param(p, "mode").unwrap_or("add") {
+                    "add" => crate::import::ImportMode::Add,
+                    "copy" => crate::import::ImportMode::Copy,
+                    other => return Err(bad("library.import", format!("unknown mode `{other}` (add|copy)"))),
+                };
+                let report = crate::import::import(s, &paths, mode)?;
+                if let Some(a) = p.get("album").and_then(Value::as_u64)
+                    && !report.imported.is_empty()
+                {
+                    s.execute("album.addPhotos", &json!({"id": a, "ids": report.imported}))?;
+                }
+                if let Some(f) = report.imported.first() {
+                    s.selection = Selection::single(PhotoId(*f));
+                }
+                Ok(serde_json::to_value(&report).unwrap_or_default())
             }
-            let imported = crate::media::import_paths(s, &paths)?;
-            if let Some(a) = p.get("album").and_then(Value::as_u64) {
-                s.execute("album.addPhotos", &json!({"id": a, "ids": imported.iter().map(|i| i.0).collect::<Vec<_>>()}))?;
-            }
-            if let Some(f) = imported.first() {
-                s.selection = Selection::single(*f);
-            }
-            Ok(json!({"imported": imported.iter().map(|i| i.0).collect::<Vec<_>>()}))
+        ),
+        // ---- persistence
+        cmd!(query "library.info", "Library Info", [], None, "{}", always, |s, _| {
+            let photos = s.catalog.len();
+            let albums = s.catalog.albums().count();
+            let (rendered_n, rendered_bytes) = s.media.rendered.mem_usage();
+            let (sources_n, sources_bytes) = s.media.source_usage();
+            let disk = s.media.rendered.disk().map(|d| {
+                use std::sync::atomic::Ordering::Relaxed;
+                json!({
+                    "path": d.dir().display().to_string(),
+                    "bytes": d.size(),
+                    "hits": d.hits.load(Relaxed),
+                    "misses": d.misses.load(Relaxed),
+                    "writes": d.writes.load(Relaxed),
+                })
+            });
+            let cache = json!({
+                "renderedInMemory": rendered_n, "renderedBytes": rendered_bytes,
+                "sourcesInMemory": sources_n, "sourceBytes": sources_bytes,
+                "disk": disk,
+            });
+            let Some(lib) = &s.library else {
+                return Ok(json!({"persistent": false, "photos": photos, "albums": albums, "cache": cache}));
+            };
+            let j = lib.journal();
+            Ok(json!({
+                "persistent": true,
+                "path": lib.dir.display().to_string(),
+                "photos": photos,
+                "albums": albums,
+                "seq": j.seq(),
+                "snapshotSeq": j.snapshot_seq(),
+                "logRecords": j.log_records(),
+                "logBytes": j.log_bytes(),
+                "lastError": lib.last_error,
+                "cache": cache,
+                "load": {
+                    "created": lib.report.created,
+                    "replayed": lib.report.replayed,
+                    "tornBytes": lib.report.torn_bytes,
+                    "damaged": lib.report.damaged,
+                },
+            }))
+        }),
+        cmd!("library.compact", "Optimize Library", ["File"], None, "{}", has_library, |s, _| {
+            s.compact_library()?;
+            ok()
+        }),
+        cmd!("library.clearPreviews", "Clear Preview Cache", ["File"], None, "{}", always, |s, _| {
+            s.media.rendered.clear();
+            ok()
         }),
     ]
+}
+
+fn has_library(s: &Session) -> std::result::Result<(), String> {
+    if s.library.is_some() { Ok(()) } else { Err("no library is open (in-memory session)".into()) }
 }
