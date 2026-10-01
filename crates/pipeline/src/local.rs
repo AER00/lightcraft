@@ -63,23 +63,31 @@ pub fn effective_wb(info: &SourceInfo, s: &DevelopSettings) -> (f64, f64) {
 
 /// Self-guided filter (He et al.) on a single plane with Gaussian windows of `sigma` px.
 pub fn guided(p: &Plane, sigma: f32, eps: f32) -> Plane {
+    let (ma, mb) = guided_coeffs(p, sigma, eps);
+    guided_apply(p, &ma, &mb)
+}
+
+/// Blurred guided-filter coefficients (mean a, mean b) of `p`; every pass row-parallel.
+fn guided_coeffs(p: &Plane, sigma: f32, eps: f32) -> (Plane, Plane) {
     let mean = gaussian(p, sigma);
-    let sq = p.map(|v| v * v);
-    let corr = gaussian(&sq, sigma);
-    let mut a = Plane::new(p.width, p.height);
-    let mut b = Plane::new(p.width, p.height);
-    for i in 0..p.len() {
-        let var = (corr.data[i] - mean.data[i] * mean.data[i]).max(0.0);
-        let ai = var / (var + eps);
-        a.data[i] = ai;
-        b.data[i] = mean.data[i] - ai * mean.data[i];
-    }
-    let ma = gaussian(&a, sigma);
-    let mb = gaussian(&b, sigma);
+    let corr = gaussian(&p.map(|v| v * v), sigma);
+    let a = corr.zip_map(&mean, |c, m| {
+        let var = (c - m * m).max(0.0);
+        var / (var + eps)
+    });
+    let b = mean.zip_map(&a, |m, a| m - a * m);
+    (gaussian(&a, sigma), gaussian(&b, sigma))
+}
+
+/// `q = a·p + b` per pixel.
+fn guided_apply(p: &Plane, a: &Plane, b: &Plane) -> Plane {
     let mut q = Plane::new(p.width, p.height);
-    for i in 0..p.len() {
-        q.data[i] = ma.data[i] * p.data[i] + mb.data[i];
-    }
+    let w = p.width;
+    for_rows(&mut q.data, w, |y, row| {
+        for ((v, pv), (av, bv)) in row.iter_mut().zip(p.row(y)).zip(a.row(y).iter().zip(b.row(y))) {
+            *v = av * pv + bv;
+        }
+    });
     q
 }
 
@@ -94,28 +102,9 @@ pub fn guided_fast(p: &Plane, sigma: f32, eps: f32) -> Plane {
     }
     let (lw, lh) = (p.width.div_ceil(s).max(1), p.height.div_ceil(s).max(1));
     let lo = resize(p, lw, lh, Filter::Box);
-    let ls = sigma / s as f32;
-    let mean = gaussian(&lo, ls);
-    let corr = gaussian(&lo.map(|v| v * v), ls);
-    let mut a = Plane::new(lw, lh);
-    let mut b = Plane::new(lw, lh);
-    for i in 0..lo.len() {
-        let var = (corr.data[i] - mean.data[i] * mean.data[i]).max(0.0);
-        let ai = var / (var + eps);
-        a.data[i] = ai;
-        b.data[i] = mean.data[i] - ai * mean.data[i];
-    }
-    let ma = resize(&gaussian(&a, ls), p.width, p.height, Filter::Bilinear);
-    let mb = resize(&gaussian(&b, ls), p.width, p.height, Filter::Bilinear);
-    let mut q = Plane::new(p.width, p.height);
-    let w = p.width;
-    for_rows(&mut q.data, w, |y, row| {
-        for (x, v) in row.iter_mut().enumerate() {
-            let i = y * w + x;
-            *v = ma.data[i] * p.data[i] + mb.data[i];
-        }
-    });
-    q
+    let (ma, mb) = guided_coeffs(&lo, sigma / s as f32, eps);
+    let up = |c: &Plane| resize(c, p.width, p.height, Filter::Bilinear);
+    guided_apply(p, &up(&ma), &up(&mb))
 }
 
 /// Noise reduction at output resolution: luminance via an edge-aware self-guided filter on
@@ -140,7 +129,7 @@ pub fn denoise(img: &mut Rgb32f, s: &DevelopSettings, src_long: usize, out_long:
             for (x, p) in row.iter_mut().enumerate() {
                 let i = y * w + x;
                 let d = (f.data[i] - l.data[i]) * k;
-                let g = 2f32.powf(d);
+                let g = d.exp2();
                 *p = p.map(|v| v * g);
             }
         });

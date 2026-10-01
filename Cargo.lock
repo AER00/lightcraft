@@ -2158,6 +2158,7 @@ dependencies = [
 name = "lightcraft-raster"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "lightcraft-color",
  "lightcraft-geom",
  "proptest",

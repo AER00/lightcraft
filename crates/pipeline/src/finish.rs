@@ -128,6 +128,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
     let out_to_norm = frame.out_to_norm(w, h);
     let aspect = w as f32 / h as f32;
 
+    let srgb = srgb_lut();
     let mut out = Rgba8::new(w, h);
     for_rows(&mut out.data, w, |y, row| {
         for (x, px) in row.iter_mut().enumerate() {
@@ -184,7 +185,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
 
             // --- local exposure / temp / tint
             if l_exp != 0.0 {
-                let g = 2f32.powf(l_exp);
+                let g = l_exp.exp2();
                 c = c.map(|v| v * g);
             }
             if l_temp != 0.0 || l_tint != 0.0 {
@@ -236,7 +237,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
                 }
             }
             if delta != 0.0 {
-                let g = 2f32.powf(delta);
+                let g = delta.exp2();
                 c = c.map(|v| v * g);
             }
 
@@ -305,7 +306,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             }
 
             // --- encode, curves, grain
-            let mut e = r.map(|v| linear_to_srgb(v.clamp(0.0, 1.0)));
+            let mut e = r.map(|v| encode_srgb(srgb, v));
             if let Some(l) = &curves {
                 e = [l[0].eval(e[0]), l[1].eval(e[1]), l[2].eval(e[2])];
             }
@@ -325,8 +326,50 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
     out
 }
 
+const SRGB_LUT_N: usize = 4096;
+
+fn srgb_lut() -> &'static [f32; SRGB_LUT_N + 1] {
+    static LUT: std::sync::OnceLock<Box<[f32; SRGB_LUT_N + 1]>> = std::sync::OnceLock::new();
+    LUT.get_or_init(|| {
+        let mut t = Box::new([0.0f32; SRGB_LUT_N + 1]);
+        for (i, v) in t.iter_mut().enumerate() {
+            *v = linear_to_srgb(i as f32 / SRGB_LUT_N as f32);
+        }
+        t
+    })
+}
+
+/// Linear → sRGB-encoded (clamped to 0..1) by an interpolated table: within 2e-5 of the exact
+/// curve (≪ one 8-bit or 10-bit step), several times faster than `powf`.
+#[inline]
+fn encode_srgb(lut: &[f32; SRGB_LUT_N + 1], v: f32) -> f32 {
+    let f = v.clamp(0.0, 1.0) * SRGB_LUT_N as f32;
+    let i = (f as usize).min(SRGB_LUT_N - 1);
+    let t = f - i as f32;
+    lut[i] + (lut[i + 1] - lut[i]) * t
+}
+
 #[inline]
 fn enc(v: f32) -> u8 {
     // `v` is already sRGB-encoded; round to 8 bits.
     (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn srgb_table_matches_the_exact_curve() {
+        let lut = srgb_lut();
+        let mut worst = 0.0f32;
+        for i in 0..=200_000 {
+            // dense near black, where the curve bends most
+            let v = (i as f32 / 200_000.0).powi(3);
+            worst = worst.max((encode_srgb(lut, v) - linear_to_srgb(v)).abs());
+        }
+        assert!(worst < 2e-5, "{worst}");
+        assert_eq!(encode_srgb(lut, -1.0), 0.0);
+        assert!((encode_srgb(lut, 2.0) - 1.0).abs() < 1e-6);
+    }
 }

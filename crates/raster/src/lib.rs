@@ -98,6 +98,22 @@ impl<T: Copy + Default> Image<T> {
         });
         out
     }
+    /// Per-pixel combination of two images of the same size (row-parallel).
+    pub fn zip_map<U: Copy + Default + Sync, V: Copy + Default + Send>(&self, other: &Image<U>, f: impl Fn(T, U) -> V + Sync + Send) -> Image<V>
+    where
+        T: Sync,
+    {
+        assert_eq!((self.width, self.height), (other.width, other.height), "zip_map: size mismatch");
+        let mut out = Image::<V>::new(self.width, self.height);
+        let w = self.width;
+        par_rows(&mut out.data, w, |y, row| {
+            let (a, b) = (&self.data[y * w..(y + 1) * w], &other.data[y * w..(y + 1) * w]);
+            for ((o, s), t) in row.iter_mut().zip(a).zip(b) {
+                *o = f(*s, *t);
+            }
+        });
+        out
+    }
     /// Crop to `[x0, x0+w) × [y0, y0+h)` (clamped to the image).
     pub fn crop(&self, x0: usize, y0: usize, w: usize, h: usize) -> Self {
         let x0 = x0.min(self.width);
