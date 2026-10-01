@@ -462,3 +462,32 @@ fn red_eye_matches() {
     };
     check("red eye + spot (cpu stage)", &src, &info, &s, &RenderRequest::fit(600, 600));
 }
+
+fn saturated(s: &mut DevelopSettings) {
+    typical(s);
+    s.color.saturation = 70.0;
+    s.color.vibrance = 40.0;
+    s.curve.highlights = 30.0;
+    s.curve.shadows = -20.0;
+    s.grain.amount = 30.0;
+}
+
+#[test]
+fn output_spaces_match() {
+    if !gpu() {
+        return;
+    }
+    // Export colour spaces: matrix to the target primaries, gamut mapping into the target gamut and
+    // its encoding curve, on both renderers. Saturated edits push colours to the gamut edges.
+    use lightcraft_pipeline::OutputSpace;
+    let src = scene(0, 900, 600);
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    for space in OutputSpace::ALL {
+        for (name, edit) in [("typical", typical as Edit), ("saturated + curves + grain", saturated as Edit)] {
+            let mut s = DevelopSettings::default();
+            edit(&mut s);
+            let req = RenderRequest { space, ..RenderRequest::fit(640, 640) };
+            check(&format!("{space:?} {name}"), &src, &raw, &s, &req);
+        }
+    }
+}

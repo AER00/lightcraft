@@ -109,6 +109,24 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         &[(F::Jpeg, "JPEG"), (F::Png, "PNG"), (F::Tiff, "TIFF"), (F::Webp, "WebP"), (F::Avif, "AVIF")],
                         &mut opts.format,
                     );
+                    if opts.format == F::Avif {
+                        ui.label(egui::RichText::new("Color space: sRGB (AVIF)").color(t.text_dim));
+                    } else {
+                        use lightcraft_engine::export::OutputSpace as C;
+                        choices(
+                            ui,
+                            "Color space",
+                            "exportColorSpace",
+                            &[
+                                (C::Srgb, "sRGB"),
+                                (C::DisplayP3, "P3"),
+                                (C::AdobeRgb, "Adobe RGB"),
+                                (C::ProPhoto, "ProPhoto"),
+                                (C::Rec2020, "Rec.2020"),
+                            ],
+                            &mut opts.color_space,
+                        );
+                    }
                     if matches!(opts.format, F::Jpeg | F::Avif) {
                         let mut q = opts.quality as f64;
                         if num(ui, &QUALITY, &mut q) {
@@ -292,6 +310,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
                 "format": opts.format, "quality": opts.quality, "longEdge": long_edge, "limitKb": limit_kb,
                 "sharpen": opts.sharpen, "sharpenAmount": opts.sharpen_amount, "naming": opts.naming, "dir": dir,
                 "metadata": opts.metadata, "removeLocation": opts.remove_location, "watermark": opts.watermark,
+                "colorSpace": opts.color_space,
             }),
         ),
         Dialog::Merge { opts } => crate::merge::start_final(app, opts),

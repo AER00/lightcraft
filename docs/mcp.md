@@ -85,7 +85,7 @@ During development you can also point the client at `cargo run --release -p ligh
 | `apply_preset {preset, amount?, ids?}` | Apply a preset (ids from `cmd_presets_list`) |
 | `crop {id?, rect?, angle?, reset?}` | Normalized crop rect `[x0,y0,x1,y1]` and straighten angle |
 | `render_photo {id?, size?, format?, path?}` | Render with current settings → **image content** (PNG, or JPEG with `format: "jpeg"`), long edge `size` (default 1024) |
-| `export {path, id?, longEdge?, quality?}` | Full-quality render to `.png` / `.jpg` / `.tif` / `.webp` (headless; the desktop app writes PNG) |
+| `export {path, id?, longEdge?, quality?, colorSpace?}` | Full-quality render to `.png` / `.jpg` / `.tif` / `.webp` (headless; the desktop app writes PNG) |
 
 Tools taking `id` make that photo active first; without it they act on the active photo.
 

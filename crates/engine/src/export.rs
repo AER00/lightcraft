@@ -1,9 +1,11 @@
-//! Export: encode a rendered image to JPEG / PNG / TIFF / WebP / AVIF with an embedded sRGB profile,
-//! optional output sharpening and a JPEG file-size limit. Pure (bytes in, bytes out) so the desktop
+//! Export: encode a rendered image to JPEG / PNG / TIFF / WebP / AVIF in sRGB, Display P3, Adobe RGB
+//! (1998) compatible, ProPhoto RGB or Rec. 2020 with an embedded ICC profile we generate from the
+//! published primaries and curves, optional output sharpening and a JPEG file-size limit. Pure (bytes in, bytes out) so the desktop
 //! app, CLI, MCP and the web build share it; writing the file is the caller's job.
 
 use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, NamedSpace, TiffCompression, encode, icc};
 use lightcraft_meta::{DateTime, Gps, Metadata};
+pub use lightcraft_pipeline::OutputSpace;
 use lightcraft_raster::Rgba8;
 use serde::{Deserialize, Serialize};
 
@@ -198,6 +200,8 @@ pub struct ExportOptions {
     pub remove_location: bool,
     /// Text watermark (none when absent or the text is empty).
     pub watermark: Option<Watermark>,
+    /// Output colour space (AVIF is always sRGB: its muxer cannot embed a profile).
+    pub color_space: OutputSpace,
 }
 
 impl Default for ExportOptions {
@@ -213,12 +217,14 @@ impl Default for ExportOptions {
             metadata: MetadataPolicy::All,
             remove_location: false,
             watermark: None,
+            color_space: OutputSpace::Srgb,
         }
     }
 }
 
 impl ExportOptions {
-    /// Read options from command params (`format`, `quality`, `longEdge`, `limitKb`, `sharpen`, `sharpenAmount`, `naming`).
+    /// Read options from command params (`format`, `quality`, `longEdge`, `limitKb`, `sharpen`,
+    /// `sharpenAmount`, `naming`, `metadata`, `removeLocation`, `watermark`, `colorSpace`).
     pub fn from_json(p: &serde_json::Value) -> Self {
         use serde_json::Value;
         let d = Self::default();
@@ -243,7 +249,13 @@ impl ExportOptions {
                 _ => None,
             }
             .filter(|w: &Watermark| !w.text.trim().is_empty()),
+            color_space: s("colorSpace").and_then(OutputSpace::parse).unwrap_or(d.color_space),
         }
+    }
+
+    /// The colour space the file is actually written in (AVIF: sRGB).
+    pub fn effective_space(&self) -> OutputSpace {
+        if self.format == ExportFormat::Avif { OutputSpace::Srgb } else { self.color_space }
     }
 
     /// Output file name for photo `stem` at 1-based position `seq` in a batch.
@@ -304,7 +316,8 @@ pub fn output_sharpen(img: &mut Rgba8, target: SharpenFor, amount: SharpenAmount
     }
 }
 
-/// Encode a rendered (display-referred sRGB) image according to `o`. Resizing to `long_edge` is the
+/// Encode a rendered display-referred image according to `o` (its pixels must already be in
+/// `o.effective_space()`). Resizing to `long_edge` is the
 /// caller's job (render at that size); sharpening is applied here.
 pub fn encode_image(img: &Rgba8, o: &ExportOptions) -> Result<Vec<u8>, String> {
     encode_with_metadata(img, o, None)
@@ -314,10 +327,12 @@ pub fn encode_image(img: &Rgba8, o: &ExportOptions) -> Result<Vec<u8>, String> {
 pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
     let mut img = img.clone();
     output_sharpen(&mut img, o.sharpen, o.sharpen_amount);
+    let space = o.effective_space();
     if let Some(wm) = &o.watermark {
-        draw_watermark(&mut img, wm);
+        let wm = Watermark { color: srgb8_in(space, wm.color), ..wm.clone() };
+        draw_watermark(&mut img, &wm);
     }
-    let profile = icc::write_named(NamedSpace::Srgb);
+    let profile = icc::write_named(named_space(space));
     let exif = meta.map(lightcraft_meta::write_exif);
     let xmp = meta.map(|m| lightcraft_meta::write_xmp(m, None));
     let meta = EncodeMeta { icc: Some(&profile), exif: exif.as_deref(), xmp: xmp.as_deref() };
@@ -356,6 +371,31 @@ pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metada
         ExportFormat::Avif => encode::encode_avif(&e, o.quality, 8, &meta),
     };
     r.map_err(|e| e.to_string())
+}
+
+/// The codecs' name of an output space (for its ICC profile).
+pub fn named_space(s: OutputSpace) -> NamedSpace {
+    match s {
+        OutputSpace::Srgb => NamedSpace::Srgb,
+        OutputSpace::DisplayP3 => NamedSpace::DisplayP3,
+        OutputSpace::AdobeRgb => NamedSpace::AdobeRgb,
+        OutputSpace::ProPhoto => NamedSpace::ProPhoto,
+        OutputSpace::Rec2020 => NamedSpace::Rec2020,
+    }
+}
+
+/// An 8-bit sRGB colour expressed in `space` (encoded with its curve).
+pub fn srgb8_in(space: OutputSpace, c: [u8; 3]) -> [u8; 3] {
+    if space == OutputSpace::Srgb {
+        return c;
+    }
+    let lin = c.map(lightcraft_color::transfer::decode_srgb8);
+    let m = lightcraft_color::SRGB.to_space(&space.rgb_space()).to_f32();
+    let t = space.trc();
+    std::array::from_fn(|i| {
+        let v = m[i][0] * lin[0] + m[i][1] * lin[1] + m[i][2] * lin[2];
+        (t.encode(v) * 255.0 + 0.5) as u8
+    })
 }
 
 /// Parse a shutter speed such as `1/250`, `0.5` or `2"` into seconds.
@@ -414,7 +454,7 @@ pub fn export_photo(session: &mut crate::Session, id: lightcraft_catalog::PhotoI
     let full = p.width.max(p.height).max(1) as usize;
     let size = o.long_edge.map_or(full, |l| l as usize);
     let meta = export_metadata(p, o);
-    let r = session.render_now(id, size, size)?;
+    let r = session.render_export(id, size, o.effective_space())?;
     let bytes = encode_with_metadata(&r.image, o, meta.as_ref())?;
     Ok(Exported { file_name: o.file_name(&stem, seq), bytes, width: r.image.width, height: r.image.height })
 }
@@ -515,5 +555,81 @@ mod tests {
         assert_eq!(o.quality, 100);
         assert_eq!(o.long_edge, Some(2048));
         assert_eq!(o.file_name("IMG/1", 7), "IMG_1-007.jpg");
+    }
+
+    /// A flat field of a saturated green inside Display P3 but outside sRGB, rendered into `space`.
+    fn p3_green(space: OutputSpace) -> Rgba8 {
+        use lightcraft_color::{DISPLAY_P3, REC2020};
+        let c = DISPLAY_P3.to_space(&REC2020).apply_f32([0.04, 0.45, 0.04]);
+        let src = lightcraft_raster::Rgb32f::filled(16, 16, c);
+        let req = lightcraft_pipeline::RenderRequest { space, ..lightcraft_pipeline::RenderRequest::fit(16, 16) };
+        lightcraft_pipeline::render(&src, &Default::default(), &Default::default(), &req).image
+    }
+
+    /// Decode `bytes` and return the centre pixel in linear sRGB primaries (unclamped), plus the
+    /// recognised space of the embedded profile.
+    fn decoded_in_srgb(bytes: &[u8]) -> ([f32; 3], Option<NamedSpace>) {
+        let d = lightcraft_codecs::decode(bytes, Default::default()).expect("decodes");
+        let m = d.space.to_space(&lightcraft_color::SRGB);
+        (m.apply_f32(d.image.get(8, 8)), d.space.named)
+    }
+
+    #[test]
+    fn p3_colour_survives_a_p3_export_and_is_clipped_in_srgb() {
+        let o = |space| ExportOptions { format: ExportFormat::Png, color_space: space, ..Default::default() };
+        let (p3, named) = decoded_in_srgb(&encode_image(&p3_green(OutputSpace::DisplayP3), &o(OutputSpace::DisplayP3)).unwrap());
+        assert_eq!(named, Some(NamedSpace::DisplayP3));
+        assert!(p3[0] < -0.03 || p3[2] < -0.03, "outside sRGB after a P3 round trip: {p3:?}");
+        let (s, named) = decoded_in_srgb(&encode_image(&p3_green(OutputSpace::Srgb), &o(OutputSpace::Srgb)).unwrap());
+        assert_eq!(named, Some(NamedSpace::Srgb));
+        assert!(s.iter().all(|v| *v > -0.002), "{s:?}");
+        // the green itself is about the same brightness either way
+        assert!((p3[1] - s[1]).abs() < 0.15, "{p3:?} {s:?}");
+    }
+
+    #[test]
+    fn every_space_embeds_its_own_profile_and_round_trips() {
+        let grey = {
+            let src = lightcraft_raster::Rgb32f::filled(16, 16, [0.18; 3]);
+            let base = lightcraft_pipeline::RenderRequest::fit(16, 16);
+            move |space| {
+                lightcraft_pipeline::render(&src, &Default::default(), &Default::default(), &lightcraft_pipeline::RenderRequest { space, ..base })
+                    .image
+            }
+        };
+        let reference =
+            decoded_in_srgb(&encode_image(&grey(OutputSpace::Srgb), &ExportOptions { format: ExportFormat::Tiff, ..Default::default() }).unwrap()).0;
+        for space in OutputSpace::ALL {
+            for format in [ExportFormat::Jpeg, ExportFormat::Png, ExportFormat::Tiff, ExportFormat::Webp] {
+                let o = ExportOptions { format, color_space: space, ..Default::default() };
+                let bytes = encode_image(&grey(space), &o).unwrap();
+                let (px, named) = decoded_in_srgb(&bytes);
+                assert_eq!(named, Some(named_space(space)), "{space:?} {format:?}");
+                // a neutral grey decodes to the same linear value whatever the output space
+                for c in 0..3 {
+                    assert!((px[c] - reference[c]).abs() < 0.01, "{space:?} {format:?}: {px:?} vs {reference:?}");
+                }
+            }
+            let icc = icc::write_named(named_space(space));
+            let info = icc::parse(&icc).expect("our profile parses");
+            assert_eq!(info.named, Some(named_space(space)));
+            assert!(info.description.as_deref().is_some_and(|d| !d.is_empty()));
+        }
+        let o = ExportOptions { format: ExportFormat::Avif, color_space: OutputSpace::ProPhoto, ..Default::default() };
+        assert_eq!(o.effective_space(), OutputSpace::Srgb);
+        let o = ExportOptions::from_json(&serde_json::json!({"colorSpace": "displayP3"}));
+        assert_eq!(o.color_space, OutputSpace::DisplayP3);
+        assert_eq!(ExportOptions::from_json(&serde_json::json!({"colorSpace": "Adobe RGB (1998) compatible"})).color_space, OutputSpace::AdobeRgb);
+    }
+
+    #[test]
+    fn srgb_watermark_colour_is_converted() {
+        assert_eq!(srgb8_in(OutputSpace::Srgb, [10, 200, 30]), [10, 200, 30]);
+        for s in OutputSpace::ALL {
+            assert_eq!(srgb8_in(s, [255, 255, 255]), [255, 255, 255], "{s:?}");
+            assert_eq!(srgb8_in(s, [0, 0, 0]), [0, 0, 0], "{s:?}");
+        }
+        let p3 = srgb8_in(OutputSpace::DisplayP3, [255, 0, 0]);
+        assert!(p3[0] < 255 && p3[1] > 0, "{p3:?}");
     }
 }

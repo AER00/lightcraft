@@ -188,6 +188,7 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
                 "naming": {"type": "string", "description": "e.g. {name}-{seq}"},
                 "metadata": {"type": "string", "enum": ["all", "allExceptCamera", "copyright", "none"]},
                 "removeLocation": {"type": "boolean"},
+                "colorSpace": {"type": "string", "enum": ["srgb", "displayP3", "adobeRgb", "proPhoto", "rec2020"], "description": "Output colour space (default sRGB; AVIF is always sRGB). adobeRgb = Adobe RGB (1998) compatible; the embedded ICC profile is generated from the published primaries"},
                 "watermark": {"description": "Text, or {text, size (fraction of short edge), opacity, anchor (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight), inset, color [r,g,b], shadow}"}
             }),
             &[],
@@ -534,6 +535,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
                         "metadata",
                         "removeLocation",
                         "watermark",
+                        "colorSpace",
                     ],
                 ),
             )

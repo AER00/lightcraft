@@ -518,6 +518,16 @@ impl crate::Session {
         r.rendered
     }
 
+    /// Synchronous render for export: like [`Self::render_now`], into colour space `space`.
+    pub fn render_export(&mut self, id: PhotoId, max: usize, space: lightcraft_pipeline::OutputSpace) -> Result<Rendered, String> {
+        let mut job = self.render_job(id, max, max, false, true).ok_or("no such photo")?;
+        job.request.space = space;
+        job.key ^= (space as u64 + 1).wrapping_mul(0xa076_1d64_78bd_642f);
+        let r = job.run();
+        self.accept(&r);
+        r.rendered
+    }
+
     /// The source proxy for pixel-statistics commands (auto tone/WB), loading synchronously.
     pub fn source_now(&mut self, id: PhotoId, level: SourceLevel) -> Result<Arc<Rgb32f>, String> {
         let p = self.catalog.photo(id).ok_or("no such photo")?.clone();

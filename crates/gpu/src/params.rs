@@ -66,6 +66,10 @@ const FIELDS: &[(&str, usize)] = &[
     ("CALIB", 1),
     ("CALIB_M", 9),
     ("SHADOW_TINT", 1),
+    ("OUT_M", 9),
+    ("OUT_Y", 3),
+    ("OUT_TRC", 1),
+    ("OUT_GAMMA", 1),
 ];
 
 /// `(name, index)` of every field (for the WGSL constants).
@@ -212,6 +216,11 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
         p.fs("CALIB_M", m.as_flattened());
     }
     p.f("SHADOW_TINT", fp.shadow_tint);
+    p.fs("OUT_M", fp.to_out.as_flattened());
+    p.fs("OUT_Y", &fp.out_luma);
+    let (trc, gamma) = fp.out_trc.code();
+    p.u("OUT_TRC", trc);
+    p.f("OUT_GAMMA", gamma);
     if let Some((amt, cell, rough, seed)) = fp.grain {
         p.b("GRAIN", true);
         p.f("GRAIN_AMT", amt);
