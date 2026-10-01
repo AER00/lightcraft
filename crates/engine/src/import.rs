@@ -223,6 +223,11 @@ pub fn import(s: &mut Session, paths: &[String], mode: ImportMode) -> crate::Res
         if let Some((t, tint)) = info.as_shot_wb {
             p.develop = std::sync::Arc::new(lightcraft_develop::DevelopSettings::for_raw(t, tint));
         }
+        p.embedded_lens = info.embedded_lens;
+        if p.embedded_lens.is_some() {
+            // built-in (file-embedded) lens corrections are on by default, like the camera intended
+            std::sync::Arc::make_mut(&mut p.develop).optics.lens_profile = true;
+        }
         let raw = p.kind == lightcraft_catalog::MediaKind::Raw;
         let packet = crate::sidecar::find_sidecar(&path, s.xmp.naming)
             .and_then(|f| std::fs::read_to_string(f).ok())

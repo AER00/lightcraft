@@ -1,10 +1,19 @@
-//! Output framing: user orientation, crop + straighten, flips — and the mapping between output
-//! pixels and normalized source coordinates (used by masks, spots and on-canvas tools).
+//! Output framing: user orientation, lens corrections and perspective ([`Warp`]), crop + straighten,
+//! flips — and the mapping between output pixels and normalized coordinates (used by masks, spots and
+//! on-canvas tools).
+//!
+//! Normalized coordinates (masks, spots, crop) refer to the *transformed* image: the oriented source after
+//! lens correction and perspective, at the source's size. Everything is sampled in one resample.
 
-use lightcraft_develop::DevelopSettings;
-use lightcraft_geom::{Affine, CropGeometry, Orientation, Point, Rect};
+use lightcraft_develop::{DevelopSettings, EmbeddedLens};
+use lightcraft_geom::{Affine, CropGeometry, Homography, Orientation, Point, Rect};
 use lightcraft_raster::resample::{Filter, resize};
 use lightcraft_raster::{Rgb32f, par_rows};
+
+use crate::optics::{Warp, reorient_lens};
+
+/// Linear value of areas outside the source after a warp (a light neutral, like an empty canvas).
+pub const BLANK: [f32; 3] = [0.55, 0.55, 0.55];
 
 /// The geometric frame of a render.
 #[derive(Clone, Debug)]
@@ -20,14 +29,104 @@ pub struct Frame {
     pub crop: CropGeometry,
     pub flip_h: bool,
     pub flip_v: bool,
+    /// Lens corrections / perspective (None = identity).
+    pub warp: Option<Warp>,
 }
 
 impl Frame {
     pub fn new(src_w: usize, src_h: usize, s: &DevelopSettings, apply_crop: bool) -> Frame {
+        Frame::with_lens(src_w, src_h, s, apply_crop, None)
+    }
+
+    /// Like [`Frame::new`], with the source's embedded lens corrections (relative to the EXIF-oriented source).
+    pub fn with_lens(src_w: usize, src_h: usize, s: &DevelopSettings, apply_crop: bool, lens: Option<&EmbeddedLens>) -> Frame {
         let orient = s.orientation;
         let (ow, oh) = if orient.swaps_axes() { (src_h as f64, src_w as f64) } else { (src_w as f64, src_h as f64) };
         let crop = if apply_crop { s.crop.geometry } else { CropGeometry::default() };
-        Frame { src_w, src_h, orient, ow, oh, crop, flip_h: apply_crop && s.crop.flip_h, flip_v: apply_crop && s.crop.flip_v }
+        let lens = lens.map(|l| reorient_lens(l, orient, src_w as f64, src_h as f64));
+        let mut warp = Warp::from_settings(ow, oh, s, lens.as_ref());
+        let persp = perspective(s, ow, oh);
+        if persp != Homography::IDENTITY
+            && let Some(inv) = persp.inverse()
+        {
+            warp.persp = persp;
+            warp.persp_inv = inv;
+        }
+        let mut f = Frame {
+            src_w,
+            src_h,
+            orient,
+            ow,
+            oh,
+            crop,
+            flip_h: apply_crop && s.crop.flip_h,
+            flip_v: apply_crop && s.crop.flip_v,
+            warp: (!warp.is_identity()).then_some(warp),
+        };
+        if apply_crop && s.geometry.constrain_crop {
+            f.constrain_to_image();
+        }
+        f
+    }
+
+    /// "Constrain Crop": shrink the crop about its centre until it contains no area outside the warped source.
+    fn constrain_to_image(&mut self) {
+        let Some(wp) = self.warp.as_ref().filter(|w| w.moves_pixels()) else { return };
+        let a = self.crop.output_to_source(self.ow, self.oh, 1.0, 1.0);
+        let (w, h) = (self.ow, self.oh);
+        let fits = |t: f64| {
+            (0..=48).all(|i| {
+                let u = i as f64 / 48.0;
+                [(u, 0.0), (u, 1.0), (0.0, u), (1.0, u)].iter().all(|&(x, y)| {
+                    let p = Point::new(0.5 + t * (x - 0.5), 0.5 + t * (y - 0.5));
+                    let s = wp.to_source(a.apply(p), 1);
+                    s.x >= -1e-6 * w && s.y >= -1e-6 * h && s.x <= w * (1.0 + 1e-6) && s.y <= h * (1.0 + 1e-6)
+                })
+            })
+        };
+        if fits(1.0) {
+            return;
+        }
+        let (mut lo, mut hi) = (0.0, 1.0);
+        for _ in 0..30 {
+            let m = (lo + hi) / 2.0;
+            if fits(m) { lo = m } else { hi = m }
+        }
+        let t = lo.max(0.02);
+        let r = self.crop.rect;
+        self.crop.rect = Rect::from_center(r.center(), r.width() * t, r.height() * t);
+    }
+
+    /// Add automatically estimated lateral CA (`[α_R, α_B]`, see [`crate::optics::estimate_lateral_ca`]).
+    pub fn add_lateral_ca(&mut self, ca: [f64; 2]) {
+        if ca == [0.0; 2] {
+            return;
+        }
+        let w = self.warp.get_or_insert_with(|| Warp::identity(self.ow, self.oh));
+        w.ca[0] += ca[0];
+        w.ca[2] += ca[1];
+    }
+
+    /// Map a point of the transformed image (normalized) to the lens-corrected, pre-perspective image (normalized).
+    pub fn transformed_to_corrected(&self, p: Point) -> Point {
+        match &self.warp {
+            Some(w) => {
+                let q = w.to_corrected(Point::new(p.x * self.ow, p.y * self.oh));
+                Point::new(q.x / self.ow, q.y / self.oh)
+            }
+            None => p,
+        }
+    }
+
+    /// Inverse of [`Frame::transformed_to_corrected`].
+    pub fn corrected_to_transformed(&self, p: Point) -> Point {
+        match &self.warp {
+            Some(w) => {
+                let q = w.from_corrected(Point::new(p.x * self.ow, p.y * self.oh));
+                Point::new(q.x / self.ow, q.y / self.oh)
+            }
+            None => p,
+        }
     }
 
     /// Aspect ratio (w/h) of the output.
@@ -92,7 +191,11 @@ impl Frame {
         } else {
             (o.clone(), 1.0)
         };
-        let xf = Affine::scale(s, base.height as f64 / o.height as f64) * self.out_to_oriented(w, h);
+        let (sx, sy) = (s, base.height as f64 / o.height as f64);
+        if let Some(wp) = &self.warp {
+            return sample_warped(&base, sx, sy, wp, self.out_to_oriented(w, h), w, h);
+        }
+        let xf = Affine::scale(sx, sy) * self.out_to_oriented(w, h);
         let identity_like = self.crop.is_identity() && !self.flip_h && !self.flip_v && base.width == w && base.height == h;
         if identity_like {
             return base;
@@ -116,6 +219,47 @@ impl Frame {
             Point::new(q.x / self.ow, q.y / self.oh)
         })
     }
+}
+
+/// The perspective homography of the settings (Upright, then the manual Transform sliders), lens-corrected →
+/// transformed, in centred coordinates.
+pub fn perspective(s: &DevelopSettings, ow: f64, oh: f64) -> Homography {
+    if !s.section_enabled("geometry") {
+        return Homography::IDENTITY;
+    }
+    crate::transform::manual(&s.geometry).mul(&crate::upright::homography(&s.geometry, ow, oh))
+}
+
+/// One resample through the warp: `o2t` maps output px → transformed px, the warp maps those to source px
+/// (scaled by `sx, sy` into `base`).
+fn sample_warped(base: &Rgb32f, sx: f64, sy: f64, wp: &Warp, o2t: Affine, w: usize, h: usize) -> Rgb32f {
+    let per_channel = wp.per_channel();
+    let gain = wp.has_gain();
+    let mut out = Rgb32f::new(w, h);
+    par_rows(&mut out.data, w, |y, row| {
+        for (x, px) in row.iter_mut().enumerate() {
+            let t = o2t.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
+            let c = wp.to_corrected(t);
+            let g = wp.corrected_to_source(c, 1);
+            if !wp.inside(g) {
+                *px = BLANK;
+                continue;
+            }
+            let mut v = base.sample_bilinear((g.x * sx) as f32, (g.y * sy) as f32);
+            if per_channel {
+                for ch in [0usize, 2] {
+                    let q = wp.corrected_to_source(c, ch);
+                    v[ch] = base.sample_bilinear((q.x * sx) as f32, (q.y * sy) as f32)[ch];
+                }
+            }
+            if gain {
+                let k = wp.gain(g);
+                v = v.map(|c| c * k);
+            }
+            *px = v;
+        }
+    });
+    out
 }
 
 /// Whole-image rectangle in normalized coordinates.

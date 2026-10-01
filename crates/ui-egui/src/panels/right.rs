@@ -133,6 +133,53 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     });
     divider(ui);
     header(ui, "Geometry");
+    padded(ui, |ui| {
+        ui.label("Upright");
+        ui.horizontal_wrapped(|ui| {
+            use lightcraft_develop::Upright;
+            for (label, mode, key) in [
+                ("Off", Upright::Off, "off"),
+                ("Auto", Upright::Auto, "auto"),
+                ("Guided", Upright::Guided, "guided"),
+                ("Level", Upright::Level, "level"),
+                ("Vertical", Upright::Vertical, "vertical"),
+                ("Full", Upright::Full, "full"),
+            ] {
+                if text_button(ui, &format!("upright-{key}"), label, d.geometry.upright == mode).clicked() {
+                    let _ = app.run("geometry.upright", json!({"mode": key}));
+                    app.ui.tool = if mode == Upright::Guided { "guidedUpright".into() } else { String::new() };
+                }
+            }
+        });
+        let guided = d.geometry.upright == lightcraft_develop::Upright::Guided;
+        ui.horizontal_wrapped(|ui| {
+            if !guided && d.geometry.upright != lightcraft_develop::Upright::Off && text_button(ui, "uprightUpdate", "Update", false).clicked() {
+                let mode = serde_json::to_value(d.geometry.upright).unwrap_or_default();
+                let _ = app.run("geometry.upright", json!({"mode": mode}));
+            }
+            if guided {
+                let drawing = app.ui.tool == "guidedUpright";
+                if text_button(ui, "uprightDraw", "Draw Guides", drawing).clicked() {
+                    app.ui.tool = if drawing { String::new() } else { "guidedUpright".into() };
+                }
+                if !d.geometry.guides.is_empty() && text_button(ui, "uprightClear", "Clear Guides", false).clicked() {
+                    let _ = app.run("geometry.guides", json!({"guides": []}));
+                }
+            }
+        });
+        if guided {
+            ui.label(
+                egui::RichText::new(format!("{} of 4 guides — drag along lines that should be vertical or horizontal.", d.geometry.guides.len()))
+                    .size(11.0)
+                    .color(Tokens::get(ui.ctx()).text_dim),
+            );
+        }
+        ui.add_space(4.0);
+        let mut c = d.geometry.constrain_crop;
+        if ui.checkbox(&mut c, "Constrain Crop").changed() {
+            let _ = app.run("develop.merge", json!({"settings": {"geometry": {"constrain_crop": c}}, "label": "Constrain Crop"}));
+        }
+    });
     for spec in lightcraft_develop::controls::in_section(lightcraft_develop::Section::Geometry).filter(|c| c.id != "crop.angle") {
         let v = lightcraft_develop::controls::get(&d, spec.id).unwrap_or(spec.default);
         let out = slider(ui, spec, v, true, None);

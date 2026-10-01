@@ -1,7 +1,7 @@
 //! The develop settings schema. Every field has a neutral default; serde uses `#[serde(default)]` so
 //! older/newer files load (unknown fields are ignored, missing fields take defaults).
 
-use lightcraft_geom::{CropGeometry, Orientation, Point};
+use lightcraft_geom::{CropGeometry, Homography, Orientation, Point};
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -419,6 +419,10 @@ pub struct Optics {
     pub distortion: f64,
     pub vignetting: f64,
     pub vignetting_midpoint: f64,
+    /// Manual lateral chromatic aberration (red/cyan, blue/yellow fringes), −100..100, added to the
+    /// automatic estimate when `remove_ca` is on.
+    pub ca_red: f64,
+    pub ca_blue: f64,
 }
 
 impl Default for Optics {
@@ -437,8 +441,40 @@ impl Default for Optics {
             distortion: 0.0,
             vignetting: 0.0,
             vignetting_midpoint: 50.0,
+            ca_red: 0.0,
+            ca_blue: 0.0,
         }
     }
+}
+
+/// Lens corrections embedded in a DNG file (`OpcodeList3`: `WarpRectilinear`, `FixVignetteRadial`), converted
+/// to the oriented, default-cropped image. This is camera/file data (stored on the photo record, not in the develop
+/// settings); "Enable Profile Corrections" applies it, scaled by the profile distortion/vignetting amounts.
+/// LightCraft never uses Adobe LCP lens profiles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EmbeddedLens {
+    pub warp: Option<EmbeddedWarp>,
+    pub vignette: Option<EmbeddedVignette>,
+}
+
+/// DNG `WarpRectilinear`: per plane (R, G, B) `[kr0, kr1, kr2, kr3, kt0, kt1]`. For an output (corrected) point at
+/// offset `d = (p − center) / radius`, the source point is `center + radius · (d·f(r²) + tangential(d))`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EmbeddedWarp {
+    pub planes: [[f64; 6]; 3],
+    /// Optical centre, normalized to the oriented image (0..1).
+    pub center: Point,
+    /// Normalisation radius as a fraction of the oriented image's long edge.
+    pub radius: f64,
+}
+
+/// DNG `FixVignetteRadial`: gain `1 + k0 r² + k1 r⁴ + … + k4 r¹⁰` with `r = |p − center| / radius`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EmbeddedVignette {
+    pub k: [f64; 5],
+    pub center: Point,
+    pub radius: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -457,8 +493,13 @@ pub enum Upright {
 #[serde(default)]
 pub struct Geometry {
     pub upright: Upright,
-    /// Guided Upright guides (normalized image coords), up to 4 line segments.
+    /// Guided Upright guides, up to 4 line segments, in normalized coordinates of the lens-corrected
+    /// (pre-perspective) oriented image.
     pub guides: Vec<(Point, Point)>,
+    /// The automatic Upright correction found by analysis for `upright` (Auto/Level/Vertical/Full), as a
+    /// homography lens-corrected → transformed in centred coordinates (`(p − centre) / (long edge / 2)`).
+    /// Stored so previews and exports use the identical transform; recomputed by `geometry.upright`.
+    pub upright_transform: Option<Homography>,
     pub vertical: f64,
     pub horizontal: f64,
     pub rotate: f64,
@@ -474,6 +515,7 @@ impl Default for Geometry {
         Self {
             upright: Upright::Off,
             guides: Vec::new(),
+            upright_transform: None,
             vertical: 0.0,
             horizontal: 0.0,
             rotate: 0.0,

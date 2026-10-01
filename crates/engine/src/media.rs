@@ -220,9 +220,13 @@ pub fn content_key(p: &Photo) -> String {
 pub fn source_info(p: &Photo) -> SourceInfo {
     // Procedural demo scenes are scene-referred HDR (like raw files): use the filmic tone map.
     if matches!(p.source, Source::Demo { .. }) {
-        return SourceInfo { raw: true, as_shot_temp: 6500.0, as_shot_tint: 0.0 };
+        return SourceInfo { raw: true, as_shot_temp: 6500.0, as_shot_tint: 0.0, lens: None };
     }
-    if p.kind == MediaKind::Raw { SourceInfo { raw: true, as_shot_temp: 5500.0, as_shot_tint: 0.0 } } else { SourceInfo::default() }
+    if p.kind == MediaKind::Raw {
+        SourceInfo { raw: true, as_shot_temp: 5500.0, as_shot_tint: 0.0, lens: p.embedded_lens }
+    } else {
+        SourceInfo::default()
+    }
 }
 
 impl crate::Session {
@@ -301,6 +305,8 @@ pub struct ProbeInfo {
     pub as_shot_wb: Option<(f64, f64)>,
     /// Hash of the file's bytes (hex), for duplicate detection.
     pub content_hash: Option<String>,
+    /// Lens corrections embedded in the file (DNG opcodes).
+    pub embedded_lens: Option<lightcraft_develop::EmbeddedLens>,
     /// The file's embedded XMP packet (raw/DNG files), for develop settings stored inside the file.
     pub xmp: Option<String>,
 }
