@@ -25,3 +25,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 ab_glyph = { workspace = true }
+
+[dev-dependencies]
+libc = { workspace = true }

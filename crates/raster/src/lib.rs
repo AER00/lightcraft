@@ -29,6 +29,19 @@ pub fn par_rows<T: Send>(data: &mut [T], row_len: usize, f: impl Fn(usize, &mut 
     }
 }
 
+/// Run `a` and `b` potentially in parallel (sequentially without the `parallel` feature). For
+/// independent passes that each scale poorly on their own (small images, short rows).
+pub fn par_join<A: Send, B: Send>(a: impl FnOnce() -> A + Send, b: impl FnOnce() -> B + Send) -> (A, B) {
+    #[cfg(feature = "parallel")]
+    {
+        rayon::join(a, b)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        (a(), b())
+    }
+}
+
 /// Interleaved row-major image.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Image<T> {
@@ -94,6 +107,22 @@ impl<T: Copy + Default> Image<T> {
             let src = &self.data[y * w..(y + 1) * w];
             for (o, s) in row.iter_mut().zip(src) {
                 *o = f(*s);
+            }
+        });
+        out
+    }
+    /// Per-pixel combination of two images of the same size (row-parallel).
+    pub fn zip_map<U: Copy + Default + Sync, V: Copy + Default + Send>(&self, other: &Image<U>, f: impl Fn(T, U) -> V + Sync + Send) -> Image<V>
+    where
+        T: Sync,
+    {
+        assert_eq!((self.width, self.height), (other.width, other.height), "zip_map: size mismatch");
+        let mut out = Image::<V>::new(self.width, self.height);
+        let w = self.width;
+        par_rows(&mut out.data, w, |y, row| {
+            let (a, b) = (&self.data[y * w..(y + 1) * w], &other.data[y * w..(y + 1) * w]);
+            for ((o, s), t) in row.iter_mut().zip(a).zip(b) {
+                *o = f(*s, *t);
             }
         });
         out

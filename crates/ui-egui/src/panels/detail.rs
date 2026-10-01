@@ -143,6 +143,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let want = (img_rect.width().max(img_rect.height()) * ppp * scale).min(2560.0) as usize;
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     if let Some(job) = app.session.render_job(id, rw.max(8), rh.max(8), false, !crop_tool) {
+        let job = if interacting { job.draft() } else { job };
         app.renderer.request(Slot::Main, job, 100);
     }
     let show_before = app.ui.before_after == BeforeAfter::Original || ui.input(|i| i.key_down(egui::Key::Backslash));
