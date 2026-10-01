@@ -10,7 +10,10 @@ pub enum ViewMode {
     PhotoGrid,
     SquareGrid,
     Detail,
+    /// Two photos side by side (select | candidate), synced zoom.
     Compare,
+    /// The selected photos tiled.
+    Survey,
 }
 
 /// The right-hand tool/panel shown next to the tool strip.
@@ -107,6 +110,11 @@ pub struct UiState {
     pub brush_flow: f32,
     pub brush_erase: bool,
     pub remove_size: f32,
+    /// Culling: after a rating, flag or colour-label key, move to the next photo.
+    pub auto_advance: bool,
+    /// Compare view: (select, candidate) photo ids.
+    #[serde(skip)]
+    pub compare: Option<(u64, u64)>,
     /// Transient toast text and its expiry (seconds of app time).
     #[serde(skip)]
     pub toast: Option<(String, f64)>,
@@ -183,6 +191,8 @@ impl Default for UiState {
             brush_flow: 60.0,
             brush_erase: false,
             remove_size: 0.02,
+            auto_advance: false,
+            compare: None,
             toast: None,
             status: String::new(),
             dialog: None,

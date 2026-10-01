@@ -329,10 +329,13 @@ impl LightcraftApp {
         }
         panels::bottombar::show(self, ui);
         let t = theme::Tokens::get(&ctx);
-        let bg = if matches!(self.ui.view, state::ViewMode::Detail | state::ViewMode::Compare) { t.canvas } else { t.grid_bg };
+        let bg =
+            if matches!(self.ui.view, state::ViewMode::Detail | state::ViewMode::Compare | state::ViewMode::Survey) { t.canvas } else { t.grid_bg };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| match self.ui.view {
             state::ViewMode::PhotoGrid | state::ViewMode::SquareGrid => panels::grid::show(self, ui),
-            state::ViewMode::Detail | state::ViewMode::Compare => panels::detail::show(self, ui),
+            state::ViewMode::Detail => panels::detail::show(self, ui),
+            state::ViewMode::Compare => panels::compare::show_compare(self, ui),
+            state::ViewMode::Survey => panels::compare::show_survey(self, ui),
         });
         panels::dialogs::show(self, &ctx);
         panels::toast(self, &ctx);

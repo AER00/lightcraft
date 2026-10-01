@@ -23,6 +23,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     ("photoGrid", Icon::GridPhoto, ViewMode::PhotoGrid, "Photo Grid (G)"),
                     ("squareGrid", Icon::GridSquare, ViewMode::SquareGrid, "Square Grid (Shift+G)"),
                     ("detail", Icon::Single, ViewMode::Detail, "Detail (D)"),
+                    ("compare", Icon::Compare, ViewMode::Compare, "Compare (Shift+C)"),
+                    ("survey", Icon::Survey, ViewMode::Survey, "Survey (N)"),
                 ] {
                     if icon_button(ui, id, icon, vec2(32.0, 32.0), app.ui.view == mode, true, tip).clicked() {
                         let _ = app.run(&format!("view.{id}"), json!({}));
@@ -45,7 +47,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             pill_ui.spacing_mut().item_spacing.x = 3.0;
             let rating = active.as_ref().map(|p| p.rating).unwrap_or(0);
             if let Some(r) = stars(&mut pill_ui, "bottom", rating, 19.0) {
-                let _ = app.run("photo.rate", json!({"rating": r}));
+                let mut params = json!({"rating": r});
+                crate::panels::compare::target_active(app, &mut params);
+                let _ = app.run("photo.rate", params);
             }
             pill_ui.add_space(6.0);
             let flag = active.as_ref().map(|p| p.flag).unwrap_or_default();
@@ -64,7 +68,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 };
                 paint(pill_ui.painter(), r.shrink(3.0), icon, c);
                 if resp.clicked() {
-                    let _ = app.run("photo.flag", json!({"flag": match f { Flag::Pick => "pick", Flag::Reject => "reject", Flag::None => "none" }}));
+                    let mut params = json!({"flag": match f { Flag::Pick => "pick", Flag::Reject => "reject", Flag::None => "none" }});
+                    crate::panels::compare::target_active(app, &mut params);
+                    let _ = app.run("photo.flag", params);
                 }
             }
             // copy / paste settings
@@ -102,7 +108,23 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     .layout(egui::Layout::right_to_left(egui::Align::Center)),
             );
             child.spacing_mut().item_spacing.x = 6.0;
-            if matches!(app.ui.view, ViewMode::Detail | ViewMode::Compare) {
+            if matches!(app.ui.view, ViewMode::Compare | ViewMode::Survey)
+                && icon_button(
+                    &mut child,
+                    "autoAdvance",
+                    Icon::ChevronRight,
+                    vec2(30.0, 30.0),
+                    app.ui.auto_advance,
+                    true,
+                    "Auto Advance after rating or flagging",
+                )
+                .clicked()
+            {
+                let _ = app.run("view.autoAdvance", json!({}));
+            }
+            if app.ui.view == ViewMode::Survey {
+                // no zoom or thumbnail size in Survey
+            } else if matches!(app.ui.view, ViewMode::Detail | ViewMode::Compare) {
                 if icon_button(
                     &mut child,
                     "beforeAfter",

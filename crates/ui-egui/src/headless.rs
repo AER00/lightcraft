@@ -283,6 +283,60 @@ mod tests {
         assert_eq!(diff, 0, "{diff} pixels differ between two runs");
     }
 
+    /// Keyboard culling: Compare (rating keys hit the candidate, arrows move it, auto-advance),
+    /// Survey (keys hit the active photo only), and auto-advance in Detail.
+    #[test]
+    fn compare_survey_and_auto_advance_by_keyboard() {
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        let rating = |h: &Headless, id: u64| h.app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap().rating;
+        let flag = |h: &Headless, id: u64| h.app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap().flag;
+        let vis: Vec<u64> = h.app.session.visible_cloned().iter().map(|p| p.0).collect();
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[0], vis[1]]}}), t);
+        let r = h.request("engine.execute", json!({"command": "view.compare"}), t);
+        assert_eq!(r["result"], json!({"select": vis[0], "candidate": vis[1]}), "{r}");
+        assert_eq!(h.app.ui.view, crate::state::ViewMode::Compare);
+        // rating applies to the candidate (active) only
+        let before = rating(&h, vis[0]);
+        h.request("ui.key", json!({"key": "2"}), t);
+        assert_eq!((rating(&h, vis[0]), rating(&h, vis[1])), (before, 2));
+        // arrows move the candidate; the select stays
+        h.request("ui.key", json!({"key": "right"}), t);
+        assert_eq!(h.app.ui.compare, Some((vis[0], vis[2])));
+        h.request("ui.key", json!({"key": "left"}), t);
+        assert_eq!(h.app.ui.compare, Some((vis[0], vis[1])));
+        // Shift+X: reject and advance to the next candidate
+        h.request("ui.key", json!({"key": "x", "shift": true}), t);
+        assert_eq!(flag(&h, vis[1]), lightcraft_catalog::Flag::Reject);
+        assert_eq!(h.app.ui.compare, Some((vis[0], vis[2])));
+        h.request("engine.execute", json!({"command": "compare.swap"}), t);
+        assert_eq!(h.app.ui.compare, Some((vis[2], vis[0])));
+        h.request("engine.execute", json!({"command": "compare.makeSelect"}), t);
+        assert_eq!(h.app.ui.compare.map(|c| c.0), Some(vis[0]));
+        // Survey: the selection tiled; keys hit the active photo, auto-advance walks the survey
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[3], vis[4], vis[5]], "active": vis[3]}}), t);
+        let r = h.request("engine.execute", json!({"command": "view.survey"}), t);
+        assert_eq!(r["result"]["photos"], 3);
+        h.request("engine.execute", json!({"command": "view.autoAdvance"}), t);
+        assert!(h.app.ui.auto_advance);
+        h.request("ui.key", json!({"key": "5"}), t);
+        h.request("ui.key", json!({"key": "p"}), t);
+        assert_eq!((rating(&h, vis[3]), flag(&h, vis[4])), (5, lightcraft_catalog::Flag::Pick));
+        assert_eq!(h.app.session.selection.active.map(|p| p.0), Some(vis[5]));
+        assert_eq!(h.app.session.selection.ids.len(), 3, "the survey keeps its selection");
+        let img = h.snapshot(Duration::from_secs(20));
+        assert_eq!(img.size, [1000, 700]);
+        // Detail: auto-advance moves to the next photo
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[6]]}}), t);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.request("ui.key", json!({"key": "u"}), t);
+        assert_eq!(h.app.session.selection.active.map(|p| p.0), Some(vis[7]));
+        // Escape leaves the culling views for Detail
+        h.request("ui.set", json!({"view": "survey"}), t);
+        h.request("ui.key", json!({"key": "escape"}), t);
+        assert_eq!(h.app.ui.view, crate::state::ViewMode::Detail);
+    }
+
     #[test]
     fn screenshot_request_is_answered_without_a_window() {
         let mut h = demo([800.0, 500.0]);

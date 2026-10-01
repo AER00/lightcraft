@@ -71,7 +71,7 @@ impl CanvasMap {
     }
 }
 
-fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], ppp: f32, pan: (f32, f32)) -> Rect {
+pub(crate) fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], ppp: f32, pan: (f32, f32)) -> Rect {
     let (aw, ah) = (area.width(), area.height());
     let (w, h) = match zoom {
         Zoom::Fit => {
@@ -652,7 +652,7 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
 
 // ------------------------------------------------------------------------ filmstrip
 
-fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
+pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
     let t = Tokens::get(ui.ctx());
     ui.painter().rect_filled(r, 0.0, t.canvas);
     ui.painter().rect_filled(Rect::from_min_size(r.min, vec2(r.width(), 4.0)), 0.0, Color32::from_gray(0x20));

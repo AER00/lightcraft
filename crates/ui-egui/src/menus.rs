@@ -14,6 +14,11 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.photoGrid", "Photo Grid", Some("G"), "View"),
     ("view.squareGrid", "Square Grid", Some("Shift+G"), "View"),
     ("view.detail", "Detail", Some("D"), "View"),
+    ("view.compare", "Compare", Some("Shift+C"), "View"),
+    ("view.survey", "Survey", Some("N"), "View"),
+    ("compare.swap", "Swap Compare Photos", None, "View"),
+    ("compare.makeSelect", "Make Candidate the Select", None, "View"),
+    ("view.autoAdvance", "Auto Advance", None, "Photo"),
     ("view.filmstrip", "Filmstrip", Some("/"), "View"),
     ("view.leftPanel", "My Photos Panel", Some("Cmd+Shift+L"), "View"),
     ("view.beforeAfter", "Compare Before and After", Some("Y"), "View"),
@@ -98,11 +103,25 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.view = ViewMode::Detail;
             Ok(Value::Null)
         }
+        "view.compare" => crate::panels::compare::enter_compare(app),
+        "view.survey" => {
+            app.ui.view = ViewMode::Survey;
+            Ok(json!({"photos": crate::panels::compare::survey_photos(app).len()}))
+        }
+        "compare.swap" => crate::panels::compare::swap(app),
+        "compare.makeSelect" => crate::panels::compare::make_select(app),
+        "view.autoAdvance" => {
+            app.ui.auto_advance = !app.ui.auto_advance;
+            app.toast(&ctx, if app.ui.auto_advance { "Auto Advance On" } else { "Auto Advance Off" });
+            Ok(json!({"autoAdvance": app.ui.auto_advance}))
+        }
         "view.back" => {
             if app.ui.dialog.is_some() {
                 app.ui.dialog = None;
             } else if !app.ui.tool.is_empty() {
                 app.ui.tool.clear();
+            } else if matches!(app.ui.view, ViewMode::Compare | ViewMode::Survey) {
+                app.ui.view = ViewMode::Detail;
             } else if app.ui.view == ViewMode::Detail {
                 app.ui.view = ViewMode::PhotoGrid;
             }
@@ -373,6 +392,8 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         s if s.starts_with("panel.") || s.starts_with("tool.") || s.starts_with("section.") => app.session.active().is_some() || s == "panel.close",
         "app.export" | "dialog.export" | "dialog.createPreset" | "dialog.copySettings" => app.session.active().is_some(),
         "file.exportPresets" => app.session.presets.iter().any(|p| !p.builtin),
+        "view.compare" => app.session.catalog.len() > 1,
+        "compare.swap" | "compare.makeSelect" => app.ui.view == ViewMode::Compare,
         _ => true,
     }
 }

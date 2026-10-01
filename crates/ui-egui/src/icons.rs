@@ -29,6 +29,7 @@ pub enum Icon {
     GridSquare,
     Single,
     Compare,
+    Survey,
     Sort,
     Star,
     StarFilled,
@@ -242,9 +243,15 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.rect_fill(10.5, 10.5, 16.5, 16.0, 0.5);
         }
         Single => pen.rect_fill(3.0, 5.0, 17.0, 15.0, 0.5),
+        Survey => {
+            pen.rect(2.5, 3.5, 9.0, 9.0, 1.0);
+            pen.rect(11.0, 3.5, 17.5, 9.0, 1.0);
+            pen.rect(2.5, 11.0, 9.0, 16.5, 1.0);
+            pen.rect(11.0, 11.0, 17.5, 16.5, 1.0);
+        }
         Compare => {
-            pen.rect_fill(3.0, 5.0, 9.5, 15.0, 0.5);
-            pen.rect_fill(10.5, 5.0, 17.0, 15.0, 0.5);
+            pen.rect_fill(2.0, 5.0, 8.8, 15.0, 0.5);
+            pen.rect_fill(11.2, 5.0, 18.0, 15.0, 0.5);
         }
         Sort => {
             pen.line(&[(3.0, 5.0), (17.0, 5.0)]);

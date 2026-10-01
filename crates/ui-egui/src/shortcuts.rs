@@ -80,15 +80,43 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 fire.push(format!("label:{label}"));
             }
         }
+        // Shift+P/X/U: flag and advance
+        for (id, key) in [("photo.pick", Key::P), ("photo.reject", Key::X), ("photo.unflag", Key::U)] {
+            if matches(i, Modifiers::SHIFT, key) {
+                fire.push(format!("flagadv:{id}"));
+            }
+        }
     });
+    use crate::panels::compare;
+    // rating/flag/label keys: in Compare/Survey they act on the active photo only; Shift+key or
+    // Auto Advance then moves on (next candidate in Compare, next photo elsewhere)
+    let cull = |app: &mut LightcraftApp, id: &str, mut params: serde_json::Value, advance: bool| {
+        compare::target_active(app, &mut params);
+        let ok = app.run(id, params).is_ok();
+        if ok && (advance || app.ui.auto_advance) {
+            compare::advance(app);
+        }
+    };
     for f in fire {
         if let Some(rest) = f.strip_prefix("rate:") {
             let (n, adv) = rest.split_once(':').unwrap_or(("0", "0"));
-            let _ = app.run("photo.rate", json!({"rating": n.parse::<u8>().unwrap_or(0), "advance": adv == "1"}));
+            cull(app, "photo.rate", json!({"rating": n.parse::<u8>().unwrap_or(0)}), adv == "1");
             let label = if n == "0" { "Rating cleared".to_string() } else { format!("Rated {}", "★".repeat(n.parse().unwrap_or(0))) };
             app.toast(ctx, label);
         } else if let Some(l) = f.strip_prefix("label:") {
-            let _ = app.run("photo.label", json!({"label": l}));
+            cull(app, "photo.label", json!({"label": l}), false);
+        } else if let Some(id) = f.strip_prefix("flagadv:") {
+            cull(app, id, json!({}), true);
+        } else if compare::culling(app) && (f == "library.next" || f == "library.previous") {
+            let d = if f == "library.next" { 1 } else { -1 };
+            let _ = if app.ui.view == crate::state::ViewMode::Compare { compare::compare_step(app, d) } else { compare::survey_step(app, d) };
+        } else if matches!(f.as_str(), "photo.pick" | "photo.reject" | "photo.unflag") && app.ui.right != crate::state::RightPanel::Crop {
+            cull(app, &f, json!({}), false);
+            match f.as_str() {
+                "photo.pick" => app.toast(ctx, "Flagged as Pick"),
+                "photo.reject" => app.toast(ctx, "Flagged as Reject"),
+                _ => app.toast(ctx, "Unflagged"),
+            }
         } else {
             // X is both reject (library) and swap crop aspect (crop tool)
             if f == "photo.reject" && app.ui.right == crate::state::RightPanel::Crop {
