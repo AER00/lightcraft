@@ -292,7 +292,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-PROF-DROPDOWN | Profile menu | P0 | 🟡 | `cmd:develop.profile`, `cmd:profiles.list`, `crates/ui-egui/src/panels/edit.rs` | no favourites / recent / browse entry |
+| LR-PROF-DROPDOWN | Profile menu | P0 | 🟡 | `cmd:develop.profile`, `cmd:profiles.list`, `cmd:profiles.menu`, `cmd:profile.favorite`, `crates/ui-egui/src/panels/edit.rs` | Favorites, Recent (last 5), group submenus, favourite toggle; favourites/recent persist with the library; Amount slider under the menu for non-default profiles; no Browse… entry yet |
 | LR-PROF-BROWSER | Profile browser | P1 | ⬜ | | |
 | LR-PROF-ADOBE | Standard raw looks (own equivalents) | P0 | ✅ | `crates/engine/src/presets.rs` (`PROFILES`), `crates/pipeline/src/profiles.rs` | six own looks: Color, Neutral, Vivid, Landscape, Portrait, Monochrome |
 | LR-PROF-ADAPTIVE | Adaptive profiles | P2 | ⬜ | | |

@@ -81,6 +81,10 @@ pub struct Session {
     /// Groups last used for Copy (Lightroom remembers them).
     pub copy_groups: Vec<lightcraft_develop::SettingsGroup>,
     pub presets: Vec<lightcraft_develop::Preset>,
+    /// Favourite profile ids (persisted with the library, like preset favourites).
+    pub profile_favorites: Vec<String>,
+    /// Recently applied profile ids, newest first (at most [`presets::RECENT_PROFILES`]).
+    pub profile_recent: Vec<String>,
     /// Executed commands (actions / debugging / replay).
     pub journal: Vec<(String, Value)>,
     /// Ops applied since the last `drain_log` (for persistence).
@@ -121,6 +125,8 @@ impl Session {
             clipboard: None,
             copy_groups: lightcraft_develop::SettingsGroup::default_copy(),
             presets: presets::builtin(),
+            profile_favorites: Vec::new(),
+            profile_recent: Vec::new(),
             journal: Vec::new(),
             pending_log: Vec::new(),
             media: media::MediaCache::default(),

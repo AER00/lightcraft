@@ -72,6 +72,9 @@ pub struct LibraryStores {
 struct PresetsFile {
     user: Vec<Preset>,
     favorites: Vec<String>,
+    /// Favourite profiles, and the recently applied ones (newest first).
+    profile_favorites: Vec<String>,
+    profile_recent: Vec<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -103,10 +106,13 @@ struct PrefsFile {
     last_export: Option<serde_json::Value>,
 }
 
-fn presets_json(presets: &[Preset]) -> String {
+fn presets_json(s: &Session) -> String {
+    let presets = &s.presets;
     let f = PresetsFile {
         user: presets.iter().filter(|p| !p.builtin).cloned().collect(),
         favorites: presets.iter().filter(|p| p.builtin && p.favorite).map(|p| p.id.clone()).collect(),
+        profile_favorites: s.profile_favorites.clone(),
+        profile_recent: s.profile_recent.clone(),
     };
     serde_json::to_string_pretty(&f).unwrap_or_default()
 }
@@ -151,6 +157,9 @@ impl Session {
                     self.presets.push(u);
                 }
             }
+            let known = |id: &String| crate::presets::profile(id).is_some();
+            self.profile_favorites = f.profile_favorites.into_iter().filter(known).collect();
+            self.profile_recent = f.profile_recent.into_iter().filter(known).take(crate::presets::RECENT_PROFILES).collect();
         }
         // preferences
         let prefs = read_json::<PrefsFile>(files.as_mut(), "prefs.json").unwrap_or_default();
@@ -170,7 +179,7 @@ impl Session {
         {
             self.selection = Selection::single(*first);
         }
-        let presets_written = presets_json(&self.presets);
+        let presets_written = presets_json(self);
         if on_disk {
             self.media.attach_disk_cache(&dir.join("thumbs"));
         }
@@ -196,7 +205,8 @@ impl Session {
         if lib.journal.wants_snapshot() && self.interaction.is_none() {
             lib.journal.snapshot(&self.catalog)?;
         }
-        let presets = presets_json(&self.presets);
+        let presets = presets_json(self);
+        let Some(lib) = self.library.as_mut() else { return Ok(()) };
         if presets != lib.presets_written {
             if let Err(e) = lib.files.write_atomic("presets.json", presets.as_bytes()) {
                 log::error!("library: presets: {e}");

@@ -297,6 +297,33 @@ pub fn profile(id: &str) -> Option<&'static ProfileInfo> {
     PROFILES.iter().find(|p| p.id == id)
 }
 
+/// How many recently used profiles the profile menu lists.
+pub const RECENT_PROFILES: usize = 5;
+
+impl Session {
+    /// Remember `id` as the most recently applied profile.
+    pub fn note_profile_used(&mut self, id: &str) {
+        self.profile_recent.retain(|p| p != id);
+        self.profile_recent.insert(0, id.to_string());
+        self.profile_recent.truncate(RECENT_PROFILES);
+    }
+
+    /// The profile menu: favourites, recent, then every group (`profiles.menu`).
+    pub fn profile_menu(&self) -> Value {
+        let item =
+            |p: &ProfileInfo| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": self.profile_favorites.iter().any(|f| f == p.id)});
+        let list = |ids: &[String]| ids.iter().filter_map(|id| profile(id)).map(item).collect::<Vec<_>>();
+        json!({
+            "favorites": list(&self.profile_favorites),
+            "recent": list(&self.profile_recent),
+            "groups": profile_groups().into_iter().map(|g| json!({
+                "name": g,
+                "profiles": PROFILES.iter().filter(|p| p.group == g).map(item).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -104,17 +104,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 14, bottom: 14 }).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Profile").font(t.font(13.0)).color(t.text_dim));
-            let name = lightcraft_engine::presets::PROFILES.iter().find(|p| p.id == d.profile.id).map(|p| p.name).unwrap_or("Color");
+            let name = lightcraft_engine::presets::profile(&d.profile.id).map(|p| p.name).unwrap_or("Color");
             let r = crate::widgets::dropdown(ui, "profile", name, t.font(15.0), t.text_label);
-            egui::Popup::menu(&r).show(|ui| {
-                for p in lightcraft_engine::presets::PROFILES {
-                    if ui.selectable_label(p.id == d.profile.id, p.name).clicked() {
-                        let _ = app.run("develop.profile", json!({"id": p.id}));
-                    }
-                }
-            });
+            egui::Popup::menu(&r).show(|ui| profile_menu(app, ui, &d));
         });
     });
+    if d.profile.id != "lc.color" {
+        control(app, ui, &d, "profile.amount", true);
+        ui.add_space(6.0);
+    }
     divider(ui);
 
     section(app, ui, &d, "light", "Light", |app, ui, d| {
@@ -282,6 +280,59 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
     });
     ui.add_space(40.0);
+}
+
+/// The profile dropdown: Favorites, Recent, one submenu per group, then favourite toggle and
+/// Browse….
+fn profile_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
+    use lightcraft_engine::presets::{PROFILES, profile, profile_groups};
+    let t = Tokens::get(ui.ctx());
+    ui.set_min_width(200.0);
+    let cur = d.profile.id.as_str();
+    let mut pick: Option<&'static str> = None;
+    let item = |ui: &mut egui::Ui, key: &str, p: &'static lightcraft_engine::presets::ProfileInfo, pick: &mut Option<&'static str>| {
+        let r = ui.selectable_label(p.id == cur, p.name);
+        register(ui.ctx(), format!("profileMenu:{key}:{}", p.id), r.rect);
+        if r.clicked() {
+            *pick = Some(p.id);
+        }
+    };
+    let heading = |ui: &mut egui::Ui, s: &str| {
+        ui.label(egui::RichText::new(s).font(t.semibold(11.5)).color(t.text_dim));
+    };
+    for (title, key, ids) in [("Favorites", "fav", app.session.profile_favorites.clone()), ("Recent", "recent", app.session.profile_recent.clone())] {
+        let list: Vec<_> = ids.iter().filter_map(|id| profile(id)).collect();
+        if list.is_empty() {
+            continue;
+        }
+        heading(ui, title);
+        for p in list {
+            item(ui, key, p, &mut pick);
+        }
+        ui.separator();
+    }
+    for g in profile_groups() {
+        let r = ui.menu_button(g, |ui| {
+            ui.set_min_width(170.0);
+            for p in PROFILES.iter().filter(|p| p.group == g) {
+                item(ui, "group", p, &mut pick);
+            }
+        });
+        register(ui.ctx(), format!("profileMenu:groupMenu:{g}"), r.response.rect);
+    }
+    ui.separator();
+    if let Some(p) = profile(cur) {
+        let fav = app.session.profile_favorites.iter().any(|f| f == p.id);
+        let label = if fav { format!("Remove “{}” from Favorites", p.name) } else { format!("Add “{}” to Favorites", p.name) };
+        let r = ui.button(label);
+        register(ui.ctx(), "profileMenu:toggleFavorite", r.rect);
+        if r.clicked() {
+            let _ = app.run("profile.favorite", json!({"id": p.id}));
+        }
+    }
+    if let Some(id) = pick {
+        let _ = app.run("develop.profile", json!({"id": id}));
+    }
 }
 
 fn sub_title(ui: &mut egui::Ui, title: &str) {
