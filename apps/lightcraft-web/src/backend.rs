@@ -232,7 +232,6 @@ impl Backend {
         }
     }
 
-    #[allow(dead_code)] // thumbnail cache pruning (render workers)
     pub async fn remove(&self, path: &str) -> Result<(), String> {
         match self {
             Backend::Opfs(root) => {
@@ -252,7 +251,6 @@ impl Backend {
     }
 
     /// Names of the files directly inside `dir`.
-    #[allow(dead_code)] // thumbnail cache pruning (render workers)
     pub async fn list(&self, dir: &str) -> Result<Vec<String>, String> {
         match self {
             Backend::Opfs(root) => {

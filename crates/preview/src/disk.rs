@@ -52,7 +52,7 @@ impl DiskCache {
             self.misses.fetch_add(1, Ordering::Relaxed);
             return None;
         };
-        match decode(&bytes) {
+        match decode_jpeg(&bytes) {
             Some(img) => {
                 self.hits.fetch_add(1, Ordering::Relaxed);
                 // refresh recency for pruning
@@ -71,7 +71,7 @@ impl DiskCache {
     }
 
     pub fn put(&self, key: Hash128, img: &Rgba8) {
-        let Some(bytes) = encode(img) else { return };
+        let Some(bytes) = encode_jpeg(img) else { return };
         let p = self.path(key);
         let Some(parent) = p.parent() else { return };
         if std::fs::create_dir_all(parent).is_err() {
@@ -144,7 +144,8 @@ impl DiskCache {
     }
 }
 
-fn encode(img: &Rgba8) -> Option<Vec<u8>> {
+/// Encode a thumbnail as the cache stores it (JPEG, RGB, 4:2:0).
+pub fn encode_jpeg(img: &Rgba8) -> Option<Vec<u8>> {
     if img.width == 0 || img.height == 0 || img.width > u16::MAX as usize || img.height > u16::MAX as usize {
         return None;
     }
@@ -159,7 +160,8 @@ fn encode(img: &Rgba8) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn decode(bytes: &[u8]) -> Option<Rgba8> {
+/// Decode a cached thumbnail (see [`encode_jpeg`]).
+pub fn decode_jpeg(bytes: &[u8]) -> Option<Rgba8> {
     use zune_core::bytestream::ZCursor;
     use zune_core::colorspace::ColorSpace;
     use zune_core::options::DecoderOptions;

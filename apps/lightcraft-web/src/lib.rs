@@ -6,19 +6,23 @@
 //!   main thread): catalog journal, presets, view state and prefs are mirrored in memory and
 //!   flushed in the background ([`files`]); imported originals are stored by content hash
 //!   ([`store`]); a new library starts with the procedural demo photos;
-//! - renders run inline on the main thread (one job per frame) — no worker threads yet;
+//! - renders run in Web Workers, each a second instance of this module ([`wire`], `workers`), and
+//!   fall back to the main thread (one job per frame) if workers can't start;
 //! - export downloads the file through the browser.
 //!
 //! `?bench` in the URL runs a scripted first-paint / slider-latency measurement and logs it to the
 //! console (see [`bench`]); `?store=idb` forces the IndexedDB backend, `?store=memory` disables
-//! persistence and `?reset` clears the stored library.
+//! persistence and `?workers=0` renders on the main thread.
 #![forbid(unsafe_code)]
 
 pub mod bench;
 pub mod files;
 pub mod store;
+pub mod wire;
 
 #[cfg(target_arch = "wasm32")]
 mod backend;
 #[cfg(target_arch = "wasm32")]
 mod web;
+#[cfg(target_arch = "wasm32")]
+mod workers;

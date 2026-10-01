@@ -1,4 +1,4 @@
-//! Browser host: opens the library in browser storage, starts eframe on
+//! Browser host: opens the library in browser storage, starts the render workers and eframe on
 //! `<canvas id="lightcraft_canvas">`, wires the file picker and drag-and-drop, and turns exports
 //! into downloads.
 
@@ -18,13 +18,15 @@ use crate::backend::Backend;
 use crate::bench::Bench;
 use crate::files::{Files, FlushOp, LIBRARY_FILES};
 use crate::store::{Originals, content_hash, download_name, storage_key};
+use crate::wire::ThumbIndex;
+use crate::workers::{THUMB_INDEX, Workers};
 
 const ACCEPT: &str = ".jpg,.jpeg,.png,.tif,.tiff,.webp,.dng,.cr2,.nef,.arw,.psd,.jxl,.gif,.bmp";
 
 /// Where the library files live in browser storage.
 const LIBRARY_DIR: &str = "library";
 
-/// How often view state and UI prefs are saved (ms).
+/// How often view state, UI prefs and the thumbnail index are saved (ms).
 const SAVE_EVERY_MS: f64 = 1000.0;
 
 fn window() -> web_sys::Window {
@@ -46,11 +48,12 @@ fn library_key(name: &str) -> String {
     format!("{LIBRARY_DIR}/{name}")
 }
 
-/// URL options (`?bench&store=idb&reset`).
+/// URL options (`?bench&store=idb&workers=2&reset`).
 struct Options {
     bench: bool,
     /// "opfs" (default: OPFS, falling back to IndexedDB), "idb" or "memory".
     store: String,
+    workers: Option<usize>,
     reset: bool,
 }
 
@@ -70,6 +73,7 @@ impl Options {
         Options {
             bench: get("bench").is_some(),
             store: get("store").filter(|s| s == "idb" || s == "memory").unwrap_or_else(|| "opfs".into()),
+            workers: get("workers").and_then(|v| v.parse().ok()),
             reset: get("reset").is_some(),
         }
     }
@@ -184,6 +188,7 @@ struct Boot {
     opts: Options,
     backend: Option<Backend>,
     files: Files,
+    index: ThumbIndex,
 }
 
 async fn boot(opts: Options) -> Boot {
@@ -200,6 +205,7 @@ async fn boot(opts: Options) -> Boot {
         }
     };
     let files = Files::default();
+    let mut index = ThumbIndex::default();
     if let Some(b) = &backend {
         if opts.reset {
             match b.clear().await {
@@ -214,10 +220,38 @@ async fn boot(opts: Options) -> Boot {
                 Err(e) => log::error!("reading {name}: {e}"),
             }
         }
+        if let Ok(Some(j)) = b.read(THUMB_INDEX).await {
+            index = ThumbIndex::from_json(&j);
+        }
         crate::backend::request_persistence();
+        // thumbnails stored without an index entry (index saved late, or lost): delete them
+        let b2 = b.clone();
+        let known: std::collections::HashSet<String> = b
+            .list("thumbs")
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|n| n.ends_with(".jpg"))
+            .map(|n| n.trim_end_matches(".jpg").to_string())
+            .collect();
+        let orphans: Vec<String> = known.into_iter().filter(|k| !index.contains(k)).collect();
+        if !orphans.is_empty() {
+            wasm_bindgen_futures::spawn_local(async move {
+                for k in &orphans {
+                    let _ = b2.remove(&crate::wire::thumb_storage_key(k)).await;
+                }
+                log::info!("thumbnail cache: removed {} unindexed files", orphans.len());
+            });
+        }
     }
-    log::info!("lightcraft: storage {} opened in {:.0} ms", backend.as_ref().map_or("memory", |b| b.kind()), perf_now() - t0);
-    Boot { opts, backend, files }
+    log::info!(
+        "lightcraft: storage {} opened in {:.0} ms ({} thumbnails indexed, {:.1} MB)",
+        backend.as_ref().map_or("memory", |b| b.kind()),
+        perf_now() - t0,
+        index.len(),
+        index.total() as f64 / 1e6
+    );
+    Boot { opts, backend, files, index }
 }
 
 struct WebApp {
@@ -225,6 +259,7 @@ struct WebApp {
     originals: Originals,
     files: Files,
     backend: Option<Backend>,
+    workers: Option<Workers>,
     flushing: Rc<Cell<bool>>,
     bench: Option<Bench>,
     first_frame_logged: bool,
@@ -234,7 +269,7 @@ struct WebApp {
 
 impl WebApp {
     fn new(cc: &eframe::CreationContext<'_>, boot: Boot) -> Self {
-        let Boot { opts, backend, files } = boot;
+        let Boot { opts, backend, files, index } = boot;
         let originals = Originals::default();
         let t = perf_now();
         let mut session = Session::new();
@@ -268,6 +303,16 @@ impl WebApp {
             app.ui = ui;
         }
         app.ui = app.ui.sanitized();
+        let n = opts.workers.unwrap_or_else(|| {
+            let cores = window().navigator().hardware_concurrency() as usize;
+            cores.saturating_sub(1).clamp(1, 4)
+        });
+        let workers =
+            (n > 0).then(|| Workers::start(n, backend.as_ref().map_or("memory", |b| b.kind()), backend.clone(), index, cc.egui_ctx.clone()));
+        if let Some(w) = &workers {
+            app.renderer.set_offload(Box::new(w.clone()));
+        }
+        log::info!("lightcraft: {n} render workers");
         CTX.with(|c| *c.borrow_mut() = Some(cc.egui_ctx.clone()));
         let origin = lightcraft_ui_egui::now_ms() - perf_now();
         WebApp {
@@ -275,6 +320,7 @@ impl WebApp {
             originals,
             files,
             backend,
+            workers,
             flushing: Rc::new(Cell::new(false)),
             bench: opts.bench.then(|| Bench::new(origin)),
             first_frame_logged: false,
@@ -335,7 +381,7 @@ impl WebApp {
         }
     }
 
-    /// Save view state and UI prefs now and then; flush dirty files.
+    /// Save view state, UI prefs and the thumbnail index now and then; flush dirty files.
     fn save(&mut self) {
         let now = perf_now();
         if now - self.last_save >= SAVE_EVERY_MS {
@@ -346,6 +392,16 @@ impl WebApp {
             {
                 self.files.write("ui.json", &ui);
                 self.ui_written = ui;
+            }
+            if let (Some(w), Some(b)) = (&self.workers, &self.backend)
+                && let Some(index) = w.take_index_if_dirty()
+            {
+                let b = b.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    if let Err(e) = b.write(THUMB_INDEX, &index).await {
+                        log::warn!("saving the thumbnail index: {e}");
+                    }
+                });
             }
         }
         if let Some(b) = &self.backend
@@ -368,7 +424,7 @@ thread_local! {
 
 /// Run a command by id from JavaScript (automation, tests): `await command("library.info", "{}")`
 /// resolves to the result as JSON text, or rejects with the error. Besides every engine/UI
-/// command, `web.stats` reports the browser host's state (storage, originals in memory).
+/// command, `web.stats` reports the browser host's state (storage, workers, originals in memory).
 #[wasm_bindgen]
 pub fn command(id: String, params: String) -> js_sys::Promise {
     js_sys::Promise::new(&mut |resolve, reject| {
@@ -379,11 +435,13 @@ pub fn command(id: String, params: String) -> js_sys::Promise {
 
 impl WebApp {
     fn web_stats(&self) -> serde_json::Value {
+        let (alive, ready, remote, inline) = self.workers.as_ref().map_or((0, 0, 0, 0), Workers::stats);
         let (orig_n, orig_bytes) = self.originals.usage();
         json!({
             "storage": self.backend.as_ref().map_or("memory", |b| b.kind()),
             "dirty": self.files.is_dirty(),
             "flushing": self.flushing.get(),
+            "workers": {"alive": alive, "ready": ready, "remoteJobs": remote, "inlineJobs": inline},
             "originalsInMemory": orig_n,
             "originalBytesInMemory": orig_bytes,
             "renderQueue": self.app.renderer.queued(),
@@ -416,6 +474,9 @@ impl eframe::App for WebApp {
             && let Some(report) = b.step(&mut self.app)
         {
             log::info!("lightcraft-bench {report}");
+            if let Some((alive, ready, remote, inline)) = self.workers.as_ref().map(Workers::stats) {
+                log::info!("lightcraft-workers {{\"alive\":{alive},\"ready\":{ready},\"remote_jobs\":{remote},\"inline_jobs\":{inline}}}");
+            }
             set_status(&format!("bench: {report}"));
             self.bench = None;
         }

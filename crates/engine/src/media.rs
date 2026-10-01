@@ -167,7 +167,13 @@ impl MediaCache {
             (Source::Demo { .. }, SourceLevel::Full) => p.width.max(p.height).max(1) as usize,
             _ => usize::MAX,
         });
-        match &p.source {
+        self.origin_ref(&p.source, max_edge)
+    }
+
+    /// How to load `origin` at most `max_edge` pixels long, ignoring decoded sources in memory (a
+    /// render worker in another wasm instance builds its sources from this).
+    pub fn origin_ref(&mut self, origin: &Source, max_edge: usize) -> SourceRef {
+        match origin {
             Source::Demo { scene } => {
                 if self.scenes.is_empty() {
                     self.scenes = lightcraft_scenes::demo_library();
@@ -188,6 +194,9 @@ pub struct RenderJob {
     pub photo: PhotoId,
     pub level: SourceLevel,
     pub source: SourceRef,
+    /// Where the photo's pixels come from (for executors that can't share `source`, e.g. a web
+    /// worker).
+    pub origin: Source,
     pub info: SourceInfo,
     pub settings: Arc<DevelopSettings>,
     pub request: RenderRequest,
@@ -303,7 +312,7 @@ impl crate::Session {
             let k = Hasher128::new().str(&content_key(&p)).u64(settings.hash64()).u64(b as u64).u64(RENDER_CACHE_VERSION).finish();
             (self.media.rendered.clone(), k)
         });
-        Some(RenderJob { photo: id, level, source, info: source_info(&p), settings, request, key, cache, stages: None })
+        Some(RenderJob { photo: id, level, source, origin: p.source.clone(), info: source_info(&p), settings, request, key, cache, stages: None })
     }
 
     /// Accept a finished job's loaded source into the cache.

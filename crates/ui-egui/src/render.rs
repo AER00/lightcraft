@@ -4,7 +4,9 @@
 //! image…). Requests are deduplicated per slot (a newer request replaces a queued older one) and
 //! prioritised (loupe first, then on-screen thumbnails, then prefetch); thumbnails scrolled far
 //! out of view are dropped from the queue. Thumbnail jobs hit the engine's preview cache (memory +
-//! disk) before rendering. On wasm the jobs run inline, one per frame.
+//! disk) before rendering. On wasm the jobs run inline, one per frame, unless the host installs a
+//! [`RenderOffload`] (the browser build's Web Workers): then queued jobs are handed to it as it has
+//! room, and its results are collected every frame.
 
 use std::collections::HashMap;
 
@@ -35,8 +37,29 @@ pub struct Tex {
     pub pixels: Option<std::sync::Arc<egui::ColorImage>>,
 }
 
+/// Runs render jobs outside this thread's job pool (the browser build: Web Workers, each with its
+/// own wasm instance). The [`Renderer`] keeps the queue (priorities, per-slot de-duplication) and
+/// hands jobs over one at a time.
+pub trait RenderOffload {
+    /// Start `job` if an executor is free; otherwise give it back (`Some`: it stays queued).
+    fn try_start(&mut self, slot: Slot, job: RenderJob) -> Option<RenderJob>;
+    /// Finished jobs since the last call: (slot, result, run time in ms).
+    fn finished(&mut self) -> Vec<(Slot, RenderResult, f64)>;
+}
+
+struct Queued {
+    slot: Slot,
+    priority: u32,
+    seq: u64,
+    job: RenderJob,
+}
+
 pub struct Renderer {
     pool: JobPool<Slot, RenderResult>,
+    /// Jobs run elsewhere (see [`RenderOffload`]); `queue` holds the ones not started yet.
+    offload: Option<Box<dyn RenderOffload>>,
+    queue: Vec<Queued>,
+    seq: u64,
     /// Slot → (key, priority) of the request in flight (queued or running).
     pending: HashMap<Slot, (u64, u32)>,
     pub textures: HashMap<Slot, Tex>,
@@ -55,6 +78,9 @@ impl Default for Renderer {
         let threads = if cfg!(target_arch = "wasm32") { 0 } else { JobPool::<Slot, RenderResult>::default_threads().min(6) };
         Renderer {
             pool: JobPool::new(threads),
+            offload: None,
+            queue: Vec::new(),
+            seq: 0,
             pending: HashMap::new(),
             textures: HashMap::new(),
             last_main_ms: 0.0,
@@ -66,6 +92,15 @@ impl Default for Renderer {
 }
 
 impl Renderer {
+    /// Run jobs through `offload` from now on (instead of the job pool / inline).
+    pub fn set_offload(&mut self, offload: Box<dyn RenderOffload>) {
+        self.offload = Some(offload);
+    }
+
+    fn is_queued(&self, slot: Slot) -> bool {
+        self.queue.iter().any(|q| q.slot == slot) || self.pool.is_queued(slot)
+    }
+
     /// Is the slot's current texture (or pending request) already for `key`?
     pub fn is_current(&self, slot: Slot, key: u64) -> bool {
         self.textures.get(&slot).is_some_and(|t| t.key == key) || self.pending.get(&slot).is_some_and(|p| p.0 == key)
@@ -78,18 +113,38 @@ impl Renderer {
         }
         if let Some(&(key, prio)) = self.pending.get(&slot)
             && key == job.key
-            && (prio == priority || !self.pool.is_queued(slot))
+            && (prio == priority || !self.is_queued(slot))
         {
             return;
         }
         self.pending.insert(slot, (job.key, priority));
-        let key = job.key;
+        // (an offload keeps its own per-view stage caches; the flag tells it to)
         let job = if matches!(slot, Slot::Main | Slot::Before) { job.with_stages(self.stages.entry(slot).or_default().clone()) } else { job };
+        if self.offload.is_some() {
+            self.seq += 1;
+            self.queue.retain(|q| q.slot != slot);
+            self.queue.push(Queued { slot, priority, seq: self.seq, job });
+            self.dispatch(); // an idle worker starts now rather than next frame
+            return;
+        }
+        let key = job.key;
         self.pool.submit(slot, key, priority, Box::new(move || job.run()));
     }
 
     pub fn queued(&self) -> usize {
-        self.pool.queued()
+        self.pool.queued() + self.queue.len()
+    }
+
+    /// Hand queued jobs to the offload (best first) while it has room.
+    fn dispatch(&mut self) {
+        let Some(off) = self.offload.as_mut() else { return };
+        while let Some(i) = self.queue.iter().enumerate().max_by_key(|(_, q)| (q.priority, q.seq)).map(|(i, _)| i) {
+            let q = self.queue.swap_remove(i);
+            if let Some(job) = off.try_start(q.slot, q.job) {
+                self.queue.push(Queued { job, ..q });
+                break;
+            }
+        }
     }
 
     /// Requests queued or running.
@@ -113,9 +168,16 @@ impl Renderer {
         };
         #[cfg(not(target_arch = "wasm32"))]
         let inline_ms = 0.0;
-        let mut changed = false;
+        let mut finished = Vec::new();
         while let Some(done) = self.pool.try_recv() {
-            let (slot, r, ms) = (done.slot, done.result, if done.ms > 0.0 { done.ms } else { inline_ms });
+            finished.push((done.slot, done.result, if done.ms > 0.0 { done.ms } else { inline_ms }));
+        }
+        if let Some(off) = self.offload.as_mut() {
+            finished.extend(off.finished());
+        }
+        self.dispatch();
+        let mut changed = false;
+        for (slot, r, ms) in finished {
             session.accept(&r);
             self.completed += 1;
             if self.pending.get(&slot).is_some_and(|p| p.0 == r.key) {
@@ -172,6 +234,14 @@ impl Renderer {
         for s in dropped {
             self.pending.remove(&s);
         }
+        let pending = &mut self.pending;
+        self.queue.retain(|q| match q.slot {
+            Slot::Thumb(id) if !keep.contains(&id) && q.priority <= 10 => {
+                pending.remove(&q.slot);
+                false
+            }
+            _ => true,
+        });
         let thumbs = self.textures.keys().filter(|s| matches!(s, Slot::Thumb(_))).count();
         if thumbs <= max {
             return;

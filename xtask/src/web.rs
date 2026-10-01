@@ -1,6 +1,7 @@
 //! `cargo xtask web`: build `apps/lightcraft-web` for wasm32 and bundle it with `wasm-bindgen`
-//! into `<target>/web/` (index.html + lightcraft_web.js + lightcraft_web_bg.wasm).
-//! `--serve [port]` then serves that folder with a tiny static HTTP server (std only).
+//! into `<target>/web/` (index.html + worker.js + lightcraft_web.js + lightcraft_web_bg.wasm).
+//! `--serve [port]` then serves that folder with a tiny static HTTP server (std only) that sends
+//! the cross-origin isolation headers (COOP/COEP).
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -10,6 +11,9 @@ use std::process::Command;
 use crate::{cargo, metadata, root, run as step};
 
 const TARGET: &str = "wasm32-unknown-unknown";
+
+/// Files copied from `apps/lightcraft-web/` into the bundle as they are.
+const STATIC_FILES: [&str; 2] = ["index.html", "worker.js"];
 
 /// The `wasm-bindgen` version pinned in Cargo.lock (the CLI must match it exactly).
 fn locked_bindgen_version() -> Result<String, String> {
@@ -72,8 +76,9 @@ pub fn run(args: &[&str]) -> Result<(), String> {
             eprintln!("(wasm-opt failed; keeping the unoptimized module)");
         }
     }
-    let index = root().join("apps/lightcraft-web/index.html");
-    std::fs::copy(&index, out.join("index.html")).map_err(|e| format!("copy index.html: {e}"))?;
+    for f in STATIC_FILES {
+        std::fs::copy(root().join("apps/lightcraft-web").join(f), out.join(f)).map_err(|e| format!("copy {f}: {e}"))?;
+    }
     let size = std::fs::metadata(&bg).map(|m| m.len()).unwrap_or(0);
     println!("\nweb build ready: {} ({:.1} MB wasm)", out.display(), size as f64 / 1e6);
 
@@ -99,6 +104,17 @@ fn mime(path: &Path) -> &'static str {
         _ => "application/octet-stream",
     }
 }
+
+/// Response headers every file gets. `Cross-Origin-Opener-Policy: same-origin` +
+/// `Cross-Origin-Embedder-Policy: require-corp` make the page cross-origin isolated
+/// (`crossOriginIsolated == true`): required for `SharedArrayBuffer` (a wasm-threads build) and
+/// for full-resolution `performance.now()`. The current worker design (separate wasm instances)
+/// works without them; they are sent so the dev server matches the recommended deployment.
+pub const ISOLATION_HEADERS: [(&str, &str); 3] = [
+    ("Cross-Origin-Opener-Policy", "same-origin"),
+    ("Cross-Origin-Embedder-Policy", "require-corp"),
+    ("Cross-Origin-Resource-Policy", "same-origin"),
+];
 
 /// Serve `dir` on 127.0.0.1:`port` (GET/HEAD only, no directory listing). Blocks.
 fn serve_dir(dir: &Path, port: u16) -> Result<(), String> {
@@ -134,11 +150,12 @@ fn handle(mut stream: TcpStream, dir: &Path) -> std::io::Result<()> {
         ("GET" | "HEAD", _, _) => ("404 Not Found", b"not found".to_vec(), "text/plain"),
         _ => ("405 Method Not Allowed", Vec::new(), "text/plain"),
     };
-    write!(
-        stream,
-        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
-        body.len()
-    )?;
+    let mut head = format!("HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\n", body.len());
+    for (k, v) in ISOLATION_HEADERS {
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    head.push_str("Connection: close\r\n\r\n");
+    stream.write_all(head.as_bytes())?;
     if method != "HEAD" {
         stream.write_all(&body)?;
     }
