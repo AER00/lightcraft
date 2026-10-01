@@ -9,9 +9,10 @@
 //! S-curve adjustments in a gamma-2.2 perceptual domain and a short shoulder above 0.95.
 
 pub const GREY: f32 = 0.18;
-const LUT_MIN_EV: f32 = -14.0;
-const LUT_MAX_EV: f32 = 10.0;
-const LUT_N: usize = 4096;
+/// The tone LUT spans `LUT_MIN_EV..LUT_MAX_EV` around grey in `LUT_N` steps.
+pub const LUT_MIN_EV: f32 = -14.0;
+pub const LUT_MAX_EV: f32 = 10.0;
+pub const LUT_N: usize = 4096;
 
 #[derive(Clone, Debug)]
 pub struct ToneMap {
@@ -84,6 +85,11 @@ impl ToneMap {
             })
             .collect();
         ToneMap { lut }
+    }
+
+    /// The table (`LUT_N` entries, see [`ToneMap::apply`]).
+    pub fn lut(&self) -> &[f32] {
+        &self.lut
     }
 
     /// Scene luminance → display-linear luminance.

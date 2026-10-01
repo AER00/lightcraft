@@ -44,6 +44,13 @@ fn mul(m: &[[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// The f32 matrices [`oklab_from_2020`] and [`oklab_to_2020`] use (row-major): Rec.2020 → LMS,
+/// LMS → Rec.2020, cube-rooted LMS → Lab, Lab → cube-rooted LMS. GPU kernels embed these.
+pub fn oklab_matrices() -> [[[f32; 3]; 3]; 4] {
+    let m = mats();
+    [m.to_lms, m.from_lms, m.to_lab, m.from_lab]
+}
+
 /// Linear Rec.2020 → OkLab `[L, a, b]`.
 #[inline]
 pub fn oklab_from_2020(rgb: [f32; 3]) -> [f32; 3] {

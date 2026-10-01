@@ -129,6 +129,12 @@ pub fn specs() -> Vec<CommandSpec> {
                 "versions": ph.versions.iter().map(|v| json!({"name": v.name, "created": v.created})).collect::<Vec<_>>(),
             }))
         }),
+        cmd!(query "app.gpu", "GPU Rendering", [], None, "{enabled?: bool} — allow/forbid GPU rendering (CPU fallback; LIGHTCRAFT_GPU=0 forbids it for the process)", always, |_, p| {
+            if let Some(on) = p.get("enabled").and_then(Value::as_bool) {
+                lightcraft_gpu::set_enabled(on);
+            }
+            Ok(json!({"enabled": lightcraft_gpu::enabled(), "available": lightcraft_gpu::available(), "adapter": lightcraft_gpu::adapter_name()}))
+        }),
         cmd!(query "journal.list", "Command Journal", [], None, "{limit?}", always, |s, p| {
             let lim = p.get("limit").and_then(Value::as_u64).unwrap_or(100) as usize;
             let start = s.journal.len().saturating_sub(lim);

@@ -16,7 +16,8 @@ pub fn oklch_hue_of_srgb_hue(deg: f64) -> f32 {
     lab_to_lch(oklab_from_2020(m))[2]
 }
 
-fn band_hues() -> &'static [f32; 8] {
+/// OkLCh hue (radians) of each colour-mixer band centre.
+pub fn band_hues() -> &'static [f32; 8] {
     static H: OnceLock<[f32; 8]> = OnceLock::new();
     H.get_or_init(|| MIXER_HUES.map(oklch_hue_of_srgb_hue))
 }
@@ -47,23 +48,28 @@ pub fn band_weights(h: f32) -> [f32; 8] {
     w
 }
 
-#[derive(Clone, Copy)]
-struct WheelK {
-    a: f32,
-    b: f32,
-    lum: f32,
+/// A colour-grading wheel as an OkLab offset (a, b) and a lightness shift.
+#[derive(Clone, Copy, Debug)]
+pub struct WheelK {
+    pub a: f32,
+    pub b: f32,
+    pub lum: f32,
 }
 
+/// The colour tools' parameters, resolved once per render (fields are read by the GPU kernel).
+#[derive(Clone, Debug)]
 pub struct ColorOps {
-    vibrance: f32,
-    saturation: f32,
-    hue: [f32; 8],
-    sat: [f32; 8],
-    lum: [f32; 8],
-    mixer: bool,
-    bw: Option<[f32; 8]>,
-    grading: Option<([WheelK; 4], f32, f32)>,
-    skin: f32,
+    pub vibrance: f32,
+    pub saturation: f32,
+    pub hue: [f32; 8],
+    pub sat: [f32; 8],
+    pub lum: [f32; 8],
+    pub mixer: bool,
+    pub bw: Option<[f32; 8]>,
+    /// Wheels (shadows, midtones, highlights, global), blending, balance.
+    pub grading: Option<([WheelK; 4], f32, f32)>,
+    /// OkLCh hue of skin tones (protected by vibrance).
+    pub skin: f32,
 }
 
 fn wheel(w: &lightcraft_develop::Wheel) -> WheelK {

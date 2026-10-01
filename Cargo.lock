@@ -2085,6 +2085,7 @@ dependencies = [
  "lightcraft-color",
  "lightcraft-develop",
  "lightcraft-geom",
+ "lightcraft-gpu",
  "lightcraft-meta",
  "lightcraft-pipeline",
  "lightcraft-preview",
@@ -2103,6 +2104,22 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "serde",
+]
+
+[[package]]
+name = "lightcraft-gpu"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "lightcraft-color",
+ "lightcraft-develop",
+ "lightcraft-geom",
+ "lightcraft-pipeline",
+ "lightcraft-raster",
+ "lightcraft-scenes",
+ "log",
+ "pollster 1.0.1",
+ "wgpu",
 ]
 
 [[package]]
