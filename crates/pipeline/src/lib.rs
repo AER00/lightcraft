@@ -22,6 +22,7 @@ mod finish;
 pub mod geometry;
 mod local;
 pub mod masks;
+pub mod profiles;
 mod tone;
 
 use lightcraft_develop::{DevelopSettings, Treatment};
@@ -104,6 +105,7 @@ pub fn render(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &Render
         }
     };
     let mut t = t0;
+    let s = &*profiles::effective(s);
     let frame = geometry::Frame::new(src.width, src.height, s, req.apply_crop);
     let (w, h) = frame.fit(req.max_w, req.max_h);
     let mut img = frame.sample(src, w, h);
