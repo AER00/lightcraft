@@ -97,6 +97,8 @@ pub struct Session {
     depth: u32,
     /// Selected mask (Masking panel), by mask id.
     pub active_mask: Option<u32>,
+    /// Selected spot (Remove panel), by index into the active photo's spots.
+    pub active_spot: Option<usize>,
     /// The persistent library this session writes to (`None` = in-memory only).
     pub library: Option<library::Library>,
     /// XMP sidecar preferences (persisted with the library).
@@ -105,6 +107,10 @@ pub struct Session {
     pub last_export: Option<serde_json::Value>,
     /// File probes from the last import review (`library.importPreview`), reused by the import.
     pub import_probes: std::collections::HashMap<String, media::ProbeInfo>,
+    /// Develop defaults applied on import (persisted in prefs.json).
+    pub import_defaults: import::ImportDefaults,
+    /// Disk budget of the library's thumbnail cache in MB (0 = default; persisted in prefs.json).
+    pub cache_mb: u32,
 }
 
 impl Default for Session {
@@ -137,10 +143,13 @@ impl Session {
             clock: Box::new(|| "2026-09-30T12:00:00".to_string()),
             depth: 0,
             active_mask: None,
+            active_spot: None,
             library: None,
             xmp: sidecar::XmpPrefs::default(),
             last_export: None,
             import_probes: Default::default(),
+            import_defaults: import::ImportDefaults::default(),
+            cache_mb: 0,
         }
     }
 
@@ -384,5 +393,9 @@ mod tests_library;
 mod tests_merge;
 #[cfg(test)]
 mod tests_organize;
+#[cfg(test)]
+mod tests_prefs;
+#[cfg(test)]
+mod tests_spots;
 #[cfg(test)]
 mod tests_xmp;

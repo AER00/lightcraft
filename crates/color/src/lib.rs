@@ -118,7 +118,7 @@ pub const PROPHOTO: RgbSpace =
     RgbSpace { name: "ProPhoto RGB", r: Xy::new(0.734699, 0.265301), g: Xy::new(0.159597, 0.840403), b: Xy::new(0.036598, 0.000105), white: D50 };
 /// The 1998 "Adobe RGB" primaries (a public colour-space definition; name used descriptively).
 pub const ADOBE_RGB: RgbSpace =
-    RgbSpace { name: "Adobe RGB (1998)", r: Xy::new(0.64, 0.33), g: Xy::new(0.21, 0.71), b: Xy::new(0.15, 0.06), white: D65 };
+    RgbSpace { name: "Adobe RGB (1998) compatible", r: Xy::new(0.64, 0.33), g: Xy::new(0.21, 0.71), b: Xy::new(0.15, 0.06), white: D65 };
 
 /// The develop pipeline's working space: linear Rec.2020 / D65.
 pub const WORKING: RgbSpace = REC2020;

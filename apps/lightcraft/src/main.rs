@@ -3,7 +3,8 @@
 //! Usage: `lightcraft [--library DIR | --memory] [--no-demo] [--control <port>] [files or folders…]`
 //!
 //! The library (catalog, presets, thumbnail cache) lives in `--library DIR`, else
-//! `$LIGHTCRAFT_LIBRARY`, else `~/Pictures/LightCraft Library`; a new library starts with the
+//! `$LIGHTCRAFT_LIBRARY`, else the library last opened with Settings → Open Library…, else
+//! `~/Pictures/LightCraft Library`; a new library starts with the
 //! procedural demo photos unless `--no-demo` or files are given. Files and folders on the command
 //! line are imported (duplicates are skipped). `--memory` runs an in-memory session that writes
 //! nothing (demo photos unless files are given; used by the README showcase scripts).
@@ -57,16 +58,13 @@ fn config_dir() -> Option<std::path::PathBuf> {
     }
 }
 
-fn load_prefs(app: &mut LightcraftApp) {
+/// The saved UI state and app settings (`<config>/ui.json`), if any.
+fn load_prefs() -> Option<UiState> {
     if std::env::var_os("LIGHTCRAFT_NO_PREFS").is_some() {
-        return;
+        return None;
     }
-    if let Some(p) = config_dir().map(|d| d.join("ui.json"))
-        && let Ok(bytes) = std::fs::read(&p)
-        && let Ok(ui) = serde_json::from_slice::<UiState>(&bytes)
-    {
-        app.ui = ui.sanitized();
-    }
+    let bytes = std::fs::read(config_dir()?.join("ui.json")).ok()?;
+    serde_json::from_slice::<UiState>(&bytes).ok().map(UiState::sanitized)
 }
 
 fn save_prefs(app: &LightcraftApp) {
@@ -83,6 +81,7 @@ fn save_prefs(app: &LightcraftApp) {
 
 fn services() -> Services {
     Services {
+        pick_folder: Some(Box::new(|| rfd::FileDialog::new().set_title("Open Library").pick_folder().map(|p| p.to_string_lossy().to_string()))),
         reveal: Some(Box::new(|path: &str| {
             let status = if cfg!(target_os = "macos") {
                 std::process::Command::new("open").args(["-R", path]).status()
@@ -192,7 +191,7 @@ fn main() -> eframe::Result {
     let mut files = Vec::new();
     let mut seed_demo = true;
     let mut in_memory = false;
-    let mut library_dir = lightcraft_engine::library::default_dir();
+    let mut library_dir: Option<std::path::PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -215,6 +214,16 @@ fn main() -> eframe::Result {
             _ => files.push(a),
         }
     }
+    let prefs = load_prefs();
+    // --library, else the library last opened from Settings, else the default location
+    let library_dir = library_dir.or_else(|| {
+        prefs
+            .as_ref()
+            .map(|u| u.settings.library_path.clone())
+            .filter(|p| !p.is_empty() && std::env::var_os("LIGHTCRAFT_LIBRARY").is_none())
+            .map(Into::into)
+    });
+    let library_dir = library_dir.or_else(lightcraft_engine::library::default_dir);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("LightCraft")
@@ -232,7 +241,9 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let session = open_session(in_memory, library_dir, seed_demo && files.is_empty());
             let mut app = LightcraftApp::new(session, services());
-            load_prefs(&mut app);
+            if let Some(ui) = prefs {
+                app.ui = ui;
+            }
             app.integrated_titlebar = cfg!(target_os = "macos");
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());

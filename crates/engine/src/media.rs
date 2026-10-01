@@ -143,8 +143,15 @@ fn source_bytes(img: &Rgb32f) -> usize {
 
 impl MediaCache {
     /// Keep rendered thumbnails on disk in `dir` as well.
-    pub fn attach_disk_cache(&mut self, dir: &std::path::Path) {
-        self.rendered = Arc::new(PreviewCache::with_disk(rendered_budget(self.budget), dir, DISK_CACHE_BYTES));
+    pub fn attach_disk_cache(&mut self, dir: &std::path::Path, disk_bytes: u64) {
+        self.rendered = Arc::new(PreviewCache::with_disk(rendered_budget(self.budget), dir, disk_bytes));
+    }
+
+    /// Forget every decoded source (photo ids changed meaning, e.g. another library was opened).
+    pub fn clear_sources(&mut self) {
+        self.thumbs = Lru::new(THUMB_SOURCE_BYTES.min(self.budget));
+        self.previews.clear();
+        self.full = None;
     }
 
     /// Bytes the caches may hold together.
@@ -355,7 +362,7 @@ impl RenderJob {
                 photo: self.photo,
                 level: self.level,
                 key: self.key,
-                rendered: Ok(Rendered { image, histogram }),
+                rendered: Ok(Rendered { image, histogram, deep: None }),
                 loaded: None,
                 quick: None,
             };
@@ -434,7 +441,7 @@ impl QuickJob {
         let done = |rendered: Result<Rendered, String>, quick| RenderResult { photo, level: SourceLevel::Thumb, key, rendered, loaded: None, quick };
         let rendered = |image: Rgba8| {
             let histogram = Histogram::of_srgb8(&image);
-            Ok(Rendered { image, histogram })
+            Ok(Rendered { image, histogram, deep: None })
         };
         for (cache, k) in &self.cached {
             if let Some(img) = cache.get(*k) {
@@ -631,6 +638,24 @@ impl crate::Session {
     /// Synchronous render (CLI, MCP, tests).
     pub fn render_now(&mut self, id: PhotoId, max_w: usize, max_h: usize) -> Result<Rendered, String> {
         let job = self.render_job(id, max_w, max_h, false, true).ok_or("no such photo")?;
+        let r = job.run();
+        self.accept(&r);
+        r.rendered
+    }
+
+    /// Synchronous render for export: like [`Self::render_now`], into colour space `space` with
+    /// sample format `depth`.
+    pub fn render_export(
+        &mut self,
+        id: PhotoId,
+        max: usize,
+        space: lightcraft_pipeline::OutputSpace,
+        depth: lightcraft_pipeline::OutputDepth,
+    ) -> Result<Rendered, String> {
+        let mut job = self.render_job(id, max, max, false, true).ok_or("no such photo")?;
+        job.request.space = space;
+        job.request.depth = depth;
+        job.key ^= (space as u64 + 1).wrapping_mul(0xa076_1d64_78bd_642f) ^ (depth as u64 + 1).wrapping_mul(0xe703_7ed1_a0b4_28db);
         let r = job.run();
         self.accept(&r);
         r.rendered

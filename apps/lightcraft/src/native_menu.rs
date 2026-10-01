@@ -19,6 +19,9 @@ use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu
 use serde_json::Value;
 
 const QUIT: &str = "app.quit";
+/// Settings… (the app menu on macOS; Edit elsewhere).
+const SETTINGS: &str = "app.settings";
+const SETTINGS_KEY: &str = "Cmd+,";
 /// Keys whose meaning depends on the panel (X = reject or swap crop aspect, ⌫ = delete the photo
 /// or the active mask): left to the egui handler, which knows the context.
 const CONTEXTUAL: &[&str] = &["X", "Delete"];
@@ -117,6 +120,7 @@ fn accelerator(sc: &str) -> Option<Accelerator> {
         "=" => Code::Equal,
         "-" => Code::Minus,
         "'" => Code::Quote,
+        "," => Code::Comma,
         "Delete" => Code::Backspace,
         _ => return None,
     };
@@ -161,6 +165,14 @@ fn structure_of(bar: &[(String, Vec<MenuNode>)]) -> String {
     s
 }
 
+/// Drop a trailing separator (left behind when an item moved to the app menu).
+fn tidy_separators(mut nodes: Vec<MenuNode>) -> Vec<MenuNode> {
+    while matches!(nodes.last(), Some(MenuNode::Separator)) {
+        nodes.pop();
+    }
+    nodes
+}
+
 impl NativeMenu {
     /// Build the menu bar and install it as the application menu (main thread, after launch).
     pub fn install(app: &mut LightcraftApp, ctx: &egui::Context) -> NativeMenu {
@@ -185,9 +197,12 @@ impl NativeMenu {
         // the application menu
         let app_menu = Submenu::new("LightCraft", true);
         let about = MenuItem::with_id("app.about", "About LightCraft", true, None);
+        let settings = MenuItem::with_id(SETTINGS, "Settings…", true, accelerator(SETTINGS_KEY));
         let quit = MenuItem::with_id(QUIT, "Quit LightCraft", true, accelerator("Cmd+Q"));
         let _ = app_menu.append_items(&[
             &about,
+            &PredefinedMenuItem::separator(),
+            &settings,
             &PredefinedMenuItem::separator(),
             &PredefinedMenuItem::services(None),
             &PredefinedMenuItem::separator(),
@@ -208,8 +223,10 @@ impl NativeMenu {
                     &PredefinedMenuItem::separator(),
                 ]);
             }
-            // About lives in the app menu on macOS
-            let nodes: Vec<MenuNode> = nodes.iter().filter(|n| !matches!(n, MenuNode::Item { id, .. } if id == "app.about")).cloned().collect();
+            // About and Settings live in the app menu on macOS
+            let nodes: Vec<MenuNode> =
+                nodes.iter().filter(|n| !matches!(n, MenuNode::Item { id, .. } if id == "app.about" || id == SETTINGS)).cloned().collect();
+            let nodes = tidy_separators(nodes);
             self.append_nodes(&sub, &nodes);
             if title == "Window" {
                 let _ = sub.append_items(&[&PredefinedMenuItem::separator(), &PredefinedMenuItem::bring_all_to_front(None)]);
@@ -281,6 +298,7 @@ impl NativeMenu {
             .filter_map(|i| i.shortcut.clone())
             .filter(|sc| !(self.text_focus && yields_to_text(sc)))
             .collect::<HashSet<_>>();
+        app.native_shortcuts.insert(SETTINGS_KEY.to_string());
     }
 
     /// Per frame: run chosen items, then sync labels / enabled / checked and the text-focus
@@ -291,8 +309,8 @@ impl NativeMenu {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 continue;
             }
-            if key == "app.about" {
-                let _ = app.run("app.about", serde_json::json!({}));
+            if key == "app.about" || key == SETTINGS {
+                let _ = app.run(&key, serde_json::json!({}));
                 continue;
             }
             if let Some(it) = self.items.get(&key) {

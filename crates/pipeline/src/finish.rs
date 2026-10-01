@@ -1,8 +1,8 @@
 //! The per-pixel stage: everything after the spatial planes are ready, in one parallel pass.
 
+use lightcraft_color::luminance_2020;
 use lightcraft_color::spline::{Lut1, MonotoneCurve};
 use lightcraft_color::transfer::linear_to_srgb;
-use lightcraft_color::{REC2020, SRGB, luminance_2020};
 use lightcraft_develop::{DevelopSettings, LocalAdjustments, ToneCurve, VignetteStyle};
 use lightcraft_geom::Point;
 use lightcraft_raster::Rgba8;
@@ -10,6 +10,7 @@ use lightcraft_raster::Rgba8;
 use crate::colorops::ColorOps;
 use crate::geometry::Frame;
 use crate::local::log_lum;
+use crate::output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc};
 use crate::tone::ToneMap;
 use crate::{Prepared, SourceInfo, for_rows};
 
@@ -105,12 +106,15 @@ fn grain_noise(x: f32, y: f32, seed: u32) -> f32 {
 }
 
 /// Number of per-mask terms in [`mask_terms`].
-pub const MASK_TERMS: usize = 18;
+pub const MASK_TERMS: usize = 21;
+
+/// Number of alpha-weighted terms at the start of [`mask_terms`].
+pub const MASK_SUMS: usize = 17;
 
 /// A mask's local adjustments as the per-pixel stage uses them (alpha-weighted sums), in order:
 /// exposure, temp, tint, contrast, highlights, shadows, whites, blacks, texture, clarity, dehaze,
-/// saturation, hue, sharpness, then the colour overlay: on (0/1), cos and sin of its OkLCh hue, and
-/// its strength.
+/// saturation, hue, sharpness, noise, moiré, defringe, then the colour overlay: on (0/1), cos and
+/// sin of its OkLCh hue, and its strength.
 pub fn mask_terms(j: &LocalAdjustments) -> [f32; MASK_TERMS] {
     let (on, cos, sin, amt) = if j.color_sat > 0.0 {
         let hue = crate::colorops::oklch_hue_of_srgb_hue(j.color_hue);
@@ -133,6 +137,9 @@ pub fn mask_terms(j: &LocalAdjustments) -> [f32; MASK_TERMS] {
         (j.saturation / 100.0) as f32,
         (j.hue / 100.0) as f32 * 0.6,
         (j.sharpness / 100.0) as f32,
+        (j.noise / 100.0) as f32,
+        (j.moire / 100.0) as f32,
+        (j.defringe / 100.0) as f32,
         on,
         cos,
         sin,
@@ -153,7 +160,11 @@ pub struct FinishParams {
     /// Refine Saturation as 0..1 (1 = the curves' own saturation).
     pub refine_sat: f32,
     pub vig: Option<Vig>,
-    pub to_srgb: [[f32; 3]; 3],
+    /// Linear Rec.2020 → linear output RGB, the output's luminance weights (gamut mapping) and its
+    /// encoding curve (see [`crate::output`]).
+    pub to_out: [[f32; 3]; 3],
+    pub out_luma: [f32; 3],
+    pub out_trc: OutputTrc,
     pub hl: f32,
     pub sh: f32,
     pub clar: f32,
@@ -178,8 +189,18 @@ pub struct FinishParams {
 }
 
 impl FinishParams {
-    /// Parameters for a `w × h` render; `ev`/`air_pre` as in [`crate::Prepared`].
-    pub fn new(s: &DevelopSettings, frame: &Frame, info: &SourceInfo, w: usize, h: usize, px_per_long: f64, air_pre: f32) -> FinishParams {
+    /// Parameters for a `w × h` render into `space`; `ev`/`air_pre` as in [`crate::Prepared`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        s: &DevelopSettings,
+        frame: &Frame,
+        info: &SourceInfo,
+        w: usize,
+        h: usize,
+        px_per_long: f64,
+        air_pre: f32,
+        space: OutputSpace,
+    ) -> FinishParams {
         let effects = s.section_enabled("effects");
         let (clar, tex, dehaze) = if effects {
             ((s.effects.clarity / 100.0) as f32, (s.effects.texture / 100.0) as f32, (s.effects.dehaze / 100.0) as f32)
@@ -205,7 +226,9 @@ impl FinishParams {
             curves: curve_luts(&s.curve),
             refine_sat: (s.curve.refine_saturation / 100.0).clamp(0.0, 1.0) as f32,
             vig: if effects { vignette(s) } else { None },
-            to_srgb: REC2020.to_space(&SRGB).to_f32(),
+            to_out: space.from_working(),
+            out_luma: space.luma(),
+            out_trc: space.trc(),
             hl: (s.light.highlights / 100.0) as f32,
             sh: (s.light.shadows / 100.0) as f32,
             clar,
@@ -228,10 +251,74 @@ impl FinishParams {
     }
 }
 
-pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo) -> Rgba8 {
+pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo, space: OutputSpace) -> Rgba8 {
     let (w, h) = (p.img.width, p.img.height);
-    let fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air);
-    let FinishParams { tone, ops, curves, vig, to_srgb, hl, sh, clar, tex, dehaze, sharpen, sharpen_mask, air, air_pre, gain, ev, grain, .. } = &fp;
+    let fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
+    let trc = fp.out_trc;
+    let data = finish_with(p, &fp, false, |e| match trc {
+        OutputTrc::Srgb => [enc(e[0]), enc(e[1]), enc(e[2]), 255],
+        t => {
+            let x = e.map(|v| enc(t.encode(lightcraft_color::transfer::srgb_to_linear(v.clamp(0.0, 1.0)))));
+            [x[0], x[1], x[2], 255]
+        }
+    });
+    Rgba8 { width: w, height: h, data }
+}
+
+/// [`finish`] into 16-bit display-encoded or 32-bit float linear samples (output primaries).
+pub(crate) fn finish_deep(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo, space: OutputSpace, depth: OutputDepth) -> DeepImage {
+    use lightcraft_color::transfer::srgb_to_linear;
+    let (w, h) = (p.img.width, p.img.height);
+    let fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
+    let trc = fp.out_trc;
+    let samples = match depth {
+        OutputDepth::F32Linear => {
+            let v = finish_with(p, &fp, true, |e| e.map(|v| srgb_to_linear(v.clamp(0.0, 1.0))));
+            DeepSamples::F32(v.into_flattened())
+        }
+        _ => {
+            let q = |v: f32| (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+            let v = finish_with(p, &fp, true, |e| match trc {
+                OutputTrc::Srgb => e.map(q),
+                t => e.map(|v| q(t.encode(srgb_to_linear(v.clamp(0.0, 1.0))))),
+            });
+            DeepSamples::U16(v.into_flattened())
+        }
+    };
+    DeepImage { width: w, height: h, space, samples }
+}
+
+/// The per-pixel stage: every output pixel's colour in the output primaries, encoded with the sRGB
+/// curve (tone curves and grain applied; not clamped), handed to `store` for the final encoding.
+/// `exact`: encode with the exact sRGB curve instead of the (8/10-bit accurate) table.
+pub(crate) fn finish_with<T: Copy + Default + Send>(
+    p: &Prepared,
+    fp: &FinishParams,
+    exact: bool,
+    store: impl Fn([f32; 3]) -> T + Sync + Send,
+) -> Vec<T> {
+    let (w, h) = (p.img.width, p.img.height);
+    let FinishParams {
+        tone,
+        ops,
+        curves,
+        vig,
+        to_out,
+        out_luma,
+        hl,
+        sh,
+        clar,
+        tex,
+        dehaze,
+        sharpen,
+        sharpen_mask,
+        air,
+        air_pre,
+        gain,
+        ev,
+        grain,
+        ..
+    } = fp;
     let (hl, sh, clar, tex, dehaze, sharpen, sharpen_mask, air, air_pre, gain, ev) =
         (*hl, *sh, *clar, *tex, *dehaze, *sharpen, *sharpen_mask, *air, *air_pre, *gain, *ev);
     let terms: Vec<[f32; MASK_TERMS]> = p.masks.iter().map(|m| mask_terms(&m.adjust)).collect();
@@ -240,8 +327,8 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
     let aspect = w as f32 / h as f32;
 
     let srgb = srgb_lut();
-    let mut out = Rgba8::new(w, h);
-    for_rows(&mut out.data, w, |y, row| {
+    let mut out = vec![T::default(); w * h];
+    for_rows(&mut out, w, |y, row| {
         for (x, px) in row.iter_mut().enumerate() {
             let i = y * w + x;
             let raw = p.img.data[i];
@@ -250,21 +337,42 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
             let l0 = l_pre + ev;
 
             // --- local (mask) contributions: alpha-weighted sums of the masks' terms
-            let mut l = [0.0f32; 14];
+            let mut l = [0.0f32; MASK_SUMS];
             let mut tint_col: Option<([f32; 3], f32)> = None;
             for (m, t) in p.masks.iter().zip(&terms) {
                 let a = m.alpha.data[i];
                 if a <= 0.0 {
                     continue;
                 }
-                for k in 0..14 {
+                for k in 0..MASK_SUMS {
                     l[k] += a * t[k];
                 }
-                if t[14] > 0.0 {
-                    tint_col = Some(([t[15], t[16], 0.0], a * t[17]));
+                if t[MASK_SUMS] > 0.0 {
+                    tint_col = Some(([t[MASK_SUMS + 1], t[MASK_SUMS + 2], 0.0], a * t[MASK_SUMS + 3]));
                 }
             }
-            let [l_exp, l_temp, l_tint, l_con, l_hl, l_sh, l_wh, l_bl, l_tex, l_clar, l_dehaze, l_sat, l_hue, l_sharp] = l;
+            let [l_exp, l_temp, l_tint, l_con, l_hl, l_sh, l_wh, l_bl, l_tex, l_clar, l_dehaze, l_sat, l_hue, l_sharp, l_noise, l_moire, l_defringe] =
+                l;
+
+            // --- local Moiré (and the colour part of Noise): chromaticity towards its blur
+            let mt = (l_moire + 0.5 * l_noise.max(0.0)).clamp(-1.0, 1.0);
+            if mt != 0.0
+                && let Some(cb) = &p.chroma_blur
+            {
+                let (y, ch0, cb) = (luminance_2020(c), crate::masks::chromaticity(raw), cb.data[i]);
+                c = std::array::from_fn(|k| ((ch0[k] + (cb[k] - ch0[k]) * mt) * y).max(0.0));
+            }
+            // --- local Defringe: desaturate purple / green fringes along edges
+            let df = l_defringe.clamp(0.0, 1.0);
+            if df > 0.0
+                && let Some(b) = &p.texture_blur
+            {
+                let k = df * defringe_weight(c, p.log_l.data[i] - b.data[i]);
+                if k > 0.0 {
+                    let y = luminance_2020(c);
+                    c = c.map(|v| v + (y - v) * k);
+                }
+            }
 
             // --- dehaze (scene linear)
             let dz = dehaze + l_dehaze;
@@ -334,6 +442,13 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
                     delta += sp * 1.3 * det.clamp(-0.8, 0.8) * m;
                 }
             }
+            // local Noise: smooth (or, negative, boost) small-amplitude detail, keep edges
+            if l_noise != 0.0
+                && let Some(b) = &p.texture_blur
+            {
+                let det = l_pre - b.data[i];
+                delta -= l_noise.clamp(-1.0, 1.0) * 0.9 * det * (1.0 - smooth(0.1, 0.5, det.abs()));
+            }
             if delta != 0.0 {
                 let g = delta.exp2();
                 c = c.map(|v| v * g);
@@ -388,14 +503,14 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
                 }
             }
 
-            // --- gamut map to sRGB (desaturate towards luminance until in range)
-            let m = to_srgb;
+            // --- gamut map to the output space (desaturate towards luminance until in range)
+            let m = to_out;
             let mut r = [
                 m[0][0] * d[0] + m[0][1] * d[1] + m[0][2] * d[2],
                 m[1][0] * d[0] + m[1][1] * d[1] + m[1][2] * d[2],
                 m[2][0] * d[0] + m[2][1] * d[1] + m[2][2] * d[2],
             ];
-            let yy = (0.2126 * r[0] + 0.7152 * r[1] + 0.0722 * r[2]).clamp(0.0, 1.0);
+            let yy = (out_luma[0] * r[0] + out_luma[1] * r[1] + out_luma[2] * r[2]).clamp(0.0, 1.0);
             let mut t = 1.0f32;
             for c in r {
                 if c < 0.0 {
@@ -409,7 +524,7 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
             }
 
             // --- encode, curves, grain
-            let mut e = r.map(|v| encode_srgb(srgb, v));
+            let mut e = if exact { r.map(|v| linear_to_srgb(v.clamp(0.0, 1.0))) } else { r.map(|v| encode_srgb(srgb, v)) };
             if let Some(l) = curves {
                 let e0 = e;
                 e = [l[0].eval(e[0]), l[1].eval(e[1]), l[2].eval(e[2])];
@@ -427,10 +542,20 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
                 let k = amt * g * (0.35 + 2.6 * lum * (1.0 - lum));
                 e = e.map(|v| v + k);
             }
-            *px = [enc(e[0]), enc(e[1]), enc(e[2]), 255];
+            *px = store(e);
         }
     });
     out
+}
+
+/// Local Defringe weight of a scene-linear colour `c` whose log luminance differs by `det` from
+/// its fine blur: high on strong edges with a purple or green cast.
+#[inline]
+pub fn defringe_weight(c: [f32; 3], det: f32) -> f32 {
+    let y = luminance_2020(c).max(1e-6);
+    let purple = (c[0].min(c[2]) - c[1]) / y;
+    let green = (c[1] - c[0].max(c[2])) / y;
+    smooth(0.04, 0.3, det.abs()) * smooth(0.02, 0.2, purple).max(smooth(0.02, 0.2, green))
 }
 
 /// Refine Saturation: scale the curved colour's chroma (around its luma, encoded values) so its

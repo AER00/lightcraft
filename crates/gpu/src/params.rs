@@ -31,6 +31,7 @@ const FIELDS: &[(&str, usize)] = &[
     ("HAS_CLAR", 1),
     ("HAS_TEX", 1),
     ("HAS_DARK", 1),
+    ("HAS_CHROMA", 1),
     ("OPS_IDENTITY", 1),
     ("VIBRANCE", 1),
     ("SATURATION", 1),
@@ -66,6 +67,10 @@ const FIELDS: &[(&str, usize)] = &[
     ("CALIB", 1),
     ("CALIB_M", 9),
     ("SHADOW_TINT", 1),
+    ("OUT_M", 9),
+    ("OUT_Y", 3),
+    ("OUT_TRC", 1),
+    ("OUT_GAMMA", 1),
 ];
 
 /// `(name, index)` of every field (for the WGSL constants).
@@ -123,6 +128,8 @@ pub struct Present {
     pub clarity: bool,
     pub texture: bool,
     pub dark: bool,
+    /// The blurred chromaticity follows the mask planes in the `masks` buffer.
+    pub chroma: bool,
 }
 
 /// The `finish` kernel's parameter block and auxiliary table (tone LUT | sRGB LUT | curve LUTs |
@@ -166,6 +173,7 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
     p.b("HAS_CLAR", present.clarity);
     p.b("HAS_TEX", present.texture);
     p.b("HAS_DARK", present.dark);
+    p.b("HAS_CHROMA", present.chroma);
 
     let ops = &fp.ops;
     p.b("OPS_IDENTITY", ops.is_identity());
@@ -212,6 +220,11 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
         p.fs("CALIB_M", m.as_flattened());
     }
     p.f("SHADOW_TINT", fp.shadow_tint);
+    p.fs("OUT_M", fp.to_out.as_flattened());
+    p.fs("OUT_Y", &fp.out_luma);
+    let (trc, gamma) = fp.out_trc.code();
+    p.u("OUT_TRC", trc);
+    p.f("OUT_GAMMA", gamma);
     if let Some((amt, cell, rough, seed)) = fp.grain {
         p.b("GRAIN", true);
         p.f("GRAIN_AMT", amt);

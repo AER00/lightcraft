@@ -275,6 +275,37 @@ fn cases() -> Vec<(&'static str, Edit)> {
                 },
             ];
         }),
+        ("masks (local noise, moiré, defringe)", |s| {
+            let radial = MaskShape::Radial { center: Point::new(0.4, 0.6), rx: 0.3, ry: 0.25, angle: 0.0, feather: 50.0, invert: false };
+            let linear = MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.7) };
+            let m = |shape, adjust| Mask { components: vec![MaskComponent { op: MaskOp::Add, invert: false, shape }], adjust, ..Default::default() };
+            use lightcraft_develop::LocalAdjustments as L;
+            s.masks = vec![
+                m(radial, L { noise: 80.0, moire: 60.0, defringe: 100.0, ..Default::default() }),
+                m(linear, L { noise: -60.0, moire: -40.0, ..Default::default() }),
+            ];
+        }),
+        ("masks (auto mask brush)", |s| {
+            let st = |pts: &[(f64, f64)], auto_mask, erase| BrushStroke {
+                points: pts.iter().map(|p| Point::new(p.0, p.1)).collect(),
+                size: 0.06,
+                feather: 40.0,
+                flow: 80.0,
+                auto_mask,
+                erase,
+                ..Default::default()
+            };
+            let strokes = vec![
+                st(&[(0.2, 0.55), (0.5, 0.6), (0.8, 0.5)], true, false),
+                st(&[(0.3, 0.2), (0.6, 0.25)], false, false),
+                st(&[(0.5, 0.58)], true, true),
+            ];
+            s.masks = vec![Mask {
+                components: vec![MaskComponent { op: MaskOp::Add, invert: false, shape: MaskShape::Brush { strokes } }],
+                adjust: lightcraft_develop::LocalAdjustments { exposure: 1.0, saturation: -50.0, ..Default::default() },
+                ..Default::default()
+            }];
+        }),
         ("calibration", |s| {
             s.calibration.shadows_tint = 40.0;
             s.calibration.red_hue = 50.0;
@@ -414,6 +445,43 @@ fn overlays_match() {
         eprintln!("visualize spots t={t:<3}          white {:.3}%  differing {:.4}%", white * 100.0, differ * 100.0);
         assert!(differ < 0.002, "spots t={t}: {differ}");
     }
+    // Mask overlays: the alpha the GPU evaluated (or, for a hidden mask, the CPU's) drawn the same way.
+    let mut s = DevelopSettings::default();
+    let stroke = BrushStroke { points: vec![Point::new(0.2, 0.3), Point::new(0.6, 0.5)], size: 0.05, ..Default::default() };
+    s.masks = vec![
+        Mask {
+            id: 1,
+            components: vec![MaskComponent {
+                op: MaskOp::Add,
+                invert: false,
+                shape: MaskShape::Radial { center: Point::new(0.4, 0.6), rx: 0.25, ry: 0.15, angle: 20.0, feather: 60.0, invert: false },
+            }],
+            ..Default::default()
+        },
+        Mask {
+            id: 2,
+            components: vec![MaskComponent { op: MaskOp::Add, invert: false, shape: MaskShape::Brush { strokes: vec![stroke] } }],
+            ..Default::default()
+        },
+        Mask {
+            id: 3,
+            visible: false,
+            components: vec![MaskComponent {
+                op: MaskOp::Add,
+                invert: false,
+                shape: MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.6) },
+            }],
+            ..Default::default()
+        },
+    ];
+    s.masks[0].adjust.exposure = 0.5;
+    use lightcraft_pipeline::{MaskView, Overlay};
+    for (id, view) in
+        [(1, MaskView::Color), (2, MaskView::ColorOnBw), (2, MaskView::WhiteOnBlack), (3, MaskView::ImageOnWhite), (1, MaskView::ImageOnBlack)]
+    {
+        let req = RenderRequest { overlay: Overlay::Mask { id, view, color: [230, 30, 40], opacity: 50 }, ..RenderRequest::fit(640, 640) };
+        check(&format!("mask {id} overlay {}", view.name()), &src, &raw, &s, &req);
+    }
 }
 
 #[test]
@@ -461,4 +529,33 @@ fn red_eye_matches() {
         ..Default::default()
     };
     check("red eye + spot (cpu stage)", &src, &info, &s, &RenderRequest::fit(600, 600));
+}
+
+fn saturated(s: &mut DevelopSettings) {
+    typical(s);
+    s.color.saturation = 70.0;
+    s.color.vibrance = 40.0;
+    s.curve.highlights = 30.0;
+    s.curve.shadows = -20.0;
+    s.grain.amount = 30.0;
+}
+
+#[test]
+fn output_spaces_match() {
+    if !gpu() {
+        return;
+    }
+    // Export colour spaces: matrix to the target primaries, gamut mapping into the target gamut and
+    // its encoding curve, on both renderers. Saturated edits push colours to the gamut edges.
+    use lightcraft_pipeline::OutputSpace;
+    let src = scene(0, 900, 600);
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    for space in OutputSpace::ALL {
+        for (name, edit) in [("typical", typical as Edit), ("saturated + curves + grain", saturated as Edit)] {
+            let mut s = DevelopSettings::default();
+            edit(&mut s);
+            let req = RenderRequest { space, ..RenderRequest::fit(640, 640) };
+            check(&format!("{space:?} {name}"), &src, &raw, &s, &req);
+        }
+    }
 }

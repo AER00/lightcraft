@@ -211,6 +211,16 @@ impl Renderer {
     }
 
     /// Is a request for `slot` queued or running?
+    /// Drop every texture and cached stage (another library was opened: photo ids changed meaning).
+    pub fn forget_all(&mut self) {
+        self.textures.clear();
+        self.stages.clear();
+        self.quick_tried.clear();
+        self.prefetched.clear();
+        self.pending.clear();
+        self.queue.clear();
+    }
+
     pub fn is_pending(&self, slot: Slot) -> bool {
         self.pending.contains_key(&slot)
     }

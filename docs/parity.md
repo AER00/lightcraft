@@ -21,17 +21,17 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 <!-- parity:summary -->
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
-| A. Import (IMP) | 2 | 4 | 7 | 1 | 1/4 (25%) | 1/4 (25%) |
-| B. Library management (LIB) | 12 | 4 | 9 | 2 | 7/9 (78%) | 4/9 (44%) |
-| C. Views & navigation (VIEW) | 9 | 2 | 6 | 0 | 7/9 (78%) | 1/4 (25%) |
+| A. Import (IMP) | 5 | 3 | 5 | 1 | 2/4 (50%) | 2/4 (50%) |
+| B. Library management (LIB) | 16 | 2 | 7 | 2 | 8/9 (89%) | 7/9 (78%) |
+| C. Views & navigation (VIEW) | 13 | 1 | 3 | 0 | 8/9 (89%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
 | E. Metadata (META) | 2 | 2 | 2 | 0 | 2/2 (100%) | 0/2 (0%) |
 | F. Edit panel — global adjustments (EDIT) | 36 | 2 | 10 | 1 | 28/28 (100%) | 8/14 (57%) |
 | G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
-| I. Remove / healing (REM) | 3 | 3 | 4 | 2 | 2/4 (50%) | 1/3 (33%) |
+| I. Remove / healing (REM) | 5 | 1 | 4 | 2 | 4/4 (100%) | 1/3 (33%) |
 | J. Red eye (EYE) | 0 | 0 | 2 | 0 | — | 0/1 (0%) |
-| K. Masking (MASK) | 6 | 10 | 7 | 0 | 4/8 (50%) | 2/5 (40%) |
+| K. Masking (MASK) | 10 | 6 | 7 | 0 | 7/8 (88%) | 3/5 (60%) |
 | L. Presets (PRE) | 3 | 2 | 2 | 1 | 2/2 (100%) | 1/2 (50%) |
 | M. Versions & history (VER) | 3 | 1 | 1 | 0 | 1/1 (100%) | 2/3 (67%) |
 | N. Copy / paste / sync (SYNC) | 4 | 0 | 1 | 0 | 3/3 (100%) | 1/1 (100%) |
@@ -39,39 +39,27 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 4 | 6 | 8 | 0 | 2/7 (29%) | 2/7 (29%) |
+| S. Export (EXP) | 6 | 6 | 6 | 0 | 3/7 (43%) | 3/7 (43%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
-| V. Preferences (PREF) | 0 | 3 | 5 | 3 | 0/1 (0%) | 0/4 (0%) |
+| V. Preferences (PREF) | 4 | 1 | 3 | 3 | 1/1 (100%) | 3/4 (75%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 10 | 3 | 4 | 1 | 7/8 (88%) | 3/5 (60%) |
-| Y. Menus | 46 | 18 | 21 | 8 | 37/47 (79%) | 7/23 (30%) |
-| Z. Keyboard shortcuts (desktop) | 46 | 16 | 18 | 1 | 39/52 (75%) | 7/23 (30%) |
-| Lightroom Classic extras | 4 | 19 | 56 | 9 | — | 3/21 (14%) |
-| **Total** | 213 | 101 | 186 | 37 | 155/198 (78%) | 49/144 (34%) |
+| Y. Menus | 53 | 17 | 15 | 8 | 38/47 (81%) | 13/23 (57%) |
+| Z. Keyboard shortcuts (desktop) | 53 | 14 | 13 | 1 | 44/52 (85%) | 9/23 (39%) |
+| Lightroom Classic extras | 4 | 20 | 55 | 9 | — | 3/21 (14%) |
+| **Total** | 250 | 87 | 163 | 37 | 171/198 (86%) | 69/144 (48%) |
 <!-- /parity:summary -->
 
 ## Top gaps
 
 Ordered by tier, then user value, then (low) effort. Take the first one nobody is working on.
 
-1. **LR-EXP-COLORSPACE** (P0) — export is sRGB only. Add Display P3 / Adobe RGB-compatible / ProPhoto-compatible /
-   Rec.2020 output (our own primaries + ICC from `crates/codecs/src/icc.rs`). High value, low–medium effort.
-2. **LR-MASK-OVERLAY + LR-MASK-PINS** (P0/P1) — show the evaluated mask alpha as a coloured overlay (all mask
-   kinds, colour/opacity choice), not just brush dabs and outlines. High value, medium effort.
-3. **LR-MASK-BRUSH + LR-MASK-SLIDERS** (P0) — apply the stored Auto Mask flag (edge-aware brush) and the local
-   Noise / Moiré / Defringe sliders, which are stored but not rendered. High value, medium effort.
-4. **LR-REM-SPOT-EDIT + LR-REM-BRUSH-PARAMS** (P0) — select a spot pin, move target/source, delete with ⌫,
-   feather/opacity sliders, `[`/`]` size keys. Medium effort.
-7. **LR-PREF-GENERAL + LR-IMP-RAWDEFAULT** (P0/P1) — a Settings dialog: raw defaults (preset or camera-specific),
-    XMP prefs, cache, GPU. Medium effort.
-9. **LR-EXP-TYPE + LR-EXP-DIM** (P0) — Original (+XMP) and DNG export (writer exists in
+1. **LR-EXP-TYPE + LR-EXP-DIM** (P0) — Original (+XMP) and DNG export (writer exists in
     `crates/raw/src/dngwrite.rs`), short edge / width / height / megapixels, "don't enlarge", ppi.
-10. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
+2. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
     permissive pure-Rust decoder yet). High value, high effort (clean sources needed).
-11. **LR-VIEW-FULLSCREEN + LR-VIEW-NAVIGATOR + LR-VIEW-INFOOVERLAY** (P1) — view modes. Medium effort.
-13. **LR-EXP-BITDEPTH + LR-EXP-COMPRESSION** (P1) — 16-bit TIFF/PNG and TIFF compression choice.
-14. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
+3. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
 
 ## Shortcuts: conflicts and missing bindings
 
@@ -100,10 +88,9 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 **Still missing / broken:**
 - No command yet: F full-screen preview, ⇧⌘F window full screen, ⇧⌘V paste selected,
-  ⌘, settings, ⌘F focus search, ⌘G / ⇧⌘G stacks, A visualize spots, `[` `]` / ⇧`[` ⇧`]`
-  brush size/feather, ⌃H / ⌃M merges, F1 help, ⇧6–9 label + advance.
-- `⌫` in the Masking panel deletes the active mask; spots have no pin selection yet (⌫ does nothing in Remove).
-- `H` opens Remove; Lightroom also uses it (Classic) to hide pins — no pin toggle yet.
+  ⌘, settings, ⌘F focus search, ⌘G / ⇧⌘G stacks, A visualize spots, ⌃H / ⌃M merges, F1 help,
+  ⇧6–9 label + advance.
+- `H` opens Remove; Lightroom also uses it (Classic) to hide pins — pins toggle from View → Show Mask Pins.
 - ⌘M / ⌘H / ⌘Q / ⌘W rely on the platform window defaults (unverified).
 
 <!-- Sections below hold one row per id. Keep the column order: Id | Feature | Tier | Status | Evidence | Notes. -->
@@ -118,7 +105,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-IMP-DEVICE | Import from camera/card | P1 | ⬜ | | no device detection |
 | LR-IMP-AUTO | Watched-folder auto import | P2 | ⬜ | | |
 | LR-IMP-PRESET | Preset on import | P2 | ✅ | `cmd:library.import` (`preset`) | chosen in the import review; one History entry |
-| LR-IMP-RAWDEFAULT | Raw defaults | P1 | ⬜ | `crates/engine/src/import.rs` | raws get embedded lens corrections on import; no user raw-default setting |
+| LR-IMP-RAWDEFAULT | Raw defaults | P1 | ✅ | `cmd:library.preferences`, `crates/engine/src/import.rs`, `crates/ui-egui/src/panels/settings.rs` | LightCraft default / a preset / per camera (make + model); non-raw default too; the preset look counts as unedited and Reset returns to it |
 | LR-IMP-MIGRATE | Migrate other catalogs | OOS | 🚫 | | |
 | LR-IMP-PROFILES | Import profiles & presets | P1 | 🟡 | `cmd:file.importPresets`, `cmd:preset.import` | presets (.lcpreset, XMP `crs:`) only; no profile import; Adobe profile formats are deliberately unsupported |
 | LR-IMP-LOCAL | Work on files in place | P0 | 🟡 | `cmd:library.import` (mode add), `cmd:library.importPreview`, `crates/engine/src/sidecar.rs`, `cmd:library.toggleAutoWriteXmp` | files referenced in place with XMP sidecars; the import review shows a folder's photos before adding (“Add in place” or “Copy into library”); no browse-a-folder-without-adding view in the main grid |
@@ -167,14 +154,14 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-VIEW-SQUAREGRID | Square grid | P0 | ✅ | `cmd:view.squareGrid` | same date headers as the photo grid |
 | LR-VIEW-DETAIL | Single-photo view | P0 | ✅ | `cmd:view.detail`, `crates/ui-egui/src/panels/detail.rs` | |
 | LR-VIEW-EDIT | Edit view | P0 | ✅ | `cmd:panel.edit` | |
-| LR-VIEW-FULLSCREEN | Full-screen preview | P1 | ⬜ | | |
+| LR-VIEW-FULLSCREEN | Full-screen preview | P1 | ✅ | `cmd:view.fullScreenPreview`, `cmd:view.enterFullScreen` | photo on black, arrows step, Esc exits; ⇧⌘F window full screen |
 | LR-VIEW-FILMSTRIP | Filmstrip | P0 | ✅ | `cmd:view.filmstrip` | |
 | LR-VIEW-ZOOM | Zoom & pan | P0 | ✅ | `cmd:view.zoomFit`, `cmd:view.zoom100`, `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle` | steps 25–800 % (not 6–1600 %); Fill only in the bottom bar |
-| LR-VIEW-NAVIGATOR | Navigator mini map | P1 | ⬜ | | |
+| LR-VIEW-NAVIGATOR | Navigator mini map | P1 | ✅ | `cmd:view.navigator`, `crates/ui-egui/src/panels/detail.rs` | shown while zoomed (bottom right); click/drag pans |
 | LR-VIEW-BEFOREAFTER | Before / after | P0 | 🟡 | `cmd:view.showOriginal`, `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | all four layouts; "before" is always the original (no before-state from history) |
 | LR-VIEW-COMPARE | Compare two photos | P1 | ✅ | `cmd:view.compare`, `cmd:compare.swap`, `cmd:compare.makeSelect`, `crates/ui-egui/src/panels/compare.rs` | select / candidate, synced zoom + pan, arrows move the candidate; no zoom-link toggle |
 | LR-VIEW-SURVEY | Survey view [Classic] | P2 | ✅ | `cmd:view.survey`, `crates/ui-egui/src/panels/compare.rs` | selection tiled (≤ 48), keys act on the active photo, hover × removes |
-| LR-VIEW-INFOOVERLAY | Info overlay on the photo | P1 | ⬜ | | |
+| LR-VIEW-INFOOVERLAY | Info overlay on the photo | P1 | ✅ | `cmd:view.infoOverlay` | off / file + date + size / exposure + camera; ⌘I cycles (I in full screen; elsewhere I stays the Info panel) |
 | LR-VIEW-SLIDESHOW | Slideshow | P2 | ⬜ | | |
 | LR-VIEW-SECONDWINDOW | Second display window [Classic] | P2 | ⬜ | | |
 | LR-VIEW-CLIPPING | Clipping indicators | P0 | ✅ | `cmd:view.clipping` | |
@@ -303,8 +290,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-REM-CLONE | Clone | P0 | ✅ | `cmd:spot.add` (`mode: clone`) | |
 | LR-REM-GEN | Generative remove | OOS | 🚫 | | |
 | LR-REM-DETECT | Object detection for remove | P2 | ⬜ | | |
-| LR-REM-BRUSH-PARAMS | Brush size / feather / opacity | P0 | 🟡 | `cmd:spot.add` (`size`, `feather`, `opacity`), `crates/ui-egui/src/panels/right.rs` | UI has size only; no `[` `]` keys |
-| LR-REM-SPOT-EDIT | Edit existing spots | P0 | 🟡 | `cmd:spot.delete` | no pin selection, no moving target/source, ⌫ deletes the photo instead |
+| LR-REM-BRUSH-PARAMS | Brush size / feather / opacity | P0 | ✅ | `cmd:spot.add` (`size`, `feather`, `opacity`), `cmd:brush.smaller`, `cmd:brush.larger`, `cmd:brush.featherLess`, `cmd:brush.featherMore`, `crates/ui-egui/src/panels/right.rs` | Size / Feather / Opacity sliders (for new spots and the selected one); `[` `]` size, ⇧`[` ⇧`]` feather (also the Masking brush) |
+| LR-REM-SPOT-EDIT | Edit existing spots | P0 | ✅ | `cmd:spot.select`, `cmd:spot.update`, `cmd:spot.refreshSource`, `cmd:spot.delete` | click a pin to select, drag target or source, ⌫ deletes the selected spot, `/` picks another source; automatic sources are resolved when the spot is added |
 | LR-REM-VISUALIZE | Visualize spots | P1 | ⬜ | | |
 | LR-REM-PEOPLE | Remove people (generative) | OOS | 🚫 | | |
 | LR-REM-REFLECT | Remove reflections | P2 | ⬜ | | |
@@ -329,7 +316,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-MASK-OBJECTS | Object selection | P2 | ⬜ | | shape exists (falls back to the subject heuristic); no UI |
 | LR-MASK-PEOPLE | People parts | P2 | ⬜ | | |
 | LR-MASK-LANDSCAPE | Landscape classes | P2 | ⬜ | | shape exists, evaluates empty |
-| LR-MASK-BRUSH | Brush mask | P0 | 🟡 | `cmd:tool.brush`, `cmd:mask.brushStroke` | size/feather/flow/density/erase; Auto Mask flag not applied; no A/B brushes, no pressure |
+| LR-MASK-BRUSH | Brush mask | P0 | ✅ | `cmd:tool.brush`, `cmd:mask.brushStroke` (`autoMask`), `crates/pipeline/src/masks.rs` | size/feather/flow/density/erase; Auto Mask: dabs weighted by similarity to the colour under the dab centre, refined by a guided filter on luminance (CPU + GPU); no A/B brushes, no pressure |
 | LR-MASK-LINEAR | Linear gradient | P0 | ✅ | `cmd:tool.linear`, `cmd:mask.update` | |
 | LR-MASK-RADIAL | Radial gradient | P0 | ✅ | `cmd:tool.radial`, `cmd:mask.update` | |
 | LR-MASK-COLORRANGE | Colour range | P1 | 🟡 | `cmd:mask.add` (`colorRange`) | renders; sampling UX unverified |
@@ -339,9 +326,9 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-MASK-INVERT | Invert | P0 | ✅ | `cmd:mask.invert` | |
 | LR-MASK-AMOUNT | Mask amount | P1 | ✅ | `cmd:mask.adjust` (`amount`), `crates/ui-egui/src/panels/masking.rs` | |
 | LR-MASK-FEATHER-EDGE | Refine mask edges | P2 | ⬜ | | |
-| LR-MASK-SLIDERS | Local adjustment sliders | P0 | 🟡 | `cmd:mask.adjust`, `crates/pipeline/src/finish.rs` | noise / moiré / defringe stored but not rendered; no local curve or effect presets |
-| LR-MASK-OVERLAY | Mask overlay | P0 | 🟡 | `cmd:view.maskOverlay`, `crates/ui-egui/src/panels/detail.rs` | brush dabs + shape outlines only; no rendered alpha, colour or mode options |
-| LR-MASK-PINS | Pins | P1 | 🟡 | `crates/ui-egui/src/panels/detail.rs` | handles drawn; no show/hide-pins option |
+| LR-MASK-SLIDERS | Local adjustment sliders | P0 | ✅ | `cmd:mask.adjust`, `crates/pipeline/src/finish.rs` | every slider renders (CPU + GPU), incl. Noise, Moiré, Defringe (negative Defringe has no effect); no local curve or effect presets |
+| LR-MASK-OVERLAY | Mask overlay | P0 | ✅ | `cmd:view.maskOverlay`, `cmd:view.maskOverlayMode`, `cmd:view.maskOverlayColor`, `crates/pipeline/src/visualize.rs` | rendered alpha of the selected mask (CPU + GPU): colour, colour on B&W, image on black/white, white on black; ⇧O cycles while masking; no auto-show on hover |
+| LR-MASK-PINS | Pins | P1 | ✅ | `cmd:view.maskPins`, `crates/ui-egui/src/panels/detail.rs` | a pin per radial/linear/brush component: click selects its mask, drag moves it; no pins for range/AI components, no Auto mode |
 | LR-MASK-UPDATE | Recompute AI masks | P2 | ⬜ | | |
 | LR-MASK-SYNC | Copy masks to other photos | P1 | ✅ | `cmd:develop.copy` (`groups`) | |
 | LR-MASK-ADAPTIVE | Adaptive presets | P2 | ⬜ | | |
@@ -424,9 +411,9 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EXP-TYPE | File types | P0 | 🟡 | `crates/engine/src/export.rs` (`ExportFormat`) | JPEG, PNG, TIFF, WebP, AVIF; no DNG, JXL or original (+XMP) |
 | LR-EXP-DIM | Output size | P0 | 🟡 | `crates/ui-egui/src/panels/dialogs.rs` (long edge / full size) | no short edge / width / height / megapixels, ppi, don't-enlarge |
 | LR-EXP-QUALITY | JPEG quality | P0 | ✅ | `cmd:app.export` (`quality`, `limitKb`) | |
-| LR-EXP-BITDEPTH | Bit depth | P1 | ⬜ | | 8-bit only |
+| LR-EXP-BITDEPTH | Bit depth | P1 | ✅ | `cmd:app.export` (`bitDepth`), `crates/pipeline/src/output.rs` (`OutputDepth`), `crates/engine/src/export.rs` | 16-bit PNG/TIFF rendered at 16 bits (TIFF defaults to 16), 32-bit float linear TIFF with a linear profile, 10-bit AVIF; high-bit-depth renders run on the CPU |
 | LR-EXP-COMPRESSION | TIFF compression | P1 | ⬜ | | always Deflate |
-| LR-EXP-COLORSPACE | Output colour space | P0 | ⬜ | `crates/engine/src/export.rs` | sRGB only |
+| LR-EXP-COLORSPACE | Output colour space | P0 | ✅ | `cmd:app.export` (`colorSpace`), `crates/pipeline/src/output.rs`, `crates/engine/src/export.rs` | sRGB, Display P3, Adobe RGB (1998) compatible, ProPhoto RGB, Rec. 2020: rendered from the working space with gamut mapping into the target gamut (CPU + GPU), own ICC profile embedded; AVIF stays sRGB (muxer has no ICC) |
 | LR-EXP-HDR | HDR output | P2 | ⬜ | | |
 | LR-EXP-SHARPEN | Output sharpening | P1 | ✅ | `cmd:app.export` (`sharpen`, `sharpenAmount`) | |
 | LR-EXP-METADATA | Metadata policy | P1 | ✅ | `cmd:app.export` (`metadata`, `removeLocation`) | |
@@ -459,11 +446,11 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-PREF-GENERAL | General settings | P0 | ⬜ | `cmd:library.xmpPreferences` | no settings dialog; only XMP preferences (by command) |
-| LR-PREF-LOCALSTORAGE | Storage & cache | P1 | 🟡 | `cmd:library.clearPreviews`, `cmd:library.compact` | bounded thumbnail cache; no UI for size/location |
+| LR-PREF-GENERAL | General settings | P0 | ✅ | `cmd:app.settings`, `cmd:app.openLibrary`, `crates/ui-egui/src/panels/settings.rs` | General / Import / Performance / Interface tabs; app settings in ui.json, library settings in prefs.json |
+| LR-PREF-LOCALSTORAGE | Storage & cache | P1 | ✅ | `cmd:library.preferences`, `cmd:library.clearPreviews`, `cmd:library.compact` | thumbnail cache size + clear in Settings → Performance; library location + Open Library… in General |
 | LR-PREF-ACCOUNT | Account | OOS | 🚫 | | |
-| LR-PREF-INTERFACE | Interface options | P1 | ⬜ | | |
-| LR-PREF-PERFORMANCE | GPU / performance | P1 | 🟡 | `cmd:app.gpu` | by command only |
+| LR-PREF-INTERFACE | Interface options | P1 | ✅ | `cmd:app.settings` | filmstrip names/badges, grid badges (auto/always/never), square-grid names, navigator, info overlay |
+| LR-PREF-PERFORMANCE | GPU / performance | P1 | ✅ | `cmd:app.gpu`, `cmd:app.memoryBudget`, `cmd:app.settings` | GPU on/off, preview size (1600–5120 px), memory budget, thumbnail cache size in Settings |
 | LR-PREF-PEOPLE | Face recognition | P2 | ⬜ | | |
 | LR-PREF-WATERMARK | Watermark settings | P1 | 🟡 | `crates/ui-egui/src/panels/dialogs.rs` | per export in the dialog; not saved as a preference |
 | LR-PREF-SHORTCUTS | Shortcut customisation | — | 🚫 | | not customisable in the reference app either; a keymap editor would be an extra |
@@ -512,7 +499,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 |---|---|---|---|---|---|
 | MENU-BAR | Menu bar rendering | P1 | ✅ | `crates/ui-egui/src/menubar.rs`, `apps/lightcraft/src/native_menu.rs` | native macOS menu bar (muda) with live labels/enabled/checked; in-window menus on web/Windows/Linux; ⌫ and X stay egui-handled (contextual), so they show no key in the native menu |
 | MENU-APP-ABOUT | About | P2 | ✅ | `cmd:app.about` | |
-| MENU-APP-SETTINGS | Settings… | P0 | ⬜ | | see LR-PREF-GENERAL |
+| MENU-APP-SETTINGS | Settings… | P0 | ✅ | `cmd:app.settings` | app menu on macOS, Edit menu elsewhere |
 | MENU-APP-UPDATES | Check for updates | P2 | ⬜ | | |
 | MENU-APP-SYNC | Sync status / pause | OOS | 🚫 | | |
 | MENU-APP-SIGNOUT | Sign out | OOS | 🚫 | | |
@@ -546,8 +533,8 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-VIEW-SQUAREGRID | Square Grid | P0 | ✅ | `cmd:view.squareGrid` | |
 | MENU-VIEW-DETAIL | Detail | P0 | ✅ | `cmd:view.detail` | |
 | MENU-VIEW-EDIT | Edit | P0 | ✅ | `cmd:panel.edit` | |
-| MENU-VIEW-FULLSCREENPREVIEW | Full Screen Preview | P1 | ⬜ | | |
-| MENU-VIEW-ENTERFULLSCREEN | Enter Full Screen | P1 | ⬜ | | |
+| MENU-VIEW-FULLSCREENPREVIEW | Full Screen Preview | P1 | ✅ | `cmd:view.fullScreenPreview` | |
+| MENU-VIEW-ENTERFULLSCREEN | Enter Full Screen | P1 | ✅ | `cmd:view.enterFullScreen` | |
 | MENU-VIEW-PHOTOSPANEL | Show/Hide photos panel | P0 | ✅ | `cmd:view.leftPanel` | |
 | MENU-VIEW-FILMSTRIP | Show/Hide filmstrip | P0 | ✅ | `cmd:view.filmstrip` | |
 | MENU-VIEW-INFO | Show/Hide info | P0 | ✅ | `cmd:panel.info` | |
@@ -555,7 +542,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-VIEW-ACTIVITY | Show/Hide activity (comments) | OOS | 🚫 | | our History panel is `panel.activity` |
 | MENU-VIEW-VERSIONS | Show/Hide versions | P1 | ✅ | `cmd:panel.versions` | |
 | MENU-VIEW-HISTOGRAM | Show/Hide histogram | P0 | ✅ | `cmd:view.histogram` | |
-| MENU-VIEW-INFOOVERLAY | Show info overlay | P1 | ⬜ | | |
+| MENU-VIEW-INFOOVERLAY | Show info overlay | P1 | ✅ | `cmd:view.infoOverlay` | cycles |
 | MENU-VIEW-SHOWORIGINAL | Show Original | P0 | ✅ | `cmd:view.showOriginal` | |
 | MENU-VIEW-BEFOREAFTER | Before/After submenu | P0 | ✅ | `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | |
 | MENU-VIEW-ZOOM | Zoom in / out / toggle / fit / 1:1 | P0 | ✅ | `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle`, `cmd:view.zoomFit`, `cmd:view.zoom100` | |
@@ -614,7 +601,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-CROP | Crop & rotate — C | P0 | ✅ | `cmd:panel.crop` | |
 | KEY-DETAIL | Detail — D | P0 | ✅ | `cmd:view.detail` | |
 | KEY-EDIT | Edit — E | P0 | ✅ | `cmd:panel.edit` | |
-| KEY-FULLSCREEN | Full-screen preview — F | P1 | ⬜ | | no command |
+| KEY-FULLSCREEN | Full-screen preview — F | P1 | ✅ | `cmd:view.fullScreenPreview` | |
 | KEY-GRID | Grid — G | P0 | ✅ | `cmd:view.photoGrid` | |
 | KEY-INFO | Info — I | P0 | ✅ | `cmd:panel.info` | |
 | KEY-KEYWORDS | Keywords — K | P0 | ✅ | `cmd:panel.keywords` | |
@@ -628,10 +615,10 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-SELECTALL | Select all — ⌘A | P0 | ✅ | `cmd:library.selectAll` | |
 | KEY-SELECTNONE | Select none — ⌘D | P0 | ✅ | `cmd:library.selectNone` | secondary binding (primary ⌘⇧A) |
 | KEY-PASTESELECTED | Paste selected — ⇧⌘V | P0 | ⬜ | | no command |
-| KEY-PREFS | Settings — ⌘, | P0 | ⬜ | | no command |
+| KEY-PREFS | Settings — ⌘, | P0 | ✅ | `cmd:app.settings` | |
 | KEY-SEARCH | Search — ⌘F | P0 | ⬜ | | no focus-search command |
 | KEY-VISUALIZESPOTS | Visualize spots — A | P1 | ⬜ | | |
-| KEY-CYCLEOVERLAY | Cycle overlay — O | P0 | 🟡 | `cmd:view.maskOverlay`, `cmd:view.cropOverlay` | O toggles the mask overlay; crop overlays cycle on ⇧O |
+| KEY-CYCLEOVERLAY | Cycle overlay — O | P0 | ✅ | `cmd:view.maskOverlay`, `cmd:view.maskOverlayMode`, `cmd:view.cropOverlay` | O toggles the mask overlay; ⇧O cycles mask overlay modes while masking, crop overlays elsewhere |
 | KEY-PHOTOSPANEL | Photos panel — P | P0 | 🟡 | `cmd:view.leftPanel` | bound to ⌘⇧L; P = pick |
 | KEY-LINEAR | Linear gradient — L | P0 | ✅ | `cmd:tool.linear` | |
 | KEY-RADIAL | Radial gradient — R | P0 | ✅ | `cmd:tool.radial` | |
@@ -643,7 +630,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-MASKCOLOR | Cycle mask colour — ⇧O | P1 | ⬜ | | ⇧O cycles crop overlays |
 | KEY-EXPORTPREV | Export with previous — ⌘E | P0 | 🟡 | `cmd:app.exportPrevious` | bound to ⌥⇧⌘E (Classic); ⌘E not bound |
 | KEY-EXPORTDIALOG | Export dialog — ⇧E | P0 | ✅ | `cmd:dialog.export` | secondary binding (primary ⌘⇧E) |
-| KEY-ENTERFULLSCREEN | Window full screen — ⇧⌘F | P1 | ⬜ | | |
+| KEY-ENTERFULLSCREEN | Window full screen — ⇧⌘F | P1 | ✅ | `cmd:view.enterFullScreen` | |
 | KEY-STACK | Group / ungroup stack — ⌘G / ⇧⌘G | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup` | also S expand/collapse, ⇧S top of stack |
 | KEY-GUIDEDUPRIGHT | Guided Upright — ⇧G | P1 | 🟡 | `cmd:geometry.upright` | button in the crop panel; ⇧G = Square Grid |
 | KEY-HIDE | Hide / hide others — ⌘H / ⌥⌘H | P1 | 🟡 | | platform default (unverified) |
@@ -656,8 +643,8 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-SECTIONS | Expand/collapse edit sections — ⌘1…⌘6 | P1 | 🟡 | `cmd:section.light`, `cmd:section.color`, `cmd:section.effects`, `cmd:section.detail`, `cmd:section.optics` | bound to ⌘⌥1–5 |
 | KEY-PRESETS | Presets panel — ⇧P | P0 | ✅ | `cmd:panel.presets` | |
 | KEY-HISTOGRAM | Histogram — ⌘0 | P0 | 🟡 | `cmd:view.histogram` | bound to ⌘⇧H; ⌘0 = zoom to fit |
-| KEY-BRUSHSIZE | Brush size — `[` / `]` | P0 | ⬜ | | brush size is UI state, no command |
-| KEY-BRUSHFEATHER | Brush feather — ⇧`[` / ⇧`]` | P0 | ⬜ | | |
+| KEY-BRUSHSIZE | Brush size — `[` / `]` | P0 | ✅ | `cmd:brush.smaller`, `cmd:brush.larger` | Masking brush and Remove tool (and its selected spot) |
+| KEY-BRUSHFEATHER | Brush feather — ⇧`[` / ⇧`]` | P0 | ✅ | `cmd:brush.featherLess`, `cmd:brush.featherMore` | |
 | KEY-BRUSH | Brush — B | P0 | ✅ | `cmd:tool.brush` | |
 | KEY-HEAL | Remove / heal — H | P0 | ✅ | `cmd:panel.remove` | |
 | KEY-MERGE | HDR / panorama merges — ⌃H ⇧⌃H ⌃M ⇧⌃M | P2 | ⬜ | | |
@@ -690,7 +677,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-VIDEO-PLAY | Play/pause video — Space | P1 | ⬜ | | |
 | KEY-ESC | Leave tool / view — Esc | P0 | ✅ | `cmd:view.back` | |
 | KEY-COMMIT | Commit tool — Return | P1 | 🟡 | | edits apply live; no explicit commit step |
-| KEY-DELETE-PIN | Delete selected pin — ⌫ | P0 | 🟡 | `cmd:mask.delete` | ⌫ deletes the active mask in the Masking panel and never the photo while retouching; no spot pin selection yet |
+| KEY-DELETE-PIN | Delete selected pin — ⌫ | P0 | ✅ | `cmd:mask.delete`, `cmd:spot.delete` | ⌫ deletes the active mask (Masking) or the selected spot (Remove), never the photo while retouching |
 | KEY-HIDEPINS | Hide pins — H | P2 | ⬜ | | H = Remove panel |
 
 ## Lightroom Classic extras

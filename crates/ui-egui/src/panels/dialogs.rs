@@ -34,6 +34,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::CopySettings { .. } => "Choose Edit Settings to Copy",
         Dialog::Export { .. } => "Export",
         Dialog::Merge { opts } => opts.title(),
+        Dialog::Settings { .. } => "Settings",
+        Dialog::ConfirmDelete { .. } => "Delete Photos",
         Dialog::About => "About LightCraft",
         Dialog::Shortcuts => "Keyboard Shortcuts",
     };
@@ -236,6 +238,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     let n = app.session.selection.ids.len().max(1);
                     ui.label(egui::RichText::new(format!("{n} photo{}", if n == 1 { "" } else { "s" })).color(t.text_dim));
                     ui.add_space(4.0);
+                    let before = opts.format;
                     choices(
                         ui,
                         "Format",
@@ -243,6 +246,34 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         &[(F::Jpeg, "JPEG"), (F::Png, "PNG"), (F::Tiff, "TIFF"), (F::Webp, "WebP"), (F::Avif, "AVIF")],
                         &mut opts.format,
                     );
+                    if opts.format != before {
+                        // each format starts at its own default depth (TIFF 16-bit, others 8-bit)
+                        opts.bit_depth = None;
+                    }
+                    let depths = lightcraft_engine::export::ExportOptions::bit_depths(opts.format);
+                    if depths.len() > 1 {
+                        let mut bd = opts.bit_depth.filter(|b| depths.iter().any(|d| d.0 == *b)).unwrap_or(depths[0].0);
+                        choices(ui, "Bit depth", "exportBitDepth", depths, &mut bd);
+                        opts.bit_depth = Some(bd);
+                    }
+                    if opts.format == F::Avif {
+                        ui.label(egui::RichText::new("Color space: sRGB (AVIF)").color(t.text_dim));
+                    } else {
+                        use lightcraft_engine::export::OutputSpace as C;
+                        choices(
+                            ui,
+                            "Color space",
+                            "exportColorSpace",
+                            &[
+                                (C::Srgb, "sRGB"),
+                                (C::DisplayP3, "P3"),
+                                (C::AdobeRgb, "Adobe RGB"),
+                                (C::ProPhoto, "ProPhoto"),
+                                (C::Rec2020, "Rec.2020"),
+                            ],
+                            &mut opts.color_space,
+                        );
+                    }
                     if matches!(opts.format, F::Jpeg | F::Avif) {
                         let mut q = opts.quality as f64;
                         if num(ui, &QUALITY, &mut q) {
@@ -324,6 +355,12 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 }
                 Dialog::Merge { opts } => crate::merge::body(app, ui, opts),
                 Dialog::Import { opts } => crate::import::body(app, ui, opts),
+                Dialog::Settings { tab } => crate::panels::settings::body(app, ui, tab),
+                Dialog::ConfirmDelete { count } => {
+                    let what = if *count == 1 { "this photo".to_string() } else { format!("these {count} photos") };
+                    ui.label(format!("Move {what} to Recently Deleted?"));
+                    ui.label(egui::RichText::new("They can be restored from Recently Deleted until it is emptied.").color(t.text_dim));
+                }
                 Dialog::About => {
                     ui.label(egui::RichText::new("LightCraft").font(t.semibold(20.0)).color(t.text));
                     ui.label(format!("Version {} — a clean-room, pure-Rust photo library and raw developer.", env!("CARGO_PKG_VERSION")));
@@ -366,7 +403,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let informational = matches!(dlg, Dialog::About | Dialog::Shortcuts);
+                let informational = matches!(dlg, Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. });
                 if !informational && ui.button("Cancel").clicked() {
                     close = true;
                 }
@@ -378,6 +415,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         add_label.as_str()
                     }
                     Dialog::Merge { .. } => "Merge",
+                    Dialog::ConfirmDelete { .. } => "Delete",
                     _ if informational => "Close",
                     _ => "OK",
                 };
@@ -456,11 +494,13 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
                 "format": opts.format, "quality": opts.quality, "longEdge": long_edge, "limitKb": limit_kb,
                 "sharpen": opts.sharpen, "sharpenAmount": opts.sharpen_amount, "naming": opts.naming, "dir": dir,
                 "metadata": opts.metadata, "removeLocation": opts.remove_location, "watermark": opts.watermark,
+                "colorSpace": opts.color_space, "bitDepth": opts.bit_depth,
             }),
         ),
         Dialog::Merge { opts } => crate::merge::start_final(app, opts),
         Dialog::Import { opts } => crate::import::start(app, opts),
-        Dialog::About | Dialog::Shortcuts => Ok(serde_json::Value::Null),
+        Dialog::ConfirmDelete { .. } => app.run("photo.delete", json!({})),
+        Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. } => Ok(serde_json::Value::Null),
     }
 }
 

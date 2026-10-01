@@ -312,7 +312,11 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         p.rect_filled(br, 2.0, Color32::from_gray(26));
         p.galley(br.min + vec2(4.0, 1.5), g, t.text_label);
     }
-    let show_badges = resp.hovered() || selected || photo.rating > 0 || photo.flag != Flag::None || photo.label.is_some();
+    let show_badges = match app.ui.settings.grid_badges {
+        crate::state::GridBadges::Auto => resp.hovered() || selected || photo.rating > 0 || photo.flag != Flag::None || photo.label.is_some(),
+        crate::state::GridBadges::Always => true,
+        crate::state::GridBadges::Never => false,
+    };
     if show_badges {
         let bar = Rect::from_min_max(pos2(img_rect.left(), img_rect.bottom() - 24.0), img_rect.right_bottom());
         if resp.hovered() || selected {
