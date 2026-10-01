@@ -88,6 +88,19 @@ the device on their first GPU render. `lightcraft_gpu::ready()` asks without blo
   one is rendered (decoded source kept, view render cached): stepping through photos shows the
   developed image in ~50 ms.
 
+## Memory (M5.6)
+- `library.memory` reports what the engine's caches hold (decoded thumbnail / preview / full-size
+  sources, rendered previews) and the GPU renderer's device buffers (allocated, of which pooled
+  and retired); `ui.inspect` → `memory` adds the loupe's stage caches (CPU images, GPU buffers)
+  and the textures.
+- Heap profile: build `lightcraft-cli` with `--features dhat-heap`; `library.memory` then also
+  reports live/peak heap bytes and the run writes `dhat-heap.json` (`LIGHTCRAFT_DHAT_FILE`), whose
+  allocation sites at the peak (`t-gmax`) show who holds the memory.
+- Measuring the scenario (import 14 raws from `corpus/raw`, open the loupe, step 12 times):
+  `/usr/bin/time -l lightcraft-cli snapshot <files> --script steps.jsonl -o out.png` → "maximum
+  resident set size" and "peak memory footprint". Run it several times: the high-water mark is
+  noisy (allocator caching, scheduling). On Apple silicon GPU buffers count in the footprint.
+
 ## Open items
 - Keep the loupe texture on the GPU (render into an `egui-wgpu` texture on eframe's device instead of
   reading back); share the device with eframe.

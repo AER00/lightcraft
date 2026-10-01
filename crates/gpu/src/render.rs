@@ -82,6 +82,41 @@ impl GpuStages {
         self.lock().len()
     }
 
+    /// Device bytes held (each buffer counted once).
+    pub fn bytes(&self) -> usize {
+        let mut seen: Vec<*const Buf> = Vec::new();
+        let mut total = 0;
+        let mut add = |b: &Arc<Buf>| {
+            let p = Arc::as_ptr(b);
+            if !seen.contains(&p) {
+                seen.push(p);
+                total += b.len * 4;
+            }
+        };
+        for e in self.lock().iter() {
+            add(&e.sampled);
+            if let Some((_, b)) = &e.lin {
+                add(b);
+            }
+            let p = &e.planes;
+            p.log_l.iter().for_each(&mut add);
+            p.base.iter().for_each(|(_, b)| add(b));
+            p.clarity.iter().for_each(|(_, b)| add(b));
+            p.texture.iter().for_each(|(_, b)| add(b));
+            p.dark.iter().for_each(|(_, b, _)| add(b));
+        }
+        if let Some((_, b)) = &*self.source.lock().unwrap_or_else(|e| e.into_inner()) {
+            add(b);
+        }
+        total
+    }
+
+    /// Drop everything (e.g. when memory is needed).
+    pub fn clear(&self) {
+        self.lock().clear();
+        *self.source.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

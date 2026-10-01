@@ -298,6 +298,18 @@ impl Renderer {
         changed
     }
 
+    /// What the renderer holds: per-view stage caches (CPU images and GPU buffers) and textures.
+    pub fn memory(&self) -> serde_json::Value {
+        let cpu: usize = self.stages.values().map(|s| s.bytes()).sum();
+        let gpu: usize = self.stages.values().map(|s| lightcraft_engine::gpu::stage_bytes(s)).sum();
+        let tex: usize = self.textures.values().map(|t| t.size[0] * t.size[1] * 4).sum();
+        let copies: usize = self.textures.values().filter_map(|t| t.pixels.as_ref()).map(|p| p.pixels.len() * 4).sum();
+        serde_json::json!({
+            "stageCaches": {"count": self.stages.len(), "cpuBytes": cpu, "gpuBytes": gpu},
+            "textures": {"count": self.textures.len(), "bytes": tex, "cpuCopyBytes": copies},
+        })
+    }
+
     /// CPU copies of the current textures by id (see [`Self::keep_pixels`]).
     pub fn cpu_textures(&self) -> HashMap<egui::TextureId, crate::softpaint::CpuTexture> {
         self.textures.values().filter_map(|t| Some((t.tex.id(), crate::softpaint::CpuTexture::linear(t.pixels.clone()?)))).collect()

@@ -135,6 +135,9 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(json!({"enabled": lightcraft_gpu::enabled(), "available": lightcraft_gpu::available(), "adapter": lightcraft_gpu::adapter_name()}))
         }),
+        cmd!(query "library.memory", "Memory Usage", [], None, "{} — bytes held by each cache (decoded sources, rendered previews, GPU buffers; heap when instrumented)", always, |s, _| {
+            Ok(serde_json::to_value(s.memory_report()).unwrap_or_default())
+        }),
         cmd!(query "journal.list", "Command Journal", [], None, "{limit?}", always, |s, p| {
             let lim = p.get("limit").and_then(Value::as_u64).unwrap_or(100) as usize;
             let start = s.journal.len().saturating_sub(lim);

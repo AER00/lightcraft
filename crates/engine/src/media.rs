@@ -169,6 +169,15 @@ impl MediaCache {
         (self.thumbs.len(), self.thumbs.cost())
     }
 
+    /// Decoded sources held: (thumbnail level, preview level, full size).
+    pub fn usage(&self) -> (crate::memory::Usage, crate::memory::Usage, crate::memory::Usage) {
+        use crate::memory::Usage;
+        let bytes = |i: &Rgb32f| i.data.len() * 12;
+        let previews = Usage::new(self.previews.len(), self.previews.iter().map(|(_, a)| bytes(a)).sum());
+        let full = self.full.as_ref().map(|(_, a)| Usage::new(1, bytes(a))).unwrap_or_default();
+        (Usage::new(self.thumbs.len(), self.thumbs.cost()), previews, full)
+    }
+
     pub fn source_ref(&mut self, p: &Photo, level: SourceLevel) -> SourceRef {
         if let Some(a) = self.get(p.id, level) {
             return SourceRef::Loaded(a);

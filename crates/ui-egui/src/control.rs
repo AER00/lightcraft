@@ -80,7 +80,17 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "perf": {"frameMs": app.perf.frame_ms, "fps": app.perf.fps, "lastRenderMs": app.renderer.last_main_ms, "renderQueue": app.renderer.queued(), "rendersInFlight": app.renderer.in_flight(), "rendersDone": app.renderer.completed, "thumbTextures": app.renderer.thumb_textures(), "gpu": (lightcraft_engine::gpu::ready() && lightcraft_engine::gpu::available()).then(lightcraft_engine::gpu::adapter_name).flatten()},
         "loupe": app.loupe_shown.map(|(p, src)| json!({"photo": p.0, "source": src, "pending": app.renderer.is_pending(crate::render::Slot::Main)})),
         "status": app.ui.status,
+        "memory": memory(app),
     })
+}
+
+/// Bytes held by the engine's caches and the renderer's (`ui.inspect` → `memory`).
+pub fn memory(app: &LightcraftApp) -> Value {
+    let mut v = serde_json::to_value(app.session.memory_report()).unwrap_or_default();
+    if let (Some(o), Value::Object(r)) = (v.as_object_mut(), app.renderer.memory()) {
+        o.extend(r);
+    }
+    v
 }
 
 fn modifiers(p: &Value) -> egui::Modifiers {

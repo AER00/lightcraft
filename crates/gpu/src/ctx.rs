@@ -1,6 +1,7 @@
 //! The wgpu device, the compiled kernels, buffers, dispatch and readback.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use wgpu::util::DeviceExt;
 
@@ -64,31 +65,72 @@ struct Kernel {
 /// as the queue then runs every earlier use before any later one. Reuse matters: allocating (and
 /// zero-filling) a fresh 100–300 MB buffer per pass costs as much as the pass itself.
 pub struct Buf {
-    buf: Option<wgpu::Buffer>,
+    buf: Option<Tracked>,
     pub len: usize,
 }
 
 impl Buf {
     pub fn raw(&self) -> &wgpu::Buffer {
-        self.buf.as_ref().expect("live buffer")
+        &self.buf.as_ref().expect("live buffer").0
     }
 }
 
 impl Drop for Buf {
     fn drop(&mut self) {
         if let Some(b) = self.buf.take() {
+            RETIRED_BYTES.fetch_add(b.0.size(), Ordering::Relaxed);
             RETIRED.with(|r| r.borrow_mut().push(b));
         }
     }
 }
 
-thread_local! {
-    /// Buffers dropped on this thread since its last submit.
-    static RETIRED: std::cell::RefCell<Vec<wgpu::Buffer>> = const { std::cell::RefCell::new(Vec::new()) };
+/// A device buffer, counted in [`ALLOCATED`] while it exists.
+pub(crate) struct Tracked(wgpu::Buffer);
+
+impl Tracked {
+    fn new(b: wgpu::Buffer) -> Tracked {
+        ALLOCATED.fetch_add(b.size(), Ordering::Relaxed);
+        Tracked(b)
+    }
 }
 
-/// Most bytes kept in the free pool.
-const POOL_BYTES: u64 = 2 << 30;
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        ALLOCATED.fetch_sub(self.0.size(), Ordering::Relaxed);
+    }
+}
+
+thread_local! {
+    /// Buffers dropped on this thread since its last submit.
+    static RETIRED: std::cell::RefCell<Vec<Tracked>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Bytes of device buffers that exist (in use, retired or pooled).
+static ALLOCATED: AtomicU64 = AtomicU64::new(0);
+/// Bytes waiting in per-thread retired lists.
+static RETIRED_BYTES: AtomicU64 = AtomicU64::new(0);
+/// Bytes in the free pool.
+static POOLED: AtomicU64 = AtomicU64::new(0);
+/// Most bytes kept in the free pool (see [`crate::set_pool_limit`]).
+pub(crate) static POOL_LIMIT: AtomicU64 = AtomicU64::new(DEFAULT_POOL_BYTES);
+
+/// Default for the most bytes kept in the free pool.
+pub(crate) const DEFAULT_POOL_BYTES: u64 = 2 << 30;
+
+/// Device buffers held by the renderer (bytes).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GpuMemory {
+    /// Every buffer that exists (in use + retired + pooled).
+    pub allocated: u64,
+    /// Of which recycled buffers waiting in the free pool.
+    pub pooled: u64,
+    /// Of which buffers dropped since their thread's last submit (pooled at its next submit).
+    pub retired: u64,
+}
+
+pub(crate) fn memory() -> GpuMemory {
+    GpuMemory { allocated: ALLOCATED.load(Ordering::Relaxed), pooled: POOLED.load(Ordering::Relaxed), retired: RETIRED_BYTES.load(Ordering::Relaxed) }
+}
 
 pub struct Gpu {
     pub device: wgpu::Device,
@@ -97,7 +139,7 @@ pub struct Gpu {
     kernels: HashMap<&'static str, Kernel>,
     dummy: wgpu::Buffer,
     /// Recycled buffers (see [`Buf`]).
-    free: std::sync::Mutex<Vec<wgpu::Buffer>>,
+    free: std::sync::Mutex<Vec<Tracked>>,
     /// Largest storage buffer the device accepts (bytes).
     pub max_buffer: u64,
 }
@@ -217,15 +259,19 @@ impl Gpu {
         let size = (len.max(1) * 4) as u64;
         let recycled = {
             let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
-            f.iter().position(|b| b.size() == size).map(|i| f.swap_remove(i))
+            let b = f.iter().position(|b| b.0.size() == size).map(|i| f.swap_remove(i));
+            if b.is_some() {
+                POOLED.fetch_sub(size, Ordering::Relaxed);
+            }
+            b
         };
         let buf = recycled.unwrap_or_else(|| {
-            self.device.create_buffer(&wgpu::BufferDescriptor {
+            Tracked::new(self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
                 size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            })
+            }))
         });
         Buf { buf: Some(buf), len }
     }
@@ -234,11 +280,29 @@ impl Gpu {
     pub fn submit(&self, cmds: impl IntoIterator<Item = wgpu::CommandBuffer>) {
         self.queue.submit(cmds);
         let retired = RETIRED.with(|r| std::mem::take(&mut *r.borrow_mut()));
+        let bytes: u64 = retired.iter().map(|b| b.0.size()).sum();
+        RETIRED_BYTES.fetch_sub(bytes, Ordering::Relaxed);
+        POOLED.fetch_add(bytes, Ordering::Relaxed);
+        self.free.lock().unwrap_or_else(|e| e.into_inner()).extend(retired);
+        self.trim(POOL_LIMIT.load(Ordering::Relaxed));
+    }
+
+    /// Free pooled buffers (oldest first) until at most `keep` bytes stay pooled.
+    pub fn trim(&self, keep: u64) {
         let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
-        f.extend(retired);
-        let mut total: u64 = f.iter().map(|b| b.size()).sum();
-        while total > POOL_BYTES && !f.is_empty() {
-            total -= f.remove(0).size();
+        let mut total: u64 = f.iter().map(|b| b.0.size()).sum();
+        let mut dropped = Vec::new();
+        while total > keep && !f.is_empty() {
+            let b = f.remove(0);
+            total -= b.0.size();
+            POOLED.fetch_sub(b.0.size(), Ordering::Relaxed);
+            dropped.push(b);
+        }
+        drop(f);
+        if !dropped.is_empty() {
+            drop(dropped);
+            // let wgpu release the memory now rather than at its next maintenance
+            let _ = self.device.poll(wgpu::PollType::Poll);
         }
     }
 
@@ -254,7 +318,7 @@ impl Gpu {
             contents: bytes,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
         });
-        Buf { buf: Some(buf), len }
+        Buf { buf: Some(Tracked::new(buf)), len }
     }
 
     /// Whether a buffer of `len` 32-bit values fits the device limits.

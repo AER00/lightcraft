@@ -51,7 +51,22 @@ USAGE:
   lightcraft-cli --version | --help
 ";
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 fn main() -> ExitCode {
+    // `--features dhat-heap`: count allocations; the profile is written when `_heap` drops
+    // (LIGHTCRAFT_DHAT_FILE, default dhat-heap.json).
+    #[cfg(feature = "dhat-heap")]
+    let _heap = {
+        let file = std::env::var("LIGHTCRAFT_DHAT_FILE").unwrap_or_else(|_| "dhat-heap.json".into());
+        lightcraft_engine::memory::set_heap_stats(|| {
+            let s = dhat::HeapStats::get();
+            lightcraft_engine::memory::HeapUsage { current: s.curr_bytes as u64, peak: s.max_bytes as u64 }
+        });
+        dhat::Profiler::builder().file_name(file).build()
+    };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         Some("mcp") => mcp(&args[1..]),

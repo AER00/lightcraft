@@ -20,7 +20,7 @@ mode ([mcp.md](mcp.md)) is a thin layer over this channel. Implementation:
 | `engine.execute` (alias `ui.menu.invoke`) | `{command, params?}` | Run any engine or UI command (see `engine.commands`) |
 | `engine.commands` | — | Engine + UI commands: id, label, menu, shortcut, params doc, enabled |
 | `ui.menu.list` | — | Menu entries |
-| `ui.inspect` | — | UI state, window, canvas/image rects, active photo, selection, perf, status |
+| `ui.inspect` | — | UI state, window, canvas/image rects, active photo, selection, perf, status, memory (bytes per cache, see `library.memory`; plus stage caches and textures) |
 | `ui.widgets` | `{filter?}` | On-screen widgets `{id, rect: [x, y, w, h]}` (screen points) |
 | `ui.clickWidget` / `ui.dragWidget` | `{id, count?, fx?, fy?}` / `{id, toX?, toY?, dx?, dy?, steps?}` | Real egui input on a widget |
 | `ui.move` / `ui.click` / `ui.drag` | `{x, y, count?, button?}` / `{x, y, toX, toY, steps?}` | Raw pointer input, screen points |
