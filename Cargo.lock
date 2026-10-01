@@ -2056,6 +2056,7 @@ dependencies = [
  "lightcraft-geom",
  "lightcraft-meta",
  "lightcraft-pipeline",
+ "lightcraft-preview",
  "lightcraft-raster",
  "lightcraft-raw",
  "lightcraft-scenes",
@@ -2098,6 +2099,18 @@ dependencies = [
  "proptest",
  "rayon",
  "serde",
+]
+
+[[package]]
+name = "lightcraft-preview"
+version = "0.1.0"
+dependencies = [
+ "jpeg-encoder",
+ "lightcraft-raster",
+ "log",
+ "siphasher",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -2158,6 +2171,7 @@ dependencies = [
  "lightcraft-engine",
  "lightcraft-geom",
  "lightcraft-pipeline",
+ "lightcraft-preview",
  "lightcraft-raster",
  "log",
  "serde",

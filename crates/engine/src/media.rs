@@ -1,18 +1,35 @@
 //! Source proxies and render jobs.
 //!
-//! Sources are decoded (or generated) once per level and cached: `Thumb` (≤ 512 px long edge) for
-//! the grid and filmstrip, `Preview` (≤ 2560 px) for the loupe. A [`RenderJob`] is self-contained
-//! and `Send`: frontends run it on a worker thread; if the source wasn't cached yet the job loads it
-//! and hands it back in the [`RenderResult`] so the cache can keep it.
+//! Sources are decoded (or generated) once per level and cached in memory LRUs: `Thumb` (≤ 512 px
+//! long edge) for the grid and filmstrip, `Preview` (≤ 2560 px) for the loupe. A [`RenderJob`] is
+//! self-contained and `Send`: frontends run it on a worker thread; if the source wasn't cached yet
+//! the job loads it and hands it back in the [`RenderResult`] so the cache can keep it.
+//!
+//! Rendered thumbnails are cached too ([`lightcraft_preview::PreviewCache`]: memory LRU, plus a
+//! disk cache in the library's `thumbs/` folder), keyed by the photo's content hash, the develop
+//! settings hash, the size and [`RENDER_CACHE_VERSION`] — so reopening a library shows its grid
+//! without decoding a single original, and an edit simply produces a new key.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use lightcraft_catalog::{MediaKind, Photo, PhotoId, Source};
 use lightcraft_develop::DevelopSettings;
 use lightcraft_pipeline::{RenderRequest, Rendered, SourceInfo};
-use lightcraft_raster::Rgb32f;
+use lightcraft_preview::{Hash128, Hasher128, Lru, PreviewCache};
+use lightcraft_raster::{Histogram, Rgb32f};
 use serde::{Deserialize, Serialize};
+
+/// Bump when the pipeline's output changes, to invalidate cached thumbnails.
+pub const RENDER_CACHE_VERSION: u64 = 1;
+
+/// Thumbnails render at one of these long edges (so window/cell size changes reuse the cache).
+pub const THUMB_SIZES: [usize; 4] = [128, 256, 384, 512];
+
+/// Memory budgets.
+const THUMB_SOURCE_BYTES: usize = 384 << 20;
+const RENDERED_MEM_BYTES: usize = 128 << 20;
+/// Disk budget for the thumbnail cache.
+pub const DISK_CACHE_BYTES: u64 = 2 << 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -57,19 +74,40 @@ impl SourceRef {
     }
 }
 
-#[derive(Default)]
 pub struct MediaCache {
-    thumbs: HashMap<PhotoId, Arc<Rgb32f>>,
+    /// Decoded thumbnail-level sources (LRU by bytes).
+    thumbs: Lru<PhotoId, Arc<Rgb32f>>,
     previews: Vec<(PhotoId, Arc<Rgb32f>)>,
     /// How many previews to keep (LRU).
     pub preview_capacity: usize,
     pub file_loader: Option<FileLoader>,
     pub file_probe: Option<FileProbe>,
     scenes: Vec<lightcraft_scenes::Scene>,
+    /// Rendered thumbnails (memory, plus disk once a library is attached).
+    pub rendered: Arc<PreviewCache>,
+}
+
+impl Default for MediaCache {
+    fn default() -> Self {
+        MediaCache {
+            thumbs: Lru::new(THUMB_SOURCE_BYTES),
+            previews: Vec::new(),
+            preview_capacity: 0,
+            file_loader: None,
+            file_probe: None,
+            scenes: Vec::new(),
+            rendered: Arc::new(PreviewCache::memory(RENDERED_MEM_BYTES)),
+        }
+    }
 }
 
 impl MediaCache {
-    pub fn get(&self, id: PhotoId, level: SourceLevel) -> Option<Arc<Rgb32f>> {
+    /// Keep rendered thumbnails on disk in `dir` as well.
+    pub fn attach_disk_cache(&mut self, dir: &std::path::Path) {
+        self.rendered = Arc::new(PreviewCache::with_disk(RENDERED_MEM_BYTES, dir, DISK_CACHE_BYTES));
+    }
+
+    pub fn get(&mut self, id: PhotoId, level: SourceLevel) -> Option<Arc<Rgb32f>> {
         match level {
             SourceLevel::Thumb => self.thumbs.get(&id).cloned(),
             SourceLevel::Preview => self.previews.iter().find(|(p, _)| *p == id).map(|(_, a)| a.clone()),
@@ -79,7 +117,8 @@ impl MediaCache {
     pub fn insert(&mut self, id: PhotoId, level: SourceLevel, img: Arc<Rgb32f>) {
         match level {
             SourceLevel::Thumb => {
-                self.thumbs.insert(id, img);
+                let cost = img.width * img.height * 12 + 64;
+                self.thumbs.insert(id, img, cost);
             }
             SourceLevel::Preview => {
                 self.previews.retain(|(p, _)| *p != id);
@@ -90,6 +129,17 @@ impl MediaCache {
                 }
             }
         }
+    }
+
+    /// Forget a photo's decoded sources (e.g. after its file changed).
+    pub fn forget(&mut self, id: PhotoId) {
+        self.thumbs.remove(&id);
+        self.previews.retain(|(p, _)| *p != id);
+    }
+
+    /// (decoded thumbnail sources, bytes).
+    pub fn source_usage(&self) -> (usize, usize) {
+        (self.thumbs.len(), self.thumbs.cost())
     }
 
     pub fn source_ref(&mut self, p: &Photo, level: SourceLevel) -> SourceRef {
@@ -122,6 +172,8 @@ pub struct RenderJob {
     pub request: RenderRequest,
     /// Identifies the result for caching: hash of settings + request.
     pub key: u64,
+    /// Rendered-thumbnail cache and this job's key in it.
+    pub cache: Option<(Arc<PreviewCache>, Hash128)>,
 }
 
 pub struct RenderResult {
@@ -135,14 +187,33 @@ pub struct RenderResult {
 
 impl RenderJob {
     pub fn run(self) -> RenderResult {
+        if let Some((cache, key)) = &self.cache
+            && let Some(img) = cache.get(*key)
+        {
+            let image = Arc::unwrap_or_clone(img);
+            let histogram = Histogram::of_srgb8(&image);
+            return RenderResult { photo: self.photo, level: self.level, key: self.key, rendered: Ok(Rendered { image, histogram }), loaded: None };
+        }
         let was_loaded = matches!(self.source, SourceRef::Loaded(_));
         match self.source.load() {
             Ok(src) => {
                 let rendered = lightcraft_pipeline::render(&src, &self.info, &self.settings, &self.request);
+                if let Some((cache, key)) = &self.cache {
+                    cache.put(*key, Arc::new(rendered.image.clone()));
+                }
                 RenderResult { photo: self.photo, level: self.level, key: self.key, rendered: Ok(rendered), loaded: (!was_loaded).then_some(src) }
             }
             Err(e) => RenderResult { photo: self.photo, level: self.level, key: self.key, rendered: Err(e), loaded: None },
         }
+    }
+}
+
+/// What identifies a photo's pixels for caching: its content hash, else its source.
+pub fn content_key(p: &Photo) -> String {
+    match (&p.content_hash, &p.source) {
+        (Some(h), _) => h.clone(),
+        (None, Source::Demo { scene }) => format!("demo:{scene}"),
+        (None, Source::File { path }) => format!("file:{path}:{}", p.file_size),
     }
 }
 
@@ -157,6 +228,25 @@ pub fn source_info(p: &Photo) -> SourceInfo {
 impl crate::Session {
     /// Build a render job for `id` fitting `max_w × max_h`. `before` renders the unedited look.
     pub fn render_job(&mut self, id: PhotoId, max_w: usize, max_h: usize, before: bool, apply_crop: bool) -> Option<RenderJob> {
+        self.build_job(id, max_w, max_h, before, apply_crop, None)
+    }
+
+    /// A grid/filmstrip thumbnail job: the long edge is rounded up to one of [`THUMB_SIZES`]
+    /// (≥ `long_edge`) and the result comes from / goes to the thumbnail cache (memory + disk).
+    pub fn thumb_job(&mut self, id: PhotoId, long_edge: usize) -> Option<RenderJob> {
+        let b = THUMB_SIZES.iter().copied().find(|s| *s >= long_edge).unwrap_or(THUMB_SIZES[THUMB_SIZES.len() - 1]);
+        self.build_job(id, b, b, false, true, Some(b))
+    }
+
+    fn build_job(
+        &mut self,
+        id: PhotoId,
+        max_w: usize,
+        max_h: usize,
+        before: bool,
+        apply_crop: bool,
+        thumb_bucket: Option<usize>,
+    ) -> Option<RenderJob> {
         let p = self.catalog.photo(id)?.clone();
         let level = SourceLevel::for_size(max_w.max(max_h));
         let source = self.media.source_ref(&p, level);
@@ -167,7 +257,11 @@ impl crate::Session {
             ^ ((max_h as u64) << 20)
             ^ (apply_crop as u64)
             ^ ((level == SourceLevel::Preview) as u64) << 60;
-        Some(RenderJob { photo: id, level, source, info: source_info(&p), settings, request, key })
+        let cache = thumb_bucket.map(|b| {
+            let k = Hasher128::new().str(&content_key(&p)).u64(settings.hash64()).u64(b as u64).u64(RENDER_CACHE_VERSION).finish();
+            (self.media.rendered.clone(), k)
+        });
+        Some(RenderJob { photo: id, level, source, info: source_info(&p), settings, request, key, cache })
     }
 
     /// Accept a finished job's loaded source into the cache.

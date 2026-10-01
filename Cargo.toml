@@ -22,6 +22,7 @@ lightcraft-develop = { path = "crates/develop" }
 lightcraft-scenes = { path = "crates/scenes" }
 lightcraft-pipeline = { path = "crates/pipeline" }
 lightcraft-catalog = { path = "crates/catalog" }
+lightcraft-preview = { path = "crates/preview" }
 lightcraft-engine = { path = "crates/engine" }
 lightcraft-ui-egui = { path = "crates/ui-egui" }
 lightcraft-mcp = { path = "crates/mcp" }

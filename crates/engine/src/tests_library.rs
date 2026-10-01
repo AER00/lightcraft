@@ -71,6 +71,46 @@ fn close_writes_snapshot_and_view_state() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Thumbnails rendered in one session are served from the disk cache in the next, without
+/// loading the source; an edit changes the key.
+#[test]
+fn thumbnails_come_from_the_disk_cache_after_restart() {
+    let dir = temp_dir("thumbs");
+    let mut s = open(&dir, true);
+    let ids: Vec<_> = s.visible_cloned().into_iter().take(3).collect();
+    for id in &ids {
+        let job = s.thumb_job(*id, 230).unwrap();
+        assert_eq!(job.request.max_w, 256, "bucketed");
+        let r = job.run();
+        assert!(r.loaded.is_some(), "first render decodes the source");
+        s.accept(&r);
+        let img = r.rendered.unwrap().image;
+        assert_eq!(img.width.max(img.height), 256);
+    }
+    drop(s);
+
+    let mut s = open(&dir, true);
+    for id in &ids {
+        let r = s.thumb_job(*id, 240).unwrap().run();
+        assert!(r.loaded.is_none(), "served from cache");
+        let img = r.rendered.unwrap().image;
+        assert_eq!(img.width.max(img.height), 256);
+    }
+    let info = s.execute("library.info", &json!({})).unwrap();
+    assert_eq!(info["cache"]["disk"]["hits"], 3, "{info}");
+    // an edit is a new key: rendered (from the source), then cached
+    s.execute("library.select", &json!({"ids": [ids[0].0]})).unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5})).unwrap();
+    let r = s.thumb_job(ids[0], 230).unwrap().run();
+    assert!(r.loaded.is_some());
+    // exact-size renders (loupe, before/after, exports) bypass the thumbnail cache
+    assert!(s.render_job(ids[0], 230, 230, true, true).unwrap().cache.is_none());
+    assert!(s.render_job(ids[0], 230, 230, false, true).unwrap().cache.is_none());
+    s.execute("library.clearPreviews", &json!({})).unwrap();
+    assert!(s.thumb_job(ids[1], 230).unwrap().run().loaded.is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn new_library_without_seed_is_empty_and_compacts() {
     let dir = temp_dir("empty");

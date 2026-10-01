@@ -386,8 +386,25 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "library.info", "Library Info", [], None, "{}", always, |s, _| {
             let photos = s.catalog.len();
             let albums = s.catalog.albums().count();
+            let (rendered_n, rendered_bytes) = s.media.rendered.mem_usage();
+            let (sources_n, sources_bytes) = s.media.source_usage();
+            let disk = s.media.rendered.disk().map(|d| {
+                use std::sync::atomic::Ordering::Relaxed;
+                json!({
+                    "path": d.dir().display().to_string(),
+                    "bytes": d.size(),
+                    "hits": d.hits.load(Relaxed),
+                    "misses": d.misses.load(Relaxed),
+                    "writes": d.writes.load(Relaxed),
+                })
+            });
+            let cache = json!({
+                "renderedInMemory": rendered_n, "renderedBytes": rendered_bytes,
+                "sourcesInMemory": sources_n, "sourceBytes": sources_bytes,
+                "disk": disk,
+            });
             let Some(lib) = &s.library else {
-                return Ok(json!({"persistent": false, "photos": photos, "albums": albums}));
+                return Ok(json!({"persistent": false, "photos": photos, "albums": albums, "cache": cache}));
             };
             let j = lib.journal();
             Ok(json!({
@@ -400,6 +417,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 "logRecords": j.log_records(),
                 "logBytes": j.log_bytes(),
                 "lastError": lib.last_error,
+                "cache": cache,
                 "load": {
                     "created": lib.report.created,
                     "replayed": lib.report.replayed,
@@ -410,6 +428,10 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         cmd!("library.compact", "Optimize Library", ["File"], None, "{}", has_library, |s, _| {
             s.compact_library()?;
+            ok()
+        }),
+        cmd!("library.clearPreviews", "Clear Preview Cache", ["File"], None, "{}", always, |s, _| {
+            s.media.rendered.clear();
             ok()
         }),
     ]

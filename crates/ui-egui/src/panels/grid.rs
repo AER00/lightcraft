@@ -144,7 +144,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     };
     // thumbnail
     let size = thumb_px(img_rect.width().max(img_rect.height()), ppp);
-    if let Some(job) = app.session.render_job(id, size, size, false, true) {
+    if let Some(job) = app.session.thumb_job(id, size) {
         app.renderer.request(Slot::Thumb(id), job, if onscreen { 10 } else { 5 });
     }
     if let Some(tex) = app.renderer.textures.get(&Slot::Thumb(id)) {

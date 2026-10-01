@@ -132,6 +132,7 @@ impl Session {
             self.selection = Selection::single(*first);
         }
         let presets_written = presets_json(&self.presets);
+        self.media.attach_disk_cache(&dir.join("thumbs"));
         self.library = Some(Library { dir, journal, report, last_error: None, presets_written });
         Ok(&self.library.as_ref().expect("just set").report)
     }

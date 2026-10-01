@@ -626,7 +626,7 @@ fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
                 p.text(pos2(cr.right() - 8.0, cr.top() + 10.0), Align2::RIGHT_CENTER, &ph.format, t.semibold(8.5), t.text_dim);
             }
             let img_area = Rect::from_min_max(cr.min + vec2(10.0, 22.0), cr.max - vec2(10.0, 8.0));
-            if let Some(job) = app.session.render_job(*id, (256.0 * ppp.min(2.0) / 2.0) as usize * 2, 256, false, true) {
+            if let Some(job) = app.session.thumb_job(*id, (256.0 * ppp.min(2.0) / 2.0) as usize * 2) {
                 app.renderer.request(Slot::Thumb(*id), job, 8);
             }
             if let Some(tex) = app.renderer.textures.get(&Slot::Thumb(*id)) {
