@@ -11,7 +11,7 @@
 //!    clarity, local adjustments (masks)
 //! 3. tone map — contrast / whites / blacks filmic curve on luminance, highlight desaturation
 //! 4. colour — vibrance, saturation, colour mixer, colour grading, B&W (OkLCh)
-//! 5. display — gamut map to sRGB, encode, tone curves (parametric + point), vignette, grain
+//! 5. display — gamut map to the output space (sRGB unless [`RenderRequest::space`] says otherwise), encode, tone curves (parametric + point), vignette, grain
 //!
 //! Spatial parameters are specified relative to the image's long edge, so a 400 px preview and a
 //! 60 MP export look alike.
@@ -29,6 +29,7 @@ pub mod geometry;
 pub mod local;
 pub mod masks;
 pub mod optics;
+pub mod output;
 pub mod profiles;
 pub mod redeye;
 pub mod spots;
@@ -37,6 +38,7 @@ pub mod transform;
 pub mod upright;
 pub mod visualize;
 
+pub use output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc};
 pub use visualize::Overlay;
 
 use lightcraft_develop::{DevelopSettings, Treatment};
@@ -84,17 +86,24 @@ pub struct RenderRequest {
     pub apply_crop: bool,
     /// A diagnostic view drawn over the result (e.g. Point Color's "visualize range").
     pub overlay: Overlay,
+    /// Colour space of the result (exports; previews stay sRGB).
+    pub space: OutputSpace,
+    /// Sample format: 8-bit only, or also a 16-bit / linear float [`Rendered::deep`] (exports).
+    pub depth: OutputDepth,
 }
 
 impl RenderRequest {
     pub fn fit(max_w: usize, max_h: usize) -> Self {
-        Self { max_w, max_h, quality: Quality::Full, apply_crop: true, overlay: Overlay::None }
+        Self { max_w, max_h, quality: Quality::Full, apply_crop: true, overlay: Overlay::None, space: OutputSpace::Srgb, depth: OutputDepth::U8 }
     }
 }
 
 pub struct Rendered {
+    /// The result, 8-bit (for deep renders: `deep` reduced to 8 bits, display-encoded).
     pub image: Rgba8,
     pub histogram: Histogram,
+    /// The high-bit-depth result when [`RenderRequest::depth`] asks for one.
+    pub deep: Option<DeepImage>,
 }
 
 /// Everything the per-pixel stage needs, precomputed at output resolution.
@@ -377,13 +386,20 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     if let Some((a, c)) = shared {
         c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((lin_key, lin)), planes });
     }
-    let image = finish::finish(&prep, s, frame, info);
+    if req.depth != OutputDepth::U8 {
+        let deep = finish::finish_deep(&prep, s, frame, info, req.space, req.depth);
+        let image = deep.to_rgba8();
+        let histogram = Histogram::of_srgb8(&image);
+        lap("finish (deep)", &mut t);
+        return Rendered { image, histogram, deep: Some(deep) };
+    }
+    let image = finish::finish(&prep, s, frame, info, req.space);
     lap("finish", &mut t);
     let histogram = Histogram::of_srgb8(&image);
     lap("histogram", &mut t);
     let mut image = image;
     visualize::apply(&mut image, req.overlay, &plan);
-    Rendered { image, histogram }
+    Rendered { image, histogram, deep: None }
 }
 
 /// Convenience: render a before/after pair side by side is up to the UI; this renders "before"

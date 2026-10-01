@@ -495,7 +495,7 @@ pub fn render(
     lap("masks", &mut t, &mut cx);
 
     // 5. per-pixel stage
-    let fp = FinishParams::new(s, &plan.frame, info, w, h, plan.px_per_long, prep.air);
+    let fp = FinishParams::new(s, &plan.frame, info, w, h, plan.px_per_long, prep.air, req.space);
     let present = Present { clarity: prep.clarity.is_some(), texture: prep.texture.is_some(), dark: prep.dark.is_some() };
     let (p, aux) = finish_block(&fp, &terms, &present);
     let aux = gpu.upload(&aux);
@@ -523,7 +523,7 @@ pub fn render(
     lap("histogram", &mut t, &mut cx);
     let mut image = image;
     lightcraft_pipeline::visualize::apply(&mut image, req.overlay, &plan);
-    Some(Rendered { image, histogram })
+    Some(Rendered { image, histogram, deep: None })
 }
 
 /// The white-balanced, retouched, denoised image.
