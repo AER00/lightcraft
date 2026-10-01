@@ -143,6 +143,9 @@ pub struct Photo {
     /// Raw files: the camera's as-shot white balance (Kelvin, tint).
     #[serde(default)]
     pub as_shot_wb: Option<(f64, f64)>,
+    /// Hash of the file's bytes (hex), for duplicate detection and preview-cache keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
 }
 
 impl Photo {
@@ -169,6 +172,7 @@ impl Photo {
             deleted: false,
             duration: None,
             as_shot_wb: None,
+            content_hash: None,
         }
     }
     pub fn is_edited(&self) -> bool {

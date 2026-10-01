@@ -22,6 +22,7 @@ lightcraft-develop = { path = "crates/develop" }
 lightcraft-scenes = { path = "crates/scenes" }
 lightcraft-pipeline = { path = "crates/pipeline" }
 lightcraft-catalog = { path = "crates/catalog" }
+lightcraft-preview = { path = "crates/preview" }
 lightcraft-engine = { path = "crates/engine" }
 lightcraft-ui-egui = { path = "crates/ui-egui" }
 lightcraft-mcp = { path = "crates/mcp" }
@@ -34,6 +35,8 @@ log = "0.4"
 rayon = "1"
 proptest = "1"
 bytemuck = { version = "1", features = ["derive"] }
+crc32fast = "1"
+siphasher = "1"
 
 # formats
 quick-xml = "0.38"

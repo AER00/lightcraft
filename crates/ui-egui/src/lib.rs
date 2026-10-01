@@ -201,6 +201,7 @@ impl LightcraftApp {
             ctx.request_repaint();
         }
         self.renderer.poll(ctx, &mut self.session);
+        self.session.persist_if_dirty();
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);
         if self.fonts_ready {

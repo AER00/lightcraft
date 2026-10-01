@@ -40,6 +40,7 @@ fn ext_upper(name: &str) -> String {
 
 /// Probe a file's bytes: kind, dimensions (oriented), metadata.
 pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
+    let content_hash = Some(lightcraft_preview::hash_bytes(bytes).to_string());
     let m = lightcraft_meta::extract(bytes);
     let (meta, captured) = meta_of(&m);
     if lightcraft_raw::probe(bytes).is_some() {
@@ -62,6 +63,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
             captured,
             meta,
             as_shot_wb,
+            content_hash,
         });
     }
     let fmt = lightcraft_codecs::sniff(bytes).ok_or("unrecognized file format")?;
@@ -79,7 +81,17 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         "" => format!("{fmt:?}").to_uppercase(),
         e => e.to_string(),
     };
-    Ok(ProbeInfo { width: w, height: h, format, kind: MediaKind::Image, file_size: bytes.len() as u64, captured, meta, as_shot_wb: None })
+    Ok(ProbeInfo {
+        width: w,
+        height: h,
+        format,
+        kind: MediaKind::Image,
+        file_size: bytes.len() as u64,
+        captured,
+        meta,
+        as_shot_wb: None,
+        content_hash,
+    })
 }
 
 /// Decode a file into a linear Rec.2020 image no larger than `max_edge`, oriented.
