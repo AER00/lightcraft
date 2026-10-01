@@ -5,6 +5,7 @@
 
 mod assets;
 mod layers;
+mod parity;
 mod stats;
 mod web;
 
@@ -17,11 +18,14 @@ usage: cargo xtask <command>
 commands:
   assets          every image/icon/font/media file is attributed in assets/ATTRIBUTION.md; no Adobe assets
   layers          enforce the crate dependency layering (plan/architecture.md §3)
+  parity [--write]
+                  check docs/parity.md (every cmd:/ctl: id and path it cites exists) and print the
+                  Lightroom parity summary; --write refreshes the summary table in the document
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates (+ the web app)
   web [--serve [port]] [--dev]
                   build the browser app (apps/lightcraft-web) into <target>/web/;
                   --serve serves it on http://127.0.0.1:<port> (default 8080)
-  ci              fmt --check, clippy -D warnings, test, layers, assets, wasm (stops at first failure)
+  ci              fmt --check, clippy -D warnings, test, parity refs, layers, assets, wasm (stops at first failure)
   corpus [--download]
                   show where test corpora live; --download fetches PngSuite and CC0 raw samples (raw.pixls.us) into corpus/
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
@@ -33,6 +37,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("layers") => cmd_layers(),
         Some("assets") => assets::run(&root()),
+        Some("parity") => parity::run(&root(), rest.contains(&"--write")),
         Some("wasm") => cmd_wasm(),
         Some("web") => web::run(&rest),
         Some("ci") => cmd_ci(),
@@ -172,6 +177,7 @@ fn cmd_ci() -> Result<(), String> {
                 run(c, "cargo test --workspace")
             }),
         ),
+        ("parity", Box::new(|| parity::run(&root(), false))),
         ("layers", Box::new(cmd_layers)),
         ("assets", Box::new(|| assets::run(&root()))),
         ("wasm", Box::new(cmd_wasm)),
