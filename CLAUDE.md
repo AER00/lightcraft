@@ -5,7 +5,8 @@ LightCraft is a clean-room, open-source, pure-Rust photo library + non-destructi
 ## Start every session here
 1. Read `plan/STATUS.md` (current milestone, next unchecked task, blockers).
 2. Read the task in `plan/execution-plan.md` §3, the relevant section of `plan/architecture.md`, and the README/docs of the crate you touch. Behaviour/visual reference: `plan/lightroom/` (incl. `10-observed-ui.md` + screenshots).
-3. Follow the autonomous operation protocol (`plan/execution-plan.md` §7). Don't stop to ask unless §7 lists the decision as the user's.
+3. **Pick work** from [`docs/parity.md`](docs/parity.md) → *Top gaps* (Lightroom parity tracker: one row per feature, menu item and shortcut). When you land a feature, update its row(s) and the gap list in the same commit; `cargo xtask parity` (part of `ci`) checks that every `cmd:`/`ctl:` id and path the tracker cites still exists, and `cargo xtask parity --write` refreshes its summary.
+4. Follow the autonomous operation protocol (`plan/execution-plan.md` §7). Don't stop to ask unless §7 lists the decision as the user's.
 
 `plan/` is gitignored (local-only).
 
@@ -41,6 +42,9 @@ and often so a crash loses minutes, not hours.
 
 ## Running and looking at the app
 - `cargo run --release -p lightcraft -- --control 7980` opens the desktop app with the JSON-lines control server (see `docs/control-protocol.md`).
+- **Never send OS-level synthetic input** (osascript/System Events keystrokes or clicks, `cliclick`, accessibility
+  automation): it goes to whatever window is frontmost — the user's terminal or other apps. Drive LightCraft only
+  through its control channel (`ui.key`, `ui.pointer`, `ui.clickWidget`, `ui.menu.invoke`) or headless snapshots.
 - For UI work, **look at the result**: drive via the control channel and take `ui.screenshot`, compare with `plan/lightroom/screenshots/`.
 - **Unattended (display asleep/locked, CI, nightly runs): prefer headless snapshots** — no window needed:
   `lightcraft-cli snapshot --demo --script tour.jsonl -o out.png --size 1600x1000` (control-protocol requests,
@@ -69,4 +73,4 @@ and often so a crash loses minutes, not hours.
 ## Map of the code
 `geom`, `color`, `raster`, `tiff` (L0) → `raw`, `codecs`, `meta`, `develop` (L1) → `pipeline` → `catalog` → `engine`
 → `ui-egui`, `mcp` (L5) → apps `lightcraft` (desktop), `lightcraft-cli` (render/commands/MCP). `scenes` generates demo
-photos. `xtask` = tooling (`ci`, `layers`, `assets`, `wasm`, `corpus`, `stats`).
+photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `corpus`, `stats`).

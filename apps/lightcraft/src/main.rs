@@ -14,14 +14,20 @@
 
 mod alloc_release;
 mod control_server;
+#[cfg(target_os = "macos")]
+mod native_menu;
 
 use lightcraft_engine::Session;
 use lightcraft_ui_egui::{LightcraftApp, Services, UiState};
 
-struct App(LightcraftApp);
+struct App(LightcraftApp, #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        if let Some(m) = self.1.as_mut() {
+            m.update(&mut self.0, ctx);
+        }
         self.0.logic(ctx);
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
@@ -77,6 +83,19 @@ fn save_prefs(app: &LightcraftApp) {
 
 fn services() -> Services {
     Services {
+        reveal: Some(Box::new(|path: &str| {
+            let status = if cfg!(target_os = "macos") {
+                std::process::Command::new("open").args(["-R", path]).status()
+            } else if cfg!(target_os = "windows") {
+                std::process::Command::new("explorer").arg(format!("/select,{path}")).status()
+            } else {
+                let dir = std::path::Path::new(path).parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| ".".into());
+                std::process::Command::new("xdg-open").arg(dir).status()
+            };
+            status
+                .map_err(|e| e.to_string())
+                .and_then(|s| if s.success() || cfg!(target_os = "windows") { Ok(()) } else { Err(format!("reveal failed: {s}")) })
+        })),
         pick_files: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .add_filter(
@@ -223,7 +242,15 @@ fn main() -> eframe::Result {
                 let _ = app.run("library.import", serde_json::json!({"paths": files}));
                 app.ui.view = lightcraft_ui_egui::state::ViewMode::PhotoGrid;
             }
-            Ok(Box::new(App(app)))
+            // native menu bar generated from the command registry (macOS; elsewhere the menus are
+            // drawn in the window's top bar). LIGHTCRAFT_NO_NATIVE_MENU=1 keeps the in-window menus.
+            #[cfg(target_os = "macos")]
+            let menu = (std::env::var_os("LIGHTCRAFT_NO_NATIVE_MENU").is_none()).then(|| native_menu::NativeMenu::install(&mut app, &cc.egui_ctx));
+            Ok(Box::new(App(
+                app,
+                #[cfg(target_os = "macos")]
+                menu,
+            )))
         }),
     )
 }

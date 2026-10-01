@@ -14,10 +14,17 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.photoGrid", "Photo Grid", Some("G"), "View"),
     ("view.squareGrid", "Square Grid", Some("Shift+G"), "View"),
     ("view.detail", "Detail", Some("D"), "View"),
+    ("view.compare", "Compare", Some("Shift+C"), "View"),
+    ("view.survey", "Survey", Some("N"), "View"),
+    ("compare.swap", "Swap Compare Photos", None, "View"),
+    ("compare.makeSelect", "Make Candidate the Select", None, "View"),
+    ("view.autoAdvance", "Auto Advance", None, "Photo"),
     ("view.filmstrip", "Filmstrip", Some("/"), "View"),
     ("view.leftPanel", "My Photos Panel", Some("Cmd+Shift+L"), "View"),
     ("view.beforeAfter", "Compare Before and After", Some("Y"), "View"),
     ("view.beforeAfterSplit", "Before/After Split", Some("Shift+Y"), "View"),
+    ("view.beforeAfterTopBottom", "Before/After Top/Bottom", Some("Alt+Y"), "View"),
+    ("view.beforeAfterSplitTopBottom", "Before/After Split Top/Bottom", Some("Alt+Shift+Y"), "View"),
     ("view.showOriginal", "Show Original", Some("\\"), "View"),
     ("view.zoomFit", "Zoom to Fit", Some("Cmd+0"), "View"),
     ("view.zoom100", "Zoom 100%", Some("Cmd+1"), "View"),
@@ -27,40 +34,49 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.clipping", "Show Clipping", Some("J"), "View"),
     ("view.histogram", "Histogram", Some("Cmd+Shift+H"), "View"),
     ("view.maskOverlay", "Show Mask Overlay", Some("O"), "View"),
+    ("view.visualizeSpots", "Visualize Spots", Some("A"), "View"),
     ("view.cropOverlay", "Cycle Crop Overlay", Some("Shift+O"), "View"),
-    ("view.back", "Back to Grid", Some("Escape"), "View"),
-    ("view.filterBar", "Filter", None, "View"),
-    ("panel.edit", "Edit", Some("E"), "View"),
-    ("panel.crop", "Crop & Rotate", Some("C"), "View"),
-    ("panel.remove", "Remove", Some("H"), "View"),
-    ("panel.masking", "Masking", Some("M"), "View"),
-    ("panel.redeye", "Red Eye", None, "View"),
-    ("panel.presets", "Presets", Some("Shift+P"), "View"),
-    ("panel.info", "Info", Some("I"), "View"),
-    ("panel.keywords", "Keywords", Some("K"), "View"),
-    ("panel.versions", "Versions", Some("Shift+V"), "View"),
-    ("panel.activity", "History", Some("Shift+Y"), "View"),
-    ("panel.close", "Close Panel", None, "View"),
-    ("section.light", "Light", Some("Cmd+Alt+1"), "View"),
-    ("section.color", "Color", Some("Cmd+Alt+2"), "View"),
-    ("section.effects", "Effects", Some("Cmd+Alt+3"), "View"),
-    ("section.detail", "Detail", Some("Cmd+Alt+4"), "View"),
-    ("section.optics", "Optics", Some("Cmd+Alt+5"), "View"),
-    ("tool.brush", "Brush", Some("B"), "View"),
-    ("tool.linear", "Linear Gradient", Some("L"), "View"),
-    ("tool.radial", "Radial Gradient", Some("R"), "View"),
-    ("tool.wbPicker", "White Balance Selector", Some("W"), "View"),
-    ("tool.none", "No Tool", None, "View"),
+    ("view.back", "Back to Grid", Some("Escape"), ""),
+    ("view.filterBar", "Filter Bar", Some("Shift+F"), "View"),
+    ("panel.edit", "Edit", Some("E"), "Window"),
+    ("panel.crop", "Crop & Rotate", Some("C"), "Window"),
+    ("panel.remove", "Remove", Some("H"), "Window"),
+    ("panel.masking", "Masking", Some("M"), "Window"),
+    ("panel.redeye", "Red Eye", None, "Window"),
+    ("panel.presets", "Presets", Some("Shift+P"), "Window"),
+    ("panel.info", "Info", Some("I"), "Window"),
+    ("panel.keywords", "Keywords", Some("K"), "Window"),
+    ("panel.versions", "Versions", Some("Shift+V"), "Window"),
+    ("panel.activity", "History", None, "Window"),
+    ("panel.close", "Close Panel", None, ""),
+    ("section.light", "Light", Some("Cmd+Alt+1"), "Window>Edit Sections"),
+    ("section.color", "Color", Some("Cmd+Alt+2"), "Window>Edit Sections"),
+    ("section.effects", "Effects", Some("Cmd+Alt+3"), "Window>Edit Sections"),
+    ("section.detail", "Detail", Some("Cmd+Alt+4"), "Window>Edit Sections"),
+    ("section.optics", "Optics", Some("Cmd+Alt+5"), "Window>Edit Sections"),
+    ("tool.brush", "Brush", Some("B"), "Window>Tools"),
+    ("tool.linear", "Linear Gradient", Some("L"), "Window>Tools"),
+    ("tool.radial", "Radial Gradient", Some("R"), "Window>Tools"),
+    ("tool.wbPicker", "White Balance Selector", Some("W"), "Window>Tools"),
+    ("tool.none", "No Tool", None, ""),
     ("dialog.newAlbum", "New Album…", Some("Cmd+N"), "File"),
+    ("dialog.newFolder", "New Folder…", Some("Cmd+Shift+N"), "File"),
+    ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
-    ("dialog.copySettings", "Choose Edit Settings to Copy…", Some("Cmd+Shift+C"), "Photo"),
+    ("dialog.autoStack", "Auto-Stack by Capture Time…", None, "Photo>Stack"),
+    ("dialog.copySettings", "Choose Edit Settings to Copy…", Some("Cmd+Shift+C"), "Edit"),
     ("dialog.export", "Export…", Some("Cmd+Shift+E"), "File"),
+    ("dialog.mergeHdr", "HDR…", Some("Ctrl+H"), "Photo>Photo Merge"),
+    ("dialog.mergePanorama", "Panorama…", Some("Ctrl+M"), "Photo>Photo Merge"),
+    ("dialog.mergeHdrPanorama", "HDR Panorama…", None, "Photo>Photo Merge"),
     ("file.addPhotos", "Add Photos…", Some("Cmd+Shift+I"), "File"),
     ("file.importPresets", "Import Presets…", None, "File"),
     ("file.exportPresets", "Export Presets…", None, "File"),
-    ("app.about", "About LightCraft", None, "LightCraft"),
+    ("app.about", "About LightCraft", None, "Help"),
     ("app.shortcuts", "Keyboard Shortcuts", Some("Cmd+/"), "Help"),
     ("app.export", "Export Now", None, ""),
+    ("app.showInFinder", "Show in Finder", Some("Cmd+R"), "Photo"),
+    ("app.exportPrevious", "Export with Previous", Some("Cmd+Alt+Shift+E"), "File"),
 ];
 
 fn panel(app: &mut LightcraftApp, ctx: &egui::Context, p: RightPanel, name: &str) {
@@ -96,11 +112,25 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.view = ViewMode::Detail;
             Ok(Value::Null)
         }
+        "view.compare" => crate::panels::compare::enter_compare(app),
+        "view.survey" => {
+            app.ui.view = ViewMode::Survey;
+            Ok(json!({"photos": crate::panels::compare::survey_photos(app).len()}))
+        }
+        "compare.swap" => crate::panels::compare::swap(app),
+        "compare.makeSelect" => crate::panels::compare::make_select(app),
+        "view.autoAdvance" => {
+            app.ui.auto_advance = !app.ui.auto_advance;
+            app.toast(&ctx, if app.ui.auto_advance { "Auto Advance On" } else { "Auto Advance Off" });
+            Ok(json!({"autoAdvance": app.ui.auto_advance}))
+        }
         "view.back" => {
             if app.ui.dialog.is_some() {
                 app.ui.dialog = None;
             } else if !app.ui.tool.is_empty() {
                 app.ui.tool.clear();
+            } else if matches!(app.ui.view, ViewMode::Compare | ViewMode::Survey) {
+                app.ui.view = ViewMode::Detail;
             } else if app.ui.view == ViewMode::Detail {
                 app.ui.view = ViewMode::PhotoGrid;
             }
@@ -120,6 +150,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "view.beforeAfterSplit" => {
             app.ui.before_after = if app.ui.before_after == BeforeAfter::Split { BeforeAfter::Off } else { BeforeAfter::Split };
+            Ok(Value::Null)
+        }
+        "view.beforeAfterTopBottom" => {
+            app.ui.before_after = if app.ui.before_after == BeforeAfter::TopBottom { BeforeAfter::Off } else { BeforeAfter::TopBottom };
+            Ok(Value::Null)
+        }
+        "view.beforeAfterSplitTopBottom" => {
+            app.ui.before_after = if app.ui.before_after == BeforeAfter::SplitTopBottom { BeforeAfter::Off } else { BeforeAfter::SplitTopBottom };
             Ok(Value::Null)
         }
         "view.showOriginal" => {
@@ -164,6 +202,16 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.mask_overlay = !app.ui.mask_overlay;
             Ok(Value::Null)
         }
+        "view.visualizeSpots" => {
+            // like Lightroom's A: opens the Remove tool with the view on, or toggles it there
+            if app.ui.right == RightPanel::Remove {
+                app.ui.visualize_spots = !app.ui.visualize_spots;
+            } else {
+                app.ui.right = RightPanel::Remove;
+                app.ui.visualize_spots = true;
+            }
+            Ok(Value::Null)
+        }
         "view.cropOverlay" => {
             use crate::state::CropOverlay::*;
             app.ui.crop_overlay = match app.ui.crop_overlay {
@@ -176,8 +224,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "view.filterBar" => {
-            app.ui.left_panel = true;
-            Ok(Value::Null)
+            app.ui.filter_bar = !app.ui.filter_bar;
+            if app.ui.filter_bar && !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+                app.ui.view = ViewMode::PhotoGrid;
+            }
+            Ok(json!({"filterBar": app.ui.filter_bar}))
         }
         "panel.edit" => {
             panel(app, &ctx, RightPanel::Edit, "Edit");
@@ -262,8 +313,20 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             Ok(Value::Null)
         }
+        "dialog.newFolder" => {
+            app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: true });
+            Ok(Value::Null)
+        }
         "dialog.newAlbum" => {
             app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: false });
+            Ok(Value::Null)
+        }
+        "dialog.autoStack" => {
+            app.ui.dialog = Some(Dialog::AutoStack { gap: p.get("gap").and_then(Value::as_f64).unwrap_or(60.0) as f32 });
+            Ok(Value::Null)
+        }
+        "dialog.newSmartAlbum" => {
+            app.ui.dialog = Some(Dialog::NewSmartAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into() });
             Ok(Value::Null)
         }
         "dialog.createPreset" => {
@@ -277,10 +340,20 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "dialog.export" => {
-            app.ui.dialog =
-                Some(Dialog::Export { opts: Default::default(), long_edge: 2048, limit_kb: 0, dir: crate::control::default_export_dir() });
+            let prev = app.session.last_export.clone().unwrap_or_default();
+            let u = |k: &str, d: u64| prev.get(k).and_then(Value::as_u64).unwrap_or(d);
+            let dir = prev.get("dir").and_then(Value::as_str).map(str::to_string).unwrap_or_else(crate::control::default_export_dir);
+            app.ui.dialog = Some(Dialog::Export {
+                opts: lightcraft_engine::export::ExportOptions::from_json(&prev),
+                long_edge: u("longEdge", 2048) as u32,
+                limit_kb: u("limitKb", 0) as u32,
+                dir,
+            });
             Ok(Value::Null)
         }
+        "dialog.mergeHdr" => crate::merge::open(app, "merge.hdr"),
+        "dialog.mergePanorama" => crate::merge::open(app, "merge.panorama"),
+        "dialog.mergeHdrPanorama" => crate::merge::open(app, "merge.hdrPanorama"),
         "app.about" => {
             app.ui.dialog = Some(Dialog::About);
             Ok(Value::Null)
@@ -353,6 +426,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             return Some(r);
         }
         "app.export" => crate::control::export_active(app, p),
+        "app.showInFinder" => show_in_finder(app),
+        "app.exportPrevious" => match app.session.last_export.clone() {
+            Some(prev) => crate::control::export_active(app, &prev),
+            None => Err("nothing exported yet — use Export…".into()),
+        },
         _ => return None,
     };
     Some(r)
@@ -362,7 +440,19 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
     match id {
         s if s.starts_with("panel.") || s.starts_with("tool.") || s.starts_with("section.") => app.session.active().is_some() || s == "panel.close",
         "app.export" | "dialog.export" | "dialog.createPreset" | "dialog.copySettings" => app.session.active().is_some(),
+        "app.exportPrevious" => app.session.active().is_some() && app.session.last_export.is_some(),
+        "app.showInFinder" => {
+            app.services.reveal.is_some()
+                && app
+                    .session
+                    .active()
+                    .and_then(|id| app.session.catalog.photo(id))
+                    .is_some_and(|p| matches!(p.source, lightcraft_engine::catalog::Source::File { .. }))
+        }
         "file.exportPresets" => app.session.presets.iter().any(|p| !p.builtin),
+        "view.compare" => app.session.catalog.len() > 1,
+        "compare.swap" | "compare.makeSelect" => app.ui.view == ViewMode::Compare,
+        s if s.starts_with("dialog.merge") => app.session.targets(&serde_json::json!({})).len() >= 2 && app.merge.final_task.is_none(),
         _ => true,
     }
 }
@@ -384,7 +474,7 @@ pub fn menu_entries(app: &LightcraftApp) -> Vec<MenuEntry> {
         .map(|(id, label, sc, m)| MenuEntry {
             id: id.to_string(),
             label: label.to_string(),
-            menu: vec![m.to_string()],
+            menu: m.split('>').map(str::to_string).collect(),
             shortcut: sc.map(str::to_string),
             enabled: ui_enabled(app, id),
         })
@@ -401,4 +491,16 @@ pub fn menu_entries(app: &LightcraftApp) -> Vec<MenuEntry> {
         }
     }
     v
+}
+
+/// Reveal the active photo's original in the system file manager.
+fn show_in_finder(app: &mut LightcraftApp) -> Result<Value, String> {
+    let id = app.session.active().ok_or("no photo selected")?;
+    let path = match app.session.catalog.photo(id).map(|p| p.source.clone()) {
+        Some(lightcraft_engine::catalog::Source::File { path }) => path,
+        _ => return Err("this photo has no file (demo scene)".into()),
+    };
+    let reveal = app.services.reveal.as_mut().ok_or("not available here")?;
+    reveal(&path)?;
+    Ok(json!({"path": path}))
 }

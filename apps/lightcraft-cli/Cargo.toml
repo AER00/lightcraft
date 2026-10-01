@@ -19,6 +19,7 @@ lightcraft-mcp = { workspace = true }
 lightcraft-ui-egui = { workspace = true }
 lightcraft-codecs = { workspace = true }
 lightcraft-raster = { workspace = true }
+lightcraft-merge = { workspace = true }
 serde_json = { workspace = true }
 dhat = { workspace = true, optional = true }
 

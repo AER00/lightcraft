@@ -158,6 +158,7 @@ fn services(originals: Originals, backend: Option<Backend>, ctx: egui::Context) 
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),
+        reveal: None,
     }
 }
 

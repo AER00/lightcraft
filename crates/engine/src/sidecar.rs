@@ -241,6 +241,9 @@ impl Session {
     /// Write the photo's XMP sidecar; returns its path.
     pub fn save_sidecar(&self, id: PhotoId) -> Result<PathBuf> {
         let p = self.catalog.photo(id).ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?;
+        if p.copy_of.is_some() {
+            return Err(EngineError::Other(format!("{} is a virtual copy: its settings live only in the library", p.file_name)));
+        }
         let orig = file_path(p).ok_or_else(|| EngineError::Other(format!("{} is not a file on disk", p.file_name)))?;
         let path = sidecar_path(orig, self.xmp.naming);
         write_atomic(&path, sidecar_packet(p).as_bytes()).map_err(|e| EngineError::Other(format!("{}: {e}", path.display())))?;
@@ -272,7 +275,7 @@ impl Session {
         let mut ids = Vec::new();
         ops.iter().for_each(|o| op_photos(o, &mut ids));
         for id in ids {
-            if self.catalog.photo(id).is_some_and(|p| file_path(p).is_some())
+            if self.catalog.photo(id).is_some_and(|p| file_path(p).is_some() && p.copy_of.is_none())
                 && let Err(e) = self.save_sidecar(id)
             {
                 log::warn!("auto-write XMP: {e}");

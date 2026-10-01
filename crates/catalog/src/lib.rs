@@ -10,6 +10,7 @@
 pub mod journal;
 pub mod model;
 pub mod query;
+pub mod stacks;
 pub mod store;
 
 use std::collections::BTreeMap;
@@ -28,6 +29,8 @@ pub enum CatalogError {
     NoPhoto(PhotoId),
     #[error("no such album {0:?}")]
     NoAlbum(AlbumId),
+    #[error("no such stack {0:?}")]
+    NoStack(StackId),
     #[error("invalid: {0}")]
     Invalid(String),
     #[error("corrupt catalog data: {0}")]
@@ -113,6 +116,23 @@ pub enum Op {
         id: AlbumId,
         cover: Option<PhotoId>,
     },
+    /// Replace a smart album's rules.
+    SetAlbumRules {
+        id: AlbumId,
+        rules: Box<Filter>,
+    },
+    AddStack {
+        stack: Stack,
+    },
+    RemoveStack {
+        id: StackId,
+    },
+    /// Replace a stack's members (first = top) and collapsed state.
+    SetStack {
+        id: StackId,
+        photos: Vec<PhotoId>,
+        collapsed: bool,
+    },
     /// Several ops as one step (undo applies the inverses in reverse).
     Batch {
         ops: Vec<Op>,
@@ -125,6 +145,10 @@ pub struct Catalog {
     albums: BTreeMap<AlbumId, Album>,
     next_photo: u64,
     next_album: u64,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    stacks: BTreeMap<StackId, Stack>,
+    #[serde(default)]
+    next_stack: u64,
     /// Increments on every applied op.
     #[serde(skip)]
     pub revision: u64,
@@ -132,7 +156,7 @@ pub struct Catalog {
 
 impl Catalog {
     pub fn new() -> Catalog {
-        Catalog { next_photo: 1, next_album: 1, ..Default::default() }
+        Catalog { next_photo: 1, next_album: 1, next_stack: 1, ..Default::default() }
     }
 
     // ---- ids
@@ -145,6 +169,11 @@ impl Catalog {
     pub fn alloc_album_id(&mut self) -> AlbumId {
         let id = AlbumId(self.next_album.max(1));
         self.next_album = id.0 + 1;
+        id
+    }
+    pub fn alloc_stack_id(&mut self) -> StackId {
+        let id = StackId(self.next_stack.max(1));
+        self.next_stack = id.0 + 1;
         id
     }
 
@@ -168,8 +197,51 @@ impl Catalog {
     pub fn albums(&self) -> impl Iterator<Item = &Album> {
         self.albums.values()
     }
+    /// Albums (regular and smart) that contain the photo.
     pub fn albums_of(&self, id: PhotoId) -> Vec<AlbumId> {
-        self.albums.values().filter(|a| a.photos.contains(&id)).map(|a| a.id).collect()
+        let Some(p) = self.photos.get(&id) else { return Vec::new() };
+        self.albums.values().filter(|a| self.album_contains(a.id, p)).map(|a| a.id).collect()
+    }
+
+    /// Whether album `id` contains `p` (a smart album evaluates its rules; deleted photos are in
+    /// no smart album).
+    pub fn album_contains(&self, id: AlbumId, p: &Photo) -> bool {
+        match self.albums.get(&id) {
+            Some(Album { smart: Some(rules), .. }) => !p.deleted && rules.matches(p, self),
+            Some(a) => a.photos.contains(&p.id),
+            None => false,
+        }
+    }
+
+    /// The photos of an album: the stored list, or a smart album's current matches (id order).
+    pub fn album_photos(&self, id: AlbumId) -> Vec<PhotoId> {
+        match self.albums.get(&id) {
+            Some(Album { smart: Some(_), .. }) => self.photos.values().filter(|p| self.album_contains(id, p)).map(|p| p.id).collect(),
+            Some(a) => a.photos.clone(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Number of photos shown for an album in the sources list (excludes deleted photos).
+    pub fn album_count(&self, id: AlbumId) -> usize {
+        match self.albums.get(&id) {
+            Some(Album { smart: Some(_), .. }) => self.album_photos(id).len(),
+            Some(a) => a.photos.iter().filter(|p| self.photos.get(p).is_some_and(|p| !p.deleted)).count(),
+            None => 0,
+        }
+    }
+
+    /// Smart-album rules must not reference another smart album (no recursion) or deleted photos.
+    fn validate_rules(&self, rules: &Filter) -> Result<()> {
+        if rules.deleted {
+            return Err(CatalogError::Invalid("smart album rules can't select deleted photos".into()));
+        }
+        if let Some(a) = rules.album
+            && self.albums.get(&a).is_some_and(Album::is_smart)
+        {
+            return Err(CatalogError::Invalid("smart album rules can't reference another smart album".into()));
+        }
+        Ok(())
     }
 
     // ---- writes
@@ -261,6 +333,12 @@ impl Catalog {
                 {
                     return Err(CatalogError::Invalid("parent must be an existing folder".into()));
                 }
+                if let Some(rules) = &album.smart {
+                    if album.folder || !album.photos.is_empty() {
+                        return Err(CatalogError::Invalid("a smart album holds rules, not photos".into()));
+                    }
+                    self.validate_rules(rules)?;
+                }
                 let id = album.id;
                 self.next_album = self.next_album.max(id.0 + 1);
                 self.albums.insert(id, album);
@@ -296,14 +374,48 @@ impl Catalog {
             }
             Op::SetAlbumPhotos { id, photos } => {
                 let a = self.album_mut(id)?;
-                if a.folder && !photos.is_empty() {
-                    return Err(CatalogError::Invalid("folders can't hold photos".into()));
+                if (a.folder || a.smart.is_some()) && !photos.is_empty() {
+                    return Err(CatalogError::Invalid(
+                        if a.folder { "folders can't hold photos" } else { "smart albums update automatically" }.into(),
+                    ));
                 }
                 Op::SetAlbumPhotos { id, photos: std::mem::replace(&mut a.photos, photos) }
             }
             Op::SetAlbumCover { id, cover } => {
                 let a = self.album_mut(id)?;
                 Op::SetAlbumCover { id, cover: std::mem::replace(&mut a.cover, cover) }
+            }
+            Op::SetAlbumRules { id, rules } => {
+                self.validate_rules(&rules)?;
+                let a = self.album_mut(id)?;
+                let Some(old) = a.smart.as_mut() else {
+                    return Err(CatalogError::Invalid("not a smart album".into()));
+                };
+                Op::SetAlbumRules { id, rules: std::mem::replace(old, rules) }
+            }
+            Op::AddStack { stack } => {
+                if self.stacks.contains_key(&stack.id) {
+                    return Err(CatalogError::Invalid(format!("stack {:?} exists", stack.id)));
+                }
+                self.validate_stack(stack.id, &stack.photos)?;
+                let id = stack.id;
+                self.next_stack = self.next_stack.max(id.0 + 1);
+                self.stacks.insert(id, stack);
+                Op::RemoveStack { id }
+            }
+            Op::RemoveStack { id } => {
+                let s = self.stacks.remove(&id).ok_or(CatalogError::NoStack(id))?;
+                Op::AddStack { stack: s }
+            }
+            Op::SetStack { id, photos, collapsed } => {
+                if !self.stacks.contains_key(&id) {
+                    return Err(CatalogError::NoStack(id));
+                }
+                self.validate_stack(id, &photos)?;
+                let s = self.stacks.get_mut(&id).ok_or(CatalogError::NoStack(id))?;
+                let old = Op::SetStack { id, photos: std::mem::replace(&mut s.photos, photos), collapsed: s.collapsed };
+                s.collapsed = collapsed;
+                old
             }
             Op::Batch { ops } => {
                 let mut inverses = Vec::with_capacity(ops.len());
@@ -325,7 +437,8 @@ impl Catalog {
         })
     }
 
-    /// Ops that remove a photo permanently including album memberships (one undoable batch).
+    /// Ops that remove a photo permanently including album and stack memberships (one undoable
+    /// batch).
     pub fn delete_permanently_ops(&self, id: PhotoId) -> Op {
         let mut ops: Vec<Op> = self
             .albums
@@ -333,6 +446,7 @@ impl Catalog {
             .filter(|a| a.photos.contains(&id))
             .map(|a| Op::SetAlbumPhotos { id: a.id, photos: a.photos.iter().copied().filter(|p| *p != id).collect() })
             .collect();
+        ops.extend(self.remove_from_stacks_ops(&[id]));
         ops.push(Op::RemovePhoto { id });
         Op::Batch { ops }
     }

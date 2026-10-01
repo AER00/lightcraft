@@ -77,7 +77,7 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "selection": app.session.selection.ids.iter().map(|p| p.0).collect::<Vec<_>>(),
         "activeMask": app.session.active_mask,
         "widgetCount": app.widgets.len(),
-        "perf": {"frameMs": app.perf.frame_ms, "fps": app.perf.fps, "lastRenderMs": app.renderer.last_main_ms, "renderQueue": app.renderer.queued(), "rendersInFlight": app.renderer.in_flight(), "rendersDone": app.renderer.completed, "thumbTextures": app.renderer.thumb_textures(), "gpu": (lightcraft_engine::gpu::ready() && lightcraft_engine::gpu::available()).then(lightcraft_engine::gpu::adapter_name).flatten()},
+        "perf": {"frameMs": app.perf.frame_ms, "fps": app.perf.fps, "lastRenderMs": app.renderer.last_main_ms, "renderQueue": app.renderer.queued(), "rendersInFlight": app.renderer.in_flight(), "mergeRunning": app.merge.busy(), "lastMerge": app.merge.last_result, "rendersDone": app.renderer.completed, "thumbTextures": app.renderer.thumb_textures(), "gpu": (lightcraft_engine::gpu::ready() && lightcraft_engine::gpu::available()).then(lightcraft_engine::gpu::adapter_name).flatten()},
         "loupe": app.loupe_shown.map(|(p, src)| json!({"photo": p.0, "source": src, "pending": app.renderer.is_pending(crate::render::Slot::Main)})),
         "status": app.ui.status,
         "memory": memory(app),
@@ -143,6 +143,9 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
         }
         "engine.commands" => ok(all_commands(app)),
         "ui.menu.list" => ok(serde_json::to_value(crate::menus::menu_entries(app)).unwrap_or_default()),
+        "ui.menu.tree" => {
+            ok(Value::Array(crate::menubar::menu_bar(app).into_iter().map(|(title, items)| json!({"label": title, "children": items})).collect()))
+        }
         "ui.inspect" => ok(inspect(app, ctx)),
         "ui.widgets" => {
             let filter = s("filter").unwrap_or("");
@@ -340,6 +343,14 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
         w(&path, &e.bytes)?;
         out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len()}));
     }
+    // remember for Export with Previous (and to prefill the dialog)
+    let mut last = p.clone();
+    if let Some(o) = last.as_object_mut() {
+        o.remove("ids");
+        o.remove("path");
+    }
+    app.session.last_export = Some(last);
+    let _ = app.session.save_prefs();
     Ok(json!({"files": out}))
 }
 

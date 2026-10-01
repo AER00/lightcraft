@@ -158,7 +158,7 @@ fn main() {
     let preview = Arc::new(fit(&full, 2560, 2560, Filter::Box));
     let s = typical();
     let view = RenderRequest::fit(1920, 1280);
-    let draft = RenderRequest { max_w: 1152, max_h: 768, quality: Quality::Draft, apply_crop: true };
+    let draft = RenderRequest { quality: Quality::Draft, ..RenderRequest::fit(1152, 768) };
     if gpu {
         let c = develop(&preview, &info, &s, &view, None, false).image;
         let g = develop(&preview, &info, &s, &view, None, true).image;

@@ -99,6 +99,8 @@ impl Library {
 #[serde(default)]
 struct PrefsFile {
     xmp: crate::sidecar::XmpPrefs,
+    /// Parameters of the last export (for Export with Previous).
+    last_export: Option<serde_json::Value>,
 }
 
 fn presets_json(presets: &[Preset]) -> String {
@@ -151,7 +153,9 @@ impl Session {
             }
         }
         // preferences
-        self.xmp = read_json::<PrefsFile>(files.as_mut(), "prefs.json").map(|p| p.xmp).unwrap_or_default();
+        let prefs = read_json::<PrefsFile>(files.as_mut(), "prefs.json").unwrap_or_default();
+        self.xmp = prefs.xmp;
+        self.last_export = prefs.last_export;
         // view state
         if let Some(v) = read_json::<ViewFile>(files.as_mut(), "view.json") {
             self.source = v.source;
@@ -248,7 +252,7 @@ impl Session {
 
     /// Save the library preferences (no-op for in-memory sessions).
     pub fn save_prefs(&mut self) -> Result<()> {
-        let v = serde_json::to_vec_pretty(&PrefsFile { xmp: self.xmp }).unwrap_or_default();
+        let v = serde_json::to_vec_pretty(&PrefsFile { xmp: self.xmp, last_export: self.last_export.clone() }).unwrap_or_default();
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         lib.files.write_atomic("prefs.json", &v).map_err(|e| EngineError::Other(format!("prefs: {e}")))
     }

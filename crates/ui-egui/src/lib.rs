@@ -8,7 +8,9 @@
 pub mod control;
 pub mod headless;
 pub mod icons;
+pub mod menubar;
 pub mod menus;
+pub mod merge;
 pub mod panels;
 pub mod render;
 pub mod shortcuts;
@@ -30,6 +32,8 @@ pub type PickFiles = Box<dyn FnMut() -> Vec<String>>;
 pub type SaveFile = Box<dyn FnMut(&str) -> Option<String>>;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
 pub type PngEncode = Box<dyn Fn(&lightcraft_raster::Rgba8) -> Vec<u8>>;
+/// Reveal a file in the system file manager (Finder / Explorer / the folder on Linux).
+pub type RevealFn = Box<dyn FnMut(&str) -> Result<(), String>>;
 
 /// Platform services injected by the host app (desktop or web).
 #[derive(Default)]
@@ -43,6 +47,8 @@ pub struct Services {
     pub write: Option<WriteFn>,
     /// PNG encoder (the host links an image encoder; the UI crate stays codec-free).
     pub png: Option<PngEncode>,
+    /// Show a file in the system file manager (desktop only).
+    pub reveal: Option<RevealFn>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -59,8 +65,11 @@ pub struct LightcraftApp {
     pub perf: Perf,
     /// macOS: the host draws the traffic lights over our top bar.
     pub integrated_titlebar: bool,
-    /// The host installed a native menu bar.
+    /// The host installed a native menu bar (no in-window menus then).
     pub native_menu: bool,
+    /// Shortcuts the native menu bar currently handles (`Cmd+Z`, `G`…): the egui shortcut handler
+    /// leaves them alone so nothing fires twice.
+    pub native_shortcuts: std::collections::HashSet<String>,
     /// The host is [`headless::Headless`] (it answers viewport screenshot commands itself).
     pub headless_host: bool,
     control_rx: Option<Receiver<ControlRequest>>,
@@ -83,6 +92,8 @@ pub struct LightcraftApp {
     /// What the loupe drew last frame: photo and source ("render", "cached", "embedded", "small",
     /// "thumb", "none").
     pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
+    /// Photo Merge dialog previews and background merges.
+    pub merge: merge::MergeState,
 }
 
 impl LightcraftApp {
@@ -97,6 +108,7 @@ impl LightcraftApp {
             perf: Perf::default(),
             integrated_titlebar: false,
             native_menu: false,
+            native_shortcuts: Default::default(),
             headless_host: false,
             control_rx: None,
             pending_screenshots: vec![],
@@ -111,6 +123,7 @@ impl LightcraftApp {
             widgets: vec![],
             gesture: None,
             loupe_shown: None,
+            merge: merge::MergeState::default(),
         }
     }
 
@@ -174,7 +187,7 @@ impl LightcraftApp {
             return;
         }
         let now = now_ms();
-        let busy = self.renderer.in_flight() > 0;
+        let busy = self.renderer.in_flight() > 0 || self.merge.busy();
         let mut shots = std::mem::take(&mut self.pending_screenshots);
         let mut shadow_ticked = false;
         shots.retain_mut(|s| {
@@ -231,7 +244,13 @@ impl LightcraftApp {
         let memory = main.memory(|m| m.clone());
         view.ctx.memory_mut(|m| *m = memory);
         view.run(headless::HeadlessView::raw_input(size, ppp, time, vec![]), |ui| self.ui(ui));
-        let img = capture.then(|| view.paint(&self.renderer.cpu_textures()));
+        let img = capture.then(|| {
+            let mut tex = self.renderer.cpu_textures();
+            if let (Some((t, ..)), Some(px)) = (&self.merge.preview, &self.merge.preview_pixels) {
+                tex.insert(t.id(), crate::softpaint::CpuTexture::linear(px.clone()));
+            }
+            view.paint(&tex)
+        });
         self.shadow = Some(view);
         img
     }
@@ -281,6 +300,7 @@ impl LightcraftApp {
             ctx.request_repaint();
         }
         self.renderer.poll(ctx, &mut self.session);
+        merge::poll(self, ctx);
         self.session.persist_if_dirty();
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);
@@ -335,10 +355,13 @@ impl LightcraftApp {
         }
         panels::bottombar::show(self, ui);
         let t = theme::Tokens::get(&ctx);
-        let bg = if matches!(self.ui.view, state::ViewMode::Detail | state::ViewMode::Compare) { t.canvas } else { t.grid_bg };
+        let bg =
+            if matches!(self.ui.view, state::ViewMode::Detail | state::ViewMode::Compare | state::ViewMode::Survey) { t.canvas } else { t.grid_bg };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| match self.ui.view {
             state::ViewMode::PhotoGrid | state::ViewMode::SquareGrid => panels::grid::show(self, ui),
-            state::ViewMode::Detail | state::ViewMode::Compare => panels::detail::show(self, ui),
+            state::ViewMode::Detail => panels::detail::show(self, ui),
+            state::ViewMode::Compare => panels::compare::show_compare(self, ui),
+            state::ViewMode::Survey => panels::compare::show_survey(self, ui),
         });
         panels::dialogs::show(self, &ctx);
         panels::toast(self, &ctx);

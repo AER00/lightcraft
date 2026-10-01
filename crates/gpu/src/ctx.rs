@@ -38,7 +38,7 @@ const MODULES: &[Module] = &[
     Module {
         src: include_str!("wgsl/map.wgsl"),
         bindings: &[("a", false, "f32"), ("b", false, "f32"), ("c", false, "f32"), ("dst", true, "f32")],
-        entries: &["log_lum_k", "dark_k", "guided_pre", "guided_ab", "guided_apply", "wb_k", "nr_lum", "chroma_k", "nr_col", "subsample"],
+        entries: &["log_lum_k", "dark_k", "guided_pre", "guided_ab", "guided_apply", "wb_k", "nr_lum", "chroma_k", "nr_col", "subsample", "redeye_k"],
     },
     Module {
         src: include_str!("wgsl/mask.wgsl"),
@@ -81,15 +81,48 @@ impl Drop for Buf {
         // Outside a render this thread has no commands recorded (only renders record), so the
         // buffer is reusable at once; without this, buffers dropped on threads that rarely
         // submit (the UI thread clearing a view's stages) would wait indefinitely.
-        if !IN_RENDER.with(|c| c.get() > 0)
-            && let Some(g) = crate::existing_device()
-        {
+        let Ok(in_render) = IN_RENDER.try_with(|c| c.get() > 0) else {
+            // thread teardown: wgpu's thread-locals may be gone too, and dropping (or trimming
+            // the pool, which drops) could abort — leak it (the device owns its memory)
+            std::mem::forget(b);
+            return;
+        };
+        if !in_render && let Some(g) = crate::existing_device() {
             g.pool([b]);
             return;
         }
-        RETIRED_BYTES.fetch_add(b.0.size(), Ordering::Relaxed);
-        RETIRED.with(|r| r.borrow_mut().push(b));
+        // during thread teardown the list may already be gone: then the buffer leaks
+        let size = b.0.size();
+        let mut b = Some(b);
+        let _ = RETIRED.try_with(|r| r.0.borrow_mut().extend(b.take()));
+        match b {
+            Some(b) => std::mem::forget(b),
+            None => {
+                RETIRED_BYTES.fetch_add(size, Ordering::Relaxed);
+            }
+        }
     }
+}
+
+/// Buffers dropped on a thread since its last submit.
+struct Retired(std::cell::RefCell<Vec<Tracked>>);
+
+impl Drop for Retired {
+    /// At thread exit wgpu's own thread-locals may already be destroyed, and dropping a buffer
+    /// then aborts the process: leak the few buffers left instead (the device owns their memory).
+    fn drop(&mut self) {
+        for b in self.0.get_mut().drain(..) {
+            RETIRED_BYTES.fetch_sub(b.0.size(), Ordering::Relaxed);
+            std::mem::forget(b);
+        }
+    }
+}
+
+/// This thread's retired buffers (empty during thread teardown).
+fn take_retired() -> Vec<Tracked> {
+    let retired = RETIRED.try_with(|r| std::mem::take(&mut *r.0.borrow_mut())).unwrap_or_default();
+    RETIRED_BYTES.fetch_sub(retired.iter().map(|b| b.0.size()).sum(), Ordering::Relaxed);
+    retired
 }
 
 thread_local! {
@@ -115,9 +148,7 @@ impl Drop for RenderScope<'_> {
             c.get() == 0
         });
         if outer {
-            let retired = RETIRED.with(|r| std::mem::take(&mut *r.borrow_mut()));
-            RETIRED_BYTES.fetch_sub(retired.iter().map(|b| b.0.size()).sum(), Ordering::Relaxed);
-            self.0.pool(retired);
+            self.0.pool(take_retired());
         }
     }
 }
@@ -139,8 +170,7 @@ impl Drop for Tracked {
 }
 
 thread_local! {
-    /// Buffers dropped on this thread since its last submit.
-    static RETIRED: std::cell::RefCell<Vec<Tracked>> = const { std::cell::RefCell::new(Vec::new()) };
+    static RETIRED: Retired = const { Retired(std::cell::RefCell::new(Vec::new())) };
 }
 
 /// Bytes of device buffers that exist (in use, retired or pooled).
@@ -198,6 +228,9 @@ fn constants() -> String {
     let b = lightcraft_pipeline::geometry::BLANK;
     s += &format!("const BLANK_R: f32 = {:?};\nconst BLANK_G: f32 = {:?};\nconst BLANK_B: f32 = {:?};\n", b[0], b[1], b[2]);
     s += &format!("const SRGB_N: u32 = {SRGB_LUT_N}u;\nconst CURVE_N: u32 = {}u;\nconst MASK_TERMS: u32 = {MASK_TERMS}u;\n", crate::params::CURVE_N);
+    s += &format!("const POINT_WORDS: u32 = {}u;\n", lightcraft_pipeline::colorops::POINT_WORDS);
+    s += &format!("const EYE_WORDS: u32 = {}u;\n", lightcraft_pipeline::redeye::EYE_WORDS);
+    s += &format!("const SHADOW_TINT_K: f32 = {:?};\n", lightcraft_pipeline::colorops::SHADOW_TINT);
     for (i, h) in GRAIN_HASH.iter().enumerate() {
         s += &format!("const GRAIN_H{i}: u32 = {h}u;\n");
     }
@@ -325,8 +358,7 @@ impl Gpu {
     /// Submit command buffers, then make the buffers this thread dropped before reusable.
     pub fn submit(&self, cmds: impl IntoIterator<Item = wgpu::CommandBuffer>) {
         self.queue.submit(cmds);
-        let retired = RETIRED.with(|r| std::mem::take(&mut *r.borrow_mut()));
-        RETIRED_BYTES.fetch_sub(retired.iter().map(|b| b.0.size()).sum(), Ordering::Relaxed);
+        let retired = take_retired();
         self.pool(retired);
     }
 

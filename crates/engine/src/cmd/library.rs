@@ -292,25 +292,63 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         // ---- albums
+        cmd!("album.create", "New Album", ["File"], None, "{name, parent?: folderId, folder?: bool, addSelected?: bool}", always, |s, p| {
+            let name = str_param(p, "name").unwrap_or("Untitled Album").trim().to_string();
+            if name.is_empty() {
+                return Err(bad("album.create", "empty name"));
+            }
+            let folder = bool_or(p, "folder", false);
+            let parent = p.get("parent").and_then(Value::as_u64).map(AlbumId);
+            let photos = if !folder && bool_or(p, "addSelected", false) { s.targets(&Value::Null) } else { vec![] };
+            let id = s.catalog.alloc_album_id();
+            let cover = photos.first().copied();
+            s.commit(
+                if folder { "New Folder" } else { "New Album" },
+                Op::AddAlbum { album: Album { id, name, parent, folder, photos, cover, smart: None } },
+            )?;
+            Ok(json!({"id": id.0}))
+        }),
         cmd!(
-            "album.create",
-            "New Album",
-            ["File"],
-            Some("Cmd+Shift+N"),
-            "{name, parent?: folderId, folder?: bool, addSelected?: bool}",
+            "album.createSmart",
+            "New Smart Album…",
+            [],
+            None,
+            "{name, rules?: partial Filter (rating, ratingOp, flag, label, kind, edited, keyword, camera, lens, dateFrom, dateTo, date, text, album), parent?: folderId} — without `rules`, saves the current view (source + filter)",
             always,
             |s, p| {
-                let name = str_param(p, "name").unwrap_or("Untitled Album").trim().to_string();
+                let name = str_param(p, "name").unwrap_or("Smart Album").trim().to_string();
                 if name.is_empty() {
-                    return Err(bad("album.create", "empty name"));
+                    return Err(bad("album.createSmart", "empty name"));
                 }
-                let folder = bool_or(p, "folder", false);
+                let rules = match p.get("rules") {
+                    Some(r) => merge_rules(&lightcraft_catalog::Filter::default(), r, "album.createSmart")?,
+                    None => view_rules(s),
+                };
                 let parent = p.get("parent").and_then(Value::as_u64).map(AlbumId);
-                let photos = if !folder && bool_or(p, "addSelected", false) { s.targets(&Value::Null) } else { vec![] };
                 let id = s.catalog.alloc_album_id();
-                let cover = photos.first().copied();
-                s.commit(if folder { "New Folder" } else { "New Album" }, Op::AddAlbum { album: Album { id, name, parent, folder, photos, cover } })?;
-                Ok(json!({"id": id.0}))
+                let album = Album { parent, smart: Some(Box::new(rules)), ..Album::new(id, name) };
+                s.commit("New Smart Album", Op::AddAlbum { album })?;
+                Ok(json!({"id": id.0, "count": s.catalog.album_count(id)}))
+            }
+        ),
+        cmd!(
+            "album.setRules",
+            "Edit Smart Album",
+            [],
+            None,
+            "{id, rules?: partial Filter merged onto the current rules (null clears a field), replace?: bool, fromView?: bool (use the current view)}",
+            always,
+            |s, p| {
+                let id = album_param(p, "id", "album.setRules")?;
+                let cur = s.catalog.album(id).and_then(|a| a.smart.as_deref().cloned()).ok_or_else(|| bad("album.setRules", "not a smart album"))?;
+                let rules = if bool_or(p, "fromView", false) {
+                    view_rules(s)
+                } else {
+                    let base = if bool_or(p, "replace", false) { Default::default() } else { cur };
+                    merge_rules(&base, p.get("rules").unwrap_or(&Value::Null), "album.setRules")?
+                };
+                s.commit("Edit Smart Album", Op::SetAlbumRules { id, rules: Box::new(rules) })?;
+                Ok(json!({"count": s.catalog.album_count(id)}))
             }
         ),
         cmd!("album.rename", "Rename Album", [], None, "{id, name}", always, |s, p| {
@@ -337,6 +375,9 @@ pub fn specs() -> Vec<CommandSpec> {
             let id = album_param(p, "id", "album.addPhotos")?;
             let targets = ids_param(p).unwrap_or_else(|| s.targets(&Value::Null));
             let al = s.catalog.album(id).ok_or_else(|| bad("album.addPhotos", "no such album"))?;
+            if al.is_smart() || al.folder {
+                return Err(bad("album.addPhotos", "smart albums and folders can't hold photos"));
+            }
             let mut photos = al.photos.clone();
             let before = photos.len();
             for t in targets {
@@ -353,6 +394,9 @@ pub fn specs() -> Vec<CommandSpec> {
             let id = album_param(p, "id", "album.removePhotos")?;
             let targets = ids_param(p).unwrap_or_else(|| s.targets(&Value::Null));
             let al = s.catalog.album(id).ok_or_else(|| bad("album.removePhotos", "no such album"))?;
+            if al.is_smart() {
+                return Err(bad("album.removePhotos", "smart albums update automatically: change their rules"));
+            }
             let photos: Vec<PhotoId> = al.photos.iter().copied().filter(|x| !targets.contains(x)).collect();
             s.commit("Remove from Album", Op::SetAlbumPhotos { id, photos })?;
             ok()
@@ -450,6 +494,51 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
     ]
+}
+
+/// `base` with a partial Filter (JSON) merged on top.
+fn merge_rules(base: &lightcraft_catalog::Filter, patch: &Value, c: &str) -> Result<lightcraft_catalog::Filter> {
+    let mut v = serde_json::to_value(base).unwrap_or_default();
+    lightcraft_develop::presets::deep_merge(&mut v, patch);
+    serde_json::from_value(v).map_err(|e| bad(c, e.to_string()))
+}
+
+/// The current view (source + filter) as smart-album rules. Viewing a smart album starts from
+/// its rules with the filter bar's settings on top.
+fn view_rules(s: &Session) -> lightcraft_catalog::Filter {
+    use lightcraft_catalog::Filter;
+    let smart = match s.source {
+        LibrarySource::Album(a) => s.catalog.album(a).and_then(|a| a.smart.as_deref().cloned()),
+        _ => None,
+    };
+    match smart {
+        Some(base) => {
+            // overlay the fields the filter bar changed
+            let cur = serde_json::to_value(&s.filter).unwrap_or_default();
+            let def = serde_json::to_value(Filter::default()).unwrap_or_default();
+            let mut patch = serde_json::Map::new();
+            if let (Some(c), Some(d)) = (cur.as_object(), def.as_object()) {
+                for (k, v) in c {
+                    if d.get(k) != Some(v) {
+                        patch.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            merge_rules(&base, &Value::Object(patch), "").unwrap_or(base)
+        }
+        None => {
+            let mut f = s.source.to_filter(&s.filter, &s.catalog);
+            f.deleted = false;
+            f
+        }
+    }
+}
+
+impl Session {
+    /// The current view (source + filter) as smart-album rules (see `album.createSmart`).
+    pub fn view_rules(&self) -> lightcraft_catalog::Filter {
+        view_rules(self)
+    }
 }
 
 fn has_library(s: &Session) -> std::result::Result<(), String> {

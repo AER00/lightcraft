@@ -13,6 +13,30 @@ pub struct PhotoId(pub u64);
 #[serde(transparent)]
 pub struct AlbumId(pub u64);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct StackId(pub u64);
+
+/// A stack: photos grouped under a top photo (bursts, brackets, merge results with their sources).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Stack {
+    pub id: StackId,
+    /// Members in stack order; `photos[0]` is the top of the stack. At least two.
+    pub photos: Vec<PhotoId>,
+    /// Collapsed stacks show only their top photo in the grid.
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
+impl Stack {
+    pub fn top(&self) -> PhotoId {
+        self.photos[0]
+    }
+    pub fn position(&self, id: PhotoId) -> Option<usize> {
+        self.photos.iter().position(|p| *p == id)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MediaKind {
@@ -150,6 +174,13 @@ pub struct Photo {
     /// "Enable Profile Corrections" is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedded_lens: Option<lightcraft_develop::EmbeddedLens>,
+    /// A virtual copy: the photo it was copied from (it shares that photo's file but has its own
+    /// settings, metadata and history).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_of: Option<PhotoId>,
+    /// Virtual copies' name ("Copy 1").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_name: Option<String>,
 }
 
 impl Photo {
@@ -178,6 +209,8 @@ impl Photo {
             as_shot_wb: None,
             content_hash: None,
             embedded_lens: None,
+            copy_of: None,
+            copy_name: None,
         }
     }
     /// The develop settings import gives this photo (raws: as-shot white balance and the raw
@@ -216,6 +249,20 @@ pub struct Album {
     pub photos: Vec<PhotoId>,
     #[serde(default)]
     pub cover: Option<PhotoId>,
+    /// A smart album: its photos are every (non-deleted) photo matching these rules, evaluated
+    /// live; `photos` stays empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smart: Option<Box<crate::Filter>>,
+}
+
+impl Album {
+    /// A regular (manual) album.
+    pub fn new(id: AlbumId, name: impl Into<String>) -> Album {
+        Album { id, name: name.into(), parent: None, folder: false, photos: Vec::new(), cover: None, smart: None }
+    }
+    pub fn is_smart(&self) -> bool {
+        self.smart.is_some()
+    }
 }
 
 #[cfg(test)]

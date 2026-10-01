@@ -16,6 +16,61 @@ pub enum DngCompression {
     Lj92 {
         tile: u32,
     },
+    /// Deflate (zlib) tiles of `tile × tile` pixels. Floating-point data is stored as 16-bit (`half`) or
+    /// 32-bit IEEE floats with the floating-point predictor (TIFF predictor 3, Adobe TIFF Technical Note 3);
+    /// integer data with horizontal differencing (predictor 2). 16-bit float is what HDR merges usually use.
+    Deflate {
+        tile: u32,
+        half: bool,
+    },
+}
+
+/// IEEE 754 binary32 → binary16 (round to nearest even; overflow → ±inf, NaN kept).
+pub fn f32_to_f16(v: f32) -> u16 {
+    let b = v.to_bits();
+    let sign = ((b >> 16) & 0x8000) as u16;
+    let exp = ((b >> 23) & 0xff) as i32;
+    let man = b & 0x7f_ffff;
+    if exp == 0xff {
+        return sign | 0x7c00 | if man != 0 { 0x200 } else { 0 };
+    }
+    let e = exp - 127 + 15;
+    if e >= 0x1f {
+        return sign | 0x7c00;
+    }
+    if e <= 0 {
+        if e < -10 {
+            return sign;
+        }
+        // subnormal half
+        let m = man | 0x80_0000;
+        let shift = (14 - e) as u32;
+        let half = m >> shift;
+        let rem = m & ((1 << shift) - 1);
+        let mid = 1 << (shift - 1);
+        let r = if rem > mid || (rem == mid && half & 1 == 1) { half + 1 } else { half };
+        return sign | r as u16;
+    }
+    let half = ((e as u32) << 10) | (man >> 13);
+    let rem = man & 0x1fff;
+    let r = if rem > 0x1000 || (rem == 0x1000 && half & 1 == 1) { half + 1 } else { half };
+    sign | r as u16
+}
+
+/// Apply the floating-point predictor (inverse of `unpack::undo_float_predictor`) to one row of
+/// `n` big-endian samples of `bytes_per` bytes: split into byte planes (most significant first), then
+/// byte-difference with `stride` samples.
+fn float_predict(row: &[u8], n: usize, bytes_per: usize, stride: usize) -> Vec<u8> {
+    let mut planes = vec![0u8; row.len()];
+    for i in 0..n {
+        for b in 0..bytes_per {
+            planes[b * n + i] = row[i * bytes_per + b];
+        }
+    }
+    for i in (stride..planes.len()).rev() {
+        planes[i] = planes[i].wrapping_sub(planes[i - stride]);
+    }
+    planes
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -131,6 +186,42 @@ pub fn write_dng(raw: &RawImage, opts: &DngWriteOptions) -> Result<Vec<u8>> {
     }
 
     match &raw.data {
+        RawData::F32(v) if matches!(opts.compression, DngCompression::Deflate { .. }) => {
+            let DngCompression::Deflate { tile, half } = opts.compression else { unreachable!() };
+            let tile = (tile.max(16) & !15) as usize;
+            let bp = if half { 2 } else { 4 };
+            ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![(bp * 8) as u16; cpp]));
+            ifd.set(t::SAMPLE_FORMAT, Value::Short(vec![3; cpp]));
+            ifd.set(t::COMPRESSION, Value::Short(vec![compression::ADOBE_DEFLATE]));
+            ifd.set(t::PREDICTOR, Value::Short(vec![3]));
+            let (ta, td) = (w.div_ceil(tile), h.div_ceil(tile));
+            let tiles: Vec<Vec<u8>> = (0..ta * td)
+                .into_par_iter()
+                .map(|i| {
+                    let (tx, ty) = (i % ta * tile, i / ta * tile);
+                    let mut buf = Vec::with_capacity(tile * tile * cpp * bp);
+                    let mut row = Vec::with_capacity(tile * cpp * bp);
+                    for y in 0..tile {
+                        let sy = (ty + y).min(h - 1);
+                        row.clear();
+                        for x in 0..tile {
+                            let sx = (tx + x).min(w - 1);
+                            for s in 0..cpp {
+                                let f = v[(sy * w + sx) * cpp + s];
+                                if half {
+                                    row.extend_from_slice(&f32_to_f16(f).to_be_bytes());
+                                } else {
+                                    row.extend_from_slice(&f.to_bits().to_be_bytes());
+                                }
+                            }
+                        }
+                        buf.extend_from_slice(&float_predict(&row, tile * cpp, bp, cpp));
+                    }
+                    miniz_oxide::deflate::compress_to_vec_zlib(&buf, 6)
+                })
+                .collect();
+            ifd.set_image(ImageData::Tiles { tile_width: tile as u32, tile_height: tile as u32, tiles });
+        }
         RawData::F32(v) => {
             ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![32; cpp]));
             ifd.set(t::SAMPLE_FORMAT, Value::Short(vec![3; cpp]));
@@ -163,6 +254,36 @@ pub fn write_dng(raw: &RawImage, opts: &DngWriteOptions) -> Result<Vec<u8>> {
                         })
                         .collect();
                     ifd.set_image(ImageData::Strips { rows_per_strip: rows as u32, strips });
+                }
+                DngCompression::Deflate { tile, .. } => {
+                    let tile = (tile.max(16) & !15) as usize;
+                    ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![16; cpp]));
+                    ifd.set(t::COMPRESSION, Value::Short(vec![compression::ADOBE_DEFLATE]));
+                    ifd.set(t::PREDICTOR, Value::Short(vec![2]));
+                    let (ta, td) = (w.div_ceil(tile), h.div_ceil(tile));
+                    let tiles: Vec<Vec<u8>> = (0..ta * td)
+                        .into_par_iter()
+                        .map(|i| {
+                            let (tx, ty) = (i % ta * tile, i / ta * tile);
+                            let mut buf = Vec::with_capacity(tile * tile * cpp * 2);
+                            let mut row = vec![0u16; tile * cpp];
+                            for y in 0..tile {
+                                let sy = (ty + y).min(h - 1);
+                                for x in 0..tile {
+                                    let sx = (tx + x).min(w - 1);
+                                    for s in 0..cpp {
+                                        row[x * cpp + s] = v[(sy * w + sx) * cpp + s];
+                                    }
+                                }
+                                for i in (cpp..row.len()).rev() {
+                                    row[i] = row[i].wrapping_sub(row[i - cpp]);
+                                }
+                                row.iter().for_each(|&x| opts.order.put_u16(&mut buf, x));
+                            }
+                            miniz_oxide::deflate::compress_to_vec_zlib(&buf, 6)
+                        })
+                        .collect();
+                    ifd.set_image(ImageData::Tiles { tile_width: tile as u32, tile_height: tile as u32, tiles });
                 }
                 DngCompression::Lj92 { tile } => {
                     let tile = (tile.max(2) & !1) as usize;

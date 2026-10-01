@@ -24,6 +24,7 @@ lightcraft-pipeline = { path = "crates/pipeline" }
 lightcraft-gpu = { path = "crates/gpu" }
 lightcraft-catalog = { path = "crates/catalog" }
 lightcraft-preview = { path = "crates/preview" }
+lightcraft-merge = { path = "crates/merge" }
 lightcraft-engine = { path = "crates/engine" }
 lightcraft-ui-egui = { path = "crates/ui-egui" }
 lightcraft-mcp = { path = "crates/mcp" }
@@ -69,6 +70,7 @@ egui_extras = { version = "0.36", default-features = false }
 eframe = { version = "0.36", default-features = false }
 egui_kittest = "0.36"
 rfd = "0.17"
+muda = { version = "0.21", default-features = false } # native menu bar (macOS: objc2/AppKit, pure Rust; no GTK)
 web-time = "1"
 
 # web (apps/lightcraft-web)

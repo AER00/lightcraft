@@ -17,6 +17,8 @@ pub struct DevelopSettings {
     pub curve: ToneCurve,
     pub color: ColorAdj,
     pub mixer: Mixer,
+    /// Point Color: up to [`MAX_POINT_COLORS`] sampled colours, each with its own adjustment.
+    pub point_colors: Vec<PointColor>,
     pub bw_mix: BwMix,
     pub grading: ColorGrading,
     pub effects: Effects,
@@ -32,6 +34,8 @@ pub struct DevelopSettings {
     pub red_eye: Vec<RedEye>,
     pub lens_blur: LensBlur,
     pub enhance: Enhance,
+    /// Camera calibration: shadows tint and primary hue/saturation (applied before tone mapping).
+    pub calibration: Calibration,
     /// Section on/off toggles (the "eye" buttons on panel headers): section id → enabled.
     pub disabled_sections: Vec<String>,
 }
@@ -47,6 +51,7 @@ impl Default for DevelopSettings {
             curve: ToneCurve::default(),
             color: ColorAdj::default(),
             mixer: Mixer::default(),
+            point_colors: Vec::new(),
             bw_mix: BwMix::default(),
             grading: ColorGrading::default(),
             effects: Effects::default(),
@@ -62,6 +67,7 @@ impl Default for DevelopSettings {
             red_eye: Vec::new(),
             lens_blur: LensBlur::default(),
             enhance: Enhance::default(),
+            calibration: Calibration::default(),
             disabled_sections: Vec::new(),
         }
     }
@@ -188,6 +194,9 @@ pub struct ToneCurve {
     pub red: Vec<Point>,
     pub green: Vec<Point>,
     pub blue: Vec<Point>,
+    /// Refine Saturation 0..100: 100 keeps the saturation a curve produces, lower values pull it
+    /// back towards the saturation before the curve (strong contrast curves oversaturate).
+    pub refine_saturation: f64,
 }
 
 impl Default for ToneCurve {
@@ -204,6 +213,7 @@ impl Default for ToneCurve {
             red: Vec::new(),
             green: Vec::new(),
             blue: Vec::new(),
+            refine_saturation: 100.0,
         }
     }
 }
@@ -253,6 +263,63 @@ impl Mixer {
     }
     pub fn is_neutral(&self) -> bool {
         self.bands().iter().all(|b| *b == Hsl::default())
+    }
+}
+
+/// Most Point Color samples per photo (Lightroom's limit).
+pub const MAX_POINT_COLORS: usize = 8;
+
+/// One Point Color sample: a colour picked on the image (OkLCh, at the stage where Point Color
+/// applies: after the colour mixer) and the adjustment of the colours around it. The range is a
+/// box in OkLCh around the sample, widened by `range` (overall) and the per-axis widths, with a
+/// soft edge.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PointColor {
+    /// Sampled OkLab lightness (0..1).
+    pub lum: f64,
+    /// Sampled OkLCh chroma (0..~0.37).
+    pub chroma: f64,
+    /// Sampled OkLCh hue, degrees.
+    pub hue: f64,
+    /// Hue shift −100..100 (±~29° at the sample).
+    pub hue_shift: f64,
+    /// Saturation shift −100..100 (chroma scale).
+    pub sat_shift: f64,
+    /// Luminance shift −100..100.
+    pub lum_shift: f64,
+    /// −100 compresses the colour spread within the range towards the sample (evens out e.g.
+    /// skin), +100 expands it.
+    pub variance: f64,
+    /// Overall range 0..100 (scales all three widths).
+    pub range: f64,
+    pub hue_range: f64,
+    pub sat_range: f64,
+    pub lum_range: f64,
+}
+
+impl Default for PointColor {
+    fn default() -> Self {
+        Self {
+            lum: 0.5,
+            chroma: 0.1,
+            hue: 0.0,
+            hue_shift: 0.0,
+            sat_shift: 0.0,
+            lum_shift: 0.0,
+            variance: 0.0,
+            range: 50.0,
+            hue_range: 50.0,
+            sat_range: 50.0,
+            lum_range: 50.0,
+        }
+    }
+}
+
+impl PointColor {
+    /// True when the sample changes nothing.
+    pub fn is_neutral(&self) -> bool {
+        self.hue_shift == 0.0 && self.sat_shift == 0.0 && self.lum_shift == 0.0 && self.variance == 0.0
     }
 }
 
@@ -316,6 +383,31 @@ impl Default for ColorGrading {
 impl ColorGrading {
     pub fn is_neutral(&self) -> bool {
         [self.shadows, self.midtones, self.highlights, self.global].iter().all(|w| w.sat == 0.0 && w.lum == 0.0)
+    }
+}
+
+/// Camera calibration (Lightroom Classic's Calibration panel): a green/magenta tint of the shadows,
+/// and a hue rotation / saturation scale of each working-space primary (−100..100), i.e. a
+/// white-preserving 3×3 matrix applied in scene-linear light before tone mapping.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Calibration {
+    pub shadows_tint: f64,
+    pub red_hue: f64,
+    pub red_sat: f64,
+    pub green_hue: f64,
+    pub green_sat: f64,
+    pub blue_hue: f64,
+    pub blue_sat: f64,
+}
+
+impl Calibration {
+    /// (hue, saturation) of the red, green and blue primaries.
+    pub fn primaries(&self) -> [(f64, f64); 3] {
+        [(self.red_hue, self.red_sat), (self.green_hue, self.green_sat), (self.blue_hue, self.blue_sat)]
+    }
+    pub fn is_neutral(&self) -> bool {
+        *self == Calibration::default()
     }
 }
 
@@ -750,14 +842,27 @@ impl Default for Spot {
     }
 }
 
+/// A red eye / pet eye correction: the user's ellipse (centre normalized, radii as fractions of
+/// the long edge); the pupil inside it is found automatically.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RedEye {
     pub center: Point,
     pub rx: f64,
     pub ry: f64,
+    /// 0..100 (50 = the detected pupil).
     pub pupil_size: f64,
+    /// 0..100.
     pub darken: f64,
     pub pet: bool,
+    /// Pet eye catchlight: offset of its centre from the pupil centre, in pupil radii.
+    #[serde(default)]
+    pub catchlight: Option<Point>,
+}
+
+impl Default for RedEye {
+    fn default() -> Self {
+        Self { center: Point::new(0.5, 0.5), rx: 0.02, ry: 0.015, pupil_size: 50.0, darken: 50.0, pet: false, catchlight: None }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

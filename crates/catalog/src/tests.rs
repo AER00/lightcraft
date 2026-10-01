@@ -57,9 +57,11 @@ fn albums_and_folders() {
     let mut c = Catalog::new();
     let a = photo(&mut c, "a.jpg", "2026-04-01");
     let f = c.alloc_album_id();
-    c.apply(Op::AddAlbum { album: Album { id: f, name: "Trips".into(), parent: None, folder: true, photos: vec![], cover: None } }).unwrap();
+    c.apply(Op::AddAlbum { album: Album { id: f, name: "Trips".into(), parent: None, folder: true, photos: vec![], cover: None, smart: None } })
+        .unwrap();
     let al = c.alloc_album_id();
-    c.apply(Op::AddAlbum { album: Album { id: al, name: "Alps".into(), parent: Some(f), folder: false, photos: vec![a], cover: None } }).unwrap();
+    c.apply(Op::AddAlbum { album: Album { id: al, name: "Alps".into(), parent: Some(f), folder: false, photos: vec![a], cover: None, smart: None } })
+        .unwrap();
     assert_eq!(c.albums_of(a), vec![al]);
     assert!(c.apply(Op::RemoveAlbum { id: f }).is_err(), "non-empty folder");
     assert!(c.apply(Op::SetAlbumPhotos { id: f, photos: vec![a] }).is_err(), "folders hold no photos");
@@ -140,4 +142,52 @@ proptest::proptest! {
         for inv in invs.into_iter().rev() { c.apply(inv).unwrap(); }
         proptest::prop_assert_eq!(c.to_snapshot(), start);
     }
+}
+
+#[test]
+fn smart_albums_update_live() {
+    let mut c = Catalog::new();
+    let a = photo(&mut c, "a.jpg", "2026-04-01T10:00:00");
+    let b = photo(&mut c, "b.jpg", "2026-05-02T10:00:00");
+    let z = photo(&mut c, "z.jpg", "2025-12-31T10:00:00");
+    let id = c.alloc_album_id();
+    let rules = Filter { rating: 3, date_from: Some("2026-01-01".into()), date_to: Some("2026-04".into()), ..Default::default() };
+    c.apply(Op::AddAlbum { album: Album { smart: Some(Box::new(rules)), ..Album::new(id, "Good spring") } }).unwrap();
+    assert!(c.album_photos(id).is_empty());
+    for p in [a, b, z] {
+        c.apply(Op::SetRating { id: p, rating: 4 }).unwrap();
+    }
+    // b is after the range, z before it
+    assert_eq!(c.album_photos(id), vec![a]);
+    assert_eq!(c.album_count(id), 1);
+    assert_eq!(c.albums_of(a), vec![id]);
+    // via the album filter (what the grid uses)
+    assert_eq!(c.query(&Filter { album: Some(id), ..Default::default() }, &Sort::default()), vec![a]);
+    // deleted photos drop out
+    c.apply(Op::SetDeleted { id: a, deleted: true }).unwrap();
+    assert!(c.album_photos(id).is_empty());
+    c.apply(Op::SetDeleted { id: a, deleted: false }).unwrap();
+    // change the rules; inverse restores
+    let inv = c.apply(Op::SetAlbumRules { id, rules: Box::new(Filter { rating: 4, rating_op: RatingOp::Exactly, ..Default::default() }) }).unwrap();
+    assert_eq!(c.album_photos(id), vec![a, b, z]);
+    c.apply(inv).unwrap();
+    assert_eq!(c.album_photos(id), vec![a]);
+    // smart albums hold no photos and can't nest smart rules
+    assert!(c.apply(Op::SetAlbumPhotos { id, photos: vec![b] }).is_err());
+    let id2 = c.alloc_album_id();
+    let bad = Filter { album: Some(id), ..Default::default() };
+    assert!(c.apply(Op::AddAlbum { album: Album { smart: Some(Box::new(bad)), ..Album::new(id2, "x") } }).is_err());
+    assert!(c.apply(Op::SetAlbumRules { id, rules: Box::new(Filter { deleted: true, ..Default::default() }) }).is_err());
+    // rules on a manual album are rejected
+    let manual = c.alloc_album_id();
+    c.apply(Op::AddAlbum { album: Album::new(manual, "m") }).unwrap();
+    assert!(c.apply(Op::SetAlbumRules { id: manual, rules: Box::new(Filter::default()) }).is_err());
+    // a smart album may narrow a manual album
+    c.apply(Op::SetAlbumPhotos { id: manual, photos: vec![b, z] }).unwrap();
+    c.apply(Op::SetAlbumRules { id, rules: Box::new(Filter { album: Some(manual), lens: Some(String::new()), ..Default::default() }) }).unwrap();
+    assert_eq!(c.album_photos(id), vec![b, z]);
+    // persisted in snapshots
+    let back = Catalog::from_snapshot(&c.to_snapshot()).unwrap();
+    assert_eq!(back.album_photos(id), vec![b, z]);
+    assert!(Filter { rating: 3, keyword: Some("sea".into()), ..Default::default() }.describe().contains("rating ≥ 3, keyword sea"));
 }

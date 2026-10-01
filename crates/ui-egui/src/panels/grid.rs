@@ -36,9 +36,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let sel_n = app.session.selection.ids.len();
     let cnt = if sel_n > 1 { format!("{sel_n} of {} photos", ids.len()) } else { format!("{} photos", ids.len()) };
     ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
+    if app.ui.filter_bar {
+        super::filterbar::show(app, ui);
+    }
     app.canvas_rect = Some(ui.max_rect());
     if ids.is_empty() {
-        super::empty_message(ui, ui.max_rect(), "No photos", "Add photos with File → Add Photos (Cmd+Shift+I), or drop them here");
+        if app.session.filter != Default::default() {
+            super::empty_message(ui, ui.max_rect(), "No matching photos", "Change the filter, or clear it (View → Clear Filters)");
+        } else {
+            super::empty_message(ui, ui.max_rect(), "No photos", "Add photos with File → Add Photos (Cmd+Shift+I), or drop them here");
+        }
         return;
     }
     let ppp = ui.ctx().pixels_per_point();
@@ -106,6 +113,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ui.data_mut(|d| d.insert_temp(key, active));
         if last != active { active.and_then(|a| cells.iter().find(|c| c.id == a).map(|c| c.rect)) } else { None }
     };
+    let stacks = app.session.catalog.stack_index();
     let mut visible_ids = HashSet::new();
     egui::ScrollArea::vertical().id_salt("grid-scroll").auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
         let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), total_h), Sense::hover());
@@ -122,6 +130,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let r = c.rect.translate(origin.to_vec2());
             let onscreen = c.rect.intersects(viewport);
             cell(app, ui, c.id, r, square, onscreen, ppp);
+            if let Some((sid, pos)) = stacks.get(&c.id) {
+                stack_badge(app, ui, c.id, *sid, *pos, r, square);
+            }
         }
     });
     app.renderer.evict_thumbs(&visible_ids, 600);
@@ -212,6 +223,23 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
             paint(p, Rect::from_min_size(pos2(bar.right() - 20.0, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::Sliders, t.text_label);
         }
     }
+    if let Some(name) = &photo.copy_name {
+        // virtual copy: a folded-corner tag at the top right
+        let g = p.layout_no_wrap(name.clone(), t.semibold(10.5), Color32::WHITE);
+        let tr = if square { img_rect.right_top() + vec2(-6.0, 6.0) } else { img_rect.right_top() + vec2(-5.0, 5.0) };
+        let br = Rect::from_min_max(pos2(tr.x - g.size().x - 26.0, tr.y), pos2(tr.x, tr.y + 20.0));
+        p.rect_filled(br, 10.0, Color32::from_black_alpha(165));
+        let c = pos2(br.left() + 13.0, br.center().y);
+        let s = 5.0;
+        p.add(egui::Shape::convex_polygon(
+            vec![c + vec2(-s, -s), c + vec2(s * 0.3, -s), c + vec2(s, -s * 0.3), c + vec2(s, s), c + vec2(-s, s)],
+            Color32::TRANSPARENT,
+            Stroke::new(1.2, Color32::WHITE),
+        ));
+        p.line_segment([c + vec2(s * 0.3, -s), c + vec2(s * 0.3, -s * 0.3)], Stroke::new(1.2, Color32::WHITE));
+        p.line_segment([c + vec2(s * 0.3, -s * 0.3), c + vec2(s, -s * 0.3)], Stroke::new(1.2, Color32::WHITE));
+        p.galley(pos2(br.left() + 22.0, br.center().y - g.size().y / 2.0), g, Color32::WHITE);
+    }
     if photo.flag == Flag::Reject {
         p.rect_filled(img_rect, 0.0, Color32::from_black_alpha(110));
     }
@@ -232,6 +260,36 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         let _ = app.run("view.detail", json!({}));
     }
     resp.context_menu(|ui| context_menu(app, ui, id));
+}
+
+/// Stack badge at the cell's top-left: the photo count on a collapsed stack's top, `i/n` on the
+/// members of an expanded stack. Clicking it expands/collapses the stack.
+pub fn stack_badge(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, sid: lightcraft_catalog::StackId, pos: usize, r: Rect, square: bool) {
+    let t = Tokens::get(ui.ctx());
+    let Some(st) = app.session.catalog.stack(sid) else { return };
+    let n = st.photos.len();
+    let collapsed = st.collapsed;
+    let text = if collapsed { n.to_string() } else { format!("{}/{n}", pos + 1) };
+    let p = ui.painter();
+    let g = p.layout_no_wrap(text, t.semibold(11.0), Color32::WHITE);
+    let origin = if square { r.min + vec2(10.0, 26.0) } else { r.min + vec2(5.0, 5.0) };
+    let br = Rect::from_min_size(origin, vec2(g.size().x + 30.0, 20.0));
+    let resp = ui.interact(br, egui::Id::new(("stack-badge", id.0)), Sense::click()).on_hover_text(if collapsed {
+        "Stack — click to expand (S)"
+    } else {
+        "Stack — click to collapse (S)"
+    });
+    register(ui.ctx(), format!("stack:{}", id.0), br);
+    let fill = if resp.hovered() { Color32::from_black_alpha(220) } else { Color32::from_black_alpha(165) };
+    p.rect_filled(br, 10.0, fill);
+    if pos == 0 && !collapsed {
+        p.rect_stroke(br, 10.0, Stroke::new(1.0, t.accent), StrokeKind::Inside);
+    }
+    paint(p, Rect::from_min_size(br.min + vec2(6.0, 3.0), vec2(14.0, 14.0)), Icon::Stack, Color32::WHITE);
+    p.galley(pos2(br.min.x + 24.0, br.center().y - g.size().y / 2.0), g, Color32::WHITE);
+    if resp.clicked() {
+        let _ = app.run("stack.toggle", json!({"ids": [id.0]}));
+    }
 }
 
 pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
@@ -257,11 +315,33 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
     });
     ui.menu_button("Add to Album", |ui| {
-        let albums: Vec<_> = app.session.catalog.albums().filter(|a| !a.folder).map(|a| (a.id.0, a.name.clone())).collect();
+        let albums: Vec<_> = app.session.catalog.albums().filter(|a| !a.folder && !a.is_smart()).map(|a| (a.id.0, a.name.clone())).collect();
         for (aid, name) in albums {
             if ui.button(name).clicked() {
                 let _ = app.run("album.addPhotos", json!({"id": aid}));
             }
+        }
+    });
+    if ui.button("Create Virtual Copy").clicked() {
+        let _ = app.run("photo.virtualCopy", json!({}));
+    }
+    ui.menu_button("Stack", |ui| {
+        let stacked = app.session.catalog.stack_of(id).is_some();
+        let several = app.session.selection.ids.len() > 1;
+        for (label, cmd, on) in [
+            ("Group into Stack", "stack.group", several),
+            ("Ungroup Stack", "stack.ungroup", stacked),
+            ("Remove from Stack", "stack.remove", stacked),
+            ("Set as Top of Stack", "stack.setTop", stacked),
+            ("Expand/Collapse Stack", "stack.toggle", stacked),
+        ] {
+            if ui.add_enabled(on, egui::Button::new(label)).clicked() {
+                let _ = app.run(cmd, json!({}));
+            }
+        }
+        ui.separator();
+        if ui.button("Auto-Stack by Capture Time…").clicked() {
+            let _ = app.run("dialog.autoStack", json!({}));
         }
     });
     ui.separator();
@@ -274,6 +354,14 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if ui.button("Reset Edits").clicked() {
         let _ = app.run("develop.reset", json!({}));
     }
+    ui.menu_button("Photo Merge", |ui| {
+        let n = app.session.targets(&json!({})).len();
+        for (id, label) in [("dialog.mergeHdr", "HDR…"), ("dialog.mergePanorama", "Panorama…"), ("dialog.mergeHdrPanorama", "HDR Panorama…")] {
+            if ui.add_enabled(n >= 2, egui::Button::new(label)).clicked() {
+                let _ = app.run(id, json!({}));
+            }
+        }
+    });
     ui.separator();
     if ui.button("Rotate Left").clicked() {
         let _ = app.run("photo.rotateLeft", json!({}));

@@ -171,7 +171,7 @@ impl Headless {
 
     /// Is anything still in progress (renders, queued input)?
     pub fn busy(&self) -> bool {
-        self.app.renderer.in_flight() > 0 || !self.app.synthetic.is_empty() || !self.events.is_empty()
+        self.app.renderer.in_flight() > 0 || self.app.merge.busy() || !self.app.synthetic.is_empty() || !self.events.is_empty()
     }
 
     /// Run frames until nothing is pending (renders finished, input consumed) for a few frames in
@@ -242,6 +242,10 @@ impl Headless {
 mod tests {
     use super::*;
 
+    /// Generous: renders are slow when the machine is loaded (parallel builds), and a timed-out
+    /// settle would show a half-rendered UI.
+    const SETTLE: Duration = Duration::from_secs(120);
+
     fn demo(size: [f32; 2]) -> Headless {
         let services = crate::Services { png: None, ..Default::default() };
         let mut app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
@@ -253,7 +257,7 @@ mod tests {
     fn demo_grid_snapshot_has_ui_pixels() {
         let t0 = Instant::now();
         let mut h = demo([1200.0, 760.0]);
-        let img = h.snapshot(Duration::from_secs(20));
+        let img = h.snapshot(SETTLE);
         eprintln!("headless snapshot: {:?} in {:?} ({} frames)", img.size, t0.elapsed(), h.frames());
         assert_eq!(img.size, [1200, 760]);
         // not blank: many distinct colours
@@ -275,24 +279,110 @@ mod tests {
             let mut h = demo([900.0, 600.0]);
             let r = h.request("ui.set", json!({"view": "detail"}), Duration::from_secs(10));
             assert_eq!(r["ok"], true, "{r}");
-            h.snapshot(Duration::from_secs(20))
+            h.snapshot(SETTLE)
         };
         let (a, b) = (shot(), shot());
         assert_eq!(a.size, b.size);
-        let diff = a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x != y).count();
+        // The photo may come from the GPU in one run and the CPU in the other (the GPU warms up in
+        // the background), which differ by ≤ 1–2 LSB; anything more is a real difference.
+        let diff = a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.to_array().iter().zip(y.to_array()).any(|(p, q)| p.abs_diff(q) > 2)).count();
         assert_eq!(diff, 0, "{diff} pixels differ between two runs");
+    }
+
+    /// Keyboard culling: Compare (rating keys hit the candidate, arrows move it, auto-advance),
+    /// Survey (keys hit the active photo only), and auto-advance in Detail.
+    #[test]
+    fn compare_survey_and_auto_advance_by_keyboard() {
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        let rating = |h: &Headless, id: u64| h.app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap().rating;
+        let flag = |h: &Headless, id: u64| h.app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap().flag;
+        let vis: Vec<u64> = h.app.session.visible_cloned().iter().map(|p| p.0).collect();
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[0], vis[1]]}}), t);
+        let r = h.request("engine.execute", json!({"command": "view.compare"}), t);
+        assert_eq!(r["result"], json!({"select": vis[0], "candidate": vis[1]}), "{r}");
+        assert_eq!(h.app.ui.view, crate::state::ViewMode::Compare);
+        // rating applies to the candidate (active) only
+        let before = rating(&h, vis[0]);
+        h.request("ui.key", json!({"key": "2"}), t);
+        assert_eq!((rating(&h, vis[0]), rating(&h, vis[1])), (before, 2));
+        // arrows move the candidate; the select stays
+        h.request("ui.key", json!({"key": "right"}), t);
+        assert_eq!(h.app.ui.compare, Some((vis[0], vis[2])));
+        h.request("ui.key", json!({"key": "left"}), t);
+        assert_eq!(h.app.ui.compare, Some((vis[0], vis[1])));
+        // Shift+X: reject and advance to the next candidate
+        h.request("ui.key", json!({"key": "x", "shift": true}), t);
+        assert_eq!(flag(&h, vis[1]), lightcraft_catalog::Flag::Reject);
+        assert_eq!(h.app.ui.compare, Some((vis[0], vis[2])));
+        h.request("engine.execute", json!({"command": "compare.swap"}), t);
+        assert_eq!(h.app.ui.compare, Some((vis[2], vis[0])));
+        h.request("engine.execute", json!({"command": "compare.makeSelect"}), t);
+        assert_eq!(h.app.ui.compare.map(|c| c.0), Some(vis[0]));
+        // Survey: the selection tiled; keys hit the active photo, auto-advance walks the survey
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[3], vis[4], vis[5]], "active": vis[3]}}), t);
+        let r = h.request("engine.execute", json!({"command": "view.survey"}), t);
+        assert_eq!(r["result"]["photos"], 3);
+        h.request("engine.execute", json!({"command": "view.autoAdvance"}), t);
+        assert!(h.app.ui.auto_advance);
+        h.request("ui.key", json!({"key": "5"}), t);
+        h.request("ui.key", json!({"key": "p"}), t);
+        assert_eq!((rating(&h, vis[3]), flag(&h, vis[4])), (5, lightcraft_catalog::Flag::Pick));
+        assert_eq!(h.app.session.selection.active.map(|p| p.0), Some(vis[5]));
+        assert_eq!(h.app.session.selection.ids.len(), 3, "the survey keeps its selection");
+        let img = h.snapshot(SETTLE);
+        assert_eq!(img.size, [1000, 700]);
+        // Detail: auto-advance moves to the next photo
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[6]]}}), t);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.request("ui.key", json!({"key": "u"}), t);
+        assert_eq!(h.app.session.selection.active.map(|p| p.0), Some(vis[7]));
+        // Escape leaves the culling views for Detail
+        h.request("ui.set", json!({"view": "survey"}), t);
+        h.request("ui.key", json!({"key": "escape"}), t);
+        assert_eq!(h.app.ui.view, crate::state::ViewMode::Detail);
+        // let in-flight renders finish: worker threads must not outlive the test process' TLS
+        h.settle(SETTLE);
+    }
+
+    /// The filter bar drives `library.filter` and saves the view as a smart album.
+    #[test]
+    fn filter_bar_filters_and_saves_a_smart_album() {
+        let mut h = demo([1400.0, 800.0]);
+        let t = Duration::from_secs(10);
+        let all = h.app.session.visible_cloned().len();
+        h.request("engine.execute", json!({"command": "view.filterBar"}), t);
+        assert!(h.app.ui.filter_bar);
+        for w in ["filter:star3", "filter:pick", "filter:label-red", "filter:label-red"] {
+            let r = h.request("ui.clickWidget", json!({"id": w}), t);
+            assert_eq!(r["ok"], true, "{w}: {r}");
+        }
+        let f = h.app.session.filter.clone();
+        assert_eq!((f.rating, f.flag, f.label), (3, Some(lightcraft_catalog::Flag::Pick), None), "a second click clears the label");
+        let n = h.app.session.visible_cloned().len();
+        assert!(n > 0 && n < all);
+        h.request("ui.clickWidget", json!({"id": "button:filterSave"}), t);
+        assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::NewSmartAlbum { .. })));
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let smart = h.app.session.catalog.albums().find(|a| a.is_smart()).expect("smart album").id;
+        assert_eq!(h.app.session.catalog.album_count(smart), n);
+        h.request("ui.clickWidget", json!({"id": "button:filterClear"}), t);
+        assert_eq!(h.app.session.filter, Default::default());
+        assert_eq!(h.app.session.visible_cloned().len(), all);
+        h.settle(SETTLE);
     }
 
     #[test]
     fn screenshot_request_is_answered_without_a_window() {
         let mut h = demo([800.0, 500.0]);
-        let r = h.request("ui.screenshot", json!({}), Duration::from_secs(20));
+        let r = h.request("ui.screenshot", json!({}), SETTLE);
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(r["result"]["width"], 800);
         assert_eq!(r["result"]["height"], 500);
         let r = h.request("ui.resize", json!({"width": 640, "height": 400}), Duration::from_secs(5));
         assert_eq!(r["ok"], true);
-        let r = h.request("ui.screenshot", json!({"headless": true}), Duration::from_secs(20));
+        let r = h.request("ui.screenshot", json!({"headless": true}), SETTLE);
         assert_eq!(r["result"]["width"], 640, "{r}");
     }
 }

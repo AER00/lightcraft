@@ -51,6 +51,39 @@ fn band_weights(h: f32) -> array<f32, 8> {
     return w;
 }
 
+// `PointK::apply` for Point Color sample `k` (OkLCh in, OkLCh out).
+fn point_color(k: u32, lch: vec3<f32>) -> vec3<f32> {
+    let o = F_PC + k * POINT_WORDS;
+    let sl = pf(o);
+    let sc = pf(o + 1u);
+    let sh = pf(o + 2u);
+    let var_k = pf(o + 6u);
+    let wh_ = pf(o + 7u);
+    let wc_ = pf(o + 8u);
+    let wl_ = pf(o + 9u);
+    var l = lch.x;
+    var c = lch.y;
+    var h = lch.z;
+    var wh = 1.0;
+    if (sc >= 0.02) {
+        wh = (1.0 - sstep(0.5 * wh_, wh_, abs(wrap_angle(h - sh)))) * sstep(0.005, 0.025, c);
+    }
+    if (wh <= 0.0) {
+        return lch;
+    }
+    let wc = 1.0 - sstep(0.5 * wc_, wc_, abs(c - sc));
+    let wl = 1.0 - sstep(0.5 * wl_, wl_, abs(l - sl));
+    let w = wh * wc * wl;
+    if (w <= 0.0) {
+        return lch;
+    }
+    h += w * (var_k * wrap_angle(h - sh) + pf(o + 3u));
+    c += w * var_k * (c - sc);
+    c = max(c * (1.0 + w * pf(o + 4u)), 0.0);
+    l += w * (var_k * (l - sl) + pf(o + 5u));
+    return vec3<f32>(l, c, h);
+}
+
 // `ColorOps::apply`.
 fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
     if (pu(F_OPS_IDENTITY) != 0u && local_sat == 0.0 && local_hue == 0.0) {
@@ -74,6 +107,12 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
         h += dh * chroma_w;
         c *= max(1.0 + ds, 0.0);
         l += dl * chroma_w * sqrt(max(l, 0.05));
+    }
+    for (var k = 0u; k < pu(F_NPC); k++) {
+        let r = point_color(k, vec3<f32>(l, c, h));
+        l = r.x;
+        c = r.y;
+        h = r.z;
     }
     let vib = pf(F_VIBRANCE);
     if (vib != 0.0) {
@@ -115,6 +154,42 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
         }
     }
     return oklab_inv(lab);
+}
+
+// `colorops::calibrate`: primaries matrix, then the shadows tint (luminance kept).
+fn calibrate(c0: vec3<f32>) -> vec3<f32> {
+    var c = c0;
+    if (pu(F_CALIB) != 0u) {
+        let m = array<vec3<f32>, 3>(
+            vec3<f32>(pf(F_CALIB_M), pf(F_CALIB_M + 1u), pf(F_CALIB_M + 2u)),
+            vec3<f32>(pf(F_CALIB_M + 3u), pf(F_CALIB_M + 4u), pf(F_CALIB_M + 5u)),
+            vec3<f32>(pf(F_CALIB_M + 6u), pf(F_CALIB_M + 7u), pf(F_CALIB_M + 8u)),
+        );
+        c = max(mul3(m, c), vec3<f32>(0.0));
+    }
+    let st = pf(F_SHADOW_TINT);
+    if (st != 0.0) {
+        let y0 = lum2020(c);
+        let w = 1.0 - sstep(-5.0, -0.5, log2(max(y0, 1e-7) / 0.18));
+        c.y *= max(1.0 - SHADOW_TINT_K * st * w, 0.0);
+        let y1 = max(lum2020(c), 1e-9);
+        c = c * y0 / y1;
+    }
+    return c;
+}
+
+// `finish::refine_saturation`.
+fn refine_saturation(before: vec3<f32>, after: vec3<f32>, refine: f32) -> vec3<f32> {
+    let lw = vec3<f32>(0.2126, 0.7152, 0.0722);
+    let y0 = dot(before, lw);
+    let y1 = dot(after, lw);
+    let s0 = (max(before.x, max(before.y, before.z)) - min(before.x, min(before.y, before.z))) / max(y0, 1e-4);
+    let s1 = (max(after.x, max(after.y, after.z)) - min(after.x, min(after.y, after.z))) / max(y1, 1e-4);
+    if (s1 <= 1e-6 || s0 <= 1e-6) {
+        return after;
+    }
+    let k = clamp(pow(s0 / s1, 1.0 - refine), 0.0, 4.0);
+    return y1 + (after - y1) * k;
 }
 
 fn ghash(i: i32, j: i32, seed: u32) -> f32 {
@@ -263,6 +338,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         c = c * exp2(delta);
     }
 
+    // --- calibration (scene linear, before the tone map)
+    if (pu(F_CALIB) != 0u || pf(F_SHADOW_TINT) != 0.0) {
+        c = calibrate(c);
+    }
+
     // --- tone map on luminance, highlight desaturation
     let yl = lum2020(c);
     let o = tone_apply(yl);
@@ -338,7 +418,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // --- encode, curves, grain
     var e = vec3<f32>(encode_srgb(r.x), encode_srgb(r.y), encode_srgb(r.z));
     if (pu(F_CURVES) != 0u) {
+        let e0 = e;
         e = vec3<f32>(curve(0u, e.x), curve(1u, e.y), curve(2u, e.z));
+        let rs = pf(F_REFINE_SAT);
+        if (rs < 1.0) {
+            e = refine_saturation(e0, e, rs);
+        }
     }
     if (pu(F_GRAIN) != 0u) {
         let px = f32(x) + 0.5;

@@ -28,6 +28,10 @@ pub enum Gesture {
         start: lightcraft_geom::Rect,
         angle: f64,
     },
+    /// Straighten tool: a line drawn along something that should be level (or plumb).
+    StraightenLine {
+        a: Pos2,
+    },
     CropRotate {
         start_angle: f64,
         a0: f32,
@@ -43,6 +47,15 @@ pub enum Gesture {
     /// Guided Upright: a guide being drawn from `a` (normalized transformed coordinates).
     Guide {
         a: Point,
+    },
+    /// Red Eye: an ellipse being dragged from corner `a` (normalized).
+    Eye {
+        a: Point,
+    },
+    /// Targeted adjustment drag from `at` (normalized); `acc` = vertical travel not yet applied.
+    Targeted {
+        at: Point,
+        acc: f32,
     },
 }
 
@@ -71,7 +84,7 @@ impl CanvasMap {
     }
 }
 
-fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], ppp: f32, pan: (f32, f32)) -> Rect {
+pub(crate) fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], ppp: f32, pan: (f32, f32)) -> Rect {
     let (aw, ah) = (area.width(), area.height());
     let (w, h) = match zoom {
         Zoom::Fit => {
@@ -124,15 +137,25 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let ppp = ui.ctx().pixels_per_point();
     let area = canvas.shrink(if crop_tool { 48.0 } else { 24.0 });
     let native = [photo.width.max(1) as usize, photo.height.max(1) as usize];
-    let split = app.ui.before_after == BeforeAfter::SideBySide;
-    let areas: Vec<Rect> = if split {
-        let half = area.width() / 2.0 - 6.0;
-        vec![
-            Rect::from_min_size(area.min, vec2(half, area.height())),
-            Rect::from_min_size(pos2(area.center().x + 6.0, area.top()), vec2(half, area.height())),
-        ]
-    } else {
-        vec![area]
+    // two views (before, after): side by side or stacked
+    let split = matches!(app.ui.before_after, BeforeAfter::SideBySide | BeforeAfter::TopBottom);
+    let split_view = matches!(app.ui.before_after, BeforeAfter::Split | BeforeAfter::SplitTopBottom);
+    let areas: Vec<Rect> = match app.ui.before_after {
+        BeforeAfter::SideBySide => {
+            let half = area.width() / 2.0 - 6.0;
+            vec![
+                Rect::from_min_size(area.min, vec2(half, area.height())),
+                Rect::from_min_size(pos2(area.center().x + 6.0, area.top()), vec2(half, area.height())),
+            ]
+        }
+        BeforeAfter::TopBottom => {
+            let half = area.height() / 2.0 - 14.0;
+            vec![
+                Rect::from_min_size(area.min, vec2(area.width(), half)),
+                Rect::from_min_size(pos2(area.left(), area.center().y + 14.0), vec2(area.width(), half)),
+            ]
+        }
+        _ => vec![area],
     };
     let main_area = *areas.last().unwrap_or(&area);
     let img_rect = fit_rect(main_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
@@ -144,6 +167,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     if let Some(job) = app.session.loupe_job(id, rw.max(8), rh.max(8), !crop_tool) {
         let job = if interacting { job.draft() } else { job };
+        let job = job.with_overlay(view_overlay(app, &d));
         app.renderer.request(Slot::Main, job, 100);
     }
     // once this photo is on screen: prepare its neighbours in filmstrip order (source decoded and
@@ -174,7 +198,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         app.renderer.request_quick(Slot::Preview, q, 110);
     }
     let show_before = app.ui.before_after == BeforeAfter::Original || ui.input(|i| i.key_down(egui::Key::Backslash));
-    if (split || show_before || app.ui.before_after == BeforeAfter::Split)
+    if (split || show_before || split_view)
         && let Some(job) = app.session.render_job(id, rw.max(8), rh.max(8), true, !crop_tool)
     {
         app.renderer.request(Slot::Before, job, 90);
@@ -221,6 +245,14 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
         p.line_segment([pos2(mid, img_rect.top()), pos2(mid, img_rect.bottom())], Stroke::new(1.5, Color32::WHITE));
     }
+    if app.ui.before_after == BeforeAfter::SplitTopBottom {
+        let mid = img_rect.center().y;
+        if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
+            let top = Rect::from_min_max(img_rect.min, pos2(img_rect.right(), mid));
+            p.image(tex.tex.id(), top, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 0.5)), Color32::WHITE);
+        }
+        p.line_segment([pos2(img_rect.left(), mid), pos2(img_rect.right(), mid)], Stroke::new(1.5, Color32::WHITE));
+    }
     if app.ui.show_clipping && !show_before {
         clipping_overlay(app, &p, img_rect);
     }
@@ -231,6 +263,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         RightPanel::Crop => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
         RightPanel::Masking => mask_overlay(app, ui, &resp, &map, &d),
         RightPanel::Remove => remove_overlay(app, ui, &resp, &map, &d),
+        RightPanel::RedEye => eye_overlay(app, ui, &resp, &map, &d),
         _ => general_interaction(app, ui, &resp, &map, img_rect, canvas, native, aspect),
     }
     resp.context_menu(|ui| super::grid::context_menu(app, ui, id));
@@ -246,6 +279,51 @@ fn quick_name(q: lightcraft_engine::media::QuickSource) -> &'static str {
         QuickSource::Embedded => "embedded",
         QuickSource::Small => "small",
     }
+}
+
+/// Targeted adjustment tool: dragging up/down on the photo raises/lowers the tone-curve region or
+/// the colour-mixer bands under the press point (`develop.targeted`, one call per whole step, all
+/// in one interaction = one undo step).
+fn targeted_drag(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, target: &str) {
+    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    if resp.drag_started()
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        let _ = app.run("develop.beginInteraction", json!({"label": "Targeted Adjustment"}));
+        app.gesture = Some(Gesture::Targeted { at: map.norm(q), acc: 0.0 });
+    }
+    if resp.dragged()
+        && let Some(Gesture::Targeted { at, acc }) = &mut app.gesture
+    {
+        *acc -= resp.drag_delta().y * 0.5;
+        let step = acc.trunc();
+        if step != 0.0 {
+            *acc -= step;
+            let at = *at;
+            let mut p = json!({"target": target, "x": at.x, "y": at.y, "delta": step});
+            if target == "curve" && app.ui.curve_channel != "parametric" {
+                p["channel"] = json!(app.ui.curve_channel);
+            }
+            let _ = app.run("develop.targeted", p);
+        }
+    }
+    if resp.drag_stopped() && matches!(app.gesture, Some(Gesture::Targeted { .. })) {
+        app.gesture = None;
+        let _ = app.run("develop.endInteraction", json!({}));
+    }
+}
+
+/// The diagnostic overlay the loupe shows (Point Color's visualized range).
+fn view_overlay(app: &LightcraftApp, d: &DevelopSettings) -> lightcraft_pipeline::Overlay {
+    use lightcraft_pipeline::Overlay;
+    if app.ui.right == RightPanel::Remove && app.ui.visualize_spots {
+        return Overlay::Spots(app.ui.spots_threshold.clamp(0.0, 100.0).round() as u8);
+    }
+    let edit = app.ui.right == RightPanel::Edit;
+    if edit && app.ui.point_color_visualize && app.ui.flyout_open("pointColor") && app.ui.point_color < d.point_colors.len() {
+        return Overlay::PointColorRange(app.ui.point_color as u8);
+    }
+    Overlay::None
 }
 
 fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
@@ -282,6 +360,23 @@ fn general_interaction(
         }
         return;
     }
+    if let Some(target) = app.ui.tool.strip_prefix("tat:").map(str::to_string) {
+        targeted_drag(app, ui, resp, map, &target);
+        return;
+    }
+    if app.ui.tool == "pointColor" {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        if resp.clicked()
+            && let Some(q) = resp.interact_pointer_pos()
+        {
+            let n = map.norm(q);
+            if let Ok(r) = app.run("pointColor.pick", json!({"x": n.x, "y": n.y})) {
+                app.ui.point_color = r["index"].as_u64().unwrap_or(0) as usize;
+            }
+            app.ui.tool.clear();
+        }
+        return;
+    }
     // click toggles Fit ↔ 100 % at the clicked point; drag pans when zoomed
     let zoomed = img.width() > canvas.width() + 1.0 || img.height() > canvas.height() + 1.0;
     if resp.double_clicked() || (resp.clicked() && !zoomed) {
@@ -310,6 +405,10 @@ fn general_interaction(
 fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, frame: &Frame, d: &DevelopSettings, id: PhotoId) {
     if app.ui.tool == "guidedUpright" {
         guided_overlay(app, ui, resp, map, frame, d);
+        return;
+    }
+    if app.ui.tool == "straighten" {
+        straighten_overlay(app, ui, resp);
         return;
     }
     let quad = frame_crop_quad(d, frame);
@@ -699,9 +798,67 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
     }
 }
 
+// ------------------------------------------------------------------------ red eye
+
+/// Red Eye tool: drag an ellipse over an eye (a new correction), click one to select it.
+fn eye_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, d: &DevelopSettings) {
+    // screen points per long-edge unit
+    let o = map.screen(Point::new(0.0, 0.0));
+    let (sx, sy) = (map.screen(Point::new(1.0, 0.0)).distance(o), map.screen(Point::new(0.0, 1.0)).distance(o));
+    let per_long = sx.max(sy);
+    let p = ui.painter();
+    for (i, e) in d.red_eye.iter().enumerate() {
+        let c = map.screen(e.center);
+        let r = vec2(e.rx as f32 * per_long, e.ry as f32 * per_long);
+        let sel = i == app.ui.eye;
+        let col = if sel { Color32::WHITE } else { Color32::from_white_alpha(150) };
+        p.add(egui::Shape::ellipse_stroke(c, r, Stroke::new(if sel { 1.5 } else { 1.0 }, col)));
+        p.line_segment([c - vec2(4.0, 0.0), c + vec2(4.0, 0.0)], Stroke::new(1.0, col));
+        p.line_segment([c - vec2(0.0, 4.0), c + vec2(0.0, 4.0)], Stroke::new(1.0, col));
+    }
+    if resp.hover_pos().is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
+    if resp.drag_started()
+        && let Some(q) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos())
+    {
+        // from where the button went down (a drag is recognized only after some movement)
+        app.gesture = Some(Gesture::Eye { a: map.norm(q) });
+    }
+    if let Some(Gesture::Eye { a }) = app.gesture
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        let (a, b) = (map.screen(a), q);
+        p.add(egui::Shape::ellipse_stroke(a.lerp(b, 0.5), ((b - a) / 2.0).abs(), Stroke::new(1.0, Color32::WHITE)));
+    }
+    if resp.drag_stopped()
+        && let Some(Gesture::Eye { a }) = app.gesture.take()
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        let (sa, sb) = (map.screen(a), q);
+        let half = ((sb - sa) / 2.0).abs() / per_long;
+        if half.x > 0.002 && half.y > 0.002 {
+            let c = map.norm(sa.lerp(sb, 0.5));
+            let r = app.run("redeye.add", json!({"center": [c.x, c.y], "rx": half.x, "ry": half.y, "pet": app.ui.eye_pet}));
+            if let Ok(v) = r {
+                app.ui.eye = v["index"].as_u64().unwrap_or(0) as usize;
+            }
+        }
+    } else if resp.clicked()
+        && let Some(q) = resp.interact_pointer_pos()
+        && let Some(i) = d.red_eye.iter().position(|e| {
+            let c = map.screen(e.center);
+            let (dx, dy) = ((q.x - c.x) / (e.rx as f32 * per_long).max(4.0), (q.y - c.y) / (e.ry as f32 * per_long).max(4.0));
+            dx * dx + dy * dy <= 1.0
+        })
+    {
+        app.ui.eye = i;
+    }
+}
+
 // ------------------------------------------------------------------------ filmstrip
 
-fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
+pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
     let t = Tokens::get(ui.ctx());
     ui.painter().rect_filled(r, 0.0, t.canvas);
     ui.painter().rect_filled(Rect::from_min_size(r.min, vec2(r.width(), 4.0)), 0.0, Color32::from_gray(0x20));
@@ -749,6 +906,15 @@ fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
                 if sel {
                     p.rect_stroke(fr, 0.0, Stroke::new(1.5, Color32::WHITE), StrokeKind::Outside);
                 }
+                if let Some(st) = app.session.catalog.stack_of(*id) {
+                    let text =
+                        if st.collapsed { st.photos.len().to_string() } else { format!("{}/{}", st.position(*id).unwrap_or(0) + 1, st.photos.len()) };
+                    let g = p.layout_no_wrap(text, t.semibold(9.5), Color32::WHITE);
+                    let br = Rect::from_min_size(fr.min + vec2(3.0, 3.0), vec2(g.size().x + 22.0, 15.0));
+                    p.rect_filled(br, 7.5, Color32::from_black_alpha(170));
+                    crate::icons::paint(p, Rect::from_min_size(br.min + vec2(4.0, 2.0), vec2(11.0, 11.0)), crate::icons::Icon::Stack, Color32::WHITE);
+                    p.galley(pos2(br.min.x + 17.0, br.center().y - g.size().y / 2.0), g, Color32::WHITE);
+                }
             }
             if resp.clicked() {
                 let m = ui.input(|i| i.modifiers);
@@ -763,4 +929,42 @@ fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
             }
         }
     });
+}
+
+/// Straighten tool: drag along a horizon (or a vertical) to set the crop angle; double-click = Auto.
+/// The image is shown unrotated in the crop view, so the line's on-screen angle is its image angle.
+fn straighten_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response) {
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    if resp.double_clicked() {
+        let _ = app.run("crop.autoStraighten", json!({}));
+        app.ui.tool.clear();
+        app.gesture = None;
+        return;
+    }
+    if resp.drag_started()
+        && let Some(q) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos())
+    {
+        app.gesture = Some(Gesture::StraightenLine { a: q });
+    }
+    let Some(Gesture::StraightenLine { a }) = app.gesture.clone() else { return };
+    let Some(b) = resp.interact_pointer_pos().or(resp.hover_pos()) else { return };
+    let p = ui.painter();
+    p.line_segment([a, b], Stroke::new(3.0, Color32::from_black_alpha(140)));
+    p.line_segment([a, b], Stroke::new(1.5, Color32::WHITE));
+    if resp.drag_stopped() {
+        app.gesture = None;
+        let v = b - a;
+        if v.length() > 8.0 {
+            let mut deg = v.y.atan2(v.x).to_degrees() as f64;
+            // fold to the nearest axis: a line closer to vertical straightens plumb lines
+            while deg > 45.0 {
+                deg -= 90.0;
+            }
+            while deg < -45.0 {
+                deg += 90.0;
+            }
+            let _ = app.run("crop.straighten", json!({"angle": (-deg * 100.0).round() / 100.0}));
+        }
+        app.ui.tool.clear();
+    }
 }

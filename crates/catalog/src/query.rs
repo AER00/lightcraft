@@ -33,6 +33,12 @@ pub struct Filter {
     pub date: Option<String>,
     pub keyword: Option<String>,
     pub camera: Option<String>,
+    /// Lens (case-insensitive substring).
+    pub lens: Option<String>,
+    /// Capture date range, inclusive: `dateFrom` is compared as a lower bound (`2026-04-01`),
+    /// `dateTo` as a prefix upper bound (`2026-04` includes all of April).
+    pub date_from: Option<String>,
+    pub date_to: Option<String>,
     /// Import date prefix (Recently Added).
     pub imported: Option<String>,
 }
@@ -91,6 +97,7 @@ fn token_matches(p: &Photo, tok: &str) -> bool {
             "type" | "kind" => format!("{:?}", p.kind).eq_ignore_ascii_case(val),
             "edited" => (val == "true" || val == "yes") == p.is_edited(),
             "date" => p.date().starts_with(val),
+            "copy" | "virtual" => (val == "true" || val == "yes") == p.copy_of.is_some(),
             "name" | "file" => p.file_name.to_lowercase().contains(val),
             _ => false,
         };
@@ -100,6 +107,48 @@ fn token_matches(p: &Photo, tok: &str) -> bool {
 }
 
 impl Filter {
+    /// Human-readable summary of the active rules (smart album tooltips, `album.list`).
+    pub fn describe(&self) -> String {
+        let mut v: Vec<String> = Vec::new();
+        if self.rating > 0 {
+            let op = match self.rating_op {
+                RatingOp::AtLeast => "≥",
+                RatingOp::Exactly => "=",
+                RatingOp::AtMost => "≤",
+            };
+            v.push(format!("rating {op} {}", self.rating));
+        }
+        if let Some(f) = self.flag {
+            v.push(format!("flag {}", format!("{f:?}").to_lowercase()));
+        }
+        if let Some(l) = self.label {
+            v.push(format!("label {}", format!("{l:?}").to_lowercase()));
+        }
+        if let Some(k) = self.kind {
+            v.push(format!("kind {}", format!("{k:?}").to_lowercase()));
+        }
+        if let Some(e) = self.edited {
+            v.push(if e { "edited".into() } else { "unedited".into() });
+        }
+        for (name, val) in
+            [("keyword", &self.keyword), ("camera", &self.camera), ("lens", &self.lens), ("date", &self.date), ("imported", &self.imported)]
+        {
+            if let Some(x) = val {
+                v.push(format!("{name} {x}"));
+            }
+        }
+        match (&self.date_from, &self.date_to) {
+            (Some(a), Some(b)) => v.push(format!("captured {a} – {b}")),
+            (Some(a), None) => v.push(format!("captured from {a}")),
+            (None, Some(b)) => v.push(format!("captured until {b}")),
+            _ => {}
+        }
+        if !self.text.trim().is_empty() {
+            v.push(format!("“{}”", self.text.trim()));
+        }
+        if v.is_empty() { "all photos".into() } else { v.join(", ") }
+    }
+
     pub fn matches(&self, p: &Photo, cat: &Catalog) -> bool {
         if p.deleted != self.deleted {
             return false;
@@ -121,7 +170,22 @@ impl Filter {
             return false;
         }
         if let Some(a) = self.album
-            && !cat.album(a).is_some_and(|al| al.photos.contains(&p.id))
+            && !cat.album_contains(a, p)
+        {
+            return false;
+        }
+        if let Some(from) = &self.date_from
+            && p.date() < from.as_str()
+        {
+            return false;
+        }
+        if let Some(to) = &self.date_to
+            && p.date().get(..to.len()).unwrap_or(p.date()) > to.as_str()
+        {
+            return false;
+        }
+        if let Some(l) = &self.lens
+            && !p.meta.lens.to_lowercase().contains(&l.to_lowercase())
         {
             return false;
         }
