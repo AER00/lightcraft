@@ -93,6 +93,36 @@ pub fn encode_jpeg(img: &EncodeImage, quality: u8, subsampling: ChromaSubsamplin
         3 => (data[..n * 3].into(), jpeg_encoder::ColorType::Rgb),
         _ => (data[..n * 4].into(), jpeg_encoder::ColorType::Rgba),
     };
+    if subsampling != ChromaSubsampling::S422 {
+        // Parallel encoder (restart-interval bands on all cores).
+        let mut segs: Vec<(u8, Vec<u8>)> = Vec::new();
+        if let Some(exif) = meta.exif {
+            if exif.len() > 65_527 {
+                return Err(Error::Encode("EXIF larger than one APP1 segment (64 KiB)".into()));
+            }
+            segs.push((0xE1, [&b"Exif\0\0"[..], exif].concat()));
+        }
+        if let Some(xmp) = meta.xmp {
+            let seg = [XMP_NS, xmp.as_bytes()].concat();
+            if seg.len() > 65_533 {
+                return Err(Error::Encode("XMP larger than one APP1 segment (extended XMP not supported)".into()));
+            }
+            segs.push((0xE1, seg));
+        }
+        if let Some(icc) = meta.icc {
+            // ICC.1 Annex B.4: "ICC_PROFILE\0", 1-based chunk number, chunk count
+            let chunks: Vec<&[u8]> = icc.chunks(65_519).collect();
+            if chunks.len() > 255 {
+                return Err(Error::Encode("ICC profile too large for JPEG".into()));
+            }
+            for (i, c) in chunks.iter().enumerate() {
+                segs.push((0xE2, [&b"ICC_PROFILE\0"[..], &[i as u8 + 1, chunks.len() as u8], c].concat()));
+            }
+        }
+        let ch = if img.channels == 2 { 1 } else { img.channels as usize };
+        // `data` is already gray for 2-channel input (see above)
+        return Ok(crate::jpeg_par::encode(&data, img.width as usize, img.height as usize, ch, quality, subsampling, &segs));
+    }
     let mut out = Vec::new();
     let mut enc = jpeg_encoder::Encoder::new(&mut out, quality.clamp(1, 100));
     enc.set_sampling_factor(match subsampling {
