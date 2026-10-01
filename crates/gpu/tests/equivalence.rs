@@ -84,6 +84,23 @@ fn cases() -> Vec<(&'static str, Edit)> {
             s.mixer.orange.hue = 30.0;
             s.mixer.green.lum = 40.0;
         }),
+        ("point color", |s| {
+            use lightcraft_develop::PointColor;
+            s.point_colors = vec![
+                PointColor {
+                    lum: 0.62,
+                    chroma: 0.09,
+                    hue: 60.0,
+                    hue_shift: 40.0,
+                    sat_shift: -30.0,
+                    lum_shift: 20.0,
+                    range: 80.0,
+                    ..Default::default()
+                },
+                PointColor { lum: 0.5, chroma: 0.12, hue: 270.0, variance: -60.0, sat_shift: 40.0, hue_range: 80.0, ..Default::default() },
+                PointColor { lum: 0.4, chroma: 0.01, hue: 0.0, lum_shift: -30.0, ..Default::default() },
+            ];
+        }),
         ("b&w mix", |s| {
             s.treatment = Treatment::Bw;
             s.bw_mix.blue = 60.0;
@@ -369,4 +386,20 @@ fn cached_renders_match_uncached() {
         let fresh = lightcraft_gpu::render(&src, &info, &s, &req, None).expect("gpu");
         assert_eq!(warm.image, fresh.image, "step {k}");
     }
+}
+
+#[test]
+fn overlays_match() {
+    if !gpu() {
+        return;
+    }
+    // Diagnostic overlays run on the finished 8-bit image, after either renderer.
+    let src = scene(0, 900, 600);
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    let s = DevelopSettings {
+        point_colors: vec![lightcraft_develop::PointColor { lum: 0.6, chroma: 0.05, hue: 300.0, hue_shift: 50.0, range: 90.0, ..Default::default() }],
+        ..Default::default()
+    };
+    let req = RenderRequest { overlay: lightcraft_pipeline::Overlay::PointColorRange(0), ..RenderRequest::fit(640, 640) };
+    check("point color range overlay", &src, &raw, &s, &req);
 }

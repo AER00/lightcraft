@@ -17,6 +17,8 @@ pub struct DevelopSettings {
     pub curve: ToneCurve,
     pub color: ColorAdj,
     pub mixer: Mixer,
+    /// Point Color: up to [`MAX_POINT_COLORS`] sampled colours, each with its own adjustment.
+    pub point_colors: Vec<PointColor>,
     pub bw_mix: BwMix,
     pub grading: ColorGrading,
     pub effects: Effects,
@@ -49,6 +51,7 @@ impl Default for DevelopSettings {
             curve: ToneCurve::default(),
             color: ColorAdj::default(),
             mixer: Mixer::default(),
+            point_colors: Vec::new(),
             bw_mix: BwMix::default(),
             grading: ColorGrading::default(),
             effects: Effects::default(),
@@ -260,6 +263,63 @@ impl Mixer {
     }
     pub fn is_neutral(&self) -> bool {
         self.bands().iter().all(|b| *b == Hsl::default())
+    }
+}
+
+/// Most Point Color samples per photo (Lightroom's limit).
+pub const MAX_POINT_COLORS: usize = 8;
+
+/// One Point Color sample: a colour picked on the image (OkLCh, at the stage where Point Color
+/// applies: after the colour mixer) and the adjustment of the colours around it. The range is a
+/// box in OkLCh around the sample, widened by `range` (overall) and the per-axis widths, with a
+/// soft edge.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PointColor {
+    /// Sampled OkLab lightness (0..1).
+    pub lum: f64,
+    /// Sampled OkLCh chroma (0..~0.37).
+    pub chroma: f64,
+    /// Sampled OkLCh hue, degrees.
+    pub hue: f64,
+    /// Hue shift −100..100 (±~29° at the sample).
+    pub hue_shift: f64,
+    /// Saturation shift −100..100 (chroma scale).
+    pub sat_shift: f64,
+    /// Luminance shift −100..100.
+    pub lum_shift: f64,
+    /// −100 compresses the colour spread within the range towards the sample (evens out e.g.
+    /// skin), +100 expands it.
+    pub variance: f64,
+    /// Overall range 0..100 (scales all three widths).
+    pub range: f64,
+    pub hue_range: f64,
+    pub sat_range: f64,
+    pub lum_range: f64,
+}
+
+impl Default for PointColor {
+    fn default() -> Self {
+        Self {
+            lum: 0.5,
+            chroma: 0.1,
+            hue: 0.0,
+            hue_shift: 0.0,
+            sat_shift: 0.0,
+            lum_shift: 0.0,
+            variance: 0.0,
+            range: 50.0,
+            hue_range: 50.0,
+            sat_range: 50.0,
+            lum_range: 50.0,
+        }
+    }
+}
+
+impl PointColor {
+    /// True when the sample changes nothing.
+    pub fn is_neutral(&self) -> bool {
+        self.hue_shift == 0.0 && self.sat_shift == 0.0 && self.lum_shift == 0.0 && self.variance == 0.0
     }
 }
 

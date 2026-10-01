@@ -45,6 +45,9 @@ pub struct WireJob {
     /// Reuse the worker's intermediate results for this view (the loupe), like the desktop's
     /// per-slot stage cache: slider drags then only redo what changed.
     pub stages: Option<String>,
+    /// The request's diagnostic overlay (`Overlay::to_parts`).
+    #[serde(default)]
+    pub overlay: (u8, f32),
 }
 
 impl WireJob {
@@ -70,6 +73,7 @@ impl WireJob {
             thumb: job.cache.as_ref().map(|(_, k)| k.to_string()),
             thumb_cached,
             stages: job.stages.is_some().then(|| view.to_string()),
+            overlay: job.request.overlay.to_parts(),
         }
     }
 
@@ -83,6 +87,7 @@ impl WireJob {
             max_h: self.max_h,
             quality: if self.draft { Quality::Draft } else { Quality::Full },
             apply_crop: self.apply_crop,
+            overlay: lightcraft_engine::pipeline::Overlay::from_parts(self.overlay.0, self.overlay.1),
         }
     }
 
@@ -296,6 +301,7 @@ mod tests {
             thumb: None,
             thumb_cached: false,
             stages: Some("Main".into()),
+            overlay: (0, 0.0),
         };
         let mut core = WorkerCore::default();
         assert_eq!(core.needs_original(&job).as_deref(), Some(hash.as_str()));

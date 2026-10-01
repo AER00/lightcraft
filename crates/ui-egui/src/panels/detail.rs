@@ -144,6 +144,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     if let Some(job) = app.session.render_job(id, rw.max(8), rh.max(8), false, !crop_tool) {
         let job = if interacting { job.draft() } else { job };
+        let job = job.with_overlay(view_overlay(app, &d));
         app.renderer.request(Slot::Main, job, 100);
     }
     let show_before = app.ui.before_after == BeforeAfter::Original || ui.input(|i| i.key_down(egui::Key::Backslash));
@@ -199,6 +200,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     resp.context_menu(|ui| super::grid::context_menu(app, ui, id));
 }
 
+/// The diagnostic overlay the loupe shows (Point Color's visualized range).
+fn view_overlay(app: &LightcraftApp, d: &DevelopSettings) -> lightcraft_pipeline::Overlay {
+    use lightcraft_pipeline::Overlay;
+    let edit = app.ui.right == RightPanel::Edit;
+    if edit && app.ui.point_color_visualize && app.ui.flyout_open("pointColor") && app.ui.point_color < d.point_colors.len() {
+        return Overlay::PointColorRange(app.ui.point_color as u8);
+    }
+    Overlay::None
+}
+
 fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
     // Highlight clipped regions using the histogram's extremes isn't spatial; show a subtle frame hint.
     if let Some(h) = app.renderer.textures.get(&Slot::Main).and_then(|t| t.histogram.as_ref()) {
@@ -229,6 +240,19 @@ fn general_interaction(
         {
             let n = map.norm(q);
             let _ = app.run("develop.wbPick", json!({"x": n.x, "y": n.y}));
+            app.ui.tool.clear();
+        }
+        return;
+    }
+    if app.ui.tool == "pointColor" {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        if resp.clicked()
+            && let Some(q) = resp.interact_pointer_pos()
+        {
+            let n = map.norm(q);
+            if let Ok(r) = app.run("pointColor.pick", json!({"x": n.x, "y": n.y})) {
+                app.ui.point_color = r["index"].as_u64().unwrap_or(0) as usize;
+            }
             app.ui.tool.clear();
         }
         return;

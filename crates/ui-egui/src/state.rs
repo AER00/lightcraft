@@ -107,6 +107,10 @@ pub struct UiState {
     pub brush_flow: f32,
     pub brush_erase: bool,
     pub remove_size: f32,
+    /// Selected Point Color sample.
+    pub point_color: usize,
+    /// Point Color "Visualize range": the selected sample's range in colour, the rest grey.
+    pub point_color_visualize: bool,
     /// Transient toast text and its expiry (seconds of app time).
     #[serde(skip)]
     pub toast: Option<(String, f64)>,
@@ -175,6 +179,8 @@ impl Default for UiState {
             brush_flow: 60.0,
             brush_erase: false,
             remove_size: 0.02,
+            point_color: 0,
+            point_color_visualize: false,
             toast: None,
             status: String::new(),
             dialog: None,

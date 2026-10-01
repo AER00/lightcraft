@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 use lightcraft_color::perceptual::{hsv_to_rgb, lab_to_lch, lch_to_lab, oklab_from_2020, oklab_to_2020};
 use lightcraft_color::{Mat3, REC2020, SRGB};
-use lightcraft_develop::{Calibration, DevelopSettings, MIXER_HUES};
+use lightcraft_develop::{Calibration, DevelopSettings, MIXER_HUES, PointColor};
 
 /// OkLCh hue angle (radians) of a pure sRGB colour with HSV hue `deg`.
 pub fn oklch_hue_of_srgb_hue(deg: f64) -> f32 {
@@ -56,6 +56,78 @@ pub struct WheelK {
     pub lum: f32,
 }
 
+/// Number of `f32`s per Point Color sample in [`PointK::words`] (the GPU parameter layout).
+pub const POINT_WORDS: usize = 10;
+
+/// A Point Color sample resolved for the per-pixel stage: the sample (OkLab lightness, chroma, hue
+/// in radians), the adjustment (hue rotation in radians, chroma scale − 1, lightness shift,
+/// variance factor − 1) and the half-widths of the range box (hue radians, chroma, lightness).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PointK {
+    pub l: f32,
+    pub c: f32,
+    pub h: f32,
+    pub dh: f32,
+    pub sat: f32,
+    pub dl: f32,
+    pub var: f32,
+    pub wh: f32,
+    pub wc: f32,
+    pub wl: f32,
+}
+
+impl PointK {
+    pub fn new(p: &PointColor) -> PointK {
+        let k = (p.range.clamp(0.0, 100.0) / 50.0).max(0.05) as f32;
+        let f = |v: f64| (v.clamp(0.0, 100.0) / 100.0) as f32;
+        PointK {
+            l: p.lum as f32,
+            c: p.chroma.max(0.0) as f32,
+            h: (p.hue as f32).to_radians(),
+            dh: (p.hue_shift.clamp(-100.0, 100.0) / 100.0) as f32 * 0.5,
+            sat: (p.sat_shift.clamp(-100.0, 100.0) / 100.0) as f32,
+            dl: (p.lum_shift.clamp(-100.0, 100.0) / 100.0) as f32 * 0.2,
+            var: (p.variance.clamp(-100.0, 100.0) / 100.0) as f32 * 0.8,
+            wh: (0.1 + 0.6 * f(p.hue_range)) * k,
+            wc: (0.02 + 0.12 * f(p.sat_range)) * k,
+            wl: (0.05 + 0.4 * f(p.lum_range)) * k,
+        }
+    }
+
+    pub fn words(&self) -> [f32; POINT_WORDS] {
+        [self.l, self.c, self.h, self.dh, self.sat, self.dl, self.var, self.wh, self.wc, self.wl]
+    }
+
+    /// How much an OkLCh colour belongs to this sample's range (0..1, soft edges).
+    #[inline]
+    pub fn weight(&self, l: f32, c: f32, h: f32) -> f32 {
+        // hue is meaningless for near-neutral colours: a chromatic sample ignores them, a
+        // near-neutral sample selects by chroma and lightness only
+        let wh = if self.c < 0.02 { 1.0 } else { (1.0 - smooth(0.5 * self.wh, self.wh, wrap(h - self.h).abs())) * smooth(0.005, 0.025, c) };
+        if wh <= 0.0 {
+            return 0.0;
+        }
+        let wc = 1.0 - smooth(0.5 * self.wc, self.wc, (c - self.c).abs());
+        let wl = 1.0 - smooth(0.5 * self.wl, self.wl, (l - self.l).abs());
+        wh * wc * wl
+    }
+
+    /// Apply this sample's adjustment to an OkLCh colour.
+    #[inline]
+    pub fn apply(&self, lch: [f32; 3]) -> [f32; 3] {
+        let [mut l, mut c, mut h] = lch;
+        let w = self.weight(l, c, h);
+        if w <= 0.0 {
+            return lch;
+        }
+        h += w * (self.var * wrap(h - self.h) + self.dh);
+        c += w * self.var * (c - self.c);
+        c = (c * (1.0 + w * self.sat)).max(0.0);
+        l += w * (self.var * (l - self.l) + self.dl);
+        [l, c, h]
+    }
+}
+
 /// The colour tools' parameters, resolved once per render (fields are read by the GPU kernel).
 #[derive(Clone, Debug)]
 pub struct ColorOps {
@@ -65,6 +137,8 @@ pub struct ColorOps {
     pub sat: [f32; 8],
     pub lum: [f32; 8],
     pub mixer: bool,
+    /// Point Color samples that change something (applied after the mixer).
+    pub points: Vec<PointK>,
     pub bw: Option<[f32; 8]>,
     /// Wheels (shadows, midtones, highlights, global), blending, balance.
     pub grading: Option<([WheelK; 4], f32, f32)>,
@@ -89,6 +163,11 @@ impl ColorOps {
             sat: bands.map(|b| (b.sat / 100.0) as f32),
             lum: bands.map(|b| (b.lum / 100.0) as f32 * 0.18),
             mixer: !s.mixer.is_neutral(),
+            points: if crate::is_bw(s) {
+                Vec::new()
+            } else {
+                s.point_colors.iter().take(lightcraft_develop::MAX_POINT_COLORS).filter(|p| !p.is_neutral()).map(PointK::new).collect()
+            },
             bw: crate::is_bw(s).then(|| s.bw_mix.bands().map(|v| (v / 100.0) as f32)),
             grading: (!g.is_neutral()).then(|| {
                 (
@@ -102,7 +181,7 @@ impl ColorOps {
     }
 
     pub fn is_identity(&self) -> bool {
-        self.vibrance == 0.0 && self.saturation == 0.0 && !self.mixer && self.bw.is_none() && self.grading.is_none()
+        self.vibrance == 0.0 && self.saturation == 0.0 && !self.mixer && self.points.is_empty() && self.bw.is_none() && self.grading.is_none()
     }
 
     /// `local_sat` (−1..1) and `local_hue` (radians) come from masks.
@@ -125,6 +204,9 @@ impl ColorOps {
             h += dh * chroma_w;
             c *= (1.0 + ds).max(0.0);
             l += dl * chroma_w * l.max(0.05).sqrt();
+        }
+        for p in &self.points {
+            [l, c, h] = p.apply([l, c, h]);
         }
         if self.vibrance != 0.0 {
             let low = 1.0 - (c / 0.22).clamp(0.0, 1.0);
@@ -298,6 +380,43 @@ mod tests {
         assert!((y(dark) - 0.01).abs() < 1e-5);
         let green = calibrate([0.01, 0.01, 0.01], None, -1.0);
         assert!(green[1] > green[0]);
+    }
+
+    #[test]
+    fn point_color_targets_its_range() {
+        let skin = [0.35, 0.16, 0.09];
+        let [l, c, h] = lab_to_lch(oklab_from_2020(skin));
+        let sample =
+            PointColor { lum: l as f64, chroma: c as f64, hue: (h as f64).to_degrees(), hue_shift: 60.0, sat_shift: -50.0, ..Default::default() };
+        let mut s = DevelopSettings::default();
+        s.point_colors.push(sample);
+        let ops = ColorOps::new(&s);
+        let out = lab_to_lch(oklab_from_2020(ops.apply(skin, 0.0, 0.0)));
+        assert!(out[1] < c * 0.7, "chroma {c} -> {}", out[1]);
+        assert!(wrap(out[2] - h) > 0.2, "hue {h} -> {}", out[2]);
+        // far colours are untouched
+        for far in [[0.02, 0.05, 0.4], [0.05, 0.3, 0.05], [0.3, 0.3, 0.3]] {
+            let o = ops.apply(far, 0.0, 0.0);
+            assert!(far.iter().zip(&o).all(|(a, b)| (a - b).abs() < 1e-4), "{far:?} -> {o:?}");
+        }
+        // weight: 1 at the sample, falling to 0 outside the range; a wider range reaches further
+        let k = PointK::new(&sample);
+        assert!((k.weight(l, c, h) - 1.0).abs() < 1e-6);
+        assert_eq!(k.weight(l, c, h + 1.0), 0.0);
+        let wide = PointK::new(&PointColor { range: 100.0, ..sample });
+        assert!(wide.weight(l, c, h + 0.45) > k.weight(l, c, h + 0.45));
+    }
+
+    #[test]
+    fn point_color_variance_compresses_towards_the_sample() {
+        let p = PointColor { lum: 0.6, chroma: 0.1, hue: 40.0, variance: -100.0, range: 100.0, ..Default::default() };
+        let k = PointK::new(&p);
+        let (h0, near) = (40f32.to_radians(), 40f32.to_radians() + 0.1);
+        let o = k.apply([0.62, 0.11, near]);
+        assert!((o[2] - h0).abs() < 0.1 && (o[1] - 0.1).abs() < 0.01 && (o[0] - 0.6).abs() < 0.02, "{o:?}");
+        let k = PointK::new(&PointColor { variance: 100.0, ..p });
+        let o = k.apply([0.62, 0.11, near]);
+        assert!(o[2] - h0 > 0.1, "{o:?}");
     }
 
     #[test]

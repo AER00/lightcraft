@@ -34,6 +34,9 @@ pub mod spots;
 pub mod tone;
 pub mod transform;
 pub mod upright;
+pub mod visualize;
+
+pub use visualize::Overlay;
 
 use lightcraft_develop::{DevelopSettings, Treatment};
 use std::any::Any;
@@ -78,11 +81,13 @@ pub struct RenderRequest {
     pub quality: Quality,
     /// Show the crop frame's content only (true) or the whole uncropped image (crop tool active).
     pub apply_crop: bool,
+    /// A diagnostic view drawn over the result (e.g. Point Color's "visualize range").
+    pub overlay: Overlay,
 }
 
 impl RenderRequest {
     pub fn fit(max_w: usize, max_h: usize) -> Self {
-        Self { max_w, max_h, quality: Quality::Full, apply_crop: true }
+        Self { max_w, max_h, quality: Quality::Full, apply_crop: true, overlay: Overlay::None }
     }
 }
 
@@ -228,10 +233,11 @@ pub struct Plan<'a> {
 
 /// Resolve `s` against `src` for `req` (see [`Plan`]).
 pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &RenderRequest) -> Plan<'a> {
-    let settings: Cow<'a, DevelopSettings> = match profiles::effective(s) {
+    let mut settings: Cow<'a, DevelopSettings> = match profiles::effective(s) {
         Cow::Borrowed(b) => upright::resolve(src, info, b),
         Cow::Owned(o) => Cow::Owned(upright::resolve(src, info, &o).into_owned()),
     };
+    visualize::adjust_settings(req.overlay, &mut settings);
     let s = &*settings;
     let frame = frame_for(src, info, s, req.apply_crop);
     let (w, h) = frame.fit(req.max_w, req.max_h);
@@ -336,6 +342,8 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     lap("finish", &mut t);
     let histogram = Histogram::of_srgb8(&image);
     lap("histogram", &mut t);
+    let mut image = image;
+    visualize::apply(&mut image, req.overlay, &plan);
     Rendered { image, histogram }
 }
 

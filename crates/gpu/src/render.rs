@@ -486,6 +486,8 @@ pub fn render(
     lap("finish + readback", &mut t, &mut cx);
     let histogram = Histogram::of_srgb8(&image);
     lap("histogram", &mut t, &mut cx);
+    let mut image = image;
+    lightcraft_pipeline::visualize::apply(&mut image, req.overlay, &plan);
     Some(Rendered { image, histogram })
 }
 

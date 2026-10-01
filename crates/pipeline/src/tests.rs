@@ -177,7 +177,7 @@ fn stage_cache_matches_uncached_render_through_a_slider_session() {
     let info = SourceInfo { raw: true, ..Default::default() };
     let cache = StageCache::default();
     let full = RenderRequest::fit(200, 200);
-    let draft = RenderRequest { max_w: 120, max_h: 120, quality: Quality::Draft, apply_crop: true };
+    let draft = RenderRequest { quality: Quality::Draft, ..RenderRequest::fit(120, 120) };
     let mut s = typical_edits();
     // every kind of edit: tone, exposure, spatial amounts, NR, WB, crop, colour — at two sizes
     let steps: Vec<Box<dyn Fn(&mut DevelopSettings)>> = vec![

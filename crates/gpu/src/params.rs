@@ -2,6 +2,7 @@
 //! `finish` kernel reads (`F_*` constants, generated from [`FIELDS`]), plus its auxiliary tables.
 
 use lightcraft_develop::VignetteStyle;
+use lightcraft_pipeline::colorops::POINT_WORDS;
 use lightcraft_pipeline::finish::{FinishParams, MASK_TERMS, srgb_lut};
 
 /// Entries per tone-curve table (`lightcraft_pipeline::finish` builds them at this size).
@@ -37,6 +38,8 @@ const FIELDS: &[(&str, usize)] = &[
     ("MIX_HUE", 8),
     ("MIX_SAT", 8),
     ("MIX_LUM", 8),
+    ("NPC", 1),
+    ("PC", 8 * POINT_WORDS),
     ("BW", 1),
     ("BW_MIX", 8),
     ("GRADING", 1),
@@ -172,6 +175,9 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
     p.fs("MIX_HUE", &ops.hue);
     p.fs("MIX_SAT", &ops.sat);
     p.fs("MIX_LUM", &ops.lum);
+    p.u("NPC", ops.points.len().min(8) as u32);
+    let pc: Vec<f32> = ops.points.iter().take(8).flat_map(|k| k.words()).collect();
+    p.fs("PC", &pc);
     p.b("BW", ops.bw.is_some());
     p.fs("BW_MIX", &ops.bw.unwrap_or([0.0; 8]));
     if let Some((wheels, blending, balance)) = &ops.grading {

@@ -101,7 +101,7 @@ impl SettingsGroup {
             SettingsGroup::Light => &["light"],
             SettingsGroup::ToneCurve => &["curve"],
             SettingsGroup::Color => &["color"],
-            SettingsGroup::ColorMixer => &["mixer", "bw_mix"],
+            SettingsGroup::ColorMixer => &["mixer", "bw_mix", "point_colors"],
             SettingsGroup::ColorGrading => &["grading"],
             SettingsGroup::Effects => &["effects"],
             SettingsGroup::Vignette => &["vignette"],

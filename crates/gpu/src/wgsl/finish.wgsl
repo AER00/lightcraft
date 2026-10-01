@@ -51,6 +51,39 @@ fn band_weights(h: f32) -> array<f32, 8> {
     return w;
 }
 
+// `PointK::apply` for Point Color sample `k` (OkLCh in, OkLCh out).
+fn point_color(k: u32, lch: vec3<f32>) -> vec3<f32> {
+    let o = F_PC + k * POINT_WORDS;
+    let sl = pf(o);
+    let sc = pf(o + 1u);
+    let sh = pf(o + 2u);
+    let var_k = pf(o + 6u);
+    let wh_ = pf(o + 7u);
+    let wc_ = pf(o + 8u);
+    let wl_ = pf(o + 9u);
+    var l = lch.x;
+    var c = lch.y;
+    var h = lch.z;
+    var wh = 1.0;
+    if (sc >= 0.02) {
+        wh = (1.0 - sstep(0.5 * wh_, wh_, abs(wrap_angle(h - sh)))) * sstep(0.005, 0.025, c);
+    }
+    if (wh <= 0.0) {
+        return lch;
+    }
+    let wc = 1.0 - sstep(0.5 * wc_, wc_, abs(c - sc));
+    let wl = 1.0 - sstep(0.5 * wl_, wl_, abs(l - sl));
+    let w = wh * wc * wl;
+    if (w <= 0.0) {
+        return lch;
+    }
+    h += w * (var_k * wrap_angle(h - sh) + pf(o + 3u));
+    c += w * var_k * (c - sc);
+    c = max(c * (1.0 + w * pf(o + 4u)), 0.0);
+    l += w * (var_k * (l - sl) + pf(o + 5u));
+    return vec3<f32>(l, c, h);
+}
+
 // `ColorOps::apply`.
 fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
     if (pu(F_OPS_IDENTITY) != 0u && local_sat == 0.0 && local_hue == 0.0) {
@@ -74,6 +107,12 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
         h += dh * chroma_w;
         c *= max(1.0 + ds, 0.0);
         l += dl * chroma_w * sqrt(max(l, 0.05));
+    }
+    for (var k = 0u; k < pu(F_NPC); k++) {
+        let r = point_color(k, vec3<f32>(l, c, h));
+        l = r.x;
+        c = r.y;
+        h = r.z;
     }
     let vib = pf(F_VIBRANCE);
     if (vib != 0.0) {
