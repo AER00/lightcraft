@@ -61,14 +61,7 @@ pub struct ImportReport {
 /// default sharpening / colour noise reduction, and file-embedded lens corrections on (as the
 /// camera intended).
 pub fn import_defaults(p: &Photo) -> lightcraft_develop::DevelopSettings {
-    let mut d = match p.as_shot_wb {
-        Some((t, tint)) => lightcraft_develop::DevelopSettings::for_raw(t, tint),
-        None => lightcraft_develop::DevelopSettings::default(),
-    };
-    if p.embedded_lens.is_some() {
-        d.optics.lens_profile = true;
-    }
-    d
+    p.import_defaults()
 }
 
 /// Does the photo still look as imported (its embedded camera preview is then a fair stand-in)?
