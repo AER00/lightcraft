@@ -146,6 +146,27 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let job = if interacting { job.draft() } else { job };
         app.renderer.request(Slot::Main, job, 100);
     }
+    // once this photo is on screen: prepare its neighbours in filmstrip order (source decoded and
+    // kept, view render cached) so stepping to them is instant
+    if !interacting && !app.renderer.is_pending(Slot::Main) && app.renderer.textures.get(&Slot::Main).is_some_and(|t| t.photo == id) {
+        let ids = app.session.visible_cloned();
+        if let Some(i) = ids.iter().position(|p| *p == id) {
+            let next = ids.get(i + 1).copied();
+            let prev = i.checked_sub(1).and_then(|j| ids.get(j)).copied();
+            for (n, nid) in [next, prev].into_iter().enumerate() {
+                let Some(nid) = nid else { continue };
+                let Some(np) = app.session.catalog.photo(nid).cloned() else { continue };
+                let nf = Frame::with_lens(np.width.max(1) as usize, np.height.max(1) as usize, &np.develop, !crop_tool, np.embedded_lens.as_ref());
+                let na = nf.aspect() as f32;
+                let nr = fit_rect(main_area, na, app.ui.zoom, [np.width.max(1) as usize, np.height.max(1) as usize], ppp, app.ui.pan);
+                let nw = (nr.width().max(nr.height()) * ppp).min(2560.0) as usize;
+                let (w, h) = if na >= 1.0 { (nw, (nw as f32 / na) as usize) } else { ((nw as f32 * na) as usize, nw) };
+                if let Some(job) = app.session.loupe_job(nid, w.max(8), h.max(8), !crop_tool) {
+                    app.renderer.prefetch(Slot::Prefetch(n as u8), job, PREFETCH_PRIORITY);
+                }
+            }
+        }
+    }
     // until the loupe has this photo: show its cached render / embedded preview / a thumbnail
     if app.renderer.textures.get(&Slot::Main).is_none_or(|t| t.photo != id)
         && let Some(q) = app.session.quick_view_job(id, want.max(8), !crop_tool)
@@ -214,6 +235,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     resp.context_menu(|ui| super::grid::context_menu(app, ui, id));
 }
+
+/// Neighbour prefetch: below on-screen thumbnails, above background thumbnail refreshes.
+const PREFETCH_PRIORITY: u32 = 4;
 
 fn quick_name(q: lightcraft_engine::media::QuickSource) -> &'static str {
     use lightcraft_engine::media::QuickSource;

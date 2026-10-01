@@ -32,6 +32,9 @@ pub enum Slot {
     Preview,
     Before,
     Compare(u8),
+    /// Background preparation of a neighbouring photo (no texture: its decoded source and view
+    /// render are cached by the engine). 0 = next, 1 = previous.
+    Prefetch(u8),
 }
 
 pub struct Tex {
@@ -62,6 +65,8 @@ pub struct Renderer {
     stages: HashMap<Slot, Arc<StageCache>>,
     /// Slot → key of the last quick job requested for it (each is tried once).
     quick_tried: HashMap<Slot, u64>,
+    /// Prefetch slot → key of the last job submitted (each runs once).
+    prefetched: HashMap<Slot, u64>,
 }
 
 impl Default for Renderer {
@@ -76,6 +81,7 @@ impl Default for Renderer {
             keep_pixels: false,
             stages: HashMap::new(),
             quick_tried: HashMap::new(),
+            prefetched: HashMap::new(),
         }
     }
 }
@@ -109,6 +115,18 @@ impl Renderer {
             return;
         }
         self.quick_tried.insert(slot, job.key);
+        self.pending.insert(slot, (job.key, priority));
+        let key = job.key;
+        self.pool.submit(slot, key, priority, Box::new(move || job.run()));
+    }
+
+    /// Prepare a photo in the background (a [`Slot::Prefetch`] job runs once per key; a newer one
+    /// replaces it while queued). Memory stays bounded by the engine's source caches.
+    pub fn prefetch(&mut self, slot: Slot, job: RenderJob, priority: u32) {
+        if self.prefetched.get(&slot) == Some(&job.key) {
+            return;
+        }
+        self.prefetched.insert(slot, job.key);
         self.pending.insert(slot, (job.key, priority));
         let key = job.key;
         self.pool.submit(slot, key, priority, Box::new(move || job.run()));
@@ -160,6 +178,9 @@ impl Renderer {
             let Ok(rendered) = r.rendered else {
                 continue;
             };
+            if matches!(slot, Slot::Prefetch(_)) {
+                continue;
+            }
             if let Slot::ThumbQuick(id) = slot {
                 if self.textures.contains_key(&Slot::Thumb(id)) {
                     continue; // the real thumbnail won the race

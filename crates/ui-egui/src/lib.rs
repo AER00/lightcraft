@@ -87,6 +87,8 @@ pub struct LightcraftApp {
 
 impl LightcraftApp {
     pub fn new(session: Session, services: Services) -> Self {
+        // GPU device + kernels off the UI thread, before the first photo is opened
+        lightcraft_engine::gpu::warm_up();
         Self {
             session,
             ui: UiState::default(),
