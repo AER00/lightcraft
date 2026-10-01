@@ -1,7 +1,9 @@
 //! `cargo xtask web`: build `apps/lightcraft-web` for wasm32 and bundle it with `wasm-bindgen`
-//! into `<target>/web/` (index.html + worker.js + lightcraft_web.js + lightcraft_web_bg.wasm).
+//! into `<target>/web/` (index.html + worker.js + lightcraft_web.js + lightcraft_web_bg.wasm),
+//! with gzip and brotli precompressed copies (`*.gz`, `*.br`) next to each file.
 //! `--serve [port]` then serves that folder with a tiny static HTTP server (std only) that sends
-//! the cross-origin isolation headers (COOP/COEP).
+//! the cross-origin isolation headers (COOP/COEP) and the precompressed files when the browser
+//! accepts them.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -14,6 +16,9 @@ const TARGET: &str = "wasm32-unknown-unknown";
 
 /// Files copied from `apps/lightcraft-web/` into the bundle as they are.
 const STATIC_FILES: [&str; 2] = ["index.html", "worker.js"];
+
+/// Bundle files that get precompressed copies.
+const COMPRESSED: [&str; 4] = ["index.html", "worker.js", "lightcraft_web.js", "lightcraft_web_bg.wasm"];
 
 /// The `wasm-bindgen` version pinned in Cargo.lock (the CLI must match it exactly).
 fn locked_bindgen_version() -> Result<String, String> {
@@ -79,16 +84,49 @@ pub fn run(args: &[&str]) -> Result<(), String> {
     for f in STATIC_FILES {
         std::fs::copy(root().join("apps/lightcraft-web").join(f), out.join(f)).map_err(|e| format!("copy {f}: {e}"))?;
     }
+
+    // precompressed copies (skipped for --dev: they'd only slow the edit loop down)
+    println!("\n{:<26} {:>12} {:>12} {:>12}", "file", "bytes", "gzip -9", "brotli -11");
+    for f in COMPRESSED {
+        let p = out.join(f);
+        let raw = std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        let (gz, br) = if dev {
+            for ext in ["gz", "br"] {
+                let _ = std::fs::remove_file(out.join(format!("{f}.{ext}")));
+            }
+            (None, None)
+        } else {
+            let gz = gzip(&raw)?;
+            let br = brotli(&raw)?;
+            std::fs::write(out.join(format!("{f}.gz")), &gz).map_err(|e| format!("{f}.gz: {e}"))?;
+            std::fs::write(out.join(format!("{f}.br")), &br).map_err(|e| format!("{f}.br: {e}"))?;
+            (Some(gz.len()), Some(br.len()))
+        };
+        let show = |n: Option<usize>| n.map_or("-".to_string(), |n| n.to_string());
+        println!("{f:<26} {:>12} {:>12} {:>12}", raw.len(), show(gz), show(br));
+    }
     let size = std::fs::metadata(&bg).map(|m| m.len()).unwrap_or(0);
     println!("\nweb build ready: {} ({:.1} MB wasm)", out.display(), size as f64 / 1e6);
 
     match serve {
         Some(port) => serve_dir(&out, port),
         None => {
-            println!("serve it with `cargo xtask web --serve` (or any static HTTP server) and open http://127.0.0.1:8080/");
+            println!("serve it with `cargo xtask web --serve` (or any static HTTP server; see docs/web.md) and open http://127.0.0.1:8080/");
             Ok(())
         }
     }
+}
+
+fn gzip(data: &[u8]) -> Result<Vec<u8>, String> {
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    e.write_all(data).and_then(|_| e.finish()).map_err(|e| format!("gzip: {e}"))
+}
+
+fn brotli(data: &[u8]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let params = ::brotli::enc::BrotliEncoderParams { quality: 11, lgwin: 24, ..Default::default() };
+    ::brotli::BrotliCompress(&mut &data[..], &mut out, &params).map_err(|e| format!("brotli: {e}"))?;
+    Ok(out)
 }
 
 fn mime(path: &Path) -> &'static str {
@@ -116,14 +154,23 @@ pub const ISOLATION_HEADERS: [(&str, &str); 3] = [
     ("Cross-Origin-Resource-Policy", "same-origin"),
 ];
 
+/// Pick the precompressed variant to send: (`Content-Encoding`, file suffix).
+fn negotiate(accept_encoding: &str, has: impl Fn(&str) -> bool) -> Option<(&'static str, &'static str)> {
+    let accepts = |enc: &str| accept_encoding.split(',').any(|e| e.split(';').next().is_some_and(|n| n.trim().eq_ignore_ascii_case(enc)));
+    [("br", ".br"), ("gzip", ".gz")].into_iter().find(|(enc, suffix)| accepts(enc) && has(suffix))
+}
+
 /// Serve `dir` on 127.0.0.1:`port` (GET/HEAD only, no directory listing). Blocks.
 fn serve_dir(dir: &Path, port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|e| format!("bind 127.0.0.1:{port}: {e}"))?;
     println!("serving {} at http://127.0.0.1:{port}/  (Ctrl+C to stop)", dir.display());
     for stream in listener.incoming().flatten() {
-        if let Err(e) = handle(stream, dir) {
-            eprintln!("http: {e}");
-        }
+        let dir = dir.to_path_buf();
+        std::thread::spawn(move || {
+            if let Err(e) = handle(stream, &dir) {
+                eprintln!("http: {e}");
+            }
+        });
     }
     Ok(())
 }
@@ -132,9 +179,14 @@ fn handle(mut stream: TcpStream, dir: &Path) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut line = String::new();
     reader.read_line(&mut line)?;
-    // drain headers
+    let mut accept_encoding = String::new();
     let mut h = String::new();
     while reader.read_line(&mut h)? > 2 {
+        if let Some((k, v)) = h.split_once(':')
+            && k.trim().eq_ignore_ascii_case("accept-encoding")
+        {
+            accept_encoding = v.trim().to_string();
+        }
         h.clear();
     }
     let mut parts = line.split_whitespace();
@@ -145,12 +197,25 @@ fn handle(mut stream: TcpStream, dir: &Path) -> std::io::Result<()> {
     let rel = if rel.is_empty() { "index.html" } else { rel };
     let file = dir.join(rel);
     let safe = !rel.split('/').any(|c| c == ".." || c.contains('\\'));
-    let (status, body, ctype) = match (method, safe, std::fs::read(&file)) {
+    let encoding = if safe { negotiate(&accept_encoding, |suffix| dir.join(format!("{rel}{suffix}")).is_file()) } else { None };
+    let read = match encoding {
+        Some((_, suffix)) => std::fs::read(dir.join(format!("{rel}{suffix}"))),
+        None => std::fs::read(&file),
+    };
+    let (status, body, ctype) = match (method, safe, read) {
         ("GET" | "HEAD", true, Ok(b)) => ("200 OK", b, mime(&file)),
         ("GET" | "HEAD", _, _) => ("404 Not Found", b"not found".to_vec(), "text/plain"),
         _ => ("405 Method Not Allowed", Vec::new(), "text/plain"),
     };
-    let mut head = format!("HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\n", body.len());
+    let mut head = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\nVary: Accept-Encoding\r\n",
+        body.len()
+    );
+    if status.starts_with("200")
+        && let Some((enc, _)) = encoding
+    {
+        head.push_str(&format!("Content-Encoding: {enc}\r\n"));
+    }
     for (k, v) in ISOLATION_HEADERS {
         head.push_str(&format!("{k}: {v}\r\n"));
     }
@@ -176,5 +241,28 @@ mod tests {
     fn wasm_mime() {
         assert_eq!(mime(Path::new("a/lightcraft_web_bg.wasm")), "application/wasm");
         assert_eq!(mime(Path::new("index.html")), "text/html; charset=utf-8");
+        assert_eq!(mime(Path::new("worker.js")), "text/javascript; charset=utf-8");
+    }
+
+    #[test]
+    fn encoding_negotiation() {
+        let all = |_: &str| true;
+        assert_eq!(negotiate("gzip, deflate, br, zstd", all), Some(("br", ".br")));
+        assert_eq!(negotiate("gzip;q=1.0", all), Some(("gzip", ".gz")));
+        assert_eq!(negotiate("gzip, br", |s| s == ".gz"), Some(("gzip", ".gz")));
+        assert_eq!(negotiate("", all), None);
+        assert_eq!(negotiate("identity", all), None);
+    }
+
+    #[test]
+    fn compressors_round_trip_sizes() {
+        let data: Vec<u8> = (0..20_000u32).flat_map(|i| (i % 97).to_le_bytes()).collect();
+        let gz = gzip(&data).unwrap();
+        let br = brotli(&data).unwrap();
+        assert!(gz.len() < data.len() / 4 && br.len() < data.len() / 4, "{} {} {}", data.len(), gz.len(), br.len());
+        assert_eq!(&gz[..2], &[0x1f, 0x8b], "gzip magic");
+        let mut back = Vec::new();
+        std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&gz[..]), &mut back).unwrap();
+        assert_eq!(back, data);
     }
 }

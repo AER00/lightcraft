@@ -28,7 +28,29 @@ it serves `.wasm` as `application/wasm`. The bundle can't be opened from `file:/
 workers and OPFS need an HTTP(S) origin; `localhost`/`127.0.0.1` count as secure). If `wasm-opt`
 (binaryen) is on `PATH`, the release build also runs it over the module.
 
-The release build uses the `web` Cargo profile (release + thin LTO, no debug info).
+The release build uses the `web` Cargo profile (see *Bundle size* below) and writes gzip (`-9`)
+and brotli (`-11`) precompressed copies next to each file (`*.gz`, `*.br`, pure Rust, printed
+as a size table). `--serve` sends them with `Content-Encoding` when the browser accepts them;
+configure a production server the same way (e.g. nginx `gzip_static`/`brotli_static`).
+
+## Bundle size
+
+Measured on the full bundle (every codec and raw decoder is in the module), without `wasm-opt`:
+
+| `web` profile                                   | `.wasm` bytes | gzip -9 | brotli -11 | slider job* |
+|-------------------------------------------------|--------------:|--------:|-----------:|------------:|
+| before: release, thin LTO                       |    15 742 091 | 5 251 664 | 3 473 726 | 3.8 ms |
+| fat LTO, 1 CGU, strip, panic=abort, opt 3       |    12 924 849 | 4 779 686 | 3 210 246 | 3.9 ms |
+| same, opt-level "s"                             |    13 056 715 | 4 362 536 | 2 959 126 | 6.1 ms |
+| same, opt-level "z"                             |    12 648 958 | 4 152 661 | 2 860 173 | 9.0 ms |
+| **current:** "s", per-pixel crates at opt 3     |    13 533 126 | 4 583 465 | 3 093 780 | 4.0 ms |
+
+\* median Exposure draft render of the `?bench` loupe in a worker (stage-cached), headless
+Chrome. Size-optimizing the pipeline crates costs 50–130 % render time, so `Cargo.toml` keeps
+them (pipeline, raster, color, develop, geom, raw, codecs, scenes, preview and the JPEG/PNG
+codecs) at opt-level 3 and the rest (egui, eframe, serde, glue) at "s". What goes over the wire
+is the brotli column: 3.1 MB, 11 % less than the old build's brotli size and 41 % less than its
+gzip size (5.25 MB). `wasm-opt -Oz`, when installed, shrinks it further.
 
 ## Deploying: headers
 
