@@ -451,6 +451,46 @@ impl crate::Session {
         })
     }
 
+    /// A render of `id` with `settings` in place of its own, fitting `max_w × max_h` (the loupe's
+    /// temporary preview while hovering a preset or profile; nothing is committed or cached).
+    pub fn preview_job(&mut self, id: PhotoId, max_w: usize, max_h: usize, apply_crop: bool, settings: &DevelopSettings) -> Option<RenderJob> {
+        let mut job = self.render_job(id, max_w, max_h, false, apply_crop)?;
+        job.settings = Arc::new(settings.clone());
+        job.key = settings.hash64() ^ ((max_w as u64) << 40) ^ ((max_h as u64) << 20) ^ (apply_crop as u64) ^ (job.level as u64) << 60;
+        Some(job)
+    }
+
+    /// Cache key of a variant thumbnail ([`Self::variant_job`]).
+    pub fn variant_key(p: &Photo, settings: &DevelopSettings, edge: usize) -> Hash128 {
+        Hasher128::new().str(&content_key(p)).str("variant").u64(settings.hash64()).u64(edge as u64).u64(RENDER_CACHE_VERSION).finish()
+    }
+
+    /// A thumbnail of `id` rendered with `settings` instead of its own (profile and preset
+    /// browsers): from the thumbnail-level source, long edge `edge` (≤ 512), cropped. The result
+    /// is cached (memory + the library's disk cache) under the photo's content and the settings
+    /// hash, so a variant renders once; `key` is derived from the same hash, so a frontend can
+    /// keep one texture per variant.
+    pub fn variant_job(&mut self, id: PhotoId, settings: &DevelopSettings, edge: usize) -> Option<RenderJob> {
+        let p = self.catalog.photo(id)?.clone();
+        let edge = edge.clamp(16, SourceLevel::Thumb.max_edge());
+        let level = SourceLevel::Thumb;
+        let source = self.media.source_ref(&p, level);
+        let ck = Self::variant_key(&p, settings, edge);
+        Some(RenderJob {
+            photo: id,
+            level,
+            source,
+            origin: p.source.clone(),
+            info: source_info(&p),
+            settings: Arc::new(settings.clone()),
+            request: RenderRequest { apply_crop: true, ..RenderRequest::fit(edge, edge) },
+            key: (ck.0 as u64) ^ ((ck.0 >> 64) as u64),
+            cache: Some((self.media.rendered.clone(), ck)),
+            stages: None,
+            view_cache: None,
+        })
+    }
+
     /// Size-independent cache key of a photo's view render (loupe) for its current settings.
     fn view_key(p: &Photo, apply_crop: bool) -> Hash128 {
         Hasher128::new().str(&content_key(p)).str("view").u64(p.develop.hash64()).u64(apply_crop as u64).u64(RENDER_CACHE_VERSION).finish()
@@ -575,5 +615,45 @@ mod tests {
         let plain: Vec<_> = s.catalog.photos().filter(|p| !p.is_edited()).map(|p| p.id).take(2).collect();
         let (a, b) = (s.render_job(plain[0], 1600, 1600, false, true).unwrap(), s.render_job(plain[1], 1600, 1600, false, true).unwrap());
         assert_ne!(a.key, b.key);
+    }
+
+    #[test]
+    fn variant_jobs_have_their_own_keys_and_hit_the_cache() {
+        let mut s = crate::Session::with_demo();
+        let id = s.active().unwrap();
+        let mine = (*s.develop_of(id).unwrap()).clone();
+        let with = |pid: &str| {
+            let mut d = mine.clone();
+            d.profile.id = pid.into();
+            d
+        };
+        let (a, b) = (with("lc.vivid"), with("lc.bw.sepia"));
+        let ja = s.variant_job(id, &a, 128).unwrap();
+        let jb = s.variant_job(id, &b, 128).unwrap();
+        assert_ne!(ja.key, jb.key, "keys differ per settings");
+        assert_eq!(ja.key, s.variant_job(id, &a, 128).unwrap().key, "stable");
+        assert_ne!(ja.key, s.variant_job(id, &a, 256).unwrap().key, "and per size");
+        assert_ne!(ja.key, s.thumb_job(id, 128).unwrap().key, "not the photo's own thumbnail");
+        assert_eq!(ja.level, SourceLevel::Thumb);
+        let (cache, ck) = ja.cache.clone().unwrap();
+        assert!(cache.get(ck).is_none());
+        let r = ja.run();
+        s.accept(&r);
+        let first = r.rendered.unwrap().image;
+        assert!(first.width.max(first.height) <= 128);
+        assert!(cache.get(ck).is_some(), "rendered variants are cached");
+        assert!(cache.get(jb.cache.as_ref().unwrap().1).is_none());
+        // a second job for the same variant is served from the cache, pixel for pixel
+        let again = s.variant_job(id, &a, 128).unwrap().run();
+        assert!(again.loaded.is_none());
+        assert_eq!(again.rendered.unwrap().image.as_bytes(), first.as_bytes());
+        let other = jb.run().rendered.unwrap().image;
+        assert_ne!(other.as_bytes(), first.as_bytes());
+        // the photo's own settings never changed
+        assert_eq!(*s.develop_of(id).unwrap(), mine);
+        // hover previews: a loupe-sized job with other settings, its own key
+        let pv = s.preview_job(id, 800, 600, true, &a).unwrap();
+        assert_ne!(pv.key, s.render_job(id, 800, 600, false, true).unwrap().key);
+        assert_eq!(*pv.settings, a);
     }
 }
