@@ -127,11 +127,18 @@ fn layer_h(l: &Layer, x: f32) -> f32 {
 
 /// Terrain shading for a layer hit at (x, v) whose crest is at `top`.
 fn terrain(l: &Layer, x: f32, v: f32, top: f32, sun_x: f32, sun_col: C, haze_col: C) -> C {
-    let e = 0.012;
-    let slope = (layer_h_lo(l, x + e) - layer_h_lo(l, x - e)) / (2.0 * e);
-    let dir = if sun_x > x { 1.0 } else { -1.0 };
-    let face = (slope * dir * 1.6).clamp(-1.0, 1.0);
     let depth = (v - top).max(0.0);
+    // Facets: slope of the low-octave crest, sampled with a wide stencil (ridged noise has creases
+    // whose slope jumps would otherwise become full-height vertical stripes) at an x warped with
+    // depth so faces lean and break up instead of running straight down.
+    let e = 0.035;
+    let xs = x + fbm(x * 7.0, v * 7.0, l.seed ^ 31, 2) * 0.03 + depth * 0.15 * (sun_x - x).signum();
+    let slope = (layer_h_lo(l, xs + e) - layer_h_lo(l, xs - e)) / (2.0 * e);
+    // Light direction blends smoothly through the sun's x (no hard flip).
+    let dir = ((sun_x - x) * 10.0).tanh();
+    let face = (slope * dir * 1.6).clamp(-1.0, 1.0) * (1.0 - smooth(0.0, 0.6, depth) * 0.5)
+        // aerial perspective: distant (hazy) ranges have little facet contrast
+        * (1.0 - l.haze * 1.6).max(0.15);
     let tex = fbm(x * 38.0, v * 38.0, l.seed ^ 77, 4) * 0.12;
     let light = (0.62 + 0.38 * face + tex).max(0.05);
     let mut c = mul(l.col, light * (1.0 - (depth * 2.5).min(0.45)));
