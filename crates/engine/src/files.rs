@@ -34,6 +34,54 @@ fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
     (meta, m.capture_time.as_ref().map(|d| d.to_iso()))
 }
 
+/// Lens corrections embedded in a DNG's `OpcodeList3` (`WarpRectilinear`, `FixVignetteRadial`), re-expressed for
+/// the default-cropped, EXIF-oriented image. These are the only "profile" corrections LightCraft applies.
+pub fn embedded_lens(raw: &lightcraft_raw::RawImage) -> Option<lightcraft_develop::EmbeddedLens> {
+    use lightcraft_develop::{EmbeddedLens, EmbeddedVignette, EmbeddedWarp};
+    use lightcraft_geom::Point;
+    let (aw, ah) = (raw.active_area.width as f64, raw.active_area.height as f64);
+    if aw < 2.0 || ah < 2.0 {
+        return None;
+    }
+    let c = raw.crop.clipped(raw.active_area.width, raw.active_area.height);
+    let (cx0, cy0, cw, ch) =
+        if c.width == 0 || c.height == 0 { (0.0, 0.0, aw, ah) } else { (c.x as f64, c.y as f64, c.width as f64, c.height as f64) };
+    let long = cw.max(ch);
+    // opcode centres are relative to the (uncropped) active area, in pixel-index units
+    let centre = |rel: [f64; 2]| -> (Point, f64) {
+        let (px, py) = (rel[0] * (aw - 1.0), rel[1] * (ah - 1.0));
+        let m = [(0.0, 0.0), (aw - 1.0, 0.0), (0.0, ah - 1.0), (aw - 1.0, ah - 1.0)]
+            .iter()
+            .map(|&(x, y)| (x - px).hypot(y - py))
+            .fold(0.0, f64::max)
+            .max(1e-9);
+        (Point::new((px + 0.5 - cx0) / cw, (py + 0.5 - cy0) / ch), m / long)
+    };
+    let mut lens = EmbeddedLens::default();
+    for op in &raw.opcodes.list3 {
+        match op {
+            lightcraft_raw::Opcode::WarpRectilinear { planes, center } if !planes.is_empty() && lens.warp.is_none() => {
+                let (center, radius) = centre(*center);
+                let p = |i: usize| planes[i.min(planes.len() - 1)];
+                lens.warp = Some(EmbeddedWarp { planes: [p(0), p(1), p(2)], center, radius });
+            }
+            lightcraft_raw::Opcode::FixVignetteRadial { k, center } if lens.vignette.is_none() => {
+                let (center, radius) = centre(*center);
+                lens.vignette = Some(EmbeddedVignette { k: *k, center, radius });
+            }
+            _ => {}
+        }
+    }
+    if lens.warp.is_none() && lens.vignette.is_none() {
+        return None;
+    }
+    Some(lightcraft_pipeline::optics::reorient_lens(&lens, raw.orientation, cw, ch))
+}
+
+fn is_lens_opcode(op: &lightcraft_raw::Opcode) -> bool {
+    matches!(op, lightcraft_raw::Opcode::WarpRectilinear { .. } | lightcraft_raw::Opcode::FixVignetteRadial { .. })
+}
+
 fn ext_upper(name: &str) -> String {
     std::path::Path::new(name).extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_default()
 }
@@ -54,7 +102,9 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         }
         let (t, tint) = xy_to_temp_tint(lightcraft_raw::color::as_shot_white_xy(&raw));
         let as_shot_wb = Some((t.round(), tint.round()));
+        let embedded_lens = embedded_lens(&raw);
         return Ok(ProbeInfo {
+            embedded_lens,
             width: w,
             height: h,
             format: ext_upper(name),
@@ -91,13 +141,17 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         meta,
         as_shot_wb: None,
         content_hash,
+        embedded_lens: None,
     })
 }
 
 /// Decode a file into a linear Rec.2020 image no larger than `max_edge`, oriented.
 pub fn load_bytes(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
     if lightcraft_raw::probe(bytes).is_some() {
-        let raw = lightcraft_raw::decode(bytes).map_err(|e| e.to_string())?;
+        let mut raw = lightcraft_raw::decode(bytes).map_err(|e| e.to_string())?;
+        // Embedded lens corrections are applied by the pipeline ("Enable Profile Corrections"), not baked in.
+        let lens = embedded_lens(&raw);
+        raw.opcodes.list3.retain(|op| !is_lens_opcode(op));
         let method = if max_edge <= 600 { lightcraft_raw::Method::Bilinear } else { lightcraft_raw::Method::Ahd };
         let mut img = raw.develop(method).map_err(|e| e.to_string())?;
         let xy = lightcraft_raw::color::as_shot_white_xy(&raw);
@@ -116,7 +170,7 @@ pub fn load_bytes(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo),
         });
         let img = fit(&img, max_edge, max_edge, Filter::Box).oriented(raw.orientation);
         let (temp, tint) = xy_to_temp_tint(xy);
-        return Ok((img, SourceInfo { raw: true, as_shot_temp: temp.round(), as_shot_tint: tint.round() }));
+        return Ok((img, SourceInfo { raw: true, as_shot_temp: temp.round(), as_shot_tint: tint.round(), lens }));
     }
     let d = lightcraft_codecs::decode(bytes, lightcraft_codecs::DecodeOptions::fit(max_edge as u32, max_edge as u32)).map_err(|e| e.to_string())?;
     let img = d.to_working();

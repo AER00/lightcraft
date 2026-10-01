@@ -146,6 +146,10 @@ pub struct Photo {
     /// Hash of the file's bytes (hex), for duplicate detection and preview-cache keys.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<String>,
+    /// Lens corrections embedded in the file (DNG `WarpRectilinear` / `FixVignetteRadial`), applied when
+    /// "Enable Profile Corrections" is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedded_lens: Option<lightcraft_develop::EmbeddedLens>,
 }
 
 impl Photo {
@@ -173,6 +177,7 @@ impl Photo {
             duration: None,
             as_shot_wb: None,
             content_hash: None,
+            embedded_lens: None,
         }
     }
     pub fn is_edited(&self) -> bool {

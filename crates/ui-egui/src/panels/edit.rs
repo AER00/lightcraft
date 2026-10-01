@@ -213,18 +213,51 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
     });
     section(app, ui, &d, "optics", "Optics", |app, ui, d| {
+        let has_lens = app.session.catalog.photo(id).is_some_and(|p| p.embedded_lens.is_some());
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 4, bottom: 4 }).show(ui, |ui| {
             let mut ca = d.optics.remove_ca;
             if ui.checkbox(&mut ca, "Remove Chromatic Aberration").changed() {
                 let _ = app.run("develop.merge", json!({"settings": {"optics": {"remove_ca": ca}}, "label": "Remove CA"}));
             }
             let mut lp = d.optics.lens_profile;
-            if ui.checkbox(&mut lp, "Use Lens Corrections").changed() {
+            if ui.checkbox(&mut lp, "Enable Lens Corrections").changed() {
                 let _ = app.run("develop.merge", json!({"settings": {"optics": {"lens_profile": lp}}, "label": "Lens Corrections"}));
             }
+            if lp && !has_lens {
+                ui.label(
+                    egui::RichText::new("No lens data embedded in this file (DNG lens opcodes only).")
+                        .size(11.0)
+                        .color(Tokens::get(ui.ctx()).text_dim),
+                );
+            }
         });
-        for c in ["optics.distortion", "optics.vignetting", "optics.vignettingMidpoint", "optics.defringePurple", "optics.defringeGreen"] {
+        if d.optics.lens_profile {
+            for c in ["optics.profileDistortion", "optics.profileVignetting"] {
+                control(app, ui, d, c, has_lens);
+            }
+        }
+        sub_title(ui, "Manual");
+        for c in ["optics.distortion", "optics.vignetting"] {
             control(app, ui, d, c, true);
+        }
+        control(app, ui, d, "optics.vignettingMidpoint", d.optics.vignetting != 0.0);
+        ui.add_space(6.0);
+        let open = app.ui.flyout_open("defringe");
+        if flyout_row(ui, "defringe", "Defringe", Icon::Picker, open).clicked() {
+            app.ui.toggle_flyout("defringe");
+        }
+        if open {
+            control(app, ui, d, "optics.defringePurple", true);
+            let on = d.optics.defringe_purple_amount > 0.0;
+            control(app, ui, d, "optics.defringePurpleHueLo", on);
+            control(app, ui, d, "optics.defringePurpleHueHi", on);
+            control(app, ui, d, "optics.defringeGreen", true);
+            let on = d.optics.defringe_green_amount > 0.0;
+            control(app, ui, d, "optics.defringeGreenHueLo", on);
+            control(app, ui, d, "optics.defringeGreenHueHi", on);
+            sub_title(ui, "Lateral Chromatic Aberration");
+            control(app, ui, d, "optics.caRed", true);
+            control(app, ui, d, "optics.caBlue", true);
         }
         ui.add_space(8.0);
     });

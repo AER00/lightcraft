@@ -98,7 +98,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
     let d = (*photo.develop).clone();
     let crop_tool = app.ui.right == RightPanel::Crop;
-    let frame = Frame::new(photo.width.max(1) as usize, photo.height.max(1) as usize, &d, !crop_tool);
+    let frame = Frame::with_lens(photo.width.max(1) as usize, photo.height.max(1) as usize, &d, !crop_tool, photo.embedded_lens.as_ref());
     let aspect = frame.aspect() as f32;
     let ppp = ui.ctx().pixels_per_point();
     let area = canvas.shrink(if crop_tool { 48.0 } else { 24.0 });

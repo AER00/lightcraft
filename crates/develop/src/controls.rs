@@ -213,7 +213,13 @@ controls! {
     "optics.profileDistortion" => optics.profile_distortion, "Profile Distortion", Optics, 0, 200, 100, 1, 0, Plain;
     "optics.profileVignetting" => optics.profile_vignetting, "Profile Vignetting", Optics, 0, 200, 100, 1, 0, Plain;
     "optics.defringePurple" => optics.defringe_purple_amount, "Purple Amount", Optics, 0, 20, 0, 1, 0, Gradient { from: "#7a7a7a", to: "#a040d0" };
+    "optics.defringePurpleHueLo" => optics.defringe_purple_hue_lo, "Purple Hue Low", Optics, 0, 90, 30, 1, 0, Gradient { from: "#6040e0", to: "#d040b0" };
+    "optics.defringePurpleHueHi" => optics.defringe_purple_hue_hi, "Purple Hue High", Optics, 10, 100, 70, 1, 0, Gradient { from: "#6040e0", to: "#d040b0" };
     "optics.defringeGreen" => optics.defringe_green_amount, "Green Amount", Optics, 0, 20, 0, 1, 0, Gradient { from: "#7a7a7a", to: "#40c040" };
+    "optics.defringeGreenHueLo" => optics.defringe_green_hue_lo, "Green Hue Low", Optics, 0, 90, 40, 1, 0, Gradient { from: "#c0d030", to: "#30c0b0" };
+    "optics.defringeGreenHueHi" => optics.defringe_green_hue_hi, "Green Hue High", Optics, 10, 100, 60, 1, 0, Gradient { from: "#c0d030", to: "#30c0b0" };
+    "optics.caRed" => optics.ca_red, "Red/Cyan Fringe", Optics, -100, 100, 0, 1, 0, Gradient { from: "#30c0c0", to: "#e04040" };
+    "optics.caBlue" => optics.ca_blue, "Blue/Yellow Fringe", Optics, -100, 100, 0, 1, 0, Gradient { from: "#d0c030", to: "#4060e0" };
     "geometry.vertical" => geometry.vertical, "Vertical", Geometry, -100, 100, 0, 1, 0, Centered;
     "geometry.horizontal" => geometry.horizontal, "Horizontal", Geometry, -100, 100, 0, 1, 0, Centered;
     "geometry.rotate" => geometry.rotate, "Rotate", Geometry, -10, 10, 0, 0.1, 1, Centered;

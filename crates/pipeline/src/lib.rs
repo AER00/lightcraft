@@ -5,7 +5,8 @@
 //! requested size, and its histogram.
 //!
 //! Stage order (see `docs/pipeline.md`):
-//! 1. geometry — user orientation, crop + straighten, flips; one resample at output resolution
+//! 1. geometry — user orientation, lens corrections (distortion, CA, vignetting), perspective, crop +
+//!    straighten, flips; one resample at output resolution; then defringe
 //! 2. scene-linear — white balance, exposure, dehaze, local tone (highlights/shadows), texture,
 //!    clarity, local adjustments (masks)
 //! 3. tone map — contrast / whites / blacks filmic curve on luminance, highlight desaturation
@@ -22,6 +23,7 @@ mod finish;
 pub mod geometry;
 mod local;
 pub mod masks;
+pub mod optics;
 pub mod profiles;
 pub mod spots;
 mod tone;
@@ -34,6 +36,8 @@ pub use tone::ToneMap;
 /// Facts about the source the settings are interpreted against.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SourceInfo {
+    /// Lens corrections embedded in the file (DNG opcodes), relative to the EXIF-oriented source.
+    pub lens: Option<lightcraft_develop::EmbeddedLens>,
     /// Raw sources use absolute Kelvin white balance; rendered sources use a relative scale around
     /// their as-shot white.
     pub raw: bool,
@@ -43,7 +47,7 @@ pub struct SourceInfo {
 
 impl Default for SourceInfo {
     fn default() -> Self {
-        Self { raw: false, as_shot_temp: 6500.0, as_shot_tint: 0.0 }
+        Self { raw: false, as_shot_temp: 6500.0, as_shot_tint: 0.0, lens: None }
     }
 }
 
@@ -95,6 +99,15 @@ pub fn output_size(src_w: usize, src_h: usize, s: &DevelopSettings, req: &Render
     geometry::Frame::new(src_w, src_h, s, req.apply_crop).fit(req.max_w, req.max_h)
 }
 
+/// The geometric frame `render` uses for `src` (lens data, automatic CA estimate included).
+pub fn frame_for(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, apply_crop: bool) -> geometry::Frame {
+    let mut frame = geometry::Frame::with_lens(src.width, src.height, s, apply_crop, info.lens.as_ref());
+    if s.optics.remove_ca && s.section_enabled("optics") {
+        frame.add_lateral_ca(optics::estimate_lateral_ca(src));
+    }
+    frame
+}
+
 /// Render `src` with settings `s`.
 pub fn render(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest) -> Rendered {
     let prof = std::env::var_os("LIGHTCRAFT_PROFILE").is_some();
@@ -107,13 +120,14 @@ pub fn render(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &Render
     };
     let mut t = prof.then(std::time::Instant::now);
     let s = &*profiles::effective(s);
-    let frame = geometry::Frame::new(src.width, src.height, s, req.apply_crop);
+    let frame = frame_for(src, info, s, req.apply_crop);
     let (w, h) = frame.fit(req.max_w, req.max_h);
     let mut img = frame.sample(src, w, h);
     lap("sample", &mut t);
     let px_per_long = frame.px_per_long(w);
 
     local::scene_linear_pre(&mut img, info, s);
+    optics::defringe(&mut img, s, px_per_long / optics::DEFRINGE_REF_LONG);
     spots::apply(&mut img, &s.spots, &frame, px_per_long);
     local::denoise(&mut img, s, src.width.max(src.height), w.max(h));
     lap("wb/exposure/spots/nr", &mut t);
@@ -162,3 +176,5 @@ pub(crate) fn for_rows<T: Send>(data: &mut [T], w: usize, f: impl Fn(usize, &mut
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_geometry;

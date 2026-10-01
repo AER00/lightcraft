@@ -419,6 +419,10 @@ pub struct Optics {
     pub distortion: f64,
     pub vignetting: f64,
     pub vignetting_midpoint: f64,
+    /// Manual lateral chromatic aberration (red/cyan, blue/yellow fringes), −100..100, added to the
+    /// automatic estimate when `remove_ca` is on.
+    pub ca_red: f64,
+    pub ca_blue: f64,
 }
 
 impl Default for Optics {
@@ -437,8 +441,40 @@ impl Default for Optics {
             distortion: 0.0,
             vignetting: 0.0,
             vignetting_midpoint: 50.0,
+            ca_red: 0.0,
+            ca_blue: 0.0,
         }
     }
+}
+
+/// Lens corrections embedded in a DNG file (`OpcodeList3`: `WarpRectilinear`, `FixVignetteRadial`), converted
+/// to the oriented, default-cropped image. This is camera/file data (stored on the photo record, not in the develop
+/// settings); "Enable Profile Corrections" applies it, scaled by the profile distortion/vignetting amounts.
+/// LightCraft never uses Adobe LCP lens profiles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EmbeddedLens {
+    pub warp: Option<EmbeddedWarp>,
+    pub vignette: Option<EmbeddedVignette>,
+}
+
+/// DNG `WarpRectilinear`: per plane (R, G, B) `[kr0, kr1, kr2, kr3, kt0, kt1]`. For an output (corrected) point at
+/// offset `d = (p − center) / radius`, the source point is `center + radius · (d·f(r²) + tangential(d))`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EmbeddedWarp {
+    pub planes: [[f64; 6]; 3],
+    /// Optical centre, normalized to the oriented image (0..1).
+    pub center: Point,
+    /// Normalisation radius as a fraction of the oriented image's long edge.
+    pub radius: f64,
+}
+
+/// DNG `FixVignetteRadial`: gain `1 + k0 r² + k1 r⁴ + … + k4 r¹⁰` with `r = |p − center| / radius`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EmbeddedVignette {
+    pub k: [f64; 5],
+    pub center: Point,
+    pub radius: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
