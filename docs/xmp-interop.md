@@ -1,0 +1,93 @@
+# XMP sidecars and interchange
+
+LightCraft keeps its catalog as the source of truth, and can also store each photo's metadata and develop settings in
+an XMP sidecar next to the original. Sidecars let edits travel with the files (backups, another LightCraft library,
+other tools), and let LightCraft pick up edits made elsewhere.
+
+## Sidecar files
+
+| | |
+|---|---|
+| Name | `<stem>.xmp` by default (`IMG_0001.CR3` → `IMG_0001.xmp`); `<file>.xmp` (`IMG_0001.CR3.xmp`) with `naming: "full"`. Reading accepts either (preferred first) and `.XMP`. |
+| Write | `photo.saveMetadataToFile {ids?}` (Photo ▸ Save Metadata to File, ⌘S), or automatically after every change with `library.xmpPreferences {autoWrite: true}` (File ▸ Automatically Write Changes into XMP). Slider drags are written once, when the drag ends; undo/redo rewrite the sidecar. Written atomically (temp file + rename). |
+| Read | On import (`library.import`, the report counts `sidecars`), and `photo.readMetadataFromFile {ids?}` (one undo step). For raw/DNG files without a sidecar, the XMP embedded in the file is used. |
+| Preferences | `library.xmpPreferences {autoWrite?, naming?: stem\|full}`, stored in the library's `prefs.json`. |
+
+What we write (standard namespaces, so other tools can read the metadata):
+
+| Field | XMP property |
+|---|---|
+| Rating 0–5 | `xmp:Rating` |
+| Colour label | `xmp:Label` (`Red`, `Yellow`, `Green`, `Blue`, `Purple`) |
+| Title / caption / copyright / creator | `dc:title` / `dc:description` / `dc:rights` / `dc:creator` |
+| Keywords | `dc:subject` |
+| Capture time, GPS | `exif:DateTimeOriginal`, `photoshop:DateCreated`, `exif:GPSLatitude`/`GPSLongitude` |
+| Pick / reject flag | `lc:flag` (`pick`, `reject`, `none`) |
+| Location | `lc:location` |
+| Develop settings | `lc:settings` — our complete `DevelopSettings` as JSON (exact round trip, incl. masks, spots, crop) |
+
+`lc:` is `http://ns.lightcraft.app/lc/1.0/`.
+
+Reading merges into the catalog with the **sidecar winning** for every field it states; fields it doesn't state are
+kept. `xmp:Rating="-1"` (the XMP convention for rejected) sets the reject flag. Develop settings come from
+`lc:settings` when present (exact); otherwise from the `crs:` fields below (approximate).
+
+## Reading `crs:` develop fields
+
+Many raw developers store edits as `crs:` properties (`http://ns.adobe.com/camera-raw-settings/1.0/`) in sidecars, in
+DNG files and in XMP presets. LightCraft reads the common ones and maps them to its own controls. We implemented this
+from the public XMP specification and by observing what each field does; no third-party code or preset files were used.
+Our pipeline renders differently, so **values carry over but the look is approximate**.
+
+We read these fields; we never write them. Only fields in the packet are applied: the result is a partial settings
+object that gets merged like a preset, so everything else keeps its current or default value. Packets marked
+`crs:AlreadyApplied="True"` are skipped, because those pixels already contain the edit. Only process-version 2012+ field
+names are read (e.g. `Exposure2012`, not the older `Exposure`).
+
+| `crs:` field(s) | LightCraft control | Notes |
+|---|---|---|
+| `Exposure2012` | `light.exposure` | EV, 1:1 |
+| `Contrast2012`, `Highlights2012`, `Shadows2012`, `Whites2012`, `Blacks2012` | `light.contrast` … `light.blacks` | −100..100, 1:1 |
+| `WhiteBalance` | `wb.mode` | `As Shot`, `Auto`, `Daylight`, `Cloudy`, `Shade`, `Tungsten`, `Fluorescent`, `Flash`; other names → custom |
+| `Temperature`, `Tint` | `wb.temp`, `wb.tint` | Kelvin / tint for raw files (and presets) |
+| `IncrementalTemperature`, `IncrementalTint` | `wb.temp`, `wb.tint` | rendered files: −100..100 on our relative scale (mired shift around 6500 K, same as the Temp slider) |
+| `Vibrance`, `Saturation` | `color.vibrance`, `color.saturation` | 1:1 |
+| `Texture`, `Clarity2012`, `Dehaze` | `effects.texture`, `effects.clarity`, `effects.dehaze` | 1:1 |
+| `HueAdjustment<Band>`, `SaturationAdjustment<Band>`, `LuminanceAdjustment<Band>` | `mixer.<band>.hue/sat/lum` | bands Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta |
+| `ConvertToGrayscale` | `treatment` | `True` → B&W |
+| `GrayMixer<Band>` | `bw_mix.<band>` | |
+| `ParametricShadows`, `ParametricDarks`, `ParametricLights`, `ParametricHighlights` | `curve.shadows/darks/lights/highlights` | |
+| `ParametricShadowSplit`, `ParametricMidtoneSplit`, `ParametricHighlightSplit` | `curve.split_shadows/split_mid/split_highlights` | |
+| `ToneCurvePV2012`, `ToneCurvePV2012Red/Green/Blue` | `curve.master/red/green/blue` | `"x, y"` points in 0..255 → 0..1; a straight 0→255 line = no curve |
+| `SplitToningShadowHue/Saturation`, `SplitToningHighlightHue/Saturation` | `grading.shadows/highlights.hue/sat` | |
+| `ColorGradeShadowLum`, `ColorGradeHighlightLum` | `grading.shadows/highlights.lum` | |
+| `ColorGradeMidtoneHue/Sat/Lum`, `ColorGradeGlobalHue/Sat/Lum` | `grading.midtones/global.*` | |
+| `ColorGradeBlending`, `SplitToningBalance` | `grading.blending`, `grading.balance` | |
+| `Sharpness`, `SharpenRadius`, `SharpenDetail`, `SharpenEdgeMasking` | `detail.sharpen_*` | |
+| `LuminanceSmoothing`, `LuminanceNoiseReductionDetail`, `LuminanceNoiseReductionContrast` | `detail.nr_luminance/nr_detail/nr_contrast` | |
+| `ColorNoiseReduction`, `ColorNoiseReductionDetail`, `ColorNoiseReductionSmoothness` | `detail.nr_color/nr_color_detail/nr_color_smoothness` | |
+| `PostCropVignetteAmount/Midpoint/Roundness/Feather/HighlightContrast` | `vignette.amount/midpoint/roundness/feather/highlights` | |
+| `PostCropVignetteStyle` | `vignette.style` | 1 highlight priority, 2 colour priority, 3 paint overlay |
+| `GrainAmount`, `GrainSize`, `GrainFrequency` | `grain.amount`, `grain.size`, `grain.roughness` | |
+| `LensProfileEnable`, `AutoLateralCA` | `optics.lens_profile`, `optics.remove_ca` | the switch only; lens profiles are our own |
+| `LensManualDistortionAmount`, `VignetteAmount`, `VignetteMidpoint` | `optics.distortion`, `optics.vignetting`, `optics.vignetting_midpoint` | |
+| `DefringePurple/GreenAmount/HueLo/HueHi` | `optics.defringe_*` | |
+| `PerspectiveVertical/Horizontal/Rotate/Scale/Aspect/X/Y` | `geometry.vertical/horizontal/rotate/scale/aspect/offset_x/offset_y` | |
+| `PerspectiveUpright` | `geometry.upright` | 0 off, 1 auto, 2 level, 3 vertical, 4 full, 5 guided |
+| `HasCrop`, `CropLeft/Top/Right/Bottom`, `CropAngle` | `crop.geometry` | normalized edges → rect; angle in degrees; `HasCrop="False"` → no crop |
+
+Values pass through our control specs, so anything outside our slider ranges gets clamped.
+
+**Not mapped:** camera profiles and looks (`CameraProfile`, `Look`; we have our own profile set), local adjustments
+(masks, gradients, brushes), spot removal, red eye, lens blur, process-version 2010 field names, and AI features.
+
+## Preset files
+
+| | |
+|---|---|
+| Ours: `.lcpreset` | JSON `{"format": "lightcraft.preset", "version": 1, "presets": [{id, name, group, settings}]}`, where `settings` is a partial develop-settings object (only the groups the preset includes). A file can hold one preset or many, and every preset keeps its group. Import also accepts a bare preset object or an array of them. |
+| Export | `preset.export {path, ids?, group?}`: all user presets by default, or the given ids or one group. In the app: File ▸ Export Presets…, Presets panel ▸ ⋯ ▸ Export User Presets…, or right-click a group ▸ Export Group…. |
+| Import | `preset.import {paths}`: files or folders (recursive), `.lcpreset` and `.xmp`. In the app: File ▸ Import Presets…, or Presets panel ▸ ⋯ ▸ Import Presets…. A preset that's already there (same name, group and settings) is skipped. If an id clashes, the import gets a fresh `user.*` id, and built-in presets are never replaced. |
+| XMP presets | Read with the `crs:` table above, with `crs:Name` as the name (falling back to the file name) and `crs:Group` as the group (falling back to "Imported Presets"). Only the fields the preset sets are included, so applying it leaves everything else alone and the Amount slider scales it like any other preset. We only read XMP presets; we don't write them. |
+
+LightCraft ships no third-party presets. Its built-in presets are its own values (`crates/engine/src/presets.rs`).

@@ -5,6 +5,7 @@
 //! LightCraft Library/
 //!   catalog.snap   catalog.log      (lightcraft-catalog journal)
 //!   presets.json   view.json        (user presets + favourites; last source/filter/sort/selection)
+//!   prefs.json     (library preferences: XMP sidecars)
 //!   thumbs/        (rendered thumbnail cache, safe to delete)
 //!   Originals/     (photos imported with "copy into library")
 //! ```
@@ -72,6 +73,12 @@ impl Library {
     }
 }
 
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+struct PrefsFile {
+    xmp: crate::sidecar::XmpPrefs,
+}
+
 fn presets_json(presets: &[Preset]) -> String {
     let f = PresetsFile {
         user: presets.iter().filter(|p| !p.builtin).cloned().collect(),
@@ -115,6 +122,9 @@ impl Session {
                 }
             }
         }
+        // preferences
+        self.xmp =
+            std::fs::read(dir.join("prefs.json")).ok().and_then(|b| serde_json::from_slice::<PrefsFile>(&b).ok()).map(|p| p.xmp).unwrap_or_default();
         // view state
         if let Ok(bytes) = std::fs::read(dir.join("view.json"))
             && let Ok(v) = serde_json::from_slice::<ViewFile>(&bytes)
@@ -187,6 +197,13 @@ impl Session {
             let _ = write_atomic(&lib.dir, "view.json", &v);
         }
         Ok(())
+    }
+
+    /// Save the library preferences (no-op for in-memory sessions).
+    pub fn save_prefs(&self) -> Result<()> {
+        let Some(lib) = &self.library else { return Ok(()) };
+        let v = serde_json::to_vec_pretty(&PrefsFile { xmp: self.xmp }).unwrap_or_default();
+        write_atomic(&lib.dir, "prefs.json", &v).map_err(|e| EngineError::Other(format!("prefs: {e}")))
     }
 
     /// Compact the log into a snapshot now.

@@ -82,6 +82,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
             meta,
             as_shot_wb,
             content_hash,
+            xmp: lightcraft_meta::embedded(bytes).xmp,
         });
     }
     let fmt = lightcraft_codecs::sniff(bytes).ok_or("unrecognized file format")?;
@@ -109,6 +110,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         meta,
         as_shot_wb: None,
         content_hash,
+        xmp: None,
     })
 }
 

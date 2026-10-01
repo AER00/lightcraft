@@ -301,6 +301,8 @@ pub struct ProbeInfo {
     pub as_shot_wb: Option<(f64, f64)>,
     /// Hash of the file's bytes (hex), for duplicate detection.
     pub content_hash: Option<String>,
+    /// The file's embedded XMP packet (raw/DNG files), for develop settings stored inside the file.
+    pub xmp: Option<String>,
 }
 
 pub type FileProbe = Arc<dyn Fn(&str) -> Result<ProbeInfo, String> + Send + Sync>;
