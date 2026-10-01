@@ -34,6 +34,8 @@ log = "0.4"
 rayon = "1"
 proptest = "1"
 bytemuck = { version = "1", features = ["derive"] }
+crc32fast = "1"
+siphasher = "1"
 
 # formats
 quick-xml = "0.38"

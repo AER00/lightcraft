@@ -1991,7 +1991,9 @@ dependencies = [
 name = "lightcraft-catalog"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "lightcraft-develop",
+ "log",
  "proptest",
  "serde",
  "serde_json",

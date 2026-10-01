@@ -2,21 +2,25 @@
 //!
 //! State changes only through [`Op`]s. [`Catalog::apply`] returns the inverse op, which gives:
 //! - **persistence**: ops are appended to a log (JSON lines) and replayed on load after the last
-//!   snapshot — crash-safe and diff-friendly;
+//!   snapshot — crash-safe and diff-friendly (see [`journal`]);
 //! - **undo/redo**: the engine keeps inverse ops;
 //! - **determinism**: replaying the log reproduces the state exactly (property-tested).
 #![forbid(unsafe_code)]
 
+pub mod journal;
 pub mod model;
 pub mod query;
+pub mod store;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+pub use journal::{Journal, LoadReport, SnapshotPolicy};
 use lightcraft_develop::DevelopSettings;
 pub use model::*;
 pub use query::{DateGroup, Filter, RatingOp, Sort, SortKey};
 use serde::{Deserialize, Serialize};
+pub use store::{FsStore, MemStore, Store};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum CatalogError {
@@ -28,9 +32,14 @@ pub enum CatalogError {
     Invalid(String),
     #[error("corrupt catalog data: {0}")]
     Corrupt(String),
+    #[error("catalog storage: {0}")]
+    Io(String),
 }
 
 pub type Result<T> = std::result::Result<T, CatalogError>;
+
+/// Maximum History entries kept per photo.
+pub const HISTORY_LIMIT: usize = 200;
 
 /// Every catalog mutation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -75,6 +84,12 @@ pub enum Op {
     SetHistory {
         id: PhotoId,
         history: Vec<HistoryStep>,
+    },
+    /// Append one History entry (dropping the oldest beyond [`HISTORY_LIMIT`]). Logged instead of
+    /// a full `SetHistory` so each edit costs one step in the op log.
+    PushHistory {
+        id: PhotoId,
+        step: HistoryStep,
     },
     AddAlbum {
         album: Album,
@@ -227,6 +242,16 @@ impl Catalog {
                 let p = self.photo_mut(id)?;
                 Op::SetHistory { id, history: std::mem::replace(&mut p.history, history) }
             }
+            Op::PushHistory { id, step } => {
+                let p = self.photo_mut(id)?;
+                let old = p.history.clone();
+                p.history.push(step);
+                if p.history.len() > HISTORY_LIMIT {
+                    let n = p.history.len() - HISTORY_LIMIT;
+                    p.history.drain(..n);
+                }
+                Op::SetHistory { id, history: old }
+            }
             Op::AddAlbum { album } => {
                 if self.albums.contains_key(&album.id) {
                     return Err(CatalogError::Invalid(format!("album {:?} exists", album.id)));
@@ -352,3 +377,5 @@ impl Catalog {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_journal;

@@ -13,6 +13,7 @@
 pub mod cmd;
 pub mod demo;
 pub mod files;
+pub mod library;
 pub mod media;
 pub mod presets;
 mod view;
@@ -85,6 +86,8 @@ pub struct Session {
     depth: u32,
     /// Selected mask (Masking panel), by mask id.
     pub active_mask: Option<u32>,
+    /// The persistent library this session writes to (`None` = in-memory only).
+    pub library: Option<library::Library>,
 }
 
 impl Default for Session {
@@ -115,6 +118,7 @@ impl Session {
             clock: Box::new(|| "2026-09-30T12:00:00".to_string()),
             depth: 0,
             active_mask: None,
+            library: None,
         }
     }
 
@@ -139,6 +143,11 @@ impl Session {
             if self.journal.len() > 10_000 {
                 self.journal.drain(..1000);
             }
+        }
+        if self.depth == 0 && self.library.is_some() {
+            // Make the command durable before reporting success (on failure the ops stay pending,
+            // are retried after the next command, and `library.info` reports the error).
+            let _ = self.persist();
         }
         r
     }
@@ -216,15 +225,11 @@ impl Session {
 
     /// The op that sets a photo's develop settings and appends a History entry (for batches).
     pub fn develop_op(&self, id: PhotoId, settings: DevelopSettings, label: &str) -> Option<Op> {
-        let p = self.catalog.photo(id)?;
+        self.catalog.photo(id)?;
         let settings = Arc::new(settings);
-        let mut history = p.history.clone();
-        history.push(lightcraft_catalog::HistoryStep { label: label.into(), settings: settings.clone() });
-        if history.len() > 200 {
-            history.remove(0);
-        }
+        let step = lightcraft_catalog::HistoryStep { label: label.into(), settings: settings.clone() };
         Some(Op::Batch {
-            ops: vec![Op::SetDevelop { id, settings, label: label.into(), edited: Some((self.clock)()) }, Op::SetHistory { id, history }],
+            ops: vec![Op::SetDevelop { id, settings, label: label.into(), edited: Some((self.clock)()) }, Op::PushHistory { id, step }],
         })
     }
 
@@ -300,3 +305,5 @@ impl Session {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_library;

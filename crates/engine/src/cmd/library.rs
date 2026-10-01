@@ -382,5 +382,39 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(json!({"imported": imported.iter().map(|i| i.0).collect::<Vec<_>>()}))
         }),
+        // ---- persistence
+        cmd!(query "library.info", "Library Info", [], None, "{}", always, |s, _| {
+            let photos = s.catalog.len();
+            let albums = s.catalog.albums().count();
+            let Some(lib) = &s.library else {
+                return Ok(json!({"persistent": false, "photos": photos, "albums": albums}));
+            };
+            let j = lib.journal();
+            Ok(json!({
+                "persistent": true,
+                "path": lib.dir.display().to_string(),
+                "photos": photos,
+                "albums": albums,
+                "seq": j.seq(),
+                "snapshotSeq": j.snapshot_seq(),
+                "logRecords": j.log_records(),
+                "logBytes": j.log_bytes(),
+                "lastError": lib.last_error,
+                "load": {
+                    "created": lib.report.created,
+                    "replayed": lib.report.replayed,
+                    "tornBytes": lib.report.torn_bytes,
+                    "damaged": lib.report.damaged,
+                },
+            }))
+        }),
+        cmd!("library.compact", "Optimize Library", ["File"], None, "{}", has_library, |s, _| {
+            s.compact_library()?;
+            ok()
+        }),
     ]
+}
+
+fn has_library(s: &Session) -> std::result::Result<(), String> {
+    if s.library.is_some() { Ok(()) } else { Err("no library is open (in-memory session)".into()) }
 }

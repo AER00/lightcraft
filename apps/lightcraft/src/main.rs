@@ -1,6 +1,12 @@
 //! LightCraft desktop app.
 //!
-//! Usage: `lightcraft [--control <port>] [--demo] [files or folders…]`
+//! Usage: `lightcraft [--library DIR | --memory] [--no-demo] [--control <port>] [files or folders…]`
+//!
+//! The library (catalog, presets, thumbnail cache) lives in `--library DIR`, else
+//! `$LIGHTCRAFT_LIBRARY`, else `~/Pictures/LightCraft Library`; a new library starts with the
+//! procedural demo photos unless `--no-demo` or files are given. Files and folders on the command
+//! line are imported (duplicates are skipped). `--memory` runs an in-memory session that writes
+//! nothing (demo photos unless files are given; used by the README showcase scripts).
 //!
 //! `--control <port>` (or `LIGHTCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
 //! `{"id":1,"method":"ui.inspect","params":{}}` → `{"id":1,"ok":true,"result":…}`.
@@ -25,6 +31,9 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         save_prefs(&self.0);
+        if let Err(e) = self.0.session.close_library() {
+            eprintln!("lightcraft: saving the library failed: {e}");
+        }
     }
 }
 
@@ -103,15 +112,50 @@ fn collect(path: &std::path::Path, out: &mut Vec<String>) {
     }
 }
 
+/// The persistent library session (or an in-memory one with `--memory` / if the library can't open).
+fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: bool) -> Session {
+    let fallback = || if seed_demo { Session::with_demo() } else { Session::new() }.with_fs();
+    if in_memory {
+        return fallback();
+    }
+    let Some(dir) = dir else {
+        eprintln!("lightcraft: no library location (set --library or LIGHTCRAFT_LIBRARY); running in memory");
+        return fallback();
+    };
+    let t0 = std::time::Instant::now();
+    let mut s = Session::new().with_fs();
+    match s.open_library(&dir, seed_demo) {
+        Ok(r) => {
+            let (replayed, torn) = (r.replayed, r.torn_bytes);
+            eprintln!(
+                "lightcraft: library {}: {} photos, {replayed} log records replayed{} ({:.1} ms)",
+                dir.display(),
+                s.catalog.len(),
+                if torn > 0 { ", torn tail repaired" } else { "" },
+                t0.elapsed().as_secs_f64() * 1000.0
+            );
+            s
+        }
+        Err(e) => {
+            eprintln!("lightcraft: can't open library {}: {e}; running in memory", dir.display());
+            fallback()
+        }
+    }
+}
+
 fn main() -> eframe::Result {
     let mut control_port: Option<u16> = std::env::var("LIGHTCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
     let mut files = Vec::new();
-    let mut demo = true;
+    let mut seed_demo = true;
+    let mut in_memory = false;
+    let mut library_dir = lightcraft_engine::library::default_dir();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
-            "--no-demo" => demo = false,
+            "--library" => library_dir = args.next().map(std::path::PathBuf::from),
+            "--no-demo" => seed_demo = false,
+            "--memory" | "--demo" => in_memory = true,
             "--version" => {
                 println!("lightcraft {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
@@ -134,7 +178,7 @@ fn main() -> eframe::Result {
         "LightCraft",
         options,
         Box::new(move |cc| {
-            let session = if demo && files.is_empty() { Session::with_demo() } else { Session::new() }.with_fs();
+            let session = open_session(in_memory, library_dir, seed_demo && files.is_empty());
             let mut app = LightcraftApp::new(session, services());
             load_prefs(&mut app);
             app.integrated_titlebar = cfg!(target_os = "macos");
