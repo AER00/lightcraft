@@ -9,7 +9,7 @@ use lightcraft_raster::Rgba8;
 
 use crate::colorops::ColorOps;
 use crate::geometry::Frame;
-use crate::local::{airlight, log_lum};
+use crate::local::log_lum;
 use crate::tone::ToneMap;
 use crate::{Prepared, SourceInfo, for_rows};
 
@@ -119,7 +119,8 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
     };
     let sharpen = (s.detail.sharpen_amount / 150.0) as f32;
     let sharpen_mask = (s.detail.sharpen_masking / 100.0) as f32;
-    let air = p.dark.as_ref().map(airlight).unwrap_or(1.0);
+    // Planes are pre-exposure: scale the airlight, shift log luminance (see `Prepared`).
+    let (air, air_pre, gain, ev) = (p.air * p.gain, p.air, p.gain, p.ev);
     let grain = (s.grain.amount > 0.0 && s.section_enabled("effects")).then(|| {
         let cell = (0.0006 + (s.grain.size / 100.0) as f32 * 0.0024) * p.px_per_long as f32;
         ((s.grain.amount / 100.0) as f32 * 0.13, cell.max(0.6), (s.grain.roughness / 100.0) as f32, s.grain.seed)
@@ -131,8 +132,10 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
     for_rows(&mut out.data, w, |y, row| {
         for (x, px) in row.iter_mut().enumerate() {
             let i = y * w + x;
-            let mut c = p.img.data[i];
-            let l0 = p.log_l.data[i];
+            let raw = p.img.data[i];
+            let mut c = if gain == 1.0 { raw } else { raw.map(|v| v * gain) };
+            let l_pre = p.log_l.data[i];
+            let l0 = l_pre + ev;
 
             // --- local (mask) contributions
             let (mut l_exp, mut l_temp, mut l_tint, mut l_con, mut l_hl, mut l_sh, mut l_wh, mut l_bl) = (0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -169,7 +172,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             if dz != 0.0
                 && let Some(dark) = &p.dark
             {
-                let d = (dark.data[i] / air).clamp(0.0, 1.0);
+                let d = (dark.data[i] / air_pre).clamp(0.0, 1.0);
                 if dz > 0.0 {
                     let t = (1.0 - 0.95 * dz.min(1.0) * d).max(0.12);
                     c = c.map(|v| ((v - air * (1.0 - t)) / t).max(0.0));
@@ -194,7 +197,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             // --- local tone in log luminance
             let l1 = if dz != 0.0 || l_exp != 0.0 { log_lum(c) } else { l0 };
             let shift = l1 - l0;
-            let base = p.base.data[i] + shift;
+            let base = p.base.data[i] + ev + shift;
             let mut delta = 0.0f32;
             let (hh, ss) = (hl + l_hl, sh + l_sh);
             if hh != 0.0 || ss != 0.0 {
@@ -215,7 +218,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             if cl != 0.0
                 && let Some(b) = &p.clarity_blur
             {
-                let det = (l0 - b.data[i]).clamp(-2.5, 2.5);
+                let det = (l_pre - b.data[i]).clamp(-2.5, 2.5);
                 let mid = (-(base / 3.2).powi(2)).exp();
                 delta += cl * 0.85 * det * (0.35 + 0.65 * mid);
             }
@@ -224,7 +227,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             if (tx != 0.0 || sp != 0.0)
                 && let Some(b) = &p.texture_blur
             {
-                let det = l0 - b.data[i];
+                let det = l_pre - b.data[i];
                 let tame = 1.0 - 0.6 * smooth(0.4, 1.6, det.abs());
                 delta += tx * 1.1 * det.clamp(-1.0, 1.0) * tame;
                 if sp != 0.0 {

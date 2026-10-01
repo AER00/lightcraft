@@ -149,3 +149,79 @@ fn unedited_rendered_source_is_passthrough() {
     }
     assert!(worst <= 3, "max error {worst}");
 }
+
+fn typical_edits() -> DevelopSettings {
+    let mut s = DevelopSettings::default();
+    s.light.exposure = 0.4;
+    s.light.highlights = -40.0;
+    s.light.shadows = 30.0;
+    s.effects.clarity = 15.0;
+    s.effects.texture = 10.0;
+    s.effects.dehaze = 12.0;
+    s.detail.nr_luminance = 30.0;
+    s.detail.nr_color = 25.0;
+    s.detail.sharpen_amount = 40.0;
+    s
+}
+
+fn max_diff(a: &lightcraft_raster::Rgba8, b: &lightcraft_raster::Rgba8) -> i32 {
+    assert_eq!((a.width, a.height), (b.width, b.height));
+    a.data.iter().zip(&b.data).map(|(p, q)| (0..3).map(|c| (p[c] as i32 - q[c] as i32).abs()).max().unwrap_or(0)).max().unwrap_or(0)
+}
+
+#[test]
+fn stage_cache_matches_uncached_render_through_a_slider_session() {
+    use crate::{Quality, StageCache, render_cached};
+    use std::sync::Arc;
+    let src = Arc::new(scene());
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let cache = StageCache::default();
+    let full = RenderRequest::fit(200, 200);
+    let draft = RenderRequest { max_w: 120, max_h: 120, quality: Quality::Draft, apply_crop: true };
+    let mut s = typical_edits();
+    // every kind of edit: tone, exposure, spatial amounts, NR, WB, crop, colour — at two sizes
+    let steps: Vec<Box<dyn Fn(&mut DevelopSettings)>> = vec![
+        Box::new(|s| s.light.contrast = 20.0),
+        Box::new(|s| s.light.exposure = -0.7),
+        Box::new(|s| s.light.highlights = -80.0),
+        Box::new(|s| s.effects.clarity = -30.0),
+        Box::new(|s| s.effects.dehaze = 0.0),
+        Box::new(|s| s.effects.dehaze = 25.0),
+        Box::new(|s| s.detail.nr_luminance = 60.0),
+        Box::new(|s| {
+            s.wb.mode = lightcraft_develop::WbMode::Custom;
+            s.wb.temp = 4000.0;
+        }),
+        Box::new(|s| s.crop.geometry.rect = lightcraft_geom::Rect::new(0.1, 0.1, 0.9, 0.8)),
+        Box::new(|s| s.color.saturation = 30.0),
+    ];
+    for (i, step) in steps.iter().enumerate() {
+        step(&mut s);
+        for req in [&full, &draft] {
+            let a = render_cached(&src, &info, &s, req, &cache).image;
+            let b = render(&src, &info, &s, req).image;
+            assert_eq!(a, b, "step {i} {:?}", req.quality);
+        }
+    }
+    assert_eq!(cache.len(), 2);
+    // a different source buffer never hits another source's entries
+    let other = Arc::new(Rgb32f::filled(src.width, src.height, [0.3, 0.3, 0.3]));
+    assert_eq!(render_cached(&other, &info, &s, &full, &cache).image, render(&other, &info, &s, &full).image);
+}
+
+#[test]
+fn exposure_after_spatial_filters_equals_exposing_the_source() {
+    // The pipeline filters the image before exposure and applies exposure per pixel; filters on
+    // log luminance are shift-equivariant, so this must equal scaling the source.
+    let src = scene();
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let mut s = typical_edits();
+    s.light.exposure = 1.3;
+    let a = render(&src, &info, &s, &RenderRequest::fit(200, 200)).image;
+    let g = 2f32.powf(1.3);
+    let scaled = src.map(|c| c.map(|v| v * g));
+    s.light.exposure = 0.0;
+    let b = render(&scaled, &info, &s, &RenderRequest::fit(200, 200)).image;
+    let d = max_diff(&a, &b);
+    assert!(d <= 2, "max difference {d}");
+}

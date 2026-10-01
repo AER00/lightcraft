@@ -21,7 +21,7 @@ fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-pub fn evaluate(masks: &[Mask], frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane) -> Vec<Evaluated> {
+pub fn evaluate(masks: &[Mask], frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane, ev: f32) -> Vec<Evaluated> {
     masks
         .iter()
         .filter(|m| m.visible && !m.components.is_empty())
@@ -29,7 +29,7 @@ pub fn evaluate(masks: &[Mask], frame: &Frame, w: usize, h: usize, img: &Rgb32f,
             let mut alpha = Plane::new(w, h);
             let mut first = true;
             for comp in &m.components {
-                let mut c = shape_alpha(&comp.shape, frame, w, h, img, log_l);
+                let mut c = shape_alpha(&comp.shape, frame, w, h, img, log_l, ev);
                 if comp.invert {
                     c.data.iter_mut().for_each(|v| *v = 1.0 - *v);
                 }
@@ -71,9 +71,11 @@ fn for_each_pos(frame: &Frame, w: usize, h: usize, out: &mut Plane, f: impl Fn(P
     });
 }
 
-pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane) -> Plane {
+pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane, ev: f32) -> Plane {
     let mut out = Plane::new(w, h);
     let to_long = |p: Point| frame.norm_to_long(p);
+    // `img`/`log_l` are before exposure: range masks select on the exposed values.
+    let gain = ev.exp2();
     match shape {
         MaskShape::Linear { start, end } => {
             let (a, b) = (to_long(*start), to_long(*end));
@@ -103,7 +105,7 @@ pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &R
             let (lo, hi, lf, hf) = (*lo as f32, *hi as f32, (*lo_feather as f32).max(1e-3), (*hi_feather as f32).max(1e-3));
             for (v, l) in out.data.iter_mut().zip(&log_l.data) {
                 // map log luminance to a 0..1 perceptual scale (−8..+4 EV)
-                let y = ((l + 8.0) / 12.0).clamp(0.0, 1.0);
+                let y = ((l + ev + 8.0) / 12.0).clamp(0.0, 1.0);
                 *v = smooth(lo - lf, lo, y) * (1.0 - smooth(hi, hi + hf, y));
             }
         }
@@ -111,7 +113,7 @@ pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &R
             let tol = 0.04 + 0.16 * (*refine as f32 / 100.0);
             let samples: Vec<[f32; 3]> = samples.iter().map(|s| [s[0] as f32, s[1] as f32, s[2] as f32]).collect();
             for (v, c) in out.data.iter_mut().zip(&img.data) {
-                let lab = lightcraft_color::perceptual::oklab_from_2020(tonemap_for_select(*c));
+                let lab = lightcraft_color::perceptual::oklab_from_2020(tonemap_for_select(c.map(|v| v * gain)));
                 let d = samples
                     .iter()
                     .map(|s| ((lab[1] - s[1]).powi(2) + (lab[2] - s[2]).powi(2) + 0.25 * (lab[0] - s[0]).powi(2)).sqrt())
@@ -126,8 +128,8 @@ pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &R
             for (i, v) in out.data.iter_mut().enumerate() {
                 let (x, y) = (i % w, i / w);
                 let n = m.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
-                let c = img.data[i];
-                let l = log_l.data[i];
+                let c = img.data[i].map(|v| v * gain);
+                let l = log_l.data[i] + ev;
                 let blue = (c[2] - c[0]).max(0.0) / (c[2] + 1e-4);
                 let top = 1.0 - smooth(0.25, 0.7, n.y as f32);
                 *v = top * smooth(-3.5, -1.0, l) * (0.4 + 0.6 * smooth(0.0, 0.3, blue).max(smooth(0.0, 1.5, l)));
@@ -148,7 +150,7 @@ pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &R
             smooth_plane(&mut out, 0.015 * frame_px(frame, w));
         }
         MaskShape::Background => {
-            let mut s = shape_alpha(&MaskShape::Subject, frame, w, h, img, log_l);
+            let mut s = shape_alpha(&MaskShape::Subject, frame, w, h, img, log_l, ev);
             s.data.iter_mut().for_each(|v| *v = 1.0 - *v);
             out = s;
         }
@@ -230,7 +232,7 @@ mod tests {
         let f = frame(100, 50);
         let img = Rgb32f::new(100, 50);
         let l = Plane::new(100, 50);
-        let a = shape_alpha(&MaskShape::Linear { start: Point::new(0.0, 0.0), end: Point::new(1.0, 0.0) }, &f, 100, 50, &img, &l);
+        let a = shape_alpha(&MaskShape::Linear { start: Point::new(0.0, 0.0), end: Point::new(1.0, 0.0) }, &f, 100, 50, &img, &l, 0.0);
         assert!(a.get(1, 25) > 0.99 && a.get(98, 25) < 0.01);
         assert!((a.get(50, 25) - 0.5).abs() < 0.05);
     }
@@ -241,10 +243,10 @@ mod tests {
         let img = Rgb32f::new(100, 100);
         let l = Plane::new(100, 100);
         let shape = MaskShape::Radial { center: Point::new(0.5, 0.5), rx: 0.2, ry: 0.2, angle: 0.0, feather: 20.0, invert: false };
-        let a = shape_alpha(&shape, &f, 100, 100, &img, &l);
+        let a = shape_alpha(&shape, &f, 100, 100, &img, &l, 0.0);
         assert!(a.get(50, 50) > 0.99 && a.get(5, 5) < 0.01);
         let m = Mask { components: vec![MaskComponent { op: MaskOp::Add, invert: true, shape }], ..Default::default() };
-        let e = evaluate(&[m], &f, 100, 100, &img, &l);
+        let e = evaluate(&[m], &f, 100, 100, &img, &l, 0.0);
         assert!(e[0].alpha.get(50, 50) < 0.01);
     }
 
@@ -259,7 +261,7 @@ mod tests {
             components: vec![MaskComponent { op: MaskOp::Add, invert: false, shape: MaskShape::Brush { strokes: vec![stroke, erase] } }],
             ..Default::default()
         };
-        let e = evaluate(&[m], &f, 200, 100, &img, &l);
+        let e = evaluate(&[m], &f, 200, 100, &img, &l, 0.0);
         let a = &e[0].alpha;
         assert!(a.get(40, 50) > 0.9, "{}", a.get(40, 50));
         assert!(a.get(100, 50) < 0.05, "erased centre {}", a.get(100, 50));

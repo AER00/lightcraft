@@ -11,8 +11,10 @@ use std::collections::HashMap;
 use lightcraft_catalog::PhotoId;
 use lightcraft_engine::Session;
 use lightcraft_engine::media::{RenderJob, RenderResult};
+use lightcraft_engine::pipeline::StageCache;
 use lightcraft_preview::JobPool;
 use lightcraft_raster::Histogram;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Slot {
@@ -39,12 +41,21 @@ pub struct Renderer {
     pub last_main_ms: f64,
     /// Jobs finished since start (for inspect/perf).
     pub completed: u64,
+    /// Per-view intermediate results (loupe and "before"), so slider drags redo only what changed.
+    stages: HashMap<Slot, Arc<StageCache>>,
 }
 
 impl Default for Renderer {
     fn default() -> Self {
         let threads = if cfg!(target_arch = "wasm32") { 0 } else { JobPool::<Slot, RenderResult>::default_threads().min(6) };
-        Renderer { pool: JobPool::new(threads), pending: HashMap::new(), textures: HashMap::new(), last_main_ms: 0.0, completed: 0 }
+        Renderer {
+            pool: JobPool::new(threads),
+            pending: HashMap::new(),
+            textures: HashMap::new(),
+            last_main_ms: 0.0,
+            completed: 0,
+            stages: HashMap::new(),
+        }
     }
 }
 
@@ -67,6 +78,7 @@ impl Renderer {
         }
         self.pending.insert(slot, (job.key, priority));
         let key = job.key;
+        let job = if matches!(slot, Slot::Main | Slot::Before) { job.with_stages(self.stages.entry(slot).or_default().clone()) } else { job };
         self.pool.submit(slot, key, priority, Box::new(move || job.run()));
     }
 

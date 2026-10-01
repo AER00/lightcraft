@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use lightcraft_catalog::{MediaKind, Photo, PhotoId, Source};
 use lightcraft_develop::DevelopSettings;
-use lightcraft_pipeline::{RenderRequest, Rendered, SourceInfo};
+use lightcraft_pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
 use lightcraft_preview::{Hash128, Hasher128, Lru, PreviewCache};
 use lightcraft_raster::{Histogram, Rgb32f};
 use serde::{Deserialize, Serialize};
@@ -174,6 +174,9 @@ pub struct RenderJob {
     pub key: u64,
     /// Rendered-thumbnail cache and this job's key in it.
     pub cache: Option<(Arc<PreviewCache>, Hash128)>,
+    /// Intermediate results of this view's previous renders (set by the frontend for the loupe):
+    /// slider drags then only redo the stages the changed setting feeds.
+    pub stages: Option<Arc<StageCache>>,
 }
 
 pub struct RenderResult {
@@ -186,6 +189,21 @@ pub struct RenderResult {
 }
 
 impl RenderJob {
+    /// Render at draft quality (interactive drags). Gets its own result key.
+    pub fn draft(mut self) -> Self {
+        if self.request.quality != Quality::Draft {
+            self.request.quality = Quality::Draft;
+            self.key ^= 0x9e37_79b9_7f4a_7c15;
+        }
+        self
+    }
+
+    /// Reuse `stages` across this view's renders.
+    pub fn with_stages(mut self, stages: Arc<StageCache>) -> Self {
+        self.stages = Some(stages);
+        self
+    }
+
     pub fn run(self) -> RenderResult {
         if let Some((cache, key)) = &self.cache
             && let Some(img) = cache.get(*key)
@@ -197,7 +215,10 @@ impl RenderJob {
         let was_loaded = matches!(self.source, SourceRef::Loaded(_));
         match self.source.load() {
             Ok(src) => {
-                let rendered = lightcraft_pipeline::render(&src, &self.info, &self.settings, &self.request);
+                let rendered = match &self.stages {
+                    Some(st) => lightcraft_pipeline::render_cached(&src, &self.info, &self.settings, &self.request, st),
+                    None => lightcraft_pipeline::render(&src, &self.info, &self.settings, &self.request),
+                };
                 if let Some((cache, key)) = &self.cache {
                     cache.put(*key, Arc::new(rendered.image.clone()));
                 }
@@ -251,7 +272,7 @@ impl crate::Session {
         let level = SourceLevel::for_size(max_w.max(max_h));
         let source = self.media.source_ref(&p, level);
         let settings = if before { Arc::new(lightcraft_pipeline::before_settings(&p.develop)) } else { p.develop.clone() };
-        let request = RenderRequest { max_w, max_h, quality: lightcraft_pipeline::Quality::Full, apply_crop };
+        let request = RenderRequest { max_w, max_h, quality: Quality::Full, apply_crop };
         let key = settings.hash64()
             ^ ((max_w as u64) << 40)
             ^ ((max_h as u64) << 20)
@@ -261,7 +282,7 @@ impl crate::Session {
             let k = Hasher128::new().str(&content_key(&p)).u64(settings.hash64()).u64(b as u64).u64(RENDER_CACHE_VERSION).finish();
             (self.media.rendered.clone(), k)
         });
-        Some(RenderJob { photo: id, level, source, info: source_info(&p), settings, request, key, cache })
+        Some(RenderJob { photo: id, level, source, info: source_info(&p), settings, request, key, cache, stages: None })
     }
 
     /// Accept a finished job's loaded source into the cache.
