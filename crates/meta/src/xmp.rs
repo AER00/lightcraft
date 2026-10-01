@@ -9,7 +9,7 @@
 //! LightCraft's full develop settings as an opaque JSON string in `lc:settings`.
 
 use crate::{DateTime, Flash, Gps, Metadata, Orientation, parse_number};
-use quick_xml::escape::escape;
+use quick_xml::escape::{escape, partial_escape};
 use quick_xml::events::Event;
 use std::collections::BTreeMap;
 
@@ -467,7 +467,8 @@ pub fn write_xmp_lc(meta: &Metadata, lc: &[(&str, &str)]) -> String {
     }
     for (k, v) in lc {
         if !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            x.push_str(&format!("   <lc:{k}>{}</lc:{k}>\n", escape(*v)));
+            // element content: quotes needn't be escaped, which keeps the JSON readable
+            x.push_str(&format!("   <lc:{k}>{}</lc:{k}>\n", partial_escape(*v)));
         }
     }
     let array = |x: &mut String, k: &str, kind: &str, items: &[String], lang: bool| {
