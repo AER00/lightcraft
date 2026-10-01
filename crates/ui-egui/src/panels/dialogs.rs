@@ -1,6 +1,6 @@
 //! Modal dialogs (new album, rename, create preset, choose settings to copy, export, about, shortcuts).
 
-use lightcraft_develop::SettingsGroup;
+use lightcraft_develop::{ControlSpec, Section, SettingsGroup, Track};
 use serde_json::json;
 
 use crate::LightcraftApp;
@@ -66,55 +66,63 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     });
                 }
                 Dialog::Export { opts, long_edge, limit_kb, dir } => {
-                    use lightcraft_engine::export::{ExportFormat as F, SharpenAmount as A, SharpenFor as S};
+                    use lightcraft_engine::export::{Anchor as P, ExportFormat as F, MetadataPolicy as M, SharpenAmount as A, SharpenFor as S};
                     let n = app.session.selection.ids.len().max(1);
                     ui.label(egui::RichText::new(format!("{n} photo{}", if n == 1 { "" } else { "s" })).color(t.text_dim));
-                    ui.horizontal(|ui| {
-                        ui.label("Format");
-                        for (f, l) in [(F::Jpeg, "JPEG"), (F::Png, "PNG"), (F::Tiff, "TIFF"), (F::Webp, "WebP"), (F::Avif, "AVIF")] {
-                            ui.selectable_value(&mut opts.format, f, l);
-                        }
-                    });
+                    ui.add_space(4.0);
+                    choices(
+                        ui,
+                        "Format",
+                        "exportFormat",
+                        &[(F::Jpeg, "JPEG"), (F::Png, "PNG"), (F::Tiff, "TIFF"), (F::Webp, "WebP"), (F::Avif, "AVIF")],
+                        &mut opts.format,
+                    );
                     if matches!(opts.format, F::Jpeg | F::Avif) {
-                        ui.add(egui::Slider::new(&mut opts.quality, 1..=100).text("Quality"));
+                        let mut q = opts.quality as f64;
+                        if num(ui, &QUALITY, &mut q) {
+                            opts.quality = q as u8;
+                        }
                     }
                     if opts.format == F::Jpeg {
-                        ui.add(egui::Slider::new(limit_kb, 0..=20_000).text("Limit file size (KB, 0 = off)"));
+                        let mut k = *limit_kb as f64;
+                        if num(ui, &LIMIT_KB, &mut k) {
+                            *limit_kb = k as u32;
+                        }
                     }
                     let mut full = *long_edge == 0;
                     if ui.checkbox(&mut full, "Full size").changed() {
                         *long_edge = if full { 0 } else { 2048 };
                     }
                     if !full {
-                        ui.add(egui::Slider::new(long_edge, 256..=12_000).text("Long edge (px)"));
-                    }
-                    ui.horizontal(|ui| {
-                        ui.label("Sharpen for");
-                        for (v, l) in [(S::None, "None"), (S::Screen, "Screen"), (S::Matte, "Matte paper"), (S::Glossy, "Glossy paper")] {
-                            ui.selectable_value(&mut opts.sharpen, v, l);
+                        let mut e = *long_edge as f64;
+                        if num(ui, &LONG_EDGE, &mut e) {
+                            *long_edge = e as u32;
                         }
-                    });
+                    }
+                    choices(
+                        ui,
+                        "Sharpen",
+                        "exportSharpen",
+                        &[(S::None, "None"), (S::Screen, "Screen"), (S::Matte, "Matte"), (S::Glossy, "Glossy")],
+                        &mut opts.sharpen,
+                    );
                     if opts.sharpen != S::None {
-                        ui.horizontal(|ui| {
-                            ui.label("Amount");
-                            for (v, l) in [(A::Low, "Low"), (A::Standard, "Standard"), (A::High, "High")] {
-                                ui.selectable_value(&mut opts.sharpen_amount, v, l);
-                            }
-                        });
+                        choices(
+                            ui,
+                            "Amount",
+                            "exportSharpenAmount",
+                            &[(A::Low, "Low"), (A::Standard, "Standard"), (A::High, "High")],
+                            &mut opts.sharpen_amount,
+                        );
                     }
-                    ui.horizontal(|ui| {
-                        use lightcraft_engine::export::MetadataPolicy as M;
-                        ui.label("Metadata");
-                        for (v, l) in
-                            [(M::All, "All"), (M::AllExceptCamera, "All except camera"), (M::Copyright, "Copyright only"), (M::None, "None")]
-                        {
-                            ui.selectable_value(&mut opts.metadata, v, l);
-                        }
-                    });
-                    if !matches!(
-                        opts.metadata,
-                        lightcraft_engine::export::MetadataPolicy::None | lightcraft_engine::export::MetadataPolicy::Copyright
-                    ) {
+                    choices(
+                        ui,
+                        "Metadata",
+                        "exportMetadata",
+                        &[(M::All, "All"), (M::AllExceptCamera, "No camera"), (M::Copyright, "Copyright"), (M::None, "None")],
+                        &mut opts.metadata,
+                    );
+                    if !matches!(opts.metadata, M::None | M::Copyright) {
                         ui.checkbox(&mut opts.remove_location, "Remove location info");
                     }
                     let mut wm_on = opts.watermark.is_some();
@@ -122,27 +130,31 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         opts.watermark = wm_on.then(|| lightcraft_engine::export::Watermark { text: "© ".into(), ..Default::default() });
                     }
                     if let Some(wm) = &mut opts.watermark {
-                        use lightcraft_engine::export::Anchor as P;
-                        ui.add(egui::TextEdit::singleline(&mut wm.text).hint_text("© Your Name").desired_width(f32::INFINITY));
-                        ui.horizontal(|ui| {
-                            ui.label("Position");
-                            for (v, l) in [(P::TopLeft, "↖"), (P::TopRight, "↗"), (P::Center, "•"), (P::BottomLeft, "↙"), (P::BottomRight, "↘")]
-                            {
-                                ui.selectable_value(&mut wm.anchor, v, l);
-                            }
+                        field(ui, "Text", |ui| {
+                            ui.add(egui::TextEdit::singleline(&mut wm.text).hint_text("© Your Name").desired_width(f32::INFINITY))
                         });
-                        ui.add(egui::Slider::new(&mut wm.size, 0.01..=0.15).text("Size"));
-                        ui.add(egui::Slider::new(&mut wm.opacity, 0.05..=1.0).text("Opacity"));
+                        choices(
+                            ui,
+                            "Position",
+                            "exportWmAnchor",
+                            &[(P::TopLeft, "↖"), (P::TopRight, "↗"), (P::Center, "•"), (P::BottomLeft, "↙"), (P::BottomRight, "↘")],
+                            &mut wm.anchor,
+                        );
+                        let mut size = wm.size as f64 * 100.0;
+                        if num(ui, &WM_SIZE, &mut size) {
+                            wm.size = (size / 100.0) as f32;
+                        }
+                        let mut op = wm.opacity as f64 * 100.0;
+                        if num(ui, &WM_OPACITY, &mut op) {
+                            wm.opacity = (op / 100.0) as f32;
+                        }
                         ui.checkbox(&mut wm.shadow, "Shadow");
                     }
-                    ui.horizontal(|ui| {
-                        ui.label("File name");
-                        ui.add(egui::TextEdit::singleline(&mut opts.naming).hint_text("{name}-{seq}").desired_width(f32::INFINITY));
+                    ui.add_space(4.0);
+                    field(ui, "File name", |ui| {
+                        ui.add(egui::TextEdit::singleline(&mut opts.naming).hint_text("{name}-{seq}").desired_width(f32::INFINITY))
                     });
-                    ui.horizontal(|ui| {
-                        ui.label("Folder");
-                        ui.add(egui::TextEdit::singleline(dir).desired_width(f32::INFINITY));
-                    });
+                    field(ui, "Folder", |ui| ui.add(egui::TextEdit::singleline(dir).desired_width(f32::INFINITY)));
                 }
                 Dialog::About => {
                     ui.label(egui::RichText::new("LightCraft").font(t.semibold(20.0)).color(t.text));
@@ -219,4 +231,54 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         ),
         Dialog::About | Dialog::Shortcuts => Ok(serde_json::Value::Null),
     }
+}
+
+// ------------------------------------------------------------------------------------------ dialog widgets
+
+/// Width of the label column in dialogs.
+const LABEL_W: f32 = 78.0;
+
+const fn spec(id: &'static str, label: &'static str, min: f64, max: f64, default: f64, step: f64) -> ControlSpec {
+    ControlSpec { id, label, section: Section::Light, min, max, default, step, decimals: 0, track: Track::Plain }
+}
+const QUALITY: ControlSpec = spec("export.quality", "Quality", 1.0, 100.0, 90.0, 1.0);
+const LIMIT_KB: ControlSpec = spec("export.limitKb", "Limit file size (KB, 0 = off)", 0.0, 20_000.0, 0.0, 10.0);
+const LONG_EDGE: ControlSpec = spec("export.longEdge", "Long edge (px)", 256.0, 12_000.0, 2048.0, 16.0);
+const WM_SIZE: ControlSpec = spec("export.watermarkSize", "Size (% of short edge)", 1.0, 15.0, 3.5, 0.5);
+const WM_OPACITY: ControlSpec = spec("export.watermarkOpacity", "Opacity (%)", 5.0, 100.0, 70.0, 1.0);
+
+/// A themed slider row editing `v`; true when it changed.
+fn num(ui: &mut egui::Ui, spec: &ControlSpec, v: &mut f64) -> bool {
+    match crate::widgets::slider(ui, spec, *v, true, None).value {
+        Some(n) => {
+            *v = n;
+            true
+        }
+        None => false,
+    }
+}
+
+/// A labelled row (fixed label column).
+fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let t = Tokens::get(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(egui::vec2(LABEL_W, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.set_min_width(LABEL_W);
+            ui.label(egui::RichText::new(label).color(t.text_label));
+        });
+        add(ui)
+    })
+    .inner
+}
+
+/// A labelled row of mutually exclusive choice buttons (ids `button:{id}-{index}`).
+fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, label: &str, id: &str, options: &[(V, &str)], value: &mut V) {
+    field(ui, label, |ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for (i, (v, l)) in options.iter().enumerate() {
+            if crate::widgets::text_button(ui, &format!("{id}-{i}"), l, *value == *v).clicked() {
+                *value = *v;
+            }
+        }
+    });
 }
