@@ -181,6 +181,11 @@ pub struct Photo {
     /// Virtual copies' name ("Copy 1").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub copy_name: Option<String>,
+    /// The settings import gave the photo when a user default (a raw/JPEG default preset, see
+    /// the engine's import defaults) changed them from [`Photo::camera_defaults`]. They count as
+    /// unedited, and Reset returns to them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_look: Option<Arc<DevelopSettings>>,
 }
 
 impl Photo {
@@ -211,11 +216,20 @@ impl Photo {
             embedded_lens: None,
             copy_of: None,
             copy_name: None,
+            import_look: None,
         }
     }
-    /// The develop settings import gives this photo (raws: as-shot white balance and the raw
-    /// defaults; embedded lens corrections on when the file has them).
+    /// The develop settings import gave this photo: [`Photo::camera_defaults`], or the user's
+    /// default preset applied on top of them ([`Photo::import_look`]).
     pub fn import_defaults(&self) -> DevelopSettings {
+        match &self.import_look {
+            Some(l) => (**l).clone(),
+            None => self.camera_defaults(),
+        }
+    }
+    /// The built-in defaults for this photo, before any user default preset: raws start from
+    /// their as-shot white balance; embedded lens corrections on when the file has them.
+    pub fn camera_defaults(&self) -> DevelopSettings {
         let mut d = match self.as_shot_wb {
             Some((t, tint)) => DevelopSettings::for_raw(t, tint),
             None => DevelopSettings::default(),

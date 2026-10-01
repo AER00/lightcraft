@@ -143,8 +143,15 @@ fn source_bytes(img: &Rgb32f) -> usize {
 
 impl MediaCache {
     /// Keep rendered thumbnails on disk in `dir` as well.
-    pub fn attach_disk_cache(&mut self, dir: &std::path::Path) {
-        self.rendered = Arc::new(PreviewCache::with_disk(rendered_budget(self.budget), dir, DISK_CACHE_BYTES));
+    pub fn attach_disk_cache(&mut self, dir: &std::path::Path, disk_bytes: u64) {
+        self.rendered = Arc::new(PreviewCache::with_disk(rendered_budget(self.budget), dir, disk_bytes));
+    }
+
+    /// Forget every decoded source (photo ids changed meaning, e.g. another library was opened).
+    pub fn clear_sources(&mut self) {
+        self.thumbs = Lru::new(THUMB_SOURCE_BYTES.min(self.budget));
+        self.previews.clear();
+        self.full = None;
     }
 
     /// Bytes the caches may hold together.

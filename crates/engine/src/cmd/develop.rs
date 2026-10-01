@@ -128,7 +128,12 @@ pub fn specs() -> Vec<CommandSpec> {
                 .iter()
                 .filter_map(|id| s.develop_of(*id).map(|d| (*id, d)))
                 .filter_map(|(id, d)| {
-                    let fresh = DevelopSettings { wb: lightcraft_develop::WhiteBalance { mode: WbMode::AsShot, ..d.wb }, ..Default::default() };
+                    // back to the photo's import defaults when a default preset gave it its look
+                    let look = s.catalog.photo(id).and_then(|p| p.import_look.clone());
+                    let fresh = match look {
+                        Some(l) => (*l).clone(),
+                        None => DevelopSettings { wb: lightcraft_develop::WhiteBalance { mode: WbMode::AsShot, ..d.wb }, ..Default::default() },
+                    };
                     s.develop_op(id, fresh, "Reset")
                 })
                 .collect();

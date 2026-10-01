@@ -102,6 +102,10 @@ pub struct Session {
     pub xmp: sidecar::XmpPrefs,
     /// Parameters of the last export (`app.export` params, minus targets), persisted in prefs.json.
     pub last_export: Option<serde_json::Value>,
+    /// Develop defaults applied on import (persisted in prefs.json).
+    pub import_defaults: import::ImportDefaults,
+    /// Disk budget of the library's thumbnail cache in MB (0 = default; persisted in prefs.json).
+    pub cache_mb: u32,
 }
 
 impl Default for Session {
@@ -137,6 +141,8 @@ impl Session {
             library: None,
             xmp: sidecar::XmpPrefs::default(),
             last_export: None,
+            import_defaults: import::ImportDefaults::default(),
+            cache_mb: 0,
         }
     }
 
@@ -352,5 +358,7 @@ mod tests_library;
 mod tests_merge;
 #[cfg(test)]
 mod tests_organize;
+#[cfg(test)]
+mod tests_prefs;
 #[cfg(test)]
 mod tests_xmp;
