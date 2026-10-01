@@ -33,6 +33,8 @@ pub const LOCAL: &[ControlSpec] = &[
     spec("saturation", "Saturation", -100.0, 100.0, 1.0, 0, Track::Gradient { from: "#7a7a7a", to: "#e04a3a" }),
     spec("sharpness", "Sharpness", -100.0, 100.0, 1.0, 0, Track::Centered),
     spec("noise", "Noise", -100.0, 100.0, 1.0, 0, Track::Centered),
+    spec("moire", "Moiré", -100.0, 100.0, 1.0, 0, Track::Centered),
+    spec("defringe", "Defringe", -100.0, 100.0, 1.0, 0, Track::Centered),
 ];
 
 pub fn local_get(a: &LocalAdjustments, key: &str) -> f64 {
@@ -294,6 +296,10 @@ fn brush_settings(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 app.ui.brush_erase = true;
             }
         });
+        let mut auto = app.ui.brush_auto_mask;
+        if ui.checkbox(&mut auto, "Auto Mask").on_hover_text("Paint only areas like the one under the brush").changed() {
+            app.ui.brush_auto_mask = auto;
+        }
     });
     for (id, label, min, max, get) in [
         ("ui.brushSize", "Size", 1.0, 100.0, (app.ui.brush_size * 400.0) as f64),

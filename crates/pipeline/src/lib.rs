@@ -110,6 +110,8 @@ pub(crate) struct Prepared {
     pub clarity_blur: Option<Arc<Plane>>,
     pub texture_blur: Option<Arc<Plane>>,
     pub dark: Option<Arc<Plane>>,
+    /// Blurred chromaticity (`rgb / Y`) for local Moiré / Noise.
+    pub chroma_blur: Option<Arc<Rgb32f>>,
     /// Airlight of `dark` (before exposure).
     pub air: f32,
     pub masks: Vec<masks::Evaluated>,
@@ -402,3 +404,5 @@ pub(crate) fn for_rows<T: Send>(data: &mut [T], w: usize, f: impl Fn(usize, &mut
 mod tests;
 #[cfg(test)]
 mod tests_geometry;
+#[cfg(test)]
+mod tests_local;

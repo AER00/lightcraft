@@ -89,3 +89,20 @@ fn mask_overlay_keys_and_pins() {
     assert_eq!(h.app.session.active_mask, Some(2));
     h.settle(SETTLE);
 }
+
+#[test]
+fn brush_strokes_carry_auto_mask() {
+    let mut h = detail("panel.masking");
+    let r = h.request("ui.set", json!({"brushAutoMask": true}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    exec(&mut h, "tool.brush", json!({}));
+    assert_eq!(h.app.ui.tool, "brush");
+    pointer(
+        &mut h,
+        json!([{"kind": "down", "x": 0.3, "y": 0.5}, {"kind": "drag", "x": 0.4, "y": 0.5}, {"kind": "drag", "x": 0.5, "y": 0.5}, {"kind": "up", "x": 0.5, "y": 0.5}]),
+    );
+    let d = develop(&h);
+    let MaskShape::Brush { strokes } = &d.masks[0].components[0].shape else { panic!("brush") };
+    assert!(strokes[0].auto_mask && strokes[0].points.len() >= 2, "{strokes:?}");
+    h.settle(SETTLE);
+}

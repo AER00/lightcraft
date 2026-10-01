@@ -105,12 +105,15 @@ fn grain_noise(x: f32, y: f32, seed: u32) -> f32 {
 }
 
 /// Number of per-mask terms in [`mask_terms`].
-pub const MASK_TERMS: usize = 18;
+pub const MASK_TERMS: usize = 21;
+
+/// Number of alpha-weighted terms at the start of [`mask_terms`].
+pub const MASK_SUMS: usize = 17;
 
 /// A mask's local adjustments as the per-pixel stage uses them (alpha-weighted sums), in order:
 /// exposure, temp, tint, contrast, highlights, shadows, whites, blacks, texture, clarity, dehaze,
-/// saturation, hue, sharpness, then the colour overlay: on (0/1), cos and sin of its OkLCh hue, and
-/// its strength.
+/// saturation, hue, sharpness, noise, moiré, defringe, then the colour overlay: on (0/1), cos and
+/// sin of its OkLCh hue, and its strength.
 pub fn mask_terms(j: &LocalAdjustments) -> [f32; MASK_TERMS] {
     let (on, cos, sin, amt) = if j.color_sat > 0.0 {
         let hue = crate::colorops::oklch_hue_of_srgb_hue(j.color_hue);
@@ -133,6 +136,9 @@ pub fn mask_terms(j: &LocalAdjustments) -> [f32; MASK_TERMS] {
         (j.saturation / 100.0) as f32,
         (j.hue / 100.0) as f32 * 0.6,
         (j.sharpness / 100.0) as f32,
+        (j.noise / 100.0) as f32,
+        (j.moire / 100.0) as f32,
+        (j.defringe / 100.0) as f32,
         on,
         cos,
         sin,
@@ -250,21 +256,42 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
             let l0 = l_pre + ev;
 
             // --- local (mask) contributions: alpha-weighted sums of the masks' terms
-            let mut l = [0.0f32; 14];
+            let mut l = [0.0f32; MASK_SUMS];
             let mut tint_col: Option<([f32; 3], f32)> = None;
             for (m, t) in p.masks.iter().zip(&terms) {
                 let a = m.alpha.data[i];
                 if a <= 0.0 {
                     continue;
                 }
-                for k in 0..14 {
+                for k in 0..MASK_SUMS {
                     l[k] += a * t[k];
                 }
-                if t[14] > 0.0 {
-                    tint_col = Some(([t[15], t[16], 0.0], a * t[17]));
+                if t[MASK_SUMS] > 0.0 {
+                    tint_col = Some(([t[MASK_SUMS + 1], t[MASK_SUMS + 2], 0.0], a * t[MASK_SUMS + 3]));
                 }
             }
-            let [l_exp, l_temp, l_tint, l_con, l_hl, l_sh, l_wh, l_bl, l_tex, l_clar, l_dehaze, l_sat, l_hue, l_sharp] = l;
+            let [l_exp, l_temp, l_tint, l_con, l_hl, l_sh, l_wh, l_bl, l_tex, l_clar, l_dehaze, l_sat, l_hue, l_sharp, l_noise, l_moire, l_defringe] =
+                l;
+
+            // --- local Moiré (and the colour part of Noise): chromaticity towards its blur
+            let mt = (l_moire + 0.5 * l_noise.max(0.0)).clamp(-1.0, 1.0);
+            if mt != 0.0
+                && let Some(cb) = &p.chroma_blur
+            {
+                let (y, ch0, cb) = (luminance_2020(c), crate::masks::chromaticity(raw), cb.data[i]);
+                c = std::array::from_fn(|k| ((ch0[k] + (cb[k] - ch0[k]) * mt) * y).max(0.0));
+            }
+            // --- local Defringe: desaturate purple / green fringes along edges
+            let df = l_defringe.clamp(0.0, 1.0);
+            if df > 0.0
+                && let Some(b) = &p.texture_blur
+            {
+                let k = df * defringe_weight(c, p.log_l.data[i] - b.data[i]);
+                if k > 0.0 {
+                    let y = luminance_2020(c);
+                    c = c.map(|v| v + (y - v) * k);
+                }
+            }
 
             // --- dehaze (scene linear)
             let dz = dehaze + l_dehaze;
@@ -333,6 +360,13 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
                     let m = if sharpen_mask > 0.0 { smooth(sharpen_mask * 0.25, sharpen_mask * 0.25 + 0.15, det.abs()) } else { 1.0 };
                     delta += sp * 1.3 * det.clamp(-0.8, 0.8) * m;
                 }
+            }
+            // local Noise: smooth (or, negative, boost) small-amplitude detail, keep edges
+            if l_noise != 0.0
+                && let Some(b) = &p.texture_blur
+            {
+                let det = l_pre - b.data[i];
+                delta -= l_noise.clamp(-1.0, 1.0) * 0.9 * det * (1.0 - smooth(0.1, 0.5, det.abs()));
             }
             if delta != 0.0 {
                 let g = delta.exp2();
@@ -431,6 +465,16 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
         }
     });
     out
+}
+
+/// Local Defringe weight of a scene-linear colour `c` whose log luminance differs by `det` from
+/// its fine blur: high on strong edges with a purple or green cast.
+#[inline]
+pub fn defringe_weight(c: [f32; 3], det: f32) -> f32 {
+    let y = luminance_2020(c).max(1e-6);
+    let purple = (c[0].min(c[2]) - c[1]) / y;
+    let green = (c[1] - c[0].max(c[2])) / y;
+    smooth(0.04, 0.3, det.abs()) * smooth(0.02, 0.2, purple).max(smooth(0.02, 0.2, green))
 }
 
 /// Refine Saturation: scale the curved colour's chroma (around its luma, encoded values) so its

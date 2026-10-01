@@ -37,7 +37,22 @@ const MODULES: &[Module] = &[
     Module {
         src: include_str!("wgsl/map.wgsl"),
         bindings: &[("a", false, "f32"), ("b", false, "f32"), ("c", false, "f32"), ("dst", true, "f32")],
-        entries: &["log_lum_k", "dark_k", "guided_pre", "guided_ab", "guided_apply", "wb_k", "nr_lum", "chroma_k", "nr_col", "subsample", "redeye_k"],
+        entries: &[
+            "log_lum_k",
+            "dark_k",
+            "guided_pre",
+            "guided_ab",
+            "guided_apply",
+            "wb_k",
+            "nr_lum",
+            "chroma_k",
+            "nr_col",
+            "subsample",
+            "redeye_k",
+            "xguided_pre",
+            "xguided_ab",
+            "xguided_apply",
+        ],
     },
     Module {
         src: include_str!("wgsl/mask.wgsl"),
@@ -121,7 +136,7 @@ pub struct Gpu {
 
 /// WGSL constants shared by every module (generated from the CPU pipeline's values).
 fn constants() -> String {
-    use lightcraft_pipeline::finish::{GRAIN_HASH, MASK_TERMS, SRGB_LUT_N};
+    use lightcraft_pipeline::finish::{GRAIN_HASH, MASK_SUMS, MASK_TERMS, SRGB_LUT_N};
     use lightcraft_pipeline::tone::{LUT_MAX_EV, LUT_MIN_EV, LUT_N};
     let mut s = String::new();
     let [to_lms, from_lms, to_lab, from_lab] = lightcraft_color::perceptual::oklab_matrices();
@@ -134,9 +149,14 @@ fn constants() -> String {
     s += &format!("const TONE_MIN_GAIN: f32 = {:?};\n", 2f32.powf(LUT_MIN_EV));
     let b = lightcraft_pipeline::geometry::BLANK;
     s += &format!("const BLANK_R: f32 = {:?};\nconst BLANK_G: f32 = {:?};\nconst BLANK_B: f32 = {:?};\n", b[0], b[1], b[2]);
-    s += &format!("const SRGB_N: u32 = {SRGB_LUT_N}u;\nconst CURVE_N: u32 = {}u;\nconst MASK_TERMS: u32 = {MASK_TERMS}u;\n", crate::params::CURVE_N);
+    s += &format!(
+        "const SRGB_N: u32 = {SRGB_LUT_N}u;\nconst CURVE_N: u32 = {}u;\nconst MASK_TERMS: u32 = {MASK_TERMS}u;\nconst MASK_SUMS: u32 = {MASK_SUMS}u;\n",
+        crate::params::CURVE_N
+    );
     s += &format!("const POINT_WORDS: u32 = {}u;\n", lightcraft_pipeline::colorops::POINT_WORDS);
     s += &format!("const EYE_WORDS: u32 = {}u;\n", lightcraft_pipeline::redeye::EYE_WORDS);
+    use lightcraft_pipeline::masks::{AUTO_TOL_CHROMA, AUTO_TOL_EV};
+    s += &format!("const AUTO_TOL_EV: f32 = {AUTO_TOL_EV:?};\nconst AUTO_TOL_CHROMA: f32 = {AUTO_TOL_CHROMA:?};\n");
     s += &format!("const SHADOW_TINT_K: f32 = {:?};\n", lightcraft_pipeline::colorops::SHADOW_TINT);
     for (i, h) in GRAIN_HASH.iter().enumerate() {
         s += &format!("const GRAIN_H{i}: u32 = {h}u;\n");

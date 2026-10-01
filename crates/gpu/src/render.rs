@@ -44,6 +44,7 @@ struct Planes {
     clarity: Option<(u32, Arc<Buf>)>,
     texture: Option<(u32, Arc<Buf>)>,
     dark: Option<(u32, Arc<Buf>, f32)>,
+    chroma: Option<(u32, Arc<Buf>)>,
 }
 
 impl GpuStages {
@@ -141,6 +142,12 @@ impl<'a> Cx<'a> {
         let enc = self.enc.get_or_insert_with(|| self.gpu.encoder());
         enc.copy_buffer_to_buffer(b.raw(), (offset * 4) as u64, out.raw(), 0, (len * 4) as u64);
         out
+    }
+
+    /// Copy all of `src` into `dst` at `offset` (32-bit words; recorded).
+    pub fn copy_into(&mut self, src: &Buf, dst: &Buf, offset: usize) {
+        let enc = self.enc.get_or_insert_with(|| self.gpu.encoder());
+        enc.copy_buffer_to_buffer(src.raw(), 0, dst.raw(), (offset * 4) as u64, (src.len * 4) as u64);
     }
 
     pub fn read_rgb(&mut self, b: &Buf, w: usize, h: usize) -> Rgb32f {
@@ -469,7 +476,12 @@ pub fn render(
 
     // 5. per-pixel stage
     let fp = FinishParams::new(s, &plan.frame, info, w, h, plan.px_per_long, prep.air);
-    let present = Present { clarity: prep.clarity.is_some(), texture: prep.texture.is_some(), dark: prep.dark.is_some() };
+    let present = Present {
+        clarity: prep.clarity.is_some(),
+        texture: prep.texture.is_some(),
+        dark: prep.dark.is_some(),
+        chroma: masks.is_some() && prep.chroma.is_some(),
+    };
     let (p, aux) = finish_block(&fp, &terms, &present);
     let aux = gpu.upload(&aux);
     let out = gpu.buffer(n);
@@ -580,6 +592,8 @@ struct Prep {
     clarity: Option<Arc<Buf>>,
     texture: Option<Arc<Buf>>,
     dark: Option<Arc<Buf>>,
+    /// Blurred chromaticity (local Moiré / Noise).
+    chroma: Option<Arc<Buf>>,
     air: f32,
 }
 
@@ -634,14 +648,58 @@ fn prepare(cx: &mut Cx<'_>, lin: &Buf, plan: &Plan<'_>, req: &RenderRequest, pla
             }
         },
     };
-    Prep { log_l, base, clarity, texture, dark, air }
+    let chroma = sig.chroma.map(|sg| {
+        plane_at(&mut planes.chroma, sg, || {
+            let ch = cx.gpu.buffer(n * 3);
+            map(cx, "chroma_k", n, &[], [Some(lin), None, None], &ch);
+            gaussian(cx, &ch, w, h, 3, sg)
+        })
+    });
+    Prep { log_l, base, clarity, texture, dark, chroma, air }
 }
 
 /// Most brush dabs the mask kernel evaluates per pixel (more: the CPU rasterizes the brush).
 const MAX_DABS: usize = 4096;
 
-/// Evaluate the masks (`lightcraft_pipeline::masks::evaluate`): their alpha planes (concatenated)
-/// and their adjustment terms. Shapes without a kernel (Sky, Subject, …) run on the CPU.
+/// The `shape` kernel's brush data for `dabs`: stroke records (12 words: dab offset, dab count,
+/// r, hard, flow, density, erase, bbox x0 y0 x1 y1, auto) then the dab centres.
+fn brush_aux(dabs: &[&lightcraft_pipeline::masks::BrushDabs], erase: bool) -> Vec<f32> {
+    let mut aux = Vec::new();
+    let mut off = 12 * dabs.len();
+    for d in dabs {
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+        for q in &d.dabs {
+            (x0, y0, x1, y1) = (x0.min(q.x - d.r), y0.min(q.y - d.r), x1.max(q.x + d.r), y1.max(q.y + d.r));
+        }
+        aux.extend([off as f32, d.dabs.len() as f32, d.r as f32, d.hard as f32, d.flow, d.density, (erase && d.erase) as u8 as f32]);
+        aux.extend([x0, y0, x1, y1].map(|v| v as f32));
+        aux.push(d.auto as u8 as f32);
+        off += 2 * d.dabs.len();
+    }
+    for d in dabs {
+        aux.extend(d.dabs.iter().flat_map(|q| [q.x as f32, q.y as f32]));
+    }
+    aux
+}
+
+/// Cross guided filter (`masks::guided_cross`) of `p` steered by `guide`, max-combined with `p`.
+fn guided_cross_max(cx: &mut Cx<'_>, guide: &Buf, p: &Buf, w: usize, h: usize, sigma: f32, eps: f32) -> Buf {
+    let n = w * h;
+    let (m0, m1) = (cx.gpu.buffer(2 * n), cx.gpu.buffer(2 * n));
+    map(cx, "xguided_pre", n, &[0], [Some(guide), Some(p), None], &m0);
+    map(cx, "xguided_pre", n, &[1], [Some(guide), Some(p), None], &m1);
+    let (b0, b1) = (gaussian(cx, &m0, w, h, 2, sigma), gaussian(cx, &m1, w, h, 2, sigma));
+    let ab = cx.gpu.buffer(2 * n);
+    map(cx, "xguided_ab", n, &[eps.to_bits()], [Some(&b0), Some(&b1), None], &ab);
+    let ab = gaussian(cx, &ab, w, h, 2, sigma);
+    let q = cx.gpu.buffer(n);
+    map(cx, "xguided_apply", n, &[], [Some(guide), Some(&ab), Some(p)], &q);
+    q
+}
+
+/// Evaluate the masks (`lightcraft_pipeline::masks::evaluate`): their alpha planes (concatenated,
+/// followed by the blurred chromaticity when local Moiré / Noise need it) and their adjustment
+/// terms. Shapes without a kernel (Sky, Subject, …) run on the CPU.
 fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Host) -> (Option<Buf>, Vec<[f32; MASK_TERMS]>) {
     use lightcraft_develop::{MaskOp, MaskShape};
     let s = &*plan.settings;
@@ -657,7 +715,10 @@ fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Ho
     let [a, b, c, d, e, f] = frame.out_to_norm(w, h).0;
     let (kx, ky) = (frame.ow / long, frame.oh / long);
     let aff = [a * kx, b * ky, c * kx, d * ky, e * kx, f * ky].map(|v| (v as f32).to_bits());
-    let alpha = cx.zeroed(n * list.len());
+    let alpha = cx.zeroed(n * list.len() + if prep.chroma.is_some() { 3 * n } else { 0 });
+    if let Some(ch) = &prep.chroma {
+        cx.copy_into(ch, &alpha, n * list.len());
+    }
     let comp_plane = cx.gpu.buffer(n);
     for (mi, m) in list.iter().enumerate() {
         let mut first = true;
@@ -673,6 +734,7 @@ fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Ho
             p.extend_from_slice(&aff);
             let f32s = |v: &[f64]| v.iter().map(|x| (*x as f32).to_bits()).collect::<Vec<u32>>();
             let mut aux: Vec<f32> = Vec::new();
+            let mut own: Option<Buf> = None;
             let kind = match &comp.shape {
                 MaskShape::Linear { start, end } => {
                     let (a, b) = (frame.norm_to_long(*start), frame.norm_to_long(*end));
@@ -700,29 +762,46 @@ fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Ho
                 }
                 MaskShape::Brush { strokes } => {
                     let dabs: Vec<_> = strokes.iter().map(|st| lightcraft_pipeline::masks::brush_dabs(st, frame, w, h)).collect();
-                    if dabs.iter().map(|d| d.dabs.len()).sum::<usize>() <= MAX_DABS {
-                        p.push(dabs.len() as u32);
-                        let mut off = 11 * dabs.len();
-                        for d in &dabs {
-                            let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-                            for q in &d.dabs {
-                                (x0, y0, x1, y1) = (x0.min(q.x - d.r), y0.min(q.y - d.r), x1.max(q.x + d.r), y1.max(q.y + d.r));
-                            }
-                            aux.extend([off as f32, d.dabs.len() as f32, d.r as f32, d.hard as f32, d.flow, d.density, d.erase as u8 as f32]);
-                            aux.extend([x0, y0, x1, y1].map(|v| v as f32));
-                            off += 2 * d.dabs.len();
-                        }
-                        for d in &dabs {
-                            aux.extend(d.dabs.iter().flat_map(|q| [q.x as f32, q.y as f32]));
-                        }
-                        Some(4)
-                    } else {
+                    if dabs.iter().map(|d| d.dabs.len()).sum::<usize>() > MAX_DABS {
                         None
+                    } else if dabs.iter().any(|d| d.auto) {
+                        // Auto Mask: stroke by stroke (each one refined before it's combined)
+                        let brush = cx.zeroed(n);
+                        let stroke = cx.gpu.buffer(n);
+                        for d in &dabs {
+                            let mut q = p.clone();
+                            q[2] = 4;
+                            q[3] = 0;
+                            q.push(1);
+                            let aux = cx.gpu.upload(&brush_aux(&[d], false));
+                            cx.run("shape", &q, &[Some(lin), Some(&prep.log_l), Some(&aux), Some(&stroke), Some(&brush)], groups2(w, h, [16, 16]));
+                            let refined = d.auto.then(|| {
+                                let (sigma, eps) = lightcraft_pipeline::masks::auto_refine(d.r);
+                                guided_cross_max(cx, &prep.log_l, &stroke, w, h, sigma, eps)
+                            });
+                            let op = if d.erase { 2 } else { 1 };
+                            cx.run(
+                                "combine",
+                                &[n as u32, 0, 0, op],
+                                &[None, None, None, Some(refined.as_ref().unwrap_or(&stroke)), Some(&brush)],
+                                groups1(n),
+                            );
+                        }
+                        if comp.invert {
+                            cx.run("finalize", &[n as u32, 0, 0, 1, 1f32.to_bits()], &[None, None, None, Some(&stroke), Some(&brush)], groups1(n));
+                        }
+                        own = Some(brush);
+                        None
+                    } else {
+                        p.push(dabs.len() as u32);
+                        aux = brush_aux(&dabs.iter().collect::<Vec<_>>(), true);
+                        Some(4)
                     }
                 }
                 _ => None,
             };
             let plane = match kind {
+                _ if own.is_some() => own,
                 Some(k) => {
                     p[2] = k;
                     let aux = (!aux.is_empty()).then(|| cx.gpu.upload(&aux));

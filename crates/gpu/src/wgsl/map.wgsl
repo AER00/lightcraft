@@ -70,6 +70,51 @@ fn guided_apply(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgr
     dst[i] = b[2u * i] * a[i] + b[2u * i + 1u];
 }
 
+// Cross guided filter (`masks::guided_cross`), a: guide, b: input. P[1] = 0: (guide, input);
+// 1: (guide·input, guide²).
+@compute @workgroup_size(256)
+fn xguided_pre(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
+    let i = lin_index(g, nw);
+    if (i >= pu(0u)) {
+        return;
+    }
+    let gi = a[i];
+    let p = b[i];
+    if (pu(1u) == 0u) {
+        dst[2u * i] = gi;
+        dst[2u * i + 1u] = p;
+    } else {
+        dst[2u * i] = gi * p;
+        dst[2u * i + 1u] = gi * gi;
+    }
+}
+
+// Coefficients (a, b) from blurred means (a: guide, input) and correlations (b: guide·input,
+// guide²). P[1] = eps.
+@compute @workgroup_size(256)
+fn xguided_ab(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
+    let i = lin_index(g, nw);
+    if (i >= pu(0u)) {
+        return;
+    }
+    let mi = a[2u * i];
+    let mp = a[2u * i + 1u];
+    let v = max(b[2u * i + 1u] - mi * mi, 0.0);
+    let k = (b[2u * i] - mi * mp) / (v + pf(1u));
+    dst[2u * i] = k;
+    dst[2u * i + 1u] = mp - k * mi;
+}
+
+// `max(p, clamp(a·guide + b, 0, 1))` (a: guide, b: blurred coefficients, c: the input p).
+@compute @workgroup_size(256)
+fn xguided_apply(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
+    let i = lin_index(g, nw);
+    if (i >= pu(0u)) {
+        return;
+    }
+    dst[i] = max(c[i], clamp(b[2u * i] * a[i] + b[2u * i + 1u], 0.0, 1.0));
+}
+
 // White balance: 3×3 matrix (P[1] = has matrix, P[2..11] row-major), clamped at 0.
 @compute @workgroup_size(256)
 fn wb_k(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
