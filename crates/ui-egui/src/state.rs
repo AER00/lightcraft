@@ -31,11 +31,13 @@ pub enum RightPanel {
     Activity,
     Keywords,
     Info,
+    /// The profile browser (part of Edit).
+    Profiles,
 }
 
 impl RightPanel {
     pub fn is_edit_tool(self) -> bool {
-        matches!(self, RightPanel::Edit | RightPanel::Crop | RightPanel::Remove | RightPanel::Masking | RightPanel::RedEye)
+        matches!(self, RightPanel::Edit | RightPanel::Profiles | RightPanel::Crop | RightPanel::Remove | RightPanel::Masking | RightPanel::RedEye)
     }
 }
 

@@ -144,13 +144,15 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
                 app.widgets.iter().filter(|(id, _)| id.contains(filter)).map(|(id, r)| json!({"id": id, "rect": rect_json(*r)})).collect(),
             ))
         }
-        "ui.clickWidget" | "ui.dragWidget" => {
+        "ui.clickWidget" | "ui.dragWidget" | "ui.hoverWidget" => {
             let Some(id) = s("id") else { return err("missing `id`") };
             let Some(r) = widget_rect(app, id) else { return err(format!("no widget `{id}` on screen (see ui.widgets)")) };
             let m = modifiers(p);
             // optional relative position inside the widget (0..1)
             let at = egui::pos2(r.left() + r.width() * f("fx").unwrap_or(0.5) as f32, r.top() + r.height() * f("fy").unwrap_or(0.5) as f32);
-            if req.method == "ui.clickWidget" {
+            if req.method == "ui.hoverWidget" {
+                app.synthetic.push(egui::Event::PointerMoved(at));
+            } else if req.method == "ui.clickWidget" {
                 let n = p.get("count").and_then(Value::as_u64).unwrap_or(1);
                 app.synthetic.push(egui::Event::PointerMoved(at));
                 for _ in 0..n {

@@ -32,7 +32,7 @@ pub fn apply_slider_out(
     }
 }
 
-fn control(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings, id: &str, enabled: bool) {
+pub(crate) fn control(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings, id: &str, enabled: bool) {
     let Some(spec) = controls::find(id) else { return };
     let v = controls::get(d, id).unwrap_or(spec.default);
     let out = slider(ui, spec, v, enabled, None);
@@ -107,6 +107,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             let name = lightcraft_engine::presets::profile(&d.profile.id).map(|p| p.name).unwrap_or("Color");
             let r = crate::widgets::dropdown(ui, "profile", name, t.font(15.0), t.text_label);
             egui::Popup::menu(&r).show(|ui| profile_menu(app, ui, &d));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if crate::widgets::icon_button(ui, "profileBrowser", Icon::ProfileGrid, vec2(28.0, 28.0), false, true, "Browse Profiles").clicked() {
+                    let _ = app.run("panel.profiles", json!({}));
+                }
+            });
         });
     });
     if d.profile.id != "lc.color" {
@@ -309,12 +314,19 @@ fn profile_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings)
     let t = Tokens::get(ui.ctx());
     ui.set_min_width(200.0);
     let cur = d.profile.id.as_str();
-    let mut pick: Option<&'static str> = None;
-    let item = |ui: &mut egui::Ui, key: &str, p: &'static lightcraft_engine::presets::ProfileInfo, pick: &mut Option<&'static str>| {
+    // (clicked, hovered)
+    let mut pick: (Option<&'static str>, Option<&'static str>) = (None, None);
+    let item = |ui: &mut egui::Ui,
+                key: &str,
+                p: &'static lightcraft_engine::presets::ProfileInfo,
+                pick: &mut (Option<&'static str>, Option<&'static str>)| {
         let r = ui.selectable_label(p.id == cur, p.name);
         register(ui.ctx(), format!("profileMenu:{key}:{}", p.id), r.rect);
         if r.clicked() {
-            *pick = Some(p.id);
+            pick.0 = Some(p.id);
+        }
+        if r.hovered() {
+            pick.1 = Some(p.id);
         }
     };
     let heading = |ui: &mut egui::Ui, s: &str| {
@@ -350,7 +362,21 @@ fn profile_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings)
             let _ = app.run("profile.favorite", json!({"id": p.id}));
         }
     }
-    if let Some(id) = pick {
+    let r = ui.button("Browse…");
+    register(ui.ctx(), "profileMenu:browse", r.rect);
+    if r.clicked() {
+        let _ = app.run("panel.profiles", json!({}));
+    }
+    // resting on a profile previews it in the loupe
+    if let Some(p) = pick.1.and_then(profile)
+        && p.id != cur
+    {
+        let mut s = d.clone();
+        s.profile.id = p.id.to_string();
+        s.profile.amount = 100.0;
+        app.hover_preview = Some(crate::HoverPreview { label: format!("Profile: {}", p.name), settings: s });
+    }
+    if let Some(id) = pick.0 {
         let _ = app.run("develop.profile", json!({"id": id}));
     }
 }

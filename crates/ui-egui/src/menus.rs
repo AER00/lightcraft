@@ -39,6 +39,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.back", "Back to Grid", Some("Escape"), ""),
     ("view.filterBar", "Filter Bar", Some("Shift+F"), "View"),
     ("panel.edit", "Edit", Some("E"), "Window"),
+    ("panel.profiles", "Profile Browser", None, "Window"),
     ("panel.crop", "Crop & Rotate", Some("C"), "Window"),
     ("panel.remove", "Remove", Some("H"), "Window"),
     ("panel.masking", "Masking", Some("M"), "Window"),
@@ -233,6 +234,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "panel.edit" => {
             panel(app, &ctx, RightPanel::Edit, "Edit");
             Ok(Value::Null)
+        }
+        "panel.profiles" => {
+            // toggles between the profile browser and the Edit panel it belongs to
+            app.ui.right = if app.ui.right == RightPanel::Profiles { RightPanel::Edit } else { RightPanel::Profiles };
+            if !matches!(app.ui.view, ViewMode::Detail) {
+                app.ui.view = ViewMode::Detail;
+            }
+            Ok(json!({"open": app.ui.right == RightPanel::Profiles}))
         }
         "panel.crop" => {
             panel(app, &ctx, RightPanel::Crop, "Crop, Rotate, Geometry");
