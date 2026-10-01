@@ -299,49 +299,8 @@ pub struct ProbeInfo {
     pub captured: Option<String>,
     pub meta: lightcraft_catalog::Meta,
     pub as_shot_wb: Option<(f64, f64)>,
+    /// Hash of the file's bytes (hex), for duplicate detection.
+    pub content_hash: Option<String>,
 }
 
 pub type FileProbe = Arc<dyn Fn(&str) -> Result<ProbeInfo, String> + Send + Sync>;
-
-/// Register files as photos (duplicates by path are skipped). Returns the new ids.
-pub fn import_paths(s: &mut crate::Session, paths: &[String]) -> crate::Result<Vec<PhotoId>> {
-    let now = (s.clock)();
-    let mut ops = Vec::new();
-    let mut ids = Vec::new();
-    for path in paths {
-        let exists = s.catalog.photos().any(|p| matches!(&p.source, Source::File { path: q } if q == path));
-        if exists {
-            continue;
-        }
-        let info = match &s.media.file_probe {
-            Some(probe) => match probe(path) {
-                Ok(i) => i,
-                Err(e) => {
-                    log::warn!("import {path}: {e}");
-                    continue;
-                }
-            },
-            None => ProbeInfo {
-                format: std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_default(),
-                ..Default::default()
-            },
-        };
-        let id = s.catalog.alloc_photo_id();
-        let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
-        let mut p = Photo::new(id, Source::File { path: path.clone() }, &name, &info.format, info.width, info.height, &now);
-        p.kind = info.kind;
-        p.file_size = info.file_size;
-        p.captured = info.captured;
-        p.meta = info.meta;
-        p.as_shot_wb = info.as_shot_wb;
-        if let Some((t, tint)) = info.as_shot_wb {
-            p.develop = std::sync::Arc::new(lightcraft_develop::DevelopSettings::for_raw(t, tint));
-        }
-        ids.push(id);
-        ops.push(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) });
-    }
-    if !ops.is_empty() {
-        s.commit("Add Photos", lightcraft_catalog::Op::Batch { ops })?;
-    }
-    Ok(ids)
-}

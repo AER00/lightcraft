@@ -92,29 +92,9 @@ fn services() -> Services {
     }
 }
 
-/// Expand folders (recursively) into photo files.
-fn collect(path: &std::path::Path, out: &mut Vec<String>) {
-    if path.is_dir() {
-        if let Ok(rd) = std::fs::read_dir(path) {
-            let mut v: Vec<_> = rd.flatten().map(|e| e.path()).collect();
-            v.sort();
-            for p in v {
-                collect(&p, out);
-            }
-        }
-    } else if path.extension().is_some_and(|e| {
-        matches!(
-            e.to_string_lossy().to_lowercase().as_str(),
-            "jpg" | "jpeg" | "png" | "tif" | "tiff" | "webp" | "dng" | "cr2" | "nef" | "arw" | "psd" | "jxl" | "gif" | "bmp"
-        )
-    }) {
-        out.push(path.to_string_lossy().to_string());
-    }
-}
-
 /// The persistent library session (or an in-memory one with `--memory` / if the library can't open).
 fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: bool) -> Session {
-    let fallback = || if seed_demo { Session::with_demo() } else { Session::new() }.with_fs();
+    let fallback = || if seed_demo { Session::with_demo() } else { Session::new() }.with_fs().with_system_clock();
     if in_memory {
         return fallback();
     }
@@ -123,7 +103,7 @@ fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: boo
         return fallback();
     };
     let t0 = std::time::Instant::now();
-    let mut s = Session::new().with_fs();
+    let mut s = Session::new().with_fs().with_system_clock();
     match s.open_library(&dir, seed_demo) {
         Ok(r) => {
             let (replayed, torn) = (r.replayed, r.torn_bytes);
@@ -160,7 +140,7 @@ fn main() -> eframe::Result {
                 println!("lightcraft {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
-            _ => collect(std::path::Path::new(&a), &mut files),
+            _ => files.push(a),
         }
     }
     let options = eframe::NativeOptions {

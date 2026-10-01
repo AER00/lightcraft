@@ -364,24 +364,39 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         // ---- import
-        cmd!("library.import", "Add Photos…", ["File"], Some("Cmd+Shift+I"), "{paths: [path], album?: albumId}", always, |s, p| {
-            let paths: Vec<String> = p
-                .get("paths")
-                .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
-                .unwrap_or_default();
-            if paths.is_empty() {
-                return Err(bad("library.import", "no paths"));
+        cmd!(
+            "library.import",
+            "Add Photos…",
+            ["File"],
+            Some("Cmd+Shift+I"),
+            "{paths: [file or folder (recursive)], mode?: add|copy (copy into the library's Originals/), album?: albumId} → {imported, duplicates, failed}",
+            always,
+            |s, p| {
+                let paths: Vec<String> = p
+                    .get("paths")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                    .unwrap_or_default();
+                if paths.is_empty() {
+                    return Err(bad("library.import", "no paths"));
+                }
+                let mode = match str_param(p, "mode").unwrap_or("add") {
+                    "add" => crate::import::ImportMode::Add,
+                    "copy" => crate::import::ImportMode::Copy,
+                    other => return Err(bad("library.import", format!("unknown mode `{other}` (add|copy)"))),
+                };
+                let report = crate::import::import(s, &paths, mode)?;
+                if let Some(a) = p.get("album").and_then(Value::as_u64)
+                    && !report.imported.is_empty()
+                {
+                    s.execute("album.addPhotos", &json!({"id": a, "ids": report.imported}))?;
+                }
+                if let Some(f) = report.imported.first() {
+                    s.selection = Selection::single(PhotoId(*f));
+                }
+                Ok(serde_json::to_value(&report).unwrap_or_default())
             }
-            let imported = crate::media::import_paths(s, &paths)?;
-            if let Some(a) = p.get("album").and_then(Value::as_u64) {
-                s.execute("album.addPhotos", &json!({"id": a, "ids": imported.iter().map(|i| i.0).collect::<Vec<_>>()}))?;
-            }
-            if let Some(f) = imported.first() {
-                s.selection = Selection::single(*f);
-            }
-            Ok(json!({"imported": imported.iter().map(|i| i.0).collect::<Vec<_>>()}))
-        }),
+        ),
         // ---- persistence
         cmd!(query "library.info", "Library Info", [], None, "{}", always, |s, _| {
             let photos = s.catalog.len();

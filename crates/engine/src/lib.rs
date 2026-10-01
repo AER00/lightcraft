@@ -13,6 +13,7 @@
 pub mod cmd;
 pub mod demo;
 pub mod files;
+pub mod import;
 pub mod library;
 pub mod media;
 pub mod presets;
@@ -305,5 +306,7 @@ impl Session {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_import;
 #[cfg(test)]
 mod tests_library;
