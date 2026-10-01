@@ -105,7 +105,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
         return Err(RawError::Unsupported("Olympus compressed ORF".into()));
     };
     let RawData::U16(ref mut samples) = data else { return Err(RawError::Unsupported("float ORF".into())) };
-    let bits = if bits == 16 && samples.par_iter().filter(|v| *v & 15 != 0).count() * 100 <= n {
+    let bits = if bits == 16 && samples.iter().step_by(7).filter(|v| *v & 15 != 0).count() * 700 <= n {
         // 12-bit values stored in the top bits
         samples.par_iter_mut().for_each(|v| *v >>= 4);
         12

@@ -4,7 +4,9 @@
 //! layout, SubIFDs, maker note header) and the ExifTool Nikon tag-name documentation (`0x000c` WB_RBLevels,
 //! `0x003d` BlackLevel). Nikon's Huffman-compressed variants (compression 34713: lossless, lossy type 1/2) are
 //! **not** implemented: the only descriptions we found are derived from GPL code, which our clean-room rules
-//! forbid. They are reported as [`RawError::Unsupported`]; their embedded previews still work.
+//! forbid. The coding is T.81-style (difference category + additional bits, as in Pentax PEF), but unlike PEF the
+//! Huffman tables are not stored in the files and our black-box table search has not converged (see ROADMAP.md).
+//! They are reported as [`RawError::Unsupported`]; their embedded previews still work.
 
 use super::white_from_data;
 use crate::tiffraw::{Packing, read_image};

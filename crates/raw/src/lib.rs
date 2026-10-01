@@ -10,10 +10,12 @@
 //!   and produces camera → linear Rec.2020 D65 matrices.
 //!
 //! Formats: DNG (uncompressed, lossless JPEG, Deflate incl. floating point, tiled/stripped, CFA and LinearRaw),
-//! Canon CR2, Nikon NEF (uncompressed), Sony ARW (uncompressed, lossless), Fujifilm RAF (uncompressed Bayer and
-//! X-Trans), Panasonic RW2 (packed 12/14-bit), Pentax PEF
-//! (uncompressed, Huffman), Olympus ORF (uncompressed). See the crate README for sources and
-//! gaps. The decoders never panic on malformed input.
+//! Canon CR2, Nikon NEF/NRW (uncompressed), Sony ARW (uncompressed, ARW2, lossless), Fujifilm RAF (uncompressed Bayer
+//! and X-Trans), Panasonic RW2 (packed 12/14-bit), Pentax PEF (uncompressed, Huffman), Olympus ORF (uncompressed).
+//! [`embedded_preview`] covers all of them plus CR3. Variants we can't decode yet (Nikon Huffman NEF, Panasonic
+//! quantised RW2, compressed ORF/RAF, CR3) return [`RawError::Unsupported`]; each vendor module documents its sources
+//! (public specifications, tag-name documentation, black-box analysis of CC0 samples) and gaps. Non-DNG files carry no
+//! colour matrix: [`color`] falls back to a documented neutral model. The decoders never panic on malformed input.
 #![forbid(unsafe_code)]
 
 pub mod color;

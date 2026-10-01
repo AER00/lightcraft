@@ -44,7 +44,25 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
     let m = lightcraft_meta::extract(bytes);
     let (meta, captured) = meta_of(&m);
     if lightcraft_raw::probe(bytes).is_some() {
-        let raw = lightcraft_raw::decode(bytes).map_err(|e| e.to_string())?;
+        let raw = match lightcraft_raw::decode(bytes) {
+            Ok(r) => r,
+            Err(lightcraft_raw::RawError::Unsupported(why)) => {
+                // a raw variant we can't decode yet: describe it from its embedded preview
+                let (w, h) = embedded_preview_size(bytes).ok_or(format!("unsupported raw ({why}) without an embedded preview"))?;
+                return Ok(ProbeInfo {
+                    width: w,
+                    height: h,
+                    format: ext_upper(name),
+                    kind: MediaKind::Raw,
+                    file_size: bytes.len() as u64,
+                    captured,
+                    meta,
+                    as_shot_wb: None,
+                    content_hash,
+                });
+            }
+            Err(e) => return Err(e.to_string()),
+        };
         let (mut w, mut h) = (raw.crop.width.max(1) as u32, raw.crop.height.max(1) as u32);
         if w <= 1 || h <= 1 {
             (w, h) = (raw.active_area.width as u32, raw.active_area.height as u32);
@@ -97,7 +115,14 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
 /// Decode a file into a linear Rec.2020 image no larger than `max_edge`, oriented.
 pub fn load_bytes(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
     if lightcraft_raw::probe(bytes).is_some() {
-        let raw = lightcraft_raw::decode(bytes).map_err(|e| e.to_string())?;
+        let raw = match lightcraft_raw::decode(bytes) {
+            Ok(r) => r,
+            Err(lightcraft_raw::RawError::Unsupported(why)) => {
+                // show the camera's embedded JPEG (rendered, not raw) until the variant is supported
+                return load_embedded_preview(bytes, max_edge).ok_or(format!("unsupported raw ({why}) without an embedded preview"));
+            }
+            Err(e) => return Err(e.to_string()),
+        };
         let method = if max_edge <= 600 { lightcraft_raw::Method::Bilinear } else { lightcraft_raw::Method::Ahd };
         let mut img = raw.develop(method).map_err(|e| e.to_string())?;
         let xy = lightcraft_raw::color::as_shot_white_xy(&raw);
@@ -124,6 +149,34 @@ pub fn load_bytes(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo),
     Ok((img.oriented(Orientation::from_exif(d.orientation)), SourceInfo::default()))
 }
 
+/// Orientation for an embedded preview: its own EXIF orientation when it has one, else the raw file's.
+fn preview_orientation(raw_bytes: &[u8], jpeg_orientation: u16) -> Orientation {
+    if jpeg_orientation > 1 {
+        return Orientation::from_exif(jpeg_orientation);
+    }
+    lightcraft_meta::extract(raw_bytes).orientation.unwrap_or(Orientation::Normal)
+}
+
+/// Oriented size of the embedded preview of a raw file.
+fn embedded_preview_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    let jpeg = lightcraft_raw::embedded_preview(bytes)?;
+    let d = lightcraft_codecs::decode(&jpeg, lightcraft_codecs::DecodeOptions::fit(64, 64)).ok()?;
+    let (mut w, mut h) = (d.source_width, d.source_height);
+    if preview_orientation(bytes, d.orientation).swaps_axes() {
+        std::mem::swap(&mut w, &mut h);
+    }
+    Some((w, h))
+}
+
+/// The embedded preview of a raw file as a working-space image no larger than `max_edge`, oriented.
+pub fn load_embedded_preview(bytes: &[u8], max_edge: usize) -> Option<(Rgb32f, SourceInfo)> {
+    let jpeg = lightcraft_raw::embedded_preview(bytes)?;
+    let d = lightcraft_codecs::decode(&jpeg, lightcraft_codecs::DecodeOptions::fit(max_edge as u32, max_edge as u32)).ok()?;
+    let img = d.to_working();
+    let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
+    Some((img.oriented(preview_orientation(bytes, d.orientation)), SourceInfo::default()))
+}
+
 /// Filesystem-backed hooks (native). On the web the host installs bytes-based hooks instead.
 pub fn fs_hooks() -> (FileLoader, FileProbe) {
     let loader: FileLoader = Arc::new(|path: &str, max_edge: usize| {
@@ -144,5 +197,38 @@ impl crate::Session {
         self.media.file_loader = Some(l);
         self.media.file_probe = Some(p);
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};
+
+    /// A CR3-shaped file (not decodable yet) whose only content is a `PRVW` preview box.
+    fn cr3_with_preview(w: u32, h: u32) -> Vec<u8> {
+        let px: Vec<u8> = (0..w * h).flat_map(|i| [(i % 251) as u8, 128, 200]).collect();
+        let jpeg = encode_jpeg(&EncodeImage::new(w, h, 3, Samples::U8(&px)), 90, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap();
+        let mut b = b"\0\0\0\x18ftypcrx \0\0\0\x01crx isom".to_vec();
+        b.extend_from_slice(&((24 + jpeg.len()) as u32).to_be_bytes());
+        b.extend_from_slice(b"PRVW\0\0\0\0\0\x01");
+        b.extend_from_slice(&(w as u16).to_be_bytes());
+        b.extend_from_slice(&(h as u16).to_be_bytes());
+        b.extend_from_slice(b"\0\x01");
+        b.extend_from_slice(&(jpeg.len() as u32).to_be_bytes());
+        b.extend_from_slice(&jpeg);
+        b
+    }
+
+    #[test]
+    fn unsupported_raw_falls_back_to_embedded_preview() {
+        let b = cr3_with_preview(48, 32);
+        let p = probe_bytes("x.cr3", &b).unwrap();
+        assert_eq!((p.width, p.height, p.kind, p.format.as_str()), (48, 32, MediaKind::Raw, "CR3"));
+        let (img, src) = load_bytes(&b, 24).unwrap();
+        assert_eq!((img.width, img.height), (24, 16));
+        assert!(!src.raw);
+        // no preview at all: a clear error, not a panic
+        assert!(load_bytes(b"\0\0\0\x18ftypcrx \0\0\0\x01", 24).is_err());
     }
 }
