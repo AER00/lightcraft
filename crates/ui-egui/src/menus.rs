@@ -39,7 +39,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("panel.info", "Info", Some("I"), "View"),
     ("panel.keywords", "Keywords", Some("K"), "View"),
     ("panel.versions", "Versions", Some("Shift+V"), "View"),
-    ("panel.activity", "History", Some("Shift+Y"), "View"),
+    ("panel.activity", "History", None, "View"),
     ("panel.close", "Close Panel", None, "View"),
     ("section.light", "Light", Some("Cmd+Alt+1"), "View"),
     ("section.color", "Color", Some("Cmd+Alt+2"), "View"),
