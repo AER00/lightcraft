@@ -45,10 +45,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 0 | 3 | 5 | 3 | 0/1 (0%) | 0/4 (0%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 10 | 2 | 5 | 1 | 7/8 (88%) | 3/5 (60%) |
-| Y. Menus | 41 | 20 | 24 | 8 | 36/47 (77%) | 3/23 (13%) |
-| Z. Keyboard shortcuts (desktop) | 44 | 16 | 20 | 1 | 39/52 (75%) | 5/23 (22%) |
+| Y. Menus | 42 | 19 | 24 | 8 | 37/47 (79%) | 3/23 (13%) |
+| Z. Keyboard shortcuts (desktop) | 45 | 16 | 19 | 1 | 39/52 (75%) | 6/23 (26%) |
 | Lightroom Classic extras | 1 | 17 | 61 | 9 | — | 1/21 (5%) |
-| **Total** | 182 | 111 | 207 | 37 | 147/198 (74%) | 32/144 (22%) |
+| **Total** | 184 | 110 | 206 | 37 | 148/198 (75%) | 33/144 (23%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -124,7 +124,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 **Still missing / broken:**
 - No command yet: F full-screen preview, ⇧⌘F window full screen, ⇧⌘V paste selected,
-  ⌘, settings, ⌘F focus search, ⌘G / ⇧⌘G stacks, ⌥Y top/bottom before/after, A visualize spots, `[` `]` / ⇧`[` ⇧`]`
+  ⌘, settings, ⌘F focus search, ⌘G / ⇧⌘G stacks, A visualize spots, `[` `]` / ⇧`[` ⇧`]`
   brush size/feather, ⌃H / ⌃M merges, F1 help, ⇧6–9 label + advance.
 - `⌫` in the Masking panel deletes the active mask; spots have no pin selection yet (⌫ does nothing in Remove).
 - `H` opens Remove; Lightroom also uses it (Classic) to hide pins — no pin toggle yet.
@@ -195,7 +195,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-VIEW-FILMSTRIP | Filmstrip | P0 | ✅ | `cmd:view.filmstrip` | |
 | LR-VIEW-ZOOM | Zoom & pan | P0 | ✅ | `cmd:view.zoomFit`, `cmd:view.zoom100`, `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle` | steps 25–800 % (not 6–1600 %); Fill only in the bottom bar |
 | LR-VIEW-NAVIGATOR | Navigator mini map | P1 | ⬜ | | |
-| LR-VIEW-BEFOREAFTER | Before / after | P0 | 🟡 | `cmd:view.showOriginal`, `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit` | no top/bottom layouts; "before" is always the original |
+| LR-VIEW-BEFOREAFTER | Before / after | P0 | 🟡 | `cmd:view.showOriginal`, `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | all four layouts; "before" is always the original (no before-state from history) |
 | LR-VIEW-COMPARE | Compare two photos | P1 | ⬜ | | |
 | LR-VIEW-SURVEY | Survey view [Classic] | P2 | ⬜ | | |
 | LR-VIEW-INFOOVERLAY | Info overlay on the photo | P1 | ⬜ | | |
@@ -581,7 +581,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-VIEW-HISTOGRAM | Show/Hide histogram | P0 | ✅ | `cmd:view.histogram` | |
 | MENU-VIEW-INFOOVERLAY | Show info overlay | P1 | ⬜ | | |
 | MENU-VIEW-SHOWORIGINAL | Show Original | P0 | ✅ | `cmd:view.showOriginal` | |
-| MENU-VIEW-BEFOREAFTER | Before/After submenu | P0 | 🟡 | `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit` | left/right and split left/right only |
+| MENU-VIEW-BEFOREAFTER | Before/After submenu | P0 | ✅ | `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | |
 | MENU-VIEW-ZOOM | Zoom in / out / toggle / fit / 1:1 | P0 | ✅ | `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle`, `cmd:view.zoomFit`, `cmd:view.zoom100` | |
 | MENU-VIEW-CLIPPING | Show Clipping | P0 | ✅ | `cmd:view.clipping` | |
 | MENU-VIEW-MASKOVERLAY | Mask overlay / cycle colour | P0 | 🟡 | `cmd:view.maskOverlay` | no colour cycle |
@@ -696,7 +696,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-FLAGADVANCE | Flag and advance — ⇧Z / ⇧X / ⇧U | P1 | 🟡 | `cmd:photo.flag` (`advance`) | ⇧X and ⇧U bound; pick-and-advance has no key (⇧P = presets) |
 | KEY-NEXTPREV | Next / previous — → / ← | P0 | ✅ | `cmd:library.next`, `cmd:library.previous` | |
 | KEY-BA-CYCLE | Before/after — Y | P0 | ✅ | `cmd:view.beforeAfter` | toggles side by side (no cycling) |
-| KEY-BA-TOPBOTTOM | Before/after top/bottom — ⌥Y | P1 | ⬜ | | |
+| KEY-BA-TOPBOTTOM | Before/after top/bottom — ⌥Y | P1 | ✅ | `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | ⌥Y, ⇧⌥Y |
 | KEY-BA-SPLIT | Split before/after — ⇧Y | P0 | ✅ | `cmd:view.beforeAfterSplit` | |
 | KEY-CHOOSECOPY | Choose settings to copy — ⇧⌘C | P0 | ✅ | `cmd:dialog.copySettings` | |
 | KEY-RESETALL | Reset all — ⇧⌘R | P0 | ✅ | `cmd:develop.reset` | |

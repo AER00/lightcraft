@@ -124,15 +124,25 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let ppp = ui.ctx().pixels_per_point();
     let area = canvas.shrink(if crop_tool { 48.0 } else { 24.0 });
     let native = [photo.width.max(1) as usize, photo.height.max(1) as usize];
-    let split = app.ui.before_after == BeforeAfter::SideBySide;
-    let areas: Vec<Rect> = if split {
-        let half = area.width() / 2.0 - 6.0;
-        vec![
-            Rect::from_min_size(area.min, vec2(half, area.height())),
-            Rect::from_min_size(pos2(area.center().x + 6.0, area.top()), vec2(half, area.height())),
-        ]
-    } else {
-        vec![area]
+    // two views (before, after): side by side or stacked
+    let split = matches!(app.ui.before_after, BeforeAfter::SideBySide | BeforeAfter::TopBottom);
+    let split_view = matches!(app.ui.before_after, BeforeAfter::Split | BeforeAfter::SplitTopBottom);
+    let areas: Vec<Rect> = match app.ui.before_after {
+        BeforeAfter::SideBySide => {
+            let half = area.width() / 2.0 - 6.0;
+            vec![
+                Rect::from_min_size(area.min, vec2(half, area.height())),
+                Rect::from_min_size(pos2(area.center().x + 6.0, area.top()), vec2(half, area.height())),
+            ]
+        }
+        BeforeAfter::TopBottom => {
+            let half = area.height() / 2.0 - 14.0;
+            vec![
+                Rect::from_min_size(area.min, vec2(area.width(), half)),
+                Rect::from_min_size(pos2(area.left(), area.center().y + 14.0), vec2(area.width(), half)),
+            ]
+        }
+        _ => vec![area],
     };
     let main_area = *areas.last().unwrap_or(&area);
     let img_rect = fit_rect(main_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
@@ -174,7 +184,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         app.renderer.request_quick(Slot::Preview, q, 110);
     }
     let show_before = app.ui.before_after == BeforeAfter::Original || ui.input(|i| i.key_down(egui::Key::Backslash));
-    if (split || show_before || app.ui.before_after == BeforeAfter::Split)
+    if (split || show_before || split_view)
         && let Some(job) = app.session.render_job(id, rw.max(8), rh.max(8), true, !crop_tool)
     {
         app.renderer.request(Slot::Before, job, 90);
@@ -220,6 +230,14 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             p.image(tex.tex.id(), left, Rect::from_min_max(pos2(0.0, 0.0), pos2(0.5, 1.0)), Color32::WHITE);
         }
         p.line_segment([pos2(mid, img_rect.top()), pos2(mid, img_rect.bottom())], Stroke::new(1.5, Color32::WHITE));
+    }
+    if app.ui.before_after == BeforeAfter::SplitTopBottom {
+        let mid = img_rect.center().y;
+        if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
+            let top = Rect::from_min_max(img_rect.min, pos2(img_rect.right(), mid));
+            p.image(tex.tex.id(), top, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 0.5)), Color32::WHITE);
+        }
+        p.line_segment([pos2(img_rect.left(), mid), pos2(img_rect.right(), mid)], Stroke::new(1.5, Color32::WHITE));
     }
     if app.ui.show_clipping && !show_before {
         clipping_overlay(app, &p, img_rect);

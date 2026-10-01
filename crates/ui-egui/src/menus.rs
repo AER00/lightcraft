@@ -18,6 +18,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.leftPanel", "My Photos Panel", Some("Cmd+Shift+L"), "View"),
     ("view.beforeAfter", "Compare Before and After", Some("Y"), "View"),
     ("view.beforeAfterSplit", "Before/After Split", Some("Shift+Y"), "View"),
+    ("view.beforeAfterTopBottom", "Before/After Top/Bottom", Some("Alt+Y"), "View"),
+    ("view.beforeAfterSplitTopBottom", "Before/After Split Top/Bottom", Some("Alt+Shift+Y"), "View"),
     ("view.showOriginal", "Show Original", Some("\\"), "View"),
     ("view.zoomFit", "Zoom to Fit", Some("Cmd+0"), "View"),
     ("view.zoom100", "Zoom 100%", Some("Cmd+1"), "View"),
@@ -123,6 +125,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "view.beforeAfterSplit" => {
             app.ui.before_after = if app.ui.before_after == BeforeAfter::Split { BeforeAfter::Off } else { BeforeAfter::Split };
+            Ok(Value::Null)
+        }
+        "view.beforeAfterTopBottom" => {
+            app.ui.before_after = if app.ui.before_after == BeforeAfter::TopBottom { BeforeAfter::Off } else { BeforeAfter::TopBottom };
+            Ok(Value::Null)
+        }
+        "view.beforeAfterSplitTopBottom" => {
+            app.ui.before_after = if app.ui.before_after == BeforeAfter::SplitTopBottom { BeforeAfter::Off } else { BeforeAfter::SplitTopBottom };
             Ok(Value::Null)
         }
         "view.showOriginal" => {

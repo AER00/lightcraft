@@ -55,6 +55,10 @@ pub enum BeforeAfter {
     Original,
     SideBySide,
     Split,
+    /// Before above after.
+    TopBottom,
+    /// One image split horizontally: before above the line.
+    SplitTopBottom,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
