@@ -56,20 +56,71 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         }
                     });
                 }
-                Dialog::Export { format, quality, long_edge } => {
+                Dialog::Export { opts, long_edge, limit_kb, dir } => {
+                    use lightcraft_engine::export::{ExportFormat as F, SharpenAmount as A, SharpenFor as S};
+                    let n = app.session.selection.ids.len().max(1);
+                    ui.label(egui::RichText::new(format!("{n} photo{}", if n == 1 { "" } else { "s" })).color(t.text_dim));
                     ui.horizontal(|ui| {
                         ui.label("Format");
-                        for f in ["jpeg", "png", "tiff"] {
-                            ui.selectable_value(format, f.to_string(), f.to_uppercase());
+                        for (f, l) in [(F::Jpeg, "JPEG"), (F::Png, "PNG"), (F::Tiff, "TIFF"), (F::Webp, "WebP"), (F::Avif, "AVIF")] {
+                            ui.selectable_value(&mut opts.format, f, l);
                         }
                     });
-                    ui.add(egui::Slider::new(quality, 10..=100).text("Quality"));
-                    ui.add(egui::Slider::new(long_edge, 512..=8000).text("Long edge (px)"));
+                    if matches!(opts.format, F::Jpeg | F::Avif) {
+                        ui.add(egui::Slider::new(&mut opts.quality, 1..=100).text("Quality"));
+                    }
+                    if opts.format == F::Jpeg {
+                        ui.add(egui::Slider::new(limit_kb, 0..=20_000).text("Limit file size (KB, 0 = off)"));
+                    }
+                    let mut full = *long_edge == 0;
+                    if ui.checkbox(&mut full, "Full size").changed() {
+                        *long_edge = if full { 0 } else { 2048 };
+                    }
+                    if !full {
+                        ui.add(egui::Slider::new(long_edge, 256..=12_000).text("Long edge (px)"));
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Sharpen for");
+                        for (v, l) in [(S::None, "None"), (S::Screen, "Screen"), (S::Matte, "Matte paper"), (S::Glossy, "Glossy paper")] {
+                            ui.selectable_value(&mut opts.sharpen, v, l);
+                        }
+                    });
+                    if opts.sharpen != S::None {
+                        ui.horizontal(|ui| {
+                            ui.label("Amount");
+                            for (v, l) in [(A::Low, "Low"), (A::Standard, "Standard"), (A::High, "High")] {
+                                ui.selectable_value(&mut opts.sharpen_amount, v, l);
+                            }
+                        });
+                    }
+                    ui.horizontal(|ui| {
+                        use lightcraft_engine::export::MetadataPolicy as M;
+                        ui.label("Metadata");
+                        for (v, l) in
+                            [(M::All, "All"), (M::AllExceptCamera, "All except camera"), (M::Copyright, "Copyright only"), (M::None, "None")]
+                        {
+                            ui.selectable_value(&mut opts.metadata, v, l);
+                        }
+                    });
+                    if !matches!(
+                        opts.metadata,
+                        lightcraft_engine::export::MetadataPolicy::None | lightcraft_engine::export::MetadataPolicy::Copyright
+                    ) {
+                        ui.checkbox(&mut opts.remove_location, "Remove location info");
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("File name");
+                        ui.add(egui::TextEdit::singleline(&mut opts.naming).hint_text("{name}-{seq}").desired_width(f32::INFINITY));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Folder");
+                        ui.add(egui::TextEdit::singleline(dir).desired_width(f32::INFINITY));
+                    });
                 }
                 Dialog::About => {
                     ui.label(egui::RichText::new("LightCraft").font(t.semibold(20.0)).color(t.text));
                     ui.label(format!("Version {} — a clean-room, pure-Rust photo library and raw developer.", env!("CARGO_PKG_VERSION")));
-                    ui.label("MIT OR Apache-2.0. Fonts: Source Sans 3 (OFL). Icons: original.");
+                    ui.label("MIT OR Apache-2.0. Font: Inter (OFL). Icons: original.");
                 }
                 Dialog::Shortcuts => {
                     egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
@@ -129,7 +180,14 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             app.run("preset.create", json!({"name": if name.is_empty() { "My Preset" } else { name }, "group": group}))
         }
         Dialog::CopySettings { groups } => app.run("develop.copy", json!({"groups": groups})),
-        Dialog::Export { format, quality, long_edge } => app.run("app.export", json!({"format": format, "quality": quality, "longEdge": long_edge})),
+        Dialog::Export { opts, long_edge, limit_kb, dir } => app.run(
+            "app.export",
+            json!({
+                "format": opts.format, "quality": opts.quality, "longEdge": long_edge, "limitKb": limit_kb,
+                "sharpen": opts.sharpen, "sharpenAmount": opts.sharpen_amount, "naming": opts.naming, "dir": dir,
+                "metadata": opts.metadata, "removeLocation": opts.remove_location,
+            }),
+        ),
         Dialog::About | Dialog::Shortcuts => Ok(serde_json::Value::Null),
     }
 }

@@ -53,7 +53,7 @@ tiff = "0.11"
 image-webp = "0.2"
 moxcms = { version = "0.9", default-features = false, features = ["lut"] }
 jxl-oxide = { version = "0.12", default-features = false }
-ravif = { version = "0.13", default-features = false }
+ravif = { version = "0.13", default-features = false, features = ["threading"] } # no "asm": it needs nasm (non-Rust)
 
 # ui
 egui = "0.36"
@@ -61,6 +61,13 @@ egui_extras = { version = "0.36", default-features = false }
 eframe = { version = "0.36", default-features = false }
 egui_kittest = "0.36"
 rfd = "0.17"
+web-time = "1"
+
+# web (apps/lightcraft-web)
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = "0.3"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -87,3 +94,9 @@ inherits = "release"
 lto = "thin"
 codegen-units = 1
 debug = false
+
+# `cargo xtask web`: the browser build (no debug info; size matters more than build time)
+[profile.web]
+inherits = "release"
+debug = false
+lto = "thin"

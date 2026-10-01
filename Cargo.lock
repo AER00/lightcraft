@@ -934,6 +934,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "egui_glow",
+ "glow",
  "glutin",
  "glutin-winit",
  "image",
@@ -2001,6 +2002,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-cli"
+version = "0.1.0"
+dependencies = [
+ "lightcraft-codecs",
+ "lightcraft-engine",
+ "lightcraft-mcp",
+ "lightcraft-raster",
+ "serde_json",
+]
+
+[[package]]
 name = "lightcraft-codecs"
 version = "0.1.0"
 dependencies = [
@@ -2072,6 +2084,17 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "serde",
+]
+
+[[package]]
+name = "lightcraft-mcp"
+version = "0.1.0"
+dependencies = [
+ "lightcraft-codecs",
+ "lightcraft-engine",
+ "lightcraft-raster",
+ "log",
+ "serde_json",
 ]
 
 [[package]]
@@ -2176,6 +2199,25 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "web-time",
+]
+
+[[package]]
+name = "lightcraft-web"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "js-sys",
+ "lightcraft-codecs",
+ "lightcraft-engine",
+ "lightcraft-raster",
+ "lightcraft-ui-egui",
+ "log",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -2233,6 +2275,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ea1f30cedd69f0a2954655f7188c6a834246d2bcf1e315e2ac40c4b24dc9519"
 dependencies = [
  "cfg-if",
+ "rayon",
 ]
 
 [[package]]
@@ -3255,6 +3298,7 @@ dependencies = [
  "loop9",
  "quick-error 2.0.1",
  "rav1e",
+ "rayon",
  "rgb",
 ]
 

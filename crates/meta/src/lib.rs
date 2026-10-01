@@ -17,7 +17,7 @@ mod xmp;
 
 pub use container::{Embedded, embedded, jpeg_segments, png_chunks, webp_chunks};
 pub use datetime::DateTime;
-pub use exif::{from_tiff, read_exif, strip_exif_header, try_read_exif};
+pub use exif::{from_tiff, read_exif, strip_exif_header, try_read_exif, write_exif};
 pub use iptc::parse_iptc;
 pub use lightcraft_geom::Orientation;
 pub use xmp::{LC_NS, XmpData, XmpError, parse_xmp, write_xmp};

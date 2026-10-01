@@ -86,11 +86,18 @@ impl Renderer {
 
     /// Collect finished jobs into textures. Returns true if anything changed.
     pub fn poll(&mut self, ctx: &egui::Context, session: &mut Session) -> bool {
+        // wasm: run one job per frame on this thread, timed with the host clock
         #[cfg(target_arch = "wasm32")]
-        self.pool.run_inline(1);
+        let inline_ms = {
+            let t0 = crate::now_ms();
+            self.pool.run_inline(1);
+            crate::now_ms() - t0
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let inline_ms = 0.0;
         let mut changed = false;
         while let Some(done) = self.pool.try_recv() {
-            let (slot, r, ms) = (done.slot, done.result, done.ms);
+            let (slot, r, ms) = (done.slot, done.result, if done.ms > 0.0 { done.ms } else { inline_ms });
             session.accept(&r);
             self.completed += 1;
             if self.pending.get(&slot).is_some_and(|p| p.0 == r.key) {

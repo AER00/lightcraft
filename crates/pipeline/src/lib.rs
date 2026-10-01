@@ -22,6 +22,8 @@ mod finish;
 pub mod geometry;
 mod local;
 pub mod masks;
+pub mod profiles;
+pub mod spots;
 mod tone;
 
 use lightcraft_develop::{DevelopSettings, Treatment};
@@ -96,14 +98,15 @@ pub fn output_size(src_w: usize, src_h: usize, s: &DevelopSettings, req: &Render
 /// Render `src` with settings `s`.
 pub fn render(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest) -> Rendered {
     let prof = std::env::var_os("LIGHTCRAFT_PROFILE").is_some();
-    let t0 = std::time::Instant::now();
-    let lap = |what: &str, t: &mut std::time::Instant| {
-        if prof {
+    // `Instant::now()` panics on wasm32-unknown-unknown: only read the clock when profiling.
+    let lap = |what: &str, t: &mut Option<std::time::Instant>| {
+        if let Some(t) = t {
             eprintln!("  {what}: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
             *t = std::time::Instant::now();
         }
     };
-    let mut t = t0;
+    let mut t = prof.then(std::time::Instant::now);
+    let s = &*profiles::effective(s);
     let frame = geometry::Frame::new(src.width, src.height, s, req.apply_crop);
     let (w, h) = frame.fit(req.max_w, req.max_h);
     let mut img = frame.sample(src, w, h);
@@ -111,7 +114,9 @@ pub fn render(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &Render
     let px_per_long = frame.px_per_long(w);
 
     local::scene_linear_pre(&mut img, info, s);
-    lap("wb/exposure", &mut t);
+    spots::apply(&mut img, &s.spots, &frame, px_per_long);
+    local::denoise(&mut img, s, src.width.max(src.height), w.max(h));
+    lap("wb/exposure/spots/nr", &mut t);
     let prep = local::prepare(img, s, &frame, px_per_long, req.quality);
     lap("prepare", &mut t);
     let image = finish::finish(&prep, s, &frame, info);
@@ -134,6 +139,23 @@ pub(crate) fn is_bw(s: &DevelopSettings) -> bool {
 }
 
 /// Parallel map over output rows with index.
+/// `LIGHTCRAFT_PROFILE` is set: print per-stage timings to stderr.
+pub(crate) fn profiling() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LIGHTCRAFT_PROFILE").is_some())
+}
+
+/// Run `f`, printing its duration under `LIGHTCRAFT_PROFILE`.
+pub(crate) fn timed<R>(what: &str, f: impl FnOnce() -> R) -> R {
+    if !profiling() {
+        return f();
+    }
+    let t = std::time::Instant::now();
+    let r = f();
+    eprintln!("    {what}: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
+    r
+}
+
 pub(crate) fn for_rows<T: Send>(data: &mut [T], w: usize, f: impl Fn(usize, &mut [T]) + Sync + Send) {
     par_rows(data, w, f)
 }
