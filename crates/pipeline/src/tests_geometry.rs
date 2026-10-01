@@ -430,3 +430,40 @@ fn upright_analysis_is_resolution_independent() {
     let stored = render(&small, &SourceInfo::default(), &s1, &RenderRequest::fit(300, 300)).image;
     assert_eq!(lazy.data, stored.data);
 }
+
+/// Regression: Upright Auto must not invent perspective in natural scenes (conical trees, ridgelines, a level
+/// water line) — the demo library has no buildings, so Auto should stay close to identity everywhere.
+#[test]
+fn upright_auto_leaves_natural_scenes_nearly_alone() {
+    use lightcraft_develop::Upright;
+    for scene in lightcraft_scenes::demo_library() {
+        let src = scene.render_fit(768);
+        let h = crate::upright::auto_transform(&src, &SourceInfo::default(), &DevelopSettings::default(), Upright::Auto);
+        // how far the corners of the centred unit frame move
+        let worst = [(-1.0, -0.66), (1.0, -0.66), (-1.0, 0.66), (1.0, 0.66)]
+            .iter()
+            .map(|&(x, y)| {
+                let p = h.apply(lightcraft_geom::Point::new(x, y));
+                (p.x - x).hypot(p.y - y)
+            })
+            .fold(0.0f64, f64::max);
+        assert!(worst < 0.06, "{}: Auto moved a corner by {worst:.3} (centred units)", scene.name);
+    }
+}
+
+/// Diagnostics: `SCENE="Lake" cargo test -p lightcraft-pipeline debug_upright_scene -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn debug_upright_scene() {
+    let scene =
+        lightcraft_scenes::demo_library().into_iter().find(|s| s.name.starts_with(std::env::var("SCENE").as_deref().unwrap_or("Lake"))).unwrap();
+    let src = scene.render_fit(768);
+    let a = crate::upright::analyze_source(&src, &SourceInfo::default(), &DevelopSettings::default());
+    eprintln!("vert {} horiz {} vvp {:?} hvp {:?}", a.vertical.len(), a.horizontal.len(), a.vertical_vp, a.horizontal_vp);
+    for s in a.vertical.iter().take(20) {
+        eprintln!("  v {:.3},{:.3} -> {:.3},{:.3} len {:.3}", s.a.x, s.a.y, s.b.x, s.b.y, s.len());
+    }
+    for m in [Upright::Level, Upright::Vertical, Upright::Full, Upright::Auto] {
+        eprintln!("{m:?}: {:?}", crate::upright::solve(m, &a).0);
+    }
+}

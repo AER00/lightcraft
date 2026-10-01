@@ -400,13 +400,14 @@ fn level_angle(vert: &[Segment], horiz: &[Segment]) -> Option<f64> {
     v.sort_by(|a, b| a.0.total_cmp(&b.0));
     let total: f64 = v.iter().map(|x| x.1).sum();
     let mut acc = 0.0;
-    for (d, l) in &v {
+    let median = v.iter().find(|(_, l)| {
         acc += l;
-        if acc >= total / 2.0 {
-            return Some(-*d);
-        }
-    }
-    None
+        acc >= total / 2.0
+    })?;
+    // consensus: most of the line length must agree with the median within 2°, otherwise the "lines" are scene
+    // texture (tree flanks, ridges) rather than a horizon or plumb lines
+    let agree: f64 = v.iter().filter(|(d, _)| (d - median.0).abs() <= 2.0).map(|x| x.1).sum();
+    (agree >= 0.5 * total).then_some(-median.0)
 }
 
 fn rot_z_h(deg: f64) -> Homography {
@@ -423,12 +424,33 @@ pub struct Analysis {
     pub horizontal_vp: Option<[f64; 3]>,
 }
 
-/// Group segments into near-vertical / near-horizontal families and find their vanishing points.
+/// Whether a family's vanishing point is backed by real structure rather than one object: at least three
+/// inlier segments, a total inlier length of a quarter of the long edge, and inliers spread across at least a
+/// fifth of the long edge perpendicular to the family, and at least 60 % of the family's length agreeing (the
+/// mirrored flanks of conical trees or peaks converge somewhere but say nothing about the camera).
+fn reliable(segs: &[Segment], v: [f64; 3], vertical: bool) -> bool {
+    let thr = 3f64.to_radians();
+    let inl: Vec<&Segment> = segs.iter().filter(|s| vp_error(s, v) < thr).collect();
+    let total: f64 = inl.iter().map(|s| s.len()).sum();
+    let across = |s: &&Segment| if vertical { s.mid().x } else { s.mid().y };
+    let (lo, hi) = inl.iter().map(across).fold((f64::MAX, f64::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
+    // consensus: real structure agrees; mirrored flanks (trees, peaks) split the family roughly in half
+    let family: f64 = segs.iter().map(Segment::len).sum();
+    // a camera-tilt vanishing point lies far outside the frame; one inside or near it is a scene feature
+    // (sun rays, a road to the horizon), not perspective to correct
+    if v[2].abs() > 1e-9 && (v[0] / v[2]).hypot(v[1] / v[2]) < 2.0 {
+        return false;
+    }
+    inl.len() >= 3 && total >= 0.5 && hi - lo >= 0.4 && total >= 0.6 * family
+}
+
+/// Group segments into near-vertical / near-horizontal families and find their vanishing points (only reliable
+/// ones; see [`reliable`]).
 pub fn analyze(segs: &[Segment]) -> Analysis {
     let vertical: Vec<Segment> = segs.iter().copied().filter(|s| s.tilt_from_vertical() < 30.0).collect();
     let horizontal: Vec<Segment> = segs.iter().copied().filter(|s| s.tilt_from_vertical() > 60.0).collect();
-    let vertical_vp = vanishing_point(&vertical).map(|v| v.0);
-    let horizontal_vp = vanishing_point(&horizontal).map(|v| v.0);
+    let vertical_vp = vanishing_point(&vertical).map(|v| v.0).filter(|v| reliable(&vertical, *v, true));
+    let horizontal_vp = vanishing_point(&horizontal).map(|v| v.0).filter(|v| reliable(&horizontal, *v, false));
     Analysis { vertical, horizontal, vertical_vp, horizontal_vp }
 }
 
@@ -450,13 +472,25 @@ pub fn solve(mode: Upright, a: &Analysis) -> Homography {
             None => vertical().map(|r| recentre(&rotation_homography(&r, DEFAULT_FOCAL))).unwrap_or_else(level),
         },
         Upright::Auto => {
+            // A vertical family that implies a camera roll must be confirmed by the horizontals (a real roll tilts
+            // both); otherwise it is scene structure (e.g. the same-side flanks of many conical trees).
+            if let Some(v) = a.vertical_vp {
+                let (x, y) = if v[1] < 0.0 { (-v[0], -v[1]) } else { (v[0], v[1]) };
+                let roll = x.atan2(y).to_degrees();
+                let confirmed = roll.abs() <= 3.0 || level_angle(&[], &a.horizontal).is_some_and(|h| (h - roll).abs() <= 3.0);
+                if !confirmed {
+                    let weaker = Analysis { vertical_vp: None, horizontal_vp: None, ..a.clone() };
+                    return solve(Upright::Auto, &weaker);
+                }
+            }
             // balanced: full correction only when it is moderate, else vertical, else level
             if let Some((r, f)) = full().filter(|(r, _)| rotation_angle(r) < 20f64.to_radians()) {
                 return recentre(&rotation_homography(&r, f));
             }
             match vertical().filter(|r| rotation_angle(r) < 25f64.to_radians()) {
                 Some(r) => recentre(&rotation_homography(&r, DEFAULT_FOCAL)),
-                None => level(),
+                // conservative: only small horizon fixes; bigger tilts are usually intentional or scene lines
+                None => level_angle(&a.vertical, &a.horizontal).filter(|d| d.abs() <= 5.0).map(rot_z_h).unwrap_or(Homography::IDENTITY),
             }
         }
     }
