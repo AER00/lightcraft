@@ -265,10 +265,26 @@ pub fn specs() -> Vec<CommandSpec> {
                 return Err(bad("develop.profile", format!("unknown profile `{id}`")));
             }
             edit(s, "develop.profile", "Profile", |d| {
-                d.profile.id = id;
+                d.profile.id = id.clone();
                 d.profile.amount = f64_or(p, "amount", d.profile.amount).clamp(0.0, 200.0);
                 Ok(())
-            })
+            })?;
+            s.note_profile_used(&id);
+            ok()
+        }),
+        cmd!("profile.favorite", "Favorite Profile", [], None, "{id, favorite?: bool} (toggles when omitted)", always, |s, p| {
+            let id = str_param(p, "id").ok_or_else(|| bad("profile.favorite", "missing id"))?.to_string();
+            if crate::presets::profile(&id).is_none() {
+                return Err(bad("profile.favorite", format!("unknown profile `{id}`")));
+            }
+            let on = s.profile_favorites.contains(&id);
+            let want = bool_or(p, "favorite", !on);
+            if want && !on {
+                s.profile_favorites.push(id);
+            } else if !want {
+                s.profile_favorites.retain(|f| *f != id);
+            }
+            Ok(json!({"favorite": want}))
         }),
         cmd!("develop.curve", "Set Point Curve", [], None, "{channel: master|red|green|blue, points: [[x,y],...] in 0..1}", has_active, |s, p| {
             let ch = str_param(p, "channel").unwrap_or("master").to_string();

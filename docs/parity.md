@@ -27,53 +27,44 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
 | E. Metadata (META) | 2 | 2 | 2 | 0 | 2/2 (100%) | 0/2 (0%) |
 | F. Edit panel — global adjustments (EDIT) | 36 | 2 | 10 | 1 | 28/28 (100%) | 8/14 (57%) |
-| G. Profiles (PROF) | 3 | 1 | 6 | 0 | 2/3 (67%) | 1/3 (33%) |
+| G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
 | I. Remove / healing (REM) | 5 | 1 | 4 | 2 | 4/4 (100%) | 1/3 (33%) |
 | J. Red eye (EYE) | 0 | 0 | 2 | 0 | — | 0/1 (0%) |
 | K. Masking (MASK) | 10 | 6 | 7 | 0 | 7/8 (88%) | 3/5 (60%) |
-| L. Presets (PRE) | 1 | 4 | 2 | 1 | 0/2 (0%) | 1/2 (50%) |
+| L. Presets (PRE) | 3 | 2 | 2 | 1 | 2/2 (100%) | 1/2 (50%) |
 | M. Versions & history (VER) | 3 | 1 | 1 | 0 | 1/1 (100%) | 2/3 (67%) |
 | N. Copy / paste / sync (SYNC) | 4 | 0 | 1 | 0 | 3/3 (100%) | 1/1 (100%) |
 | O. Merge (MERGE) | 3 | 0 | 1 | 0 | — | — |
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 4 | 6 | 8 | 0 | 2/7 (29%) | 2/7 (29%) |
+| S. Export (EXP) | 6 | 6 | 6 | 0 | 3/7 (43%) | 3/7 (43%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 0 | 3 | 5 | 3 | 0/1 (0%) | 0/4 (0%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 10 | 2 | 5 | 1 | 7/8 (88%) | 3/5 (60%) |
+| X. Cross-cutting behaviours (BEHAV) | 10 | 3 | 4 | 1 | 7/8 (88%) | 3/5 (60%) |
 | Y. Menus | 46 | 18 | 21 | 8 | 37/47 (79%) | 7/23 (30%) |
-| Z. Keyboard shortcuts (desktop) | 46 | 16 | 18 | 1 | 39/52 (75%) | 7/23 (30%) |
+| Z. Keyboard shortcuts (desktop) | 50 | 14 | 16 | 1 | 43/52 (83%) | 7/23 (30%) |
 | Lightroom Classic extras | 4 | 19 | 56 | 9 | — | 3/21 (14%) |
-| **Total** | 214 | 97 | 189 | 37 | 157/198 (79%) | 49/144 (34%) |
+| **Total** | 225 | 93 | 182 | 37 | 165/198 (83%) | 51/144 (35%) |
 <!-- /parity:summary -->
 
 ## Top gaps
 
 Ordered by tier, then user value, then (low) effort. Take the first one nobody is working on.
 
-1. **LR-EXP-COLORSPACE** (P0) — export is sRGB only. Add Display P3 / Adobe RGB-compatible / ProPhoto-compatible /
-   Rec.2020 output (our own primaries + ICC from `crates/codecs/src/icc.rs`). High value, low–medium effort.
-5. **LR-VIEW-PHOTOGRID** (P0) — group the justified grid by capture date with headers. Low–medium effort.
-6. **LR-PRE-CREATE + LR-PRE-PANEL + LR-BEHAV-PREVIEW-HOVER** (P0/P1) — per-group checkboxes in Create Preset;
-    live preview while hovering presets/profiles/versions. Medium effort.
-7. **LR-PROF-DROPDOWN** (P0) — favourites/recent in the profile menu (and later a browser, LR-PROF-BROWSER).
-8. **LR-LIB-KEYWORD** (P0) — rename/delete a keyword library-wide; keyword list in the left panel for browsing.
-9. **LR-PREF-GENERAL + LR-IMP-RAWDEFAULT** (P0/P1) — a Settings dialog: raw defaults (preset or camera-specific),
-    XMP prefs, cache, GPU. Medium effort.
-10. **LR-IMP-ADD-DIALOG + LR-IMP-LOCAL** (P0) — an import review grid with per-photo checkboxes and destination
+1. **LR-VIEW-PHOTOGRID** (P0) — group the justified grid by capture date with headers. Low–medium effort.
+2. **LR-LIB-KEYWORD** (P0) — rename/delete a keyword library-wide; keyword list in the left panel for browsing.
+3. **LR-IMP-ADD-DIALOG + LR-IMP-LOCAL** (P0) — an import review grid with per-photo checkboxes and destination
     album; browse folders before adding. Medium effort.
-11. **LR-EXP-TYPE + LR-EXP-DIM** (P0) — Original (+XMP) and DNG export (writer exists in
+4. **LR-EXP-TYPE + LR-EXP-DIM** (P0) — Original (+XMP) and DNG export (writer exists in
     `crates/raw/src/dngwrite.rs`), short edge / width / height / megapixels, "don't enlarge", ppi.
-12. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
+5. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
     permissive pure-Rust decoder yet). High value, high effort (clean sources needed).
-13. **LR-VIEW-FULLSCREEN + LR-VIEW-NAVIGATOR + LR-VIEW-INFOOVERLAY** (P1) — view modes. Medium effort.
-14. **LR-LIB-RENAME + LR-LIB-CAPTURETIME + LR-LIB-LABEL UI** (P1) — batch rename, capture-time edit, label menu/names.
-15. **LR-EXP-BITDEPTH + LR-EXP-COMPRESSION** (P1) — 16-bit TIFF/PNG and TIFF compression choice.
-16. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
+6. **LR-LIB-RENAME + LR-LIB-CAPTURETIME + LR-LIB-LABEL UI** (P1) — batch rename, capture-time edit, label menu/names.
+7. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
 
 ## Shortcuts: conflicts and missing bindings
 
@@ -102,10 +93,9 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 **Still missing / broken:**
 - No command yet: F full-screen preview, ⇧⌘F window full screen, ⇧⌘V paste selected,
-  ⌘, settings, ⌘F focus search, ⌘G / ⇧⌘G stacks, A visualize spots, `[` `]` / ⇧`[` ⇧`]`
-  brush size/feather, ⌃H / ⌃M merges, F1 help, ⇧6–9 label + advance.
-- `⌫` in the Masking panel deletes the active mask; spots have no pin selection yet (⌫ does nothing in Remove).
-- `H` opens Remove; Lightroom also uses it (Classic) to hide pins — no pin toggle yet.
+  ⌘, settings, ⌘F focus search, ⌘G / ⇧⌘G stacks, A visualize spots, ⌃H / ⌃M merges, F1 help,
+  ⇧6–9 label + advance.
+- `H` opens Remove; Lightroom also uses it (Classic) to hide pins — pins toggle from View → Show Mask Pins.
 - ⌘M / ⌘H / ⌘Q / ⌘W rely on the platform window defaults (unverified).
 
 <!-- Sections below hold one row per id. Keep the column order: Id | Feature | Tier | Status | Evidence | Notes. -->
@@ -270,12 +260,12 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-PROF-DROPDOWN | Profile menu | P0 | 🟡 | `cmd:develop.profile`, `cmd:profiles.list`, `crates/ui-egui/src/panels/edit.rs` | no favourites / recent / browse entry |
-| LR-PROF-BROWSER | Profile browser | P1 | ⬜ | | |
+| LR-PROF-DROPDOWN | Profile menu | P0 | ✅ | `cmd:develop.profile`, `cmd:profiles.list`, `cmd:profiles.menu`, `cmd:profile.favorite`, `crates/ui-egui/src/panels/edit.rs` | Favorites, Recent (last 5), group submenus, favourite toggle; favourites/recent persist with the library; Amount slider under the menu for non-default profiles; Browse… opens the profile browser; resting on an entry previews it in the loupe |
+| LR-PROF-BROWSER | Profile browser | P1 | ✅ | `cmd:panel.profiles`, `crates/ui-egui/src/panels/profiles.rs`, `crates/engine/src/media.rs` | grid of live variant thumbnails of the current photo per group (Favorites first), star toggles favourites, amount slider, hover = loupe preview (no history), click applies |
 | LR-PROF-ADOBE | Standard raw looks (own equivalents) | P0 | ✅ | `crates/engine/src/presets.rs` (`PROFILES`), `crates/pipeline/src/profiles.rs` | six own looks: Color, Neutral, Vivid, Landscape, Portrait, Monochrome |
 | LR-PROF-ADAPTIVE | Adaptive profiles | P2 | ⬜ | | |
 | LR-PROF-CAMERA | Camera-matching looks | P2 | ⬜ | | |
-| LR-PROF-CREATIVE | Creative profiles (own) | P2 | ⬜ | | |
+| LR-PROF-CREATIVE | Creative profiles (own) | P2 | ✅ | `cmd:develop.profile`, `crates/pipeline/src/profiles.rs` | 16 own looks in Film / Cinematic / Muted / B&W (tone + point-curve fades, colour grading, mixer / B&W mix); scale with `ctl:profile.amount`; sliders untouched |
 | LR-PROF-LEGACY | Legacy profiles | P2 | ⬜ | | |
 | LR-PROF-NONRAW | Profiles for non-raw files | P0 | ✅ | `cmd:develop.profile` | same looks apply to JPEG/TIFF |
 | LR-PROF-AMOUNT | Profile amount | P1 | ✅ | `ctl:profile.amount` | |
@@ -352,8 +342,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-PRE-PANEL | Presets panel | P0 | 🟡 | `cmd:panel.presets`, `cmd:preset.apply`, `crates/ui-egui/src/panels/presets.rs` | grouped list with amount; no hover preview |
-| LR-PRE-CREATE | Create preset | P0 | 🟡 | `cmd:dialog.createPreset`, `cmd:preset.create` (`groups`) | dialog has no per-group checkboxes (fixed subset) |
+| LR-PRE-PANEL | Presets panel | P0 | ✅ | `cmd:panel.presets`, `cmd:preset.apply`, `crates/ui-egui/src/panels/presets.rs` | grouped list with amount; resting on a preset previews it in the loupe (no history entry); optional live thumbnails (⋯ → Show Thumbnails) |
+| LR-PRE-CREATE | Create preset | P0 | ✅ | `cmd:dialog.createPreset`, `cmd:preset.create` (`groups`) | name, group and a checklist of settings groups (crop, masks, remove, red eye off by default; All / None) |
 | LR-PRE-MANAGE | Manage presets | P1 | 🟡 | `cmd:preset.delete`, `cmd:preset.favorite`, `cmd:preset.import`, `cmd:preset.export` | no rename, update-with-current, move group, hide groups |
 | LR-PRE-AMOUNT | Preset amount | P1 | ✅ | `cmd:preset.apply` (`amount` 0–200) | |
 | LR-PRE-ADAPTIVE | Adaptive presets | P2 | ⬜ | | |
@@ -426,9 +416,9 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EXP-TYPE | File types | P0 | 🟡 | `crates/engine/src/export.rs` (`ExportFormat`) | JPEG, PNG, TIFF, WebP, AVIF; no DNG, JXL or original (+XMP) |
 | LR-EXP-DIM | Output size | P0 | 🟡 | `crates/ui-egui/src/panels/dialogs.rs` (long edge / full size) | no short edge / width / height / megapixels, ppi, don't-enlarge |
 | LR-EXP-QUALITY | JPEG quality | P0 | ✅ | `cmd:app.export` (`quality`, `limitKb`) | |
-| LR-EXP-BITDEPTH | Bit depth | P1 | ⬜ | | 8-bit only |
+| LR-EXP-BITDEPTH | Bit depth | P1 | ✅ | `cmd:app.export` (`bitDepth`), `crates/pipeline/src/output.rs` (`OutputDepth`), `crates/engine/src/export.rs` | 16-bit PNG/TIFF rendered at 16 bits (TIFF defaults to 16), 32-bit float linear TIFF with a linear profile, 10-bit AVIF; high-bit-depth renders run on the CPU |
 | LR-EXP-COMPRESSION | TIFF compression | P1 | ⬜ | | always Deflate |
-| LR-EXP-COLORSPACE | Output colour space | P0 | ⬜ | `crates/engine/src/export.rs` | sRGB only |
+| LR-EXP-COLORSPACE | Output colour space | P0 | ✅ | `cmd:app.export` (`colorSpace`), `crates/pipeline/src/output.rs`, `crates/engine/src/export.rs` | sRGB, Display P3, Adobe RGB (1998) compatible, ProPhoto RGB, Rec. 2020: rendered from the working space with gamut mapping into the target gamut (CPU + GPU), own ICC profile embedded; AVIF stays sRGB (muxer has no ICC) |
 | LR-EXP-HDR | HDR output | P2 | ⬜ | | |
 | LR-EXP-SHARPEN | Output sharpening | P1 | ✅ | `cmd:app.export` (`sharpen`, `sharpenAmount`) | |
 | LR-EXP-METADATA | Metadata policy | P1 | ✅ | `cmd:app.export` (`metadata`, `removeLocation`) | |
@@ -490,7 +480,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-UNDO | Global undo | P0 | ✅ | `cmd:edit.undo`, `crates/engine/src/tests.rs` (`rating_flag_undo_redo`) | covers ratings, albums, deletes, edits |
 | LR-BEHAV-MULTISELECT | Multi-selection | P0 | ✅ | `cmd:library.select` (`replace`/`add`/`toggle`/`range`), `cmd:library.selectAll` | |
 | LR-BEHAV-BATCH | Batch apply to selection | P0 | ✅ | `cmd:photo.rate`, `cmd:develop.paste`, `cmd:preset.apply`, `cmd:app.export` | |
-| LR-BEHAV-PREVIEW-HOVER | Hover previews | P1 | ⬜ | | presets, profiles, versions |
+| LR-BEHAV-PREVIEW-HOVER | Hover previews | P1 | 🟡 | `crates/ui-egui/src/panels/presets.rs`, `crates/ui-egui/src/panels/profiles.rs`, `crates/ui-egui/src/panels/detail.rs` | presets, profile menu and profile browser preview in the loupe; versions do not |
 | LR-BEHAV-PROGRESSIVE | Progressive rendering | P0 | ✅ | `crates/engine/src/media.rs`, `crates/preview/src/lib.rs` | |
 | LR-BEHAV-BG-TASKS | Background tasks | P0 | 🟡 | `crates/preview/src/lib.rs` (`JobPool`) | renders off the UI thread; no progress popover for import/export |
 | LR-BEHAV-OFFLINE | Offline editing | P1 | ✅ | | local-first: everything works offline |
@@ -633,7 +623,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-PREFS | Settings — ⌘, | P0 | ⬜ | | no command |
 | KEY-SEARCH | Search — ⌘F | P0 | ⬜ | | no focus-search command |
 | KEY-VISUALIZESPOTS | Visualize spots — A | P1 | ⬜ | | |
-| KEY-CYCLEOVERLAY | Cycle overlay — O | P0 | 🟡 | `cmd:view.maskOverlay`, `cmd:view.cropOverlay` | O toggles the mask overlay; crop overlays cycle on ⇧O |
+| KEY-CYCLEOVERLAY | Cycle overlay — O | P0 | ✅ | `cmd:view.maskOverlay`, `cmd:view.maskOverlayMode`, `cmd:view.cropOverlay` | O toggles the mask overlay; ⇧O cycles mask overlay modes while masking, crop overlays elsewhere |
 | KEY-PHOTOSPANEL | Photos panel — P | P0 | 🟡 | `cmd:view.leftPanel` | bound to ⌘⇧L; P = pick |
 | KEY-LINEAR | Linear gradient — L | P0 | ✅ | `cmd:tool.linear` | |
 | KEY-RADIAL | Radial gradient — R | P0 | ✅ | `cmd:tool.radial` | |
@@ -658,8 +648,8 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-SECTIONS | Expand/collapse edit sections — ⌘1…⌘6 | P1 | 🟡 | `cmd:section.light`, `cmd:section.color`, `cmd:section.effects`, `cmd:section.detail`, `cmd:section.optics` | bound to ⌘⌥1–5 |
 | KEY-PRESETS | Presets panel — ⇧P | P0 | ✅ | `cmd:panel.presets` | |
 | KEY-HISTOGRAM | Histogram — ⌘0 | P0 | 🟡 | `cmd:view.histogram` | bound to ⌘⇧H; ⌘0 = zoom to fit |
-| KEY-BRUSHSIZE | Brush size — `[` / `]` | P0 | ⬜ | | brush size is UI state, no command |
-| KEY-BRUSHFEATHER | Brush feather — ⇧`[` / ⇧`]` | P0 | ⬜ | | |
+| KEY-BRUSHSIZE | Brush size — `[` / `]` | P0 | ✅ | `cmd:brush.smaller`, `cmd:brush.larger` | Masking brush and Remove tool (and its selected spot) |
+| KEY-BRUSHFEATHER | Brush feather — ⇧`[` / ⇧`]` | P0 | ✅ | `cmd:brush.featherLess`, `cmd:brush.featherMore` | |
 | KEY-BRUSH | Brush — B | P0 | ✅ | `cmd:tool.brush` | |
 | KEY-HEAL | Remove / heal — H | P0 | ✅ | `cmd:panel.remove` | |
 | KEY-MERGE | HDR / panorama merges — ⌃H ⇧⌃H ⌃M ⇧⌃M | P2 | ⬜ | | |
@@ -692,7 +682,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-VIDEO-PLAY | Play/pause video — Space | P1 | ⬜ | | |
 | KEY-ESC | Leave tool / view — Esc | P0 | ✅ | `cmd:view.back` | |
 | KEY-COMMIT | Commit tool — Return | P1 | 🟡 | | edits apply live; no explicit commit step |
-| KEY-DELETE-PIN | Delete selected pin — ⌫ | P0 | 🟡 | `cmd:mask.delete` | ⌫ deletes the active mask in the Masking panel and never the photo while retouching; no spot pin selection yet |
+| KEY-DELETE-PIN | Delete selected pin — ⌫ | P0 | ✅ | `cmd:mask.delete`, `cmd:spot.delete` | ⌫ deletes the active mask (Masking) or the selected spot (Remove), never the photo while retouching |
 | KEY-HIDEPINS | Hide pins — H | P2 | ⬜ | | H = Remove panel |
 
 ## Lightroom Classic extras

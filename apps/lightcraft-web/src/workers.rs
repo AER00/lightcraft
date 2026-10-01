@@ -97,7 +97,7 @@ async fn handle(scope: &web_sys::DedicatedWorkerGlobalScope, backend: Option<Bac
             match b.read(&key).await.ok().flatten().and_then(|bytes| lightcraft_preview::decode_jpeg(&bytes)) {
                 Some(image) => {
                     let histogram = Histogram::of_srgb8(&image);
-                    return Ok((Rendered { image, histogram }, 0));
+                    return Ok((Rendered { image, histogram, deep: None }, 0));
                 }
                 None => cache_miss = true,
             }
@@ -275,7 +275,7 @@ impl Workers {
                 Some(image) if hist.len() == 1025 => {
                     let ch = |k: usize| hist[k * 256..(k + 1) * 256].to_vec();
                     let histogram = Histogram { r: ch(0), g: ch(1), b: ch(2), luma: ch(3), total: hist[1024] };
-                    Ok(Rendered { image, histogram })
+                    Ok(Rendered { image, histogram, deep: None })
                 }
                 _ => Err("render worker: bad image".to_string()),
             }
@@ -344,7 +344,7 @@ impl RenderOffload for Workers {
                 photo: job.photo,
                 level: job.level,
                 key: job.key,
-                rendered: Ok(Rendered { image, histogram }),
+                rendered: Ok(Rendered { image, histogram, deep: None }),
                 loaded: None,
                 quick: None,
             };

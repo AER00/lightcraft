@@ -37,6 +37,12 @@ pub enum Slot {
     /// Background preparation of a neighbouring photo (no texture: its decoded source and view
     /// render are cached by the engine). 0 = next, 1 = previous.
     Prefetch(u8),
+    /// A variant thumbnail (profile / preset browsers), by its job key ([`Session::variant_job`]).
+    /// Kept in a bounded LRU ([`VARIANT_TEXTURES`]).
+    Variant(u64),
+    /// The loupe while hovering a preset or profile: the photo with the hovered look (nothing is
+    /// committed).
+    Hover,
 }
 
 pub struct Tex {
@@ -69,6 +75,11 @@ struct Queued {
     job: RenderJob,
 }
 
+/// Variant thumbnails kept as textures (LRU).
+pub const VARIANT_TEXTURES: usize = 96;
+/// Priority of variant thumbnail jobs: below on-screen grid thumbnails and the loupe.
+const VARIANT_PRIORITY: u32 = 6;
+
 pub struct Renderer {
     pool: JobPool<Slot, RenderResult>,
     /// Jobs run elsewhere (see [`RenderOffload`]); `queue` holds the ones not started yet.
@@ -90,7 +101,18 @@ pub struct Renderer {
     quick_tried: HashMap<Slot, u64>,
     /// Prefetch slot → key of the last job submitted (each runs once).
     prefetched: HashMap<Slot, u64>,
+    /// Variant key → frame it was last asked for (LRU of [`Slot::Variant`] textures).
+    variant_used: HashMap<u64, u64>,
+    /// Frames polled so far.
+    frame: u64,
+    /// Since when nothing has been pending, and whether the GPU pool was trimmed since.
+    #[cfg(not(target_arch = "wasm32"))]
+    idle: Option<(std::time::Instant, bool)>,
 }
+
+/// After this long without renders the GPU renderer's pool of recycled buffers is freed.
+#[cfg(not(target_arch = "wasm32"))]
+const IDLE_TRIM: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl Default for Renderer {
     fn default() -> Self {
@@ -108,6 +130,10 @@ impl Default for Renderer {
             stages: HashMap::new(),
             quick_tried: HashMap::new(),
             prefetched: HashMap::new(),
+            variant_used: HashMap::new(),
+            frame: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            idle: None,
         }
     }
 }
@@ -140,7 +166,8 @@ impl Renderer {
         }
         self.pending.insert(slot, (job.key, priority));
         // (an offload keeps its own per-view stage caches; the flag tells it to)
-        let job = if matches!(slot, Slot::Main | Slot::Before) { job.with_stages(self.stages.entry(slot).or_default().clone()) } else { job };
+        let job =
+            if matches!(slot, Slot::Main | Slot::Before | Slot::Hover) { job.with_stages(self.stages.entry(slot).or_default().clone()) } else { job };
         if self.offload.is_some() {
             self.seq += 1;
             self.queue.retain(|q| q.slot != slot);
@@ -149,7 +176,13 @@ impl Renderer {
             return;
         }
         let key = job.key;
-        self.pool.submit(slot, key, priority, Box::new(move || job.run()));
+        let background = matches!(slot, Slot::Thumb(_) | Slot::ThumbQuick(_) | Slot::Prefetch(_));
+        self.pool.submit(
+            slot,
+            key,
+            priority,
+            Box::new(move || if background { lightcraft_engine::memory::in_background(|| job.run()) } else { job.run() }),
+        );
     }
 
     /// Request a stand-in for `slot` (once per job key).
@@ -172,7 +205,7 @@ impl Renderer {
         self.prefetched.insert(slot, job.key);
         self.pending.insert(slot, (job.key, priority));
         let key = job.key;
-        self.pool.submit(slot, key, priority, Box::new(move || job.run()));
+        self.pool.submit(slot, key, priority, Box::new(move || lightcraft_engine::memory::in_background(|| job.run())));
     }
 
     /// Is a request for `slot` queued or running?
@@ -207,12 +240,73 @@ impl Renderer {
     }
 
     /// Thumbnail textures currently loaded.
+    /// A variant thumbnail ([`Slot::Variant`]): its texture once rendered; until then the job is
+    /// queued at low priority (below on-screen grid thumbnails). Call it every frame the variant
+    /// is visible: variants not asked for during the last frames leave the queue, and textures
+    /// beyond [`VARIANT_TEXTURES`] are evicted least recently used first.
+    pub fn variant(&mut self, job: RenderJob) -> Option<&Tex> {
+        let key = job.key;
+        let slot = Slot::Variant(key);
+        self.variant_used.insert(key, self.frame);
+        if !self.textures.contains_key(&slot) {
+            self.request(slot, job, VARIANT_PRIORITY);
+        }
+        self.textures.get(&slot)
+    }
+
+    /// Variant thumbnail textures currently loaded.
+    pub fn variant_textures(&self) -> usize {
+        self.textures.keys().filter(|s| matches!(s, Slot::Variant(_))).count()
+    }
+
+    /// Drop variant jobs nobody asked for in the last frames, and the least recently used
+    /// variant textures beyond the budget.
+    fn evict_variants(&mut self) {
+        let now = self.frame;
+        let stale = |used: Option<&u64>| used.is_none_or(|f| now.saturating_sub(*f) > 2);
+        let used = &self.variant_used;
+        let dropped = self.pool.reprioritize(|s, p| match s {
+            Slot::Variant(k) if stale(used.get(k)) => None,
+            _ => Some(p),
+        });
+        for s in dropped {
+            self.pending.remove(&s);
+        }
+        let pending = &mut self.pending;
+        self.queue.retain(|q| match q.slot {
+            Slot::Variant(k) if stale(used.get(&k)) => {
+                pending.remove(&q.slot);
+                false
+            }
+            _ => true,
+        });
+        let n = self.variant_textures();
+        if n > VARIANT_TEXTURES {
+            let mut have: Vec<(u64, u64)> = self
+                .textures
+                .keys()
+                .filter_map(|s| if let Slot::Variant(k) = s { Some((self.variant_used.get(k).copied().unwrap_or(0), *k)) } else { None })
+                .collect();
+            have.sort_unstable();
+            for (_, k) in have.into_iter().take(n - VARIANT_TEXTURES) {
+                self.textures.remove(&Slot::Variant(k));
+                self.variant_used.remove(&k);
+            }
+        }
+        if self.variant_used.len() > 4 * VARIANT_TEXTURES {
+            let textures = &self.textures;
+            let pending = &self.pending;
+            self.variant_used.retain(|k, _| textures.contains_key(&Slot::Variant(*k)) || pending.contains_key(&Slot::Variant(*k)));
+        }
+    }
+
     pub fn thumb_textures(&self) -> usize {
         self.textures.keys().filter(|s| matches!(s, Slot::Thumb(_) | Slot::ThumbQuick(_))).count()
     }
 
     /// Collect finished jobs into textures. Returns true if anything changed.
     pub fn poll(&mut self, ctx: &egui::Context, session: &mut Session) -> bool {
+        self.frame += 1;
         // wasm: run one job per frame on this thread, timed with the host clock
         #[cfg(target_arch = "wasm32")]
         let inline_ms = {
@@ -292,10 +386,48 @@ impl Renderer {
             }
             changed = true;
         }
+        self.evict_variants();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.trim_when_idle(ctx);
         if !self.pending.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
         changed
+    }
+
+    /// Free the GPU renderer's recycled buffers once nothing has rendered for [`IDLE_TRIM`] (they
+    /// are reallocated by the next render; while working, renders reuse them).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn trim_when_idle(&mut self, ctx: &egui::Context) {
+        if !self.pending.is_empty() {
+            self.idle = None;
+            return;
+        }
+        let now = std::time::Instant::now();
+        let (since, trimmed) = *self.idle.get_or_insert((now, false));
+        if trimmed {
+            return;
+        }
+        let waited = now.duration_since(since);
+        if waited >= IDLE_TRIM {
+            lightcraft_engine::gpu::trim_pool(0);
+            lightcraft_engine::memory::release();
+            self.idle = Some((since, true));
+        } else {
+            ctx.request_repaint_after(IDLE_TRIM - waited);
+        }
+    }
+
+    /// What the renderer holds: per-view stage caches (CPU images and GPU buffers) and textures.
+    pub fn memory(&self) -> serde_json::Value {
+        let cpu: usize = self.stages.values().map(|s| s.bytes()).sum();
+        let gpu: usize = self.stages.values().map(|s| lightcraft_engine::gpu::stage_bytes(s)).sum();
+        let tex: usize = self.textures.values().map(|t| t.size[0] * t.size[1] * 4).sum();
+        let copies: usize = self.textures.values().filter_map(|t| t.pixels.as_ref()).map(|p| p.pixels.len() * 4).sum();
+        serde_json::json!({
+            "stageCaches": {"count": self.stages.len(), "cpuBytes": cpu, "gpuBytes": gpu},
+            "textures": {"count": self.textures.len(), "bytes": tex, "cpuCopyBytes": copies},
+        })
     }
 
     /// CPU copies of the current textures by id (see [`Self::keep_pixels`]).

@@ -219,6 +219,26 @@ fn enc8(v: f32) -> u32 {
     return u32(clamp(v, 0.0, 1.0) * 255.0 + 0.5);
 }
 
+// sRGB-curve-encoded value → the output space's own curve (`OutputTrc`: 0 sRGB, 1 gamma, 2 Rec.709).
+fn out_encode(v: f32) -> f32 {
+    let kind = pu(F_OUT_TRC);
+    if (kind == 0u) {
+        return v;
+    }
+    let e = clamp(v, 0.0, 1.0);
+    var l = e / 12.92;
+    if (e > 0.04045) {
+        l = pow((e + 0.055) / 1.055, 2.4);
+    }
+    if (kind == 1u) {
+        return pow(l, 1.0 / pf(F_OUT_GAMMA));
+    }
+    if (l < 0.018) {
+        return l * 4.5;
+    }
+    return 1.099 * pow(l, 0.45) - 0.099;
+}
+
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let w = pu(F_W);
@@ -429,9 +449,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    // --- gamut map to sRGB (desaturate towards luminance until in range)
-    var r = mul3(TO_SRGB, d);
-    let yy = clamp(0.2126 * r.x + 0.7152 * r.y + 0.0722 * r.z, 0.0, 1.0);
+    // --- gamut map to the output space (desaturate towards luminance until in range)
+    let om = array<vec3<f32>, 3>(
+        vec3<f32>(pf(F_OUT_M), pf(F_OUT_M + 1u), pf(F_OUT_M + 2u)),
+        vec3<f32>(pf(F_OUT_M + 3u), pf(F_OUT_M + 4u), pf(F_OUT_M + 5u)),
+        vec3<f32>(pf(F_OUT_M + 6u), pf(F_OUT_M + 7u), pf(F_OUT_M + 8u)),
+    );
+    var r = mul3(om, d);
+    let yy = clamp(pf(F_OUT_Y) * r.x + pf(F_OUT_Y + 1u) * r.y + pf(F_OUT_Y + 2u) * r.z, 0.0, 1.0);
     var tg = 1.0;
     for (var k = 0u; k < 3u; k++) {
         let cc = r[k];
@@ -469,5 +494,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let k = pf(F_GRAIN_AMT) * g * (0.35 + 2.6 * lum * (1.0 - lum));
         e = e + k;
     }
+    e = vec3<f32>(out_encode(e.x), out_encode(e.y), out_encode(e.z));
     out[i] = enc8(e.x) | (enc8(e.y) << 8u) | (enc8(e.z) << 16u) | (255u << 24u);
 }

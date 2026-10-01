@@ -206,6 +206,7 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
         "view.autoAdvance" => Some(u.auto_advance),
         "view.filterBar" => Some(u.filter_bar),
         "panel.edit" => panel(RightPanel::Edit),
+        "panel.profiles" => panel(RightPanel::Profiles),
         "panel.crop" => panel(RightPanel::Crop),
         "panel.remove" => panel(RightPanel::Remove),
         "panel.masking" => panel(RightPanel::Masking),

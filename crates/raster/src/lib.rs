@@ -97,6 +97,19 @@ impl<T: Copy + Default> Image<T> {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
+    /// [`Self::map`] into the same buffer (no second image in memory).
+    pub fn map_in_place(&mut self, f: impl Fn(T) -> T + Sync + Send)
+    where
+        T: Send,
+    {
+        let w = self.width;
+        par_rows(&mut self.data, w, |_, row| {
+            for p in row.iter_mut() {
+                *p = f(*p);
+            }
+        });
+    }
+
     pub fn map<U: Copy + Default + Send>(&self, f: impl Fn(T) -> U + Sync + Send) -> Image<U>
     where
         T: Sync,
@@ -139,6 +152,19 @@ impl<T: Copy + Default> Image<T> {
         }
         Self { width: w, height: h, data }
     }
+    /// [`Self::crop`] in place: rows move to the front of the same buffer (no second image).
+    pub fn into_crop(mut self, x0: usize, y0: usize, w: usize, h: usize) -> Self {
+        let x0 = x0.min(self.width);
+        let y0 = y0.min(self.height);
+        let w = w.min(self.width - x0);
+        let h = h.min(self.height - y0);
+        for (i, y) in (y0..y0 + h).enumerate() {
+            let src = y * self.width + x0;
+            self.data.copy_within(src..src + w, i * w);
+        }
+        self.data.truncate(w * h);
+        Self { width: w, height: h, data: self.data }
+    }
     /// Rotate 90° clockwise.
     pub fn rotate_cw(&self) -> Self {
         let (w, h) = (self.width, self.height);
@@ -157,6 +183,11 @@ impl<T: Copy + Default> Image<T> {
         out
     }
     /// Apply an EXIF orientation (stored → displayed).
+    /// [`Self::oriented`] without a copy when `o` is the identity.
+    pub fn into_oriented(self, o: lightcraft_geom::Orientation) -> Self {
+        if o == lightcraft_geom::Orientation::Normal { self } else { self.oriented(o) }
+    }
+
     pub fn oriented(&self, o: lightcraft_geom::Orientation) -> Self {
         let (flip, turns) = o.to_parts();
         let mut img = if flip { self.flip_h() } else { self.clone() };
@@ -231,6 +262,17 @@ mod tests {
         let img = Image::<u32>::from_fn(4, 3, |x, y| (y * 10 + x) as u32);
         let c = img.crop(1, 1, 2, 2);
         assert_eq!(c.data, vec![11, 12, 21, 22]);
+        // the in-place variants equal the copying ones
+        for (x, y, w, h) in [(1, 1, 2, 2), (0, 0, 4, 3), (2, 0, 9, 9), (0, 2, 4, 1), (3, 2, 1, 1)] {
+            assert_eq!(img.clone().into_crop(x, y, w, h), img.crop(x, y, w, h));
+        }
+        for v in 1..=8 {
+            let o = Orientation::from_exif(v);
+            assert_eq!(img.clone().into_oriented(o), img.oriented(o));
+        }
+        let mut m = img.clone();
+        m.map_in_place(|p| p * 2 + 1);
+        assert_eq!(m, img.map(|p| p * 2 + 1));
         let r = img.rotate_cw();
         assert_eq!((r.width, r.height), (3, 4));
         // top-left of rotated = bottom-left of original

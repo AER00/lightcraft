@@ -88,6 +88,9 @@ impl WireJob {
             quality: if self.draft { Quality::Draft } else { Quality::Full },
             apply_crop: self.apply_crop,
             overlay: lightcraft_engine::pipeline::Overlay::from_parts(self.overlay.0, self.overlay.1),
+            // workers render previews (exports run in-process)
+            space: lightcraft_engine::pipeline::OutputSpace::Srgb,
+            depth: lightcraft_engine::pipeline::OutputDepth::U8,
         }
     }
 

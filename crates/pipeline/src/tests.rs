@@ -209,6 +209,11 @@ fn stage_cache_matches_uncached_render_through_a_slider_session() {
         }
     }
     assert_eq!(cache.len(), 2);
+    // both sizes' sampled + linear images at least (12 bytes per pixel each), nothing after clear()
+    let b = cache.bytes();
+    assert!(b >= 2 * 12 * (200 * 133 + 120 * 80), "{b}");
+    cache.clear();
+    assert_eq!(cache.bytes(), 0);
     // a different source buffer never hits another source's entries
     let other = Arc::new(Rgb32f::filled(src.width, src.height, [0.3, 0.3, 0.3]));
     assert_eq!(render_cached(&other, &info, &s, &full, &cache).image, render(&other, &info, &s, &full).image);

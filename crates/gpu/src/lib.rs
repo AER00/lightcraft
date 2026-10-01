@@ -66,6 +66,12 @@ pub(crate) fn device() -> Option<&'static ctx::Gpu> {
     GPU.get_or_init(|| std::panic::catch_unwind(ctx::Gpu::new).ok().flatten()).as_ref()
 }
 
+/// The device if it has been created (never creates it).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn existing_device() -> Option<&'static ctx::Gpu> {
+    GPU.get().and_then(|g| g.as_ref())
+}
+
 /// Create the device and compile the kernels on a background thread now (app start), so the
 /// first render doesn't wait ~0.3–0.4 s for it and the UI thread never does.
 pub fn warm_up() {
@@ -114,17 +120,80 @@ pub fn adapter_name() -> Option<String> {
     }
 }
 
+/// Device buffers held by the renderer.
+#[cfg(not(target_arch = "wasm32"))]
+pub use ctx::GpuMemory;
+
+/// Device buffers held by the renderer.
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GpuMemory {
+    pub allocated: u64,
+    pub pooled: u64,
+    pub retired: u64,
+}
+
+/// Device memory held by the renderer's buffers (zero without a device).
+pub fn memory() -> GpuMemory {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ctx::memory()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        GpuMemory::default()
+    }
+}
+
+/// Keep at most `bytes` of recycled buffers in the free pool from now on (trimming it now).
+pub fn set_pool_limit(bytes: u64) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ctx::POOL_LIMIT.store(bytes, Ordering::Relaxed);
+        trim_pool(bytes);
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = bytes;
+}
+
+/// Free recycled buffers until at most `keep` bytes stay pooled (e.g. when the app goes idle).
+pub fn trim_pool(keep: u64) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(g) = GPU.get().and_then(|g| g.as_ref()) {
+        g.trim(keep);
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = keep;
+}
+
+/// Device bytes held by a view's GPU stages (kept with its [`StageCache`]); 0 when it has none.
+pub fn stage_bytes(stages: &StageCache) -> usize {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        stages.peek_extension::<GpuStages>().map(|g| g.bytes()).unwrap_or(0)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = stages;
+        0
+    }
+}
+
 /// Render `src` with `s` on the GPU, reusing the device-resident stages kept with `stages` (the
 /// view's CPU stage cache). `None`: render on the CPU instead.
 pub fn render(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, stages: Option<&StageCache>) -> Option<Rendered> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        if !enabled() {
+        // the kernel writes 8-bit output: high-bit-depth exports render on the CPU
+        if !enabled() || req.depth != lightcraft_pipeline::OutputDepth::U8 {
             return None;
         }
         let gpu = device()?;
         let ext = stages.map(|c| c.extension::<GpuStages>());
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::render(gpu, src, info, s, req, ext.as_deref())));
+        let r = {
+            let _scope = ctx::RenderScope::new(gpu);
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::render(gpu, src, info, s, req, ext.as_deref())))
+        };
         match r {
             // a device error during the render: its result is not trustworthy
             Ok(_) if BROKEN.load(Ordering::Relaxed) => None,

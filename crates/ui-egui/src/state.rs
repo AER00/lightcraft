@@ -31,11 +31,13 @@ pub enum RightPanel {
     Activity,
     Keywords,
     Info,
+    /// The profile browser (part of Edit).
+    Profiles,
 }
 
 impl RightPanel {
     pub fn is_edit_tool(self) -> bool {
-        matches!(self, RightPanel::Edit | RightPanel::Crop | RightPanel::Remove | RightPanel::Masking | RightPanel::RedEye)
+        matches!(self, RightPanel::Edit | RightPanel::Profiles | RightPanel::Crop | RightPanel::Remove | RightPanel::Masking | RightPanel::RedEye)
     }
 }
 
@@ -83,6 +85,8 @@ pub struct UiState {
     pub right: RightPanel,
     /// Presets column open (opens to the left of the Edit panel).
     pub presets: bool,
+    /// Presets column: show a live thumbnail of the photo with each preset.
+    pub preset_thumbs: bool,
     pub filmstrip: bool,
     pub zoom: Zoom,
     /// Pan offset of the loupe when zoomed (image-normalized centre).
@@ -151,6 +155,19 @@ pub struct UiState {
     pub dialog: Option<Dialog>,
 }
 
+/// Settings group ids (`SettingsGroup` serde names) a new preset includes by default: everything
+/// but crop, masks, spots and red eye.
+pub fn default_preset_groups() -> Vec<String> {
+    lightcraft_develop::SettingsGroup::default_copy().iter().filter_map(|g| serde_json::to_value(g).ok()?.as_str().map(str::to_string)).collect()
+}
+
+impl Dialog {
+    /// A fresh Create Preset dialog.
+    pub fn create_preset() -> Dialog {
+        Dialog::CreatePreset { name: String::new(), group: "User Presets".into(), groups: default_preset_groups() }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Dialog {
@@ -170,9 +187,12 @@ pub enum Dialog {
     NewSmartAlbum {
         name: String,
     },
+    /// `groups`: the settings groups the preset includes (`SettingsGroup` ids).
     CreatePreset {
         name: String,
         group: String,
+        #[serde(default = "default_preset_groups")]
+        groups: Vec<String>,
     },
     CopySettings {
         groups: Vec<String>,
@@ -199,6 +219,7 @@ impl Default for UiState {
             left_panel: false,
             right: RightPanel::Edit,
             presets: false,
+            preset_thumbs: false,
             filmstrip: true,
             zoom: Zoom::Fit,
             pan: (0.5, 0.5),

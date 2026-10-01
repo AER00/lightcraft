@@ -94,11 +94,15 @@ impl SourceRef {
 pub struct MediaCache {
     /// Decoded thumbnail-level sources (LRU by bytes).
     thumbs: Lru<PhotoId, Arc<Rgb32f>>,
-    previews: Vec<(PhotoId, Arc<Rgb32f>)>,
+    /// Decoded preview-level sources with their last use ([`lightcraft_preview::next_tick`]).
+    previews: Vec<(PhotoId, Arc<Rgb32f>, u64)>,
     /// The last full-resolution original (exports; one at a time: ~300 MB at 24 MP).
-    full: Option<(PhotoId, Arc<Rgb32f>)>,
+    full: Option<(PhotoId, Arc<Rgb32f>, u64)>,
     /// How many previews to keep (LRU).
     pub preview_capacity: usize,
+    /// Bytes all decoded sources and rendered previews in memory may take together (the cache
+    /// share of [`crate::memory::budget`]); the least recently used entry of any of them goes first.
+    budget: usize,
     pub file_loader: Option<FileLoader>,
     pub file_probe: Option<FileProbe>,
     pub preview_loader: Option<PreviewLoader>,
@@ -111,58 +115,124 @@ pub struct MediaCache {
 
 impl Default for MediaCache {
     fn default() -> Self {
+        let budget = crate::memory::cache_share(crate::memory::budget());
         MediaCache {
-            thumbs: Lru::new(THUMB_SOURCE_BYTES),
+            thumbs: Lru::new(THUMB_SOURCE_BYTES.min(budget)),
             previews: Vec::new(),
             full: None,
             preview_capacity: 0,
+            budget,
             file_loader: None,
             file_probe: None,
             preview_loader: None,
             file_bytes: None,
             scenes: Vec::new(),
-            rendered: Arc::new(PreviewCache::memory(RENDERED_MEM_BYTES)),
+            rendered: Arc::new(PreviewCache::memory(rendered_budget(budget))),
         }
     }
+}
+
+/// Memory for rendered previews out of the cache share.
+fn rendered_budget(share: usize) -> usize {
+    RENDERED_MEM_BYTES.min(share / 4)
+}
+
+fn source_bytes(img: &Rgb32f) -> usize {
+    img.data.len() * 12 + 64
 }
 
 impl MediaCache {
     /// Keep rendered thumbnails on disk in `dir` as well.
     pub fn attach_disk_cache(&mut self, dir: &std::path::Path) {
-        self.rendered = Arc::new(PreviewCache::with_disk(RENDERED_MEM_BYTES, dir, DISK_CACHE_BYTES));
+        self.rendered = Arc::new(PreviewCache::with_disk(rendered_budget(self.budget), dir, DISK_CACHE_BYTES));
+    }
+
+    /// Bytes the caches may hold together.
+    pub fn budget(&self) -> usize {
+        self.budget
+    }
+
+    /// Change the bytes the caches may hold together, evicting at once if needed.
+    pub fn set_budget(&mut self, bytes: usize) {
+        self.budget = bytes;
+        self.thumbs.set_budget(THUMB_SOURCE_BYTES.min(bytes));
+        self.rendered.set_mem_budget(rendered_budget(bytes));
+        self.enforce_budget();
+    }
+
+    /// Bytes held by decoded sources and rendered previews in memory.
+    pub fn held(&self) -> usize {
+        let (t, p, f) = self.usage();
+        t.bytes + p.bytes + f.bytes + self.rendered.mem_usage().1
+    }
+
+    /// Evict least recently used entries across the source caches and the rendered previews
+    /// until they fit the budget. The newest preview-level source (the photo on screen, or the
+    /// one just decoded) is never evicted here.
+    pub fn enforce_budget(&mut self) {
+        let mut held = self.held();
+        while held > self.budget {
+            let newest_preview = self.previews.iter().map(|e| e.2).max();
+            let candidates = [
+                self.thumbs.oldest_tick().map(|t| (t, 0)),
+                self.previews.iter().filter(|e| Some(e.2) != newest_preview).map(|e| e.2).min().map(|t| (t, 1)),
+                self.full.as_ref().map(|e| (e.2, 2)),
+                self.rendered.oldest_tick().map(|t| (t, 3)),
+            ];
+            let Some((tick, which)) = candidates.into_iter().flatten().min() else { break };
+            let freed = match which {
+                0 => self.thumbs.pop_oldest(),
+                1 => self.previews.iter().position(|e| e.2 == tick).map(|i| source_bytes(&self.previews.remove(i).1)),
+                2 => self.full.take().map(|e| source_bytes(&e.1)),
+                _ => self.rendered.evict_oldest(),
+            };
+            match freed {
+                Some(b) if b > 0 => held = held.saturating_sub(b),
+                _ => break,
+            }
+        }
     }
 
     pub fn get(&mut self, id: PhotoId, level: SourceLevel) -> Option<Arc<Rgb32f>> {
         match level {
             SourceLevel::Thumb => self.thumbs.get(&id).cloned(),
-            SourceLevel::Preview => self.previews.iter().find(|(p, _)| *p == id).map(|(_, a)| a.clone()),
-            SourceLevel::Full => self.full.as_ref().filter(|(p, _)| *p == id).map(|(_, a)| a.clone()),
+            SourceLevel::Preview => self.previews.iter_mut().find(|e| e.0 == id).map(|e| {
+                e.2 = lightcraft_preview::next_tick();
+                e.1.clone()
+            }),
+            SourceLevel::Full => self.full.as_mut().filter(|e| e.0 == id).map(|e| {
+                e.2 = lightcraft_preview::next_tick();
+                e.1.clone()
+            }),
         }
     }
 
     pub fn insert(&mut self, id: PhotoId, level: SourceLevel, img: Arc<Rgb32f>) {
+        let tick = lightcraft_preview::next_tick();
         match level {
             SourceLevel::Thumb => {
-                let cost = img.width * img.height * 12 + 64;
+                let cost = source_bytes(&img);
                 self.thumbs.insert(id, img, cost);
             }
             SourceLevel::Preview => {
-                self.previews.retain(|(p, _)| *p != id);
-                self.previews.push((id, img));
+                self.previews.retain(|e| e.0 != id);
+                self.previews.push((id, img, tick));
                 let cap = if self.preview_capacity == 0 { 4 } else { self.preview_capacity };
                 while self.previews.len() > cap {
-                    self.previews.remove(0);
+                    let oldest = self.previews.iter().enumerate().min_by_key(|(_, e)| e.2).map(|(i, _)| i).unwrap_or(0);
+                    self.previews.remove(oldest);
                 }
             }
-            SourceLevel::Full => self.full = Some((id, img)),
+            SourceLevel::Full => self.full = Some((id, img, tick)),
         }
+        self.enforce_budget();
     }
 
     /// Forget a photo's decoded sources (e.g. after its file changed).
     pub fn forget(&mut self, id: PhotoId) {
         self.thumbs.remove(&id);
-        self.previews.retain(|(p, _)| *p != id);
-        if self.full.as_ref().is_some_and(|(p, _)| *p == id) {
+        self.previews.retain(|e| e.0 != id);
+        if self.full.as_ref().is_some_and(|e| e.0 == id) {
             self.full = None;
         }
     }
@@ -170,6 +240,14 @@ impl MediaCache {
     /// (decoded thumbnail sources, bytes).
     pub fn source_usage(&self) -> (usize, usize) {
         (self.thumbs.len(), self.thumbs.cost())
+    }
+
+    /// Decoded sources held: (thumbnail level, preview level, full size).
+    pub fn usage(&self) -> (crate::memory::Usage, crate::memory::Usage, crate::memory::Usage) {
+        use crate::memory::Usage;
+        let previews = Usage::new(self.previews.len(), self.previews.iter().map(|e| source_bytes(&e.1)).sum());
+        let full = self.full.as_ref().map(|e| Usage::new(1, source_bytes(&e.1))).unwrap_or_default();
+        (Usage::new(self.thumbs.len(), self.thumbs.cost()), previews, full)
     }
 
     pub fn source_ref(&mut self, p: &Photo, level: SourceLevel) -> SourceRef {
@@ -277,7 +355,7 @@ impl RenderJob {
                 photo: self.photo,
                 level: self.level,
                 key: self.key,
-                rendered: Ok(Rendered { image, histogram }),
+                rendered: Ok(Rendered { image, histogram, deep: None }),
                 loaded: None,
                 quick: None,
             };
@@ -356,7 +434,7 @@ impl QuickJob {
         let done = |rendered: Result<Rendered, String>, quick| RenderResult { photo, level: SourceLevel::Thumb, key, rendered, loaded: None, quick };
         let rendered = |image: Rgba8| {
             let histogram = Histogram::of_srgb8(&image);
-            Ok(Rendered { image, histogram })
+            Ok(Rendered { image, histogram, deep: None })
         };
         for (cache, k) in &self.cached {
             if let Some(img) = cache.get(*k) {
@@ -451,6 +529,46 @@ impl crate::Session {
         })
     }
 
+    /// A render of `id` with `settings` in place of its own, fitting `max_w × max_h` (the loupe's
+    /// temporary preview while hovering a preset or profile; nothing is committed or cached).
+    pub fn preview_job(&mut self, id: PhotoId, max_w: usize, max_h: usize, apply_crop: bool, settings: &DevelopSettings) -> Option<RenderJob> {
+        let mut job = self.render_job(id, max_w, max_h, false, apply_crop)?;
+        job.settings = Arc::new(settings.clone());
+        job.key = settings.hash64() ^ ((max_w as u64) << 40) ^ ((max_h as u64) << 20) ^ (apply_crop as u64) ^ (job.level as u64) << 60;
+        Some(job)
+    }
+
+    /// Cache key of a variant thumbnail ([`Self::variant_job`]).
+    pub fn variant_key(p: &Photo, settings: &DevelopSettings, edge: usize) -> Hash128 {
+        Hasher128::new().str(&content_key(p)).str("variant").u64(settings.hash64()).u64(edge as u64).u64(RENDER_CACHE_VERSION).finish()
+    }
+
+    /// A thumbnail of `id` rendered with `settings` instead of its own (profile and preset
+    /// browsers): from the thumbnail-level source, long edge `edge` (≤ 512), cropped. The result
+    /// is cached (memory + the library's disk cache) under the photo's content and the settings
+    /// hash, so a variant renders once; `key` is derived from the same hash, so a frontend can
+    /// keep one texture per variant.
+    pub fn variant_job(&mut self, id: PhotoId, settings: &DevelopSettings, edge: usize) -> Option<RenderJob> {
+        let p = self.catalog.photo(id)?.clone();
+        let edge = edge.clamp(16, SourceLevel::Thumb.max_edge());
+        let level = SourceLevel::Thumb;
+        let source = self.media.source_ref(&p, level);
+        let ck = Self::variant_key(&p, settings, edge);
+        Some(RenderJob {
+            photo: id,
+            level,
+            source,
+            origin: p.source.clone(),
+            info: source_info(&p),
+            settings: Arc::new(settings.clone()),
+            request: RenderRequest { apply_crop: true, ..RenderRequest::fit(edge, edge) },
+            key: (ck.0 as u64) ^ ((ck.0 >> 64) as u64),
+            cache: Some((self.media.rendered.clone(), ck)),
+            stages: None,
+            view_cache: None,
+        })
+    }
+
     /// Size-independent cache key of a photo's view render (loupe) for its current settings.
     fn view_key(p: &Photo, apply_crop: bool) -> Hash128 {
         Hasher128::new().str(&content_key(p)).str("view").u64(p.develop.hash64()).u64(apply_crop as u64).u64(RENDER_CACHE_VERSION).finish()
@@ -518,6 +636,24 @@ impl crate::Session {
         r.rendered
     }
 
+    /// Synchronous render for export: like [`Self::render_now`], into colour space `space` with
+    /// sample format `depth`.
+    pub fn render_export(
+        &mut self,
+        id: PhotoId,
+        max: usize,
+        space: lightcraft_pipeline::OutputSpace,
+        depth: lightcraft_pipeline::OutputDepth,
+    ) -> Result<Rendered, String> {
+        let mut job = self.render_job(id, max, max, false, true).ok_or("no such photo")?;
+        job.request.space = space;
+        job.request.depth = depth;
+        job.key ^= (space as u64 + 1).wrapping_mul(0xa076_1d64_78bd_642f) ^ (depth as u64 + 1).wrapping_mul(0xe703_7ed1_a0b4_28db);
+        let r = job.run();
+        self.accept(&r);
+        r.rendered
+    }
+
     /// The source proxy for pixel-statistics commands (auto tone/WB), loading synchronously.
     pub fn source_now(&mut self, id: PhotoId, level: SourceLevel) -> Result<Arc<Rgb32f>, String> {
         let p = self.catalog.photo(id).ok_or("no such photo")?.clone();
@@ -553,6 +689,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn budget_evicts_least_recently_used_across_caches() {
+        let img = |w: usize| Arc::new(Rgb32f::new(w, w));
+        let mut m = MediaCache::default();
+        let mb = 1 << 20;
+        m.set_budget(30 * mb);
+        // 3 previews of 12 MB (1000² × 12 B) don't fit 30 MB: the least recently used goes
+        m.insert(PhotoId(1), SourceLevel::Preview, img(1000));
+        m.insert(PhotoId(2), SourceLevel::Preview, img(1000));
+        assert!(m.get(PhotoId(1), SourceLevel::Preview).is_some()); // 1 is now more recent than 2
+        m.insert(PhotoId(3), SourceLevel::Preview, img(1000));
+        assert!(m.get(PhotoId(2), SourceLevel::Preview).is_none());
+        assert!(m.get(PhotoId(1), SourceLevel::Preview).is_some() && m.get(PhotoId(3), SourceLevel::Preview).is_some());
+        // a thumbnail source and a rendered preview compete in the same budget
+        m.insert(PhotoId(4), SourceLevel::Thumb, img(500));
+        m.rendered.put(Hash128(7), Arc::new(lightcraft_raster::Rgba8::new(1000, 1000)));
+        assert!(m.held() <= 30 * mb, "{}", m.held());
+        // the newest preview (the one on screen) is never evicted, even alone over budget
+        m.set_budget(mb);
+        assert!(m.get(PhotoId(3), SourceLevel::Preview).is_some());
+        assert_eq!(m.usage().1.count, 1);
+        assert_eq!(m.usage().0.count, 0);
+        assert_eq!(m.rendered.mem_usage().0, 0);
+    }
+
+    #[test]
+    fn work_gate_waits_for_room() {
+        use crate::memory::WorkGate;
+        let g = Arc::new(WorkGate::new(100));
+        let a = g.acquire(80);
+        // more than fits waits until `a` is released; urgent work never waits
+        let urgent = g.acquire_urgent(500);
+        assert_eq!(g.usage().0, 580);
+        drop(urgent);
+        let g2 = g.clone();
+        let t = std::thread::spawn(move || {
+            let _b = g2.acquire(50);
+            g2.usage().0
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(g.usage().0, 80, "the second holder is still waiting");
+        drop(a);
+        assert_eq!(t.join().unwrap(), 50);
+        assert_eq!(g.usage().0, 0);
+        // a single holder may exceed the limit
+        drop(g.acquire(1000));
+    }
+
+    #[test]
     fn levels_cover_sizes_and_large_exports_use_the_original() {
         assert_eq!(SourceLevel::for_size(256), SourceLevel::Thumb);
         assert_eq!(SourceLevel::for_size(2560), SourceLevel::Preview);
@@ -575,5 +759,45 @@ mod tests {
         let plain: Vec<_> = s.catalog.photos().filter(|p| !p.is_edited()).map(|p| p.id).take(2).collect();
         let (a, b) = (s.render_job(plain[0], 1600, 1600, false, true).unwrap(), s.render_job(plain[1], 1600, 1600, false, true).unwrap());
         assert_ne!(a.key, b.key);
+    }
+
+    #[test]
+    fn variant_jobs_have_their_own_keys_and_hit_the_cache() {
+        let mut s = crate::Session::with_demo();
+        let id = s.active().unwrap();
+        let mine = (*s.develop_of(id).unwrap()).clone();
+        let with = |pid: &str| {
+            let mut d = mine.clone();
+            d.profile.id = pid.into();
+            d
+        };
+        let (a, b) = (with("lc.vivid"), with("lc.bw.sepia"));
+        let ja = s.variant_job(id, &a, 128).unwrap();
+        let jb = s.variant_job(id, &b, 128).unwrap();
+        assert_ne!(ja.key, jb.key, "keys differ per settings");
+        assert_eq!(ja.key, s.variant_job(id, &a, 128).unwrap().key, "stable");
+        assert_ne!(ja.key, s.variant_job(id, &a, 256).unwrap().key, "and per size");
+        assert_ne!(ja.key, s.thumb_job(id, 128).unwrap().key, "not the photo's own thumbnail");
+        assert_eq!(ja.level, SourceLevel::Thumb);
+        let (cache, ck) = ja.cache.clone().unwrap();
+        assert!(cache.get(ck).is_none());
+        let r = ja.run();
+        s.accept(&r);
+        let first = r.rendered.unwrap().image;
+        assert!(first.width.max(first.height) <= 128);
+        assert!(cache.get(ck).is_some(), "rendered variants are cached");
+        assert!(cache.get(jb.cache.as_ref().unwrap().1).is_none());
+        // a second job for the same variant is served from the cache, pixel for pixel
+        let again = s.variant_job(id, &a, 128).unwrap().run();
+        assert!(again.loaded.is_none());
+        assert_eq!(again.rendered.unwrap().image.as_bytes(), first.as_bytes());
+        let other = jb.run().rendered.unwrap().image;
+        assert_ne!(other.as_bytes(), first.as_bytes());
+        // the photo's own settings never changed
+        assert_eq!(*s.develop_of(id).unwrap(), mine);
+        // hover previews: a loupe-sized job with other settings, its own key
+        let pv = s.preview_job(id, 800, 600, true, &a).unwrap();
+        assert_ne!(pv.key, s.render_job(id, 800, 600, false, true).unwrap().key);
+        assert_eq!(*pv.settings, a);
     }
 }

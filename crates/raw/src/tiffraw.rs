@@ -23,8 +23,9 @@ enum ChunkPx {
     F32(Vec<f32>),
 }
 
-/// Decode all chunks of `info` into one buffer of `width × height × cpp` samples.
-pub fn read_image(data: &[u8], info: &ImageInfo, order: ByteOrder, packing: Packing) -> Result<RawData> {
+/// The checks [`read_image`] makes before decoding anything (sample format, size limits, data
+/// present); returns the number of samples.
+pub fn check_image(data: &[u8], info: &ImageInfo) -> Result<usize> {
     let (w, h) = (info.width as usize, info.height as usize);
     let cpp = info.samples_per_pixel as usize;
     let total = w.checked_mul(h).and_then(|v| v.checked_mul(cpp)).ok_or(RawError::Limit("image too large"))?;
@@ -49,6 +50,29 @@ pub fn read_image(data: &[u8], info: &ImageInfo, order: ByteOrder, packing: Pack
     if available.saturating_mul(2048) < total as u64 {
         return Err(RawError::Corrupt(format!("{available} bytes of image data cannot hold {total} samples")));
     }
+    Ok(total)
+}
+
+/// Read the samples of `info` in `mode`: [`Mode::Header`] only checks them ([`check_image`]) and
+/// returns no samples (floating-point data as an empty `F32`).
+pub(crate) fn read_image_in(mode: crate::Mode, data: &[u8], info: &ImageInfo, order: ByteOrder, packing: Packing) -> Result<RawData> {
+    match mode {
+        crate::Mode::Full => read_image(data, info, order, packing),
+        crate::Mode::Header => {
+            check_image(data, info)?;
+            Ok(if info.sample_format == 3 { RawData::F32(Vec::new()) } else { RawData::U16(Vec::new()) })
+        }
+    }
+}
+
+/// Decode all chunks of `info` into one buffer of `width × height × cpp` samples.
+pub fn read_image(data: &[u8], info: &ImageInfo, order: ByteOrder, packing: Packing) -> Result<RawData> {
+    let (w, h) = (info.width as usize, info.height as usize);
+    let total = check_image(data, info)?;
+    let cpp = info.samples_per_pixel as usize;
+    let bits = info.bits() as u32;
+    let float = info.sample_format == 3;
+    let chunks = info.chunks(data.len() as u64);
     let planar = info.planar == 2 && cpp > 1;
     let ccpp = if planar { 1 } else { cpp };
     let decoded: Vec<Result<(Chunk, ChunkPx)>> =

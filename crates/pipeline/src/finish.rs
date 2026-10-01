@@ -1,8 +1,8 @@
 //! The per-pixel stage: everything after the spatial planes are ready, in one parallel pass.
 
+use lightcraft_color::luminance_2020;
 use lightcraft_color::spline::{Lut1, MonotoneCurve};
 use lightcraft_color::transfer::linear_to_srgb;
-use lightcraft_color::{REC2020, SRGB, luminance_2020};
 use lightcraft_develop::{DevelopSettings, LocalAdjustments, ToneCurve, VignetteStyle};
 use lightcraft_geom::Point;
 use lightcraft_raster::Rgba8;
@@ -10,6 +10,7 @@ use lightcraft_raster::Rgba8;
 use crate::colorops::ColorOps;
 use crate::geometry::Frame;
 use crate::local::log_lum;
+use crate::output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc};
 use crate::tone::ToneMap;
 use crate::{Prepared, SourceInfo, for_rows};
 
@@ -159,7 +160,11 @@ pub struct FinishParams {
     /// Refine Saturation as 0..1 (1 = the curves' own saturation).
     pub refine_sat: f32,
     pub vig: Option<Vig>,
-    pub to_srgb: [[f32; 3]; 3],
+    /// Linear Rec.2020 → linear output RGB, the output's luminance weights (gamut mapping) and its
+    /// encoding curve (see [`crate::output`]).
+    pub to_out: [[f32; 3]; 3],
+    pub out_luma: [f32; 3],
+    pub out_trc: OutputTrc,
     pub hl: f32,
     pub sh: f32,
     pub clar: f32,
@@ -184,8 +189,18 @@ pub struct FinishParams {
 }
 
 impl FinishParams {
-    /// Parameters for a `w × h` render; `ev`/`air_pre` as in [`crate::Prepared`].
-    pub fn new(s: &DevelopSettings, frame: &Frame, info: &SourceInfo, w: usize, h: usize, px_per_long: f64, air_pre: f32) -> FinishParams {
+    /// Parameters for a `w × h` render into `space`; `ev`/`air_pre` as in [`crate::Prepared`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        s: &DevelopSettings,
+        frame: &Frame,
+        info: &SourceInfo,
+        w: usize,
+        h: usize,
+        px_per_long: f64,
+        air_pre: f32,
+        space: OutputSpace,
+    ) -> FinishParams {
         let effects = s.section_enabled("effects");
         let (clar, tex, dehaze) = if effects {
             ((s.effects.clarity / 100.0) as f32, (s.effects.texture / 100.0) as f32, (s.effects.dehaze / 100.0) as f32)
@@ -211,7 +226,9 @@ impl FinishParams {
             curves: curve_luts(&s.curve),
             refine_sat: (s.curve.refine_saturation / 100.0).clamp(0.0, 1.0) as f32,
             vig: if effects { vignette(s) } else { None },
-            to_srgb: REC2020.to_space(&SRGB).to_f32(),
+            to_out: space.from_working(),
+            out_luma: space.luma(),
+            out_trc: space.trc(),
             hl: (s.light.highlights / 100.0) as f32,
             sh: (s.light.shadows / 100.0) as f32,
             clar,
@@ -234,10 +251,74 @@ impl FinishParams {
     }
 }
 
-pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo) -> Rgba8 {
+pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo, space: OutputSpace) -> Rgba8 {
     let (w, h) = (p.img.width, p.img.height);
-    let fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air);
-    let FinishParams { tone, ops, curves, vig, to_srgb, hl, sh, clar, tex, dehaze, sharpen, sharpen_mask, air, air_pre, gain, ev, grain, .. } = &fp;
+    let fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
+    let trc = fp.out_trc;
+    let data = finish_with(p, &fp, false, |e| match trc {
+        OutputTrc::Srgb => [enc(e[0]), enc(e[1]), enc(e[2]), 255],
+        t => {
+            let x = e.map(|v| enc(t.encode(lightcraft_color::transfer::srgb_to_linear(v.clamp(0.0, 1.0)))));
+            [x[0], x[1], x[2], 255]
+        }
+    });
+    Rgba8 { width: w, height: h, data }
+}
+
+/// [`finish`] into 16-bit display-encoded or 32-bit float linear samples (output primaries).
+pub(crate) fn finish_deep(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo, space: OutputSpace, depth: OutputDepth) -> DeepImage {
+    use lightcraft_color::transfer::srgb_to_linear;
+    let (w, h) = (p.img.width, p.img.height);
+    let fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
+    let trc = fp.out_trc;
+    let samples = match depth {
+        OutputDepth::F32Linear => {
+            let v = finish_with(p, &fp, true, |e| e.map(|v| srgb_to_linear(v.clamp(0.0, 1.0))));
+            DeepSamples::F32(v.into_flattened())
+        }
+        _ => {
+            let q = |v: f32| (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+            let v = finish_with(p, &fp, true, |e| match trc {
+                OutputTrc::Srgb => e.map(q),
+                t => e.map(|v| q(t.encode(srgb_to_linear(v.clamp(0.0, 1.0))))),
+            });
+            DeepSamples::U16(v.into_flattened())
+        }
+    };
+    DeepImage { width: w, height: h, space, samples }
+}
+
+/// The per-pixel stage: every output pixel's colour in the output primaries, encoded with the sRGB
+/// curve (tone curves and grain applied; not clamped), handed to `store` for the final encoding.
+/// `exact`: encode with the exact sRGB curve instead of the (8/10-bit accurate) table.
+pub(crate) fn finish_with<T: Copy + Default + Send>(
+    p: &Prepared,
+    fp: &FinishParams,
+    exact: bool,
+    store: impl Fn([f32; 3]) -> T + Sync + Send,
+) -> Vec<T> {
+    let (w, h) = (p.img.width, p.img.height);
+    let FinishParams {
+        tone,
+        ops,
+        curves,
+        vig,
+        to_out,
+        out_luma,
+        hl,
+        sh,
+        clar,
+        tex,
+        dehaze,
+        sharpen,
+        sharpen_mask,
+        air,
+        air_pre,
+        gain,
+        ev,
+        grain,
+        ..
+    } = fp;
     let (hl, sh, clar, tex, dehaze, sharpen, sharpen_mask, air, air_pre, gain, ev) =
         (*hl, *sh, *clar, *tex, *dehaze, *sharpen, *sharpen_mask, *air, *air_pre, *gain, *ev);
     let terms: Vec<[f32; MASK_TERMS]> = p.masks.iter().map(|m| mask_terms(&m.adjust)).collect();
@@ -246,8 +327,8 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
     let aspect = w as f32 / h as f32;
 
     let srgb = srgb_lut();
-    let mut out = Rgba8::new(w, h);
-    for_rows(&mut out.data, w, |y, row| {
+    let mut out = vec![T::default(); w * h];
+    for_rows(&mut out, w, |y, row| {
         for (x, px) in row.iter_mut().enumerate() {
             let i = y * w + x;
             let raw = p.img.data[i];
@@ -422,14 +503,14 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
                 }
             }
 
-            // --- gamut map to sRGB (desaturate towards luminance until in range)
-            let m = to_srgb;
+            // --- gamut map to the output space (desaturate towards luminance until in range)
+            let m = to_out;
             let mut r = [
                 m[0][0] * d[0] + m[0][1] * d[1] + m[0][2] * d[2],
                 m[1][0] * d[0] + m[1][1] * d[1] + m[1][2] * d[2],
                 m[2][0] * d[0] + m[2][1] * d[1] + m[2][2] * d[2],
             ];
-            let yy = (0.2126 * r[0] + 0.7152 * r[1] + 0.0722 * r[2]).clamp(0.0, 1.0);
+            let yy = (out_luma[0] * r[0] + out_luma[1] * r[1] + out_luma[2] * r[2]).clamp(0.0, 1.0);
             let mut t = 1.0f32;
             for c in r {
                 if c < 0.0 {
@@ -443,7 +524,7 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
             }
 
             // --- encode, curves, grain
-            let mut e = r.map(|v| encode_srgb(srgb, v));
+            let mut e = if exact { r.map(|v| linear_to_srgb(v.clamp(0.0, 1.0))) } else { r.map(|v| encode_srgb(srgb, v)) };
             if let Some(l) = curves {
                 let e0 = e;
                 e = [l[0].eval(e[0]), l[1].eval(e[1]), l[2].eval(e[2])];
@@ -461,7 +542,7 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
                 let k = amt * g * (0.35 + 2.6 * lum * (1.0 - lum));
                 e = e.map(|v| v + k);
             }
-            *px = [enc(e[0]), enc(e[1]), enc(e[2]), 255];
+            *px = store(e);
         }
     });
     out

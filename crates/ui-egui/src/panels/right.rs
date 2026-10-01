@@ -27,6 +27,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 match app.ui.right {
                     RightPanel::Edit => super::edit::show(app, ui, id),
+                    RightPanel::Profiles => super::profiles::show(app, ui, id),
                     RightPanel::Crop => crop(app, ui, id),
                     RightPanel::Remove => remove(app, ui, id),
                     RightPanel::Masking => super::masking::show(app, ui, id),

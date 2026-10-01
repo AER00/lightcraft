@@ -126,3 +126,29 @@ fn new_library_without_seed_is_empty_and_compacts() {
     assert_eq!(s2.catalog.albums().count(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn profile_favorites_and_recent_survive_reopen() {
+    let dir = temp_dir("profiles");
+    let mut s = open(&dir, true);
+    s.execute("profile.favorite", &json!({"id": "lc.bw.sepia"})).unwrap();
+    s.execute("profile.favorite", &json!({"id": "lc.vivid"})).unwrap();
+    s.execute("profile.favorite", &json!({"id": "lc.vivid"})).unwrap(); // toggled off again
+    assert!(s.execute("profile.favorite", &json!({"id": "nope"})).is_err());
+    for id in ["lc.neutral", "lc.vivid", "lc.film.cool-fade", "lc.mono", "lc.cine.teal-amber", "lc.muted.bleached", "lc.vivid"] {
+        s.execute("develop.profile", &json!({"id": id})).unwrap();
+    }
+    let want_recent = ["lc.vivid", "lc.muted.bleached", "lc.cine.teal-amber", "lc.mono", "lc.film.cool-fade"];
+    assert_eq!(s.profile_recent, want_recent, "newest first, deduplicated, at most 5");
+    drop(s); // no clean close: every command persisted already
+    let mut s = open(&dir, false);
+    assert_eq!(s.profile_favorites, ["lc.bw.sepia"]);
+    assert_eq!(s.profile_recent, want_recent);
+    let menu = s.execute("profiles.menu", &json!({})).unwrap();
+    assert_eq!(menu["favorites"][0]["name"], "Sepia Tone");
+    assert_eq!(menu["recent"].as_array().unwrap().len(), 5);
+    assert_eq!(menu["groups"][0]["name"], "Basic");
+    let list = s.execute("profiles.list", &json!({})).unwrap();
+    assert!(list.as_array().unwrap().iter().any(|p| p["id"] == "lc.bw.sepia" && p["favorite"] == true));
+    let _ = std::fs::remove_dir_all(&dir);
+}
