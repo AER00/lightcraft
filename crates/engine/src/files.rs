@@ -59,6 +59,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
                     meta,
                     as_shot_wb: None,
                     content_hash,
+                    xmp: lightcraft_meta::embedded(bytes).xmp,
                 });
             }
             Err(e) => return Err(e.to_string()),
