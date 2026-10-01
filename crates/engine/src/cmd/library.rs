@@ -45,6 +45,7 @@ fn step(s: &mut Session, d: isize) -> Result<Value> {
     s.end_interaction()?;
     s.selection = Selection::single(vis[next]);
     s.active_mask = None;
+    s.active_spot = None;
     Ok(json!({"active": vis[next].0}))
 }
 
@@ -169,6 +170,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 other => return Err(bad("library.select", format!("unknown mode `{other}`"))),
             }
             s.active_mask = None;
+            s.active_spot = None;
             Ok(json!({"selected": s.selection.ids.len()}))
         }),
         cmd!("library.selectAll", "Select All", ["Edit"], Some("Cmd+A"), "{}", always, |s, _| {

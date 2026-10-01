@@ -208,6 +208,8 @@ pub(crate) struct Planes {
     pub texture: Option<(u32, Arc<Plane>)>,
     /// Dark channel and its airlight.
     pub dark: Option<(u32, Arc<Plane>, f32)>,
+    /// Blurred chromaticity (local Moiré / Noise).
+    pub chroma: Option<(u32, Arc<Rgb32f>)>,
 }
 
 /// Reuse `slot` if it was computed at `sigma`, else compute and store it.
@@ -232,6 +234,9 @@ pub fn dark_of(c: [f32; 3]) -> f32 {
     c[0].min(c[1]).min(c[2])
 }
 
+/// Radius of the local Moiré / colour-noise chromaticity blur, as a fraction of the long edge.
+pub const CHROMA_SIGMA: f32 = 0.004;
+
 /// Radii (px) of the spatial planes the settings need (`None` = not needed).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PlaneSigmas {
@@ -243,6 +248,8 @@ pub struct PlaneSigmas {
     pub texture: Option<f32>,
     /// Dehaze dark channel (Gaussian).
     pub dark: Option<f32>,
+    /// Chromaticity blur for local Moiré / colour noise (Gaussian).
+    pub chroma: Option<f32>,
 }
 
 pub fn plane_sigmas(s: &DevelopSettings, px_per_long: f64, q: Quality) -> PlaneSigmas {
@@ -256,10 +263,17 @@ pub fn plane_sigmas(s: &DevelopSettings, px_per_long: f64, q: Quality) -> PlaneS
         if q == Quality::Draft { sigma.min(24.0) } else { sigma }
     });
     let clarity = (s.effects.clarity != 0.0 || local_any(|a| a.clarity)).then(|| (0.012 * ppl).max(1.0));
-    let texture = (s.effects.texture != 0.0 || s.detail.sharpen_amount != 0.0 || local_any(|a| a.texture) || local_any(|a| a.sharpness))
-        .then(|| (0.0018 * ppl).max(0.6));
+    // local Noise and Defringe read the fine detail band too
+    let texture = (s.effects.texture != 0.0
+        || s.detail.sharpen_amount != 0.0
+        || local_any(|a| a.texture)
+        || local_any(|a| a.sharpness)
+        || local_any(|a| a.noise)
+        || s.masks.iter().any(|m| m.adjust.defringe > 0.0))
+    .then(|| (0.0018 * ppl).max(0.6));
     let dark = (s.effects.dehaze != 0.0 || local_any(|a| a.dehaze)).then(|| (0.02 * ppl).max(1.0));
-    PlaneSigmas { base, clarity, texture, dark }
+    let chroma = (local_any(|a| a.moire) || s.masks.iter().any(|m| m.adjust.noise > 0.0)).then(|| (CHROMA_SIGMA * ppl).max(1.0));
+    PlaneSigmas { base, clarity, texture, dark, chroma }
 }
 
 /// The spatial planes the per-pixel stage needs for `img` (white-balanced, before exposure),
@@ -267,9 +281,18 @@ pub fn plane_sigmas(s: &DevelopSettings, px_per_long: f64, q: Quality) -> PlaneS
 /// one alone scales poorly: the guided filters work on small subsampled grids).
 pub(crate) fn prepare(img: Arc<Rgb32f>, s: &DevelopSettings, frame: &Frame, px_per_long: f64, q: Quality, planes: &mut Planes) -> Prepared {
     let log_l = planes.log_l.get_or_insert_with(|| Arc::new(timed("log_l", || img.map(log_lum)))).clone();
-    let PlaneSigmas { base: base_sigma, clarity: clarity_sigma, texture: texture_sigma, dark: dark_sigma } = plane_sigmas(s, px_per_long, q);
+    let PlaneSigmas { base: base_sigma, clarity: clarity_sigma, texture: texture_sigma, dark: dark_sigma, chroma: chroma_sigma } =
+        plane_sigmas(s, px_per_long, q);
 
-    let Planes { base: sb, clarity: sc, texture: st, dark: sd, .. } = planes;
+    let Planes { base: sb, clarity: sc, texture: st, dark: sd, chroma: sch, .. } = planes;
+    let chroma_blur = chroma_sigma.map(|sg| match sch {
+        Some((k, c)) if *k == sg.to_bits() => c.clone(),
+        _ => {
+            let c = timed("chroma", || Arc::new(gaussian(&img.map(masks::chromaticity), sg)));
+            *sch = Some((sg.to_bits(), c.clone()));
+            c
+        }
+    });
     let l = &log_l;
     let (base, (clarity_blur, (texture_blur, dark))) = par_join(
         || base_sigma.map(|sg| plane_at(sb, sg, || timed("base", || guided_fast(l, sg, BASE_EPS)))),
@@ -302,7 +325,7 @@ pub(crate) fn prepare(img: Arc<Rgb32f>, s: &DevelopSettings, frame: &Frame, px_p
     };
     let ev = s.light.exposure as f32;
     let masks = timed("masks", || masks::evaluate(&s.masks, frame, img.width, img.height, &img, &log_l, ev));
-    Prepared { img, log_l, base, clarity_blur, texture_blur, dark, air, masks, px_per_long }
+    Prepared { img, log_l, base, clarity_blur, texture_blur, dark, chroma_blur, air, masks, px_per_long }
 }
 
 /// The airlight is estimated from every `AIRLIGHT_STEP`-th value of the dark channel.

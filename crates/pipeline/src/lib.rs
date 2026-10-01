@@ -39,7 +39,7 @@ pub mod upright;
 pub mod visualize;
 
 pub use output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc};
-pub use visualize::Overlay;
+pub use visualize::{MaskView, Overlay};
 
 use lightcraft_develop::{DevelopSettings, Treatment};
 use std::any::Any;
@@ -119,6 +119,8 @@ pub(crate) struct Prepared {
     pub clarity_blur: Option<Arc<Plane>>,
     pub texture_blur: Option<Arc<Plane>>,
     pub dark: Option<Arc<Plane>>,
+    /// Blurred chromaticity (`rgb / Y`) for local Moiré / Noise.
+    pub chroma_blur: Option<Arc<Rgb32f>>,
     /// Airlight of `dark` (before exposure).
     pub air: f32,
     pub masks: Vec<masks::Evaluated>,
@@ -398,8 +400,20 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     let histogram = Histogram::of_srgb8(&image);
     lap("histogram", &mut t);
     let mut image = image;
-    visualize::apply(&mut image, req.overlay, &plan);
+    let mask = overlay_alpha(req.overlay, &plan, &prep);
+    visualize::apply(&mut image, req.overlay, &plan, mask.as_ref());
     Rendered { image, histogram, deep: None }
+}
+
+/// The alpha plane a mask overlay shows: the one the render evaluated, or (for a hidden mask) a
+/// fresh evaluation.
+fn overlay_alpha(o: Overlay, plan: &Plan<'_>, prep: &Prepared) -> Option<Plane> {
+    let m = o.mask(&plan.settings)?;
+    if let Some(e) = prep.masks.iter().find(|e| e.id == m.id) {
+        return Some(e.alpha.clone());
+    }
+    let ev = plan.settings.light.exposure as f32;
+    Some(masks::evaluate_one(m, &plan.frame, plan.w, plan.h, &prep.img, &prep.log_l, ev))
 }
 
 /// Convenience: render a before/after pair side by side is up to the UI; this renders "before"
@@ -439,3 +453,5 @@ pub(crate) fn for_rows<T: Send>(data: &mut [T], w: usize, f: impl Fn(usize, &mut
 mod tests;
 #[cfg(test)]
 mod tests_geometry;
+#[cfg(test)]
+mod tests_local;

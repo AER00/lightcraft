@@ -11,6 +11,8 @@ use crate::for_rows;
 use crate::geometry::Frame;
 
 pub struct Evaluated {
+    /// The mask's id ([`Mask::id`]).
+    pub id: u32,
     pub alpha: Plane,
     pub adjust: LocalAdjustments,
 }
@@ -21,42 +23,47 @@ fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// The visible masks with components, evaluated in order.
 pub fn evaluate(masks: &[Mask], frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane, ev: f32) -> Vec<Evaluated> {
     masks
         .iter()
         .filter(|m| m.visible && !m.components.is_empty())
-        .map(|m| {
-            let mut alpha = Plane::new(w, h);
-            let mut first = true;
-            for comp in &m.components {
-                let mut c = shape_alpha(&comp.shape, frame, w, h, img, log_l, ev);
-                if comp.invert {
-                    c.data.iter_mut().for_each(|v| *v = 1.0 - *v);
-                }
-                if first && comp.op != MaskOp::Intersect {
-                    alpha = c;
-                    first = false;
-                    continue;
-                }
-                for (a, c) in alpha.data.iter_mut().zip(&c.data) {
-                    *a = match comp.op {
-                        MaskOp::Add => a.max(*c),
-                        MaskOp::Subtract => *a * (1.0 - c),
-                        MaskOp::Intersect => *a * c,
-                    };
-                }
-                first = false;
-            }
-            if m.invert {
-                alpha.data.iter_mut().for_each(|v| *v = 1.0 - *v);
-            }
-            let amt = (m.adjust.amount / 100.0) as f32;
-            if (amt - 1.0).abs() > 1e-6 {
-                alpha.data.iter_mut().for_each(|v| *v *= amt);
-            }
-            Evaluated { alpha, adjust: m.adjust }
-        })
+        .map(|m| Evaluated { id: m.id, alpha: evaluate_one(m, frame, w, h, img, log_l, ev), adjust: m.adjust })
         .collect()
+}
+
+/// The alpha plane of mask `m` (whether visible or not): its components combined, inverted and
+/// scaled by its amount.
+pub fn evaluate_one(m: &Mask, frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane, ev: f32) -> Plane {
+    let mut alpha = Plane::new(w, h);
+    let mut first = true;
+    for comp in &m.components {
+        let mut c = shape_alpha(&comp.shape, frame, w, h, img, log_l, ev);
+        if comp.invert {
+            c.data.iter_mut().for_each(|v| *v = 1.0 - *v);
+        }
+        if first && comp.op != MaskOp::Intersect {
+            alpha = c;
+            first = false;
+            continue;
+        }
+        for (a, c) in alpha.data.iter_mut().zip(&c.data) {
+            *a = match comp.op {
+                MaskOp::Add => a.max(*c),
+                MaskOp::Subtract => *a * (1.0 - c),
+                MaskOp::Intersect => *a * c,
+            };
+        }
+        first = false;
+    }
+    if m.invert {
+        alpha.data.iter_mut().for_each(|v| *v = 1.0 - *v);
+    }
+    let amt = (m.adjust.amount / 100.0) as f32;
+    if (amt - 1.0).abs() > 1e-6 {
+        alpha.data.iter_mut().for_each(|v| *v *= amt);
+    }
+    alpha
 }
 
 /// Per-pixel positions in long-edge units for output pixel centres.
@@ -100,7 +107,7 @@ pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &R
                 if inv { 1.0 - a } else { a }
             });
         }
-        MaskShape::Brush { strokes } => rasterize_brush(strokes, frame, w, h, &mut out),
+        MaskShape::Brush { strokes } => rasterize_brush(strokes, frame, w, h, img, log_l, &mut out),
         MaskShape::LuminanceRange { lo, hi, lo_feather, hi_feather } => {
             let (lo, hi, lf, hf) = (*lo as f32, *hi as f32, (*lo_feather as f32).max(1e-3), (*hi_feather as f32).max(1e-3));
             for (v, l) in out.data.iter_mut().zip(&log_l.data) {
@@ -181,6 +188,8 @@ pub struct BrushDabs {
     pub flow: f32,
     pub density: f32,
     pub erase: bool,
+    /// Auto Mask: paint only pixels like the one under each dab, then snap to edges.
+    pub auto: bool,
 }
 
 /// The dabs of stroke `s` in a `w × h` output.
@@ -203,15 +212,90 @@ pub fn brush_dabs(s: &BrushStroke, frame: &Frame, w: usize, h: usize) -> BrushDa
         }
         dabs.push(q);
     }
-    BrushDabs { dabs, r, hard, flow: (s.flow / 100.0).clamp(0.0, 1.0) as f32, density: (s.density / 100.0).clamp(0.0, 1.0) as f32, erase: s.erase }
+    BrushDabs {
+        dabs,
+        r,
+        hard,
+        flow: (s.flow / 100.0).clamp(0.0, 1.0) as f32,
+        density: (s.density / 100.0).clamp(0.0, 1.0) as f32,
+        erase: s.erase,
+        auto: s.auto_mask,
+    }
 }
 
-/// Stamp brush strokes into `out` (max-combine; erase strokes subtract).
-fn rasterize_brush(strokes: &[BrushStroke], frame: &Frame, w: usize, h: usize, out: &mut Plane) {
+/// Auto Mask tolerances: a pixel takes a dab's paint fully up to half of these from the colour
+/// under the dab centre, none beyond them (log2 luminance, chromaticity `rgb / Y`).
+pub const AUTO_TOL_EV: f32 = 0.5;
+pub const AUTO_TOL_CHROMA: f32 = 0.25;
+
+/// Chromaticity `rgb / Y` (as colour noise reduction uses it).
+#[inline]
+pub fn chromaticity(c: [f32; 3]) -> [f32; 3] {
+    let y = lightcraft_color::luminance_2020(c).max(1e-6);
+    [c[0] / y, c[1] / y, c[2] / y]
+}
+
+/// Auto Mask: how much a pixel (log luminance `l`, chromaticity `ch`) is like the reference.
+#[inline]
+pub fn auto_similarity(l: f32, ch: [f32; 3], rl: f32, rch: [f32; 3]) -> f32 {
+    let dl = (l - rl) / AUTO_TOL_EV;
+    let dc = ((ch[0] - rch[0]).powi(2) + (ch[1] - rch[1]).powi(2) + (ch[2] - rch[2]).powi(2)).sqrt() / AUTO_TOL_CHROMA;
+    1.0 - smooth(0.5, 1.0, (dl * dl + dc * dc).sqrt())
+}
+
+/// The output pixel a dab at `d` samples its reference colour from.
+#[inline]
+pub fn dab_pixel(d: Point, w: usize, h: usize) -> usize {
+    let x = (d.x.floor().max(0.0) as usize).min(w - 1);
+    let y = (d.y.floor().max(0.0) as usize).min(h - 1);
+    y * w + x
+}
+
+/// Guided-filter refinement of an Auto Mask stroke of radius `r` px: (sigma px, epsilon EV²). The
+/// stroke keeps the larger of its own and the refined alpha.
+pub fn auto_refine(r: f64) -> (f32, f32) {
+    ((0.25 * r).max(1.0) as f32, 0.02)
+}
+
+/// Guided filter of `p` steered by `guide` (He et al.), clamped to 0..1: `p`'s edges snap to the
+/// guide's.
+pub fn guided_cross(guide: &Plane, p: &Plane, sigma: f32, eps: f32) -> Plane {
+    use lightcraft_raster::blur::gaussian;
+    let mi = gaussian(guide, sigma);
+    let mp = gaussian(p, sigma);
+    let cip = gaussian(&guide.zip_map(p, |a, b| a * b), sigma);
+    let cii = gaussian(&guide.map(|a| a * a), sigma);
+    let mut a = Plane::new(p.width, p.height);
+    let mut b = Plane::new(p.width, p.height);
+    for i in 0..p.data.len() {
+        let var = (cii.data[i] - mi.data[i] * mi.data[i]).max(0.0);
+        let k = (cip.data[i] - mi.data[i] * mp.data[i]) / (var + eps);
+        a.data[i] = k;
+        b.data[i] = mp.data[i] - k * mi.data[i];
+    }
+    let (ma, mb) = (gaussian(&a, sigma), gaussian(&b, sigma));
+    let mut q = Plane::new(p.width, p.height);
+    for i in 0..q.data.len() {
+        q.data[i] = (ma.data[i] * guide.data[i] + mb.data[i]).clamp(0.0, 1.0);
+    }
+    q
+}
+
+/// Stamp brush strokes into `out` (max-combine; erase strokes subtract). Auto Mask strokes weight
+/// each dab by [`auto_similarity`] to the pixel under its centre and are refined with
+/// [`guided_cross`] on log luminance.
+fn rasterize_brush(strokes: &[BrushStroke], frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane, out: &mut Plane) {
+    if w == 0 || h == 0 {
+        return;
+    }
     for s in strokes {
-        let BrushDabs { dabs, r, hard, flow, density: dens, erase } = brush_dabs(s, frame, w, h);
+        let BrushDabs { dabs, r, hard, flow, density: dens, erase, auto } = brush_dabs(s, frame, w, h);
         let mut stroke_alpha = Plane::new(w, h);
         for d in &dabs {
+            let refc = auto.then(|| {
+                let j = dab_pixel(*d, w, h);
+                (log_l.data[j], chromaticity(img.data[j]))
+            });
             let (x0, x1) = (((d.x - r).floor().max(0.0)) as usize, ((d.x + r).ceil().max(0.0) as usize).min(w));
             let (y0, y1) = (((d.y - r).floor().max(0.0)) as usize, ((d.y + r).ceil().max(0.0) as usize).min(h));
             for y in y0..y1 {
@@ -220,12 +304,22 @@ fn rasterize_brush(strokes: &[BrushStroke], frame: &Frame, w: usize, h: usize, o
                     if dd > r {
                         continue;
                     }
-                    let a = if dd <= hard { 1.0 } else { 1.0 - smooth(hard as f32, r as f32, dd as f32) };
-                    let v = &mut stroke_alpha.data[y * w + x];
+                    let mut a = if dd <= hard { 1.0 } else { 1.0 - smooth(hard as f32, r as f32, dd as f32) };
+                    let i = y * w + x;
+                    if let Some((rl, rch)) = refc {
+                        a *= auto_similarity(log_l.data[i], chromaticity(img.data[i]), rl, rch);
+                    }
+                    let v = &mut stroke_alpha.data[i];
                     // flow accumulates within a stroke up to density
                     *v = (*v + a * flow * (1.0 - *v)).min(dens);
                 }
             }
+        }
+        if auto {
+            let (sigma, eps) = auto_refine(r);
+            let q = guided_cross(log_l, &stroke_alpha, sigma, eps);
+            // the refinement fills gaps along edges; it never takes paint away
+            stroke_alpha = stroke_alpha.zip_map(&q, f32::max);
         }
         for (o, a) in out.data.iter_mut().zip(&stroke_alpha.data) {
             *o = if erase { *o * (1.0 - a) } else { o.max(*a) };
@@ -281,5 +375,36 @@ mod tests {
         assert!(a.get(40, 50) > 0.9, "{}", a.get(40, 50));
         assert!(a.get(100, 50) < 0.05, "erased centre {}", a.get(100, 50));
         assert!(a.get(40, 5) < 0.01);
+    }
+
+    #[test]
+    fn auto_mask_stops_at_edges() {
+        // dark left half, bright right half; a stroke along the boundary, centred on the dark side
+        let (w, h) = (200, 100);
+        let f = frame(w, h);
+        let img = Rgb32f::from_fn(w, h, |x, _| if x < 100 { [0.03; 3] } else { [0.6, 0.5, 0.4] });
+        let l = img.map(crate::local::log_lum);
+        let stroke = |auto_mask| BrushStroke {
+            points: vec![Point::new(0.47, 0.2), Point::new(0.47, 0.8)],
+            size: 0.08,
+            feather: 0.0,
+            auto_mask,
+            ..Default::default()
+        };
+        let comp = |auto| MaskShape::Brush { strokes: vec![stroke(auto)] };
+        let plain = shape_alpha(&comp(false), &f, w, h, &img, &l, 0.0);
+        let auto = shape_alpha(&comp(true), &f, w, h, &img, &l, 0.0);
+        // without Auto Mask the brush spills over the edge; with it, it stays on the dark side
+        assert!(plain.get(105, 50) > 0.9, "{}", plain.get(105, 50));
+        assert!(auto.get(105, 50) < 0.05, "spill {}", auto.get(105, 50));
+        assert!(auto.get(110, 50) < 0.02);
+        assert!(auto.get(90, 50) > 0.9, "painted side {}", auto.get(90, 50));
+        assert!(auto.get(99, 50) > 0.8, "up to the edge {}", auto.get(99, 50));
+        // on a flat area Auto Mask paints like the plain brush
+        let flat = Rgb32f::from_fn(w, h, |_, _| [0.2; 3]);
+        let fl = flat.map(crate::local::log_lum);
+        let a = shape_alpha(&comp(true), &f, w, h, &flat, &fl, 0.0);
+        let b = shape_alpha(&comp(false), &f, w, h, &flat, &fl, 0.0);
+        assert!((a.get(94, 50) - b.get(94, 50)).abs() < 0.02, "{} vs {}", a.get(94, 50), b.get(94, 50));
     }
 }

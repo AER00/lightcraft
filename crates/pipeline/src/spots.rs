@@ -54,20 +54,56 @@ fn score(img: &Rgb32f, target: (f32, f32), source: (f32, f32), r: f32) -> f32 {
     s
 }
 
-/// Pick a source offset (in output pixels) for a remove/heal spot.
-pub fn auto_source(img: &Rgb32f, target: (f32, f32), r: f32) -> (f32, f32) {
-    let mut best = (f32::MAX, (r * 2.5, 0.0));
+/// Candidate source offsets (output pixels) for a spot of radius `r` at `target`, best first
+/// (candidates reaching outside the image are left out).
+pub fn ranked_sources(img: &Rgb32f, target: (f32, f32), r: f32) -> Vec<(f32, f32)> {
+    let mut c: Vec<(f32, (f32, f32))> = Vec::new();
     for ring in [2.4f32, 3.2, 4.2] {
         for i in 0..16 {
             let a = i as f32 / 16.0 * std::f32::consts::TAU;
             let d = (a.cos() * r * ring, a.sin() * r * ring);
             let s = score(img, target, (target.0 + d.0, target.1 + d.1), r);
-            if s < best.0 {
-                best = (s, d);
+            if s < f32::MAX {
+                c.push((s, d));
             }
         }
     }
-    best.1
+    c.sort_by(|a, b| a.0.total_cmp(&b.0));
+    c.into_iter().map(|(_, d)| d).collect()
+}
+
+/// Pick a source offset (in output pixels) for a remove/heal spot.
+pub fn auto_source(img: &Rgb32f, target: (f32, f32), r: f32) -> (f32, f32) {
+    ranked_sources(img, target, r).first().copied().unwrap_or((r * 2.5, 0.0))
+}
+
+/// A source offset (normalized, as [`Spot::source_offset`]) for `spot` on `src` developed with
+/// `s`: the best match, or with `avoid` (the current offset) the best one at least a spot radius
+/// away from it ("refresh source"). `None` when no candidate fits in the image.
+pub fn pick_source(
+    src: &Rgb32f,
+    info: &crate::SourceInfo,
+    s: &lightcraft_develop::DevelopSettings,
+    spot: &Spot,
+    avoid: Option<Point>,
+) -> Option<Point> {
+    let frame = crate::frame_for(src, info, s, true);
+    let (w, h) = frame.fit(512, 512);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let img = frame.sample(src, w, h);
+    let (to_out, to_norm) = (frame.norm_to_out(w, h), frame.out_to_norm(w, h));
+    let t = to_out.apply(*spot.points.first()?);
+    let r = (spot.size * frame.px_per_long(w)).max(1.0) as f32;
+    let avoid = avoid.map(|o| {
+        let (a, b) = (to_out.apply(Point::new(0.0, 0.0)), to_out.apply(o));
+        ((b.x - a.x) as f32, (b.y - a.y) as f32)
+    });
+    let far = |d: &(f32, f32)| avoid.is_none_or(|a| ((d.0 - a.0).powi(2) + (d.1 - a.1).powi(2)).sqrt() > r);
+    let d = ranked_sources(&img, (t.x as f32, t.y as f32), r).into_iter().find(far)?;
+    let (n0, n1) = (to_norm.apply(t), to_norm.apply(Point::new(t.x + d.0 as f64, t.y + d.1 as f64)));
+    Some(Point::new(n1.x - n0.x, n1.y - n0.y))
 }
 
 /// Apply all spots to `img` (output resolution). `ppl` = output pixels per long-edge unit.

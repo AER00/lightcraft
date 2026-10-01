@@ -29,9 +29,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | F. Edit panel — global adjustments (EDIT) | 36 | 2 | 10 | 1 | 28/28 (100%) | 8/14 (57%) |
 | G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
-| I. Remove / healing (REM) | 3 | 3 | 4 | 2 | 2/4 (50%) | 1/3 (33%) |
+| I. Remove / healing (REM) | 5 | 1 | 4 | 2 | 4/4 (100%) | 1/3 (33%) |
 | J. Red eye (EYE) | 0 | 0 | 2 | 0 | — | 0/1 (0%) |
-| K. Masking (MASK) | 6 | 10 | 7 | 0 | 4/8 (50%) | 2/5 (40%) |
+| K. Masking (MASK) | 10 | 6 | 7 | 0 | 7/8 (88%) | 3/5 (60%) |
 | L. Presets (PRE) | 3 | 2 | 2 | 1 | 2/2 (100%) | 1/2 (50%) |
 | M. Versions & history (VER) | 3 | 1 | 1 | 0 | 1/1 (100%) | 2/3 (67%) |
 | N. Copy / paste / sync (SYNC) | 4 | 0 | 1 | 0 | 3/3 (100%) | 1/1 (100%) |
@@ -46,31 +46,25 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 10 | 3 | 4 | 1 | 7/8 (88%) | 3/5 (60%) |
 | Y. Menus | 50 | 18 | 17 | 8 | 38/47 (81%) | 10/23 (43%) |
-| Z. Keyboard shortcuts (desktop) | 49 | 16 | 15 | 1 | 40/52 (77%) | 9/23 (39%) |
+| Z. Keyboard shortcuts (desktop) | 53 | 14 | 13 | 1 | 44/52 (85%) | 9/23 (39%) |
 | Lightroom Classic extras | 4 | 19 | 56 | 9 | — | 3/21 (14%) |
-| **Total** | 230 | 99 | 171 | 37 | 159/198 (80%) | 62/144 (43%) |
+| **Total** | 240 | 91 | 169 | 37 | 168/198 (85%) | 63/144 (44%) |
 <!-- /parity:summary -->
 
 ## Top gaps
 
 Ordered by tier, then user value, then (low) effort. Take the first one nobody is working on.
 
-1. **LR-MASK-OVERLAY + LR-MASK-PINS** (P0/P1) — show the evaluated mask alpha as a coloured overlay (all mask
-   kinds, colour/opacity choice), not just brush dabs and outlines. High value, medium effort.
-2. **LR-MASK-BRUSH + LR-MASK-SLIDERS** (P0) — apply the stored Auto Mask flag (edge-aware brush) and the local
-   Noise / Moiré / Defringe sliders, which are stored but not rendered. High value, medium effort.
-3. **LR-REM-SPOT-EDIT + LR-REM-BRUSH-PARAMS** (P0) — select a spot pin, move target/source, delete with ⌫,
-   feather/opacity sliders, `[`/`]` size keys. Medium effort.
-4. **LR-VIEW-PHOTOGRID** (P0) — group the justified grid by capture date with headers. Low–medium effort.
-5. **LR-LIB-KEYWORD** (P0) — rename/delete a keyword library-wide; keyword list in the left panel for browsing.
-6. **LR-IMP-ADD-DIALOG + LR-IMP-LOCAL** (P0) — an import review grid with per-photo checkboxes and destination
+1. **LR-VIEW-PHOTOGRID** (P0) — group the justified grid by capture date with headers. Low–medium effort.
+2. **LR-LIB-KEYWORD** (P0) — rename/delete a keyword library-wide; keyword list in the left panel for browsing.
+3. **LR-IMP-ADD-DIALOG + LR-IMP-LOCAL** (P0) — an import review grid with per-photo checkboxes and destination
     album; browse folders before adding. Medium effort.
-7. **LR-EXP-TYPE + LR-EXP-DIM** (P0) — Original (+XMP) and DNG export (writer exists in
+4. **LR-EXP-TYPE + LR-EXP-DIM** (P0) — Original (+XMP) and DNG export (writer exists in
     `crates/raw/src/dngwrite.rs`), short edge / width / height / megapixels, "don't enlarge", ppi.
-8. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
+5. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
     permissive pure-Rust decoder yet). High value, high effort (clean sources needed).
-9. **LR-LIB-RENAME + LR-LIB-CAPTURETIME + LR-LIB-LABEL UI** (P1) — batch rename, capture-time edit, label menu/names.
-10. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
+6. **LR-LIB-RENAME + LR-LIB-CAPTURETIME + LR-LIB-LABEL UI** (P1) — batch rename, capture-time edit, label menu/names.
+7. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
 
 ## Shortcuts: conflicts and missing bindings
 
@@ -99,10 +93,9 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 **Still missing / broken:**
 - No command yet: F full-screen preview, ⇧⌘F window full screen, ⇧⌘V paste selected,
-  ⌘, settings, ⌘F focus search, ⌘G / ⇧⌘G stacks, A visualize spots, `[` `]` / ⇧`[` ⇧`]`
-  brush size/feather, ⌃H / ⌃M merges, F1 help, ⇧6–9 label + advance.
-- `⌫` in the Masking panel deletes the active mask; spots have no pin selection yet (⌫ does nothing in Remove).
-- `H` opens Remove; Lightroom also uses it (Classic) to hide pins — no pin toggle yet.
+  ⌘, settings, ⌘F focus search, ⌘G / ⇧⌘G stacks, A visualize spots, ⌃H / ⌃M merges, F1 help,
+  ⇧6–9 label + advance.
+- `H` opens Remove; Lightroom also uses it (Classic) to hide pins — pins toggle from View → Show Mask Pins.
 - ⌘M / ⌘H / ⌘Q / ⌘W rely on the platform window defaults (unverified).
 
 <!-- Sections below hold one row per id. Keep the column order: Id | Feature | Tier | Status | Evidence | Notes. -->
@@ -302,8 +295,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-REM-CLONE | Clone | P0 | ✅ | `cmd:spot.add` (`mode: clone`) | |
 | LR-REM-GEN | Generative remove | OOS | 🚫 | | |
 | LR-REM-DETECT | Object detection for remove | P2 | ⬜ | | |
-| LR-REM-BRUSH-PARAMS | Brush size / feather / opacity | P0 | 🟡 | `cmd:spot.add` (`size`, `feather`, `opacity`), `crates/ui-egui/src/panels/right.rs` | UI has size only; no `[` `]` keys |
-| LR-REM-SPOT-EDIT | Edit existing spots | P0 | 🟡 | `cmd:spot.delete` | no pin selection, no moving target/source, ⌫ deletes the photo instead |
+| LR-REM-BRUSH-PARAMS | Brush size / feather / opacity | P0 | ✅ | `cmd:spot.add` (`size`, `feather`, `opacity`), `cmd:brush.smaller`, `cmd:brush.larger`, `cmd:brush.featherLess`, `cmd:brush.featherMore`, `crates/ui-egui/src/panels/right.rs` | Size / Feather / Opacity sliders (for new spots and the selected one); `[` `]` size, ⇧`[` ⇧`]` feather (also the Masking brush) |
+| LR-REM-SPOT-EDIT | Edit existing spots | P0 | ✅ | `cmd:spot.select`, `cmd:spot.update`, `cmd:spot.refreshSource`, `cmd:spot.delete` | click a pin to select, drag target or source, ⌫ deletes the selected spot, `/` picks another source; automatic sources are resolved when the spot is added |
 | LR-REM-VISUALIZE | Visualize spots | P1 | ⬜ | | |
 | LR-REM-PEOPLE | Remove people (generative) | OOS | 🚫 | | |
 | LR-REM-REFLECT | Remove reflections | P2 | ⬜ | | |
@@ -328,7 +321,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-MASK-OBJECTS | Object selection | P2 | ⬜ | | shape exists (falls back to the subject heuristic); no UI |
 | LR-MASK-PEOPLE | People parts | P2 | ⬜ | | |
 | LR-MASK-LANDSCAPE | Landscape classes | P2 | ⬜ | | shape exists, evaluates empty |
-| LR-MASK-BRUSH | Brush mask | P0 | 🟡 | `cmd:tool.brush`, `cmd:mask.brushStroke` | size/feather/flow/density/erase; Auto Mask flag not applied; no A/B brushes, no pressure |
+| LR-MASK-BRUSH | Brush mask | P0 | ✅ | `cmd:tool.brush`, `cmd:mask.brushStroke` (`autoMask`), `crates/pipeline/src/masks.rs` | size/feather/flow/density/erase; Auto Mask: dabs weighted by similarity to the colour under the dab centre, refined by a guided filter on luminance (CPU + GPU); no A/B brushes, no pressure |
 | LR-MASK-LINEAR | Linear gradient | P0 | ✅ | `cmd:tool.linear`, `cmd:mask.update` | |
 | LR-MASK-RADIAL | Radial gradient | P0 | ✅ | `cmd:tool.radial`, `cmd:mask.update` | |
 | LR-MASK-COLORRANGE | Colour range | P1 | 🟡 | `cmd:mask.add` (`colorRange`) | renders; sampling UX unverified |
@@ -338,9 +331,9 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-MASK-INVERT | Invert | P0 | ✅ | `cmd:mask.invert` | |
 | LR-MASK-AMOUNT | Mask amount | P1 | ✅ | `cmd:mask.adjust` (`amount`), `crates/ui-egui/src/panels/masking.rs` | |
 | LR-MASK-FEATHER-EDGE | Refine mask edges | P2 | ⬜ | | |
-| LR-MASK-SLIDERS | Local adjustment sliders | P0 | 🟡 | `cmd:mask.adjust`, `crates/pipeline/src/finish.rs` | noise / moiré / defringe stored but not rendered; no local curve or effect presets |
-| LR-MASK-OVERLAY | Mask overlay | P0 | 🟡 | `cmd:view.maskOverlay`, `crates/ui-egui/src/panels/detail.rs` | brush dabs + shape outlines only; no rendered alpha, colour or mode options |
-| LR-MASK-PINS | Pins | P1 | 🟡 | `crates/ui-egui/src/panels/detail.rs` | handles drawn; no show/hide-pins option |
+| LR-MASK-SLIDERS | Local adjustment sliders | P0 | ✅ | `cmd:mask.adjust`, `crates/pipeline/src/finish.rs` | every slider renders (CPU + GPU), incl. Noise, Moiré, Defringe (negative Defringe has no effect); no local curve or effect presets |
+| LR-MASK-OVERLAY | Mask overlay | P0 | ✅ | `cmd:view.maskOverlay`, `cmd:view.maskOverlayMode`, `cmd:view.maskOverlayColor`, `crates/pipeline/src/visualize.rs` | rendered alpha of the selected mask (CPU + GPU): colour, colour on B&W, image on black/white, white on black; ⇧O cycles while masking; no auto-show on hover |
+| LR-MASK-PINS | Pins | P1 | ✅ | `cmd:view.maskPins`, `crates/ui-egui/src/panels/detail.rs` | a pin per radial/linear/brush component: click selects its mask, drag moves it; no pins for range/AI components, no Auto mode |
 | LR-MASK-UPDATE | Recompute AI masks | P2 | ⬜ | | |
 | LR-MASK-SYNC | Copy masks to other photos | P1 | ✅ | `cmd:develop.copy` (`groups`) | |
 | LR-MASK-ADAPTIVE | Adaptive presets | P2 | ⬜ | | |
@@ -630,7 +623,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-PREFS | Settings — ⌘, | P0 | ✅ | `cmd:app.settings` | |
 | KEY-SEARCH | Search — ⌘F | P0 | ⬜ | | no focus-search command |
 | KEY-VISUALIZESPOTS | Visualize spots — A | P1 | ⬜ | | |
-| KEY-CYCLEOVERLAY | Cycle overlay — O | P0 | 🟡 | `cmd:view.maskOverlay`, `cmd:view.cropOverlay` | O toggles the mask overlay; crop overlays cycle on ⇧O |
+| KEY-CYCLEOVERLAY | Cycle overlay — O | P0 | ✅ | `cmd:view.maskOverlay`, `cmd:view.maskOverlayMode`, `cmd:view.cropOverlay` | O toggles the mask overlay; ⇧O cycles mask overlay modes while masking, crop overlays elsewhere |
 | KEY-PHOTOSPANEL | Photos panel — P | P0 | 🟡 | `cmd:view.leftPanel` | bound to ⌘⇧L; P = pick |
 | KEY-LINEAR | Linear gradient — L | P0 | ✅ | `cmd:tool.linear` | |
 | KEY-RADIAL | Radial gradient — R | P0 | ✅ | `cmd:tool.radial` | |
@@ -655,8 +648,8 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-SECTIONS | Expand/collapse edit sections — ⌘1…⌘6 | P1 | 🟡 | `cmd:section.light`, `cmd:section.color`, `cmd:section.effects`, `cmd:section.detail`, `cmd:section.optics` | bound to ⌘⌥1–5 |
 | KEY-PRESETS | Presets panel — ⇧P | P0 | ✅ | `cmd:panel.presets` | |
 | KEY-HISTOGRAM | Histogram — ⌘0 | P0 | 🟡 | `cmd:view.histogram` | bound to ⌘⇧H; ⌘0 = zoom to fit |
-| KEY-BRUSHSIZE | Brush size — `[` / `]` | P0 | ⬜ | | brush size is UI state, no command |
-| KEY-BRUSHFEATHER | Brush feather — ⇧`[` / ⇧`]` | P0 | ⬜ | | |
+| KEY-BRUSHSIZE | Brush size — `[` / `]` | P0 | ✅ | `cmd:brush.smaller`, `cmd:brush.larger` | Masking brush and Remove tool (and its selected spot) |
+| KEY-BRUSHFEATHER | Brush feather — ⇧`[` / ⇧`]` | P0 | ✅ | `cmd:brush.featherLess`, `cmd:brush.featherMore` | |
 | KEY-BRUSH | Brush — B | P0 | ✅ | `cmd:tool.brush` | |
 | KEY-HEAL | Remove / heal — H | P0 | ✅ | `cmd:panel.remove` | |
 | KEY-MERGE | HDR / panorama merges — ⌃H ⇧⌃H ⌃M ⇧⌃M | P2 | ⬜ | | |
@@ -689,7 +682,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-VIDEO-PLAY | Play/pause video — Space | P1 | ⬜ | | |
 | KEY-ESC | Leave tool / view — Esc | P0 | ✅ | `cmd:view.back` | |
 | KEY-COMMIT | Commit tool — Return | P1 | 🟡 | | edits apply live; no explicit commit step |
-| KEY-DELETE-PIN | Delete selected pin — ⌫ | P0 | 🟡 | `cmd:mask.delete` | ⌫ deletes the active mask in the Masking panel and never the photo while retouching; no spot pin selection yet |
+| KEY-DELETE-PIN | Delete selected pin — ⌫ | P0 | ✅ | `cmd:mask.delete`, `cmd:spot.delete` | ⌫ deletes the active mask (Masking) or the selected spot (Remove), never the photo while retouching |
 | KEY-HIDEPINS | Hide pins — H | P2 | ⬜ | | H = Remove panel |
 
 ## Lightroom Classic extras

@@ -1,5 +1,6 @@
 // The per-pixel stage: a straight port of `lightcraft_pipeline::finish` (keep in step with it).
-// Bindings: img (rgb, pre-exposure), log_l, base, clar, tex, dark, masks (NMASK planes), aux
+// Bindings: img (rgb, pre-exposure), log_l, base, clar, tex, dark, masks (NMASK planes, then the
+// blurred chromaticity when HAS_CHROMA), aux
 // (tone LUT | sRGB LUT | curve LUTs | mask terms), out (packed RGBA8).
 
 fn tone_apply(y: f32) -> f32 {
@@ -259,7 +260,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let l0 = l_pre + ev;
 
     // --- local (mask) contributions
-    var lt: array<f32, 14>;
+    var lt: array<f32, MASK_SUMS>;
     var tint_on = false;
     var tint_dir = vec2<f32>(0.0, 0.0);
     var tint_amt = 0.0;
@@ -270,18 +271,42 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
         let t = pu(F_MASK_OFF) + m * MASK_TERMS;
-        for (var k = 0u; k < 14u; k++) {
+        for (var k = 0u; k < MASK_SUMS; k++) {
             lt[k] += a * aux[t + k];
         }
-        if (aux[t + 14u] > 0.0) {
+        if (aux[t + MASK_SUMS] > 0.0) {
             tint_on = true;
-            tint_dir = vec2<f32>(aux[t + 15u], aux[t + 16u]);
-            tint_amt = a * aux[t + 17u];
+            tint_dir = vec2<f32>(aux[t + MASK_SUMS + 1u], aux[t + MASK_SUMS + 2u]);
+            tint_amt = a * aux[t + MASK_SUMS + 3u];
         }
     }
     let l_exp = lt[0];
     let l_temp = lt[1];
     let l_tint = lt[2];
+    let l_noise = lt[14];
+
+    // --- local Moiré (and the colour part of Noise): chromaticity towards its blur
+    let mt = clamp(lt[15] + 0.5 * max(l_noise, 0.0), -1.0, 1.0);
+    if (mt != 0.0 && pu(F_HAS_CHROMA) != 0u) {
+        let raw = vec3<f32>(img[3u * i], img[3u * i + 1u], img[3u * i + 2u]);
+        let y = lum2020(c);
+        let ch0 = raw / max(lum2020(raw), 1e-6);
+        let o = nm * n + 3u * i;
+        let cb = vec3<f32>(masks[o], masks[o + 1u], masks[o + 2u]);
+        c = max((ch0 + (cb - ch0) * mt) * y, vec3<f32>(0.0));
+    }
+    // --- local Defringe: desaturate purple / green fringes along edges
+    let df = clamp(lt[16], 0.0, 1.0);
+    if (df > 0.0 && pu(F_HAS_TEX) != 0u) {
+        let yd = max(lum2020(c), 1e-6);
+        let purple = (min(c.x, c.z) - c.y) / yd;
+        let green = (c.y - max(c.x, c.z)) / yd;
+        let k = df * sstep(0.04, 0.3, abs(l_pre - tex[i])) * max(sstep(0.02, 0.2, purple), sstep(0.02, 0.2, green));
+        if (k > 0.0) {
+            let y = lum2020(c);
+            c = c + (y - c) * k;
+        }
+    }
 
     // --- dehaze (scene linear)
     let dz = pf(F_DEHAZE) + lt[10];
@@ -353,6 +378,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             delta += sp * 1.3 * clamp(det, -0.8, 0.8) * mk;
         }
+    }
+    // local Noise: smooth (or, negative, boost) small-amplitude detail, keep edges
+    if (l_noise != 0.0 && pu(F_HAS_TEX) != 0u) {
+        let det = l_pre - tex[i];
+        delta -= clamp(l_noise, -1.0, 1.0) * 0.9 * det * (1.0 - sstep(0.1, 0.5, abs(det)));
     }
     if (delta != 0.0) {
         c = c * exp2(delta);

@@ -34,6 +34,10 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.clipping", "Show Clipping", Some("J"), "View"),
     ("view.histogram", "Histogram", Some("Cmd+Shift+H"), "View"),
     ("view.maskOverlay", "Show Mask Overlay", Some("O"), "View"),
+    // Shift+O in the Masking panel (elsewhere it cycles the crop overlay)
+    ("view.maskOverlayMode", "Cycle Mask Overlay Mode", None, "View"),
+    ("view.maskOverlayColor", "Mask Overlay Color", None, ""),
+    ("view.maskPins", "Show Mask Pins", None, "View"),
     ("view.visualizeSpots", "Visualize Spots", Some("A"), "View"),
     ("view.cropOverlay", "Cycle Crop Overlay", Some("Shift+O"), "View"),
     ("view.back", "Back to Grid", Some("Escape"), ""),
@@ -64,6 +68,11 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("tool.radial", "Radial Gradient", Some("R"), "Window>Tools"),
     ("tool.wbPicker", "White Balance Selector", Some("W"), "Window>Tools"),
     ("tool.none", "No Tool", None, ""),
+    // brush size / feather of the active brush (Masking brush, Remove tool and its selected spot)
+    ("brush.smaller", "Decrease Brush Size", Some("["), "Window>Tools"),
+    ("brush.larger", "Increase Brush Size", Some("]"), "Window>Tools"),
+    ("brush.featherLess", "Decrease Brush Feather", Some("Shift+["), "Window>Tools"),
+    ("brush.featherMore", "Increase Brush Feather", Some("Shift+]"), "Window>Tools"),
     ("dialog.newAlbum", "New Album…", Some("Cmd+N"), "File"),
     ("dialog.newFolder", "New Folder…", Some("Cmd+Shift+N"), "File"),
     ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
@@ -101,6 +110,45 @@ fn panel(app: &mut LightcraftApp, ctx: &egui::Context, p: RightPanel, name: &str
         app.ui.tool.clear();
     }
     let _ = app.session.end_interaction();
+}
+
+/// `[` / `]` (size ×`k`) and ⇧`[` / ⇧`]` (feather +`df`) for the brush in use: the Remove tool's
+/// (and its selected spot's) or the Masking brush's.
+fn adjust_brush(app: &mut LightcraftApp, k: f32, df: f32) -> Value {
+    if app.ui.right == RightPanel::Remove {
+        app.ui.remove_size = (app.ui.remove_size * k).clamp(0.001, 0.25);
+        app.ui.remove_feather = (app.ui.remove_feather + df).clamp(0.0, 100.0);
+        if app.session.active_spot.is_some() {
+            let mut p = json!({});
+            if k != 1.0 {
+                p["size"] = json!(app.ui.remove_size);
+            }
+            if df != 0.0 {
+                p["feather"] = json!(app.ui.remove_feather);
+            }
+            let _ = app.run("spot.update", p);
+        }
+        json!({"size": app.ui.remove_size, "feather": app.ui.remove_feather})
+    } else {
+        app.ui.brush_size = (app.ui.brush_size * k).clamp(0.002, 0.5);
+        app.ui.brush_feather = (app.ui.brush_feather + df).clamp(0.0, 100.0);
+        json!({"size": app.ui.brush_size, "feather": app.ui.brush_feather})
+    }
+}
+
+/// An sRGB colour from `"#rrggbb"` or `[r, g, b]` (0..255).
+pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
+    if let Some(s) = v.as_str() {
+        let h = s.strip_prefix('#').unwrap_or(s);
+        if h.len() != 6 {
+            return None;
+        }
+        let c = |i: usize| u8::from_str_radix(h.get(i..i + 2)?, 16).ok();
+        return Some([c(0)?, c(2)?, c(4)?]);
+    }
+    let a = v.as_array()?;
+    let c = |i: usize| a.get(i)?.as_f64().map(|x| x.clamp(0.0, 255.0).round() as u8);
+    Some([c(0)?, c(1)?, c(2)?])
 }
 
 /// Handle UI commands; `None` means "not a UI command — send it to the engine".
@@ -252,8 +300,52 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "view.maskOverlay" => {
-            app.ui.mask_overlay = !app.ui.mask_overlay;
-            Ok(Value::Null)
+            app.ui.mask_overlay = p.get("show").and_then(Value::as_bool).unwrap_or(!app.ui.mask_overlay);
+            Ok(json!({"maskOverlay": app.ui.mask_overlay}))
+        }
+        "view.maskOverlayMode" => {
+            use lightcraft_engine::pipeline::MaskView;
+            let cur = MaskView::parse(&app.ui.mask_overlay_mode).unwrap_or_default();
+            let next = match p.get("mode").and_then(Value::as_str) {
+                Some(m) => match MaskView::parse(m) {
+                    Some(v) => v,
+                    None => {
+                        let names: Vec<&str> = MaskView::ALL.iter().map(|v| v.name()).collect();
+                        return Some(Err(format!("view.maskOverlayMode: unknown mode `{m}` ({})", names.join("|"))));
+                    }
+                },
+                None => cur.next(),
+            };
+            app.ui.mask_overlay_mode = next.name().into();
+            app.ui.mask_overlay = true;
+            app.toast(&ctx, next.label());
+            Ok(json!({"mode": next.name()}))
+        }
+        "view.maskOverlayColor" => {
+            if let Some(c) = p.get("color") {
+                match parse_rgb(c) {
+                    Some(rgb) => app.ui.mask_overlay_color = rgb,
+                    None => return Some(Err("view.maskOverlayColor: `color` is \"#rrggbb\" or [r, g, b]".into())),
+                }
+            }
+            if let Some(o) = p.get("opacity").and_then(Value::as_f64) {
+                app.ui.mask_overlay_opacity = o.clamp(0.0, 100.0) as f32;
+            }
+            let [r, g, b] = app.ui.mask_overlay_color;
+            Ok(json!({"color": format!("#{r:02x}{g:02x}{b:02x}"), "opacity": app.ui.mask_overlay_opacity}))
+        }
+        "brush.smaller" | "brush.larger" | "brush.featherLess" | "brush.featherMore" => {
+            let (k, df) = match id {
+                "brush.smaller" => (1.0 / 1.2, 0.0),
+                "brush.larger" => (1.2, 0.0),
+                "brush.featherLess" => (1.0, -10.0),
+                _ => (1.0, 10.0),
+            };
+            Ok(adjust_brush(app, k, df))
+        }
+        "view.maskPins" => {
+            app.ui.mask_pins = p.get("show").and_then(Value::as_bool).unwrap_or(!app.ui.mask_pins);
+            Ok(json!({"maskPins": app.ui.mask_pins}))
         }
         "view.visualizeSpots" => {
             // like Lightroom's A: opens the Remove tool with the view on, or toggles it there

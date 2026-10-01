@@ -251,7 +251,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Remove Spot",
             [],
             None,
-            "{mode?: remove|heal|clone, points: [[x,y],…], size?: fraction of long edge, feather?, opacity?, source?: [dx,dy]}",
+            "{mode?: remove|heal|clone, points: [[x,y],…], size?: fraction of long edge, feather?, opacity?, source?: [dx,dy] (default: the best match nearby)} — selects the new spot; returns {index}",
             has_active,
             |s, p| {
                 let mode: SpotMode =
@@ -265,31 +265,113 @@ pub fn specs() -> Vec<CommandSpec> {
                     return Err(bad("spot.add", "missing points"));
                 }
                 let d = Spot::default();
-                let spot = Spot {
+                let mut spot = Spot {
                     mode,
                     points: pts,
-                    size: f64_or(p, "size", d.size),
-                    feather: f64_or(p, "feather", d.feather),
-                    opacity: f64_or(p, "opacity", d.opacity),
+                    size: f64_or(p, "size", d.size).clamp(SPOT_SIZE.0, SPOT_SIZE.1),
+                    feather: f64_or(p, "feather", d.feather).clamp(0.0, 100.0),
+                    opacity: f64_or(p, "opacity", d.opacity).clamp(0.0, 100.0),
                     source_offset: point(p, "source"),
                 };
                 let id = s.active().ok_or_else(|| bad("spot.add", "no active photo"))?;
                 let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
+                if spot.source_offset.is_none() {
+                    // resolve the automatic source now: it gets a pin and stays put at every size
+                    spot.source_offset = pick_source(s, id, &dd, &spot, None);
+                }
                 dd.spots.push(spot);
                 let n = dd.spots.len();
                 s.set_develop(id, dd, "Remove")?;
+                s.active_spot = Some(n - 1);
                 Ok(json!({"index": n - 1}))
             }
         ),
-        cmd!("spot.delete", "Delete Spot", [], None, "{index}", has_active, |s, p| {
-            let i = super::f64_req(p, "index", "spot.delete")? as usize;
-            let id = s.active().ok_or_else(|| bad("spot.delete", "no active photo"))?;
-            let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
-            if i >= dd.spots.len() {
-                return Err(bad("spot.delete", "no such spot"));
+        cmd!("spot.select", "Select Spot", [], None, "{index|null}", has_active, |s, p| {
+            let n = spots_len(s);
+            s.active_spot = match p.get("index").and_then(Value::as_u64) {
+                Some(i) if (i as usize) < n => Some(i as usize),
+                Some(_) => return Err(bad("spot.select", "no such spot")),
+                None => None,
+            };
+            Ok(json!({"activeSpot": s.active_spot}))
+        }),
+        cmd!(
+            "spot.update",
+            "Edit Spot",
+            [],
+            None,
+            "{index? (the selected spot), move?: [dx,dy] (the target, normalized), source?: [dx,dy] (offset from the target), moveSource?: [dx,dy], size?, feather?, opacity?, mode?}",
+            has_active,
+            |s, p| {
+                let c = "spot.update";
+                let i = spot_index(s, p, c)?;
+                let mode: Option<SpotMode> = match p.get("mode") {
+                    Some(m) => Some(serde_json::from_value(m.clone()).map_err(|e| bad(c, e.to_string()))?),
+                    None => None,
+                };
+                spots_edit(s, c, "Edit Spot", |spots| {
+                    let sp = &mut spots[i];
+                    if let Some(d) = point(p, "move") {
+                        sp.points.iter_mut().for_each(|q| *q = Point::new(q.x + d.x, q.y + d.y));
+                        // the source moves along (its offset is relative to the target)
+                    }
+                    if let Some(o) = point(p, "source") {
+                        sp.source_offset = Some(o);
+                    }
+                    if let Some(d) = point(p, "moveSource") {
+                        let o = sp.source_offset.unwrap_or(Point::new(0.0, 0.0));
+                        sp.source_offset = Some(Point::new(o.x + d.x, o.y + d.y));
+                    }
+                    if let Some(v) = p.get("size").and_then(Value::as_f64) {
+                        sp.size = v.clamp(SPOT_SIZE.0, SPOT_SIZE.1);
+                    }
+                    if let Some(v) = p.get("feather").and_then(Value::as_f64) {
+                        sp.feather = v.clamp(0.0, 100.0);
+                    }
+                    if let Some(v) = p.get("opacity").and_then(Value::as_f64) {
+                        sp.opacity = v.clamp(0.0, 100.0);
+                    }
+                    if let Some(m) = mode {
+                        sp.mode = m;
+                    }
+                    Ok(())
+                })?;
+                Ok(json!({"index": i}))
             }
-            dd.spots.remove(i);
-            s.set_develop(id, dd, "Delete Spot")?;
+        ),
+        cmd!(
+            "spot.refreshSource",
+            "Refresh Source",
+            [],
+            None,
+            "{index? (the selected spot)} — picks the next-best source away from the current one",
+            has_active,
+            |s, p| {
+                let c = "spot.refreshSource";
+                let i = spot_index(s, p, c)?;
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let dd = (*s.develop_of(id).unwrap_or_default()).clone();
+                let spot = dd.spots[i].clone();
+                let next = pick_source(s, id, &dd, &spot, spot.source_offset).ok_or_else(|| bad(c, "no other source fits in the photo"))?;
+                spots_edit(s, c, "Refresh Source", |spots| {
+                    spots[i].source_offset = Some(next);
+                    Ok(())
+                })?;
+                Ok(json!({"index": i, "source": [next.x, next.y]}))
+            }
+        ),
+        cmd!("spot.delete", "Delete Spot", [], None, "{index? (the selected spot)}", has_active, |s, p| {
+            let c = "spot.delete";
+            let i = spot_index(s, p, c)?;
+            spots_edit(s, c, "Delete Spot", |spots| {
+                spots.remove(i);
+                Ok(())
+            })?;
+            s.active_spot = match s.active_spot {
+                Some(a) if a == i => None,
+                Some(a) if a > i => Some(a - 1),
+                a => a,
+            };
             ok()
         }),
         // ---- Red eye / pet eye
@@ -356,6 +438,36 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
     ]
+}
+
+/// Spot radius limits (fraction of the long edge).
+pub const SPOT_SIZE: (f64, f64) = (0.001, 0.25);
+
+fn spots_len(s: &Session) -> usize {
+    s.active().and_then(|id| s.develop_of(id)).map(|d| d.spots.len()).unwrap_or(0)
+}
+
+/// `index` from the params, else the selected spot.
+fn spot_index(s: &Session, p: &Value, c: &str) -> Result<usize> {
+    let i = p.get("index").and_then(Value::as_u64).map(|v| v as usize).or(s.active_spot).ok_or_else(|| bad(c, "no spot selected (give `index`)"))?;
+    if i >= spots_len(s) {
+        return Err(bad(c, "no such spot"));
+    }
+    Ok(i)
+}
+
+fn spots_edit(s: &mut Session, c: &str, label: &str, f: impl FnOnce(&mut Vec<Spot>) -> Result<()>) -> Result<()> {
+    let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+    let mut d = (*s.develop_of(id).unwrap_or_default()).clone();
+    f(&mut d.spots)?;
+    s.set_develop(id, d, label)
+}
+
+/// An automatic source for `spot` on photo `id` (a small proxy of the photo, framed by `d`).
+fn pick_source(s: &mut Session, id: crate::PhotoId, d: &lightcraft_develop::DevelopSettings, spot: &Spot, avoid: Option<Point>) -> Option<Point> {
+    let src = s.source_now(id, crate::media::SourceLevel::Thumb).ok()?;
+    let info = crate::media::source_info(s.catalog.photo(id)?);
+    lightcraft_pipeline::spots::pick_source(&src, &info, d, spot, avoid)
 }
 
 fn clamp_local(mut a: LocalAdjustments) -> LocalAdjustments {

@@ -189,7 +189,13 @@ pub struct UiState {
     pub single_panel: bool,
     pub show_clipping: bool,
     pub histogram: bool,
+    /// Masking: show the selected mask as a rendered overlay (O), how (`MaskView` name, ⇧O cycles),
+    /// in which colour and opacity (0..100, colour views), and whether pins are drawn.
     pub mask_overlay: bool,
+    pub mask_overlay_mode: String,
+    pub mask_overlay_color: [u8; 3],
+    pub mask_overlay_opacity: f32,
+    pub mask_pins: bool,
     pub crop_overlay: CropOverlay,
     pub show_filenames: bool,
     pub search: String,
@@ -205,7 +211,12 @@ pub struct UiState {
     pub brush_feather: f32,
     pub brush_flow: f32,
     pub brush_erase: bool,
+    /// Brush Auto Mask: dabs stick to areas like the one under the brush centre.
+    pub brush_auto_mask: bool,
+    /// Remove tool brush: size (fraction of the long edge), feather and opacity (0..100).
     pub remove_size: f32,
+    pub remove_feather: f32,
+    pub remove_opacity: f32,
     /// Selected Point Color sample.
     pub point_color: usize,
     /// Point Color "Visualize range": the selected sample's range in colour, the rest grey.
@@ -327,6 +338,10 @@ impl Default for UiState {
             show_clipping: false,
             histogram: true,
             mask_overlay: true,
+            mask_overlay_mode: "color".into(),
+            mask_overlay_color: [230, 30, 40],
+            mask_overlay_opacity: 50.0,
+            mask_pins: true,
             crop_overlay: CropOverlay::Thirds,
             show_filenames: true,
             search: String::new(),
@@ -338,7 +353,10 @@ impl Default for UiState {
             brush_feather: 50.0,
             brush_flow: 60.0,
             brush_erase: false,
+            brush_auto_mask: false,
             remove_size: 0.02,
+            remove_feather: 50.0,
+            remove_opacity: 100.0,
             point_color: 0,
             point_color_visualize: false,
             eye: 0,
