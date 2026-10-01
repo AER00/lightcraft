@@ -19,6 +19,13 @@ pub struct Headless {
     pub session: Session,
 }
 
+impl Drop for Headless {
+    /// Snapshot a persistent library on exit (a no-op for in-memory sessions).
+    fn drop(&mut self) {
+        let _ = self.session.close_library();
+    }
+}
+
 impl Default for Headless {
     fn default() -> Self {
         Self::new(Session::new().with_fs())

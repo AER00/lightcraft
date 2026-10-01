@@ -24,6 +24,7 @@ USAGE:
       given files imported. Options:
         --connect [ADDR]  drive a running app instead (`lightcraft --control 7980`; default 127.0.0.1:7980)
         --demo            headless: start with the procedurally generated demo library
+        --library DIR     headless: open (or create) a persistent LightCraft library; edits are saved
         --compact         list only the helper tools (every command stays reachable via run_command)
   lightcraft-cli render <IN> -o <OUT> [OPTIONS]
       Develop one file and write the result (.png, .jpg, .tif or .webp by extension). Options:
@@ -66,6 +67,7 @@ fn main() -> ExitCode {
 fn mcp(args: &[String]) -> Result<(), String> {
     let mut connect: Option<String> = None;
     let mut demo = false;
+    let mut library: Option<String> = None;
     let mut compact = false;
     let mut files = Vec::new();
     let mut i = 0;
@@ -85,6 +87,7 @@ fn mcp(args: &[String]) -> Result<(), String> {
             "--headless" => connect = None,
             "--demo" => demo = true,
             "--compact" => compact = true,
+            "--library" => library = Some(take_value(args, &mut i, "--library")?.to_string()),
             a if a.starts_with("--") => return Err(format!("unknown option `{a}`")),
             f => files.push(f.to_string()),
         }
@@ -92,8 +95,8 @@ fn mcp(args: &[String]) -> Result<(), String> {
     }
     let backend: Box<dyn Backend> = match connect {
         Some(addr) => {
-            if !files.is_empty() || demo {
-                return Err("FILES and --demo apply to headless mode only (import through the `import` tool instead)".into());
+            if !files.is_empty() || demo || library.is_some() {
+                return Err("FILES, --demo and --library apply to headless mode only (import through the `import` tool instead)".into());
             }
             match Remote::connect(&addr) {
                 Ok(r) => {
@@ -107,7 +110,16 @@ fn mcp(args: &[String]) -> Result<(), String> {
             }
         }
         None => {
-            let mut h = if demo { Headless::demo() } else { Headless::default() };
+            let mut h = match &library {
+                Some(dir) => {
+                    let mut h = Headless::default();
+                    let r = h.session.open_library(dir, demo).map_err(|e| e.to_string())?;
+                    eprintln!("lightcraft-cli mcp: opened library {dir} ({r:?})");
+                    h
+                }
+                None if demo => Headless::demo(),
+                None => Headless::default(),
+            };
             if !files.is_empty() {
                 let paths = expand_paths(&files);
                 let r = h.session.execute("library.import", &json!({"paths": paths})).map_err(|e| e.to_string())?;

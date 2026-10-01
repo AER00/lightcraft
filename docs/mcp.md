@@ -13,7 +13,10 @@ It runs in one of two modes:
 | **Headless** (default) | `lightcraft-cli mcp [--demo] [FILES/FOLDERS…]` | An in-process engine `Session`. Develop, render and export without a window. |
 | **Connect** | `lightcraft-cli mcp --connect [127.0.0.1:7980]` | A running desktop app started with `lightcraft --control 7980`, through its loopback JSON-lines control channel ([control-protocol.md](control-protocol.md)). Adds the UI tools (screenshot, clicks, keys, pointer gestures). |
 
-Options: `--demo` starts the headless session with the procedurally generated demo library;
+Options: `--library DIR` opens (or creates) a persistent LightCraft library — the same crash-safe
+format the desktop app uses (`~/Pictures/LightCraft Library` by default there) — so ratings, edits and albums
+survive between sessions (with `--demo`, a new library is seeded with the demo photos);
+`--demo` starts the headless session with the procedurally generated demo library;
 `--compact` lists only the helper tools (see below). In connect mode the server starts even when
 the app is not running yet and connects on the first call (and reconnects if the app restarts).
 
