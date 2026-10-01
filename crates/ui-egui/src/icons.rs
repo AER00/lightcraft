@@ -45,6 +45,7 @@ pub enum Icon {
     Plus,
     Minus,
     Album,
+    SmartAlbum,
     Folder,
     Photos,
     Clock,
@@ -301,6 +302,12 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Album => {
             pen.rect(3.0, 5.0, 15.0, 17.0, 1.0);
             pen.line(&[(6.0, 2.5), (17.5, 2.5), (17.5, 14.0)]);
+        }
+        SmartAlbum => {
+            pen.rect(3.0, 5.0, 15.0, 17.0, 1.0);
+            pen.line(&[(6.0, 2.5), (17.5, 2.5), (17.5, 14.0)]);
+            // a small funnel: the album is a saved filter
+            pen.closed(&[(5.5, 8.5), (12.5, 8.5), (10.0, 11.5), (10.0, 14.5), (8.0, 13.5), (8.0, 11.5)]);
         }
         Folder => pen.closed(&[(2.5, 5.0), (8.0, 5.0), (9.5, 7.0), (17.5, 7.0), (17.5, 15.5), (2.5, 15.5)]),
         Photos => {

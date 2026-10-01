@@ -203,4 +203,18 @@ pub struct Album {
     pub photos: Vec<PhotoId>,
     #[serde(default)]
     pub cover: Option<PhotoId>,
+    /// A smart album: its photos are every (non-deleted) photo matching these rules, evaluated
+    /// live; `photos` stays empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smart: Option<Box<crate::Filter>>,
+}
+
+impl Album {
+    /// A regular (manual) album.
+    pub fn new(id: AlbumId, name: impl Into<String>) -> Album {
+        Album { id, name: name.into(), parent: None, folder: false, photos: Vec::new(), cover: None, smart: None }
+    }
+    pub fn is_smart(&self) -> bool {
+        self.smart.is_some()
+    }
 }

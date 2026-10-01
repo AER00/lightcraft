@@ -88,6 +88,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     if ui.button("Create Album…").clicked() {
                         app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: false });
                     }
+                    if ui.button("Create Smart Album from Filter…").clicked() {
+                        app.ui.dialog = Some(crate::state::Dialog::NewSmartAlbum { name: String::new() });
+                    }
                     if ui.button("Create Folder…").clicked() {
                         app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: true });
                     }
@@ -132,7 +135,12 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
             }
         } else {
             let sel = app.session.source == LibrarySource::Album(a.id);
-            let resp = row(app, ui, &format!("album:{}", a.id.0), Icon::Album, &a.name, Some(a.photos.len()), sel, indent);
+            let icon = if a.is_smart() { Icon::SmartAlbum } else { Icon::Album };
+            let n = app.session.catalog.album_count(a.id);
+            let mut resp = row(app, ui, &format!("album:{}", a.id.0), icon, &a.name, Some(n), sel, indent);
+            if let Some(rules) = &a.smart {
+                resp = resp.on_hover_text(format!("Smart album: {}", rules.describe()));
+            }
             if resp.clicked() {
                 let _ = app.run("library.source", json!({"kind": "album", "id": a.id.0}));
             }
@@ -143,8 +151,11 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
 
 fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
     resp.context_menu(|ui| {
-        if !a.folder && ui.button("Add Selected Photos").clicked() {
+        if !a.folder && !a.is_smart() && ui.button("Add Selected Photos").clicked() {
             let _ = app.run("album.addPhotos", json!({"id": a.id.0}));
+        }
+        if a.is_smart() && ui.button("Update Rules from Current Filter").clicked() {
+            let _ = app.run("album.setRules", json!({"id": a.id.0, "fromView": true}));
         }
         if ui.button("Rename…").clicked() {
             app.ui.dialog = Some(crate::state::Dialog::RenameAlbum { id: a.id.0, name: a.name.clone() });

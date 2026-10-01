@@ -127,6 +127,10 @@ pub enum Dialog {
         id: u64,
         name: String,
     },
+    /// Save the current view (source + filter) as a smart album.
+    NewSmartAlbum {
+        name: String,
+    },
     CreatePreset {
         name: String,
         group: String,

@@ -285,6 +285,7 @@ impl Session {
                 && self.sort.key == lightcraft_catalog::SortKey::CaptureDate
                 && let LibrarySource::Album(a) = self.source
                 && let Some(al) = self.catalog.album(a)
+                && !al.is_smart()
                 && self.filter == Filter::default()
             {
                 let order = al.photos.clone();
@@ -320,5 +321,7 @@ mod tests;
 mod tests_import;
 #[cfg(test)]
 mod tests_library;
+#[cfg(test)]
+mod tests_organize;
 #[cfg(test)]
 mod tests_xmp;

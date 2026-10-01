@@ -239,7 +239,7 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
     });
     ui.menu_button("Add to Album", |ui| {
-        let albums: Vec<_> = app.session.catalog.albums().filter(|a| !a.folder).map(|a| (a.id.0, a.name.clone())).collect();
+        let albums: Vec<_> = app.session.catalog.albums().filter(|a| !a.folder && !a.is_smart()).map(|a| (a.id.0, a.name.clone())).collect();
         for (aid, name) in albums {
             if ui.button(name).clicked() {
                 let _ = app.run("album.addPhotos", json!({"id": aid}));

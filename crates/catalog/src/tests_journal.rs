@@ -19,7 +19,14 @@ fn op_for(c: &mut Catalog, kind: u8, a: u8, b: u8) -> Op {
     let albums: Vec<AlbumId> = c.albums().map(|a| a.id).collect();
     let pid = photos.get(a as usize % photos.len().max(1)).copied().unwrap_or(PhotoId(99));
     let aid = albums.get(a as usize % albums.len().max(1)).copied().unwrap_or(AlbumId(99));
-    match kind % 10 {
+    let rules = |b: u8| Filter {
+        rating: b % 6,
+        flag: [None, Some(Flag::Pick), Some(Flag::Reject)][b as usize % 3],
+        date_from: (b % 4 == 1).then(|| "2026-01".to_string()),
+        text: if b.is_multiple_of(5) { format!("{}", b % 10) } else { String::new() },
+        ..Default::default()
+    };
+    match kind % 12 {
         0 | 1 => {
             let id = c.alloc_photo_id();
             let mut p = Photo::new(id, Source::File { path: format!("/p/{}.jpg", id.0) }, &format!("{}.jpg", id.0), "JPEG", 60, 40, "2026-01-01");
@@ -42,11 +49,18 @@ fn op_for(c: &mut Catalog, kind: u8, a: u8, b: u8) -> Op {
         }
         5 => {
             let id = c.alloc_album_id();
-            Op::AddAlbum { album: Album { id, name: format!("A{b}"), parent: None, folder: b.is_multiple_of(4), photos: vec![], cover: None } }
+            Op::AddAlbum {
+                album: Album { id, name: format!("A{b}"), parent: None, folder: b.is_multiple_of(4), photos: vec![], cover: None, smart: None },
+            }
         }
         6 => Op::SetAlbumPhotos { id: aid, photos: photos.iter().copied().filter(|p| (p.0 + b as u64).is_multiple_of(3)).collect() },
         7 => Op::RenameAlbum { id: aid, name: format!("Renamed {b} ✓") },
         8 => Op::SetDeleted { id: pid, deleted: b.is_multiple_of(2) },
+        10 => {
+            let id = c.alloc_album_id();
+            Op::AddAlbum { album: Album { smart: Some(Box::new(rules(b))), ..Album::new(id, format!("Smart {b}")) } }
+        }
+        11 => Op::SetAlbumRules { id: aid, rules: Box::new(rules(b)) },
         _ => c.delete_permanently_ops(pid),
     }
 }

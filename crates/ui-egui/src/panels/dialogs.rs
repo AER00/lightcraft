@@ -22,6 +22,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewAlbum { folder: true, .. } => "Create Folder",
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
+        Dialog::NewSmartAlbum { .. } => "Create Smart Album",
         Dialog::CreatePreset { .. } => "Create Preset",
         Dialog::CopySettings { .. } => "Choose Edit Settings to Copy",
         Dialog::Export { .. } => "Export",
@@ -38,6 +39,20 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             match &mut dlg {
+                Dialog::NewSmartAlbum { name } => {
+                    let r = ui.add(egui::TextEdit::singleline(name).hint_text("Name").desired_width(f32::INFINITY));
+                    r.request_focus();
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        confirm = true;
+                    }
+                    let rules = app.session.view_rules();
+                    let n = app.session.catalog.query(&rules, &Default::default()).len();
+                    ui.label(egui::RichText::new(format!("Matches: {}", rules.describe())).color(t.text_label));
+                    ui.label(
+                        egui::RichText::new(format!("{n} photo{} now · updates automatically as photos change", if n == 1 { "" } else { "s" }))
+                            .color(t.text_dim),
+                    );
+                }
                 Dialog::NewAlbum { name, .. } | Dialog::RenameAlbum { name, .. } => {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text("Name").desired_width(f32::INFINITY));
                     r.request_focus();
@@ -217,6 +232,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
     match dlg {
         Dialog::NewAlbum { name, folder } => app.run("album.create", json!({"name": name, "folder": folder, "addSelected": !folder})),
         Dialog::RenameAlbum { id, name } => app.run("album.rename", json!({"id": id, "name": name})),
+        Dialog::NewSmartAlbum { name } => app.run("album.createSmart", json!({"name": if name.trim().is_empty() { "Smart Album" } else { name }})),
         Dialog::CreatePreset { name, group } => {
             app.run("preset.create", json!({"name": if name.is_empty() { "My Preset" } else { name }, "group": group}))
         }

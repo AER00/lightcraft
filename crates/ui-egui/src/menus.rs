@@ -52,6 +52,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("tool.wbPicker", "White Balance Selector", Some("W"), "View"),
     ("tool.none", "No Tool", None, "View"),
     ("dialog.newAlbum", "New Album…", Some("Cmd+N"), "File"),
+    ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
     ("dialog.copySettings", "Choose Edit Settings to Copy…", Some("Cmd+Shift+C"), "Photo"),
     ("dialog.export", "Export…", Some("Cmd+Shift+E"), "File"),
@@ -264,6 +265,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "dialog.newAlbum" => {
             app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: false });
+            Ok(Value::Null)
+        }
+        "dialog.newSmartAlbum" => {
+            app.ui.dialog = Some(Dialog::NewSmartAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into() });
             Ok(Value::Null)
         }
         "dialog.createPreset" => {
