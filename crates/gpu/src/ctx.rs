@@ -39,6 +39,11 @@ const MODULES: &[Module] = &[
         bindings: &[("a", false, "f32"), ("b", false, "f32"), ("c", false, "f32"), ("dst", true, "f32")],
         entries: &["log_lum_k", "dark_k", "guided_pre", "guided_ab", "guided_apply", "wb_k", "nr_lum", "chroma_k", "nr_col", "subsample"],
     },
+    Module {
+        src: include_str!("wgsl/mask.wgsl"),
+        bindings: &[("img", false, "f32"), ("log_l", false, "f32"), ("aux", false, "f32"), ("c", true, "f32"), ("alpha", true, "f32")],
+        entries: &["shape", "combine", "finalize"],
+    },
 ];
 
 struct Kernel {

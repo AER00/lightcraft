@@ -435,21 +435,121 @@ fn prepare(cx: &mut Cx<'_>, lin: &Buf, plan: &Plan<'_>, req: &RenderRequest, pla
     Prep { log_l, base, clarity, texture, dark, air }
 }
 
-/// Evaluate the masks: their alpha planes (concatenated) and their adjustment terms.
+/// Most brush dabs the mask kernel evaluates per pixel (more: the CPU rasterizes the brush).
+const MAX_DABS: usize = 4096;
+
+/// Evaluate the masks (`lightcraft_pipeline::masks::evaluate`): their alpha planes (concatenated)
+/// and their adjustment terms. Shapes without a kernel (Sky, Subject, …) run on the CPU.
 fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Host) -> (Option<Buf>, Vec<[f32; MASK_TERMS]>) {
+    use lightcraft_develop::{MaskOp, MaskShape};
     let s = &*plan.settings;
-    if !s.masks.iter().any(|m| m.visible && !m.components.is_empty()) {
+    let list: Vec<_> = s.masks.iter().filter(|m| m.visible && !m.components.is_empty()).collect();
+    if list.is_empty() {
         return (None, Vec::new());
     }
     let (w, h) = (plan.w, plan.h);
-    let img = host.lin.get_or_insert_with(|| Arc::new(cx.read_rgb(lin, w, h))).clone();
-    let l = host.log_l.get_or_insert_with(|| Arc::new(cx.read_plane(&prep.log_l, w, h))).clone();
+    let n = w * h;
+    let frame = &plan.frame;
     let ev = s.light.exposure as f32;
-    let ev = lightcraft_pipeline::masks::evaluate(&s.masks, &plan.frame, w, h, &img, &l, ev);
-    let terms = ev.iter().map(|m| mask_terms(&m.adjust)).collect();
-    let mut all = Vec::with_capacity(ev.len() * w * h);
-    for m in &ev {
-        all.extend_from_slice(&m.alpha.data);
+    let long = frame.ow.max(frame.oh);
+    let [a, b, c, d, e, f] = frame.out_to_norm(w, h).0;
+    let (kx, ky) = (frame.ow / long, frame.oh / long);
+    let aff = [a * kx, b * ky, c * kx, d * ky, e * kx, f * ky].map(|v| (v as f32).to_bits());
+    let alpha = cx.gpu.buffer(n * list.len());
+    let comp_plane = cx.gpu.buffer(n);
+    for (mi, m) in list.iter().enumerate() {
+        let mut first = true;
+        for comp in &m.components {
+            let op = match comp.op {
+                _ if first && comp.op != MaskOp::Intersect => 0u32,
+                MaskOp::Add => 1,
+                MaskOp::Subtract => 2,
+                MaskOp::Intersect => 3,
+            };
+            first = false;
+            let mut p = vec![w as u32, h as u32, 0, comp.invert as u32];
+            p.extend_from_slice(&aff);
+            let f32s = |v: &[f64]| v.iter().map(|x| (*x as f32).to_bits()).collect::<Vec<u32>>();
+            let mut aux: Vec<f32> = Vec::new();
+            let kind = match &comp.shape {
+                MaskShape::Linear { start, end } => {
+                    let (a, b) = (frame.norm_to_long(*start), frame.norm_to_long(*end));
+                    let d = b - a;
+                    p.extend(f32s(&[a.x, a.y, d.x, d.y, d.dot(d).max(1e-12)]));
+                    Some(0)
+                }
+                MaskShape::Radial { center, rx, ry, angle, feather, invert } => {
+                    let c = frame.norm_to_long(*center);
+                    let (sn, co) = (-angle.to_radians()).sin_cos();
+                    p.extend(f32s(&[c.x, c.y, co, sn, rx.max(1e-6), ry.max(1e-6), (*feather / 100.0).clamp(0.0, 1.0)]));
+                    p.push(*invert as u32);
+                    Some(1)
+                }
+                MaskShape::LuminanceRange { lo, hi, lo_feather, hi_feather } => {
+                    p.extend(f32s(&[*lo, *hi, lo_feather.max(1e-3), hi_feather.max(1e-3)]));
+                    p.push(ev.to_bits());
+                    Some(2)
+                }
+                MaskShape::ColorRange { samples, refine } => {
+                    let tol = 0.04 + 0.16 * (*refine as f32 / 100.0);
+                    p.extend([tol.to_bits(), ev.exp2().to_bits(), samples.len() as u32]);
+                    aux.extend(samples.iter().flat_map(|s| s.map(|v| v as f32)));
+                    Some(3)
+                }
+                MaskShape::Brush { strokes } => {
+                    let dabs: Vec<_> = strokes.iter().map(|st| lightcraft_pipeline::masks::brush_dabs(st, frame, w, h)).collect();
+                    if dabs.iter().map(|d| d.dabs.len()).sum::<usize>() <= MAX_DABS {
+                        p.push(dabs.len() as u32);
+                        let mut off = 11 * dabs.len();
+                        for d in &dabs {
+                            let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+                            for q in &d.dabs {
+                                (x0, y0, x1, y1) = (x0.min(q.x - d.r), y0.min(q.y - d.r), x1.max(q.x + d.r), y1.max(q.y + d.r));
+                            }
+                            aux.extend([off as f32, d.dabs.len() as f32, d.r as f32, d.hard as f32, d.flow, d.density, d.erase as u8 as f32]);
+                            aux.extend([x0, y0, x1, y1].map(|v| v as f32));
+                            off += 2 * d.dabs.len();
+                        }
+                        for d in &dabs {
+                            aux.extend(d.dabs.iter().flat_map(|q| [q.x as f32, q.y as f32]));
+                        }
+                        Some(4)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            let plane = match kind {
+                Some(k) => {
+                    p[2] = k;
+                    let aux = (!aux.is_empty()).then(|| cx.gpu.upload(&aux));
+                    cx.run("shape", &p, &[Some(lin), Some(&prep.log_l), aux.as_ref(), Some(&comp_plane), Some(&alpha)], groups2(w, h, [16, 16]));
+                    None
+                }
+                None => {
+                    // no kernel: evaluate on the CPU
+                    let img = host.lin.get_or_insert_with(|| Arc::new(cx.read_rgb(lin, w, h))).clone();
+                    let l = host.log_l.get_or_insert_with(|| Arc::new(cx.read_plane(&prep.log_l, w, h))).clone();
+                    let mut v = lightcraft_pipeline::masks::shape_alpha(&comp.shape, frame, w, h, &img, &l, ev);
+                    if comp.invert {
+                        v.data.iter_mut().for_each(|x| *x = 1.0 - *x);
+                    }
+                    Some(cx.gpu.upload(&v.data))
+                }
+            };
+            let cbuf = plane.as_ref().unwrap_or(&comp_plane);
+            let k = [n as u32, 0, mi as u32, op];
+            cx.run("combine", &k, &[None, None, None, Some(cbuf), Some(&alpha)], groups1(n));
+        }
+        let amt = (m.adjust.amount / 100.0) as f32;
+        cx.run(
+            "finalize",
+            &[n as u32, 0, mi as u32, m.invert as u32, amt.to_bits()],
+            &[None, None, None, Some(&comp_plane), Some(&alpha)],
+            groups1(n),
+        );
     }
-    (Some(cx.gpu.upload(&all)), terms)
+    let terms = list.iter().map(|m| mask_terms(&m.adjust)).collect();
+    (Some(alpha), terms)
 }

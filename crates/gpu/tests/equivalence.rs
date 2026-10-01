@@ -226,6 +226,33 @@ fn cases() -> Vec<(&'static str, Edit)> {
                 },
             ];
         }),
+        ("masks (cpu shapes, ops, amount)", |s| {
+            s.masks = vec![
+                Mask {
+                    components: vec![
+                        MaskComponent { op: MaskOp::Add, invert: false, shape: MaskShape::Sky },
+                        MaskComponent {
+                            op: MaskOp::Subtract,
+                            invert: false,
+                            shape: MaskShape::Radial { center: Point::new(0.7, 0.2), rx: 0.1, ry: 0.1, angle: 0.0, feather: 30.0, invert: false },
+                        },
+                    ],
+                    adjust: lightcraft_develop::LocalAdjustments { exposure: -0.5, dehaze: 40.0, amount: 70.0, ..Default::default() },
+                    ..Default::default()
+                },
+                Mask {
+                    components: vec![MaskComponent { op: MaskOp::Intersect, invert: false, shape: MaskShape::Subject }],
+                    adjust: lightcraft_develop::LocalAdjustments { exposure: 0.5, ..Default::default() },
+                    ..Default::default()
+                },
+                Mask {
+                    components: vec![MaskComponent { op: MaskOp::Add, invert: true, shape: MaskShape::Background }],
+                    adjust: lightcraft_develop::LocalAdjustments { saturation: -60.0, ..Default::default() },
+                    invert: true,
+                    ..Default::default()
+                },
+            ];
+        }),
         ("spots + defringe (cpu stage)", |s| {
             s.spots = vec![Spot { points: vec![Point::new(0.3, 0.3)], size: 0.03, source_offset: Some(Point::new(0.1, 0.0)), ..Default::default() }];
             s.optics.defringe_purple_amount = 5.0;

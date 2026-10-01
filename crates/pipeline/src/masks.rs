@@ -172,29 +172,44 @@ fn tonemap_for_select(c: [f32; 3]) -> [f32; 3] {
     c.map(|v| v / (1.0 + v))
 }
 
-/// Stamp brush strokes into `out` (max-combine; erase strokes subtract).
-fn rasterize_brush(strokes: &[BrushStroke], frame: &Frame, w: usize, h: usize, out: &mut Plane) {
+/// A brush stroke resolved to output pixels: dab centres (spacing r/4 along the path), radius,
+/// hard-core radius, flow and density (0..1), and whether it erases.
+pub struct BrushDabs {
+    pub dabs: Vec<Point>,
+    pub r: f64,
+    pub hard: f64,
+    pub flow: f32,
+    pub density: f32,
+    pub erase: bool,
+}
+
+/// The dabs of stroke `s` in a `w × h` output.
+pub fn brush_dabs(s: &BrushStroke, frame: &Frame, w: usize, h: usize) -> BrushDabs {
     let to_out = frame.norm_to_out(w, h);
     let ppl = frame.px_per_long(w);
-    for s in strokes {
-        let r = (s.size * ppl).max(0.5);
-        let hard = r * (1.0 - (s.feather / 100.0).clamp(0.0, 1.0));
-        let flow = (s.flow / 100.0).clamp(0.0, 1.0) as f32;
-        let dens = (s.density / 100.0).clamp(0.0, 1.0) as f32;
-        // Densify the path so dabs overlap (spacing r/4).
-        let mut dabs: Vec<Point> = Vec::new();
-        for (i, p) in s.points.iter().enumerate() {
-            let q = to_out.apply(*p);
-            if i > 0 {
-                let prev = to_out.apply(s.points[i - 1]);
-                let dist = prev.dist(q);
-                let n = (dist / (r / 4.0).max(0.5)).ceil() as usize;
-                for k in 1..n {
-                    dabs.push(prev.lerp(q, k as f64 / n as f64));
-                }
+    let r = (s.size * ppl).max(0.5);
+    let hard = r * (1.0 - (s.feather / 100.0).clamp(0.0, 1.0));
+    // Densify the path so dabs overlap (spacing r/4).
+    let mut dabs: Vec<Point> = Vec::new();
+    for (i, p) in s.points.iter().enumerate() {
+        let q = to_out.apply(*p);
+        if i > 0 {
+            let prev = to_out.apply(s.points[i - 1]);
+            let dist = prev.dist(q);
+            let n = (dist / (r / 4.0).max(0.5)).ceil() as usize;
+            for k in 1..n {
+                dabs.push(prev.lerp(q, k as f64 / n as f64));
             }
-            dabs.push(q);
         }
+        dabs.push(q);
+    }
+    BrushDabs { dabs, r, hard, flow: (s.flow / 100.0).clamp(0.0, 1.0) as f32, density: (s.density / 100.0).clamp(0.0, 1.0) as f32, erase: s.erase }
+}
+
+/// Stamp brush strokes into `out` (max-combine; erase strokes subtract).
+fn rasterize_brush(strokes: &[BrushStroke], frame: &Frame, w: usize, h: usize, out: &mut Plane) {
+    for s in strokes {
+        let BrushDabs { dabs, r, hard, flow, density: dens, erase } = brush_dabs(s, frame, w, h);
         let mut stroke_alpha = Plane::new(w, h);
         for d in &dabs {
             let (x0, x1) = (((d.x - r).floor().max(0.0)) as usize, ((d.x + r).ceil().max(0.0) as usize).min(w));
@@ -213,7 +228,7 @@ fn rasterize_brush(strokes: &[BrushStroke], frame: &Frame, w: usize, h: usize, o
             }
         }
         for (o, a) in out.data.iter_mut().zip(&stroke_alpha.data) {
-            *o = if s.erase { *o * (1.0 - a) } else { o.max(*a) };
+            *o = if erase { *o * (1.0 - a) } else { o.max(*a) };
         }
     }
 }
