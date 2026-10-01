@@ -54,8 +54,9 @@ impl Filter {
     }
 }
 
-/// Contributions for each output coordinate: (first source index, weights).
-fn weights(src: usize, dst: usize, filter: Filter) -> Vec<(usize, Vec<f32>)> {
+/// Contributions for each output coordinate: (first source index, weights) — the exact taps
+/// [`resize`] uses (GPU kernels upload these tables).
+pub fn weights(src: usize, dst: usize, filter: Filter) -> Vec<(usize, Vec<f32>)> {
     let scale = src as f32 / dst as f32;
     let fscale = scale.max(1.0);
     let support = filter.support() * fscale;

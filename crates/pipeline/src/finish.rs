@@ -3,7 +3,7 @@
 use lightcraft_color::spline::{Lut1, MonotoneCurve};
 use lightcraft_color::transfer::linear_to_srgb;
 use lightcraft_color::{REC2020, SRGB, luminance_2020};
-use lightcraft_develop::{DevelopSettings, ToneCurve, VignetteStyle};
+use lightcraft_develop::{DevelopSettings, LocalAdjustments, ToneCurve, VignetteStyle};
 use lightcraft_geom::Point;
 use lightcraft_raster::Rgba8;
 
@@ -55,14 +55,16 @@ fn curve_luts(c: &ToneCurve) -> Option<[Lut1; 3]> {
     Some(std::array::from_fn(|i| if chans[i] { MonotoneCurve::new(&to_pts(per[i])).to_lut(N).compose(&base) } else { base.clone() }))
 }
 
-struct Vig {
-    amount: f32,
-    start: f32,
-    width: f32,
-    aspect_mix: f32,
-    power: f32,
-    highlights: f32,
-    style: VignetteStyle,
+/// Vignette (post-crop) parameters.
+#[derive(Clone, Copy, Debug)]
+pub struct Vig {
+    pub amount: f32,
+    pub start: f32,
+    pub width: f32,
+    pub aspect_mix: f32,
+    pub power: f32,
+    pub highlights: f32,
+    pub style: VignetteStyle,
 }
 
 fn vignette(s: &DevelopSettings) -> Option<Vig> {
@@ -81,14 +83,17 @@ fn vignette(s: &DevelopSettings) -> Option<Vig> {
     })
 }
 
+/// Hash constants of [`grain_noise`] (shared with the GPU kernel).
+pub const GRAIN_HASH: [u32; 4] = [0x8da6_b343, 0xd816_3841, 0xcb1a_b31f, 0x5bd1_e995];
+
 #[inline]
 fn grain_noise(x: f32, y: f32, seed: u32) -> f32 {
     let (x0, y0) = (x.floor(), y.floor());
     let (fx, fy) = (x - x0, y - y0);
     let h = |i: i32, j: i32| {
-        let mut v = (i as u32).wrapping_mul(0x8da6_b343) ^ (j as u32).wrapping_mul(0xd816_3841) ^ seed.wrapping_mul(0xcb1a_b31f);
+        let mut v = (i as u32).wrapping_mul(GRAIN_HASH[0]) ^ (j as u32).wrapping_mul(GRAIN_HASH[1]) ^ seed.wrapping_mul(GRAIN_HASH[2]);
         v ^= v >> 13;
-        v = v.wrapping_mul(0x5bd1_e995);
+        v = v.wrapping_mul(GRAIN_HASH[3]);
         v ^= v >> 15;
         (v & 0xffff) as f32 / 32768.0 - 1.0
     };
@@ -99,33 +104,130 @@ fn grain_noise(x: f32, y: f32, seed: u32) -> f32 {
     a + (b - a) * v
 }
 
-pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo) -> Rgba8 {
+/// Number of per-mask terms in [`mask_terms`].
+pub const MASK_TERMS: usize = 18;
+
+/// A mask's local adjustments as the per-pixel stage uses them (alpha-weighted sums), in order:
+/// exposure, temp, tint, contrast, highlights, shadows, whites, blacks, texture, clarity, dehaze,
+/// saturation, hue, sharpness, then the colour overlay: on (0/1), cos and sin of its OkLCh hue, and
+/// its strength.
+pub fn mask_terms(j: &LocalAdjustments) -> [f32; MASK_TERMS] {
+    let (on, cos, sin, amt) = if j.color_sat > 0.0 {
+        let hue = crate::colorops::oklch_hue_of_srgb_hue(j.color_hue);
+        (1.0, hue.cos(), hue.sin(), (j.color_sat / 100.0) as f32)
+    } else {
+        (0.0, 0.0, 0.0, 0.0)
+    };
+    [
+        j.exposure as f32,
+        (j.temp / 100.0) as f32,
+        (j.tint / 100.0) as f32,
+        (j.contrast / 100.0) as f32,
+        (j.highlights / 100.0) as f32,
+        (j.shadows / 100.0) as f32,
+        (j.whites / 100.0) as f32,
+        (j.blacks / 100.0) as f32,
+        (j.texture / 100.0) as f32,
+        (j.clarity / 100.0) as f32,
+        (j.dehaze / 100.0) as f32,
+        (j.saturation / 100.0) as f32,
+        (j.hue / 100.0) as f32 * 0.6,
+        (j.sharpness / 100.0) as f32,
+        on,
+        cos,
+        sin,
+        amt,
+    ]
+}
+
+/// Everything the per-pixel stage computes once per render: the CPU loop below and the GPU kernel
+/// (`lightcraft-gpu`) both read their parameters from here, so the two cannot drift apart.
+pub struct FinishParams {
+    pub tone: ToneMap,
+    pub ops: ColorOps,
+    /// Tone curves (parametric ∘ point, per channel) on encoded values, 1024 entries each.
+    pub curves: Option<[Lut1; 3]>,
+    pub vig: Option<Vig>,
+    pub to_srgb: [[f32; 3]; 3],
+    pub hl: f32,
+    pub sh: f32,
+    pub clar: f32,
+    pub tex: f32,
+    pub dehaze: f32,
+    pub sharpen: f32,
+    pub sharpen_mask: f32,
+    /// Airlight after and before exposure, exposure gain and EV (see [`crate::Prepared`]).
+    pub air: f32,
+    pub air_pre: f32,
+    pub gain: f32,
+    pub ev: f32,
+    /// Grain: amount, cell size (px), roughness, seed.
+    pub grain: Option<(f32, f32, f32, u32)>,
+    /// Output px → normalized oriented coordinates.
+    pub out_to_norm: lightcraft_geom::Affine,
+    pub ow: f64,
+    pub oh: f64,
+    pub w: usize,
+    pub h: usize,
+    pub px_per_long: f64,
+}
+
+impl FinishParams {
+    /// Parameters for a `w × h` render; `ev`/`air_pre` as in [`crate::Prepared`].
+    pub fn new(s: &DevelopSettings, frame: &Frame, info: &SourceInfo, w: usize, h: usize, px_per_long: f64, air_pre: f32) -> FinishParams {
+        let effects = s.section_enabled("effects");
+        let (clar, tex, dehaze) = if effects {
+            ((s.effects.clarity / 100.0) as f32, (s.effects.texture / 100.0) as f32, (s.effects.dehaze / 100.0) as f32)
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+        let ev = s.light.exposure as f32;
+        let gain = 2f32.powf(ev);
+        let grain = (s.grain.amount > 0.0 && effects).then(|| {
+            let cell = (0.0006 + (s.grain.size / 100.0) as f32 * 0.0024) * px_per_long as f32;
+            ((s.grain.amount / 100.0) as f32 * 0.13, cell.max(0.6), (s.grain.roughness / 100.0) as f32, s.grain.seed)
+        });
+        FinishParams {
+            tone: if info.raw {
+                ToneMap::new(s.light.contrast, s.light.whites, s.light.blacks)
+            } else {
+                ToneMap::display(s.light.contrast, s.light.whites, s.light.blacks)
+            },
+            ops: ColorOps::new(s),
+            curves: curve_luts(&s.curve),
+            vig: if effects { vignette(s) } else { None },
+            to_srgb: REC2020.to_space(&SRGB).to_f32(),
+            hl: (s.light.highlights / 100.0) as f32,
+            sh: (s.light.shadows / 100.0) as f32,
+            clar,
+            tex,
+            dehaze,
+            sharpen: (s.detail.sharpen_amount / 150.0) as f32,
+            sharpen_mask: (s.detail.sharpen_masking / 100.0) as f32,
+            air: air_pre * gain,
+            air_pre,
+            gain,
+            ev,
+            grain,
+            out_to_norm: frame.out_to_norm(w, h),
+            ow: frame.ow,
+            oh: frame.oh,
+            w,
+            h,
+            px_per_long,
+        }
+    }
+}
+
+pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo) -> Rgba8 {
     let (w, h) = (p.img.width, p.img.height);
-    let tone = if info.raw {
-        ToneMap::new(s.light.contrast, s.light.whites, s.light.blacks)
-    } else {
-        ToneMap::display(s.light.contrast, s.light.whites, s.light.blacks)
-    };
-    let ops = ColorOps::new(s);
-    let curves = curve_luts(&s.curve);
-    let vig = if s.section_enabled("effects") { vignette(s) } else { None };
-    let to_srgb: [[f32; 3]; 3] = REC2020.to_space(&SRGB).to_f32();
-    let hl = (s.light.highlights / 100.0) as f32;
-    let sh = (s.light.shadows / 100.0) as f32;
-    let (clar, tex, dehaze) = if s.section_enabled("effects") {
-        ((s.effects.clarity / 100.0) as f32, (s.effects.texture / 100.0) as f32, (s.effects.dehaze / 100.0) as f32)
-    } else {
-        (0.0, 0.0, 0.0)
-    };
-    let sharpen = (s.detail.sharpen_amount / 150.0) as f32;
-    let sharpen_mask = (s.detail.sharpen_masking / 100.0) as f32;
-    // Planes are pre-exposure: scale the airlight, shift log luminance (see `Prepared`).
-    let (air, air_pre, gain, ev) = (p.air * p.gain, p.air, p.gain, p.ev);
-    let grain = (s.grain.amount > 0.0 && s.section_enabled("effects")).then(|| {
-        let cell = (0.0006 + (s.grain.size / 100.0) as f32 * 0.0024) * p.px_per_long as f32;
-        ((s.grain.amount / 100.0) as f32 * 0.13, cell.max(0.6), (s.grain.roughness / 100.0) as f32, s.grain.seed)
-    });
-    let out_to_norm = frame.out_to_norm(w, h);
+    let fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air);
+    let FinishParams { tone, ops, curves, vig, to_srgb, hl, sh, clar, tex, dehaze, sharpen, sharpen_mask, air, air_pre, gain, ev, grain, .. } = &fp;
+    let (hl, sh, clar, tex, dehaze, sharpen, sharpen_mask, air, air_pre, gain, ev) =
+        (*hl, *sh, *clar, *tex, *dehaze, *sharpen, *sharpen_mask, *air, *air_pre, *gain, *ev);
+    let terms: Vec<[f32; MASK_TERMS]> = p.masks.iter().map(|m| mask_terms(&m.adjust)).collect();
+    let out_to_norm = fp.out_to_norm;
+    let long = fp.ow.max(fp.oh);
     let aspect = w as f32 / h as f32;
 
     let srgb = srgb_lut();
@@ -138,35 +240,22 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             let l_pre = p.log_l.data[i];
             let l0 = l_pre + ev;
 
-            // --- local (mask) contributions
-            let (mut l_exp, mut l_temp, mut l_tint, mut l_con, mut l_hl, mut l_sh, mut l_wh, mut l_bl) = (0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-            let (mut l_tex, mut l_clar, mut l_dehaze, mut l_sat, mut l_hue, mut l_sharp) = (0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0);
+            // --- local (mask) contributions: alpha-weighted sums of the masks' terms
+            let mut l = [0.0f32; 14];
             let mut tint_col: Option<([f32; 3], f32)> = None;
-            for m in &p.masks {
+            for (m, t) in p.masks.iter().zip(&terms) {
                 let a = m.alpha.data[i];
                 if a <= 0.0 {
                     continue;
                 }
-                let j = &m.adjust;
-                l_exp += a * j.exposure as f32;
-                l_temp += a * (j.temp / 100.0) as f32;
-                l_tint += a * (j.tint / 100.0) as f32;
-                l_con += a * (j.contrast / 100.0) as f32;
-                l_hl += a * (j.highlights / 100.0) as f32;
-                l_sh += a * (j.shadows / 100.0) as f32;
-                l_wh += a * (j.whites / 100.0) as f32;
-                l_bl += a * (j.blacks / 100.0) as f32;
-                l_tex += a * (j.texture / 100.0) as f32;
-                l_clar += a * (j.clarity / 100.0) as f32;
-                l_dehaze += a * (j.dehaze / 100.0) as f32;
-                l_sat += a * (j.saturation / 100.0) as f32;
-                l_hue += a * (j.hue / 100.0) as f32 * 0.6;
-                l_sharp += a * (j.sharpness / 100.0) as f32;
-                if j.color_sat > 0.0 {
-                    let hue = crate::colorops::oklch_hue_of_srgb_hue(j.color_hue);
-                    tint_col = Some(([hue.cos(), hue.sin(), 0.0], a * (j.color_sat / 100.0) as f32));
+                for k in 0..14 {
+                    l[k] += a * t[k];
+                }
+                if t[14] > 0.0 {
+                    tint_col = Some(([t[15], t[16], 0.0], a * t[17]));
                 }
             }
+            let [l_exp, l_temp, l_tint, l_con, l_hl, l_sh, l_wh, l_bl, l_tex, l_clar, l_dehaze, l_sat, l_hue, l_sharp] = l;
 
             // --- dehaze (scene linear)
             let dz = dehaze + l_dehaze;
@@ -259,7 +348,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             }
 
             // --- vignette (display linear, post-crop)
-            if let Some(v) = &vig {
+            if let Some(v) = vig {
                 let u = (x as f32 + 0.5) / w as f32 * 2.0 - 1.0;
                 let vv = (y as f32 + 0.5) / h as f32 * 2.0 - 1.0;
                 let sx = 1.0 + (aspect - 1.0) * v.aspect_mix;
@@ -286,7 +375,7 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
             }
 
             // --- gamut map to sRGB (desaturate towards luminance until in range)
-            let m = &to_srgb;
+            let m = to_srgb;
             let mut r = [
                 m[0][0] * d[0] + m[0][1] * d[1] + m[0][2] * d[2],
                 m[1][0] * d[0] + m[1][1] * d[1] + m[1][2] * d[2],
@@ -307,13 +396,13 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
 
             // --- encode, curves, grain
             let mut e = r.map(|v| encode_srgb(srgb, v));
-            if let Some(l) = &curves {
+            if let Some(l) = curves {
                 e = [l[0].eval(e[0]), l[1].eval(e[1]), l[2].eval(e[2])];
             }
-            if let Some((amt, cell, rough, seed)) = grain {
+            if let Some((amt, cell, rough, seed)) = *grain {
                 let n = out_to_norm.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
-                let (gx, gy) = ((n.x * frame.ow) as f32 / frame.ow.max(frame.oh) as f32, (n.y * frame.oh) as f32 / frame.ow.max(frame.oh) as f32);
-                let sc = p.px_per_long as f32 / cell;
+                let (gx, gy) = ((n.x * fp.ow) as f32 / long as f32, (n.y * fp.oh) as f32 / long as f32);
+                let sc = fp.px_per_long as f32 / cell;
                 let mut g = grain_noise(gx * sc, gy * sc, seed);
                 g = g * (1.0 - rough * 0.5) + grain_noise(gx * sc * 2.3, gy * sc * 2.3, seed ^ 0x55) * rough * 0.7;
                 let lum = 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
@@ -326,9 +415,10 @@ pub fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInf
     out
 }
 
-const SRGB_LUT_N: usize = 4096;
+pub const SRGB_LUT_N: usize = 4096;
 
-fn srgb_lut() -> &'static [f32; SRGB_LUT_N + 1] {
+/// Linear → sRGB-encoded table (`SRGB_LUT_N + 1` entries over 0..1), interpolated linearly.
+pub fn srgb_lut() -> &'static [f32; SRGB_LUT_N + 1] {
     static LUT: std::sync::OnceLock<Box<[f32; SRGB_LUT_N + 1]>> = std::sync::OnceLock::new();
     LUT.get_or_init(|| {
         let mut t = Box::new([0.0f32; SRGB_LUT_N + 1]);

@@ -2106,6 +2106,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-gpu"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "lightcraft-color",
+ "lightcraft-develop",
+ "lightcraft-geom",
+ "lightcraft-pipeline",
+ "lightcraft-raster",
+ "lightcraft-scenes",
+ "log",
+ "pollster 1.0.1",
+ "wgpu",
+]
+
+[[package]]
 name = "lightcraft-mcp"
 version = "0.1.0"
 dependencies = [

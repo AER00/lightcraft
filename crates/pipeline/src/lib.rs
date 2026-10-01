@@ -23,19 +23,21 @@
 #![forbid(unsafe_code)]
 
 pub mod auto;
-mod colorops;
-mod finish;
+pub mod colorops;
+pub mod finish;
 pub mod geometry;
-mod local;
+pub mod local;
 pub mod masks;
 pub mod optics;
 pub mod profiles;
 pub mod spots;
-mod tone;
+pub mod tone;
 pub mod transform;
 pub mod upright;
 
 use lightcraft_develop::{DevelopSettings, Treatment};
+use std::any::Any;
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
 use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8, par_rows};
@@ -105,9 +107,6 @@ pub(crate) struct Prepared {
     /// Airlight of `dark` (before exposure).
     pub air: f32,
     pub masks: Vec<masks::Evaluated>,
-    /// Exposure in EV and as a linear gain.
-    pub ev: f32,
-    pub gain: f32,
     /// Output pixels per unit of the source long edge.
     pub px_per_long: f64,
 }
@@ -137,11 +136,13 @@ pub fn frame_for(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, apply_cro
 pub struct StageCache {
     entries: Mutex<Vec<CacheEntry>>,
     capacity: usize,
+    /// Another renderer's per-view state (the GPU renderer keeps its device-resident stages here).
+    ext: Mutex<Option<Arc<dyn Any + Send + Sync>>>,
 }
 
 impl Default for StageCache {
     fn default() -> Self {
-        StageCache { entries: Mutex::new(Vec::new()), capacity: 2 }
+        StageCache { entries: Mutex::new(Vec::new()), capacity: 2, ext: Mutex::new(None) }
     }
 }
 
@@ -149,6 +150,21 @@ impl StageCache {
     /// Drop everything (e.g. when memory is needed).
     pub fn clear(&self) {
         self.lock().clear();
+        *self.ext.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// Per-view state of type `T` kept alongside this cache (created on first use). Lets another
+    /// renderer of the same view (e.g. `lightcraft-gpu`) keep its own stage cache with this one.
+    pub fn extension<T: Any + Send + Sync + Default>(&self) -> Arc<T> {
+        let mut g = self.ext.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(e) = g.as_ref()
+            && let Ok(t) = e.clone().downcast::<T>()
+        {
+            return t;
+        }
+        let t = Arc::new(T::default());
+        *g = Some(t.clone());
+        t
     }
 
     /// Number of cached output sizes.
@@ -192,6 +208,66 @@ fn hash_of(parts: impl std::hash::Hash) -> u64 {
     BuildHasherDefault::<DefaultHasher>::default().hash_one(parts)
 }
 
+/// What a render resolves to before any pixel work: the effective settings (profile and Upright
+/// applied), the geometric frame, the output size and the stage-cache keys. Shared by the CPU
+/// renderer and the GPU renderer (`lightcraft-gpu`), so both key their caches identically.
+pub struct Plan<'a> {
+    pub settings: Cow<'a, DevelopSettings>,
+    pub frame: geometry::Frame,
+    pub w: usize,
+    pub h: usize,
+    /// Output pixels per unit of the oriented source's long edge.
+    pub px_per_long: f64,
+    /// Long edge of the source buffer (px).
+    pub src_long: usize,
+    /// Key of the resampled source (together with the source buffer's identity).
+    pub geo: u64,
+    /// Key of the white-balanced, retouched, denoised image (and of the planes computed from it).
+    pub lin_key: u64,
+}
+
+/// Resolve `s` against `src` for `req` (see [`Plan`]).
+pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &RenderRequest) -> Plan<'a> {
+    let settings: Cow<'a, DevelopSettings> = match profiles::effective(s) {
+        Cow::Borrowed(b) => upright::resolve(src, info, b),
+        Cow::Owned(o) => Cow::Owned(upright::resolve(src, info, &o).into_owned()),
+    };
+    let s = &*settings;
+    let frame = frame_for(src, info, s, req.apply_crop);
+    let (w, h) = frame.fit(req.max_w, req.max_h);
+    let px_per_long = frame.px_per_long(w);
+    let src_long = src.width.max(src.height);
+    let geo = hash_of((format!("{frame:?}"), w, h));
+    let (wb_t, wb_tint) = local::effective_wb(info, s);
+    let d = &s.detail;
+    let lin_key = hash_of((
+        geo,
+        [wb_t, wb_tint, info.as_shot_temp, info.as_shot_tint].map(f64::to_bits),
+        format!("{:?}", s.spots),
+        // defringe runs in this stage
+        format!("{:?}", s.optics),
+        [d.nr_luminance, d.nr_detail, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits),
+        src_long,
+    ));
+    Plan { settings, frame, w, h, px_per_long, src_long, geo, lin_key }
+}
+
+/// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal).
+pub fn lin_needs_cpu(s: &DevelopSettings) -> bool {
+    let o = &s.optics;
+    let defringe = s.section_enabled("optics") && (o.defringe_purple_amount > 0.0 || o.defringe_green_amount > 0.0);
+    defringe || !s.spots.is_empty()
+}
+
+/// The white-balanced, defringed, retouched image (before noise reduction): the CPU part of the
+/// scene-linear stage, in place.
+pub fn lin_cpu(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
+    let s = &*p.settings;
+    local::white_balance(img, info, s);
+    optics::defringe(img, s, p.px_per_long / optics::DEFRINGE_REF_LONG);
+    spots::apply(img, &s.spots, &p.frame, p.px_per_long);
+}
+
 /// Render `src` with settings `s`.
 pub fn render(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest) -> Rendered {
     render_impl(Src::Borrowed(src), info, s, req, None)
@@ -217,22 +293,18 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         }
     };
     let mut t = profiling().then(std::time::Instant::now);
-    let s = &*profiles::effective(s);
     let src_img: &Rgb32f = match &src {
         Src::Borrowed(r) => r,
         Src::Shared(a) => a,
     };
-    let s = &*upright::resolve(src_img, info, s);
-    let frame = frame_for(src_img, info, s, req.apply_crop);
-    let (w, h) = frame.fit(req.max_w, req.max_h);
-    let px_per_long = frame.px_per_long(w);
-    let src_long = src_img.width.max(src_img.height);
+    let plan = plan(src_img, info, s, req);
+    let Plan { ref frame, w, h, px_per_long, src_long, geo, lin_key, .. } = plan;
+    let s = &*plan.settings;
 
     let shared = match (&src, cache) {
         (Src::Shared(a), Some(c)) => Some((*a, c)),
         _ => None,
     };
-    let geo = hash_of((format!("{frame:?}"), w, h));
     let cached = shared.and_then(|(a, c)| c.get(a, geo));
     let sampled = match &cached {
         Some(e) => e.sampled.clone(),
@@ -240,25 +312,12 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     };
     lap("sample", &mut t);
 
-    let (wb_t, wb_tint) = local::effective_wb(info, s);
-    let d = &s.detail;
-    let lin_key = hash_of((
-        geo,
-        [wb_t, wb_tint, info.as_shot_temp, info.as_shot_tint].map(f64::to_bits),
-        format!("{:?}", s.spots),
-        // defringe runs in this stage
-        format!("{:?}", s.optics),
-        [d.nr_luminance, d.nr_detail, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits),
-        src_long,
-    ));
     let lin = match cached.as_ref().and_then(|e| e.lin.clone()).filter(|(k, _)| *k == lin_key) {
         Some((_, img)) => img,
         None => {
             // Without a cache the resampled buffer is ours: work on it in place.
             let mut img = if shared.is_some() { (*sampled).clone() } else { Arc::unwrap_or_clone(sampled.clone()) };
-            local::white_balance(&mut img, info, s);
-            optics::defringe(&mut img, s, px_per_long / optics::DEFRINGE_REF_LONG);
-            spots::apply(&mut img, &s.spots, &frame, px_per_long);
+            lin_cpu(&mut img, info, &plan);
             local::denoise(&mut img, s, src_long, w.max(h));
             Arc::new(img)
         }
@@ -268,12 +327,12 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         Some(p) if p.key == lin_key => p,
         _ => local::Planes { key: lin_key, ..Default::default() },
     };
-    let prep = local::prepare(lin.clone(), s, &frame, px_per_long, req.quality, &mut planes);
+    let prep = local::prepare(lin.clone(), s, frame, px_per_long, req.quality, &mut planes);
     lap("prepare", &mut t);
     if let Some((a, c)) = shared {
         c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((lin_key, lin)), planes });
     }
-    let image = finish::finish(&prep, s, &frame, info);
+    let image = finish::finish(&prep, s, frame, info);
     lap("finish", &mut t);
     let histogram = Histogram::of_srgb8(&image);
     lap("histogram", &mut t);
