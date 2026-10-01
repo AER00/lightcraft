@@ -132,6 +132,37 @@ fn main() {
         });
         println!("loupe draft NR drag (warm):           {ms}");
     }
+    if run("finish") {
+        // per-pixel stage cost by feature (warm cache: exposure changes only)
+        let variants: [(&str, fn(&mut DevelopSettings)); 6] = [
+            ("typical", |_| {}),
+            ("- dehaze", |t| t.effects.dehaze = 0.0),
+            ("- clarity", |t| t.effects.clarity = 0.0),
+            ("- texture/sharpen", |t| {
+                t.effects.texture = 0.0;
+                t.detail.sharpen_amount = 0.0;
+            }),
+            ("- highlights/shadows", |t| {
+                t.light.highlights = 0.0;
+                t.light.shadows = 0.0;
+            }),
+            ("+ vibrance/saturation", |t| {
+                t.color.vibrance = 20.0;
+                t.color.saturation = 10.0;
+            }),
+        ];
+        for (name, f) in variants {
+            let mut t = s.clone();
+            f(&mut t);
+            drop(render_cached(&preview, &info, &t, &view, &cache));
+            let ms = best(n, || {
+                k += 1.0;
+                t.light.exposure = 0.3 + k * 0.001;
+                drop(render_cached(&preview, &info, &t, &view, &cache));
+            });
+            println!("finish 1920×1280 {name:<22} {ms}");
+        }
+    }
     if run("batch") && args.len() > 1 {
         // full-size JPEG export of all the files given (decode + render + encode)
         use lightcraft_engine::export::export_photo;

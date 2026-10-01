@@ -29,6 +29,19 @@ pub fn par_rows<T: Send>(data: &mut [T], row_len: usize, f: impl Fn(usize, &mut 
     }
 }
 
+/// Run `a` and `b` potentially in parallel (sequentially without the `parallel` feature). For
+/// independent passes that each scale poorly on their own (small images, short rows).
+pub fn par_join<A: Send, B: Send>(a: impl FnOnce() -> A + Send, b: impl FnOnce() -> B + Send) -> (A, B) {
+    #[cfg(feature = "parallel")]
+    {
+        rayon::join(a, b)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        (a(), b())
+    }
+}
+
 /// Interleaved row-major image.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Image<T> {

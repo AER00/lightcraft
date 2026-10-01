@@ -7,7 +7,7 @@ use lightcraft_develop::DevelopSettings;
 use lightcraft_raster::blur::gaussian;
 use std::sync::Arc;
 
-use lightcraft_raster::{Plane, Rgb32f};
+use lightcraft_raster::{Plane, Rgb32f, par_join};
 
 use crate::geometry::Frame;
 use crate::{Prepared, Quality, SourceInfo, for_rows, masks, timed};
@@ -67,16 +67,16 @@ pub fn guided(p: &Plane, sigma: f32, eps: f32) -> Plane {
     guided_apply(p, &ma, &mb)
 }
 
-/// Blurred guided-filter coefficients (mean a, mean b) of `p`; every pass row-parallel.
+/// Blurred guided-filter coefficients (mean a, mean b) of `p`; every pass row-parallel, and the
+/// two independent blurs of each step run side by side.
 fn guided_coeffs(p: &Plane, sigma: f32, eps: f32) -> (Plane, Plane) {
-    let mean = gaussian(p, sigma);
-    let corr = gaussian(&p.map(|v| v * v), sigma);
+    let (mean, corr) = par_join(|| gaussian(p, sigma), || gaussian(&p.map(|v| v * v), sigma));
     let a = corr.zip_map(&mean, |c, m| {
         let var = (c - m * m).max(0.0);
         var / (var + eps)
     });
     let b = mean.zip_map(&a, |m, a| m - a * m);
-    (gaussian(&a, sigma), gaussian(&b, sigma))
+    par_join(|| gaussian(&a, sigma), || gaussian(&b, sigma))
 }
 
 /// `q = a·p + b` per pixel.
@@ -192,46 +192,54 @@ fn plane_at(slot: &mut Option<(u32, Arc<Plane>)>, sigma: f32, f: impl FnOnce() -
 }
 
 /// The spatial planes the per-pixel stage needs for `img` (white-balanced, before exposure),
-/// reusing whatever `planes` already holds for it.
+/// reusing whatever `planes` already holds for it. Missing planes are computed side by side (each
+/// one alone scales poorly: the guided filters work on small subsampled grids).
 pub(crate) fn prepare(img: Arc<Rgb32f>, s: &DevelopSettings, frame: &Frame, px_per_long: f64, q: Quality, planes: &mut Planes) -> Prepared {
     let log_l = planes.log_l.get_or_insert_with(|| Arc::new(timed("log_l", || img.map(log_lum)))).clone();
     let ppl = px_per_long as f32;
+    let local_any = |f: fn(&lightcraft_develop::LocalAdjustments) -> f64| s.masks.iter().any(|m| f(&m.adjust) != 0.0);
     let tone_active =
         s.light.highlights != 0.0 || s.light.shadows != 0.0 || s.masks.iter().any(|m| m.adjust.highlights != 0.0 || m.adjust.shadows != 0.0);
-    let base = if tone_active {
-        // Edge-aware base at ~1.5% of the long edge (EV² epsilon: edges of > ~0.6 EV are preserved).
+    // Edge-aware base at ~1.5% of the long edge (EV² epsilon: edges of > ~0.6 EV are preserved).
+    let base_sigma = tone_active.then(|| {
         let sigma = (0.015 * ppl).max(1.0);
-        let sigma = if q == Quality::Draft { sigma.min(24.0) } else { sigma };
-        plane_at(&mut planes.base, sigma, || timed("base", || guided_fast(&log_l, sigma, 0.35)))
-    } else {
-        log_l.clone()
-    };
-    let local_any = |f: fn(&lightcraft_develop::LocalAdjustments) -> f64| s.masks.iter().any(|m| f(&m.adjust) != 0.0);
-    let clarity_blur = (s.effects.clarity != 0.0 || local_any(|a| a.clarity)).then(|| {
-        let sigma = (0.012 * ppl).max(1.0);
-        plane_at(&mut planes.clarity, sigma, || timed("clarity", || guided_fast(&log_l, sigma, 0.8)))
+        if q == Quality::Draft { sigma.min(24.0) } else { sigma }
     });
-    let texture_blur =
-        (s.effects.texture != 0.0 || s.detail.sharpen_amount != 0.0 || local_any(|a| a.texture) || local_any(|a| a.sharpness)).then(|| {
-            let sigma = (0.0018 * ppl).max(0.6);
-            plane_at(&mut planes.texture, sigma, || timed("texture", || gaussian(&log_l, sigma)))
-        });
-    let (dark, air) = if s.effects.dehaze != 0.0 || local_any(|a| a.dehaze) {
-        let sigma = (0.02 * ppl).max(1.0);
-        match &planes.dark {
-            Some((k, d, air)) if *k == sigma.to_bits() => (Some(d.clone()), *air),
-            _ => {
-                let d = timed("dehaze", || {
-                    let min_c = img.map(|c| c[0].min(c[1]).min(c[2]));
-                    Arc::new(gaussian(&min_c, sigma))
-                });
-                let air = airlight(&d);
-                planes.dark = Some((sigma.to_bits(), d.clone(), air));
-                (Some(d), air)
-            }
-        }
-    } else {
-        (None, 1.0)
+    let clarity_sigma = (s.effects.clarity != 0.0 || local_any(|a| a.clarity)).then(|| (0.012 * ppl).max(1.0));
+    let texture_sigma = (s.effects.texture != 0.0 || s.detail.sharpen_amount != 0.0 || local_any(|a| a.texture) || local_any(|a| a.sharpness))
+        .then(|| (0.0018 * ppl).max(0.6));
+    let dark_sigma = (s.effects.dehaze != 0.0 || local_any(|a| a.dehaze)).then(|| (0.02 * ppl).max(1.0));
+
+    let Planes { base: sb, clarity: sc, texture: st, dark: sd, .. } = planes;
+    let l = &log_l;
+    let (base, (clarity_blur, (texture_blur, dark))) = par_join(
+        || base_sigma.map(|sg| plane_at(sb, sg, || timed("base", || guided_fast(l, sg, 0.35)))),
+        || {
+            par_join(
+                || clarity_sigma.map(|sg| plane_at(sc, sg, || timed("clarity", || guided_fast(l, sg, 0.8)))),
+                || {
+                    par_join(
+                        || texture_sigma.map(|sg| plane_at(st, sg, || timed("texture", || gaussian(l, sg)))),
+                        || {
+                            dark_sigma.map(|sg| match sd {
+                                Some((k, d, air)) if *k == sg.to_bits() => (d.clone(), *air),
+                                _ => {
+                                    let d = timed("dehaze", || Arc::new(gaussian(&img.map(|c| c[0].min(c[1]).min(c[2])), sg)));
+                                    let air = airlight(&d);
+                                    *sd = Some((sg.to_bits(), d.clone(), air));
+                                    (d, air)
+                                }
+                            })
+                        },
+                    )
+                },
+            )
+        },
+    );
+    let base = base.unwrap_or_else(|| log_l.clone());
+    let (dark, air) = match dark {
+        Some((d, air)) => (Some(d), air),
+        None => (None, 1.0),
     };
     let ev = s.light.exposure as f32;
     let gain = 2f32.powf(ev);
