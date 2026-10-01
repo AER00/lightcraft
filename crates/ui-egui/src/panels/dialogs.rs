@@ -180,6 +180,18 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                                     ui.end_row();
                                 }
                             }
+                            for (sc, id, _) in crate::shortcuts::ALIASES {
+                                let label = crate::menus::UI_COMMANDS
+                                    .iter()
+                                    .find(|c| c.0 == *id)
+                                    .map(|c| c.1)
+                                    .or_else(|| lightcraft_engine::find_command(id).map(|c| c.label))
+                                    .unwrap_or(id);
+                                ui.label(label);
+                                ui.label(*sc);
+                                ui.label(egui::RichText::new(*id).color(t.text_dim));
+                                ui.end_row();
+                            }
                         });
                     });
                 }
