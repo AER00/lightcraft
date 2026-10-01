@@ -424,7 +424,14 @@ impl crate::Session {
         let source = self.media.source_ref(&p, level);
         let settings = if before { Arc::new(lightcraft_pipeline::before_settings(&p.develop)) } else { p.develop.clone() };
         let request = RenderRequest { apply_crop, ..RenderRequest::fit(max_w, max_h) };
-        let key = settings.hash64() ^ ((max_w as u64) << 40) ^ ((max_h as u64) << 20) ^ (apply_crop as u64) ^ (level as u64) << 60;
+        // the photo id is part of the key: two photos with the same settings and size must not
+        // share a result (a view slot showing photo A would otherwise look current for photo B)
+        let key = settings.hash64()
+            ^ ((max_w as u64) << 40)
+            ^ ((max_h as u64) << 20)
+            ^ (apply_crop as u64)
+            ^ (level as u64) << 60
+            ^ id.0.wrapping_mul(0x9e37_79b9_7f4a_7c15);
         let cache = thumb_bucket.map(|b| {
             let k = Hasher128::new().str(&content_key(&p)).u64(settings.hash64()).u64(b as u64).u64(RENDER_CACHE_VERSION).finish();
             (self.media.rendered.clone(), k)
@@ -564,5 +571,9 @@ mod tests {
         let loupe = s.render_job(p.id, 1600, 1600, false, true).unwrap();
         assert_eq!(loupe.level, SourceLevel::Preview);
         assert_ne!(loupe.key, s.render_job(p.id, 1600, 1600, false, true).unwrap().draft().key);
+        // two photos with identical settings and size never share a result key
+        let plain: Vec<_> = s.catalog.photos().filter(|p| !p.is_edited()).map(|p| p.id).take(2).collect();
+        let (a, b) = (s.render_job(plain[0], 1600, 1600, false, true).unwrap(), s.render_job(plain[1], 1600, 1600, false, true).unwrap());
+        assert_ne!(a.key, b.key);
     }
 }

@@ -186,6 +186,17 @@ impl Session {
         Ok(())
     }
 
+    /// Fold the last `n` undo steps into one (commands that commit step by step because each op
+    /// depends on the state the previous one left).
+    pub fn merge_undo(&mut self, n: usize, label: &str) {
+        if n < 2 || n > self.undo.len() {
+            return;
+        }
+        let tail = self.undo.split_off(self.undo.len() - n);
+        let ops = tail.into_iter().rev().map(|e| e.op).collect();
+        self.undo.push(UndoEntry { label: label.to_string(), op: Op::Batch { ops } });
+    }
+
     /// Apply without recording undo (interactive previews).
     fn apply_silent(&mut self, op: Op) -> Result<()> {
         self.catalog.apply(op)?;
@@ -289,6 +300,7 @@ impl Session {
                 && self.sort.key == lightcraft_catalog::SortKey::CaptureDate
                 && let LibrarySource::Album(a) = self.source
                 && let Some(al) = self.catalog.album(a)
+                && !al.is_smart()
                 && self.filter == Filter::default()
             {
                 let order = al.photos.clone();
@@ -296,6 +308,9 @@ impl Session {
                 if !self.sort.ascending {
                     self.visible.reverse();
                 }
+            }
+            if self.source != LibrarySource::RecentlyDeleted {
+                self.visible = self.catalog.arrange_stacks(&self.visible);
             }
             self.visible_key = Some(key);
         }
@@ -328,5 +343,7 @@ mod tests_import;
 mod tests_library;
 #[cfg(test)]
 mod tests_merge;
+#[cfg(test)]
+mod tests_organize;
 #[cfg(test)]
 mod tests_xmp;

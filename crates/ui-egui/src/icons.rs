@@ -29,6 +29,7 @@ pub enum Icon {
     GridSquare,
     Single,
     Compare,
+    Survey,
     Sort,
     Star,
     StarFilled,
@@ -45,6 +46,8 @@ pub enum Icon {
     Plus,
     Minus,
     Album,
+    SmartAlbum,
+    Stack,
     Folder,
     Photos,
     Clock,
@@ -242,9 +245,15 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.rect_fill(10.5, 10.5, 16.5, 16.0, 0.5);
         }
         Single => pen.rect_fill(3.0, 5.0, 17.0, 15.0, 0.5),
+        Survey => {
+            pen.rect(2.5, 3.5, 9.0, 9.0, 1.0);
+            pen.rect(11.0, 3.5, 17.5, 9.0, 1.0);
+            pen.rect(2.5, 11.0, 9.0, 16.5, 1.0);
+            pen.rect(11.0, 11.0, 17.5, 16.5, 1.0);
+        }
         Compare => {
-            pen.rect_fill(3.0, 5.0, 9.5, 15.0, 0.5);
-            pen.rect_fill(10.5, 5.0, 17.0, 15.0, 0.5);
+            pen.rect_fill(2.0, 5.0, 8.8, 15.0, 0.5);
+            pen.rect_fill(11.2, 5.0, 18.0, 15.0, 0.5);
         }
         Sort => {
             pen.line(&[(3.0, 5.0), (17.0, 5.0)]);
@@ -303,6 +312,17 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Album => {
             pen.rect(3.0, 5.0, 15.0, 17.0, 1.0);
             pen.line(&[(6.0, 2.5), (17.5, 2.5), (17.5, 14.0)]);
+        }
+        Stack => {
+            pen.rect(2.5, 7.0, 13.5, 17.5, 1.0);
+            pen.line(&[(5.0, 4.5), (16.0, 4.5), (16.0, 14.5)]);
+            pen.line(&[(7.5, 2.0), (18.5, 2.0), (18.5, 11.5)]);
+        }
+        SmartAlbum => {
+            pen.rect(3.0, 5.0, 15.0, 17.0, 1.0);
+            pen.line(&[(6.0, 2.5), (17.5, 2.5), (17.5, 14.0)]);
+            // a small funnel: the album is a saved filter
+            pen.closed(&[(5.5, 8.5), (12.5, 8.5), (10.0, 11.5), (10.0, 14.5), (8.0, 13.5), (8.0, 11.5)]);
         }
         Folder => pen.closed(&[(2.5, 5.0), (8.0, 5.0), (9.5, 7.0), (17.5, 7.0), (17.5, 15.5), (2.5, 15.5)]),
         Photos => {

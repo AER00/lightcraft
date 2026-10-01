@@ -62,8 +62,7 @@ impl MergeKind {
 pub struct MergeFinish {
     /// Run Auto Settings on the result.
     pub auto_settings: bool,
-    /// Group the result with its sources. LightCraft has no stacks yet: recorded in the result's
-    /// caption instead (see `docs/merge.md`).
+    /// Stack the result on top of its sources (collapsed); the result's caption also lists them.
     pub stack: bool,
     /// Preview only: tint deghosted areas red.
     pub show_overlay: bool,
@@ -381,6 +380,12 @@ impl Session {
             .copied()
             .map(PhotoId)
             .ok_or_else(|| EngineError::Other(format!("the merged file {path} could not be imported: {:?}", report.failed)))?;
+        if job.finish.stack {
+            let sources: Vec<PhotoId> = job.sources.iter().map(|(p, _)| *p).collect();
+            if let Some(op) = self.catalog.stack_with_ops(id, &sources) {
+                self.commit("Stack with Sources", op)?;
+            }
+        }
         self.selection = crate::Selection::single(id);
         if job.finish.auto_settings {
             self.execute("develop.auto", &json!({}))?;

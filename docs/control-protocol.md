@@ -19,7 +19,8 @@ mode ([mcp.md](mcp.md)) is a thin layer over this channel. Implementation:
 |---|---|---|
 | `engine.execute` (alias `ui.menu.invoke`) | `{command, params?}` | Run any engine or UI command (see `engine.commands`) |
 | `engine.commands` | — | Engine + UI commands: id, label, menu, shortcut, params doc, enabled |
-| `ui.menu.list` | — | Menu entries |
+| `ui.menu.list` | — | Menu entries (flat: id, label, menu path, shortcut, enabled) |
+| `ui.menu.tree` | — | The menu bar as shown (File … Help): items `{id, params?, label, shortcut?, enabled, checked?}`, separators, submenus — the model behind the native macOS menu bar and the in-window menus |
 | `ui.inspect` | — | UI state, window, canvas/image rects, active photo, selection, perf, status |
 | `ui.widgets` | `{filter?}` | On-screen widgets `{id, rect: [x, y, w, h]}` (screen points) |
 | `ui.clickWidget` / `ui.dragWidget` | `{id, count?, fx?, fy?}` / `{id, toX?, toY?, dx?, dy?, steps?}` | Real egui input on a widget |

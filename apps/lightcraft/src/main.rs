@@ -13,14 +13,20 @@
 //! See `lightcraft_ui_egui::control` for the methods.
 
 mod control_server;
+#[cfg(target_os = "macos")]
+mod native_menu;
 
 use lightcraft_engine::Session;
 use lightcraft_ui_egui::{LightcraftApp, Services, UiState};
 
-struct App(LightcraftApp);
+struct App(LightcraftApp, #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        if let Some(m) = self.1.as_mut() {
+            m.update(&mut self.0, ctx);
+        }
         self.0.logic(ctx);
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
@@ -234,7 +240,15 @@ fn main() -> eframe::Result {
                 let _ = app.run("library.import", serde_json::json!({"paths": files}));
                 app.ui.view = lightcraft_ui_egui::state::ViewMode::PhotoGrid;
             }
-            Ok(Box::new(App(app)))
+            // native menu bar generated from the command registry (macOS; elsewhere the menus are
+            // drawn in the window's top bar). LIGHTCRAFT_NO_NATIVE_MENU=1 keeps the in-window menus.
+            #[cfg(target_os = "macos")]
+            let menu = (std::env::var_os("LIGHTCRAFT_NO_NATIVE_MENU").is_none()).then(|| native_menu::NativeMenu::install(&mut app, &cc.egui_ctx));
+            Ok(Box::new(App(
+                app,
+                #[cfg(target_os = "macos")]
+                menu,
+            )))
         }),
     )
 }
