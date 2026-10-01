@@ -1999,6 +1999,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-cli"
+version = "0.1.0"
+dependencies = [
+ "lightcraft-codecs",
+ "lightcraft-engine",
+ "lightcraft-mcp",
+ "lightcraft-raster",
+ "serde_json",
+]
+
+[[package]]
 name = "lightcraft-codecs"
 version = "0.1.0"
 dependencies = [
@@ -2069,6 +2080,17 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "serde",
+]
+
+[[package]]
+name = "lightcraft-mcp"
+version = "0.1.0"
+dependencies = [
+ "lightcraft-codecs",
+ "lightcraft-engine",
+ "lightcraft-raster",
+ "log",
+ "serde_json",
 ]
 
 [[package]]

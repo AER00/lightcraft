@@ -1,0 +1,23 @@
+[package]
+name = "lightcraft-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "LightCraft command-line tool: headless render, command listing and the MCP server"
+
+[[bin]]
+name = "lightcraft-cli"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+lightcraft-engine = { workspace = true }
+lightcraft-mcp = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+lightcraft-codecs = { workspace = true }
+lightcraft-raster = { workspace = true }
