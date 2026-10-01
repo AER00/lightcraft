@@ -8,11 +8,15 @@
 //! and a full-size render + JPEG encode (export); `ONLY=batch` with several files times a full-size
 //! export of each (decode + render + encode). Prints minimum wall-clock and minimum process CPU
 //! time: on a shared machine the CPU time shows the work done, wall-clock also the wait for cores.
+//! Each scenario runs on the CPU pipeline and, when a GPU adapter exists, on `lightcraft-gpu`
+//! (second column; `LIGHTCRAFT_GPU=0` for the CPU only).
+use std::sync::Arc;
 use std::time::Instant;
 
 use lightcraft_develop::DevelopSettings;
 use lightcraft_engine::export::{ExportOptions, encode_image};
-use lightcraft_pipeline::{Quality, RenderRequest, SourceInfo, StageCache, render, render_cached};
+use lightcraft_engine::media::develop;
+use lightcraft_pipeline::{Quality, RenderRequest, SourceInfo, StageCache};
 use lightcraft_raster::Rgb32f;
 use lightcraft_raster::resample::{Filter, fit};
 
@@ -66,6 +70,19 @@ fn typical() -> DevelopSettings {
     s
 }
 
+/// Max and mean |Δ| (8-bit, RGB) between two renders.
+fn diff(a: &lightcraft_raster::Rgba8, b: &lightcraft_raster::Rgba8) -> (u8, f64) {
+    let (mut max, mut sum) = (0u8, 0u64);
+    for (p, q) in a.data.iter().zip(&b.data) {
+        for c in 0..3 {
+            let d = p[c].abs_diff(q[c]);
+            max = max.max(d);
+            sum += d as u64;
+        }
+    }
+    (max, sum as f64 / (a.data.len() * 3).max(1) as f64)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let n: usize = std::env::var("N").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
@@ -87,50 +104,76 @@ fn main() {
             SourceInfo { raw: true, ..Default::default() },
         ),
     };
+    let full = Arc::new(full);
     println!("source {}×{} ({:.1} MP), {n} runs each", full.width, full.height, (full.width * full.height) as f64 / 1e6);
-    let preview = std::sync::Arc::new(fit(&full, 2560, 2560, Filter::Box));
+    // GPU column: `LIGHTCRAFT_GPU=0` (or no adapter) prints only the CPU column.
+    let t = Instant::now();
+    let gpu = lightcraft_engine::gpu::available();
+    match lightcraft_engine::gpu::adapter_name().filter(|_| gpu) {
+        Some(a) => println!("gpu: {a} (device + kernels: {:.0} ms)", t.elapsed().as_secs_f64() * 1e3),
+        None => println!("gpu: none"),
+    }
+    let backends: &[bool] = if gpu { &[false, true] } else { &[false] };
+    let row = |name: &str, f: &mut dyn FnMut(bool)| {
+        let cols: Vec<String> = backends.iter().map(|&g| format!("{}", best(n, || f(g)))).collect();
+        println!("{name:<38} cpu: {}{}", cols[0], cols.get(1).map(|g| format!("  |  gpu: {g}")).unwrap_or_default());
+    };
+    let preview = Arc::new(fit(&full, 2560, 2560, Filter::Box));
     let s = typical();
     let view = RenderRequest::fit(1920, 1280);
     let draft = RenderRequest { max_w: 1152, max_h: 768, quality: Quality::Draft, apply_crop: true };
+    if gpu {
+        let c = develop(&preview, &info, &s, &view, None, false).image;
+        let g = develop(&preview, &info, &s, &view, None, true).image;
+        let (max, mean) = diff(&c, &g);
+        println!("gpu vs cpu, loupe 1920×1280 typical: max {max} LSB, mean {mean:.4} LSB");
+    }
 
     if run("cold") {
-        println!("loupe 1920×1280 cold:                 {}", best(n, || drop(render(&preview, &info, &s, &view))));
-        println!("loupe draft 1152×768 cold:            {}", best(n, || drop(render(&preview, &info, &s, &draft))));
+        // a new photo: no cached stages (the GPU also uploads the preview)
+        row("loupe 1920×1280 cold:", &mut |g| drop(develop(&preview, &info, &s, &view, None, g)));
+        row("loupe draft 1152×768 cold:", &mut |g| drop(develop(&preview, &info, &s, &draft, None, g)));
     }
-    let cache = StageCache::default();
+    let caches = [StageCache::default(), StageCache::default()];
     let mut k = 0.0;
     if run("drag") {
-        drop(render_cached(&preview, &info, &s, &view, &cache));
-        let ms = best(n, || {
+        for g in backends {
+            drop(develop(&preview, &info, &s, &view, Some(&caches[*g as usize]), *g));
+        }
+        row("loupe 1920×1280 exposure drag (warm):", &mut |g| {
             let mut t = s.clone();
             k += 1.0;
-            t.light.contrast = k;
+            t.light.contrast = k % 50.0;
             t.light.exposure = 0.3 + k * 0.01;
-            drop(render_cached(&preview, &info, &t, &view, &cache));
+            drop(develop(&preview, &info, &t, &view, Some(&caches[g as usize]), g));
         });
-        println!("loupe 1920×1280 exposure drag (warm): {ms}");
-        drop(render_cached(&preview, &info, &s, &draft, &cache));
-        let ms = best(n, || {
+        for g in backends {
+            drop(develop(&preview, &info, &s, &draft, Some(&caches[*g as usize]), *g));
+        }
+        row("loupe draft highlights drag (warm):", &mut |g| {
             let mut t = s.clone();
             k += 1.0;
-            t.light.highlights = -40.0 + k;
-            drop(render_cached(&preview, &info, &t, &draft, &cache));
+            t.light.highlights = -40.0 + k % 50.0;
+            drop(develop(&preview, &info, &t, &draft, Some(&caches[g as usize]), g));
         });
-        println!("loupe draft highlights drag (warm):   {ms}");
-        let ms = best(n, || {
+        row("loupe draft clarity drag (warm):", &mut |g| {
             let mut t = s.clone();
             k += 1.0;
-            t.effects.clarity = 15.0 + k;
-            drop(render_cached(&preview, &info, &t, &draft, &cache));
+            t.effects.clarity = 15.0 + k % 50.0;
+            drop(develop(&preview, &info, &t, &draft, Some(&caches[g as usize]), g));
         });
-        println!("loupe draft clarity drag (warm):      {ms}");
-        let ms = best(n, || {
+        row("loupe draft NR drag (warm):", &mut |g| {
             let mut t = s.clone();
             k += 1.0;
-            t.detail.nr_luminance = 30.0 + k;
-            drop(render_cached(&preview, &info, &t, &draft, &cache));
+            t.detail.nr_luminance = 30.0 + k % 50.0;
+            drop(develop(&preview, &info, &t, &draft, Some(&caches[g as usize]), g));
         });
-        println!("loupe draft NR drag (warm):           {ms}");
+        row("loupe 1920×1280 NR drag (warm):", &mut |g| {
+            let mut t = s.clone();
+            k += 1.0;
+            t.detail.nr_luminance = 30.0 + k % 50.0;
+            drop(develop(&preview, &info, &t, &view, Some(&caches[g as usize]), g));
+        });
     }
     if run("finish") {
         // per-pixel stage cost by feature (warm cache: exposure changes only)
@@ -154,13 +197,14 @@ fn main() {
         for (name, f) in variants {
             let mut t = s.clone();
             f(&mut t);
-            drop(render_cached(&preview, &info, &t, &view, &cache));
-            let ms = best(n, || {
+            for g in backends {
+                drop(develop(&preview, &info, &t, &view, Some(&caches[*g as usize]), *g));
+            }
+            row(&format!("finish 1920×1280 {name}"), &mut |g| {
                 k += 1.0;
                 t.light.exposure = 0.3 + k * 0.001;
-                drop(render_cached(&preview, &info, &t, &view, &cache));
+                drop(develop(&preview, &info, &t, &view, Some(&caches[g as usize]), g));
             });
-            println!("finish 1920×1280 {name:<22} {ms}");
         }
     }
     if run("batch") && args.len() > 1 {
@@ -171,22 +215,39 @@ fn main() {
         let ids: Vec<_> = r["imported"].as_array().expect("ids").iter().filter_map(|v| v.as_u64()).map(lightcraft_engine::catalog::PhotoId).collect();
         let items: Vec<_> = ids.iter().enumerate().map(|(i, id)| (*id, i + 1)).collect();
         let o = ExportOptions::default();
-        let ms = best(n.min(3), || {
+        row(&format!("batch export of {} files (decode+render+JPEG):", items.len()), &mut |g| {
+            lightcraft_engine::gpu::set_enabled(g);
             for &(id, seq) in &items {
                 drop(export_photo(&mut session, id, &o, seq).expect("export"));
                 session.media.forget(id); // as in a batch: every original is decoded once
             }
         });
-        println!("batch export of {} files (decode+render+JPEG): {ms}", items.len());
+        lightcraft_engine::gpu::set_enabled(true);
         return;
     }
     if run("export") {
         let big = RenderRequest::fit(full.width, full.height);
         let ne = n.min(3);
         let mut img = None;
-        let ms = best(ne, || img = Some(render(&full, &info, &s, &big).image));
-        println!("export render {}×{}:            {ms}", full.width, full.height);
+        let cols: Vec<String> = backends
+            .iter()
+            .map(|&g| {
+                let ms = best(ne, || img = Some(develop(&full, &info, &s, &big, None, g).image));
+                format!("{ms}")
+            })
+            .collect();
+        println!(
+            "{:<38} cpu: {}{}",
+            format!("export render {}×{}:", full.width, full.height),
+            cols[0],
+            cols.get(1).map(|g| format!("  |  gpu: {g}")).unwrap_or_default()
+        );
+        if gpu {
+            let c = develop(&full, &info, &s, &big, None, false).image;
+            let (max, mean) = diff(&c, img.as_ref().expect("rendered"));
+            println!("gpu vs cpu, export {}×{} typical: max {max} LSB, mean {mean:.4} LSB", full.width, full.height);
+        }
         let img = img.expect("rendered");
-        println!("export JPEG encode:                   {}", best(ne, || drop(encode_image(&img, &ExportOptions::default()))));
+        println!("export JPEG encode:                    {}", best(ne, || drop(encode_image(&img, &ExportOptions::default()))));
     }
 }

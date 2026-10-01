@@ -58,10 +58,37 @@ struct Kernel {
 }
 
 /// A device buffer of `len` 32-bit values.
+///
+/// Dropped buffers are recycled: they first wait in a per-thread list (commands recorded on this
+/// thread may still use them) and become reusable once this thread submits ([`Gpu::submitted`]),
+/// as the queue then runs every earlier use before any later one. Reuse matters: allocating (and
+/// zero-filling) a fresh 100–300 MB buffer per pass costs as much as the pass itself.
 pub struct Buf {
-    pub buf: wgpu::Buffer,
+    buf: Option<wgpu::Buffer>,
     pub len: usize,
 }
+
+impl Buf {
+    pub fn raw(&self) -> &wgpu::Buffer {
+        self.buf.as_ref().expect("live buffer")
+    }
+}
+
+impl Drop for Buf {
+    fn drop(&mut self) {
+        if let Some(b) = self.buf.take() {
+            RETIRED.with(|r| r.borrow_mut().push(b));
+        }
+    }
+}
+
+thread_local! {
+    /// Buffers dropped on this thread since its last submit.
+    static RETIRED: std::cell::RefCell<Vec<wgpu::Buffer>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Most bytes kept in the free pool.
+const POOL_BYTES: u64 = 2 << 30;
 
 pub struct Gpu {
     pub device: wgpu::Device,
@@ -69,6 +96,8 @@ pub struct Gpu {
     pub info: wgpu::AdapterInfo,
     kernels: HashMap<&'static str, Kernel>,
     dummy: wgpu::Buffer,
+    /// Recycled buffers (see [`Buf`]).
+    free: std::sync::Mutex<Vec<wgpu::Buffer>>,
     /// Largest storage buffer the device accepts (bytes).
     pub max_buffer: u64,
 }
@@ -180,19 +209,37 @@ impl Gpu {
         });
         let max_buffer = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);
         log::info!("gpu: {} ({:?})", info.name, info.backend);
-        Some(Gpu { device, queue, info, kernels, dummy, max_buffer })
+        Some(Gpu { device, queue, info, kernels, dummy, free: Default::default(), max_buffer })
     }
 
-    /// A zero-initialized buffer of `len` 32-bit values.
+    /// A buffer of `len` 32-bit values with undefined contents (a recycled one when possible).
     pub fn buffer(&self, len: usize) -> Buf {
         let size = (len.max(1) * 4) as u64;
-        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+        let recycled = {
+            let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
+            f.iter().position(|b| b.size() == size).map(|i| f.swap_remove(i))
+        };
+        let buf = recycled.unwrap_or_else(|| {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
         });
-        Buf { buf, len }
+        Buf { buf: Some(buf), len }
+    }
+
+    /// Submit command buffers, then make the buffers this thread dropped before reusable.
+    pub fn submit(&self, cmds: impl IntoIterator<Item = wgpu::CommandBuffer>) {
+        self.queue.submit(cmds);
+        let retired = RETIRED.with(|r| std::mem::take(&mut *r.borrow_mut()));
+        let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
+        f.extend(retired);
+        let mut total: u64 = f.iter().map(|b| b.size()).sum();
+        while total > POOL_BYTES && !f.is_empty() {
+            total -= f.remove(0).size();
+        }
     }
 
     /// Upload 32-bit values.
@@ -207,7 +254,7 @@ impl Gpu {
             contents: bytes,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
         });
-        Buf { buf, len }
+        Buf { buf: Some(buf), len }
     }
 
     /// Whether a buffer of `len` 32-bit values fits the device limits.
@@ -230,7 +277,7 @@ impl Gpu {
         });
         let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() }];
         for (i, b) in bufs.iter().enumerate() {
-            let buf = b.map(|b| &b.buf).unwrap_or(&self.dummy);
+            let buf = b.map(|b| b.raw()).unwrap_or(&self.dummy);
             entries.push(wgpu::BindGroupEntry { binding: i as u32 + 1, resource: buf.as_entire_binding() });
         }
         let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &k.layout, entries: &entries });
@@ -250,8 +297,8 @@ impl Gpu {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        enc.copy_buffer_to_buffer(&src.buf, 0, &staging, 0, size);
-        self.queue.submit([enc.finish()]);
+        enc.copy_buffer_to_buffer(src.raw(), 0, &staging, 0, size);
+        self.submit([enc.finish()]);
         let slice = staging.slice(..size);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {

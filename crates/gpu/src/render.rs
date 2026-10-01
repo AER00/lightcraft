@@ -111,11 +111,27 @@ impl<'a> Cx<'a> {
         self.gpu.finish_and_read(enc, b, len)
     }
 
+    /// Submit what is recorded and wait for it (profiling only: stage timings).
+    pub fn sync(&mut self) {
+        if let Some(enc) = self.enc.take() {
+            self.gpu.submit([enc.finish()]);
+        }
+        let _ = self.gpu.device.poll(wgpu::PollType::wait_indefinitely());
+    }
+
+    /// A zero-filled buffer (the clear is recorded).
+    pub fn zeroed(&mut self, len: usize) -> Buf {
+        let out = self.gpu.buffer(len);
+        let enc = self.enc.get_or_insert_with(|| self.gpu.encoder());
+        enc.clear_buffer(out.raw(), 0, None);
+        out
+    }
+
     /// A copy of `b` (recorded).
     pub fn copy(&mut self, b: &Buf) -> Buf {
         let out = self.gpu.buffer(b.len);
         let enc = self.enc.get_or_insert_with(|| self.gpu.encoder());
-        enc.copy_buffer_to_buffer(&b.buf, 0, &out.buf, 0, (b.len * 4) as u64);
+        enc.copy_buffer_to_buffer(b.raw(), 0, out.raw(), 0, (b.len * 4) as u64);
         out
     }
 
@@ -135,7 +151,8 @@ pub(crate) fn rgb_words(img: &Rgb32f) -> &[f32] {
 // ---------------------------------------------------------------------------------------------
 // Filters (twins of `lightcraft_raster::blur` / `resample` and `lightcraft_pipeline::local`)
 
-/// Pixels each blur thread slides its running sum over.
+/// Pixels each blur thread slides its running sum over (at least; longer for large radii, so the
+/// priming sum stays a small share of the work).
 const CHUNK: usize = 16;
 
 /// Gaussian blur of a `w × h` image of `nc` interleaved channels: three box passes each way
@@ -145,19 +162,22 @@ pub(crate) fn gaussian(cx: &mut Cx<'_>, src: &Buf, w: usize, h: usize, nc: usize
         return cx.copy(src);
     }
     let radii = lightcraft_raster::blur::box_radii(sigma);
-    let mut cur: Option<Buf> = None;
-    let passes = radii.iter().map(|r| ("box_h", *r)).chain(radii.iter().map(|r| ("box_v", *r)));
-    for (k, r) in passes {
-        if r == 0 {
-            continue;
-        }
-        let out = cx.gpu.buffer(w * h * nc);
-        let groups = if k == "box_h" { groups2(w.div_ceil(CHUNK), h, [64, 4]) } else { groups2(w, h.div_ceil(CHUNK), [64, 4]) };
-        let p = [w as u32, h as u32, nc as u32, r as u32, CHUNK as u32];
-        cx.run(k, &p, &[Some(cur.as_ref().unwrap_or(src)), Some(&out)], groups);
-        cur = Some(out);
+    let passes: Vec<(&str, usize)> = radii.iter().map(|r| ("box_h", *r)).chain(radii.iter().map(|r| ("box_v", *r))).filter(|p| p.1 > 0).collect();
+    if passes.is_empty() {
+        return cx.copy(src);
     }
-    cur.unwrap_or_else(|| cx.copy(src))
+    // ping-pong between two buffers
+    let mut bufs = [cx.gpu.buffer(w * h * nc), cx.gpu.buffer(w * h * nc)];
+    for (i, (k, r)) in passes.iter().enumerate() {
+        let chunk = (2 * r + 1).clamp(CHUNK, 128);
+        let groups = if *k == "box_h" { groups2(w.div_ceil(chunk), h, [64, 4]) } else { groups2(w, h.div_ceil(chunk), [64, 4]) };
+        let p = [w as u32, h as u32, nc as u32, *r as u32, chunk as u32];
+        let (out, prev) = (&bufs[i % 2], &bufs[(i + 1) % 2]);
+        cx.run(k, &p, &[Some(if i == 0 { src } else { prev }), Some(out)], groups);
+    }
+    let last = (passes.len() - 1) % 2;
+    let [a, b] = std::mem::replace(&mut bufs, [cx.gpu.buffer(0), cx.gpu.buffer(0)]);
+    if last == 0 { a } else { b }
 }
 
 /// Resample taps of `lightcraft_raster::resample::resize`, packed for the `resize_*` kernels.
@@ -377,9 +397,11 @@ pub fn render(
     stages: Option<&GpuStages>,
 ) -> Option<Rendered> {
     let mut t = profiling().then(std::time::Instant::now);
-    let lap = |what: &str, t: &mut Option<std::time::Instant>| {
+    // Under `LIGHTCRAFT_PROFILE` each stage is submitted and waited for, so the timings are real.
+    let lap = |what: &str, t: &mut Option<std::time::Instant>, cx: &mut Cx<'_>| {
         if let Some(t) = t {
-            eprintln!("  gpu {what}: {:.1} ms (recorded)", t.elapsed().as_secs_f64() * 1e3);
+            cx.sync();
+            eprintln!("  gpu {what}: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
             *t = std::time::Instant::now();
         }
     };
@@ -393,6 +415,7 @@ pub fn render(
     let cached = stages.and_then(|c| c.get(src, plan.geo));
     let mut host = Host::default();
     let mut cx = Cx::new(gpu);
+    lap("plan", &mut t, &mut cx);
 
     // 1. geometry (on the CPU when the source exceeds the device's buffer limit)
     let sampled = match &cached {
@@ -412,14 +435,14 @@ pub fn render(
             b
         }
     };
-    lap("sample", &mut t);
+    lap("sample", &mut t, &mut cx);
 
     // 2. white balance, defringe, spots, noise reduction
     let lin = match cached.as_ref().and_then(|e| e.lin.clone()).filter(|(k, _)| *k == plan.lin_key) {
         Some((_, b)) => b,
         None => Arc::new(linear(&mut cx, &sampled, info, &plan, &mut host)),
     };
-    lap("wb/nr", &mut t);
+    lap("wb/nr", &mut t, &mut cx);
 
     // 3. spatial planes
     let mut planes = match cached.map(|e| e.planes) {
@@ -427,14 +450,14 @@ pub fn render(
         _ => Planes { key: plan.lin_key, ..Default::default() },
     };
     let prep = prepare(&mut cx, &lin, &plan, req, &mut planes);
-    lap("planes", &mut t);
+    lap("planes", &mut t, &mut cx);
     if let Some(c) = stages {
         c.put(Entry { src: src.clone(), geo: plan.geo, sampled, lin: Some((plan.lin_key, lin.clone())), planes });
     }
 
     // 4. masks
     let (masks, terms) = masks(&mut cx, &lin, &prep, &plan, &mut host);
-    lap("masks", &mut t);
+    lap("masks", &mut t, &mut cx);
 
     // 5. per-pixel stage
     let fp = FinishParams::new(s, &plan.frame, info, w, h, plan.px_per_long, prep.air);
@@ -460,8 +483,9 @@ pub fn render(
     );
     let data: Vec<[u8; 4]> = cx.read(&out, n);
     let image = Rgba8 { width: w, height: h, data };
-    lap("finish + readback", &mut t);
+    lap("finish + readback", &mut t, &mut cx);
     let histogram = Histogram::of_srgb8(&image);
+    lap("histogram", &mut t, &mut cx);
     Some(Rendered { image, histogram })
 }
 
@@ -598,7 +622,7 @@ fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Ho
     let [a, b, c, d, e, f] = frame.out_to_norm(w, h).0;
     let (kx, ky) = (frame.ow / long, frame.oh / long);
     let aff = [a * kx, b * ky, c * kx, d * ky, e * kx, f * ky].map(|v| (v as f32).to_bits());
-    let alpha = cx.gpu.buffer(n * list.len());
+    let alpha = cx.zeroed(n * list.len());
     let comp_plane = cx.gpu.buffer(n);
     for (mi, m) in list.iter().enumerate() {
         let mut first = true;
@@ -700,6 +724,35 @@ fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Ho
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Kernel timings on a 24 MP plane: `cargo test --release -p lightcraft-gpu -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn bench_kernels() {
+        let Some(gpu) = crate::device() else { return };
+        let (w, h) = (6000, 4000);
+        let src = gpu.upload(&vec![0.5f32; w * h * 3]);
+        let time = |name: &str, f: &mut dyn FnMut(&mut Cx<'_>)| {
+            let mut best = f64::MAX;
+            for _ in 0..5 {
+                let mut cx = Cx::new(gpu);
+                cx.sync();
+                let t = std::time::Instant::now();
+                f(&mut cx);
+                cx.sync();
+                best = best.min(t.elapsed().as_secs_f64() * 1e3);
+            }
+            eprintln!("{name:<40} {best:.1} ms");
+        };
+        for nc in [1, 2, 3] {
+            time(&format!("gaussian nc={nc} sigma=2"), &mut |cx| drop(gaussian(cx, &src, w, h, nc, 2.0)));
+        }
+        time("map log_lum", &mut |cx| {
+            let o = cx.gpu.buffer(w * h);
+            map(cx, "log_lum_k", w * h, &[], [Some(&src), None, None], &o);
+        });
+        time("guided sigma=1.75", &mut |cx| drop(guided(cx, &src, w, h, 1.75, 0.01)));
+    }
 
     #[test]
     fn orient_map_matches_image_oriented() {

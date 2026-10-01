@@ -56,7 +56,7 @@ fn env_disabled() -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn device() -> Option<&'static ctx::Gpu> {
+pub(crate) fn device() -> Option<&'static ctx::Gpu> {
     static GPU: std::sync::OnceLock<Option<ctx::Gpu>> = std::sync::OnceLock::new();
     if env_disabled() {
         return None;

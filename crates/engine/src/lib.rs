@@ -30,7 +30,7 @@ use lightcraft_develop::DevelopSettings;
 pub use media::{RenderJob, SourceLevel};
 use serde_json::Value;
 pub use view::{LibrarySource, Selection};
-pub use {lightcraft_catalog as catalog, lightcraft_develop as develop, lightcraft_pipeline as pipeline};
+pub use {lightcraft_catalog as catalog, lightcraft_develop as develop, lightcraft_gpu as gpu, lightcraft_pipeline as pipeline};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
