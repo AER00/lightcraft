@@ -20,7 +20,7 @@
 //! reconstruction rule for every scale, and no permissively licensed description exists. Those files report
 //! [`RawError::Unsupported`]; their embedded preview still works.
 
-use crate::{BlackLevel, Cfa, ColorData, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
+use crate::{BlackLevel, Cfa, ColorData, Mode, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
 use lightcraft_geom::Orientation;
 use lightcraft_tiff::{Tiff, tags as t};
 use rayon::prelude::*;
@@ -97,7 +97,7 @@ fn cfa(code: u16) -> Cfa {
     Cfa::bayer(s).expect("static")
 }
 
-pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
+pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
     let get = |tag: u16| ifd0.u64(tag).map(|v| v as usize);
@@ -118,9 +118,12 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
     if src.len() < need {
         return Err(RawError::Corrupt(format!("RW2 raw data truncated ({} of {need} bytes)", src.len())));
     }
-    let stream = unrotate(&src[..(need.div_ceil(CHUNK) * CHUNK).min(src.len())]);
-    let mut data = vec![0u16; n];
-    unpack(&stream, bits, &mut data)?;
+    let mut data = Vec::new();
+    if mode == Mode::Full {
+        let stream = unrotate(&src[..(need.div_ceil(CHUNK) * CHUNK).min(src.len())]);
+        data = vec![0u16; n];
+        unpack(&stream, bits, &mut data)?;
+    }
 
     let active = match (get(BORDER_TOP), get(BORDER_LEFT), get(BORDER_BOTTOM), get(BORDER_RIGHT)) {
         (Some(tp), Some(l), Some(b), Some(r)) if b > tp && r > l => Rect::new(l, tp, r - l, b - tp).clipped(w, h),
@@ -167,7 +170,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
         opcodes: OpcodeLists::default(),
         metadata,
     };
-    img.validate()?;
+    img.validate_for(mode)?;
     Ok(img)
 }
 
@@ -235,6 +238,7 @@ mod tests {
             let bytes = rw2(w as u16, h as u16, bits as u16, 5, &encode(&px, bits));
             assert_eq!(crate::probe(&bytes), Some(RawFormat::Rw2));
             let r = crate::decode(&bytes).unwrap_or_else(|e| panic!("{bits}: {e}"));
+            assert_eq!(crate::probe_info(&bytes).unwrap(), r.info());
             assert_eq!(r.data, RawData::U16(px), "{bits}-bit");
             assert_eq!(r.active_area, Rect::new(4, 2, w - 4, h - 2));
             assert_eq!(r.cfa.as_ref().unwrap().name(), "RGGB");

@@ -1,8 +1,8 @@
 //! DNG (Adobe Digital Negative Specification 1.7): raw IFD selection, pixel data (via [`crate::tiffraw`]),
 //! linearization, black/white levels, active area, default crop, CFA description, colour tags, opcode lists.
 
-use crate::tiffraw::{Packing, read_image};
-use crate::{BlackLevel, Cfa, ColorData, Mat3, RawData, RawError, RawFormat, RawImage, Rect, Result, opcodes};
+use crate::tiffraw::{Packing, read_image_in};
+use crate::{BlackLevel, Cfa, ColorData, Mat3, Mode, RawData, RawError, RawFormat, RawImage, Rect, Result, opcodes};
 use lightcraft_color::Xy;
 use lightcraft_geom::Orientation;
 use lightcraft_tiff::tags::{self as t, photometric};
@@ -48,7 +48,7 @@ pub(crate) fn color_data(ifd0: &Ifd, raw: &Ifd) -> ColorData {
     }
 }
 
-pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
+pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
     let raw = raw_ifd(&tiff).ok_or_else(|| RawError::Corrupt("DNG without a raw image IFD".into()))?;
@@ -63,7 +63,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
     if info.compression == t::compression::JPEG_XL {
         return Err(RawError::Unsupported("JPEG XL DNG".into()));
     }
-    let mut data = read_image(bytes, &info, tiff.order, Packing::Msb)?;
+    let mut data = read_image_in(mode, bytes, &info, tiff.order, Packing::Msb)?;
     let bits = info.bits() as u32;
 
     // linearization table (integer data only)
@@ -162,6 +162,6 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
         opcodes,
         metadata,
     };
-    img.validate()?;
+    img.validate_for(mode)?;
     Ok(img)
 }

@@ -145,16 +145,72 @@ pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
 
 /// Decode a raw file.
 pub fn decode(bytes: &[u8]) -> Result<RawImage> {
+    decode_with(bytes, Mode::Full)
+}
+
+/// Everything [`decode`] learns about a raw file except its samples: geometry, orientation, CFA,
+/// colour data, as-shot white balance, opcode lists (embedded lens corrections), metadata — read
+/// from the headers without decompressing the pixel data, for imports. Equal to
+/// [`RawImage::info`] of the decoded image. Black and white levels are not included (some formats
+/// measure them from the samples).
+///
+/// A few uncompressed vendor formats derive part of this from the samples themselves (Nikon
+/// NEF: optically masked trailing columns; Olympus ORF: the CFA phase and bit depth; Pentax PEF
+/// without crop tags: dark borders); for those the samples are read (unpacked, nothing to
+/// decompress) and dropped.
+pub fn probe_info(bytes: &[u8]) -> Result<RawInfo> {
+    decode_with(bytes, Mode::Header).map(RawImage::into_info)
+}
+
+/// How much of a file a decoder reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Mode {
+    /// Headers and samples.
+    Full,
+    /// Headers only: the returned image has no samples, and black/white levels measured from
+    /// the samples are placeholders. Only [`RawImage::into_info`] may look at it.
+    Header,
+}
+
+fn decode_with(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     match probe(bytes).ok_or(RawError::NotRaw)? {
-        RawFormat::Dng => dng::decode(bytes),
-        RawFormat::Cr2 => vendor::cr2::decode(bytes),
+        RawFormat::Dng => dng::decode(bytes, mode),
+        RawFormat::Cr2 => vendor::cr2::decode(bytes, mode),
         RawFormat::Nef | RawFormat::Nrw => vendor::nef::decode(bytes),
-        RawFormat::Arw => vendor::arw::decode(bytes),
-        RawFormat::Raf => vendor::raf::decode(bytes),
-        RawFormat::Rw2 => vendor::rw2::decode(bytes),
-        RawFormat::Pef => vendor::pef::decode(bytes),
+        RawFormat::Arw => vendor::arw::decode(bytes, mode),
+        RawFormat::Raf => vendor::raf::decode(bytes, mode),
+        RawFormat::Rw2 => vendor::rw2::decode(bytes, mode),
+        RawFormat::Pef => vendor::pef::decode(bytes, mode),
         RawFormat::Orf => vendor::orf::decode(bytes),
         other => Err(RawError::Unsupported(format!("{other:?} files are not decoded yet"))),
+    }
+}
+
+/// A raw file's description without its samples (see [`probe_info`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RawInfo {
+    pub format: RawFormat,
+    /// Full sensor data dimensions (including masked borders).
+    pub width: usize,
+    pub height: usize,
+    pub cpp: usize,
+    pub cfa: Option<Cfa>,
+    pub bits: u32,
+    pub active_area: Rect,
+    /// Default crop relative to the active area.
+    pub crop: Rect,
+    pub orientation: Orientation,
+    pub color: ColorData,
+    pub wb_multipliers: Option<[f32; 3]>,
+    pub opcodes: OpcodeLists,
+    pub metadata: Metadata,
+}
+
+impl RawInfo {
+    /// Size of the developed image before orientation: the default crop, else the active area.
+    pub fn developed_size(&self) -> (usize, usize) {
+        let c = self.crop.clipped(self.active_area.width, self.active_area.height);
+        if c.width > 1 && c.height > 1 { (c.width, c.height) } else { (self.active_area.width, self.active_area.height) }
     }
 }
 
@@ -377,12 +433,59 @@ pub struct Normalized {
 }
 
 impl RawImage {
+    /// The description without the samples (what [`probe_info`] returns for the same file).
+    pub fn info(&self) -> RawInfo {
+        RawInfo {
+            format: self.format,
+            width: self.width,
+            height: self.height,
+            cpp: self.cpp,
+            cfa: self.cfa.clone(),
+            bits: self.bits,
+            active_area: self.active_area,
+            crop: self.crop,
+            orientation: self.orientation,
+            color: self.color.clone(),
+            wb_multipliers: self.wb_multipliers,
+            opcodes: self.opcodes.clone(),
+            metadata: self.metadata.clone(),
+        }
+    }
+
+    /// [`Self::info`], dropping the samples.
+    pub fn into_info(self) -> RawInfo {
+        RawInfo {
+            format: self.format,
+            width: self.width,
+            height: self.height,
+            cpp: self.cpp,
+            cfa: self.cfa,
+            bits: self.bits,
+            active_area: self.active_area,
+            crop: self.crop,
+            orientation: self.orientation,
+            color: self.color,
+            wb_multipliers: self.wb_multipliers,
+            opcodes: self.opcodes,
+            metadata: self.metadata,
+        }
+    }
+
+    /// Validate what a decoder read in `mode` ([`Mode::Header`]: everything but the samples).
+    pub(crate) fn validate_for(&self, mode: Mode) -> Result<()> {
+        self.check(mode == Mode::Full)
+    }
+
     /// Validate internal consistency (dimensions vs data length, CFA shape, rectangles).
     pub fn validate(&self) -> Result<()> {
+        self.check(true)
+    }
+
+    fn check(&self, samples: bool) -> Result<()> {
         if self.width == 0 || self.height == 0 || !(1..=4).contains(&self.cpp) {
             return Err(RawError::Corrupt("bad dimensions".into()));
         }
-        if self.data.len() != self.width * self.height * self.cpp {
+        if samples && self.data.len() != self.width * self.height * self.cpp {
             return Err(RawError::Corrupt("data length mismatch".into()));
         }
         if let Some(c) = &self.cfa
@@ -449,12 +552,13 @@ impl RawImage {
     pub fn develop(&self, method: Method) -> Result<Rgb32f> {
         let n = self.normalized()?;
         let mut rgb = demosaic(&n, method);
+        drop(n);
         opcodes::apply_list3(&self.opcodes.list3, &mut rgb);
         let c = self.crop.clipped(rgb.width, rgb.height);
         if c.width == 0 || c.height == 0 || (c.x == 0 && c.y == 0 && c.width == rgb.width && c.height == rgb.height) {
             return Ok(rgb);
         }
-        Ok(rgb.crop(c.x, c.y, c.width, c.height))
+        Ok(rgb.into_crop(c.x, c.y, c.width, c.height))
     }
 }
 

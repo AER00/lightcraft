@@ -189,3 +189,23 @@ fn upright_and_guides_commands() {
     assert!(s.render_now(id, 160, 160).is_ok());
     assert!(s.execute("geometry.upright", &json!({"mode": "sideways"})).is_err());
 }
+
+#[test]
+fn memory_report_counts_decoded_sources_and_renders() {
+    let mut s = demo();
+    let r = s.execute("library.memory", &json!({})).unwrap();
+    assert_eq!(r["previewSources"]["count"], 0);
+    assert!(r["gpu"]["allocated"].is_u64() && r.get("engineBytes").is_some());
+    let id = s.active().unwrap();
+    s.render_now(id, 800, 600).unwrap();
+    let m = s.memory_report();
+    assert_eq!(m.preview_sources.count, 1);
+    // a 2560 px linear float source: 12 bytes per pixel
+    assert!(m.preview_sources.bytes >= 12 * 2560 * 1000, "{:?}", m.preview_sources);
+    assert_eq!(m.engine_bytes, m.thumb_sources.bytes + m.preview_sources.bytes + m.full_source.bytes + m.rendered.bytes);
+    let r = s.thumb_job(id, 200).unwrap().run();
+    s.accept(&r);
+    let m = s.memory_report();
+    assert_eq!(m.thumb_sources.count, 1);
+    assert!(m.rendered.count >= 1, "the thumbnail render is cached");
+}

@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 pub use disk::{DiskCache, decode_jpeg, encode_jpeg};
 pub use hash::{Hash128, Hasher128, hash_bytes};
 use lightcraft_raster::Rgba8;
-pub use lru::Lru;
+pub use lru::{Lru, next_tick};
 pub use pool::JobPool;
 
 /// Rendered-thumbnail cache: memory LRU over an optional disk cache.
@@ -90,6 +90,25 @@ impl PreviewCache {
         self.mem.lock().unwrap_or_else(|e| e.into_inner()).clear();
         if let Some(d) = &self.disk {
             d.clear();
+        }
+    }
+
+    /// Use tick ([`next_tick`]) of the least recently used image in memory.
+    pub fn oldest_tick(&self) -> Option<u64> {
+        self.mem.lock().unwrap_or_else(|e| e.into_inner()).oldest_tick()
+    }
+
+    /// Drop the least recently used image from memory (it stays on disk); returns its bytes.
+    pub fn evict_oldest(&self) -> Option<usize> {
+        self.mem.lock().unwrap_or_else(|e| e.into_inner()).pop_oldest()
+    }
+
+    /// Change the memory budget (bytes), evicting at once if needed.
+    pub fn set_mem_budget(&self, bytes: usize) {
+        let mut m = self.mem.lock().unwrap_or_else(|e| e.into_inner());
+        m.set_budget(bytes);
+        while m.cost() > bytes && m.len() > 1 {
+            m.pop_oldest();
         }
     }
 
