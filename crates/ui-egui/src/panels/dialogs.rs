@@ -102,6 +102,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     let n = app.session.selection.ids.len().max(1);
                     ui.label(egui::RichText::new(format!("{n} photo{}", if n == 1 { "" } else { "s" })).color(t.text_dim));
                     ui.add_space(4.0);
+                    let before = opts.format;
                     choices(
                         ui,
                         "Format",
@@ -109,6 +110,16 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         &[(F::Jpeg, "JPEG"), (F::Png, "PNG"), (F::Tiff, "TIFF"), (F::Webp, "WebP"), (F::Avif, "AVIF")],
                         &mut opts.format,
                     );
+                    if opts.format != before {
+                        // each format starts at its own default depth (TIFF 16-bit, others 8-bit)
+                        opts.bit_depth = None;
+                    }
+                    let depths = lightcraft_engine::export::ExportOptions::bit_depths(opts.format);
+                    if depths.len() > 1 {
+                        let mut bd = opts.bit_depth.filter(|b| depths.iter().any(|d| d.0 == *b)).unwrap_or(depths[0].0);
+                        choices(ui, "Bit depth", "exportBitDepth", depths, &mut bd);
+                        opts.bit_depth = Some(bd);
+                    }
                     if opts.format == F::Avif {
                         ui.label(egui::RichText::new("Color space: sRGB (AVIF)").color(t.text_dim));
                     } else {
@@ -310,7 +321,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
                 "format": opts.format, "quality": opts.quality, "longEdge": long_edge, "limitKb": limit_kb,
                 "sharpen": opts.sharpen, "sharpenAmount": opts.sharpen_amount, "naming": opts.naming, "dir": dir,
                 "metadata": opts.metadata, "removeLocation": opts.remove_location, "watermark": opts.watermark,
-                "colorSpace": opts.color_space,
+                "colorSpace": opts.color_space, "bitDepth": opts.bit_depth,
             }),
         ),
         Dialog::Merge { opts } => crate::merge::start_final(app, opts),

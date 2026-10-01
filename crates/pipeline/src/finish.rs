@@ -10,7 +10,7 @@ use lightcraft_raster::Rgba8;
 use crate::colorops::ColorOps;
 use crate::geometry::Frame;
 use crate::local::log_lum;
-use crate::output::{OutputSpace, OutputTrc};
+use crate::output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc};
 use crate::tone::ToneMap;
 use crate::{Prepared, SourceInfo, for_rows};
 
@@ -249,7 +249,7 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
     let (w, h) = (p.img.width, p.img.height);
     let fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
     let trc = fp.out_trc;
-    let data = finish_with(p, &fp, |e| match trc {
+    let data = finish_with(p, &fp, false, |e| match trc {
         OutputTrc::Srgb => [enc(e[0]), enc(e[1]), enc(e[2]), 255],
         t => {
             let x = e.map(|v| enc(t.encode(lightcraft_color::transfer::srgb_to_linear(v.clamp(0.0, 1.0)))));
@@ -259,9 +259,38 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
     Rgba8 { width: w, height: h, data }
 }
 
+/// [`finish`] into 16-bit display-encoded or 32-bit float linear samples (output primaries).
+pub(crate) fn finish_deep(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo, space: OutputSpace, depth: OutputDepth) -> DeepImage {
+    use lightcraft_color::transfer::srgb_to_linear;
+    let (w, h) = (p.img.width, p.img.height);
+    let fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
+    let trc = fp.out_trc;
+    let samples = match depth {
+        OutputDepth::F32Linear => {
+            let v = finish_with(p, &fp, true, |e| e.map(|v| srgb_to_linear(v.clamp(0.0, 1.0))));
+            DeepSamples::F32(v.into_flattened())
+        }
+        _ => {
+            let q = |v: f32| (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+            let v = finish_with(p, &fp, true, |e| match trc {
+                OutputTrc::Srgb => e.map(q),
+                t => e.map(|v| q(t.encode(srgb_to_linear(v.clamp(0.0, 1.0))))),
+            });
+            DeepSamples::U16(v.into_flattened())
+        }
+    };
+    DeepImage { width: w, height: h, space, samples }
+}
+
 /// The per-pixel stage: every output pixel's colour in the output primaries, encoded with the sRGB
 /// curve (tone curves and grain applied; not clamped), handed to `store` for the final encoding.
-pub(crate) fn finish_with<T: Copy + Default + Send>(p: &Prepared, fp: &FinishParams, store: impl Fn([f32; 3]) -> T + Sync + Send) -> Vec<T> {
+/// `exact`: encode with the exact sRGB curve instead of the (8/10-bit accurate) table.
+pub(crate) fn finish_with<T: Copy + Default + Send>(
+    p: &Prepared,
+    fp: &FinishParams,
+    exact: bool,
+    store: impl Fn([f32; 3]) -> T + Sync + Send,
+) -> Vec<T> {
     let (w, h) = (p.img.width, p.img.height);
     let FinishParams {
         tone,
@@ -461,7 +490,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(p: &Prepared, fp: &FinishPar
             }
 
             // --- encode, curves, grain
-            let mut e = r.map(|v| encode_srgb(srgb, v));
+            let mut e = if exact { r.map(|v| linear_to_srgb(v.clamp(0.0, 1.0))) } else { r.map(|v| encode_srgb(srgb, v)) };
             if let Some(l) = curves {
                 let e0 = e;
                 e = [l[0].eval(e[0]), l[1].eval(e[1]), l[2].eval(e[2])];

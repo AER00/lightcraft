@@ -488,7 +488,7 @@ pub fn render(
     lap("histogram", &mut t, &mut cx);
     let mut image = image;
     lightcraft_pipeline::visualize::apply(&mut image, req.overlay, &plan);
-    Some(Rendered { image, histogram })
+    Some(Rendered { image, histogram, deep: None })
 }
 
 /// The white-balanced, retouched, denoised image.

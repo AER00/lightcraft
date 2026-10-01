@@ -38,7 +38,7 @@ pub mod transform;
 pub mod upright;
 pub mod visualize;
 
-pub use output::{OutputSpace, OutputTrc};
+pub use output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc};
 pub use visualize::Overlay;
 
 use lightcraft_develop::{DevelopSettings, Treatment};
@@ -88,17 +88,22 @@ pub struct RenderRequest {
     pub overlay: Overlay,
     /// Colour space of the result (exports; previews stay sRGB).
     pub space: OutputSpace,
+    /// Sample format: 8-bit only, or also a 16-bit / linear float [`Rendered::deep`] (exports).
+    pub depth: OutputDepth,
 }
 
 impl RenderRequest {
     pub fn fit(max_w: usize, max_h: usize) -> Self {
-        Self { max_w, max_h, quality: Quality::Full, apply_crop: true, overlay: Overlay::None, space: OutputSpace::Srgb }
+        Self { max_w, max_h, quality: Quality::Full, apply_crop: true, overlay: Overlay::None, space: OutputSpace::Srgb, depth: OutputDepth::U8 }
     }
 }
 
 pub struct Rendered {
+    /// The result, 8-bit (for deep renders: `deep` reduced to 8 bits, display-encoded).
     pub image: Rgba8,
     pub histogram: Histogram,
+    /// The high-bit-depth result when [`RenderRequest::depth`] asks for one.
+    pub deep: Option<DeepImage>,
 }
 
 /// Everything the per-pixel stage needs, precomputed at output resolution.
@@ -348,13 +353,20 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     if let Some((a, c)) = shared {
         c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((lin_key, lin)), planes });
     }
+    if req.depth != OutputDepth::U8 {
+        let deep = finish::finish_deep(&prep, s, frame, info, req.space, req.depth);
+        let image = deep.to_rgba8();
+        let histogram = Histogram::of_srgb8(&image);
+        lap("finish (deep)", &mut t);
+        return Rendered { image, histogram, deep: Some(deep) };
+    }
     let image = finish::finish(&prep, s, frame, info, req.space);
     lap("finish", &mut t);
     let histogram = Histogram::of_srgb8(&image);
     lap("histogram", &mut t);
     let mut image = image;
     visualize::apply(&mut image, req.overlay, &plan);
-    Rendered { image, histogram }
+    Rendered { image, histogram, deep: None }
 }
 
 /// Convenience: render a before/after pair side by side is up to the UI; this renders "before"

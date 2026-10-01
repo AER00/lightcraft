@@ -138,6 +138,66 @@ impl OutputSpace {
     }
 }
 
+/// Sample format of a render.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OutputDepth {
+    /// 8-bit display-encoded ([`crate::Rendered::image`] only).
+    #[default]
+    U8,
+    /// 16-bit display-encoded RGB in [`crate::Rendered::deep`].
+    U16,
+    /// 32-bit float *linear* RGB (target primaries, 0..1) in [`crate::Rendered::deep`].
+    F32Linear,
+}
+
+/// High-bit-depth RGB samples (3 per pixel, interleaved, row-major).
+#[derive(Clone, Debug, PartialEq)]
+pub enum DeepSamples {
+    U16(Vec<u16>),
+    F32(Vec<f32>),
+}
+
+/// A high-bit-depth render ([`OutputDepth::U16`] / [`OutputDepth::F32Linear`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeepImage {
+    pub width: usize,
+    pub height: usize,
+    pub space: OutputSpace,
+    pub samples: DeepSamples,
+}
+
+impl DeepImage {
+    /// The same image reduced to 8 bits, display-encoded with the space's curve.
+    pub fn to_rgba8(&self) -> lightcraft_raster::Rgba8 {
+        let mut out = lightcraft_raster::Rgba8::new(self.width, self.height);
+        let trc = self.space.trc();
+        match &self.samples {
+            DeepSamples::U16(v) => {
+                for (p, c) in out.data.iter_mut().zip(v.chunks_exact(3)) {
+                    *p = [c[0], c[1], c[2]].map(|x| ((x as u32 * 255 + 32767) / 65535) as u8).into_rgba();
+                }
+            }
+            DeepSamples::F32(v) => {
+                for (p, c) in out.data.iter_mut().zip(v.chunks_exact(3)) {
+                    *p = [c[0], c[1], c[2]].map(|x| (trc.encode(x) * 255.0 + 0.5) as u8).into_rgba();
+                }
+            }
+        }
+        out
+    }
+}
+
+trait IntoRgba {
+    fn into_rgba(self) -> [u8; 4];
+}
+
+impl IntoRgba for [u8; 3] {
+    fn into_rgba(self) -> [u8; 4] {
+        [self[0], self[1], self[2], 255]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

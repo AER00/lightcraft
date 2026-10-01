@@ -90,6 +90,7 @@ impl WireJob {
             overlay: lightcraft_engine::pipeline::Overlay::from_parts(self.overlay.0, self.overlay.1),
             // workers render previews (exports run in-process)
             space: lightcraft_engine::pipeline::OutputSpace::Srgb,
+            depth: lightcraft_engine::pipeline::OutputDepth::U8,
         }
     }
 

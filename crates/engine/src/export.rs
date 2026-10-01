@@ -3,9 +3,9 @@
 //! published primaries and curves, optional output sharpening and a JPEG file-size limit. Pure (bytes in, bytes out) so the desktop
 //! app, CLI, MCP and the web build share it; writing the file is the caller's job.
 
-use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, NamedSpace, TiffCompression, encode, icc};
+use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, NamedSpace, Samples, TiffCompression, encode, icc};
 use lightcraft_meta::{DateTime, Gps, Metadata};
-pub use lightcraft_pipeline::OutputSpace;
+pub use lightcraft_pipeline::{DeepImage, DeepSamples, OutputDepth, OutputSpace};
 use lightcraft_raster::Rgba8;
 use serde::{Deserialize, Serialize};
 
@@ -105,15 +105,49 @@ impl Default for Watermark {
 /// Inter SemiBold (OFL, see assets/ATTRIBUTION.md).
 static WATERMARK_FONT: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
 
-/// Draw `wm` onto `img` (straight sRGB alpha blending).
+/// Draw `wm` onto `img` (straight alpha blending of the encoded values).
 pub fn draw_watermark(img: &mut Rgba8, wm: &Watermark) {
+    let width = img.width;
+    watermark_coverage(img.width, img.height, wm, |x, y, k, col| {
+        let p = &mut img.data[y * width + x];
+        for c in 0..3 {
+            p[c] = (p[c] as f32 + (col[c] as f32 - p[c] as f32) * k).round() as u8;
+        }
+    });
+}
+
+/// Draw `wm` onto a high-bit-depth image (`wm.color` is in the image's space, 8-bit encoded; float
+/// images are linear and blend in linear light).
+pub fn draw_watermark_deep(img: &mut DeepImage, wm: &Watermark) {
+    let (width, trc) = (img.width, img.space.trc());
+    match &mut img.samples {
+        DeepSamples::U16(v) => watermark_coverage(img.width, img.height, wm, |x, y, k, col| {
+            let i = (y * width + x) * 3;
+            for c in 0..3 {
+                let p = v[i + c] as f32;
+                v[i + c] = (p + (col[c] as f32 * 257.0 - p) * k).round().clamp(0.0, 65535.0) as u16;
+            }
+        }),
+        DeepSamples::F32(v) => watermark_coverage(img.width, img.height, wm, |x, y, k, col| {
+            let i = (y * width + x) * 3;
+            for c in 0..3 {
+                let target = trc.decode(col[c] as f32 / 255.0);
+                v[i + c] += (target - v[i + c]) * k;
+            }
+        }),
+    }
+}
+
+/// Lay out `wm` on a `width × height` image and call `blend(x, y, coverage × opacity, colour)` for
+/// every covered pixel (shadow pass first).
+fn watermark_coverage(width: usize, height: usize, wm: &Watermark, mut blend_px: impl FnMut(usize, usize, f32, [u8; 3])) {
     use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
     let text = wm.text.trim();
-    if text.is_empty() || img.width == 0 || img.height == 0 {
+    if text.is_empty() || width == 0 || height == 0 {
         return;
     }
     let Ok(font) = FontRef::try_from_slice(WATERMARK_FONT) else { return };
-    let short = img.width.min(img.height) as f32;
+    let short = width.min(height) as f32;
     let px = (wm.size.clamp(0.005, 0.5) * short).max(6.0);
     let sf = font.as_scaled(PxScale::from(px));
     // Lay out one line.
@@ -131,7 +165,7 @@ pub fn draw_watermark(img: &mut Rgba8, wm: &Watermark) {
     }
     let (tw, th) = (x, sf.ascent() - sf.descent());
     let inset = wm.inset.clamp(0.0, 0.4) * short;
-    let (w, h) = (img.width as f32, img.height as f32);
+    let (w, h) = (width as f32, height as f32);
     use Anchor::*;
     let ox = match wm.anchor {
         TopLeft | Left | BottomLeft => inset,
@@ -145,14 +179,10 @@ pub fn draw_watermark(img: &mut Rgba8, wm: &Watermark) {
     };
     let alpha = wm.opacity.clamp(0.0, 1.0);
     let mut blend = |gx: i32, gy: i32, cov: f32, col: [u8; 3], a: f32| {
-        if gx < 0 || gy < 0 || gx >= img.width as i32 || gy >= img.height as i32 {
+        if gx < 0 || gy < 0 || gx >= width as i32 || gy >= height as i32 {
             return;
         }
-        let k = (cov * a).clamp(0.0, 1.0);
-        let p = &mut img.data[gy as usize * img.width + gx as usize];
-        for c in 0..3 {
-            p[c] = (p[c] as f32 + (col[c] as f32 - p[c] as f32) * k).round() as u8;
-        }
+        blend_px(gx as usize, gy as usize, (cov * a).clamp(0.0, 1.0), col);
     };
     let passes: &[(f32, [u8; 3], f32)] =
         if wm.shadow { &[((px * 0.05).max(1.0), [0, 0, 0], 0.45), (0.0, wm.color, 1.0)] } else { &[(0.0, wm.color, 1.0)] };
@@ -202,6 +232,9 @@ pub struct ExportOptions {
     pub watermark: Option<Watermark>,
     /// Output colour space (AVIF is always sRGB: its muxer cannot embed a profile).
     pub color_space: OutputSpace,
+    /// Bits per channel: 8, 16 (PNG, TIFF), 32 (TIFF: float, linear) or 10 (AVIF); `None` = the
+    /// format's default (TIFF 16, everything else 8). See [`ExportOptions::effective_depth`].
+    pub bit_depth: Option<u8>,
 }
 
 impl Default for ExportOptions {
@@ -218,13 +251,14 @@ impl Default for ExportOptions {
             remove_location: false,
             watermark: None,
             color_space: OutputSpace::Srgb,
+            bit_depth: None,
         }
     }
 }
 
 impl ExportOptions {
     /// Read options from command params (`format`, `quality`, `longEdge`, `limitKb`, `sharpen`,
-    /// `sharpenAmount`, `naming`, `metadata`, `removeLocation`, `watermark`, `colorSpace`).
+    /// `sharpenAmount`, `naming`, `metadata`, `removeLocation`, `watermark`, `colorSpace`, `bitDepth`).
     pub fn from_json(p: &serde_json::Value) -> Self {
         use serde_json::Value;
         let d = Self::default();
@@ -250,6 +284,31 @@ impl ExportOptions {
             }
             .filter(|w: &Watermark| !w.text.trim().is_empty()),
             color_space: s("colorSpace").and_then(OutputSpace::parse).unwrap_or(d.color_space),
+            bit_depth: u("bitDepth").filter(|b| matches!(b, 8 | 10 | 16 | 32)).map(|b| b as u8),
+        }
+    }
+
+    /// The sample format the file is written with (unsupported requests fall back to the closest).
+    pub fn effective_depth(&self) -> OutputDepth {
+        match (self.format, self.bit_depth) {
+            (ExportFormat::Jpeg | ExportFormat::Webp, _) => OutputDepth::U8,
+            (ExportFormat::Png, Some(16 | 32)) => OutputDepth::U16,
+            (ExportFormat::Png, _) => OutputDepth::U8,
+            (ExportFormat::Tiff, Some(8)) => OutputDepth::U8,
+            (ExportFormat::Tiff, Some(32)) => OutputDepth::F32Linear,
+            (ExportFormat::Tiff, _) => OutputDepth::U16,
+            (ExportFormat::Avif, Some(10 | 16 | 32)) => OutputDepth::U16,
+            (ExportFormat::Avif, _) => OutputDepth::U8,
+        }
+    }
+
+    /// The bit depths `format` offers (value, label); the first is its default.
+    pub fn bit_depths(format: ExportFormat) -> &'static [(u8, &'static str)] {
+        match format {
+            ExportFormat::Jpeg | ExportFormat::Webp => &[(8, "8-bit")],
+            ExportFormat::Png => &[(8, "8-bit"), (16, "16-bit")],
+            ExportFormat::Tiff => &[(16, "16-bit"), (8, "8-bit"), (32, "32-bit float")],
+            ExportFormat::Avif => &[(8, "8-bit"), (10, "10-bit")],
         }
     }
 
@@ -269,8 +328,43 @@ impl ExportOptions {
 
 /// Unsharp mask on an 8-bit image (separable box-blur approximation of a small Gaussian).
 pub fn output_sharpen(img: &mut Rgba8, target: SharpenFor, amount: SharpenAmount) {
+    let src: Vec<[f32; 3]> = img.data.iter().map(|p| [p[0] as f32, p[1] as f32, p[2] as f32]).collect();
+    if let Some(out) = unsharp(img.width, img.height, &src, target, amount) {
+        for (p, v) in img.data.iter_mut().zip(out) {
+            for c in 0..3 {
+                p[c] = v[c].round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+}
+
+/// [`output_sharpen`] on a high-bit-depth image (float images are sharpened in linear light).
+pub fn output_sharpen_deep(img: &mut DeepImage, target: SharpenFor, amount: SharpenAmount) {
+    let (w, h) = (img.width, img.height);
+    match &mut img.samples {
+        DeepSamples::U16(v) => {
+            let src: Vec<[f32; 3]> = v.chunks_exact(3).map(|c| [c[0] as f32, c[1] as f32, c[2] as f32]).collect();
+            if let Some(out) = unsharp(w, h, &src, target, amount) {
+                for (d, s) in v.iter_mut().zip(out.as_flattened()) {
+                    *d = s.round().clamp(0.0, 65535.0) as u16;
+                }
+            }
+        }
+        DeepSamples::F32(v) => {
+            let src: Vec<[f32; 3]> = v.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+            if let Some(out) = unsharp(w, h, &src, target, amount) {
+                for (d, s) in v.iter_mut().zip(out.as_flattened()) {
+                    *d = s.max(0.0);
+                }
+            }
+        }
+    }
+}
+
+/// The sharpened values of `src` (`w × h`), or `None` when nothing is to be done.
+fn unsharp(w: usize, h: usize, src: &[[f32; 3]], target: SharpenFor, amount: SharpenAmount) -> Option<Vec<[f32; 3]>> {
     let (radius, base) = match target {
-        SharpenFor::None => return,
+        SharpenFor::None => return None,
         SharpenFor::Screen => (1usize, 0.35f32),
         SharpenFor::Matte => (2, 0.6),
         SharpenFor::Glossy => (1, 0.5),
@@ -281,11 +375,9 @@ pub fn output_sharpen(img: &mut Rgba8, target: SharpenFor, amount: SharpenAmount
             SharpenAmount::Standard => 1.0,
             SharpenAmount::High => 1.5,
         };
-    let (w, h) = (img.width, img.height);
     if w < 3 || h < 3 {
-        return;
+        return None;
     }
-    let src: Vec<[f32; 3]> = img.data.iter().map(|p| [p[0] as f32, p[1] as f32, p[2] as f32]).collect();
     let r = radius as isize;
     let box_pass = |inp: &[[f32; 3]], horizontal: bool| -> Vec<[f32; 3]> {
         let mut out = vec![[0.0; 3]; inp.len()];
@@ -307,13 +399,8 @@ pub fn output_sharpen(img: &mut Rgba8, target: SharpenFor, amount: SharpenAmount
         }
         out
     };
-    let blur = box_pass(&box_pass(&src, true), false);
-    for (i, p) in img.data.iter_mut().enumerate() {
-        for c in 0..3 {
-            let v = src[i][c] + (src[i][c] - blur[i][c]) * k;
-            p[c] = v.round().clamp(0.0, 255.0) as u8;
-        }
-    }
+    let blur = box_pass(&box_pass(src, true), false);
+    Some(src.iter().zip(&blur).map(|(s, b)| std::array::from_fn(|c| s[c] + (s[c] - b[c]) * k)).collect())
 }
 
 /// Encode a rendered display-referred image according to `o` (its pixels must already be in
@@ -398,6 +485,44 @@ pub fn srgb8_in(space: OutputSpace, c: [u8; 3]) -> [u8; 3] {
     })
 }
 
+/// Encode a render according to `o`: its high-bit-depth samples when it has them (16-bit PNG/TIFF,
+/// 10-bit AVIF, 32-bit float linear TIFF), else its 8-bit image.
+pub fn encode_rendered(r: &lightcraft_pipeline::Rendered, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
+    match &r.deep {
+        Some(d) if o.effective_depth() != OutputDepth::U8 => encode_deep(d, o, meta),
+        _ => encode_with_metadata(&r.image, o, meta),
+    }
+}
+
+/// Encode a high-bit-depth image (see [`encode_rendered`]).
+pub fn encode_deep(img: &DeepImage, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
+    let mut img = img.clone();
+    output_sharpen_deep(&mut img, o.sharpen, o.sharpen_amount);
+    if let Some(wm) = &o.watermark {
+        let wm = Watermark { color: srgb8_in(img.space, wm.color), ..wm.clone() };
+        draw_watermark_deep(&mut img, &wm);
+    }
+    let profile = match img.samples {
+        DeepSamples::F32(_) => icc::write_matrix_trc(&img.space.rgb_space(), &lightcraft_codecs::Trc::Linear),
+        DeepSamples::U16(_) => icc::write_named(named_space(img.space)),
+    };
+    let exif = meta.map(lightcraft_meta::write_exif);
+    let xmp = meta.map(|m| lightcraft_meta::write_xmp(m, None));
+    let meta = EncodeMeta { icc: Some(&profile), exif: exif.as_deref(), xmp: xmp.as_deref() };
+    let (w, h) = (img.width as u32, img.height as u32);
+    let e = match &img.samples {
+        DeepSamples::U16(v) => EncodeImage::new(w, h, 3, Samples::U16(v)),
+        DeepSamples::F32(v) => EncodeImage::new(w, h, 3, Samples::F32(v)),
+    };
+    let r = match o.format {
+        ExportFormat::Png => encode::encode_png(&e, &meta),
+        ExportFormat::Tiff => encode::encode_tiff(&e, TiffCompression::Deflate, &meta),
+        ExportFormat::Avif => encode::encode_avif(&e, o.quality, 8, &meta),
+        f => return Err(format!("{f:?} export is 8-bit only")),
+    };
+    r.map_err(|e| e.to_string())
+}
+
 /// Parse a shutter speed such as `1/250`, `0.5` or `2"` into seconds.
 fn parse_shutter(s: &str) -> Option<f64> {
     let s = s.trim().trim_end_matches(['s', '"']).trim();
@@ -454,8 +579,8 @@ pub fn export_photo(session: &mut crate::Session, id: lightcraft_catalog::PhotoI
     let full = p.width.max(p.height).max(1) as usize;
     let size = o.long_edge.map_or(full, |l| l as usize);
     let meta = export_metadata(p, o);
-    let r = session.render_export(id, size, o.effective_space())?;
-    let bytes = encode_with_metadata(&r.image, o, meta.as_ref())?;
+    let r = session.render_export(id, size, o.effective_space(), o.effective_depth())?;
+    let bytes = encode_rendered(&r, o, meta.as_ref())?;
     Ok(Exported { file_name: o.file_name(&stem, seq), bytes, width: r.image.width, height: r.image.height })
 }
 
@@ -631,5 +756,98 @@ mod tests {
         }
         let p3 = srgb8_in(OutputSpace::DisplayP3, [255, 0, 0]);
         assert!(p3[0] < 255 && p3[1] > 0, "{p3:?}");
+    }
+
+    /// A shallow horizontal grey ramp (few 8-bit levels), rendered at `depth`.
+    fn ramp(depth: OutputDepth, space: OutputSpace) -> lightcraft_pipeline::Rendered {
+        let src = lightcraft_raster::Rgb32f::from_fn(1024, 4, |x, _| [0.10 + 0.03 * x as f32 / 1023.0; 3]);
+        let req = lightcraft_pipeline::RenderRequest { depth, space, ..lightcraft_pipeline::RenderRequest::fit(1024, 4) };
+        lightcraft_pipeline::render(&src, &Default::default(), &Default::default(), &req)
+    }
+
+    fn distinct_levels(bytes: &[u8]) -> (usize, lightcraft_codecs::Decoded) {
+        let d = lightcraft_codecs::decode(bytes, Default::default()).expect("decodes");
+        let mut v: Vec<u32> = (0..d.image.width).map(|x| d.image.get(x, 1)[1].to_bits()).collect();
+        v.dedup();
+        (v.len(), d)
+    }
+
+    #[test]
+    fn sixteen_bit_tiff_and_png_have_no_banding() {
+        let tiff = |bit_depth| ExportOptions { format: ExportFormat::Tiff, bit_depth, ..Default::default() };
+        assert_eq!(tiff(None).effective_depth(), OutputDepth::U16, "TIFF defaults to 16-bit");
+        let r16 = ramp(OutputDepth::U16, OutputSpace::Srgb);
+        assert!(matches!(r16.deep.as_ref().unwrap().samples, DeepSamples::U16(_)));
+        let (levels16, d16) = distinct_levels(&encode_rendered(&r16, &tiff(None), None).unwrap());
+        let r8 = ramp(OutputDepth::U8, OutputSpace::Srgb);
+        let (levels8, _) = distinct_levels(&encode_rendered(&r8, &tiff(Some(8)), None).unwrap());
+        eprintln!("gradient levels: 16-bit TIFF {levels16}, 8-bit TIFF {levels8}");
+        assert!(levels8 < 40, "{levels8}");
+        assert!(levels16 > 10 * levels8, "16-bit: {levels16} levels vs 8-bit: {levels8}");
+        assert_eq!(d16.space.named, Some(NamedSpace::Srgb));
+        // the 8-bit preview of a deep render matches the 8-bit render
+        for (a, b) in r16.image.data.iter().zip(&r8.image.data) {
+            assert!(a[1].abs_diff(b[1]) <= 1, "{a:?} {b:?}");
+        }
+        let png = ExportOptions { format: ExportFormat::Png, bit_depth: Some(16), color_space: OutputSpace::DisplayP3, ..Default::default() };
+        let rp = ramp(OutputDepth::U16, OutputSpace::DisplayP3);
+        let bytes = encode_rendered(&rp, &png, None).unwrap();
+        assert_eq!(bytes[24], 16, "PNG IHDR bit depth");
+        let (levels, d) = distinct_levels(&bytes);
+        assert!(levels > 10 * levels8, "{levels}");
+        assert_eq!(d.space.named, Some(NamedSpace::DisplayP3));
+        // sharpening and watermarking work on deep images too
+        let o = ExportOptions {
+            sharpen: SharpenFor::Matte,
+            watermark: Some(Watermark { text: "LC".into(), size: 0.5, ..Default::default() }),
+            ..tiff(None)
+        };
+        assert!(encode_rendered(&r16, &o, None).is_ok());
+    }
+
+    #[test]
+    fn float_tiff_is_linear_with_a_linear_profile() {
+        let o = ExportOptions { format: ExportFormat::Tiff, bit_depth: Some(32), color_space: OutputSpace::ProPhoto, ..Default::default() };
+        assert_eq!(o.effective_depth(), OutputDepth::F32Linear);
+        let rf = ramp(OutputDepth::F32Linear, OutputSpace::ProPhoto);
+        let (levels, df) = distinct_levels(&encode_rendered(&rf, &o, None).unwrap());
+        assert!(levels > 500, "{levels}");
+        assert_eq!(df.space.named, Some(NamedSpace::ProPhoto));
+        assert!(df.space.trc.as_ref().is_some_and(|t| t[0].is_linear()), "{:?}", df.space.trc);
+        // decodes to the same light as the 16-bit gamma-encoded export
+        let o16 = ExportOptions { bit_depth: Some(16), ..o.clone() };
+        let (_, d16) = distinct_levels(&encode_rendered(&ramp(OutputDepth::U16, OutputSpace::ProPhoto), &o16, None).unwrap());
+        for x in [0, 300, 700, 1023] {
+            let (a, b) = (df.image.get(x, 1)[1], d16.image.get(x, 1)[1]);
+            assert!((a - b).abs() < 2e-4, "{x}: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn bit_depth_options_per_format() {
+        let d = |format, bit_depth| ExportOptions { format, bit_depth, ..Default::default() }.effective_depth();
+        assert_eq!(d(ExportFormat::Jpeg, Some(16)), OutputDepth::U8);
+        assert_eq!(d(ExportFormat::Webp, None), OutputDepth::U8);
+        assert_eq!(d(ExportFormat::Png, None), OutputDepth::U8);
+        assert_eq!(d(ExportFormat::Png, Some(16)), OutputDepth::U16);
+        assert_eq!(d(ExportFormat::Avif, Some(10)), OutputDepth::U16);
+        assert_eq!(ExportOptions::from_json(&serde_json::json!({"bitDepth": 16})).bit_depth, Some(16));
+        assert_eq!(ExportOptions::from_json(&serde_json::json!({"bitDepth": 12})).bit_depth, None);
+        for f in [ExportFormat::Jpeg, ExportFormat::Png, ExportFormat::Tiff, ExportFormat::Webp, ExportFormat::Avif] {
+            let first = ExportOptions::bit_depths(f)[0].0;
+            let def = d(f, None);
+            assert_eq!(d(f, Some(first)), def, "{f:?}: the first choice is the default");
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn avif_ten_bit() {
+        let o = ExportOptions { format: ExportFormat::Avif, bit_depth: Some(10), quality: 60, ..Default::default() };
+        let r = ramp(OutputDepth::U16, OutputSpace::Srgb);
+        match encode_rendered(&r, &o, None) {
+            Ok(b) => assert_eq!(&b[4..8], b"ftyp"),
+            Err(e) => assert!(e.contains("not available"), "{e}"),
+        }
     }
 }

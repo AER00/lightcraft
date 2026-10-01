@@ -86,7 +86,7 @@ Ordered by tier, then user value, then (low) effort. Take the first one nobody i
 19. **LR-EYE-RED** (P1) — red-eye correction (panel placeholder exists; no render).
 20. **LR-EDIT-COLOR-POINTCOLOR, LR-EDIT-CALIB, LR-EDIT-LIGHT-CURVE-TAT, LR-EDIT-LIGHT-CURVE-REFINESAT** (P1) —
     missing develop controls (calibration matters for XMP interop).
-21. **LR-EXP-BITDEPTH + LR-EXP-COMPRESSION** (P1) — 16-bit TIFF/PNG and TIFF compression choice.
+21. **LR-EXP-COMPRESSION** (P1) — TIFF compression choice (None / LZW / Deflate; the encoder supports all three).
 22. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
 
 ## Shortcuts: conflicts and missing bindings
@@ -440,7 +440,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EXP-TYPE | File types | P0 | 🟡 | `crates/engine/src/export.rs` (`ExportFormat`) | JPEG, PNG, TIFF, WebP, AVIF; no DNG, JXL or original (+XMP) |
 | LR-EXP-DIM | Output size | P0 | 🟡 | `crates/ui-egui/src/panels/dialogs.rs` (long edge / full size) | no short edge / width / height / megapixels, ppi, don't-enlarge |
 | LR-EXP-QUALITY | JPEG quality | P0 | ✅ | `cmd:app.export` (`quality`, `limitKb`) | |
-| LR-EXP-BITDEPTH | Bit depth | P1 | ⬜ | | 8-bit only |
+| LR-EXP-BITDEPTH | Bit depth | P1 | ✅ | `cmd:app.export` (`bitDepth`), `crates/pipeline/src/output.rs` (`OutputDepth`), `crates/engine/src/export.rs` | 16-bit PNG/TIFF rendered at 16 bits (TIFF defaults to 16), 32-bit float linear TIFF with a linear profile, 10-bit AVIF; high-bit-depth renders run on the CPU |
 | LR-EXP-COMPRESSION | TIFF compression | P1 | ⬜ | | always Deflate |
 | LR-EXP-COLORSPACE | Output colour space | P0 | ✅ | `cmd:app.export` (`colorSpace`), `crates/pipeline/src/output.rs`, `crates/engine/src/export.rs` | sRGB, Display P3, Adobe RGB (1998) compatible, ProPhoto RGB, Rec. 2020: rendered from the working space with gamut mapping into the target gamut (CPU + GPU), own ICC profile embedded; AVIF stays sRGB (muxer has no ICC) |
 | LR-EXP-HDR | HDR output | P2 | ⬜ | | |

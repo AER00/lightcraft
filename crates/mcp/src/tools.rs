@@ -189,6 +189,7 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
                 "metadata": {"type": "string", "enum": ["all", "allExceptCamera", "copyright", "none"]},
                 "removeLocation": {"type": "boolean"},
                 "colorSpace": {"type": "string", "enum": ["srgb", "displayP3", "adobeRgb", "proPhoto", "rec2020"], "description": "Output colour space (default sRGB; AVIF is always sRGB). adobeRgb = Adobe RGB (1998) compatible; the embedded ICC profile is generated from the published primaries"},
+                "bitDepth": {"type": "integer", "enum": [8, 10, 16, 32], "description": "Bits per channel: PNG 8|16 (default 8), TIFF 8|16|32 (default 16; 32 = linear float with a linear profile), AVIF 8|10; JPEG/WebP are 8-bit"},
                 "watermark": {"description": "Text, or {text, size (fraction of short edge), opacity, anchor (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight), inset, color [r,g,b], shadow}"}
             }),
             &[],
@@ -536,6 +537,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
                         "removeLocation",
                         "watermark",
                         "colorSpace",
+                        "bitDepth",
                     ],
                 ),
             )
