@@ -215,7 +215,9 @@ lightcraft --control 7980 ~/Pictures/trip
 
 ## Feature status
 
-LightCraft is young and moving fast — see the [roadmap](ROADMAP.md) for estimates.
+LightCraft is young and moving fast — see the [roadmap](ROADMAP.md) for estimates. The detailed, row-by-row
+Lightroom parity tracker — every feature, menu item and shortcut with its status, evidence and the top gaps — is
+[docs/parity.md](docs/parity.md).
 
 | Area | Status |
 |---|---|
