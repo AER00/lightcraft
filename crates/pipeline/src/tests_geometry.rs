@@ -177,3 +177,100 @@ fn optics_preview_matches_export() {
     let err = mean_abs_diff_downscaled(&small, &big);
     assert!(err < 4.0, "mean abs error {err}");
 }
+
+// ------------------------------------------------------------------------------------------ M4.3 transforms
+
+/// Source whose content is a straight grid after the forward transform `h` (centred coordinates of a `w × h`
+/// image): each source pixel shows the grid at its transformed position.
+fn keystoned_grid(w: usize, h: usize, fwd: lightcraft_geom::Homography, step: f64) -> Rgb32f {
+    let l = w.max(h) as f64 / 2.0;
+    let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0);
+    synth(
+        w,
+        h,
+        move |p| {
+            let q = fwd.apply(Point::new((p.x - cx) / l, (p.y - cy) / l));
+            Point::new(cx + q.x * l, cy + q.y * l)
+        },
+        move |p| [grid_value(p, step); 3],
+    )
+}
+
+#[test]
+fn manual_vertical_keystone_widens_the_top() {
+    let g = lightcraft_develop::Geometry { vertical: -50.0, ..Default::default() };
+    let hm = crate::transform::manual(&g);
+    let (tl, tr) = (hm.apply(Point::new(-1.0, -0.66)), hm.apply(Point::new(1.0, -0.66)));
+    let (bl, br) = (hm.apply(Point::new(-1.0, 0.66)), hm.apply(Point::new(1.0, 0.66)));
+    assert!(tr.x - tl.x > (br.x - bl.x) * 1.15, "top {} bottom {}", tr.x - tl.x, br.x - bl.x);
+    let c = hm.apply(Point::new(0.0, 0.0));
+    assert!(c.dist(Point::new(0.0, 0.0)) < 1e-9, "centre stays put");
+    let g = lightcraft_develop::Geometry { horizontal: -50.0, ..Default::default() };
+    let hm = crate::transform::manual(&g);
+    let (lt, lb) = (hm.apply(Point::new(-0.9, -0.6)), hm.apply(Point::new(-0.9, 0.6)));
+    let (rt, rb) = (hm.apply(Point::new(0.9, -0.6)), hm.apply(Point::new(0.9, 0.6)));
+    assert!(lb.y - lt.y > rb.y - rt.y, "left side enlarged");
+}
+
+#[test]
+fn manual_transforms_straighten_known_keystone() {
+    let (w, h) = (480usize, 320usize);
+    for g in [
+        lightcraft_develop::Geometry { vertical: -40.0, ..Default::default() },
+        lightcraft_develop::Geometry { horizontal: 35.0, rotate: 3.0, ..Default::default() },
+        lightcraft_develop::Geometry { vertical: 25.0, aspect: 30.0, scale: 110.0, offset_x: 6.0, offset_y: -4.0, ..Default::default() },
+    ] {
+        // the source was "shot" with the inverse transform; correcting with `g` must give the straight grid back
+        let fwd = crate::transform::manual(&g);
+        let src = keystoned_grid(w, h, fwd, 40.0);
+        let s = DevelopSettings { geometry: g.clone(), ..Default::default() };
+        let img = render(&src, &SourceInfo::default(), &s, &RenderRequest::fit(w, h)).image;
+        let xs: Vec<f64> = [60usize, 150, 260].iter().map(|&y| line_x(&img, y, 200.0, 15.0)).collect();
+        let ys: Vec<f64> = [60usize, 220, 420].iter().map(|&x| line_y(&img, x, 200.0, 15.0)).collect();
+        assert!(spread(&xs) < 1.0 && (xs[0] - 200.0).abs() < 1.0, "{g:?}: vertical line at {xs:?}");
+        assert!(spread(&ys) < 1.0 && (ys[0] - 200.0).abs() < 1.0, "{g:?}: horizontal line at {ys:?}");
+        // and without the correction the lines are not straight/where they belong
+        let raw = render(&src, &SourceInfo::default(), &DevelopSettings::default(), &RenderRequest::fit(w, h)).image;
+        let rx: Vec<f64> = [60usize, 150, 260].iter().map(|&y| line_x(&raw, y, 200.0, 15.0)).collect();
+        let ry: Vec<f64> = [60usize, 220, 420].iter().map(|&x| line_y(&raw, x, 200.0, 15.0)).collect();
+        assert!(spread(&rx) > 1.5 || spread(&ry) > 1.5 || (rx[0] - 200.0).abs() > 1.5, "{g:?}: source should be distorted");
+    }
+}
+
+fn blank_fraction(img: &Rgba8) -> f64 {
+    let blank =
+        crate::render(&Rgb32f::filled(4, 4, crate::geometry::BLANK), &SourceInfo::default(), &DevelopSettings::default(), &RenderRequest::fit(4, 4))
+            .image
+            .get(1, 1);
+    img.data.iter().filter(|p| (0..3).all(|i| (p[i] as i32 - blank[i] as i32).abs() <= 1)).count() as f64 / img.len() as f64
+}
+
+#[test]
+fn constrain_crop_removes_blank_areas() {
+    let src = Rgb32f::from_fn(300, 200, |x, y| [0.05 + 0.002 * x as f32, 0.1 + 0.002 * y as f32, 0.3]);
+    let mut s = DevelopSettings::default();
+    s.geometry.vertical = -60.0;
+    s.geometry.rotate = 4.0;
+    let free = render(&src, &SourceInfo::default(), &s, &RenderRequest::fit(300, 300)).image;
+    assert!(blank_fraction(&free) > 0.03, "keystone leaves blank corners: {}", blank_fraction(&free));
+    s.geometry.constrain_crop = true;
+    let c = render(&src, &SourceInfo::default(), &s, &RenderRequest::fit(300, 300)).image;
+    assert_eq!((c.width, c.height), (free.width, free.height), "constrain keeps the aspect");
+    assert!(blank_fraction(&c) < 0.002, "constrained: {}", blank_fraction(&c));
+}
+
+#[test]
+fn transforms_preview_matches_export() {
+    let src = lightcraft_scenes::demo_library()[4].render(960, 640);
+    let mut s = DevelopSettings::default();
+    s.geometry.vertical = -30.0;
+    s.geometry.horizontal = 15.0;
+    s.geometry.rotate = 2.5;
+    s.geometry.scale = 105.0;
+    s.geometry.constrain_crop = true;
+    let small = render(&src, &SourceInfo::default(), &s, &RenderRequest::fit(240, 240)).image;
+    let big = render(&src, &SourceInfo::default(), &s, &RenderRequest::fit(960, 960)).image;
+    assert_eq!(small.width * 4, big.width);
+    let err = mean_abs_diff_downscaled(&small, &big);
+    assert!(err < 4.0, "mean abs error {err}");
+}

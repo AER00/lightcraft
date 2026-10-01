@@ -133,6 +133,12 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     });
     divider(ui);
     header(ui, "Geometry");
+    padded(ui, |ui| {
+        let mut c = d.geometry.constrain_crop;
+        if ui.checkbox(&mut c, "Constrain Crop").changed() {
+            let _ = app.run("develop.merge", json!({"settings": {"geometry": {"constrain_crop": c}}, "label": "Constrain Crop"}));
+        }
+    });
     for spec in lightcraft_develop::controls::in_section(lightcraft_develop::Section::Geometry).filter(|c| c.id != "crop.angle") {
         let v = lightcraft_develop::controls::get(&d, spec.id).unwrap_or(spec.default);
         let out = slider(ui, spec, v, true, None);

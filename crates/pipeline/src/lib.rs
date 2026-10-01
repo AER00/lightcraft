@@ -27,6 +27,7 @@ pub mod optics;
 pub mod profiles;
 pub mod spots;
 mod tone;
+pub mod transform;
 
 use lightcraft_develop::{DevelopSettings, Treatment};
 use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8, par_rows};
