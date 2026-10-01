@@ -44,6 +44,11 @@ const MODULES: &[Module] = &[
         bindings: &[("img", false, "f32"), ("log_l", false, "f32"), ("aux", false, "f32"), ("c", true, "f32"), ("alpha", true, "f32")],
         entries: &["shape", "combine", "finalize"],
     },
+    Module {
+        src: include_str!("wgsl/geom.wgsl"),
+        bindings: &[("src", false, "f32"), ("dst", true, "f32")],
+        entries: &["orient", "sample_affine", "sample_warp"],
+    },
 ];
 
 struct Kernel {
@@ -81,6 +86,8 @@ fn constants() -> String {
     }
     s += &format!("const TONE_MIN_EV: f32 = {LUT_MIN_EV:?};\nconst TONE_MAX_EV: f32 = {LUT_MAX_EV:?};\nconst TONE_N: u32 = {LUT_N}u;\n");
     s += &format!("const TONE_MIN_GAIN: f32 = {:?};\n", 2f32.powf(LUT_MIN_EV));
+    let b = lightcraft_pipeline::geometry::BLANK;
+    s += &format!("const BLANK_R: f32 = {:?};\nconst BLANK_G: f32 = {:?};\nconst BLANK_B: f32 = {:?};\n", b[0], b[1], b[2]);
     s += &format!("const SRGB_N: u32 = {SRGB_LUT_N}u;\nconst CURVE_N: u32 = {}u;\nconst MASK_TERMS: u32 = {MASK_TERMS}u;\n", crate::params::CURVE_N);
     for (i, h) in GRAIN_HASH.iter().enumerate() {
         s += &format!("const GRAIN_H{i}: u32 = {h}u;\n");

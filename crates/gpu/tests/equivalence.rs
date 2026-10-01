@@ -298,6 +298,45 @@ fn rendered_sources_and_other_scenes() {
 }
 
 #[test]
+fn geometry_variants() {
+    if !gpu() {
+        return;
+    }
+    use lightcraft_develop::{EmbeddedLens, EmbeddedVignette, EmbeddedWarp};
+    let src = scene(2, 900, 600);
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    use Orientation::*;
+    for o in [Normal, Rotate90, Rotate180, Rotate270, FlipH, Transverse, FlipV, Transpose] {
+        for (crop, req) in [(false, RenderRequest::fit(900, 900)), (true, RenderRequest::fit(500, 500))] {
+            let mut s = DevelopSettings { orientation: o, ..Default::default() };
+            if crop {
+                s.crop.geometry.rect = Rect::new(0.2, 0.1, 0.9, 0.8);
+                s.crop.geometry.angle = -4.0;
+                s.crop.flip_v = true;
+            }
+            check(&format!("{o:?} crop={crop}"), &src, &raw, &s, &req);
+        }
+    }
+    // embedded DNG lens corrections (per-plane warp + vignette) with manual CA
+    let lens = EmbeddedLens {
+        warp: Some(EmbeddedWarp {
+            planes: [[1.0, -0.03, 0.01, 0.0, 0.001, -0.002], [1.0, -0.028, 0.01, 0.0, 0.001, -0.002], [1.0, -0.026, 0.01, 0.0, 0.001, -0.002]],
+            center: Point::new(0.52, 0.48),
+            radius: 0.6,
+        }),
+        vignette: Some(EmbeddedVignette { k: [0.4, -0.1, 0.02, 0.0, 0.0], center: Point::new(0.5, 0.5), radius: 0.6 }),
+    };
+    let info = SourceInfo { lens: Some(lens), ..raw };
+    let mut s = DevelopSettings::default();
+    s.optics.lens_profile = true;
+    s.optics.ca_red = 30.0;
+    s.geometry.horizontal = -15.0;
+    check("embedded lens + perspective", &src, &info, &s, &RenderRequest::fit(700, 700));
+    s.orientation = Rotate270;
+    check("embedded lens rotated", &src, &info, &s, &RenderRequest::fit(700, 700));
+}
+
+#[test]
 fn cached_renders_match_uncached() {
     if !gpu() {
         return;

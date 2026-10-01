@@ -5,7 +5,9 @@
 use std::sync::{Arc, Mutex};
 
 use lightcraft_develop::DevelopSettings;
+use lightcraft_geom::Orientation;
 use lightcraft_pipeline::finish::{FinishParams, MASK_TERMS, mask_terms};
+use lightcraft_pipeline::geometry::SampleMode;
 use lightcraft_pipeline::{Plan, RenderRequest, Rendered, SourceInfo, local};
 use lightcraft_raster::resample::Filter;
 use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8};
@@ -18,6 +20,8 @@ use crate::params::{Present, finish_block};
 #[derive(Default)]
 pub struct GpuStages {
     entries: Mutex<Vec<Entry>>,
+    /// The uploaded source (a view renders one photo at several sizes).
+    source: Mutex<Option<(Arc<Rgb32f>, Arc<Buf>)>>,
 }
 
 const CAPACITY: usize = 2;
@@ -53,6 +57,19 @@ impl GpuStages {
         v.push(e);
         while v.len() > CAPACITY {
             v.remove(0);
+        }
+    }
+
+    fn source(&self, src: &Arc<Rgb32f>, upload: impl FnOnce() -> Buf) -> Arc<Buf> {
+        let mut g = self.source.lock().unwrap_or_else(|e| e.into_inner());
+        match &*g {
+            Some((s, b)) if Arc::ptr_eq(s, src) => b.clone(),
+            _ => {
+                *g = None; // free the previous photo's buffer first
+                let b = Arc::new(upload());
+                *g = Some((src.clone(), b.clone()));
+                b
+            }
         }
     }
 
@@ -214,6 +231,127 @@ fn guided_fast(cx: &mut Cx<'_>, p: &Buf, w: usize, h: usize, sigma: f32, eps: f3
 }
 
 // ---------------------------------------------------------------------------------------------
+// Geometry (`Frame::sample`)
+
+/// Integer pixel map `(x, y) → (m0·x + m1·y + m2, m3·x + m4·y + m5)` from an oriented image back
+/// to the source of `w × h` (`Image::oriented`: optional horizontal flip, then quarter turns).
+pub(crate) fn orient_map(o: Orientation, w: usize, h: usize) -> [i32; 6] {
+    let (flip, turns) = o.to_parts();
+    let (w, h) = (w as i32, h as i32);
+    let mut ops: Vec<fn(i32, i32) -> [i32; 6]> = Vec::new();
+    if flip {
+        ops.push(|w, _| [-1, 0, w - 1, 0, 1, 0]);
+    }
+    let cw: fn(i32, i32) -> [i32; 6] = |_, h| [0, 1, 0, -1, 0, h - 1];
+    let half: fn(i32, i32) -> [i32; 6] = |w, h| [-1, 0, w - 1, 0, -1, h - 1];
+    match turns {
+        1 => ops.push(cw),
+        2 => ops.push(half),
+        3 => {
+            ops.push(half);
+            ops.push(cw);
+        }
+        _ => {}
+    }
+    // compose: T ← T ∘ op, tracking each op's input size
+    let mut t = [1, 0, 0, 0, 1, 0];
+    let (mut cw_, mut ch_) = (w, h);
+    for op in ops {
+        let o = op(cw_, ch_);
+        t = [
+            t[0] * o[0] + t[1] * o[3],
+            t[0] * o[1] + t[1] * o[4],
+            t[0] * o[2] + t[1] * o[5] + t[2],
+            t[3] * o[0] + t[4] * o[3],
+            t[3] * o[1] + t[4] * o[4],
+            t[3] * o[2] + t[4] * o[5] + t[5],
+        ];
+        if o[0] == 0 {
+            (cw_, ch_) = (ch_, cw_);
+        }
+    }
+    t
+}
+
+fn affine_bits(a: &lightcraft_geom::Affine) -> [u32; 6] {
+    a.0.map(|v| (v as f32).to_bits())
+}
+
+/// The `sample_warp` kernel's parameters (layout documented in `geom.wgsl`).
+fn warp_params(
+    wp: &lightcraft_pipeline::optics::Warp,
+    base: (usize, usize),
+    out: (usize, usize),
+    o2t: &lightcraft_geom::Affine,
+    sx: f64,
+    sy: f64,
+) -> Vec<u32> {
+    let f = |v: f64| (v as f32).to_bits();
+    let mut p = vec![base.0 as u32, base.1 as u32, out.0 as u32, out.1 as u32];
+    p.extend(affine_bits(o2t));
+    p.extend([f(sx), f(sy), f(wp.w), f(wp.h)]);
+    let persp = wp.persp != lightcraft_geom::Homography::IDENTITY;
+    p.push(persp as u32);
+    p.extend(wp.persp_inv.0.map(f));
+    p.push(f(wp.k1));
+    p.extend(wp.ca.map(f));
+    p.push(f(wp.lens_dist));
+    let warp = wp.lens.and_then(|l| l.warp);
+    p.push(warp.is_some() as u32);
+    let w = warp.unwrap_or_default();
+    p.extend(w.planes.iter().flatten().map(|v| f(*v)));
+    p.extend([f(w.center.x), f(w.center.y), f(w.radius)]);
+    p.extend([f(wp.vig_stops), f(wp.vig_power), f(wp.lens_vig)]);
+    let vig = wp.lens.and_then(|l| l.vignette);
+    p.push(vig.is_some() as u32);
+    let v = vig.unwrap_or_default();
+    p.extend(v.k.map(f));
+    p.extend([f(v.center.x), f(v.center.y), f(v.radius)]);
+    p.push(wp.per_channel() as u32);
+    p.push(wp.has_gain() as u32);
+    debug_assert_eq!(p.len(), 65);
+    p
+}
+
+/// Resample the source into the output frame (`Frame::sample`). May return the source buffer
+/// itself when the frame is the identity.
+fn sample(cx: &mut Cx<'_>, src: &Arc<Rgb32f>, src_buf: Arc<Buf>, plan: &Plan<'_>) -> Arc<Buf> {
+    let (w, h) = (plan.w, plan.h);
+    let fr = &plan.frame;
+    let sp = fr.sample_plan(src.width, src.height, w, h);
+    let oriented = if fr.orient == Orientation::Normal {
+        src_buf
+    } else {
+        let out = cx.gpu.buffer(sp.ow * sp.oh * 3);
+        let mut p = vec![src.width as u32, src.height as u32, sp.ow as u32, sp.oh as u32];
+        p.extend(orient_map(fr.orient, src.width, src.height).map(|v| v as u32));
+        cx.run("orient", &p, &[Some(&src_buf), Some(&out)], groups2(sp.ow, sp.oh, [16, 16]));
+        Arc::new(out)
+    };
+    let (base, (bw, bh)) = match sp.prefilter {
+        Some(d) => (Arc::new(resize(cx, &oriented, (sp.ow, sp.oh), d, 3, Filter::Mitchell)), d),
+        None => (oriented, (sp.ow, sp.oh)),
+    };
+    match &sp.mode {
+        SampleMode::Copy => base,
+        SampleMode::Affine(xf) => {
+            let out = cx.gpu.buffer(w * h * 3);
+            let mut p = vec![bw as u32, bh as u32, w as u32, h as u32];
+            p.extend(affine_bits(xf));
+            cx.run("sample_affine", &p, &[Some(&base), Some(&out)], groups2(w, h, [16, 16]));
+            Arc::new(out)
+        }
+        SampleMode::Warp(o2t) => {
+            let wp = fr.warp.as_ref().expect("warp mode has a warp");
+            let out = cx.gpu.buffer(w * h * 3);
+            let p = warp_params(wp, (bw, bh), (w, h), o2t, sp.sx, sp.sy);
+            cx.run("sample_warp", &p, &[Some(&base), Some(&out)], groups2(w, h, [16, 16]));
+            Arc::new(out)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // The render
 
 /// CPU copies made along the way (for stages that still run on the CPU).
@@ -248,7 +386,7 @@ pub fn render(
     let plan = lightcraft_pipeline::plan(src, info, s, req);
     let (w, h) = (plan.w, plan.h);
     let n = w * h;
-    if !gpu.fits(n * 3) || !gpu.fits(src.data.len() * 3) {
+    if !gpu.fits(n * 3) {
         return None;
     }
     let s = &*plan.settings;
@@ -256,10 +394,23 @@ pub fn render(
     let mut host = Host::default();
     let mut cx = Cx::new(gpu);
 
-    // 1. geometry
+    // 1. geometry (on the CPU when the source exceeds the device's buffer limit)
     let sampled = match &cached {
         Some(e) => e.sampled.clone(),
-        None => Arc::new(sample(&mut cx, src, &plan, &mut host)),
+        None if gpu.fits(src.data.len() * 3) => {
+            let upload = || gpu.upload(rgb_words(src));
+            let src_buf = match stages {
+                Some(c) => c.source(src, upload),
+                None => Arc::new(upload()),
+            };
+            sample(&mut cx, src, src_buf, &plan)
+        }
+        None => {
+            let img = plan.frame.sample(src, w, h);
+            let b = Arc::new(gpu.upload(rgb_words(&img)));
+            host.sampled = Some(img);
+            b
+        }
     };
     lap("sample", &mut t);
 
@@ -312,14 +463,6 @@ pub fn render(
     lap("finish + readback", &mut t);
     let histogram = Histogram::of_srgb8(&image);
     Some(Rendered { image, histogram })
-}
-
-/// Resample the source into the output frame.
-fn sample(cx: &mut Cx<'_>, src: &Arc<Rgb32f>, plan: &Plan<'_>, host: &mut Host) -> Buf {
-    let img = plan.frame.sample(src, plan.w, plan.h);
-    let b = cx.gpu.upload(rgb_words(&img));
-    host.sampled = Some(img);
-    b
 }
 
 /// The white-balanced, retouched, denoised image.
@@ -552,4 +695,26 @@ fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Ho
     }
     let terms = list.iter().map(|m| mask_terms(&m.adjust)).collect();
     (Some(alpha), terms)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn orient_map_matches_image_oriented() {
+        use Orientation::*;
+        let img = Rgb32f::from_fn(5, 3, |x, y| [x as f32, y as f32, 0.0]);
+        for o in [Normal, Rotate90, Rotate180, Rotate270, FlipH, Transverse, FlipV, Transpose] {
+            let r = img.oriented(o);
+            let m = orient_map(o, 5, 3);
+            for y in 0..r.height {
+                for x in 0..r.width {
+                    let (x, y) = (x as i32, y as i32);
+                    let (sx, sy) = (m[0] * x + m[1] * y + m[2], m[3] * x + m[4] * y + m[5]);
+                    assert_eq!(r.get(x as usize, y as usize), img.get(sx as usize, sy as usize), "{o:?} at {x},{y}");
+                }
+            }
+        }
+    }
 }
