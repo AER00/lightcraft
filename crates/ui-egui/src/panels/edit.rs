@@ -463,6 +463,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         for c in ["curve.highlights", "curve.lights", "curve.darks", "curve.shadows"] {
             control(app, ui, d, c, true);
         }
+        control(app, ui, d, "curve.refineSaturation", true);
         return;
     }
     let pts_of = |d: &DevelopSettings| -> Vec<Point> {
@@ -554,6 +555,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         let _ = app.run("develop.endInteraction", json!({}));
     }
     ui.data_mut(|dd| dd.insert_temp(drag_id, dragging));
+    control(app, ui, d, "curve.refineSaturation", true);
     let _ = id;
 }
 

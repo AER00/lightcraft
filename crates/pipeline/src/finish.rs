@@ -150,6 +150,8 @@ pub struct FinishParams {
     pub shadow_tint: f32,
     /// Tone curves (parametric ∘ point, per channel) on encoded values, 1024 entries each.
     pub curves: Option<[Lut1; 3]>,
+    /// Refine Saturation as 0..1 (1 = the curves' own saturation).
+    pub refine_sat: f32,
     pub vig: Option<Vig>,
     pub to_srgb: [[f32; 3]; 3],
     pub hl: f32,
@@ -201,6 +203,7 @@ impl FinishParams {
             },
             ops: ColorOps::new(s),
             curves: curve_luts(&s.curve),
+            refine_sat: (s.curve.refine_saturation / 100.0).clamp(0.0, 1.0) as f32,
             vig: if effects { vignette(s) } else { None },
             to_srgb: REC2020.to_space(&SRGB).to_f32(),
             hl: (s.light.highlights / 100.0) as f32,
@@ -408,7 +411,11 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
             // --- encode, curves, grain
             let mut e = r.map(|v| encode_srgb(srgb, v));
             if let Some(l) = curves {
+                let e0 = e;
                 e = [l[0].eval(e[0]), l[1].eval(e[1]), l[2].eval(e[2])];
+                if fp.refine_sat < 1.0 {
+                    e = refine_saturation(e0, e, fp.refine_sat);
+                }
             }
             if let Some((amt, cell, rough, seed)) = *grain {
                 let n = out_to_norm.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
@@ -424,6 +431,23 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
         }
     });
     out
+}
+
+/// Refine Saturation: scale the curved colour's chroma (around its luma, encoded values) so its
+/// saturation (chroma / luma) moves from the curve's towards the pre-curve one: the ratio is
+/// `(s_curve / s_before)^refine`, so 1 keeps the curve, 0 restores the original saturation.
+#[inline]
+pub fn refine_saturation(before: [f32; 3], after: [f32; 3], refine: f32) -> [f32; 3] {
+    let luma = |e: [f32; 3]| 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
+    let chroma = |e: [f32; 3]| e[0].max(e[1]).max(e[2]) - e[0].min(e[1]).min(e[2]);
+    let (y0, y1) = (luma(before), luma(after));
+    let s0 = chroma(before) / y0.max(1e-4);
+    let s1 = chroma(after) / y1.max(1e-4);
+    if s1 <= 1e-6 || s0 <= 1e-6 {
+        return after;
+    }
+    let k = (s0 / s1).powf(1.0 - refine).clamp(0.0, 4.0);
+    after.map(|v| y1 + (v - y1) * k)
 }
 
 pub const SRGB_LUT_N: usize = 4096;
@@ -459,6 +483,21 @@ fn enc(v: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refine_saturation_restores_the_pre_curve_saturation() {
+        let before = [0.5, 0.3, 0.2];
+        let after = [0.7, 0.35, 0.15]; // a contrasty curve: more saturated
+        assert_eq!(refine_saturation(before, after, 1.0), after);
+        let r = refine_saturation(before, after, 0.0);
+        let sat = |e: [f32; 3]| (e[0] - e[2]) / (0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2]);
+        assert!((sat(r) - sat(before)).abs() < 1e-4, "{r:?}");
+        let half = refine_saturation(before, after, 0.5);
+        assert!(sat(half) > sat(before) && sat(half) < sat(after));
+        // luma is kept
+        let y = |e: [f32; 3]| 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
+        assert!((y(r) - y(after)).abs() < 1e-5);
+    }
 
     #[test]
     fn srgb_table_matches_the_exact_curve() {

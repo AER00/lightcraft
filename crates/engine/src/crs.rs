@@ -190,6 +190,7 @@ pub fn to_partial(props: &Props, raw: Option<bool>) -> Value {
     n(o, "ParametricShadowSplit", "curve.split_shadows");
     n(o, "ParametricMidtoneSplit", "curve.split_mid");
     n(o, "ParametricHighlightSplit", "curve.split_highlights");
+    n(o, "CurveRefineSaturation", "curve.refine_saturation");
     for (crs, ch) in
         [("ToneCurvePV2012", "master"), ("ToneCurvePV2012Red", "red"), ("ToneCurvePV2012Green", "green"), ("ToneCurvePV2012Blue", "blue")]
     {
@@ -339,7 +340,7 @@ mod tests {
     crs:Whites2012="+9" crs:Blacks2012="-17" crs:Texture="+6" crs:Clarity2012="+11" crs:Dehaze="+4"
     crs:Vibrance="+19" crs:Saturation="-3" crs:HueAdjustmentOrange="-7" crs:SaturationAdjustmentBlue="-22"
     crs:LuminanceAdjustmentAqua="+13" crs:ParametricShadows="+5" crs:ParametricHighlights="-8"
-    crs:ParametricMidtoneSplit="55" crs:SplitToningShadowHue="210" crs:SplitToningShadowSaturation="14"
+    crs:ParametricMidtoneSplit="55" crs:CurveRefineSaturation="40" crs:SplitToningShadowHue="210" crs:SplitToningShadowSaturation="14"
     crs:SplitToningHighlightHue="40" crs:SplitToningHighlightSaturation="9" crs:SplitToningBalance="+20"
     crs:ColorGradeMidtoneHue="120" crs:ColorGradeMidtoneSat="6" crs:ColorGradeBlending="70"
     crs:Sharpness="55" crs:SharpenRadius="+1.2" crs:SharpenDetail="30" crs:SharpenEdgeMasking="12"
@@ -380,6 +381,7 @@ mod tests {
         assert_eq!(s.mixer.aqua.lum, 13.0);
         assert_eq!((s.curve.shadows, s.curve.highlights, s.curve.split_mid), (5.0, -8.0, 55.0));
         assert_eq!(s.curve.master.len(), 4);
+        assert_eq!(s.curve.refine_saturation, 40.0);
         assert!((s.curve.master[1].x - 64.0 / 255.0).abs() < 1e-9 && (s.curve.master[1].y - 52.0 / 255.0).abs() < 1e-9);
         assert!(s.curve.red.is_empty(), "identity channel curve maps to no curve");
         assert_eq!((s.grading.shadows.hue, s.grading.shadows.sat), (210.0, 14.0));

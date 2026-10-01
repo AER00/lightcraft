@@ -102,6 +102,11 @@ fn cases() -> Vec<(&'static str, Edit)> {
             s.curve.master = vec![Point::new(0.0, 0.05), Point::new(0.5, 0.55), Point::new(1.0, 0.95)];
             s.curve.blue = vec![Point::new(0.0, 0.0), Point::new(0.5, 0.45), Point::new(1.0, 1.0)];
         }),
+        ("tone curves + refine saturation", |s| {
+            s.curve.master = vec![Point::new(0.0, 0.0), Point::new(0.25, 0.15), Point::new(0.75, 0.88), Point::new(1.0, 1.0)];
+            s.curve.lights = 30.0;
+            s.curve.refine_saturation = 20.0;
+        }),
         ("vignette (highlight)", |s| {
             s.vignette.amount = -60.0;
             s.vignette.highlights = 50.0;

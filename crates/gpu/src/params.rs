@@ -59,6 +59,7 @@ const FIELDS: &[(&str, usize)] = &[
     ("GRAIN_ROUGH", 1),
     ("GRAIN_SEED", 1),
     ("GRAIN_AFF", 6),
+    ("REFINE_SAT", 1),
     ("CALIB", 1),
     ("CALIB_M", 9),
     ("SHADOW_TINT", 1),
@@ -147,6 +148,7 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
     p.u("SRGB_OFF", srgb_off as u32);
     p.u("CURVE_OFF", curve_off as u32);
     p.b("CURVES", fp.curves.is_some());
+    p.f("REFINE_SAT", fp.refine_sat);
     p.f("GAIN", fp.gain);
     p.f("EV", fp.ev);
     p.f("AIR", fp.air);

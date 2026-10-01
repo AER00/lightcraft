@@ -259,3 +259,26 @@ fn calibration_shifts_colours_but_keeps_greys() {
     let off = render(&dark, &info, &s, &RenderRequest::fit(16, 16)).image.data[0];
     assert!(off[1].abs_diff(off[0]) <= 1, "{off:?}");
 }
+
+#[test]
+fn refine_saturation_tames_a_contrast_curve() {
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let src = Rgb32f::filled(16, 16, [0.12, 0.05, 0.03]);
+    let req = RenderRequest::fit(16, 16);
+    let sat = |p: [u8; 4]| p[0] as i32 - p[2] as i32;
+    let mut s = DevelopSettings::default();
+    let flat = render(&src, &info, &s, &req).image.data[0];
+    s.curve.master = vec![
+        lightcraft_geom::Point::new(0.0, 0.0),
+        lightcraft_geom::Point::new(0.3, 0.15),
+        lightcraft_geom::Point::new(0.7, 0.85),
+        lightcraft_geom::Point::new(1.0, 1.0),
+    ];
+    let full = render(&src, &info, &s, &req).image.data[0];
+    s.curve.refine_saturation = 0.0;
+    let refined = render(&src, &info, &s, &req).image.data[0];
+    assert!(sat(full) > sat(refined), "{flat:?} {full:?} {refined:?}");
+    // the curve's tone change stays
+    let y = |p: [u8; 4]| 0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32;
+    assert!((y(full) - y(refined)).abs() < 2.0);
+}

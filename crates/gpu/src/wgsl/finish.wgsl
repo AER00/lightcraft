@@ -139,6 +139,20 @@ fn calibrate(c0: vec3<f32>) -> vec3<f32> {
     return c;
 }
 
+// `finish::refine_saturation`.
+fn refine_saturation(before: vec3<f32>, after: vec3<f32>, refine: f32) -> vec3<f32> {
+    let lw = vec3<f32>(0.2126, 0.7152, 0.0722);
+    let y0 = dot(before, lw);
+    let y1 = dot(after, lw);
+    let s0 = (max(before.x, max(before.y, before.z)) - min(before.x, min(before.y, before.z))) / max(y0, 1e-4);
+    let s1 = (max(after.x, max(after.y, after.z)) - min(after.x, min(after.y, after.z))) / max(y1, 1e-4);
+    if (s1 <= 1e-6 || s0 <= 1e-6) {
+        return after;
+    }
+    let k = clamp(pow(s0 / s1, 1.0 - refine), 0.0, 4.0);
+    return y1 + (after - y1) * k;
+}
+
 fn ghash(i: i32, j: i32, seed: u32) -> f32 {
     var v = (bitcast<u32>(i) * GRAIN_H0) ^ (bitcast<u32>(j) * GRAIN_H1) ^ (seed * GRAIN_H2);
     v ^= v >> 13u;
@@ -365,7 +379,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // --- encode, curves, grain
     var e = vec3<f32>(encode_srgb(r.x), encode_srgb(r.y), encode_srgb(r.z));
     if (pu(F_CURVES) != 0u) {
+        let e0 = e;
         e = vec3<f32>(curve(0u, e.x), curve(1u, e.y), curve(2u, e.z));
+        let rs = pf(F_REFINE_SAT);
+        if (rs < 1.0) {
+            e = refine_saturation(e0, e, rs);
+        }
     }
     if (pu(F_GRAIN) != 0u) {
         let px = f32(x) + 0.5;

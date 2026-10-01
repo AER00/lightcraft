@@ -191,6 +191,9 @@ pub struct ToneCurve {
     pub red: Vec<Point>,
     pub green: Vec<Point>,
     pub blue: Vec<Point>,
+    /// Refine Saturation 0..100: 100 keeps the saturation a curve produces, lower values pull it
+    /// back towards the saturation before the curve (strong contrast curves oversaturate).
+    pub refine_saturation: f64,
 }
 
 impl Default for ToneCurve {
@@ -207,6 +210,7 @@ impl Default for ToneCurve {
             red: Vec::new(),
             green: Vec::new(),
             blue: Vec::new(),
+            refine_saturation: 100.0,
         }
     }
 }
