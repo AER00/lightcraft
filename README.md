@@ -228,7 +228,8 @@ LightCraft is young and moving fast — see the [roadmap](ROADMAP.md) for estima
 | Library persistence (crash-safe op log + snapshots), disk thumbnail cache, import with duplicate detection | ✅ |
 | MCP server (headless or live app, persistent libraries), CLI, control channel | ✅ |
 | XMP sidecars (read/write, auto-write), reading `crs:` develop settings, preset files (`.lcpreset`, XMP presets) | ✅ |
-| Optics, Geometry/Upright, GPU pipeline | 🚧 |
+| Optics (distortion, vignetting, auto + manual CA, defringe, DNG-embedded lens corrections), Geometry (transforms, Constrain Crop), Upright (Auto/Level/Vertical/Full/Guided) | ✅ · camera lens profiles (our own) ⬜ |
+| GPU pipeline | 🚧 |
 | Web build (same UI in the browser via WASM; in-memory imports, export downloads) | ✅ · persistence, workers 🚧 |
 
 <br>
