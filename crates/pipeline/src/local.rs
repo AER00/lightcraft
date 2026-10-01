@@ -108,6 +108,53 @@ pub fn guided_fast(p: &Plane, sigma: f32, eps: f32) -> Plane {
     q
 }
 
+/// Noise reduction at output resolution: luminance via an edge-aware self-guided filter on
+/// log-luminance, colour by blurring chromaticity (rgb / Y) and re-applying the original luminance.
+/// Radii scale with how much the source was downsampled (preview noise is already averaged out).
+pub fn denoise(img: &mut Rgb32f, s: &DevelopSettings, src_long: usize, out_long: usize) {
+    let lum = (s.detail.nr_luminance / 100.0) as f32;
+    let col = (s.detail.nr_color / 100.0) as f32;
+    if lum <= 0.0 && col <= 0.0 {
+        return;
+    }
+    let scale = (out_long as f32 / src_long.max(1) as f32).clamp(0.05, 1.0);
+    let w = img.width;
+    if lum > 0.0 {
+        let l = img.map(log_lum);
+        let detail = (s.detail.nr_detail / 100.0) as f32;
+        let eps = 0.002 + lum * lum * 0.25 * (1.0 - 0.7 * detail);
+        let f = guided(&l, (1.0 + 2.5 * lum) * scale.max(0.4), eps);
+        let k = lum.sqrt();
+        for_rows(&mut img.data, w, |y, row| {
+            for (x, p) in row.iter_mut().enumerate() {
+                let i = y * w + x;
+                let d = (f.data[i] - l.data[i]) * k;
+                let g = 2f32.powf(d);
+                *p = p.map(|v| v * g);
+            }
+        });
+    }
+    if col > 0.0 {
+        let chroma = img.map(|c| {
+            let y = luminance_2020(c).max(1e-6);
+            [c[0] / y, c[1] / y, c[2] / y]
+        });
+        let sigma = (1.5 + 6.0 * col) * scale.max(0.35) * (1.0 + (s.detail.nr_color_smoothness / 100.0) as f32);
+        let b = gaussian(&chroma, sigma);
+        let keep = (s.detail.nr_color_detail / 100.0) as f32 * 0.5;
+        for_rows(&mut img.data, w, |y, row| {
+            for (x, p) in row.iter_mut().enumerate() {
+                let i = y * w + x;
+                let yl = luminance_2020(*p);
+                let c0 = chroma.data[i];
+                let cb = b.data[i];
+                let t = col * (1.0 - keep);
+                *p = [0, 1, 2].map(|k| ((c0[k] + (cb[k] - c0[k]) * t) * yl).max(0.0));
+            }
+        });
+    }
+}
+
 pub fn log_lum(c: [f32; 3]) -> f32 {
     (luminance_2020(c).max(1e-7) / crate::tone::GREY).log2()
 }
@@ -202,5 +249,29 @@ mod fast_tests {
         let b = guided_fast(&p, 12.0, 0.3);
         let err: f32 = a.data.iter().zip(&b.data).map(|(u, v)| (u - v).abs()).sum::<f32>() / a.len() as f32;
         assert!(err < 0.08, "{err}");
+    }
+}
+
+#[cfg(test)]
+mod nr_tests {
+    use super::*;
+
+    #[test]
+    fn luminance_nr_reduces_noise_keeps_mean() {
+        let mut img = Rgb32f::from_fn(64, 64, |x, y| {
+            let n = (((x * 7919 + y * 104729) % 97) as f32 / 97.0 - 0.5) * 0.06;
+            [0.2 + n; 3]
+        });
+        let var = |im: &Rgb32f| {
+            let m = im.data.iter().map(|p| p[1]).sum::<f32>() / im.len() as f32;
+            (im.data.iter().map(|p| (p[1] - m).powi(2)).sum::<f32>() / im.len() as f32, m)
+        };
+        let (v0, m0) = var(&img);
+        let mut s = DevelopSettings::default();
+        s.detail.nr_luminance = 80.0;
+        denoise(&mut img, &s, 64, 64);
+        let (v1, m1) = var(&img);
+        assert!(v1 < v0 * 0.5, "{v0} -> {v1}");
+        assert!((m1 - m0).abs() < 0.01);
     }
 }

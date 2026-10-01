@@ -115,7 +115,8 @@ pub fn render(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &Render
 
     local::scene_linear_pre(&mut img, info, s);
     spots::apply(&mut img, &s.spots, &frame, px_per_long);
-    lap("wb/exposure/spots", &mut t);
+    local::denoise(&mut img, s, src.width.max(src.height), w.max(h));
+    lap("wb/exposure/spots/nr", &mut t);
     let prep = local::prepare(img, s, &frame, px_per_long, req.quality);
     lap("prepare", &mut t);
     let image = finish::finish(&prep, s, &frame, info);
