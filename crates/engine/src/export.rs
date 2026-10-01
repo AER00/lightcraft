@@ -207,7 +207,7 @@ pub fn encode_image(img: &Rgba8, o: &ExportOptions) -> Result<Vec<u8>, String> {
         ExportFormat::Png => encode::encode_png(&e, &meta),
         ExportFormat::Tiff => encode::encode_tiff(&e, TiffCompression::Deflate, &meta),
         ExportFormat::Webp => encode::encode_webp_lossless(&e, &meta),
-        ExportFormat::Avif => encode::encode_avif(&e, o.quality, 6, &meta),
+        ExportFormat::Avif => encode::encode_avif(&e, o.quality, 8, &meta),
     };
     r.map_err(|e| e.to_string())
 }
