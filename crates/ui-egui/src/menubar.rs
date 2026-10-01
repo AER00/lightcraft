@@ -200,6 +200,7 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
         "view.beforeAfter" => Some(u.before_after == crate::state::BeforeAfter::SideBySide),
         "view.beforeAfterSplit" => Some(u.before_after == crate::state::BeforeAfter::Split),
         "view.autoAdvance" => Some(u.auto_advance),
+        "view.filterBar" => Some(u.filter_bar),
         "panel.edit" => panel(RightPanel::Edit),
         "panel.crop" => panel(RightPanel::Crop),
         "panel.remove" => panel(RightPanel::Remove),

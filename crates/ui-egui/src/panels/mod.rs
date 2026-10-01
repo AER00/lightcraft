@@ -5,6 +5,7 @@ pub mod compare;
 pub mod detail;
 pub mod dialogs;
 pub mod edit;
+pub mod filterbar;
 pub mod grid;
 pub mod left;
 pub mod masking;

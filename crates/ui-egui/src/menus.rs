@@ -36,7 +36,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.maskOverlay", "Show Mask Overlay", Some("O"), "View"),
     ("view.cropOverlay", "Cycle Crop Overlay", Some("Shift+O"), "View"),
     ("view.back", "Back to Grid", Some("Escape"), ""),
-    ("view.filterBar", "Filter", None, "View"),
+    ("view.filterBar", "Filter Bar", Some("Shift+F"), "View"),
     ("panel.edit", "Edit", Some("E"), "Window"),
     ("panel.crop", "Crop & Rotate", Some("C"), "Window"),
     ("panel.remove", "Remove", Some("H"), "Window"),
@@ -210,8 +210,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "view.filterBar" => {
-            app.ui.left_panel = true;
-            Ok(Value::Null)
+            app.ui.filter_bar = !app.ui.filter_bar;
+            if app.ui.filter_bar && !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+                app.ui.view = ViewMode::PhotoGrid;
+            }
+            Ok(json!({"filterBar": app.ui.filter_bar}))
         }
         "panel.edit" => {
             panel(app, &ctx, RightPanel::Edit, "Edit");

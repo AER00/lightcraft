@@ -114,6 +114,8 @@ pub struct UiState {
     pub brush_flow: f32,
     pub brush_erase: bool,
     pub remove_size: f32,
+    /// The library filter bar above the grid.
+    pub filter_bar: bool,
     /// Culling: after a rating, flag or colour-label key, move to the next photo.
     pub auto_advance: bool,
     /// Compare view: (select, candidate) photo ids.
@@ -196,6 +198,7 @@ impl Default for UiState {
             brush_erase: false,
             remove_size: 0.02,
             auto_advance: false,
+            filter_bar: false,
             compare: None,
             toast: None,
             status: String::new(),

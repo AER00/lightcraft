@@ -78,7 +78,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let fr = Rect::from_center_size(pos2(sr.right() + 22.0, sr.center().y), vec2(28.0, 28.0));
             let fresp = ui.interact(fr, egui::Id::new("filter-btn"), Sense::click());
             register(ui.ctx(), "icon:filter", fr);
-            let filtering = app.session.filter != Default::default();
+            let filtering = app.session.filter != Default::default() || app.ui.filter_bar;
             paint(
                 ui.painter(),
                 fr.shrink(6.0),

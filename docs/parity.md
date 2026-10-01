@@ -22,9 +22,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
 | A. Import (IMP) | 2 | 4 | 7 | 1 | 1/4 (25%) | 1/4 (25%) |
-| B. Library management (LIB) | 9 | 4 | 12 | 2 | 7/9 (78%) | 1/9 (11%) |
-| C. Views & navigation (VIEW) | 7 | 2 | 8 | 0 | 7/9 (78%) | 0/4 (0%) |
-| D. Search & filter (FILT) | 2 | 7 | 4 | 0 | 2/4 (50%) | 0/4 (0%) |
+| B. Library management (LIB) | 12 | 4 | 9 | 2 | 7/9 (78%) | 4/9 (44%) |
+| C. Views & navigation (VIEW) | 9 | 2 | 6 | 0 | 7/9 (78%) | 1/4 (25%) |
+| D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
 | E. Metadata (META) | 2 | 2 | 2 | 0 | 2/2 (100%) | 0/2 (0%) |
 | F. Edit panel — global adjustments (EDIT) | 35 | 3 | 10 | 1 | 27/28 (96%) | 8/14 (57%) |
 | G. Profiles (PROF) | 3 | 1 | 6 | 0 | 2/3 (67%) | 1/3 (33%) |
@@ -45,10 +45,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 0 | 3 | 5 | 3 | 0/1 (0%) | 0/4 (0%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 10 | 2 | 5 | 1 | 7/8 (88%) | 3/5 (60%) |
-| Y. Menus | 42 | 19 | 24 | 8 | 37/47 (79%) | 3/23 (13%) |
-| Z. Keyboard shortcuts (desktop) | 45 | 16 | 19 | 1 | 39/52 (75%) | 6/23 (26%) |
-| Lightroom Classic extras | 1 | 17 | 61 | 9 | — | 1/21 (5%) |
-| **Total** | 184 | 110 | 206 | 37 | 148/198 (75%) | 33/144 (23%) |
+| Y. Menus | 46 | 18 | 21 | 8 | 37/47 (79%) | 7/23 (30%) |
+| Z. Keyboard shortcuts (desktop) | 46 | 16 | 18 | 1 | 39/52 (75%) | 7/23 (30%) |
+| Lightroom Classic extras | 4 | 19 | 56 | 9 | — | 3/21 (14%) |
+| **Total** | 202 | 106 | 192 | 37 | 150/198 (76%) | 47/144 (33%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -57,45 +57,39 @@ Ordered by tier, then user value, then (low) effort. Take the first one nobody i
 
 1. **LR-EXP-COLORSPACE** (P0) — export is sRGB only. Add Display P3 / Adobe RGB-compatible / ProPhoto-compatible /
    Rec.2020 output (our own primaries + ICC from `crates/codecs/src/icc.rs`). High value, low–medium effort.
-2. **LR-FILT-RATING / LR-FILT-FLAG / LR-FILT-LABEL / LR-FILT-TYPE** (P0/P1) — the engine filters already exist
-   (`cmd:library.filter`); there is no filter-bar UI (stars ≥/=/≤, flags, labels, kind, edited). High value, low effort.
-3. **LR-EXP-PREVIOUS + LR-EXP-DIALOG presets** (P0) — remember the last export settings (⌘E "export with previous")
+2. **LR-EXP-PREVIOUS + LR-EXP-DIALOG presets** (P0) — remember the last export settings (⌘E "export with previous")
    and offer built-in export presets (small JPEG, full JPEG, TIFF). Medium value, low effort.
-4. **LR-LIB-SHOWFINDER** (P0) — reveal the original in Finder/Explorer/file manager. Medium value, low effort.
-5. **LR-EDIT-EFFECTS-VIGNETTE** (P0) — the vignette style (highlight priority / colour priority / paint overlay) is
+3. **LR-LIB-SHOWFINDER** (P0) — reveal the original in Finder/Explorer/file manager. Medium value, low effort.
+4. **LR-EDIT-EFFECTS-VIGNETTE** (P0) — the vignette style (highlight priority / colour priority / paint overlay) is
    rendered but has no UI. Low effort.
-6. **LR-VIEW-BEFOREAFTER** (P0) — add top/bottom and split top/bottom layouts (⌥Y). Low effort.
-7. **LR-MASK-OVERLAY + LR-MASK-PINS** (P0/P1) — show the evaluated mask alpha as a coloured overlay (all mask
+5. **LR-VIEW-BEFOREAFTER** (P0) — add top/bottom and split top/bottom layouts (⌥Y). Low effort.
+6. **LR-MASK-OVERLAY + LR-MASK-PINS** (P0/P1) — show the evaluated mask alpha as a coloured overlay (all mask
    kinds, colour/opacity choice), not just brush dabs and outlines. High value, medium effort.
-8. **LR-MASK-BRUSH + LR-MASK-SLIDERS** (P0) — apply the stored Auto Mask flag (edge-aware brush) and the local
+7. **LR-MASK-BRUSH + LR-MASK-SLIDERS** (P0) — apply the stored Auto Mask flag (edge-aware brush) and the local
    Noise / Moiré / Defringe sliders, which are stored but not rendered. High value, medium effort.
-9. **LR-REM-SPOT-EDIT + LR-REM-BRUSH-PARAMS** (P0) — select a spot pin, move target/source, delete with ⌫,
+8. **LR-REM-SPOT-EDIT + LR-REM-BRUSH-PARAMS** (P0) — select a spot pin, move target/source, delete with ⌫,
    feather/opacity sliders, `[`/`]` size keys. Medium effort.
-10. **LR-VIEW-PHOTOGRID** (P0) — group the justified grid by capture date with headers. Low–medium effort.
-11. **LR-CROP-STRAIGHTEN** (P0) — draw-along-the-horizon straighten tool (+ double-click auto). Low effort.
-12. **LR-PRE-CREATE + LR-PRE-PANEL + LR-BEHAV-PREVIEW-HOVER** (P0/P1) — per-group checkboxes in Create Preset;
+9. **LR-VIEW-PHOTOGRID** (P0) — group the justified grid by capture date with headers. Low–medium effort.
+10. **LR-CROP-STRAIGHTEN** (P0) — draw-along-the-horizon straighten tool (+ double-click auto). Low effort.
+11. **LR-PRE-CREATE + LR-PRE-PANEL + LR-BEHAV-PREVIEW-HOVER** (P0/P1) — per-group checkboxes in Create Preset;
     live preview while hovering presets/profiles/versions. Medium effort.
-13. **LR-PROF-DROPDOWN** (P0) — favourites/recent in the profile menu (and later a browser, LR-PROF-BROWSER).
-14. **LR-LIB-KEYWORD** (P0) — rename/delete a keyword library-wide; keyword list in the left panel for browsing.
-15. **LR-PREF-GENERAL + LR-IMP-RAWDEFAULT** (P0/P1) — a Settings dialog: raw defaults (preset or camera-specific),
+12. **LR-PROF-DROPDOWN** (P0) — favourites/recent in the profile menu (and later a browser, LR-PROF-BROWSER).
+13. **LR-LIB-KEYWORD** (P0) — rename/delete a keyword library-wide; keyword list in the left panel for browsing.
+14. **LR-PREF-GENERAL + LR-IMP-RAWDEFAULT** (P0/P1) — a Settings dialog: raw defaults (preset or camera-specific),
     XMP prefs, cache, GPU. Medium effort.
-16. **LR-IMP-ADD-DIALOG + LR-IMP-LOCAL** (P0) — an import review grid with per-photo checkboxes and destination
+15. **LR-IMP-ADD-DIALOG + LR-IMP-LOCAL** (P0) — an import review grid with per-photo checkboxes and destination
     album; browse folders before adding. Medium effort.
-17. **LR-EXP-TYPE + LR-EXP-DIM** (P0) — Original (+XMP) and DNG export (writer exists in
+16. **LR-EXP-TYPE + LR-EXP-DIM** (P0) — Original (+XMP) and DNG export (writer exists in
     `crates/raw/src/dngwrite.rs`), short edge / width / height / megapixels, "don't enlarge", ppi.
-18. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
+17. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
     permissive pure-Rust decoder yet). High value, high effort (clean sources needed).
-19. **MENU-BAR** (P1) — render the existing menu model (`ui.menu.list`) as a native macOS menu / in-window menu bar.
-    High value, medium effort.
-20. **LR-LIB-SMARTALBUM** (P1) — smart albums from the existing filter + fielded search tokens. High value, medium effort.
-21. **LR-LIB-STACK + LR-LIB-VIRTUALCOPY** (P1) — stacks (⌘G) and virtual copies. Medium effort.
-22. **LR-VIEW-FULLSCREEN + LR-VIEW-COMPARE + LR-VIEW-NAVIGATOR + LR-VIEW-INFOOVERLAY** (P1) — view modes. Medium effort.
-23. **LR-LIB-RENAME + LR-LIB-CAPTURETIME + LR-LIB-LABEL UI** (P1) — batch rename, capture-time edit, label menu/names.
-24. **LR-EYE-RED** (P1) — red-eye correction (panel placeholder exists; no render).
-25. **LR-EDIT-COLOR-POINTCOLOR, LR-EDIT-CALIB, LR-EDIT-LIGHT-CURVE-TAT, LR-EDIT-LIGHT-CURVE-REFINESAT** (P1) —
+18. **LR-VIEW-FULLSCREEN + LR-VIEW-NAVIGATOR + LR-VIEW-INFOOVERLAY** (P1) — view modes. Medium effort.
+19. **LR-LIB-RENAME + LR-LIB-CAPTURETIME + LR-LIB-LABEL UI** (P1) — batch rename, capture-time edit, label menu/names.
+20. **LR-EYE-RED** (P1) — red-eye correction (panel placeholder exists; no render).
+21. **LR-EDIT-COLOR-POINTCOLOR, LR-EDIT-CALIB, LR-EDIT-LIGHT-CURVE-TAT, LR-EDIT-LIGHT-CURVE-REFINESAT** (P1) —
     missing develop controls (calibration matters for XMP interop).
-26. **LR-EXP-BITDEPTH + LR-EXP-COMPRESSION** (P1) — 16-bit TIFF/PNG and TIFF compression choice.
-27. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
+22. **LR-EXP-BITDEPTH + LR-EXP-COMPRESSION** (P1) — 16-bit TIFF/PNG and TIFF compression choice.
+23. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
 
 ## Shortcuts: conflicts and missing bindings
 
@@ -160,7 +154,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-BYDATE | Browse by date | P1 | 🟡 | `cmd:library.filter` (`date`), `crates/ui-egui/src/panels/left.rs` | years only; no month/day tree |
 | LR-LIB-ALBUM | Albums | P0 | ✅ | `cmd:album.create`, `cmd:album.rename`, `cmd:album.delete`, `cmd:album.addPhotos`, `cmd:album.removePhotos`, `cmd:dialog.newAlbum` | no drag photos onto album (LR-BEHAV-DRAGDROP), no album sort |
 | LR-LIB-FOLDER | Folders of albums | P0 | ✅ | `cmd:album.create` (`folder`), `cmd:album.move` | moving is command-only (no drag, no "Move to" menu) |
-| LR-LIB-SMARTALBUM | Smart albums | P1 | ⬜ | `crates/catalog/src/query.rs` | building blocks exist (filter + fielded search tokens) |
+| LR-LIB-SMARTALBUM | Smart albums | P1 | ✅ | `cmd:album.createSmart`, `cmd:album.setRules`, `crates/catalog/src/query.rs`, `crates/ui-egui/src/panels/filterbar.rs` | saved filters (rating/flag/label/kind/edited/keyword/camera/lens/date range/text/album), live; match-all only (no any/none rule groups, no rule editor dialog — rules come from the filter bar or `album.setRules`) |
 | LR-LIB-SHARED-ALBUM | Shared albums | P2 | ⬜ | | needs a sharing service |
 | LR-LIB-OFFLINE | Keep album offline | P2 | 🚫 | | not applicable: local-first library |
 | LR-LIB-TARGET | Target album | P2 | ⬜ | | |
@@ -169,7 +163,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-LABEL | Colour labels | P1 | 🟡 | `cmd:photo.label`, keys 6–9 in `crates/ui-egui/src/shortcuts.rs` | no label menu/buttons, no purple key, label names not editable |
 | LR-LIB-KEYWORD | Keywords | P0 | 🟡 | `cmd:panel.keywords`, `cmd:photo.setMeta` (`addKeywords`/`removeKeywords`) | no library-wide rename/delete, no keyword browser in the left panel |
 | LR-LIB-PEOPLE | People / faces | P2 | ⬜ | | |
-| LR-LIB-STACK | Stacks | P1 | ⬜ | | |
+| LR-LIB-STACK | Stacks | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup`, `cmd:stack.toggle`, `cmd:stack.setTop`, `cmd:stack.remove`, `cmd:stack.auto`, `crates/catalog/src/stacks.rs` | grid/filmstrip count badges, expand/collapse, auto-stack by capture time; no visual-similarity auto-stack |
 | LR-LIB-VERSIONS | Versions | P1 | ✅ | `cmd:version.create` | see section M |
 | LR-LIB-DELETE | Delete / Recently Deleted | P0 | ✅ | `cmd:photo.delete`, `cmd:photo.restore`, `cmd:photo.deletePermanently` | no confirmation dialog, no auto-purge after N days, no "Empty" |
 | LR-LIB-REMOVE-ALBUM | Remove from album | P0 | ✅ | `cmd:album.removePhotos` | |
@@ -181,7 +175,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-CULL | Assisted culling | P2 | ⬜ | | |
 | LR-LIB-ACTIVITY | Comments & likes | OOS | 🚫 | | |
 | LR-LIB-QUICKCOLL | Quick collection [Classic] | P2 | ⬜ | | |
-| LR-LIB-VIRTUALCOPY | Virtual copies [Classic] | P1 | ⬜ | | |
+| LR-LIB-VIRTUALCOPY | Virtual copies [Classic] | P1 | ✅ | `cmd:photo.virtualCopy`, `crates/engine/src/cmd/organize.rs` | “Copy N” badge, stacked with the original, same albums, no XMP writes; no “Set Copy as Master” |
 
 ## C. Views & navigation (VIEW)
 
@@ -196,8 +190,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-VIEW-ZOOM | Zoom & pan | P0 | ✅ | `cmd:view.zoomFit`, `cmd:view.zoom100`, `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle` | steps 25–800 % (not 6–1600 %); Fill only in the bottom bar |
 | LR-VIEW-NAVIGATOR | Navigator mini map | P1 | ⬜ | | |
 | LR-VIEW-BEFOREAFTER | Before / after | P0 | 🟡 | `cmd:view.showOriginal`, `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | all four layouts; "before" is always the original (no before-state from history) |
-| LR-VIEW-COMPARE | Compare two photos | P1 | ⬜ | | |
-| LR-VIEW-SURVEY | Survey view [Classic] | P2 | ⬜ | | |
+| LR-VIEW-COMPARE | Compare two photos | P1 | ✅ | `cmd:view.compare`, `cmd:compare.swap`, `cmd:compare.makeSelect`, `crates/ui-egui/src/panels/compare.rs` | select / candidate, synced zoom + pan, arrows move the candidate; no zoom-link toggle |
+| LR-VIEW-SURVEY | Survey view [Classic] | P2 | ✅ | `cmd:view.survey`, `crates/ui-egui/src/panels/compare.rs` | selection tiled (≤ 48), keys act on the active photo, hover × removes |
 | LR-VIEW-INFOOVERLAY | Info overlay on the photo | P1 | ⬜ | | |
 | LR-VIEW-SLIDESHOW | Slideshow | P2 | ⬜ | | |
 | LR-VIEW-SECONDWINDOW | Second display window [Classic] | P2 | ⬜ | | |
@@ -211,12 +205,12 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 |---|---|---|---|---|---|
 | LR-FILT-SEARCH-META | Text search | P0 | ✅ | `cmd:library.filter` (`text`), `crates/ui-egui/src/panels/topbar.rs`, `crates/catalog/src/query.rs` | fielded tokens (`rating:3`, `iso:>800`, `camera:…`); no suggestions dropdown |
 | LR-FILT-SEARCH-AI | Natural-language search | P2 | ⬜ | | |
-| LR-FILT-RATING | Rating filter | P0 | 🟡 | `cmd:library.filter` (`rating`, `ratingOp`) | engine + search token only; no filter-bar UI |
-| LR-FILT-FLAG | Flag filter | P0 | 🟡 | `cmd:library.filter` (`flag`), `cmd:library.source` (`picks`) | no filter-bar UI (Picks source only) |
-| LR-FILT-LABEL | Colour-label filter | P1 | 🟡 | `cmd:library.filter` (`label`) | no UI |
-| LR-FILT-TYPE | Type / edited filter | P1 | 🟡 | `cmd:library.filter` (`kind`, `edited`) | no UI; no HDR/panorama/depth kinds |
-| LR-FILT-KEYWORD | Keyword filter | P1 | 🟡 | `cmd:library.filter` (`keyword`) | no UI |
-| LR-FILT-CAMERA | Camera / lens filter | P1 | 🟡 | `cmd:library.filter` (`camera`) | no UI; lens via text search only |
+| LR-FILT-RATING | Rating filter | P0 | ✅ | `cmd:library.filter` (`rating`, `ratingOp`), `crates/ui-egui/src/panels/filterbar.rs` | ≥ / = / ≤ stars in the filter bar (`cmd:view.filterBar`) |
+| LR-FILT-FLAG | Flag filter | P0 | ✅ | `cmd:library.filter` (`flag`), `crates/ui-egui/src/panels/filterbar.rs` | picked / rejected / unflagged (one at a time) |
+| LR-FILT-LABEL | Colour-label filter | P1 | ✅ | `cmd:library.filter` (`label`), `crates/ui-egui/src/panels/filterbar.rs` | one label at a time; no “no label” choice |
+| LR-FILT-TYPE | Type / edited filter | P1 | 🟡 | `cmd:library.filter` (`kind`, `edited`), `crates/ui-egui/src/panels/filterbar.rs` | photos / raw / videos, edited / unedited; no HDR/panorama/depth kinds |
+| LR-FILT-KEYWORD | Keyword filter | P1 | ✅ | `cmd:library.filter` (`keyword`), `crates/ui-egui/src/panels/filterbar.rs` | keyword picker |
+| LR-FILT-CAMERA | Camera / lens filter | P1 | ✅ | `cmd:library.filter` (`camera`, `lens`), `crates/ui-egui/src/panels/filterbar.rs` | camera and lens pickers |
 | LR-FILT-LOCATION | Location filter | P2 | 🟡 | `cmd:library.filter` (`text`) | free-text match on the location field only |
 | LR-FILT-PEOPLE | People filter | P2 | ⬜ | | |
 | LR-FILT-CULL | Culling-score filters | P2 | ⬜ | | |
@@ -534,7 +528,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| MENU-BAR | Menu bar rendering | P1 | 🟡 | `crates/ui-egui/src/menus.rs` (`menu_entries`) | model only; no native macOS menu or in-window menu bar |
+| MENU-BAR | Menu bar rendering | P1 | ✅ | `crates/ui-egui/src/menubar.rs`, `apps/lightcraft/src/native_menu.rs` | native macOS menu bar (muda) with live labels/enabled/checked; in-window menus on web/Windows/Linux; ⌫ and X stay egui-handled (contextual), so they show no key in the native menu |
 | MENU-APP-ABOUT | About | P2 | ✅ | `cmd:app.about` | |
 | MENU-APP-SETTINGS | Settings… | P0 | ⬜ | | see LR-PREF-GENERAL |
 | MENU-APP-UPDATES | Check for updates | P2 | ⬜ | | |
@@ -547,7 +541,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-FILE-MIGRATE | Migrate photos | OOS | 🚫 | | |
 | MENU-FILE-NEWALBUM | New Album… | P0 | ✅ | `cmd:dialog.newAlbum` | |
 | MENU-FILE-NEWFOLDER | New Folder… | P0 | ✅ | `cmd:dialog.newFolder` | ⇧⌘N |
-| MENU-FILE-NEWSMART | New Smart Album… | P1 | ⬜ | | |
+| MENU-FILE-NEWSMART | New Smart Album… | P1 | ✅ | `cmd:dialog.newSmartAlbum` | saves the current view (source + filter) |
 | MENU-FILE-IMPORTPROFILES | Import Profiles & Presets… | P1 | 🟡 | `cmd:file.importPresets` | presets only |
 | MENU-FILE-EXPORT | Export… | P0 | ✅ | `cmd:dialog.export` | |
 | MENU-FILE-EXPORTPREV | Export with Previous | P0 | ✅ | `cmd:app.exportPrevious` | ⌥⇧⌘E |
@@ -587,7 +581,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-VIEW-MASKOVERLAY | Mask overlay / cycle colour | P0 | 🟡 | `cmd:view.maskOverlay` | no colour cycle |
 | MENU-VIEW-INCLUDESUBFOLDERS | Include subfolders | P1 | 🟡 | `cmd:library.import` | folder import is always recursive |
 | MENU-VIEW-SORT | Sort submenu | P0 | ✅ | `cmd:library.sort` | no colour-label key |
-| MENU-VIEW-STACKS | Expand/collapse stacks | P1 | ⬜ | | |
+| MENU-VIEW-STACKS | Expand/collapse stacks | P1 | ✅ | `cmd:stack.expandAll`, `cmd:stack.collapseAll` | |
 | MENU-VIEW-PHOTOCOUNT | Show photo counts | P2 | 🟡 | `crates/ui-egui/src/panels/left.rs` | counts always shown; no toggle |
 | MENU-VIEW-HDR | HDR display options | P2 | ⬜ | | |
 | MENU-PHOTO-ADDTOALBUM | Add to album | P0 | ✅ | `cmd:album.addPhotos` | |
@@ -598,7 +592,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-PHOTO-ROTATE | Rotate left / right | P0 | ✅ | `cmd:photo.rotateLeft`, `cmd:photo.rotateRight` | |
 | MENU-PHOTO-FLIP | Flip horizontal / vertical | P0 | ✅ | `cmd:photo.flipHorizontal`, `cmd:photo.flipVertical` | |
 | MENU-PHOTO-CREATEVERSION | Create Version… | P1 | ✅ | `cmd:version.create` | no name prompt |
-| MENU-PHOTO-STACK | Stack submenu | P1 | ⬜ | | |
+| MENU-PHOTO-STACK | Stack submenu | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup`, `cmd:dialog.autoStack` | |
 | MENU-PHOTO-MERGE | Photo merge submenu | P2 | ⬜ | | |
 | MENU-PHOTO-ENHANCE | Enhance… | P2 | ⬜ | | |
 | MENU-PHOTO-AUTO | Auto settings | P0 | ✅ | `cmd:develop.auto` | |
@@ -668,7 +662,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-EXPORTPREV | Export with previous — ⌘E | P0 | 🟡 | `cmd:app.exportPrevious` | bound to ⌥⇧⌘E (Classic); ⌘E not bound |
 | KEY-EXPORTDIALOG | Export dialog — ⇧E | P0 | ✅ | `cmd:dialog.export` | secondary binding (primary ⌘⇧E) |
 | KEY-ENTERFULLSCREEN | Window full screen — ⇧⌘F | P1 | ⬜ | | |
-| KEY-STACK | Group / ungroup stack — ⌘G / ⇧⌘G | P1 | ⬜ | | |
+| KEY-STACK | Group / ungroup stack — ⌘G / ⇧⌘G | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup` | also S expand/collapse, ⇧S top of stack |
 | KEY-GUIDEDUPRIGHT | Guided Upright — ⇧G | P1 | 🟡 | `cmd:geometry.upright` | button in the crop panel; ⇧G = Square Grid |
 | KEY-HIDE | Hide / hide others — ⌘H / ⌥⌘H | P1 | 🟡 | | platform default (unverified) |
 | KEY-QUIT | Quit — ⌘Q | P0 | 🟡 | | platform default (unverified) |
@@ -727,17 +721,17 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-AUTOIMPORT | Watched-folder import | P2 | ⬜ | | |
 | LRC-LIB-TETHER | Tethered capture | P2 | ⬜ | | |
 | LRC-LIB-VIEWS | Grid / loupe / compare / survey / people | P1 | 🟡 | `cmd:view.photoGrid`, `cmd:view.detail` | no compare, survey, people; no grid cell styles beyond filenames |
-| LRC-LIB-COMPARE | Compare view | P1 | ⬜ | | |
-| LRC-LIB-SURVEY | Survey view | P2 | ⬜ | | |
+| LRC-LIB-COMPARE | Compare view | P1 | ✅ | `cmd:view.compare` | ⇧C (C is Crop here); swap, make select; zoom always linked |
+| LRC-LIB-SURVEY | Survey view | P2 | ✅ | `cmd:view.survey` | N |
 | LRC-LIB-REFVIEW | Reference view | P2 | ⬜ | | |
 | LRC-LIB-CATALOG-PANEL | Catalog sets | P1 | 🟡 | `cmd:library.source` | all, recently added, picks, recently deleted; no missing/problem sets |
 | LRC-LIB-FOLDERS | Disk folder tree | P1 | ⬜ | | |
 | LRC-LIB-COLLECTIONS | Collections & sets | P1 | 🟡 | `cmd:album.create` | albums + folders; no smart / quick / target collections |
-| LRC-LIB-SMARTCOLL | Smart-collection rules | P1 | ⬜ | `crates/catalog/src/query.rs` | fielded search tokens are a start |
+| LRC-LIB-SMARTCOLL | Smart-collection rules | P1 | 🟡 | `cmd:album.createSmart`, `crates/catalog/src/query.rs` | the filter fields + date range; no rule editor, any/none groups or operators beyond ≥/=/≤ |
 | LRC-LIB-PUBLISH | Publish services | P2 | ⬜ | | |
-| LRC-LIB-FILTERBAR | Library filter bar | P1 | 🟡 | `cmd:library.filter` | engine filter + text tokens; no filter bar, presets, lock |
-| LRC-LIB-STACKS | Stacks (full) | P1 | ⬜ | | |
-| LRC-LIB-VC | Virtual copies | P1 | ⬜ | | |
+| LRC-LIB-FILTERBAR | Library filter bar | P1 | 🟡 | `cmd:view.filterBar`, `crates/ui-egui/src/panels/filterbar.rs` | rating/flag/label/kind/edited/camera/lens/keyword, clear, save as smart album; no filter presets, lock, or multi-select columns |
+| LRC-LIB-STACKS | Stacks (full) | P1 | 🟡 | `crates/catalog/src/stacks.rs` | group/ungroup/toggle/top/remove/auto by time; no split stack or move up/down |
+| LRC-LIB-VC | Virtual copies | P1 | ✅ | `cmd:photo.virtualCopy` | ⌘' |
 | LRC-LIB-LABELS | Colour-label sets | P1 | ⬜ | | |
 | LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | ⬜ | | flat keywords only (LR-LIB-KEYWORD) |
 | LRC-LIB-METADATA | Metadata panel & presets | P1 | 🟡 | `cmd:photo.setMeta`, `cmd:photo.saveMetadataToFile`, `cmd:photo.readMetadataFromFile` | no metadata presets, capture-time edit, copyright status |

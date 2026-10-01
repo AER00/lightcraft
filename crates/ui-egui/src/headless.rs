@@ -339,6 +339,34 @@ mod tests {
         h.settle(Duration::from_secs(20));
     }
 
+    /// The filter bar drives `library.filter` and saves the view as a smart album.
+    #[test]
+    fn filter_bar_filters_and_saves_a_smart_album() {
+        let mut h = demo([1400.0, 800.0]);
+        let t = Duration::from_secs(10);
+        let all = h.app.session.visible_cloned().len();
+        h.request("engine.execute", json!({"command": "view.filterBar"}), t);
+        assert!(h.app.ui.filter_bar);
+        for w in ["filter:star3", "filter:pick", "filter:label-red", "filter:label-red"] {
+            let r = h.request("ui.clickWidget", json!({"id": w}), t);
+            assert_eq!(r["ok"], true, "{w}: {r}");
+        }
+        let f = h.app.session.filter.clone();
+        assert_eq!((f.rating, f.flag, f.label), (3, Some(lightcraft_catalog::Flag::Pick), None), "a second click clears the label");
+        let n = h.app.session.visible_cloned().len();
+        assert!(n > 0 && n < all);
+        h.request("ui.clickWidget", json!({"id": "button:filterSave"}), t);
+        assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::NewSmartAlbum { .. })));
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let smart = h.app.session.catalog.albums().find(|a| a.is_smart()).expect("smart album").id;
+        assert_eq!(h.app.session.catalog.album_count(smart), n);
+        h.request("ui.clickWidget", json!({"id": "button:filterClear"}), t);
+        assert_eq!(h.app.session.filter, Default::default());
+        assert_eq!(h.app.session.visible_cloned().len(), all);
+        h.settle(Duration::from_secs(20));
+    }
+
     #[test]
     fn screenshot_request_is_answered_without_a_window() {
         let mut h = demo([800.0, 500.0]);

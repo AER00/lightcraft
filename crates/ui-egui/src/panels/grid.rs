@@ -36,9 +36,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let sel_n = app.session.selection.ids.len();
     let cnt = if sel_n > 1 { format!("{sel_n} of {} photos", ids.len()) } else { format!("{} photos", ids.len()) };
     ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
+    if app.ui.filter_bar {
+        super::filterbar::show(app, ui);
+    }
     app.canvas_rect = Some(ui.max_rect());
     if ids.is_empty() {
-        super::empty_message(ui, ui.max_rect(), "No photos", "Add photos with File → Add Photos (Cmd+Shift+I), or drop them here");
+        if app.session.filter != Default::default() {
+            super::empty_message(ui, ui.max_rect(), "No matching photos", "Change the filter, or clear it (View → Clear Filters)");
+        } else {
+            super::empty_message(ui, ui.max_rect(), "No photos", "Add photos with File → Add Photos (Cmd+Shift+I), or drop them here");
+        }
         return;
     }
     let ppp = ui.ctx().pixels_per_point();
