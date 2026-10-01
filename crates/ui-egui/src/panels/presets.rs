@@ -22,8 +22,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.y = 0.0;
             let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::hover());
             ui.painter().text(pos2(hr.left() + 24.0, hr.center().y + 2.0), Align2::LEFT_CENTER, "Presets", t.semibold(15.0), t.text);
-            let mut hdr = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(hr.right() - 80.0, hr.top()), hr.right_bottom())).layout(egui::Layout::right_to_left(egui::Align::Center)));
-            if icon_button(&mut hdr, "presetCreate", Icon::Plus, vec2(28.0, 28.0), false, app.session.active().is_some(), "Create Preset…").clicked() {
+            let mut hdr = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(Rect::from_min_max(pos2(hr.right() - 80.0, hr.top()), hr.right_bottom()))
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            );
+            if icon_button(&mut hdr, "presetCreate", Icon::Plus, vec2(28.0, 28.0), false, app.session.active().is_some(), "Create Preset…").clicked()
+            {
                 app.ui.dialog = Some(crate::state::Dialog::CreatePreset { name: String::new(), group: "User Presets".into() });
             }
             divider(ui);
@@ -31,7 +36,17 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let amt_id = egui::Id::new("preset-amount");
             let last: Option<(String, f64)> = ui.data(|d| d.get_temp(amt_id));
             if let Some((pid, amount)) = last.clone() {
-                let spec = ControlSpec { id: "presetAmount", label: "Amount", section: Section::Profile, min: 0.0, max: 200.0, default: 100.0, step: 1.0, decimals: 0, track: Track::Plain };
+                let spec = ControlSpec {
+                    id: "presetAmount",
+                    label: "Amount",
+                    section: Section::Profile,
+                    min: 0.0,
+                    max: 200.0,
+                    default: 100.0,
+                    step: 1.0,
+                    decimals: 0,
+                    track: Track::Plain,
+                };
                 let out = slider(ui, &spec, amount, true, None);
                 if let Some(v) = out.value {
                     // re-apply from the pre-preset state: undo last preset step then apply with the new amount
@@ -51,7 +66,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     let open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(true);
                     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
                     register(ui.ctx(), format!("presetGroup:{g}"), r);
-                    paint(ui.painter(), Rect::from_center_size(pos2(r.left() + 22.0, r.center().y), vec2(12.0, 12.0)), if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_label);
+                    paint(
+                        ui.painter(),
+                        Rect::from_center_size(pos2(r.left() + 22.0, r.center().y), vec2(12.0, 12.0)),
+                        if open { Icon::ChevronDown } else { Icon::ChevronRight },
+                        t.text_label,
+                    );
                     ui.painter().text(pos2(r.left() + 36.0, r.center().y), Align2::LEFT_CENTER, &g, t.semibold(13.0), t.text_label);
                     if resp.clicked() {
                         ui.data_mut(|d| d.insert_temp(open_id, !open));
@@ -70,7 +90,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                         }
                         ui.painter().text(pos2(r.left() + 40.0, r.center().y), Align2::LEFT_CENTER, &name, t.font(13.0), t.text_label);
                         if fav {
-                            paint(ui.painter(), Rect::from_center_size(pos2(r.right() - 20.0, r.center().y), vec2(12.0, 12.0)), Icon::StarFilled, t.star);
+                            paint(
+                                ui.painter(),
+                                Rect::from_center_size(pos2(r.right() - 20.0, r.center().y), vec2(12.0, 12.0)),
+                                Icon::StarFilled,
+                                t.star,
+                            );
                         }
                         if resp.clicked() {
                             let _ = app.run("preset.apply", json!({"id": pid, "amount": 100}));

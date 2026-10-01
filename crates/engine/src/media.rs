@@ -200,6 +200,7 @@ pub struct ProbeInfo {
     pub file_size: u64,
     pub captured: Option<String>,
     pub meta: lightcraft_catalog::Meta,
+    pub as_shot_wb: Option<(f64, f64)>,
 }
 
 pub type FileProbe = Arc<dyn Fn(&str) -> Result<ProbeInfo, String> + Send + Sync>;
@@ -234,6 +235,10 @@ pub fn import_paths(s: &mut crate::Session, paths: &[String]) -> crate::Result<V
         p.file_size = info.file_size;
         p.captured = info.captured;
         p.meta = info.meta;
+        p.as_shot_wb = info.as_shot_wb;
+        if let Some((t, tint)) = info.as_shot_wb {
+            p.develop = std::sync::Arc::new(lightcraft_develop::DevelopSettings::for_raw(t, tint));
+        }
         ids.push(id);
         ops.push(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) });
     }

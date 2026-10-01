@@ -140,6 +140,9 @@ pub struct Photo {
     /// Video duration in seconds.
     #[serde(default)]
     pub duration: Option<f64>,
+    /// Raw files: the camera's as-shot white balance (Kelvin, tint).
+    #[serde(default)]
+    pub as_shot_wb: Option<(f64, f64)>,
 }
 
 impl Photo {
@@ -165,6 +168,7 @@ impl Photo {
             history: Vec::new(),
             deleted: false,
             duration: None,
+            as_shot_wb: None,
         }
     }
     pub fn is_edited(&self) -> bool {

@@ -24,89 +24,92 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::About => "About LightCraft",
         Dialog::Shortcuts => "Keyboard Shortcuts",
     };
-    egui::Window::new(title).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).default_width(380.0).show(ctx, |ui| {
-        ui.spacing_mut().item_spacing.y = 8.0;
-        match &mut dlg {
-            Dialog::NewAlbum { name, .. } | Dialog::RenameAlbum { name, .. } => {
-                let r = ui.add(egui::TextEdit::singleline(name).hint_text("Name").desired_width(f32::INFINITY));
-                r.request_focus();
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    confirm = true;
+    egui::Window::new(title).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).default_width(380.0).show(
+        ctx,
+        |ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            match &mut dlg {
+                Dialog::NewAlbum { name, .. } | Dialog::RenameAlbum { name, .. } => {
+                    let r = ui.add(egui::TextEdit::singleline(name).hint_text("Name").desired_width(f32::INFINITY));
+                    r.request_focus();
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        confirm = true;
+                    }
                 }
-            }
-            Dialog::CreatePreset { name, group } => {
-                ui.add(egui::TextEdit::singleline(name).hint_text("Preset name").desired_width(f32::INFINITY));
-                ui.add(egui::TextEdit::singleline(group).hint_text("Group").desired_width(f32::INFINITY));
-                ui.label(egui::RichText::new("Includes the current settings except crop, masks and remove.").color(t.text_dim));
-            }
-            Dialog::CopySettings { groups } => {
-                ui.columns(2, |cols| {
-                    for (i, g) in SettingsGroup::ALL.iter().enumerate() {
-                        let key = serde_json::to_value(g).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-                        let mut on = groups.contains(&key);
-                        if cols[i % 2].checkbox(&mut on, g.label()).changed() {
-                            if on {
-                                groups.push(key);
-                            } else {
-                                groups.retain(|x| *x != key);
-                            }
-                        }
-                    }
-                });
-            }
-            Dialog::Export { format, quality, long_edge } => {
-                ui.horizontal(|ui| {
-                    ui.label("Format");
-                    for f in ["jpeg", "png", "tiff"] {
-                        ui.selectable_value(format, f.to_string(), f.to_uppercase());
-                    }
-                });
-                ui.add(egui::Slider::new(quality, 10..=100).text("Quality"));
-                ui.add(egui::Slider::new(long_edge, 512..=8000).text("Long edge (px)"));
-            }
-            Dialog::About => {
-                ui.label(egui::RichText::new("LightCraft").font(t.semibold(20.0)).color(t.text));
-                ui.label(format!("Version {} — a clean-room, pure-Rust photo library and raw developer.", env!("CARGO_PKG_VERSION")));
-                ui.label("MIT OR Apache-2.0. Fonts: Source Sans 3 (OFL). Icons: original.");
-            }
-            Dialog::Shortcuts => {
-                egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-                    egui::Grid::new("shortcuts").striped(true).show(ui, |ui| {
-                        for (id, label, sc, _) in crate::menus::UI_COMMANDS {
-                            if let Some(sc) = sc {
-                                ui.label(*label);
-                                ui.label(*sc);
-                                ui.label(egui::RichText::new(*id).color(t.text_dim));
-                                ui.end_row();
-                            }
-                        }
-                        for c in lightcraft_engine::command_specs() {
-                            if let Some(sc) = c.shortcut {
-                                ui.label(c.label);
-                                ui.label(sc);
-                                ui.label(egui::RichText::new(c.id).color(t.text_dim));
-                                ui.end_row();
+                Dialog::CreatePreset { name, group } => {
+                    ui.add(egui::TextEdit::singleline(name).hint_text("Preset name").desired_width(f32::INFINITY));
+                    ui.add(egui::TextEdit::singleline(group).hint_text("Group").desired_width(f32::INFINITY));
+                    ui.label(egui::RichText::new("Includes the current settings except crop, masks and remove.").color(t.text_dim));
+                }
+                Dialog::CopySettings { groups } => {
+                    ui.columns(2, |cols| {
+                        for (i, g) in SettingsGroup::ALL.iter().enumerate() {
+                            let key = serde_json::to_value(g).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+                            let mut on = groups.contains(&key);
+                            if cols[i % 2].checkbox(&mut on, g.label()).changed() {
+                                if on {
+                                    groups.push(key);
+                                } else {
+                                    groups.retain(|x| *x != key);
+                                }
                             }
                         }
                     });
-                });
-            }
-        }
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let informational = matches!(dlg, Dialog::About | Dialog::Shortcuts);
-            if !informational && ui.button("Cancel").clicked() {
-                close = true;
-            }
-            if ui.button(if informational { "Close" } else { "OK" }).clicked() {
-                if informational {
-                    close = true;
-                } else {
-                    confirm = true;
+                }
+                Dialog::Export { format, quality, long_edge } => {
+                    ui.horizontal(|ui| {
+                        ui.label("Format");
+                        for f in ["jpeg", "png", "tiff"] {
+                            ui.selectable_value(format, f.to_string(), f.to_uppercase());
+                        }
+                    });
+                    ui.add(egui::Slider::new(quality, 10..=100).text("Quality"));
+                    ui.add(egui::Slider::new(long_edge, 512..=8000).text("Long edge (px)"));
+                }
+                Dialog::About => {
+                    ui.label(egui::RichText::new("LightCraft").font(t.semibold(20.0)).color(t.text));
+                    ui.label(format!("Version {} — a clean-room, pure-Rust photo library and raw developer.", env!("CARGO_PKG_VERSION")));
+                    ui.label("MIT OR Apache-2.0. Fonts: Source Sans 3 (OFL). Icons: original.");
+                }
+                Dialog::Shortcuts => {
+                    egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                        egui::Grid::new("shortcuts").striped(true).show(ui, |ui| {
+                            for (id, label, sc, _) in crate::menus::UI_COMMANDS {
+                                if let Some(sc) = sc {
+                                    ui.label(*label);
+                                    ui.label(*sc);
+                                    ui.label(egui::RichText::new(*id).color(t.text_dim));
+                                    ui.end_row();
+                                }
+                            }
+                            for c in lightcraft_engine::command_specs() {
+                                if let Some(sc) = c.shortcut {
+                                    ui.label(c.label);
+                                    ui.label(sc);
+                                    ui.label(egui::RichText::new(c.id).color(t.text_dim));
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                    });
                 }
             }
-        });
-    });
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let informational = matches!(dlg, Dialog::About | Dialog::Shortcuts);
+                if !informational && ui.button("Cancel").clicked() {
+                    close = true;
+                }
+                if ui.button(if informational { "Close" } else { "OK" }).clicked() {
+                    if informational {
+                        close = true;
+                    } else {
+                        confirm = true;
+                    }
+                }
+            });
+        },
+    );
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         close = true;
     }
@@ -122,7 +125,9 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
     match dlg {
         Dialog::NewAlbum { name, folder } => app.run("album.create", json!({"name": name, "folder": folder, "addSelected": !folder})),
         Dialog::RenameAlbum { id, name } => app.run("album.rename", json!({"id": id, "name": name})),
-        Dialog::CreatePreset { name, group } => app.run("preset.create", json!({"name": if name.is_empty() { "My Preset" } else { name }, "group": group})),
+        Dialog::CreatePreset { name, group } => {
+            app.run("preset.create", json!({"name": if name.is_empty() { "My Preset" } else { name }, "group": group}))
+        }
         Dialog::CopySettings { groups } => app.run("develop.copy", json!({"groups": groups})),
         Dialog::Export { format, quality, long_edge } => app.run("app.export", json!({"format": format, "quality": quality, "longEdge": long_edge})),
         Dialog::About | Dialog::Shortcuts => Ok(serde_json::Value::Null),

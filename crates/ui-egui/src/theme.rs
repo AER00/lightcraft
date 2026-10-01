@@ -108,7 +108,9 @@ impl Tokens {
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert("SourceSans3".into(), Arc::new(FontData::from_static(include_bytes!("../../../assets/fonts/SourceSans3-Regular.ttf"))));
-    fonts.font_data.insert("SourceSans3-Semibold".into(), Arc::new(FontData::from_static(include_bytes!("../../../assets/fonts/SourceSans3-Semibold.ttf"))));
+    fonts
+        .font_data
+        .insert("SourceSans3-Semibold".into(), Arc::new(FontData::from_static(include_bytes!("../../../assets/fonts/SourceSans3-Semibold.ttf"))));
     let fallback: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let mut prop = vec!["SourceSans3".to_string()];
     prop.extend(fallback.clone());
@@ -136,7 +138,13 @@ pub fn apply(ctx: &egui::Context) {
     v.popup_shadow = egui::epaint::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(140) };
     v.window_shadow = egui::epaint::Shadow { offset: [0, 8], blur: 30, spread: 0, color: Color32::from_black_alpha(160) };
     let w = &mut v.widgets;
-    for (wv, fill) in [(&mut w.noninteractive, t.chrome), (&mut w.inactive, t.button), (&mut w.hovered, t.hover), (&mut w.active, t.pressed), (&mut w.open, t.hover)] {
+    for (wv, fill) in [
+        (&mut w.noninteractive, t.chrome),
+        (&mut w.inactive, t.button),
+        (&mut w.hovered, t.hover),
+        (&mut w.active, t.pressed),
+        (&mut w.open, t.hover),
+    ] {
         wv.bg_fill = fill;
         wv.weak_bg_fill = fill;
         wv.corner_radius = CornerRadius::same(4);

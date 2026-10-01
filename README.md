@@ -17,7 +17,7 @@ cargo xtask ci                                         # fmt, clippy, tests, lay
 
 See [ROADMAP.md](ROADMAP.md) for milestones and estimates.
 
-## The Craft family
+## Crafting Apps
 
 Clean-room, pure-Rust creative tools from the same workshop — native on macOS, Windows and Linux, and in the browser.
 

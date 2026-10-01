@@ -208,7 +208,8 @@ impl LightcraftApp {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let dropped: Vec<String> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.as_ref().map(|p| p.to_string_lossy().to_string())).collect());
+            let dropped: Vec<String> =
+                ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_string_lossy().to_string()).filter(|p| !p.is_empty()).collect());
             if !dropped.is_empty() {
                 let _ = self.run("library.import", serde_json::json!({"paths": dropped}));
             }
@@ -226,12 +227,6 @@ impl LightcraftApp {
         };
         if let Some(egui::Event::PointerMoved(p) | egui::Event::PointerButton { pos: p, .. }) = self.synthetic.first() {
             raw.events.push(egui::Event::PointerMoved(*p));
-        }
-        if let Some(m) = self.synthetic.iter().take(n).find_map(|e| match e {
-            egui::Event::Key { modifiers, .. } | egui::Event::PointerButton { modifiers, .. } => Some(*modifiers),
-            _ => None,
-        }) {
-            raw.modifiers = m;
         }
         raw.events.extend(self.synthetic.drain(..n));
     }
@@ -281,4 +276,9 @@ pub fn now_ms() -> f64 {
     {
         0.0
     }
+}
+
+/// Whether the settings render in black & white.
+pub fn is_bw(d: &lightcraft_develop::DevelopSettings) -> bool {
+    d.treatment == lightcraft_develop::Treatment::Bw || d.profile.id == "lc.mono"
 }

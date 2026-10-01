@@ -32,9 +32,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let sr = Rect::from_center_size(pos2(full.center().x, full.center().y), vec2(sw, 28.0));
             let id = egui::Id::new("search-field");
             let focused = ui.memory(|m| m.has_focus(id));
-            ui.painter().rect(sr, 4.0, if focused { t.canvas } else { t.field }, Stroke::new(1.0, if focused { t.accent } else { t.field_border }), StrokeKind::Inside);
+            ui.painter().rect(
+                sr,
+                4.0,
+                if focused { t.canvas } else { t.field },
+                Stroke::new(1.0, if focused { t.accent } else { t.field_border }),
+                StrokeKind::Inside,
+            );
             register(ui.ctx(), "field:search", sr);
-            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(sr.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+            let mut child =
+                ui.new_child(egui::UiBuilder::new().max_rect(sr.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
             let empty = app.ui.search.is_empty();
             if empty && !focused {
                 let g = child.painter().layout_no_wrap("Search Photos".into(), t.font(13.5), t.text_dim);
@@ -44,7 +51,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 child.painter().galley(pos2(x0 + 24.0, sr.center().y - g.size().y / 2.0), g, t.text_dim);
             }
             let resp = child.add(
-                egui::TextEdit::singleline(&mut app.ui.search).id(id).frame(egui::Frame::NONE).desired_width(sr.width() - 20.0).font(t.font(13.5)).text_color(t.text),
+                egui::TextEdit::singleline(&mut app.ui.search)
+                    .id(id)
+                    .frame(egui::Frame::NONE)
+                    .desired_width(sr.width() - 20.0)
+                    .font(t.font(13.5))
+                    .text_color(t.text),
             );
             if resp.changed() {
                 let q = app.ui.search.clone();
@@ -55,7 +67,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let fresp = ui.interact(fr, egui::Id::new("filter-btn"), Sense::click());
             register(ui.ctx(), "icon:filter", fr);
             let filtering = app.session.filter != Default::default();
-            paint(ui.painter(), fr.shrink(6.0), Icon::Filter, if filtering { t.accent } else if fresp.hovered() { t.text } else { t.icon });
+            paint(
+                ui.painter(),
+                fr.shrink(6.0),
+                Icon::Filter,
+                if filtering {
+                    t.accent
+                } else if fresp.hovered() {
+                    t.text
+                } else {
+                    t.icon
+                },
+            );
             if fresp.clicked() {
                 let _ = app.run("view.filterBar", json!({}));
             }

@@ -106,7 +106,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let split = app.ui.before_after == BeforeAfter::SideBySide;
     let areas: Vec<Rect> = if split {
         let half = area.width() / 2.0 - 6.0;
-        vec![Rect::from_min_size(area.min, vec2(half, area.height())), Rect::from_min_size(pos2(area.center().x + 6.0, area.top()), vec2(half, area.height()))]
+        vec![
+            Rect::from_min_size(area.min, vec2(half, area.height())),
+            Rect::from_min_size(pos2(area.center().x + 6.0, area.top()), vec2(half, area.height())),
+        ]
     } else {
         vec![area]
     };
@@ -122,10 +125,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         app.renderer.request(Slot::Main, job, 100);
     }
     let show_before = app.ui.before_after == BeforeAfter::Original || ui.input(|i| i.key_down(egui::Key::Backslash));
-    if split || show_before || app.ui.before_after == BeforeAfter::Split {
-        if let Some(job) = app.session.render_job(id, rw.max(8), rh.max(8), true, !crop_tool) {
-            app.renderer.request(Slot::Before, job, 90);
-        }
+    if (split || show_before || app.ui.before_after == BeforeAfter::Split)
+        && let Some(job) = app.session.render_job(id, rw.max(8), rh.max(8), true, !crop_tool)
+    {
+        app.renderer.request(Slot::Before, job, 90);
     }
     let p = ui.painter_at(canvas);
     let draw = |slot: Slot, r: Rect| {
@@ -187,7 +190,16 @@ fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
     }
 }
 
-fn general_interaction(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, img: Rect, canvas: Rect, native: [usize; 2], aspect: f32) {
+fn general_interaction(
+    app: &mut LightcraftApp,
+    ui: &mut egui::Ui,
+    resp: &egui::Response,
+    map: &CanvasMap,
+    img: Rect,
+    canvas: Rect,
+    native: [usize; 2],
+    aspect: f32,
+) {
     if app.ui.tool == "wbPicker" {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         if resp.clicked()
@@ -260,9 +272,7 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         p.line_segment([lerp(pts[0], pts[3], f), lerp(pts[1], pts[2], f)], guide);
     }
     // handles: 0..3 corners, 4..7 edges (top, right, bottom, left)
-    let handles: Vec<Pos2> = (0..8)
-        .map(|i| if i < 4 { pts[i] } else { lerp(pts[i - 4], pts[(i - 3) % 4], 0.5) })
-        .collect();
+    let handles: Vec<Pos2> = (0..8).map(|i| if i < 4 { pts[i] } else { lerp(pts[i - 4], pts[(i - 3) % 4], 0.5) }).collect();
     for (i, h) in handles.iter().enumerate() {
         register(ui.ctx(), format!("cropHandle:{i}"), Rect::from_center_size(*h, vec2(14.0, 14.0)));
         let s = if i < 4 { 12.0 } else { 9.0 };
@@ -402,7 +412,10 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
                     if sel && app.ui.mask_overlay {
                         p.add(egui::Shape::convex_polygon(pts.clone(), red, Stroke::NONE));
                     }
-                    p.add(egui::Shape::closed_line(pts, Stroke::new(if sel { 1.5 } else { 1.0 }, Color32::from_white_alpha(if sel { 230 } else { 120 }))));
+                    p.add(egui::Shape::closed_line(
+                        pts,
+                        Stroke::new(if sel { 1.5 } else { 1.0 }, Color32::from_white_alpha(if sel { 230 } else { 120 })),
+                    ));
                     pin(p, c0, sel);
                     if sel {
                         register(ui.ctx(), format!("maskPin:{}", m.id), Rect::from_center_size(c0, vec2(14.0, 14.0)));
@@ -626,7 +639,13 @@ fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
             }
             if resp.clicked() {
                 let m = ui.input(|i| i.modifiers);
-                let mode = if m.command { "toggle" } else if m.shift { "range" } else { "replace" };
+                let mode = if m.command {
+                    "toggle"
+                } else if m.shift {
+                    "range"
+                } else {
+                    "replace"
+                };
                 let _ = app.run("library.select", json!({"ids": [id.0], "mode": mode}));
             }
         }

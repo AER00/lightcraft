@@ -118,10 +118,26 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             let sel = app.session.active_mask == Some(m.id);
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
             register(ui.ctx(), format!("mask:{}", m.id), r);
-            ui.painter().rect_filled(r, 4.0, if sel { t.tool_active } else if resp.hovered() { t.hover.gamma_multiply(0.7) } else { t.chrome });
+            ui.painter().rect_filled(
+                r,
+                4.0,
+                if sel {
+                    t.tool_active
+                } else if resp.hovered() {
+                    t.hover.gamma_multiply(0.7)
+                } else {
+                    t.chrome
+                },
+            );
             let icon = m.components.first().map(|c| kind_label(&c.shape).1).unwrap_or(Icon::Mask);
             paint(ui.painter(), Rect::from_min_size(r.min + vec2(8.0, 7.0), vec2(16.0, 16.0)), icon, t.text_label);
-            ui.painter().text(pos2(r.left() + 32.0, r.center().y), Align2::LEFT_CENTER, &m.name, t.font(13.0), if m.visible { t.text } else { t.text_disabled });
+            ui.painter().text(
+                pos2(r.left() + 32.0, r.center().y),
+                Align2::LEFT_CENTER,
+                &m.name,
+                t.font(13.0),
+                if m.visible { t.text } else { t.text_disabled },
+            );
             if resp.clicked() {
                 let _ = app.run("mask.select", json!({"id": m.id}));
             }
@@ -169,7 +185,17 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let out = slider(ui, s, v, true, None);
         apply_slider_out(app, s, out, |app, v| app.run("mask.adjust", json!({"values": {s.id: v}})));
     }
-    let amt = ControlSpec { id: "amount", label: "Amount", section: Section::Light, min: 0.0, max: 200.0, default: 100.0, step: 1.0, decimals: 0, track: Track::Plain };
+    let amt = ControlSpec {
+        id: "amount",
+        label: "Amount",
+        section: Section::Light,
+        min: 0.0,
+        max: 200.0,
+        default: 100.0,
+        step: 1.0,
+        decimals: 0,
+        track: Track::Plain,
+    };
     let out = slider(ui, &amt, m.adjust.amount, true, None);
     apply_slider_out(app, &amt, out, |app, v| app.run("mask.adjust", json!({"values": {"amount": v}})));
     ui.add_space(30.0);
@@ -177,7 +203,14 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 }
 
 fn component_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, op: &str) {
-    for (kind, label) in [("brush", "Brush"), ("linear", "Linear Gradient"), ("radial", "Radial Gradient"), ("sky", "Sky"), ("subject", "Subject"), ("luminanceRange", "Luminance Range")] {
+    for (kind, label) in [
+        ("brush", "Brush"),
+        ("linear", "Linear Gradient"),
+        ("radial", "Radial Gradient"),
+        ("sky", "Sky"),
+        ("subject", "Subject"),
+        ("luminanceRange", "Luminance Range"),
+    ] {
         if ui.button(label).clicked() {
             if kind == "brush" {
                 app.ui.tool = "brush".into();

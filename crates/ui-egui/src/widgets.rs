@@ -50,7 +50,13 @@ fn track_stops(track: &Track) -> Option<Vec<Color32>> {
             let prev = hex(BAND_COLORS[(i + 7) % 8]);
             let next = hex(BAND_COLORS[(i + 1) % 8]);
             let me = hex(BAND_COLORS[i]);
-            vec![prev.gamma_multiply(0.7), lerp(prev, me, 0.5).gamma_multiply(0.7), me.gamma_multiply(0.7), lerp(me, next, 0.5).gamma_multiply(0.7), next.gamma_multiply(0.7)]
+            vec![
+                prev.gamma_multiply(0.7),
+                lerp(prev, me, 0.5).gamma_multiply(0.7),
+                me.gamma_multiply(0.7),
+                lerp(me, next, 0.5).gamma_multiply(0.7),
+                next.gamma_multiply(0.7),
+            ]
         }
         Track::Sat { band } => vec![hex("#454343"), lerp(hex("#454343"), hex(BAND_COLORS[*band as usize]), 0.6), hex(BAND_COLORS[*band as usize])],
         Track::Lum { band } => {
@@ -231,7 +237,12 @@ pub fn flyout_row(ui: &mut Ui, id: &str, title: &str, icon: Icon, open: bool) ->
     p.rect_filled(tile, 3.0, t.chrome.gamma_multiply(1.15));
     paint(p, tile.shrink(3.0), icon, t.text_label);
     p.text(pos2(tile.right() + 10.0, r.center().y), Align2::LEFT_CENTER, title, t.semibold(13.0), t.text_label);
-    paint(p, Rect::from_center_size(pos2(r.right() - 14.0, r.center().y), vec2(12.0, 12.0)), if open { Icon::ChevronDown } else { Icon::TriangleLeft }, t.text_label);
+    paint(
+        p,
+        Rect::from_center_size(pos2(r.right() - 14.0, r.center().y), vec2(12.0, 12.0)),
+        if open { Icon::ChevronDown } else { Icon::TriangleLeft },
+        t.text_label,
+    );
     resp
 }
 
@@ -305,4 +316,17 @@ pub fn stars(ui: &mut Ui, id: &str, rating: u8, size: f32) -> Option<u8> {
     };
     let _ = hover_n;
     out
+}
+
+/// A borderless dropdown button: `text` followed by a painted chevron (no font glyph needed).
+pub fn dropdown(ui: &mut Ui, id: &str, text: &str, font: egui::FontId, color: Color32) -> Response {
+    let t = Tokens::get(ui.ctx());
+    let galley = ui.painter().layout_no_wrap(text.to_string(), font, color);
+    let size = vec2(galley.size().x + 20.0, galley.size().y.max(20.0));
+    let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+    register(ui.ctx(), format!("dropdown:{id}"), r);
+    let c = if resp.hovered() { t.text } else { color };
+    ui.painter().galley(pos2(r.left(), r.center().y - galley.size().y / 2.0), galley, c);
+    paint(ui.painter(), Rect::from_center_size(pos2(r.right() - 7.0, r.center().y + 1.0), vec2(12.0, 12.0)), Icon::ChevronDown, c);
+    resp
 }

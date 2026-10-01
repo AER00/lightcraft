@@ -40,7 +40,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let active = app.session.active().and_then(|id| app.session.catalog.photo(id).cloned());
             let pill = Rect::from_center_size(pos2(full.center().x - 60.0, full.center().y), vec2(196.0, 30.0));
             ui.painter().rect_filled(pill, 15.0, t.canvas);
-            let mut pill_ui = ui.new_child(egui::UiBuilder::new().max_rect(pill.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+            let mut pill_ui =
+                ui.new_child(egui::UiBuilder::new().max_rect(pill.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
             pill_ui.spacing_mut().item_spacing.x = 3.0;
             let rating = active.as_ref().map(|p| p.rating).unwrap_or(0);
             if let Some(r) = stars(&mut pill_ui, "bottom", rating, 19.0) {
@@ -48,7 +49,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             }
             pill_ui.add_space(6.0);
             let flag = active.as_ref().map(|p| p.flag).unwrap_or_default();
-            for (id, icon, f) in [("unflag", Icon::Circle, Flag::None), ("pick", Icon::FlagPick, Flag::Pick), ("reject", Icon::FlagReject, Flag::Reject)] {
+            for (id, icon, f) in
+                [("unflag", Icon::Circle, Flag::None), ("pick", Icon::FlagPick, Flag::Pick), ("reject", Icon::FlagReject, Flag::Reject)]
+            {
                 let (r, resp) = pill_ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
                 register(pill_ui.ctx(), format!("flag:{id}"), r);
                 let on = flag == f && f != Flag::None;
@@ -71,7 +74,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let cresp = ui.interact(copy_r, egui::Id::new("copy-settings"), Sense::click());
             register(ui.ctx(), "button:copySettings", copy_r);
             ui.painter().rect_filled(copy_r, 15.0, if cresp.hovered() { t.hover } else { t.canvas });
-            ui.painter().text(copy_r.center(), Align2::CENTER_CENTER, label, t.font(13.0), if active.is_some() { t.text_label } else { t.text_disabled });
+            ui.painter().text(
+                copy_r.center(),
+                Align2::CENTER_CENTER,
+                label,
+                t.font(13.0),
+                if active.is_some() { t.text_label } else { t.text_disabled },
+            );
             if cresp.clicked() && active.is_some() {
                 let _ = if has_clip { app.run("develop.paste", json!({})) } else { app.run("develop.copy", json!({})) };
                 let msg = if has_clip { "Settings pasted" } else { "Edit settings copied" };
@@ -87,10 +96,24 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             }
 
             // right side
-            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(full.right() - 360.0, full.top()), full.right_bottom())).layout(egui::Layout::right_to_left(egui::Align::Center)));
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(Rect::from_min_max(pos2(full.right() - 360.0, full.top()), full.right_bottom()))
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            );
             child.spacing_mut().item_spacing.x = 6.0;
             if matches!(app.ui.view, ViewMode::Detail | ViewMode::Compare) {
-                if icon_button(&mut child, "beforeAfter", Icon::BeforeAfter, vec2(30.0, 30.0), app.ui.before_after != BeforeAfter::Off, true, "Before/After (Y)").clicked() {
+                if icon_button(
+                    &mut child,
+                    "beforeAfter",
+                    Icon::BeforeAfter,
+                    vec2(30.0, 30.0),
+                    app.ui.before_after != BeforeAfter::Off,
+                    true,
+                    "Before/After (Y)",
+                )
+                .clicked()
+                {
                     let _ = app.run("view.beforeAfter", json!({}));
                 }
                 if icon_button(&mut child, "filmstrip", Icon::Filmstrip, vec2(30.0, 30.0), app.ui.filmstrip, true, "Filmstrip (/)").clicked() {
@@ -102,10 +125,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     Zoom::Fill => "Fill".to_string(),
                     Zoom::Percent(p) => format!("{p}%"),
                 };
-                let zr = child.add(egui::Button::new(egui::RichText::new(format!("{zoom_label}  ⌄")).font(t.font(13.0)).color(t.text_label)).frame(false));
-                register(child.ctx(), "button:zoom", zr.rect);
+                let zr = crate::widgets::dropdown(&mut child, "zoom", &zoom_label, t.font(13.0), t.text_label);
                 egui::Popup::menu(&zr).show(|ui| {
-                    for (label, z) in [("Fit", Zoom::Fit), ("Fill", Zoom::Fill), ("50%", Zoom::Percent(50)), ("100%", Zoom::Percent(100)), ("200%", Zoom::Percent(200)), ("400%", Zoom::Percent(400))] {
+                    for (label, z) in [
+                        ("Fit", Zoom::Fit),
+                        ("Fill", Zoom::Fill),
+                        ("50%", Zoom::Percent(50)),
+                        ("100%", Zoom::Percent(100)),
+                        ("200%", Zoom::Percent(200)),
+                        ("400%", Zoom::Percent(400)),
+                    ] {
                         if ui.selectable_label(app.ui.zoom == z, label).clicked() {
                             app.ui.zoom = z;
                             app.ui.pan = (0.5, 0.5);

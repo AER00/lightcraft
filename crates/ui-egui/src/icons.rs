@@ -381,7 +381,14 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Invert => {
             pen.circle(10.0, 10.0, 7.0);
             pen.p.add(Shape::convex_polygon(
-                (0..=16).map(|i| pen.pt(10.0 + 7.0 * ((90.0 + i as f32 * 180.0 / 16.0f32).to_radians()).cos(), 10.0 + 7.0 * ((90.0 + i as f32 * 180.0 / 16.0f32).to_radians()).sin())).collect(),
+                (0..=16)
+                    .map(|i| {
+                        pen.pt(
+                            10.0 + 7.0 * ((90.0 + i as f32 * 180.0 / 16.0f32).to_radians()).cos(),
+                            10.0 + 7.0 * ((90.0 + i as f32 * 180.0 / 16.0f32).to_radians()).sin(),
+                        )
+                    })
+                    .collect(),
                 color,
                 Stroke::NONE,
             ));

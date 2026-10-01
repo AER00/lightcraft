@@ -88,10 +88,10 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if text_button(ui, "cropRotateLeft", "⟲ 90°", false).clicked() {
+            if text_button(ui, "cropRotateLeft", "Rotate Left", false).clicked() {
                 let _ = app.run("photo.rotateLeft", json!({}));
             }
-            if text_button(ui, "cropRotateRight", "⟳ 90°", false).clicked() {
+            if text_button(ui, "cropRotateRight", "Rotate Right", false).clicked() {
                 let _ = app.run("photo.rotateRight", json!({}));
             }
             if text_button(ui, "cropFlipH", "Flip H", d.crop.flip_h).clicked() {
@@ -119,7 +119,12 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     padded(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label("Overlay");
-            for (label, o) in [("Thirds", crate::state::CropOverlay::Thirds), ("Grid", crate::state::CropOverlay::Grid), ("Golden", crate::state::CropOverlay::Golden), ("None", crate::state::CropOverlay::None)] {
+            for (label, o) in [
+                ("Thirds", crate::state::CropOverlay::Thirds),
+                ("Grid", crate::state::CropOverlay::Grid),
+                ("Golden", crate::state::CropOverlay::Golden),
+                ("None", crate::state::CropOverlay::None),
+            ] {
                 if ui.selectable_label(app.ui.crop_overlay == o, label).clicked() {
                     app.ui.crop_overlay = o;
                 }
@@ -244,7 +249,7 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             for k in &p.meta.keywords {
-                let r = ui.add(egui::Button::new(egui::RichText::new(format!("{k}  ✕")).color(t.text_label)).corner_radius(10.0));
+                let r = ui.add(egui::Button::new(egui::RichText::new(format!("{k}  ×")).color(t.text_label)).corner_radius(10.0));
                 if r.clicked() {
                     let _ = app.run("photo.setMeta", json!({"removeKeywords": [k]}));
                 }
@@ -255,7 +260,9 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let all = app.session.catalog.keywords();
         ui.horizontal_wrapped(|ui| {
             for (k, n) in all {
-                if !p.meta.keywords.contains(&k) && ui.add(egui::Button::new(egui::RichText::new(format!("{k} {n}")).color(t.text_dim)).frame(false)).clicked() {
+                if !p.meta.keywords.contains(&k)
+                    && ui.add(egui::Button::new(egui::RichText::new(format!("{k} {n}")).color(t.text_dim)).frame(false)).clicked()
+                {
                     let _ = app.run("photo.setMeta", json!({"addKeywords": [k]}));
                 }
             }
@@ -276,7 +283,7 @@ fn versions(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 if ui.button(&v.name).on_hover_text(&v.created).clicked() {
                     let _ = app.run("version.restore", json!({"index": i}));
                 }
-                if ui.small_button("✕").clicked() {
+                if ui.small_button("×").clicked() {
                     let _ = app.run("version.delete", json!({"index": i}));
                 }
             });

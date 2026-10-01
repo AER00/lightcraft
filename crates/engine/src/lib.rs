@@ -12,6 +12,7 @@
 
 pub mod cmd;
 pub mod demo;
+pub mod files;
 pub mod media;
 pub mod presets;
 mod view;

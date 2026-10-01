@@ -170,7 +170,10 @@ impl Renderer {
                 }
                 None => {
                     let tex = ctx.load_texture(name, color, egui::TextureOptions::LINEAR);
-                    self.textures.insert(slot, Tex { key: r.key, photo: r.photo, tex, size: [img.width, img.height], histogram: Some(rendered.histogram), ms });
+                    self.textures.insert(
+                        slot,
+                        Tex { key: r.key, photo: r.photo, tex, size: [img.width, img.height], histogram: Some(rendered.histogram), ms },
+                    );
                 }
             }
             if slot == Slot::Main {

@@ -10,7 +10,16 @@ use crate::icons::{Icon, paint};
 use crate::theme::Tokens;
 use crate::widgets::{icon_button, register};
 
-fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, id: &str, icon: Icon, label: &str, count: Option<usize>, selected: bool, indent: f32) -> egui::Response {
+fn row(
+    app: &mut LightcraftApp,
+    ui: &mut egui::Ui,
+    id: &str,
+    icon: Icon,
+    label: &str,
+    count: Option<usize>,
+    selected: bool,
+    indent: f32,
+) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 29.0), Sense::click());
     register(ui.ctx(), format!("source:{id}"), r);
@@ -20,8 +29,19 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, id: &str, icon: Icon, label: 
     } else if resp.hovered() {
         ui.painter().rect_filled(inner, 4.0, t.hover.gamma_multiply(0.6));
     }
-    paint(ui.painter(), Rect::from_min_size(pos2(r.left() + 18.0 + indent, r.center().y - 8.0), vec2(16.0, 16.0)), icon, if selected { t.text } else { t.icon });
-    ui.painter().text(pos2(r.left() + 42.0 + indent, r.center().y), Align2::LEFT_CENTER, label, t.font(13.5), if selected { t.text } else { t.text_label });
+    paint(
+        ui.painter(),
+        Rect::from_min_size(pos2(r.left() + 18.0 + indent, r.center().y - 8.0), vec2(16.0, 16.0)),
+        icon,
+        if selected { t.text } else { t.icon },
+    );
+    ui.painter().text(
+        pos2(r.left() + 42.0 + indent, r.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        t.font(13.5),
+        if selected { t.text } else { t.text_label },
+    );
     if let Some(n) = count {
         ui.painter().text(pos2(r.right() - 18.0, r.center().y), Align2::RIGHT_CENTER, n.to_string(), t.font(12.5), t.text_dim);
     }
@@ -58,7 +78,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 // Albums header
                 let (ar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
                 ui.painter().text(pos2(ar.left() + 18.0, ar.center().y), Align2::LEFT_CENTER, "Albums", t.semibold(13.5), t.text_label);
-                let mut hdr = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(ar.right() - 50.0, ar.top()), ar.right_bottom())).layout(egui::Layout::right_to_left(egui::Align::Center)));
+                let mut hdr = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(Rect::from_min_max(pos2(ar.right() - 50.0, ar.top()), ar.right_bottom()))
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                );
                 let plus = icon_button(&mut hdr, "albumNew", Icon::Plus, vec2(26.0, 26.0), false, true, "Create Album");
                 egui::Popup::menu(&plus).show(|ui| {
                     if ui.button("Create Album…").clicked() {
@@ -82,7 +106,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     }
                 }
                 ui.add_space(10.0);
-                if row(app, ui, "recentlyDeleted", Icon::Trash, "Recently Deleted", Some(deleted), src == LibrarySource::RecentlyDeleted, 0.0).clicked() {
+                if row(app, ui, "recentlyDeleted", Icon::Trash, "Recently Deleted", Some(deleted), src == LibrarySource::RecentlyDeleted, 0.0)
+                    .clicked()
+                {
                     let _ = app.run("library.source", json!({"kind": "recentlyDeleted"}));
                 }
             });

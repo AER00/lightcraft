@@ -40,8 +40,28 @@ fn control(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings, id: 
 }
 
 /// Relative temperature scale for rendered (non-raw) files: −100..100 ↔ Kelvin via mired shift.
-const REL_TEMP: ControlSpec = ControlSpec { id: "wb.tempRel", label: "Temp", section: Section::Color, min: -100.0, max: 100.0, default: 0.0, step: 1.0, decimals: 0, track: Track::Temp };
-const REL_TINT: ControlSpec = ControlSpec { id: "wb.tintRel", label: "Tint", section: Section::Color, min: -100.0, max: 100.0, default: 0.0, step: 1.0, decimals: 0, track: Track::Tint };
+const REL_TEMP: ControlSpec = ControlSpec {
+    id: "wb.tempRel",
+    label: "Temp",
+    section: Section::Color,
+    min: -100.0,
+    max: 100.0,
+    default: 0.0,
+    step: 1.0,
+    decimals: 0,
+    track: Track::Temp,
+};
+const REL_TINT: ControlSpec = ControlSpec {
+    id: "wb.tintRel",
+    label: "Tint",
+    section: Section::Color,
+    min: -100.0,
+    max: 100.0,
+    default: 0.0,
+    step: 1.0,
+    decimals: 0,
+    track: Track::Tint,
+};
 
 fn k_to_rel(k: f64) -> f64 {
     ((1e6 / 6500.0 - 1e6 / k) / 0.8).clamp(-100.0, 100.0)
@@ -85,8 +105,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Profile").font(t.font(13.0)).color(t.text_dim));
             let name = lightcraft_engine::presets::PROFILES.iter().find(|p| p.id == d.profile.id).map(|p| p.name).unwrap_or("Color");
-            let r = ui.add(egui::Button::new(egui::RichText::new(format!("{name}  ⌄")).font(t.font(15.0)).color(t.text_label)).frame(false));
-            register(ui.ctx(), "button:profile", r.rect);
+            let r = crate::widgets::dropdown(ui, "profile", name, t.font(15.0), t.text_label);
             egui::Popup::menu(&r).show(|ui| {
                 for p in lightcraft_engine::presets::PROFILES {
                     if ui.selectable_label(p.id == d.profile.id, p.name).clicked() {
@@ -117,8 +136,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 2 }).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("White Balance").font(t.font(13.0)).color(t.text_dim));
-                let r = ui.add(egui::Button::new(egui::RichText::new(format!("{}  ⌄", d.wb.mode.label())).font(t.font(14.0)).color(t.text_label)).frame(false));
-                register(ui.ctx(), "button:wbMode", r.rect);
+                let r = crate::widgets::dropdown(ui, "wbMode", d.wb.mode.label(), t.font(14.0), t.text_label);
                 egui::Popup::menu(&r).show(|ui| {
                     for m in WbMode::ALL {
                         if m == WbMode::Custom {
@@ -132,7 +150,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let active = app.ui.tool == "wbPicker";
-                    if crate::widgets::icon_button(ui, "wbPicker", Icon::Picker, vec2(28.0, 28.0), active, true, "White Balance Selector (W)").clicked() {
+                    if crate::widgets::icon_button(ui, "wbPicker", Icon::Picker, vec2(28.0, 28.0), active, true, "White Balance Selector (W)")
+                        .clicked()
+                    {
                         app.ui.tool = if active { String::new() } else { "wbPicker".into() };
                     }
                 });
@@ -186,7 +206,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             control(app, ui, d, c, c == "detail.sharpenAmount" || d.detail.sharpen_amount > 0.0);
         }
         sub_title(ui, "Noise Reduction");
-        for c in ["detail.nrLuminance", "detail.nrDetail", "detail.nrContrast", "detail.nrColor", "detail.nrColorDetail", "detail.nrColorSmoothness"] {
+        for c in ["detail.nrLuminance", "detail.nrDetail", "detail.nrContrast", "detail.nrColor", "detail.nrColorDetail", "detail.nrColorSmoothness"]
+        {
             control(app, ui, d, c, true);
         }
         ui.add_space(8.0);
@@ -216,7 +237,14 @@ fn sub_title(ui: &mut egui::Ui, title: &str) {
     ui.painter().text(pos2(r.left() + 24.0, r.center().y + 4.0), Align2::LEFT_CENTER, title, t.semibold(13.0), t.text_label);
 }
 
-fn section(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings, id: &str, title: &str, body: impl FnOnce(&mut LightcraftApp, &mut egui::Ui, &DevelopSettings)) {
+fn section(
+    app: &mut LightcraftApp,
+    ui: &mut egui::Ui,
+    d: &DevelopSettings,
+    id: &str,
+    title: &str,
+    body: impl FnOnce(&mut LightcraftApp, &mut egui::Ui, &DevelopSettings),
+) {
     let open = app.ui.section_open(id);
     let (resp, toggled) = section_header(ui, id, title, open, Some(d.section_enabled(id)));
     if let Some(on) = toggled {
@@ -308,7 +336,13 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     // channel selector
     egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 6, bottom: 4 }).show(ui, |ui| {
         ui.horizontal(|ui| {
-            for (ch, c) in [("parametric", Color32::from_gray(200)), ("master", Color32::WHITE), ("red", hex("#dd3333")), ("green", hex("#33bb55")), ("blue", hex("#3377ee"))] {
+            for (ch, c) in [
+                ("parametric", Color32::from_gray(200)),
+                ("master", Color32::WHITE),
+                ("red", hex("#dd3333")),
+                ("green", hex("#33bb55")),
+                ("blue", hex("#3377ee")),
+            ] {
                 let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
                 register(ui.ctx(), format!("curveChannel:{ch}"), r);
                 let sel = app.ui.curve_channel == ch;
@@ -340,8 +374,14 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     p.rect_filled(r, 2.0, t.canvas);
     for i in 1..4 {
         let f = i as f32 / 4.0;
-        p.line_segment([pos2(r.left() + r.width() * f, r.top()), pos2(r.left() + r.width() * f, r.bottom())], Stroke::new(1.0, Color32::from_gray(52)));
-        p.line_segment([pos2(r.left(), r.top() + r.height() * f), pos2(r.right(), r.top() + r.height() * f)], Stroke::new(1.0, Color32::from_gray(52)));
+        p.line_segment(
+            [pos2(r.left() + r.width() * f, r.top()), pos2(r.left() + r.width() * f, r.bottom())],
+            Stroke::new(1.0, Color32::from_gray(52)),
+        );
+        p.line_segment(
+            [pos2(r.left(), r.top() + r.height() * f), pos2(r.right(), r.top() + r.height() * f)],
+            Stroke::new(1.0, Color32::from_gray(52)),
+        );
     }
     p.line_segment([r.left_bottom(), r.right_top()], Stroke::new(1.0, Color32::from_gray(70)));
     let to_screen = |x: f64, y: f64| pos2(r.left() + x as f32 * r.width(), r.bottom() - y as f32 * r.height());
@@ -349,7 +389,12 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     if ch == "parametric" {
         // draw the effective parametric curve by sampling the pipeline's region curve approximation
         let c = &d.curve;
-        let regions = [(0.0, c.split_shadows / 100.0, c.shadows), (c.split_shadows / 100.0, c.split_mid / 100.0, c.darks), (c.split_mid / 100.0, c.split_highlights / 100.0, c.lights), (c.split_highlights / 100.0, 1.0, c.highlights)];
+        let regions = [
+            (0.0, c.split_shadows / 100.0, c.shadows),
+            (c.split_shadows / 100.0, c.split_mid / 100.0, c.darks),
+            (c.split_mid / 100.0, c.split_highlights / 100.0, c.lights),
+            (c.split_highlights / 100.0, 1.0, c.highlights),
+        ];
         let pts: Vec<Pos2> = (0..=64)
             .map(|i| {
                 let x = i as f64 / 64.0;

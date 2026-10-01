@@ -14,7 +14,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     egui::Panel::right("tool_strip")
         .exact_size(t.strip_w)
         .resizable(false)
-        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin { left: 0, right: 0, top: 8, bottom: 8 }).stroke(egui::Stroke::new(1.0, t.divider)))
+        .frame(
+            egui::Frame::NONE
+                .fill(t.chrome)
+                .inner_margin(egui::Margin { left: 0, right: 0, top: 8, bottom: 8 })
+                .stroke(egui::Stroke::new(1.0, t.divider)),
+        )
         .show(ui, |ui| {
             let has_photo = app.session.active().is_some();
             ui.vertical_centered(|ui| {
@@ -50,7 +55,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             });
             // bottom icons
             let bottom = ui.max_rect().bottom();
-            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(egui::pos2(ui.max_rect().left(), bottom - 96.0), ui.max_rect().right_bottom())));
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(egui::Rect::from_min_max(egui::pos2(ui.max_rect().left(), bottom - 96.0), ui.max_rect().right_bottom())),
+            );
             child.vertical_centered(|ui| {
                 let sz = vec2(t.strip_w, 40.0);
                 if icon_button(ui, "keywords", Icon::Tag, sz, app.ui.right == RightPanel::Keywords, has_photo, "Keywords (K)").clicked() {
