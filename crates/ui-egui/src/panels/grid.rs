@@ -431,6 +431,9 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
         }
     });
+    if ui.button("Rename…").clicked() {
+        let _ = app.run("dialog.rename", json!({}));
+    }
     if ui.button("Create Virtual Copy").clicked() {
         let _ = app.run("photo.virtualCopy", json!({}));
     }

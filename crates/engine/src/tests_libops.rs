@@ -93,3 +93,96 @@ fn keyword_rename_merge_delete_undo_and_replay() {
     assert!(s.execute("keyword.merge", &json!({"from": [], "into": "x"})).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn write_png(path: &std::path::Path, seed: u8) {
+    let (w, h) = (24usize, 16usize);
+    let data: Vec<[u8; 4]> = (0..w * h).map(|i| [(i % w * 9) as u8, (i / w * 11) as u8, seed, 255]).collect();
+    let img = lightcraft_raster::Rgba8 { width: w, height: h, data };
+    let bytes = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, bytes).unwrap();
+}
+
+fn path_of(s: &Session, id: u64) -> String {
+    match &s.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap().source {
+        lightcraft_catalog::Source::File { path } => path.clone(),
+        _ => panic!("not a file"),
+    }
+}
+
+/// Batch rename on disk: collisions with existing files and within the batch get suffixes, sidecars
+/// move along, virtual copies follow, undo/redo move the files back and forth, a failed move rolls
+/// the batch back, and the op log replays the new paths.
+#[test]
+fn batch_rename_files_collisions_undo_and_replay() {
+    let src = temp_dir("rename-src");
+    let lib = temp_dir("rename-lib");
+    write_png(&src.join("a.png"), 1);
+    write_png(&src.join("b.png"), 2);
+    std::fs::write(src.join("Trip-001.png"), b"not ours").unwrap();
+    std::fs::write(src.join("a.xmp"), b"<x:xmpmeta xmlns:x='adobe:ns:meta/'></x:xmpmeta>").unwrap();
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    let r = s.execute("library.import", &json!({"paths": [src.join("a.png").to_string_lossy(), src.join("b.png").to_string_lossy()]})).unwrap();
+    let ids: Vec<u64> = r["imported"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();
+    assert_eq!(ids.len(), 2, "{r}");
+    s.execute("library.select", &json!({"ids": [ids[0]]})).unwrap();
+    s.execute("photo.virtualCopy", &json!({})).unwrap();
+    let copy = s.catalog.photos().find(|p| p.copy_of.is_some()).unwrap().id.0;
+
+    // preview: the existing Trip-001.png is skipped, the copy shares its master's file
+    let pv = s.execute("photo.renamePreview", &json!({"ids": [ids[0], copy, ids[1]], "template": "Trip-{seq:3}"})).unwrap();
+    assert_eq!(pv.as_array().unwrap().len(), 2, "{pv}");
+    assert_eq!(pv[0]["to"], "Trip-001-1.png");
+    assert_eq!(pv[1]["to"], "Trip-002.png");
+    let r = s.execute("photo.rename", &json!({"ids": [ids[0], copy, ids[1]], "template": "Trip-{seq:3}"})).unwrap();
+    assert_eq!(r["renamed"], 3, "{r}");
+    assert!(src.join("Trip-001-1.png").is_file() && src.join("Trip-002.png").is_file());
+    assert!(!src.join("a.png").exists() && !src.join("b.png").exists());
+    assert_eq!(std::fs::read(src.join("Trip-001.png")).unwrap(), b"not ours", "never overwritten");
+    assert!(src.join("Trip-001-1.xmp").is_file() && !src.join("a.xmp").exists(), "sidecar moved");
+    assert_eq!(path_of(&s, copy), path_of(&s, ids[0]), "the virtual copy follows");
+    assert_eq!(s.catalog.photo(lightcraft_catalog::PhotoId(ids[1])).unwrap().file_name, "Trip-002.png");
+
+    // undo moves the files back; redo renames again
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(src.join("a.png").is_file() && src.join("b.png").is_file() && src.join("a.xmp").is_file());
+    assert_eq!(path_of(&s, ids[0]), src.join("a.png").to_string_lossy());
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert!(src.join("Trip-002.png").is_file() && !src.join("b.png").exists());
+
+    // collisions inside the batch
+    let r = s.execute("photo.rename", &json!({"ids": [ids[0], ids[1]], "template": "same"})).unwrap();
+    assert_eq!(r["plans"][0]["to"], "same.png");
+    assert_eq!(r["plans"][1]["to"], "same-1.png");
+
+    // a failing move rolls the whole batch back and changes nothing
+    std::fs::remove_file(src.join("same-1.png")).unwrap();
+    let before = s.catalog.to_snapshot();
+    assert!(s.execute("photo.rename", &json!({"ids": [ids[0], ids[1]], "template": "x-{seq}"})).is_err());
+    assert!(src.join("same.png").is_file() && !src.join("x-1.png").exists(), "rolled back");
+    assert_eq!(s.catalog.to_snapshot(), before);
+
+    // the op log replays the renames
+    let expect = s.catalog.to_snapshot();
+    drop(s);
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    assert_eq!(s.catalog.to_snapshot(), expect);
+    assert_eq!(path_of(&s, ids[0]), src.join("same.png").to_string_lossy());
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&lib);
+}
+
+/// Demo photos (no file) rename in the catalog only.
+#[test]
+fn rename_demo_photos_in_catalog() {
+    let mut s = Session::with_demo();
+    let ids: Vec<u64> = s.visible_cloned().iter().take(3).map(|p| p.0).collect();
+    let r = s.execute("photo.rename", &json!({"ids": ids, "template": "{date:%Y-%m-%d}_{seq:2}", "start": 7})).unwrap();
+    assert_eq!(r["renamed"], 3);
+    let name = &s.catalog.photo(lightcraft_catalog::PhotoId(ids[0])).unwrap().file_name;
+    assert!(name.ends_with("_07.jpg") || name.contains("_07."), "{name}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(s.catalog.photo(lightcraft_catalog::PhotoId(ids[0])).unwrap().file_name.starts_with("LC"));
+}

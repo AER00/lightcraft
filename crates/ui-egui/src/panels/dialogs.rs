@@ -22,6 +22,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewAlbum { folder: true, .. } => "Create Folder",
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
+        Dialog::Rename { .. } => "Rename Photos",
         Dialog::RenameKeyword { .. } => "Rename Keyword",
         Dialog::MergeKeywords { .. } => "Merge Keywords",
         Dialog::NewSmartAlbum { .. } => "Create Smart Album",
@@ -71,6 +72,42 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         egui::RichText::new(format!("{n} photo{} now · updates automatically as photos change", if n == 1 { "" } else { "s" }))
                             .color(t.text_dim),
                     );
+                }
+                Dialog::Rename { template, start } => {
+                    let n = app.session.targets(&json!({})).len();
+                    ui.label(egui::RichText::new(format!("{n} photo{}", if n == 1 { "" } else { "s" })).color(t.text_dim));
+                    field(ui, "Template", |ui| {
+                        let r = ui.add(egui::TextEdit::singleline(template).hint_text("{name}").desired_width(f32::INFINITY));
+                        crate::widgets::register(ui.ctx(), "field:renameTemplate", r.rect);
+                    });
+                    field(ui, "Presets", |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for (i, (label, tpl)) in
+                            [("Name", "{name}"), ("Date–Name", "{date}_{name}"), ("Title–Seq", "{title}-{seq:3}"), ("Custom–Seq", "Photo-{seq:3}")].iter().enumerate()
+                        {
+                            if crate::widgets::text_button(ui, &format!("renamePreset-{i}"), label, template == tpl).clicked() {
+                                *template = tpl.to_string();
+                            }
+                        }
+                    });
+                    field(ui, "Start at", |ui| ui.add(egui::DragValue::new(start).range(0..=999_999)));
+                    ui.label(
+                        egui::RichText::new("Tokens: {name} {seq} {seq:3} {date} {date:%Y-%m-%d} {camera} {title}. Files are renamed on disk (with their XMP sidecars); existing names get -1, -2…")
+                            .color(t.text_dim),
+                    );
+                    let preview = app.session.execute("photo.renamePreview", &json!({"template": template, "start": start})).unwrap_or_default();
+                    egui::Grid::new("rename-preview").num_columns(3).spacing([8.0, 2.0]).show(ui, |ui| {
+                        for pl in preview.as_array().into_iter().flatten().take(6) {
+                            ui.label(egui::RichText::new(pl["from"].as_str().unwrap_or("")).color(t.text_dim));
+                            ui.label(egui::RichText::new("→").color(t.text_dim));
+                            ui.label(egui::RichText::new(pl["to"].as_str().unwrap_or("")).color(t.text));
+                            ui.end_row();
+                        }
+                    });
+                    let more = preview.as_array().map_or(0, Vec::len).saturating_sub(6);
+                    if more > 0 {
+                        ui.label(egui::RichText::new(format!("… and {more} more")).color(t.text_dim));
+                    }
                 }
                 Dialog::RenameKeyword { from, to } => {
                     let n = app.session.catalog.photos().filter(|p| p.meta.keywords.iter().any(|k| lightcraft_catalog::keywords::is_under(k, from))).count();
@@ -321,6 +358,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
     match dlg {
         Dialog::NewAlbum { name, folder } => app.run("album.create", json!({"name": name, "folder": folder, "addSelected": !folder})),
         Dialog::RenameAlbum { id, name } => app.run("album.rename", json!({"id": id, "name": name})),
+        Dialog::Rename { template, start } => app.run("photo.rename", json!({"template": template, "start": start})),
         Dialog::RenameKeyword { from, to } => app.run("keyword.rename", json!({"from": from, "to": to})),
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),

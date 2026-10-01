@@ -137,6 +137,13 @@ pub enum Op {
         photos: Vec<PhotoId>,
         collapsed: bool,
     },
+    /// Rename a photo: its file name and the source it points to. Applying the op never touches
+    /// the disk — the engine moves the file before it commits (and on undo/redo).
+    SetFile {
+        id: PhotoId,
+        file_name: String,
+        source: Source,
+    },
     /// Several ops as one step (undo applies the inverses in reverse).
     Batch {
         ops: Vec<Op>,
@@ -420,6 +427,14 @@ impl Catalog {
                 let old = Op::SetStack { id, photos: std::mem::replace(&mut s.photos, photos), collapsed: s.collapsed };
                 s.collapsed = collapsed;
                 old
+            }
+            Op::SetFile { id, file_name, source } => {
+                if file_name.trim().is_empty() {
+                    return Err(CatalogError::Invalid("empty file name".into()));
+                }
+                let p = self.photo_mut(id)?;
+                let old_name = std::mem::replace(&mut p.file_name, file_name);
+                Op::SetFile { id, file_name: old_name, source: std::mem::replace(&mut p.source, source) }
             }
             Op::Batch { ops } => {
                 let mut inverses = Vec::with_capacity(ops.len());

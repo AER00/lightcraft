@@ -136,6 +136,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "photo.saveMetadataToFile",
             "photo.readMetadataFromFile",
             "app.showInFinder",
+            "dialog.rename",
             "---",
             "photo.delete",
         ],
@@ -225,6 +226,7 @@ fn live_label(app: &LightcraftApp, id: &str, label: &str) -> String {
         "edit.redo" => app.session.redo.last().map(|e| format!("Redo {}", e.label)).unwrap_or_else(|| "Redo".into()),
         "photo.delete" if n > 1 => format!("Delete {n} Photos"),
         "photo.virtualCopy" if n > 1 => format!("Create {n} Virtual Copies"),
+        "dialog.rename" if n > 1 => format!("Rename {n} Photos…"),
         _ => label.to_string(),
     }
 }

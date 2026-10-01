@@ -20,6 +20,7 @@ pub mod library;
 pub mod media;
 pub mod merge;
 pub mod presets;
+pub mod rename;
 pub mod sidecar;
 mod view;
 
@@ -205,7 +206,13 @@ impl Session {
 
     pub fn undo_step(&mut self) -> Result<String> {
         let e = self.undo.pop().ok_or_else(|| EngineError::Other("nothing to undo".into()))?;
-        let redo = self.catalog.apply(e.op.clone())?;
+        let redo = match self.apply_with_files(&e.op) {
+            Ok(r) => r,
+            Err(err) => {
+                self.undo.push(e);
+                return Err(err);
+            }
+        };
         self.pending_log.push(e.op);
         self.redo.push(UndoEntry { label: e.label.clone(), op: redo });
         Ok(e.label)
@@ -213,10 +220,30 @@ impl Session {
 
     pub fn redo_step(&mut self) -> Result<String> {
         let e = self.redo.pop().ok_or_else(|| EngineError::Other("nothing to redo".into()))?;
-        let undo = self.catalog.apply(e.op.clone())?;
+        let undo = match self.apply_with_files(&e.op) {
+            Ok(r) => r,
+            Err(err) => {
+                self.redo.push(e);
+                return Err(err);
+            }
+        };
         self.pending_log.push(e.op);
         self.undo.push(UndoEntry { label: e.label.clone(), op: undo });
         Ok(e.label)
+    }
+
+    /// Apply an undo/redo op, first moving the files its renames imply (all or nothing).
+    fn apply_with_files(&mut self, op: &Op) -> Result<Op> {
+        let moves = self.file_moves(op);
+        Session::move_files(&moves)?;
+        match self.catalog.apply(op.clone()) {
+            Ok(inv) => Ok(inv),
+            Err(e) => {
+                let back: Vec<(String, String)> = moves.iter().rev().map(|(a, b)| (b.clone(), a.clone())).collect();
+                let _ = Session::move_files(&back);
+                Err(e.into())
+            }
+        }
     }
 
     /// Ops applied since the last call, for the op-log store.

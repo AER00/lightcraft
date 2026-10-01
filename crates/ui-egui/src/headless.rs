@@ -437,6 +437,25 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// Photo > Rename Photos…: the dialog previews and renames the selection.
+    #[test]
+    fn rename_dialog_renames_the_selection() {
+        let mut h = demo([1200.0, 800.0]);
+        let t = Duration::from_secs(10);
+        let vis: Vec<u64> = h.app.session.visible_cloned().iter().take(2).map(|p| p.0).collect();
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": vis}}), t);
+        let tree = h.request("ui.menu.tree", json!({}), t);
+        assert!(tree.to_string().contains("Rename 2 Photos…"), "live menu label");
+        h.request("engine.execute", json!({"command": "dialog.rename", "params": {"template": "Trip-{seq:2}", "start": 5}}), t);
+        h.settle(SETTLE);
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let name = |id: u64| h.app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap().file_name.clone();
+        assert!(name(vis[0]).starts_with("Trip-05."), "{}", name(vis[0]));
+        assert!(name(vis[1]).starts_with("Trip-06."), "{}", name(vis[1]));
+        h.settle(SETTLE);
+    }
+
     #[test]
     fn screenshot_request_is_answered_without_a_window() {
         let mut h = demo([800.0, 500.0]);

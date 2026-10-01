@@ -151,6 +151,11 @@ pub enum Dialog {
         id: u64,
         name: String,
     },
+    /// Batch rename the selected photos with a file-name template.
+    Rename {
+        template: String,
+        start: u32,
+    },
     /// Rename a keyword on every photo (children included).
     RenameKeyword {
         from: String,

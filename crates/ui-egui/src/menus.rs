@@ -76,6 +76,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.shortcuts", "Keyboard Shortcuts", Some("Cmd+/"), "Help"),
     ("app.export", "Export Now", None, ""),
     ("app.showInFinder", "Show in Finder", Some("Cmd+R"), "Photo"),
+    ("dialog.rename", "Rename Photos…", None, "Photo"),
     ("app.exportPrevious", "Export with Previous", Some("Cmd+Alt+Shift+E"), "File"),
 ];
 
@@ -329,6 +330,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.dialog = Some(Dialog::NewSmartAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into() });
             Ok(Value::Null)
         }
+        "dialog.rename" => {
+            let template = p.get("template").and_then(Value::as_str).unwrap_or("{name}").to_string();
+            app.ui.dialog = Some(Dialog::Rename { template, start: p.get("start").and_then(Value::as_u64).unwrap_or(1) as u32 });
+            Ok(Value::Null)
+        }
         "dialog.createPreset" => {
             app.ui.dialog = Some(Dialog::CreatePreset { name: String::new(), group: "User Presets".into() });
             Ok(Value::Null)
@@ -439,7 +445,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
 pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
     match id {
         s if s.starts_with("panel.") || s.starts_with("tool.") || s.starts_with("section.") => app.session.active().is_some() || s == "panel.close",
-        "app.export" | "dialog.export" | "dialog.createPreset" | "dialog.copySettings" => app.session.active().is_some(),
+        "app.export" | "dialog.export" | "dialog.createPreset" | "dialog.rename" | "dialog.copySettings" => app.session.active().is_some(),
         "app.exportPrevious" => app.session.active().is_some() && app.session.last_export.is_some(),
         "app.showInFinder" => {
             app.services.reveal.is_some()
