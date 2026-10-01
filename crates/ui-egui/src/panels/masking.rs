@@ -142,6 +142,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 let _ = app.run("mask.select", json!({"id": m.id}));
             }
         }
+        if !d.masks.is_empty() {
+            ui.add_space(6.0);
+            overlay_options(app, ui);
+        }
     });
     let Some(mid) = app.session.active_mask else { return };
     let Some(m) = d.masks.iter().find(|m| m.id == mid).cloned() else { return };
@@ -200,6 +204,62 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     apply_slider_out(app, &amt, out, |app, v| app.run("mask.adjust", json!({"values": {"amount": v}})));
     ui.add_space(30.0);
     let _ = Stroke::NONE;
+}
+
+/// Overlay colours offered as swatches (the colour of the selected one is used for the tint).
+const OVERLAY_COLORS: [[u8; 3]; 5] = [[230, 30, 40], [40, 200, 70], [40, 110, 240], [250, 210, 30], [255, 255, 255]];
+
+/// How the selected mask is shown: overlay mode, colour, opacity, pins.
+fn overlay_options(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    use lightcraft_pipeline::MaskView;
+    let t = Tokens::get(ui.ctx());
+    let view = MaskView::parse(&app.ui.mask_overlay_mode).unwrap_or_default();
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Overlay").color(t.text_dim));
+        let r = crate::widgets::dropdown(ui, "maskOverlayMode", view.label(), t.font(12.5), t.text_label);
+        egui::Popup::menu(&r).show(|ui| {
+            for v in MaskView::ALL {
+                if ui.selectable_label(v == view, v.label()).clicked() {
+                    let _ = app.run("view.maskOverlayMode", json!({"mode": v.name()}));
+                }
+            }
+        });
+    });
+    let colored = matches!(view, MaskView::Color | MaskView::ColorOnBw);
+    if colored {
+        ui.horizontal(|ui| {
+            for c in OVERLAY_COLORS {
+                let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
+                register(ui.ctx(), format!("maskOverlayColor:{:02x}{:02x}{:02x}", c[0], c[1], c[2]), r);
+                ui.painter().rect_filled(r.shrink(2.0), 3.0, egui::Color32::from_rgb(c[0], c[1], c[2]));
+                if app.ui.mask_overlay_color == c {
+                    ui.painter().rect_stroke(r, 3.0, Stroke::new(1.5, t.text), egui::StrokeKind::Inside);
+                }
+                if resp.clicked() {
+                    let _ = app.run("view.maskOverlayColor", json!({"color": c}));
+                }
+            }
+        });
+    }
+    let spec = ControlSpec {
+        id: "ui.maskOverlayOpacity",
+        label: "Opacity",
+        section: Section::Light,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Track::Plain,
+    };
+    let out = slider(ui, &spec, app.ui.mask_overlay_opacity as f64, colored && app.ui.mask_overlay, None);
+    if let Some(v) = out.value {
+        app.ui.mask_overlay_opacity = v as f32;
+    }
+    let mut pins = app.ui.mask_pins;
+    if ui.checkbox(&mut pins, "Show Pins").changed() {
+        let _ = app.run("view.maskPins", json!({"show": pins}));
+    }
 }
 
 fn component_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, op: &str) {

@@ -19,6 +19,9 @@ pub mod state;
 pub mod theme;
 pub mod widgets;
 
+#[cfg(test)]
+mod tests_masking;
+
 use std::sync::mpsc::{Receiver, Sender};
 
 use lightcraft_engine::Session;

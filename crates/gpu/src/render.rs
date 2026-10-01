@@ -135,6 +135,14 @@ impl<'a> Cx<'a> {
         out
     }
 
+    /// `len` values of `b` from `offset` (both in 32-bit words), as a new buffer (recorded).
+    pub fn slice(&mut self, b: &Buf, offset: usize, len: usize) -> Buf {
+        let out = self.gpu.buffer(len);
+        let enc = self.enc.get_or_insert_with(|| self.gpu.encoder());
+        enc.copy_buffer_to_buffer(b.raw(), (offset * 4) as u64, out.raw(), 0, (len * 4) as u64);
+        out
+    }
+
     pub fn read_rgb(&mut self, b: &Buf, w: usize, h: usize) -> Rgb32f {
         Rgb32f { width: w, height: h, data: self.read(b, w * h * 3) }
     }
@@ -481,13 +489,30 @@ pub fn render(
         ],
         groups2(w, h, [16, 16]),
     );
+    // the alpha a mask overlay shows: copied out before the readback below submits
+    let overlay_mask = req.overlay.mask(s).map(|m| {
+        let list = s.masks.iter().filter(|m| m.visible && !m.components.is_empty());
+        match (list.map(|m| m.id).position(|id| id == m.id), masks.as_ref()) {
+            (Some(mi), Some(all)) => Ok(cx.slice(all, mi * n, n)),
+            _ => Err(m),
+        }
+    });
     let data: Vec<[u8; 4]> = cx.read(&out, n);
     let image = Rgba8 { width: w, height: h, data };
     lap("finish + readback", &mut t, &mut cx);
     let histogram = Histogram::of_srgb8(&image);
     lap("histogram", &mut t, &mut cx);
     let mut image = image;
-    lightcraft_pipeline::visualize::apply(&mut image, req.overlay, &plan);
+    let overlay_mask = overlay_mask.map(|r| match r {
+        Ok(b) => cx.read_plane(&b, w, h),
+        // a hidden mask: evaluate it on the CPU
+        Err(m) => {
+            let img = host.lin.get_or_insert_with(|| Arc::new(cx.read_rgb(&lin, w, h))).clone();
+            let l = host.log_l.get_or_insert_with(|| Arc::new(cx.read_plane(&prep.log_l, w, h))).clone();
+            lightcraft_pipeline::masks::evaluate_one(m, &plan.frame, w, h, &img, &l, s.light.exposure as f32)
+        }
+    });
+    lightcraft_pipeline::visualize::apply(&mut image, req.overlay, &plan, overlay_mask.as_ref());
     Some(Rendered { image, histogram })
 }
 

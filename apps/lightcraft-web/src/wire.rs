@@ -47,7 +47,7 @@ pub struct WireJob {
     pub stages: Option<String>,
     /// The request's diagnostic overlay (`Overlay::to_parts`).
     #[serde(default)]
-    pub overlay: (u8, f32),
+    pub overlay: (u8, f64),
 }
 
 impl WireJob {

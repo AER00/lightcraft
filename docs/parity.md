@@ -31,7 +31,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
 | I. Remove / healing (REM) | 3 | 3 | 4 | 2 | 2/4 (50%) | 1/3 (33%) |
 | J. Red eye (EYE) | 0 | 0 | 2 | 0 | — | 0/1 (0%) |
-| K. Masking (MASK) | 6 | 10 | 7 | 0 | 4/8 (50%) | 2/5 (40%) |
+| K. Masking (MASK) | 8 | 8 | 7 | 0 | 5/8 (63%) | 3/5 (60%) |
 | L. Presets (PRE) | 1 | 4 | 2 | 1 | 0/2 (0%) | 1/2 (50%) |
 | M. Versions & history (VER) | 3 | 1 | 1 | 0 | 1/1 (100%) | 2/3 (67%) |
 | N. Copy / paste / sync (SYNC) | 4 | 0 | 1 | 0 | 3/3 (100%) | 1/1 (100%) |
@@ -48,7 +48,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 46 | 18 | 21 | 8 | 37/47 (79%) | 7/23 (30%) |
 | Z. Keyboard shortcuts (desktop) | 46 | 16 | 18 | 1 | 39/52 (75%) | 7/23 (30%) |
 | Lightroom Classic extras | 4 | 19 | 56 | 9 | — | 3/21 (14%) |
-| **Total** | 208 | 103 | 189 | 37 | 152/198 (77%) | 48/144 (33%) |
+| **Total** | 210 | 101 | 189 | 37 | 153/198 (77%) | 49/144 (34%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -57,8 +57,6 @@ Ordered by tier, then user value, then (low) effort. Take the first one nobody i
 
 1. **LR-EXP-COLORSPACE** (P0) — export is sRGB only. Add Display P3 / Adobe RGB-compatible / ProPhoto-compatible /
    Rec.2020 output (our own primaries + ICC from `crates/codecs/src/icc.rs`). High value, low–medium effort.
-2. **LR-MASK-OVERLAY + LR-MASK-PINS** (P0/P1) — show the evaluated mask alpha as a coloured overlay (all mask
-   kinds, colour/opacity choice), not just brush dabs and outlines. High value, medium effort.
 3. **LR-MASK-BRUSH + LR-MASK-SLIDERS** (P0) — apply the stored Auto Mask flag (edge-aware brush) and the local
    Noise / Moiré / Defringe sliders, which are stored but not rendered. High value, medium effort.
 4. **LR-REM-SPOT-EDIT + LR-REM-BRUSH-PARAMS** (P0) — select a spot pin, move target/source, delete with ⌫,
@@ -348,8 +346,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-MASK-AMOUNT | Mask amount | P1 | ✅ | `cmd:mask.adjust` (`amount`), `crates/ui-egui/src/panels/masking.rs` | |
 | LR-MASK-FEATHER-EDGE | Refine mask edges | P2 | ⬜ | | |
 | LR-MASK-SLIDERS | Local adjustment sliders | P0 | 🟡 | `cmd:mask.adjust`, `crates/pipeline/src/finish.rs` | noise / moiré / defringe stored but not rendered; no local curve or effect presets |
-| LR-MASK-OVERLAY | Mask overlay | P0 | 🟡 | `cmd:view.maskOverlay`, `crates/ui-egui/src/panels/detail.rs` | brush dabs + shape outlines only; no rendered alpha, colour or mode options |
-| LR-MASK-PINS | Pins | P1 | 🟡 | `crates/ui-egui/src/panels/detail.rs` | handles drawn; no show/hide-pins option |
+| LR-MASK-OVERLAY | Mask overlay | P0 | ✅ | `cmd:view.maskOverlay`, `cmd:view.maskOverlayMode`, `cmd:view.maskOverlayColor`, `crates/pipeline/src/visualize.rs` | rendered alpha of the selected mask (CPU + GPU): colour, colour on B&W, image on black/white, white on black; ⇧O cycles while masking; no auto-show on hover |
+| LR-MASK-PINS | Pins | P1 | ✅ | `cmd:view.maskPins`, `crates/ui-egui/src/panels/detail.rs` | a pin per radial/linear/brush component: click selects its mask, drag moves it; no pins for range/AI components, no Auto mode |
 | LR-MASK-UPDATE | Recompute AI masks | P2 | ⬜ | | |
 | LR-MASK-SYNC | Copy masks to other photos | P1 | ✅ | `cmd:develop.copy` (`groups`) | |
 | LR-MASK-ADAPTIVE | Adaptive presets | P2 | ⬜ | | |

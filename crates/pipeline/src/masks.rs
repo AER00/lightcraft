@@ -11,6 +11,8 @@ use crate::for_rows;
 use crate::geometry::Frame;
 
 pub struct Evaluated {
+    /// The mask's id ([`Mask::id`]).
+    pub id: u32,
     pub alpha: Plane,
     pub adjust: LocalAdjustments,
 }
@@ -21,42 +23,47 @@ fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// The visible masks with components, evaluated in order.
 pub fn evaluate(masks: &[Mask], frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane, ev: f32) -> Vec<Evaluated> {
     masks
         .iter()
         .filter(|m| m.visible && !m.components.is_empty())
-        .map(|m| {
-            let mut alpha = Plane::new(w, h);
-            let mut first = true;
-            for comp in &m.components {
-                let mut c = shape_alpha(&comp.shape, frame, w, h, img, log_l, ev);
-                if comp.invert {
-                    c.data.iter_mut().for_each(|v| *v = 1.0 - *v);
-                }
-                if first && comp.op != MaskOp::Intersect {
-                    alpha = c;
-                    first = false;
-                    continue;
-                }
-                for (a, c) in alpha.data.iter_mut().zip(&c.data) {
-                    *a = match comp.op {
-                        MaskOp::Add => a.max(*c),
-                        MaskOp::Subtract => *a * (1.0 - c),
-                        MaskOp::Intersect => *a * c,
-                    };
-                }
-                first = false;
-            }
-            if m.invert {
-                alpha.data.iter_mut().for_each(|v| *v = 1.0 - *v);
-            }
-            let amt = (m.adjust.amount / 100.0) as f32;
-            if (amt - 1.0).abs() > 1e-6 {
-                alpha.data.iter_mut().for_each(|v| *v *= amt);
-            }
-            Evaluated { alpha, adjust: m.adjust }
-        })
+        .map(|m| Evaluated { id: m.id, alpha: evaluate_one(m, frame, w, h, img, log_l, ev), adjust: m.adjust })
         .collect()
+}
+
+/// The alpha plane of mask `m` (whether visible or not): its components combined, inverted and
+/// scaled by its amount.
+pub fn evaluate_one(m: &Mask, frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane, ev: f32) -> Plane {
+    let mut alpha = Plane::new(w, h);
+    let mut first = true;
+    for comp in &m.components {
+        let mut c = shape_alpha(&comp.shape, frame, w, h, img, log_l, ev);
+        if comp.invert {
+            c.data.iter_mut().for_each(|v| *v = 1.0 - *v);
+        }
+        if first && comp.op != MaskOp::Intersect {
+            alpha = c;
+            first = false;
+            continue;
+        }
+        for (a, c) in alpha.data.iter_mut().zip(&c.data) {
+            *a = match comp.op {
+                MaskOp::Add => a.max(*c),
+                MaskOp::Subtract => *a * (1.0 - c),
+                MaskOp::Intersect => *a * c,
+            };
+        }
+        first = false;
+    }
+    if m.invert {
+        alpha.data.iter_mut().for_each(|v| *v = 1.0 - *v);
+    }
+    let amt = (m.adjust.amount / 100.0) as f32;
+    if (amt - 1.0).abs() > 1e-6 {
+        alpha.data.iter_mut().for_each(|v| *v *= amt);
+    }
+    alpha
 }
 
 /// Per-pixel positions in long-edge units for output pixel centres.

@@ -179,6 +179,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             if f == "crop.rotateAspect" && app.ui.right != crate::state::RightPanel::Crop {
                 continue;
             }
+            // Shift+O cycles the mask overlay mode while masking (the crop overlay elsewhere)
+            if f == "view.cropOverlay" && app.ui.right == crate::state::RightPanel::Masking {
+                let _ = app.run("view.maskOverlayMode", json!({}));
+                continue;
+            }
             let _ = app.run(&f, json!({}));
             match f.as_str() {
                 "photo.pick" => app.toast(ctx, "Flagged as Pick"),

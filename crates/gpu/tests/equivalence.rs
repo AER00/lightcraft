@@ -414,6 +414,43 @@ fn overlays_match() {
         eprintln!("visualize spots t={t:<3}          white {:.3}%  differing {:.4}%", white * 100.0, differ * 100.0);
         assert!(differ < 0.002, "spots t={t}: {differ}");
     }
+    // Mask overlays: the alpha the GPU evaluated (or, for a hidden mask, the CPU's) drawn the same way.
+    let mut s = DevelopSettings::default();
+    let stroke = BrushStroke { points: vec![Point::new(0.2, 0.3), Point::new(0.6, 0.5)], size: 0.05, ..Default::default() };
+    s.masks = vec![
+        Mask {
+            id: 1,
+            components: vec![MaskComponent {
+                op: MaskOp::Add,
+                invert: false,
+                shape: MaskShape::Radial { center: Point::new(0.4, 0.6), rx: 0.25, ry: 0.15, angle: 20.0, feather: 60.0, invert: false },
+            }],
+            ..Default::default()
+        },
+        Mask {
+            id: 2,
+            components: vec![MaskComponent { op: MaskOp::Add, invert: false, shape: MaskShape::Brush { strokes: vec![stroke] } }],
+            ..Default::default()
+        },
+        Mask {
+            id: 3,
+            visible: false,
+            components: vec![MaskComponent {
+                op: MaskOp::Add,
+                invert: false,
+                shape: MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.6) },
+            }],
+            ..Default::default()
+        },
+    ];
+    s.masks[0].adjust.exposure = 0.5;
+    use lightcraft_pipeline::{MaskView, Overlay};
+    for (id, view) in
+        [(1, MaskView::Color), (2, MaskView::ColorOnBw), (2, MaskView::WhiteOnBlack), (3, MaskView::ImageOnWhite), (1, MaskView::ImageOnBlack)]
+    {
+        let req = RenderRequest { overlay: Overlay::Mask { id, view, color: [230, 30, 40], opacity: 50 }, ..RenderRequest::fit(640, 640) };
+        check(&format!("mask {id} overlay {}", view.name()), &src, &raw, &s, &req);
+    }
 }
 
 #[test]

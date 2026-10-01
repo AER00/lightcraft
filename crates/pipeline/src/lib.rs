@@ -37,7 +37,7 @@ pub mod transform;
 pub mod upright;
 pub mod visualize;
 
-pub use visualize::Overlay;
+pub use visualize::{MaskView, Overlay};
 
 use lightcraft_develop::{DevelopSettings, Treatment};
 use std::any::Any;
@@ -349,8 +349,20 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     let histogram = Histogram::of_srgb8(&image);
     lap("histogram", &mut t);
     let mut image = image;
-    visualize::apply(&mut image, req.overlay, &plan);
+    let mask = overlay_alpha(req.overlay, &plan, &prep);
+    visualize::apply(&mut image, req.overlay, &plan, mask.as_ref());
     Rendered { image, histogram }
+}
+
+/// The alpha plane a mask overlay shows: the one the render evaluated, or (for a hidden mask) a
+/// fresh evaluation.
+fn overlay_alpha(o: Overlay, plan: &Plan<'_>, prep: &Prepared) -> Option<Plane> {
+    let m = o.mask(&plan.settings)?;
+    if let Some(e) = prep.masks.iter().find(|e| e.id == m.id) {
+        return Some(e.alpha.clone());
+    }
+    let ev = plan.settings.light.exposure as f32;
+    Some(masks::evaluate_one(m, &plan.frame, plan.w, plan.h, &prep.img, &prep.log_l, ev))
 }
 
 /// Convenience: render a before/after pair side by side is up to the UI; this renders "before"
