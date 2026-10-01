@@ -172,12 +172,16 @@ const HIGHLIGHT_CLIP: f32 = 0.99;
 
 /// The largest block size to bin a raw's mosaic by for a source of at most `max_edge` pixels:
 /// the binned image must keep at least 90 % of `max_edge` (a 16 MP sensor still bins 2× for the
-/// 2560 px preview). `None` = demosaic at full size.
+/// 2560 px preview). X-Trans can only bin 3× (its 6×6 pattern), and its full demosaic is ~5× the
+/// cost of Bayer's, so 3× is accepted down to 75 % (a 24 MP X-Trans preview is then ~2000 px
+/// instead of a ~1.2 s full demosaic; zooming in still uses the full-size source).
+/// `None` = demosaic at full size.
 pub fn bin_factor(raw: &lightcraft_raw::RawImage, max_edge: usize) -> Option<usize> {
     let c = raw.crop.clipped(raw.active_area.width, raw.active_area.height);
     let long = if c.width > 1 && c.height > 1 { c.width.max(c.height) } else { raw.active_area.width.max(raw.active_area.height) };
-    let need = max_edge.saturating_mul(9) / 10;
-    [8usize, 6, 4, 3, 2].into_iter().find(|&k| long / k >= need.max(1) && raw.can_bin(k))
+    let need = (max_edge.saturating_mul(9) / 10).max(1);
+    let need3 = (max_edge.saturating_mul(3) / 4).max(1);
+    [8usize, 6, 4, 3, 2].into_iter().find(|&k| raw.can_bin(k) && (long / k >= need || (k == 3 && !raw.can_bin(2) && long / k >= need3)))
 }
 
 /// Decode a file into a linear Rec.2020 image no larger than `max_edge`, oriented.
