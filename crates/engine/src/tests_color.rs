@@ -54,6 +54,32 @@ fn point_color_pick_and_adjust() {
 }
 
 #[test]
+fn red_eye_commands_and_controls() {
+    let mut s = demo();
+    let r = s.execute("redeye.add", &json!({"center": [0.3, 0.4], "rx": 0.03, "ry": 0.02})).unwrap();
+    assert_eq!(r["index"], 0);
+    s.execute("redeye.add", &json!({"center": [0.6, 0.4], "rx": 0.03, "ry": 0.02, "darken": 80})).unwrap();
+    let d = active_dev(&s);
+    assert_eq!(d.red_eye.len(), 2);
+    assert_eq!((d.red_eye[0].pupil_size, d.red_eye[0].darken, d.red_eye[1].darken), (50.0, 50.0, 80.0));
+    // per-eye sliders are develop controls
+    s.execute("develop.set", &json!({"values": {"redEye.1.pupilSize": 70, "redEye.0.darken": 140}})).unwrap();
+    let d = active_dev(&s);
+    assert_eq!((d.red_eye[1].pupil_size, d.red_eye[0].darken), (70.0, 100.0));
+    let ctl = s.execute("develop.controls", &json!({"section": "redEye"})).unwrap();
+    assert_eq!(ctl.as_array().unwrap().len(), 4, "{ctl}");
+    // the render runs with eyes (detection falls back gracefully on a photo without red pupils)
+    let id = s.active().unwrap();
+    assert!(s.render_now(id, 200, 200).is_ok());
+    s.execute("redeye.delete", &json!({"index": 0})).unwrap();
+    assert_eq!(active_dev(&s).red_eye.len(), 1);
+    assert!(s.execute("redeye.delete", &json!({"index": 5})).is_err());
+    assert!(s.execute("redeye.add", &json!({"rx": 0.03})).is_err());
+    let d = active_dev(&s);
+    assert_eq!(lightcraft_develop::DevelopSettings::from_json(&d.to_json()).unwrap(), d);
+}
+
+#[test]
 fn targeted_adjustment_on_curve_and_mixer() {
     let mut s = demo();
     // the bright sky lies in the upper regions of the parametric curve

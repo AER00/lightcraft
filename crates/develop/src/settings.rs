@@ -842,14 +842,27 @@ impl Default for Spot {
     }
 }
 
+/// A red eye / pet eye correction: the user's ellipse (centre normalized, radii as fractions of
+/// the long edge); the pupil inside it is found automatically.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RedEye {
     pub center: Point,
     pub rx: f64,
     pub ry: f64,
+    /// 0..100 (50 = the detected pupil).
     pub pupil_size: f64,
+    /// 0..100.
     pub darken: f64,
     pub pet: bool,
+    /// Pet eye catchlight: offset of its centre from the pupil centre, in pupil radii.
+    #[serde(default)]
+    pub catchlight: Option<Point>,
+}
+
+impl Default for RedEye {
+    fn default() -> Self {
+        Self { center: Point::new(0.5, 0.5), rx: 0.02, ry: 0.015, pupil_size: 50.0, darken: 50.0, pet: false, catchlight: None }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

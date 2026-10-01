@@ -1,6 +1,6 @@
 //! Masking and Remove (spot) commands on the active photo.
 
-use lightcraft_develop::{BrushStroke, LocalAdjustments, Mask, MaskComponent, MaskOp, MaskShape, Spot, SpotMode};
+use lightcraft_develop::{BrushStroke, LocalAdjustments, Mask, MaskComponent, MaskOp, MaskShape, RedEye, Spot, SpotMode};
 use lightcraft_geom::Point;
 use serde_json::{Value, json};
 
@@ -290,6 +290,47 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             dd.spots.remove(i);
             s.set_develop(id, dd, "Delete Spot")?;
+            ok()
+        }),
+        // ---- Red eye / pet eye
+        cmd!(
+            "redeye.add",
+            "Add Red Eye Correction",
+            [],
+            None,
+            "{center: [x,y] normalized, rx, ry: radii as fractions of the long edge, pet?: bool, pupilSize?: 0..100, darken?: 0..100} — the pupil inside is found automatically; returns {index}",
+            has_active,
+            |s, p| {
+                let c = "redeye.add";
+                let center = point(p, "center").ok_or_else(|| bad(c, "missing center"))?;
+                let d = RedEye::default();
+                let eye = RedEye {
+                    center,
+                    rx: f64_or(p, "rx", d.rx).clamp(1e-4, 0.5),
+                    ry: f64_or(p, "ry", d.ry).clamp(1e-4, 0.5),
+                    pupil_size: f64_or(p, "pupilSize", d.pupil_size).clamp(0.0, 100.0),
+                    darken: f64_or(p, "darken", d.darken).clamp(0.0, 100.0),
+                    pet: bool_or(p, "pet", false),
+                    catchlight: None,
+                };
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
+                dd.red_eye.push(eye);
+                let n = dd.red_eye.len();
+                s.set_develop(id, dd, if eye.pet { "Pet Eye" } else { "Red Eye" })?;
+                Ok(json!({"index": n - 1}))
+            }
+        ),
+        cmd!("redeye.delete", "Delete Red Eye Correction", [], None, "{index}", has_active, |s, p| {
+            let c = "redeye.delete";
+            let i = super::f64_req(p, "index", c)? as usize;
+            let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+            let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
+            if i >= dd.red_eye.len() {
+                return Err(bad(c, "no such eye"));
+            }
+            dd.red_eye.remove(i);
+            s.set_develop(id, dd, "Delete Red Eye")?;
             ok()
         }),
     ]

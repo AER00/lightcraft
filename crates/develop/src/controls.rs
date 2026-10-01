@@ -27,6 +27,7 @@ pub enum Section {
     Profile,
     Calibration,
     PointColor,
+    RedEye,
 }
 
 impl Section {
@@ -47,6 +48,7 @@ impl Section {
             Section::Profile => "Profile",
             Section::Calibration => "Calibration",
             Section::PointColor => "Point Color",
+            Section::RedEye => "Red Eye",
         }
     }
 }
@@ -335,6 +337,28 @@ pub static INDEXED: &[ControlSpec] = &[
         decimals: 0,
         track: Gradient { from: "#202020", to: "#f0f0f0" },
     },
+    ControlSpec {
+        id: "redEye.pupilSize",
+        label: "Pupil Size",
+        section: Section::RedEye,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Plain,
+    },
+    ControlSpec {
+        id: "redEye.darken",
+        label: "Darken",
+        section: Section::RedEye,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Gradient { from: "#d0d0d0", to: "#101010" },
+    },
 ];
 
 /// `pointColor.3.hueShift` → (`pointColor`, 3, `hueShift`).
@@ -361,13 +385,21 @@ fn indexed_field<'a>(s: &'a mut DevelopSettings, id: &str) -> Option<&'a mut f64
                 _ => return None,
             })
         }
+        "redEye" => {
+            let e = s.red_eye.get_mut(i)?;
+            Some(match field {
+                "pupilSize" => &mut e.pupil_size,
+                "darken" => &mut e.darken,
+                _ => return None,
+            })
+        }
         _ => None,
     }
 }
 
 fn indexed_get(s: &DevelopSettings, id: &str) -> Option<f64> {
     // (a clone keeps one accessor for get and set; these lists are tiny)
-    let mut c = DevelopSettings { point_colors: s.point_colors.clone(), ..DevelopSettings::default() };
+    let mut c = DevelopSettings { point_colors: s.point_colors.clone(), red_eye: s.red_eye.clone(), ..DevelopSettings::default() };
     indexed_field(&mut c, id).map(|v| *v)
 }
 
@@ -398,6 +430,7 @@ pub fn indexed_instances(s: &DevelopSettings) -> Vec<(String, &'static ControlSp
         let Some((fam, field)) = spec.id.split_once('.') else { continue };
         let n = match fam {
             "pointColor" => s.point_colors.len(),
+            "redEye" => s.red_eye.len(),
             _ => 0,
         };
         for i in 0..n {

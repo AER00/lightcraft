@@ -510,7 +510,15 @@ fn linear(cx: &mut Cx<'_>, sampled: &Buf, info: &SourceInfo, plan: &Plan<'_>, ho
         p.extend(m.unwrap_or_default().iter().flatten().map(|v| v.to_bits()));
         let out = cx.gpu.buffer(n * 3);
         map(cx, "wb_k", n, &p, [Some(sampled), None, None], &out);
-        out
+        if plan.eyes.is_empty() {
+            out
+        } else {
+            let mut p = vec![w as u32, plan.eyes.len() as u32];
+            p.extend(plan.eyes.iter().flat_map(|e| e.words()).map(f32::to_bits));
+            let eyed = cx.gpu.buffer(n * 3);
+            map(cx, "redeye_k", n, &p, [Some(&out), None, None], &eyed);
+            eyed
+        }
     };
     denoise(cx, img, plan)
 }

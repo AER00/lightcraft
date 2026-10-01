@@ -44,6 +44,10 @@ pub enum Gesture {
     Guide {
         a: Point,
     },
+    /// Red Eye: an ellipse being dragged from corner `a` (normalized).
+    Eye {
+        a: Point,
+    },
     /// Targeted adjustment drag from `at` (normalized); `acc` = vertical travel not yet applied.
     Targeted {
         at: Point,
@@ -200,6 +204,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         RightPanel::Crop => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
         RightPanel::Masking => mask_overlay(app, ui, &resp, &map, &d),
         RightPanel::Remove => remove_overlay(app, ui, &resp, &map, &d),
+        RightPanel::RedEye => eye_overlay(app, ui, &resp, &map, &d),
         _ => general_interaction(app, ui, &resp, &map, img_rect, canvas, native, aspect),
     }
     resp.context_menu(|ui| super::grid::context_menu(app, ui, id));
@@ -712,6 +717,64 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
         };
         let pts: Vec<[f64; 2]> = points.iter().map(|q| [q.x, q.y]).collect();
         let _ = app.run("spot.add", json!({"mode": mode, "points": pts, "size": app.ui.remove_size}));
+    }
+}
+
+// ------------------------------------------------------------------------ red eye
+
+/// Red Eye tool: drag an ellipse over an eye (a new correction), click one to select it.
+fn eye_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, d: &DevelopSettings) {
+    // screen points per long-edge unit
+    let o = map.screen(Point::new(0.0, 0.0));
+    let (sx, sy) = (map.screen(Point::new(1.0, 0.0)).distance(o), map.screen(Point::new(0.0, 1.0)).distance(o));
+    let per_long = sx.max(sy);
+    let p = ui.painter();
+    for (i, e) in d.red_eye.iter().enumerate() {
+        let c = map.screen(e.center);
+        let r = vec2(e.rx as f32 * per_long, e.ry as f32 * per_long);
+        let sel = i == app.ui.eye;
+        let col = if sel { Color32::WHITE } else { Color32::from_white_alpha(150) };
+        p.add(egui::Shape::ellipse_stroke(c, r, Stroke::new(if sel { 1.5 } else { 1.0 }, col)));
+        p.line_segment([c - vec2(4.0, 0.0), c + vec2(4.0, 0.0)], Stroke::new(1.0, col));
+        p.line_segment([c - vec2(0.0, 4.0), c + vec2(0.0, 4.0)], Stroke::new(1.0, col));
+    }
+    if resp.hover_pos().is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
+    if resp.drag_started()
+        && let Some(q) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos())
+    {
+        // from where the button went down (a drag is recognized only after some movement)
+        app.gesture = Some(Gesture::Eye { a: map.norm(q) });
+    }
+    if let Some(Gesture::Eye { a }) = app.gesture
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        let (a, b) = (map.screen(a), q);
+        p.add(egui::Shape::ellipse_stroke(a.lerp(b, 0.5), ((b - a) / 2.0).abs(), Stroke::new(1.0, Color32::WHITE)));
+    }
+    if resp.drag_stopped()
+        && let Some(Gesture::Eye { a }) = app.gesture.take()
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        let (sa, sb) = (map.screen(a), q);
+        let half = ((sb - sa) / 2.0).abs() / per_long;
+        if half.x > 0.002 && half.y > 0.002 {
+            let c = map.norm(sa.lerp(sb, 0.5));
+            let r = app.run("redeye.add", json!({"center": [c.x, c.y], "rx": half.x, "ry": half.y, "pet": app.ui.eye_pet}));
+            if let Ok(v) = r {
+                app.ui.eye = v["index"].as_u64().unwrap_or(0) as usize;
+            }
+        }
+    } else if resp.clicked()
+        && let Some(q) = resp.interact_pointer_pos()
+        && let Some(i) = d.red_eye.iter().position(|e| {
+            let c = map.screen(e.center);
+            let (dx, dy) = ((q.x - c.x) / (e.rx as f32 * per_long).max(4.0), (q.y - c.y) / (e.ry as f32 * per_long).max(4.0));
+            dx * dx + dy * dy <= 1.0
+        })
+    {
+        app.ui.eye = i;
     }
 }
 

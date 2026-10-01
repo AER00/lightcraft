@@ -111,6 +111,9 @@ pub struct UiState {
     pub point_color: usize,
     /// Point Color "Visualize range": the selected sample's range in colour, the rest grey.
     pub point_color_visualize: bool,
+    /// Red Eye panel: selected correction, and whether new ones are pet eyes.
+    pub eye: usize,
+    pub eye_pet: bool,
     /// Transient toast text and its expiry (seconds of app time).
     #[serde(skip)]
     pub toast: Option<(String, f64)>,
@@ -181,6 +184,8 @@ impl Default for UiState {
             remove_size: 0.02,
             point_color: 0,
             point_color_visualize: false,
+            eye: 0,
+            eye_pet: false,
             toast: None,
             status: String::new(),
             dialog: None,

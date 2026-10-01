@@ -37,7 +37,7 @@ const MODULES: &[Module] = &[
     Module {
         src: include_str!("wgsl/map.wgsl"),
         bindings: &[("a", false, "f32"), ("b", false, "f32"), ("c", false, "f32"), ("dst", true, "f32")],
-        entries: &["log_lum_k", "dark_k", "guided_pre", "guided_ab", "guided_apply", "wb_k", "nr_lum", "chroma_k", "nr_col", "subsample"],
+        entries: &["log_lum_k", "dark_k", "guided_pre", "guided_ab", "guided_apply", "wb_k", "nr_lum", "chroma_k", "nr_col", "subsample", "redeye_k"],
     },
     Module {
         src: include_str!("wgsl/mask.wgsl"),
@@ -119,6 +119,7 @@ fn constants() -> String {
     s += &format!("const BLANK_R: f32 = {:?};\nconst BLANK_G: f32 = {:?};\nconst BLANK_B: f32 = {:?};\n", b[0], b[1], b[2]);
     s += &format!("const SRGB_N: u32 = {SRGB_LUT_N}u;\nconst CURVE_N: u32 = {}u;\nconst MASK_TERMS: u32 = {MASK_TERMS}u;\n", crate::params::CURVE_N);
     s += &format!("const POINT_WORDS: u32 = {}u;\n", lightcraft_pipeline::colorops::POINT_WORDS);
+    s += &format!("const EYE_WORDS: u32 = {}u;\n", lightcraft_pipeline::redeye::EYE_WORDS);
     s += &format!("const SHADOW_TINT_K: f32 = {:?};\n", lightcraft_pipeline::colorops::SHADOW_TINT);
     for (i, h) in GRAIN_HASH.iter().enumerate() {
         s += &format!("const GRAIN_H{i}: u32 = {h}u;\n");

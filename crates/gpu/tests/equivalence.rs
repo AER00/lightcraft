@@ -403,3 +403,50 @@ fn overlays_match() {
     let req = RenderRequest { overlay: lightcraft_pipeline::Overlay::PointColorRange(0), ..RenderRequest::fit(640, 640) };
     check("point color range overlay", &src, &raw, &s, &req);
 }
+
+#[test]
+fn red_eye_matches() {
+    if !gpu() {
+        return;
+    }
+    // A face-like patch with a red pupil (left) and a glowing pet pupil (right).
+    let src = Arc::new(Rgb32f::from_fn(800, 400, |x, y| {
+        let d = |cx: f32, cy: f32| ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+        if d(250.0, 200.0) < 20.0 {
+            [0.55, 0.05, 0.04]
+        } else if d(560.0, 190.0) < 24.0 {
+            [0.5, 0.7, 0.3]
+        } else if d(250.0, 200.0) < 40.0 || d(560.0, 190.0) < 45.0 {
+            [0.12, 0.1, 0.08]
+        } else {
+            [0.45, 0.3, 0.22]
+        }
+    }));
+    let info = SourceInfo::default();
+    let eyes = vec![
+        lightcraft_develop::RedEye { center: Point::new(0.31, 0.5), rx: 0.06, ry: 0.05, darken: 70.0, ..Default::default() },
+        lightcraft_develop::RedEye {
+            center: Point::new(0.7, 0.48),
+            rx: 0.06,
+            ry: 0.06,
+            pupil_size: 60.0,
+            pet: true,
+            catchlight: Some(Point::new(-0.35, -0.35)),
+            ..Default::default()
+        },
+    ];
+    let s = DevelopSettings { red_eye: eyes.clone(), ..Default::default() };
+    check("red + pet eye", &src, &info, &s, &RenderRequest::fit(800, 800));
+    let g = lightcraft_gpu::render(&src, &info, &s, &RenderRequest::fit(800, 800), None).expect("gpu").image;
+    let (red, pet) = (g.data[200 * 800 + 250], g.data[190 * 800 + 560]);
+    assert!(red[0] < 80 && red[0].abs_diff(red[1]) < 10, "red pupil fixed on the GPU: {red:?}");
+    assert!(pet[1] < 80 && pet[0].abs_diff(pet[1]) < 5, "pet pupil darkened on the GPU: {pet:?}");
+    check("red + pet eye (small)", &src, &info, &s, &RenderRequest::fit(300, 300));
+    // with a spot the scene-linear stage runs on the CPU (eyes included)
+    let s = DevelopSettings {
+        red_eye: eyes,
+        spots: vec![Spot { points: vec![Point::new(0.1, 0.2)], size: 0.02, source_offset: Some(Point::new(0.05, 0.0)), ..Default::default() }],
+        ..Default::default()
+    };
+    check("red eye + spot (cpu stage)", &src, &info, &s, &RenderRequest::fit(600, 600));
+}
