@@ -5,7 +5,7 @@
 //! `Unsupported` for one of the variants we know we don't decode yet. Prints decode times
 //! (`cargo test -p lightcraft-raw --release --test corpus -- --nocapture`).
 
-use lightcraft_raw::{RawError, RawFormat, decode, embedded_preview, probe};
+use lightcraft_raw::{RawError, RawFormat, decode, embedded_preview, probe, probe_info};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -55,9 +55,20 @@ fn corpus_raw_decodes() {
         }
         let preview_kb = preview.as_ref().map_or(0, |p| p.len() / 1024);
         let t1 = Instant::now();
-        match decode(&bytes) {
+        let decoded = decode(&bytes);
+        let dt = t1.elapsed().as_secs_f64() * 1e3;
+        // the header-only probe agrees with the full decode, faster
+        let t2 = Instant::now();
+        let info = probe_info(&bytes);
+        let di = t2.elapsed().as_secs_f64() * 1e3;
+        match (&decoded, &info) {
+            (Ok(img), Ok(info)) => assert_eq!(&img.info(), info, "{name}: probe_info differs from decode"),
+            (Err(RawError::Unsupported(_)), Err(RawError::Unsupported(_))) => {}
+            (d, i) => panic!("{name}: decode {:?} but probe_info {:?}", d.as_ref().err(), i.as_ref().err()),
+        }
+        eprintln!("{name:44} probe_info {di:.1} ms");
+        match decoded {
             Ok(img) => {
-                let dt = t1.elapsed().as_secs_f64() * 1e3;
                 img.validate().unwrap();
                 assert!(img.white_at(0) > img.black.mean(), "{name}: white {} <= black {}", img.white_at(0), img.black.mean());
                 let mp = (img.width * img.height) as f64 / 1e6;

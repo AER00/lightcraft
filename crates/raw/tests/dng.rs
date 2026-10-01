@@ -100,6 +100,8 @@ fn writer_roundtrip_all_layouts() {
                     assert_eq!(probe(&bytes), Some(RawFormat::Dng));
                     let back = decode(&bytes).unwrap();
                     assert_same(&raw, &back);
+                    // the header-only probe describes the same image
+                    assert_eq!(lightcraft_raw::probe_info(&bytes).unwrap(), back.info());
                 }
             }
         }

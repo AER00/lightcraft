@@ -270,7 +270,10 @@ fn snapshot(args: &[String]) -> Result<(), String> {
         None => Session::new().with_fs(),
     };
     if !files.is_empty() {
-        session.execute("library.import", &json!({"paths": expand_paths(&files)})).map_err(|e| e.to_string())?;
+        let ti = Instant::now();
+        let r = session.execute("library.import", &json!({"paths": expand_paths(&files)})).map_err(|e| e.to_string())?;
+        let n = r["imported"].as_array().map_or(0, Vec::len);
+        eprintln!("lightcraft-cli snapshot: imported {n} files in {:.0} ms", ti.elapsed().as_secs_f64() * 1e3);
     }
     let services = lightcraft_ui_egui::Services {
         write: Some(Box::new(|p: &str, b: &[u8]| {

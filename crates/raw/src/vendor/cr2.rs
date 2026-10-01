@@ -14,7 +14,7 @@
 //! - sRAW / mRAW (YCbCr, subsampled) are not supported yet.
 
 use super::{black_from_columns, white_from_data};
-use crate::{BlackLevel, Cfa, ColorData, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result, ljpeg};
+use crate::{BlackLevel, Cfa, ColorData, Mode, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result, ljpeg};
 use lightcraft_geom::Orientation;
 use lightcraft_tiff::image::chunk_bytes;
 use lightcraft_tiff::{Ifd, Tiff, makernote, tags as t};
@@ -45,7 +45,7 @@ fn wb_from_color_balance(v: &[u64]) -> Option<[f32; 3]> {
     None
 }
 
-pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
+pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
     let raw = raw_ifd(&tiff).ok_or_else(|| RawError::Corrupt("CR2 without raw IFD".into()))?;
@@ -57,8 +57,24 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
     let chunk = lightcraft_tiff::image::Chunk { index: 0, x: 0, y: 0, width: 0, height: 0, plane: 0, offset: off, len };
     let src = chunk_bytes(bytes, &chunk).ok_or_else(|| RawError::Corrupt("raw strip outside file".into()))?;
     let (fw, fh, nc, prec) = ljpeg::frame_info(src)?;
-    let frame = ljpeg::decode(src, (fw * fh * nc).min(crate::MAX_SAMPLES))?;
-    let total = frame.data.len();
+    let frame = match mode {
+        Mode::Full => Some(ljpeg::decode(src, (fw * fh * nc).min(crate::MAX_SAMPLES))?),
+        Mode::Header => None,
+    };
+    let total = match &frame {
+        Some(f) => f.data.len(),
+        None => {
+            let total = fw
+                .checked_mul(fh)
+                .and_then(|v| v.checked_mul(nc))
+                .filter(|t| *t > 0)
+                .ok_or_else(|| RawError::Corrupt("bad CR2 frame size".into()))?;
+            if total > crate::MAX_SAMPLES {
+                return Err(RawError::Limit("lossless JPEG frame larger than expected"));
+            }
+            total
+        }
+    };
     let slices = raw.u64s(CR2_SLICE).filter(|s| s.len() == 3 && s[1] > 0 && s[2] > 0);
     let widths: Vec<usize> = match &slices {
         Some(s) => {
@@ -74,16 +90,20 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
         return Err(RawError::Corrupt(format!("CR2 slices ({width}) do not divide the frame ({total} samples)")));
     }
     let height = total / width;
-    let mut data = vec![0u16; total];
-    let mut i = 0;
-    let mut x0 = 0;
-    for &sw in &widths {
-        for y in 0..height {
-            data[y * width + x0..y * width + x0 + sw].copy_from_slice(&frame.data[i..i + sw]);
-            i += sw;
+    let mut data = Vec::new();
+    if let Some(frame) = &frame {
+        data = vec![0u16; total];
+        let mut i = 0;
+        let mut x0 = 0;
+        for &sw in &widths {
+            for y in 0..height {
+                data[y * width + x0..y * width + x0 + sw].copy_from_slice(&frame.data[i..i + sw]);
+                i += sw;
+            }
+            x0 += sw;
         }
-        x0 += sw;
     }
+    drop(frame);
 
     // maker note: sensor borders and white balance
     let make = ifd0.string(t::MAKE).unwrap_or_default();
@@ -126,7 +146,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
         opcodes: OpcodeLists::default(),
         metadata,
     };
-    img.validate()?;
+    img.validate_for(mode)?;
     Ok(img)
 }
 
@@ -183,6 +203,7 @@ pub(crate) mod tests {
             assert_eq!(crate::probe(&bytes), Some(RawFormat::Cr2));
             let r = crate::decode(&bytes).unwrap();
             assert_eq!((r.width, r.height), (64, 10));
+            assert_eq!(crate::probe_info(&bytes).unwrap(), r.info());
             assert_eq!(r.data, RawData::U16(img));
             assert_eq!(r.orientation, Orientation::Rotate270);
             assert_eq!(r.metadata.iso, Some(400));

@@ -16,8 +16,8 @@
 //!
 //! Also: uncompressed 16-bit ARW, and lossless-JPEG tiled ARW through the generic TIFF path.
 
-use crate::tiffraw::{Packing, read_image};
-use crate::{BlackLevel, Cfa, ColorData, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
+use crate::tiffraw::{Packing, read_image_in};
+use crate::{BlackLevel, Cfa, ColorData, Mode, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
 use lightcraft_geom::Orientation;
 use lightcraft_tiff::image::chunk_bytes;
 use lightcraft_tiff::tags::{self as t, photometric};
@@ -94,7 +94,7 @@ fn raw_ifd(tiff: &Tiff) -> Option<&Ifd> {
         .max_by_key(|i| i.u64(t::IMAGE_WIDTH).unwrap_or(0).saturating_mul(i.u64(t::IMAGE_LENGTH).unwrap_or(0)))
 }
 
-pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
+pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
     let raw = raw_ifd(&tiff).ok_or_else(|| RawError::Unsupported("ARW without a CFA image IFD (old ARW or SR2)".into()))?;
@@ -107,6 +107,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
     let chunks = info.chunks(bytes.len() as u64);
     let strip_len: u64 = chunks.iter().map(|c| c.len).sum();
     let (data, out_bits) = match info.compression {
+        32767 if chunks.len() == 1 && strip_len >= (w * h) as u64 && strip_len < (w * h) as u64 * 5 / 4 && mode == Mode::Header => {
+            chunk_bytes(bytes, &chunks[0]).ok_or_else(|| RawError::Corrupt("raw strip outside file".into()))?;
+            (RawData::U16(Vec::new()), 14)
+        }
         32767 if chunks.len() == 1 && strip_len >= (w * h) as u64 && strip_len < (w * h) as u64 * 5 / 4 => {
             let src = chunk_bytes(bytes, &chunks[0]).ok_or_else(|| RawError::Corrupt("raw strip outside file".into()))?;
             let curve = code_curve(&raw.u64s(TONE_CURVE).unwrap_or_else(|| vec![8000, 10400, 12900, 14100]));
@@ -123,9 +127,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
         32767 => return Err(RawError::Unsupported("Sony ARW version 1 / packed compressed variant".into())),
         1 => {
             let packing = if strip_len >= (w * h * 2) as u64 { Packing::Word16 } else { Packing::Msb };
-            (read_image(bytes, &info, tiff.order, packing)?, bits)
+            (read_image_in(mode, bytes, &info, tiff.order, packing)?, bits)
         }
-        _ => (read_image(bytes, &info, tiff.order, Packing::Msb)?, bits),
+        _ => (read_image_in(mode, bytes, &info, tiff.order, Packing::Msb)?, bits),
     };
     let RawData::U16(ref samples) = data else { return Err(RawError::Unsupported("float ARW".into())) };
 
@@ -171,7 +175,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
         opcodes: OpcodeLists::default(),
         metadata,
     };
-    img.validate()?;
+    img.validate_for(mode)?;
     Ok(img)
 }
 

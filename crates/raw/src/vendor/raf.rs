@@ -21,7 +21,7 @@
 
 use super::white_from_data;
 use crate::unpack::{unpack_lsb, unpack_msb};
-use crate::{BlackLevel, Cfa, ColorData, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
+use crate::{BlackLevel, Cfa, ColorData, Mode, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
 use lightcraft_geom::Orientation;
 use lightcraft_tiff::{ByteOrder, Ifd, Tiff};
 use rayon::prelude::*;
@@ -114,7 +114,7 @@ pub(crate) fn unpack_row(src: &[u8], bits: u32, out: &mut [u16]) {
     }
 }
 
-pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
+pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let h = header(bytes)?;
     let raw = h.raw.ok_or_else(|| RawError::Corrupt("RAF without raw data".into()))?;
     let ifd = raw_ifd(raw)?;
@@ -137,11 +137,14 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
         return Err(RawError::Unsupported(format!("Fujifilm compressed RAF ({len} bytes for {w}x{hgt} {bits}-bit)")));
     }
     let src = raw.get(off..off.saturating_add(len).min(raw.len())).ok_or_else(|| RawError::Corrupt("RAF strip outside file".into()))?;
-    let mut data = vec![0u16; n];
-    data.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
-        let s = src.get(y * stride..(y * stride + packed_row).min(src.len())).unwrap_or(&[]);
-        unpack_row(s, store, row);
-    });
+    let mut data = Vec::new();
+    if mode == Mode::Full {
+        data = vec![0u16; n];
+        data.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+            let s = src.get(y * stride..(y * stride + packed_row).min(src.len())).unwrap_or(&[]);
+            unpack_row(s, store, row);
+        });
+    }
 
     let cfa = cfa(&h);
     let active = match (pair(&h, CROP_TOP_LEFT), pair(&h, CROPPED_SIZE)) {
@@ -186,7 +189,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
         opcodes: OpcodeLists::default(),
         metadata,
     };
-    img.validate()?;
+    img.validate_for(mode)?;
     Ok(img)
 }
 
@@ -298,6 +301,7 @@ mod tests {
             let bytes = raf(w, h, bits, pack(&px, store), Some(layout), b"\xff\xd8\xff\xd9");
             assert_eq!(crate::probe(&bytes), Some(RawFormat::Raf));
             let r = crate::decode(&bytes).unwrap_or_else(|e| panic!("{bits}: {e}"));
+            assert_eq!(crate::probe_info(&bytes).unwrap(), r.info());
             assert_eq!(r.data, RawData::U16(px), "{bits}-bit");
             assert_eq!(r.cfa, Some(Cfa::xtrans()));
             assert_eq!(r.active_area, Rect::new(4, 2, 12, 4));

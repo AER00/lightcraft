@@ -36,7 +36,7 @@ fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
 
 /// Lens corrections embedded in a DNG's `OpcodeList3` (`WarpRectilinear`, `FixVignetteRadial`), re-expressed for
 /// the default-cropped, EXIF-oriented image. These are the only "profile" corrections LightCraft applies.
-pub fn embedded_lens(raw: &lightcraft_raw::RawImage) -> Option<lightcraft_develop::EmbeddedLens> {
+pub fn embedded_lens(raw: &lightcraft_raw::RawInfo) -> Option<lightcraft_develop::EmbeddedLens> {
     use lightcraft_develop::{EmbeddedLens, EmbeddedVignette, EmbeddedWarp};
     use lightcraft_geom::Point;
     let (aw, ah) = (raw.active_area.width as f64, raw.active_area.height as f64);
@@ -86,13 +86,14 @@ fn ext_upper(name: &str) -> String {
     std::path::Path::new(name).extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_default()
 }
 
-/// Probe a file's bytes: kind, dimensions (oriented), metadata.
+/// Probe a file's bytes: kind, dimensions (oriented), metadata. Raws are described from their
+/// headers ([`lightcraft_raw::probe_info`]): no pixel data is decompressed.
 pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
     let content_hash = Some(lightcraft_preview::hash_bytes(bytes).to_string());
     let m = lightcraft_meta::extract(bytes);
     let (meta, captured) = meta_of(&m);
     if lightcraft_raw::probe(bytes).is_some() {
-        let raw = match lightcraft_raw::decode(bytes) {
+        let raw = match lightcraft_raw::probe_info(bytes) {
             Ok(r) => r,
             Err(lightcraft_raw::RawError::Unsupported(why)) => {
                 // a raw variant we can't decode yet: describe it from its embedded preview
@@ -120,7 +121,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         if raw.orientation.swaps_axes() {
             std::mem::swap(&mut w, &mut h);
         }
-        let (t, tint) = xy_to_temp_tint(lightcraft_raw::color::as_shot_white_xy(&raw));
+        let (t, tint) = xy_to_temp_tint(lightcraft_raw::color::as_shot_white_xy_of(&raw));
         let as_shot_wb = Some((t.round(), tint.round()));
         let embedded_lens = embedded_lens(&raw);
         return Ok(ProbeInfo {
@@ -204,7 +205,7 @@ fn load_bytes_now(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo),
             Err(e) => return Err(e.to_string()),
         };
         // Embedded lens corrections are applied by the pipeline ("Enable Profile Corrections"), not baked in.
-        let lens = embedded_lens(&raw);
+        let lens = embedded_lens(&raw.info());
         raw.opcodes.list3.retain(|op| !is_lens_opcode(op));
         // Previews and thumbnails bin the mosaic straight to (about) the size they need; only
         // larger levels (exports, 1:1) demosaic the whole sensor.
