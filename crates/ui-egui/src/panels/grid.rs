@@ -354,6 +354,14 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if ui.button("Reset Edits").clicked() {
         let _ = app.run("develop.reset", json!({}));
     }
+    ui.menu_button("Photo Merge", |ui| {
+        let n = app.session.targets(&json!({})).len();
+        for (id, label) in [("dialog.mergeHdr", "HDR…"), ("dialog.mergePanorama", "Panorama…"), ("dialog.mergeHdrPanorama", "HDR Panorama…")] {
+            if ui.add_enabled(n >= 2, egui::Button::new(label)).clicked() {
+                let _ = app.run(id, json!({}));
+            }
+        }
+    });
     ui.separator();
     if ui.button("Rotate Left").clicked() {
         let _ = app.run("photo.rotateLeft", json!({}));

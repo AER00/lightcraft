@@ -4,6 +4,8 @@
 //! lightcraft-cli mcp [--connect [ADDR]] [--demo] [--compact] [FILES/FOLDERS…]
 //! lightcraft-cli render <in> -o <out> [--set control=value]… [--settings FILE.json] [--preset ID] [--size N] [--quality Q]
 //! lightcraft-cli snapshot [--library DIR | --demo] [--script FILE.jsonl] [-o OUT.png] [--size WxH] [--scale S] [FILES…]
+//! lightcraft-cli merge hdr|panorama|hdr-panorama [OPTIONS] FILES…
+//! lightcraft-cli synth-merge hdr|panorama -o DIR
 //! lightcraft-cli commands [--json]
 //! lightcraft-cli controls [--json]
 //! ```
@@ -46,6 +48,15 @@ USAGE:
         -o, --output OUT  PNG path (a final screenshot is written here if the script took none)
         --size WxH        window size in points (default 1600x1000)
         --scale S         pixels per point (default 1)
+  lightcraft-cli merge hdr|panorama|hdr-panorama [OPTIONS] FILES…
+      Photo Merge: writes <first>-HDR.dng / -Pano.dng / -HDR-Pano.dng next to the first file and
+      prints the result as JSON. Options:
+        --deghost none|low|medium|high   --no-align   --bracket N (HDR panorama)
+        --projection auto|spherical|cylindrical|perspective   --boundary-warp 0..100
+        --auto-crop   --fill-edges   --no-auto-settings
+        --preview OUT.png   only render a ≤ 1024 px preview (nothing written next to the files)
+  lightcraft-cli synth-merge hdr|panorama -o DIR
+      Write synthetic merge inputs (procedural scene; bracketed DNGs or overlapping PNG views).
   lightcraft-cli commands [--json]   list every command id with its parameters
   lightcraft-cli controls [--json]   list every develop control id with its range
   lightcraft-cli --version | --help
@@ -58,6 +69,8 @@ fn main() -> ExitCode {
         Some("render") => render(&args[1..]),
         Some("snapshot") => snapshot(&args[1..]),
         Some("commands") => commands(&args[1..]),
+        Some("merge") => merge(&args[1..]),
+        Some("synth-merge") => synth_merge(&args[1..]),
         Some("controls") => controls(&args[1..]),
         Some("--version" | "-V" | "version") => {
             println!("lightcraft-cli {}", env!("CARGO_PKG_VERSION"));
@@ -146,6 +159,112 @@ fn mcp(args: &[String]) -> Result<(), String> {
     let mut server = Server::new(backend).with_command_tools(!compact);
     let stdin = std::io::stdin();
     server.serve(BufReader::new(stdin.lock()), std::io::stdout().lock()).map_err(|e| e.to_string())
+}
+
+fn merge(args: &[String]) -> Result<(), String> {
+    let cmd = match args.first().map(String::as_str) {
+        Some("hdr") => "merge.hdr",
+        Some("panorama" | "pano") => "merge.panorama",
+        Some("hdr-panorama") => "merge.hdrPanorama",
+        _ => return Err("merge: expected hdr, panorama or hdr-panorama".into()),
+    };
+    let mut p = serde_json::Map::new();
+    let mut files = Vec::new();
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--deghost" => {
+                p.insert("deghost".into(), json!(take_value(args, &mut i, "--deghost")?));
+            }
+            "--no-align" => {
+                p.insert("align".into(), json!(false));
+            }
+            "--bracket" => {
+                p.insert("bracket".into(), json!(take_value(args, &mut i, "--bracket")?.parse::<u64>().map_err(|e| e.to_string())?));
+            }
+            "--projection" => {
+                p.insert("projection".into(), json!(take_value(args, &mut i, "--projection")?));
+            }
+            "--boundary-warp" => {
+                p.insert("boundaryWarp".into(), json!(take_value(args, &mut i, "--boundary-warp")?.parse::<f64>().map_err(|e| e.to_string())?));
+            }
+            "--auto-crop" => {
+                p.insert("autoCrop".into(), json!(true));
+            }
+            "--fill-edges" => {
+                p.insert("fillEdges".into(), json!(true));
+            }
+            "--no-auto-settings" => {
+                p.insert("autoSettings".into(), json!(false));
+            }
+            "--preview" => {
+                p.insert("preview".into(), json!(true));
+                p.insert("previewPath".into(), json!(take_value(args, &mut i, "--preview")?));
+                p.insert("showOverlay".into(), json!(true));
+            }
+            a if a.starts_with("--") => return Err(format!("unknown option `{a}`")),
+            f => files.push(f.to_string()),
+        }
+        i += 1;
+    }
+    let mut s = Session::new().with_fs();
+    let paths = expand_paths(&files);
+    let r = s.execute("library.import", &json!({"paths": paths})).map_err(|e| e.to_string())?;
+    let mut ids: Vec<u64> = r["imported"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
+    // keep the command line's order
+    ids.sort_by_key(|id| {
+        paths.iter().position(|f| {
+            s.catalog
+                .photo(lightcraft_engine::catalog::PhotoId(*id))
+                .is_some_and(|ph| matches!(&ph.source, lightcraft_engine::catalog::Source::File { path } if path == f))
+        })
+    });
+    p.insert("ids".into(), json!(ids));
+    let t0 = std::time::Instant::now();
+    let mut out = s.execute(cmd, &Value::Object(p)).map_err(|e| e.to_string())?;
+    out["seconds"] = json!(t0.elapsed().as_secs_f64());
+    println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+    Ok(())
+}
+
+fn synth_merge(args: &[String]) -> Result<(), String> {
+    let kind = args.first().map(String::as_str).unwrap_or("");
+    let mut dir = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--output" => dir = Some(take_value(args, &mut i, "-o")?.to_string()),
+            a => return Err(format!("unknown option `{a}`")),
+        }
+        i += 1;
+    }
+    let dir = dir.ok_or("synth-merge needs -o DIR")?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut written = Vec::new();
+    match kind {
+        "hdr" => {
+            for (k, b) in lightcraft_merge::synth::bracket_dngs(1800, 1200, &[-2.0, 0.0, 2.0]).into_iter().enumerate() {
+                let p = Path::new(&dir).join(format!("bracket-{k}.dng"));
+                std::fs::write(&p, b).map_err(|e| e.to_string())?;
+                written.push(p);
+            }
+        }
+        "panorama" | "pano" => {
+            for (k, v) in lightcraft_merge::synth::pano_views(1200, 900, 1000.0, &[-50.0, -25.0, 0.0, 25.0, 50.0]).into_iter().enumerate() {
+                let p = Path::new(&dir).join(format!("view-{k}.png"));
+                let img = v.to_srgb8();
+                let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default())
+                    .map_err(|e| e.to_string())?;
+                std::fs::write(&p, png).map_err(|e| e.to_string())?;
+                written.push(p);
+            }
+        }
+        _ => return Err("synth-merge: expected hdr or panorama".into()),
+    }
+    for p in written {
+        println!("{}", p.display());
+    }
+    Ok(())
 }
 
 fn take_value<'a>(args: &'a [String], i: &mut usize, flag: &str) -> Result<&'a str, String> {

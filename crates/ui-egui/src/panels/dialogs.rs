@@ -27,6 +27,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::CreatePreset { .. } => "Create Preset",
         Dialog::CopySettings { .. } => "Choose Edit Settings to Copy",
         Dialog::Export { .. } => "Export",
+        Dialog::Merge { opts } => opts.title(),
         Dialog::About => "About LightCraft",
         Dialog::Shortcuts => "Keyboard Shortcuts",
     };
@@ -187,6 +188,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     });
                     field(ui, "Folder", |ui| ui.add(egui::TextEdit::singleline(dir).desired_width(f32::INFINITY)));
                 }
+                Dialog::Merge { opts } => crate::merge::body(app, ui, opts),
                 Dialog::About => {
                     ui.label(egui::RichText::new("LightCraft").font(t.semibold(20.0)).color(t.text));
                     ui.label(format!("Version {} — a clean-room, pure-Rust photo library and raw developer.", env!("CARGO_PKG_VERSION")));
@@ -233,7 +235,12 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 if !informational && ui.button("Cancel").clicked() {
                     close = true;
                 }
-                if ui.button(if informational { "Close" } else { "OK" }).clicked() {
+                let ok = match dlg {
+                    Dialog::Merge { .. } => "Merge",
+                    _ if informational => "Close",
+                    _ => "OK",
+                };
+                if ui.button(ok).clicked() {
                     if informational {
                         close = true;
                     } else {
@@ -287,6 +294,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
                 "metadata": opts.metadata, "removeLocation": opts.remove_location, "watermark": opts.watermark,
             }),
         ),
+        Dialog::Merge { opts } => crate::merge::start_final(app, opts),
         Dialog::About | Dialog::Shortcuts => Ok(serde_json::Value::Null),
     }
 }

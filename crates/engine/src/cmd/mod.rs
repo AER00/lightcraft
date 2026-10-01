@@ -8,6 +8,7 @@ mod develop;
 mod edit;
 mod library;
 mod masks;
+mod merge;
 mod organize;
 mod preset_files;
 mod query;
@@ -104,6 +105,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(develop::specs());
         v.extend(masks::specs());
         v.extend(organize::specs());
+        v.extend(merge::specs());
         v.extend(query::specs());
         v.extend(xmp::specs());
         v.extend(preset_files::specs());

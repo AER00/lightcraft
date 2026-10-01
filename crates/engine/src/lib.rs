@@ -18,6 +18,7 @@ pub mod files;
 pub mod import;
 pub mod library;
 pub mod media;
+pub mod merge;
 pub mod presets;
 pub mod sidecar;
 mod view;
@@ -338,6 +339,8 @@ mod tests;
 mod tests_import;
 #[cfg(test)]
 mod tests_library;
+#[cfg(test)]
+mod tests_merge;
 #[cfg(test)]
 mod tests_organize;
 #[cfg(test)]
