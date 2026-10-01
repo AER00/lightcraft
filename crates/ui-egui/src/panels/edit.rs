@@ -341,7 +341,15 @@ fn histogram(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let p = ui.painter();
     p.rect_filled(r, 0.0, t.button);
     let plot = Rect::from_min_max(r.min + vec2(0.0, 6.0), pos2(r.right(), r.bottom() - 26.0));
-    if let Some(h) = app.renderer.textures.get(&Slot::Main).and_then(|t| t.histogram.clone()) {
+    // the loupe render of this photo, else its thumbnail (grid view before the loupe has rendered it)
+    let hist = app
+        .renderer
+        .textures
+        .get(&Slot::Main)
+        .filter(|t| t.photo == id)
+        .and_then(|t| t.histogram.clone())
+        .or_else(|| app.renderer.textures.get(&Slot::Thumb(id)).and_then(|t| t.histogram.clone()));
+    if let Some(h) = hist {
         let smooth = |v: &[u32]| -> Vec<f32> {
             (0..256)
                 .map(|i| {
