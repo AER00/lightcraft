@@ -52,3 +52,32 @@ fn point_color_pick_and_adjust() {
     let d = active_dev(&s);
     assert_eq!(lightcraft_develop::DevelopSettings::from_json(&d.to_json()).unwrap(), d);
 }
+
+#[test]
+fn targeted_adjustment_on_curve_and_mixer() {
+    let mut s = demo();
+    // the bright sky lies in the upper regions of the parametric curve
+    let r = s.execute("develop.targeted", &json!({"target": "curve", "x": 0.5, "y": 0.35, "delta": 20})).unwrap();
+    let (k, v) = r.as_object().unwrap().iter().next().map(|(k, v)| (k.clone(), v.clone())).unwrap();
+    assert!(k == "curve.lights" || k == "curve.highlights", "{r}");
+    assert_eq!(v, 20.0);
+    assert_eq!(lightcraft_develop::controls::get(&active_dev(&s), &k), Some(20.0));
+    // the dark trees in the lower ones
+    let r = s.execute("develop.targeted", &json!({"target": "curve", "x": 0.4, "y": 0.62, "delta": -10})).unwrap();
+    assert!(r.get("curve.shadows").is_some() || r.get("curve.darks").is_some(), "{r}");
+    // point curve: a point appears at the sampled input, raised by delta levels
+    s.execute("develop.targeted", &json!({"target": "curve", "channel": "master", "x": 0.5, "y": 0.35, "delta": 12.75})).unwrap();
+    let m = active_dev(&s).curve.master;
+    assert_eq!(m.len(), 3);
+    assert!((m[1].y - m[1].x - 0.05).abs() < 1e-6, "{m:?}");
+    // a second step moves the same point
+    s.execute("develop.targeted", &json!({"target": "curve", "channel": "master", "x": 0.5, "y": 0.35, "delta": 12.75})).unwrap();
+    assert_eq!(active_dev(&s).curve.master.len(), 3);
+    // colour mixer: the purple sky's bands lose saturation, the dominant one by the full delta
+    let r = s.execute("develop.targeted", &json!({"target": "sat", "x": 0.5, "y": 0.1, "delta": -30})).unwrap();
+    let o = r.as_object().unwrap();
+    assert!(!o.is_empty() && o.keys().all(|k| k.starts_with("mixer.") && k.ends_with(".sat")), "{r}");
+    assert!(o.values().any(|v| v.as_f64() == Some(-30.0)), "{r}");
+    assert!(o.values().all(|v| v.as_f64().unwrap() < 0.0));
+    assert!(s.execute("develop.targeted", &json!({"target": "nope", "x": 0.5, "y": 0.5, "delta": 1})).is_err());
+}

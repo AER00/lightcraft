@@ -422,6 +422,9 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
                     app.ui.curve_channel = ch.into();
                 }
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                tat_button(app, ui, "tat:curve", "Targeted adjustment: drag up/down on the photo to adjust the curve there");
+            });
         });
     });
     let ch = app.ui.curve_channel.clone();
@@ -568,6 +571,15 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     let _ = id;
 }
 
+/// Toggle for a targeted-adjustment tool (`tool` = `tat:<target>`).
+fn tat_button(app: &mut LightcraftApp, ui: &mut egui::Ui, tool: &str, tip: &str) {
+    let active = app.ui.tool == tool;
+    let id = tool.replace(':', "-");
+    if crate::widgets::icon_button(ui, &id, Icon::Target, vec2(26.0, 26.0), active, true, tip).clicked() {
+        app.ui.tool = if active { String::new() } else { tool.to_string() };
+    }
+}
+
 // ------------------------------------------------------------------------------ colour mixer
 
 fn mixer(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
@@ -587,6 +599,26 @@ fn mixer(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
                 }
                 if resp.clicked() {
                     app.ui.mixer_mode = b.to_string();
+                }
+            }
+        });
+    });
+    // targeted adjustment: pick the attribute, then drag on the photo
+    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 2 }).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+            paint(ui.painter(), r, Icon::Target, t.icon);
+            let items: &[(&str, &str)] =
+                if crate::is_bw(d) { &[("lum", "B&W Mix")] } else { &[("hue", "Hue"), ("sat", "Saturation"), ("lum", "Luminance")] };
+            for (k, label) in items {
+                let tool = format!("tat:{k}");
+                let active = app.ui.tool == tool;
+                if text_button(ui, &format!("tatMixer-{k}"), label, active)
+                    .on_hover_text("Targeted adjustment: drag up/down on the photo to adjust the colours there")
+                    .clicked()
+                {
+                    app.ui.tool = if active { String::new() } else { tool };
                 }
             }
         });

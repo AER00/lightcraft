@@ -1,13 +1,16 @@
-//! Commands that sample the developed image: Point Color samples and the targeted adjustment tool.
+//! Commands that sample the developed image: Point Color samples and the targeted adjustment tool
+//! (`develop.targeted`: a vertical drag on the photo raises/lowers the tone-curve region or the
+//! colour-mixer bands under the pointer; the UI sends one call per drag step inside an interaction).
 //!
 //! Sampling renders a small proxy with every stage *after* the sampled one neutralized, so the
 //! picked colour is the one the adjustment will see (e.g. Point Color samples after the colour
 //! mixer, before vibrance, grading, vignette and curves).
 
 use lightcraft_color::perceptual::{lab_to_lch, oklab_from_2020};
+use lightcraft_color::spline::MonotoneCurve;
 use lightcraft_color::transfer::srgb_to_linear;
 use lightcraft_color::{REC2020, SRGB};
-use lightcraft_develop::{DevelopSettings, MAX_POINT_COLORS, PointColor, Treatment};
+use lightcraft_develop::{DevelopSettings, MAX_POINT_COLORS, MIXER_BANDS, PointColor, ToneCurve, Treatment, controls};
 use lightcraft_geom::Point;
 use serde_json::{Value, json};
 
@@ -64,6 +67,94 @@ pub(crate) fn after_mixer_neutral(d: &mut DevelopSettings) {
     d.curve = Default::default();
 }
 
+/// The targeted adjustment tool: the controls (and their new values) a vertical drag of `delta`
+/// at `(x, y)` changes, computed on `d` (applied by the caller).
+fn targeted(s: &mut Session, p: &Value) -> Result<Value> {
+    let c = "develop.targeted";
+    let (x, y, delta) = (f64_req(p, "x", c)?, f64_req(p, "y", c)?, f64_req(p, "delta", c)?);
+    let target = p.get("target").and_then(Value::as_str).unwrap_or("curve").to_string();
+    let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+    let mut d = (*s.develop_of(id).unwrap_or_default()).clone();
+    let mut changed = serde_json::Map::new();
+    fn nudge(changed: &mut serde_json::Map<String, Value>, d: &mut DevelopSettings, ctl: &str, by: f64) {
+        let v = controls::get(d, ctl).unwrap_or(0.0) + by;
+        controls::set(d, ctl, v);
+        changed.insert(ctl.to_string(), json!(controls::get(d, ctl)));
+    }
+    let label;
+    match target.as_str() {
+        "curve" => {
+            // the encoded value the tone curve sees there (curves and grain neutralized)
+            let e = probe(s, c, x, y, |d| {
+                d.curve = ToneCurve { refine_saturation: d.curve.refine_saturation, ..Default::default() };
+                d.grain.amount = 0.0;
+            })?;
+            let channel = p.get("channel").and_then(Value::as_str).unwrap_or("parametric");
+            label = "Tone Curve";
+            if channel == "parametric" {
+                let v = (0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2]) as f64 * 100.0;
+                let cv = &d.curve;
+                let region = if v < cv.split_shadows {
+                    "curve.shadows"
+                } else if v < cv.split_mid {
+                    "curve.darks"
+                } else if v < cv.split_highlights {
+                    "curve.lights"
+                } else {
+                    "curve.highlights"
+                };
+                nudge(&mut changed, &mut d, region, delta);
+            } else {
+                // point curve: move the point at the sampled input up/down (or add one there)
+                let (pts, v) = match channel {
+                    "red" => (&mut d.curve.red, e[0]),
+                    "green" => (&mut d.curve.green, e[1]),
+                    "blue" => (&mut d.curve.blue, e[2]),
+                    _ => (&mut d.curve.master, 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2]),
+                };
+                let v = v as f64;
+                if pts.is_empty() {
+                    *pts = vec![Point::new(0.0, 0.0), Point::new(1.0, 1.0)];
+                }
+                let curve = MonotoneCurve::new(&pts.iter().map(|q| (q.x, q.y)).collect::<Vec<_>>());
+                let dy = delta / 255.0;
+                match pts.iter().position(|q| (q.x - v).abs() < 0.03) {
+                    Some(i) => pts[i].y = (pts[i].y + dy).clamp(0.0, 1.0),
+                    None => {
+                        let i = pts.iter().position(|q| q.x > v).unwrap_or(pts.len());
+                        pts.insert(i, Point::new(v, (curve.eval(v) + dy).clamp(0.0, 1.0)));
+                    }
+                }
+                changed.insert(format!("curve.{channel}"), json!(pts.iter().map(|q| [q.x, q.y]).collect::<Vec<_>>()));
+            }
+        }
+        "hue" | "sat" | "lum" => {
+            // the hue the colour mixer sees there (the mixer and everything after it neutralized)
+            let e = probe(s, c, x, y, |d| {
+                d.mixer = Default::default();
+                d.bw_mix = Default::default();
+                after_mixer_neutral(d);
+            })?;
+            let [_, _, h] = encoded_to_oklch(e);
+            let w = lightcraft_pipeline::colorops::band_weights(h);
+            let top = w.iter().cloned().fold(0.0f32, f32::max).max(1e-6);
+            let bw = d.treatment == Treatment::Bw || d.profile.id == "lc.mono";
+            label = if bw { "B&W Mix" } else { "Color Mixer" };
+            for (i, band) in MIXER_BANDS.iter().enumerate() {
+                let k = (w[i] / top) as f64;
+                if k < 0.05 {
+                    continue;
+                }
+                let ctl = if bw { format!("bw.{band}") } else { format!("mixer.{band}.{target}") };
+                nudge(&mut changed, &mut d, &ctl, delta * k);
+            }
+        }
+        _ => return Err(bad(c, "target must be curve, hue, sat or lum")),
+    }
+    s.set_develop(id, d, label)?;
+    Ok(Value::Object(changed))
+}
+
 fn index(p: &Value, c: &str) -> Result<usize> {
     Ok(f64_req(p, "index", c)? as usize)
 }
@@ -92,6 +183,15 @@ pub fn specs() -> Vec<CommandSpec> {
                 s.set_develop(id, d, "Point Color")?;
                 Ok(json!({"index": i, "lum": sample.lum, "chroma": sample.chroma, "hue": sample.hue}))
             }
+        ),
+        cmd!(
+            "develop.targeted",
+            "Targeted Adjustment",
+            [],
+            None,
+            "{target: curve|hue|sat|lum, x, y (normalized image coords), delta (slider units; point curves: output levels 0..255), channel?: parametric|master|red|green|blue (curve)} — adjusts the curve region / colour-mixer bands under the point; returns the changed controls",
+            has_active,
+            targeted
         ),
         cmd!("pointColor.delete", "Delete Point Color Sample", [], None, "{index}", has_active, |s, p| {
             let c = "pointColor.delete";

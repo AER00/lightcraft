@@ -44,6 +44,11 @@ pub enum Gesture {
     Guide {
         a: Point,
     },
+    /// Targeted adjustment drag from `at` (normalized); `acc` = vertical travel not yet applied.
+    Targeted {
+        at: Point,
+        acc: f32,
+    },
 }
 
 /// Screen ↔ normalized-image mapping for the displayed frame.
@@ -200,6 +205,38 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     resp.context_menu(|ui| super::grid::context_menu(app, ui, id));
 }
 
+/// Targeted adjustment tool: dragging up/down on the photo raises/lowers the tone-curve region or
+/// the colour-mixer bands under the press point (`develop.targeted`, one call per whole step, all
+/// in one interaction = one undo step).
+fn targeted_drag(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, target: &str) {
+    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    if resp.drag_started()
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        let _ = app.run("develop.beginInteraction", json!({"label": "Targeted Adjustment"}));
+        app.gesture = Some(Gesture::Targeted { at: map.norm(q), acc: 0.0 });
+    }
+    if resp.dragged()
+        && let Some(Gesture::Targeted { at, acc }) = &mut app.gesture
+    {
+        *acc -= resp.drag_delta().y * 0.5;
+        let step = acc.trunc();
+        if step != 0.0 {
+            *acc -= step;
+            let at = *at;
+            let mut p = json!({"target": target, "x": at.x, "y": at.y, "delta": step});
+            if target == "curve" && app.ui.curve_channel != "parametric" {
+                p["channel"] = json!(app.ui.curve_channel);
+            }
+            let _ = app.run("develop.targeted", p);
+        }
+    }
+    if resp.drag_stopped() && matches!(app.gesture, Some(Gesture::Targeted { .. })) {
+        app.gesture = None;
+        let _ = app.run("develop.endInteraction", json!({}));
+    }
+}
+
 /// The diagnostic overlay the loupe shows (Point Color's visualized range).
 fn view_overlay(app: &LightcraftApp, d: &DevelopSettings) -> lightcraft_pipeline::Overlay {
     use lightcraft_pipeline::Overlay;
@@ -242,6 +279,10 @@ fn general_interaction(
             let _ = app.run("develop.wbPick", json!({"x": n.x, "y": n.y}));
             app.ui.tool.clear();
         }
+        return;
+    }
+    if let Some(target) = app.ui.tool.strip_prefix("tat:").map(str::to_string) {
+        targeted_drag(app, ui, resp, map, &target);
         return;
     }
     if app.ui.tool == "pointColor" {

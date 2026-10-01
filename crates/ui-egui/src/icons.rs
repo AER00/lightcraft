@@ -66,6 +66,8 @@ pub enum Icon {
     Video,
     Heart,
     Edited,
+    /// Targeted adjustment: a ring with a centre dot and up/down arrows (drag vertically).
+    Target,
 }
 
 struct Pen<'a> {
@@ -401,6 +403,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Edited => {
             pen.circle(10.0, 10.0, 7.0);
             pen.line(&[(7.0, 13.0), (13.0, 7.0)]);
+        }
+        Target => {
+            pen.circle(8.0, 10.0, 5.0);
+            pen.dot(8.0, 10.0, 1.3);
+            pen.line(&[(15.5, 3.5), (15.5, 16.5)]);
+            pen.line(&[(13.5, 5.5), (15.5, 3.5), (17.5, 5.5)]);
+            pen.line(&[(13.5, 14.5), (15.5, 16.5), (17.5, 14.5)]);
         }
     }
 }
