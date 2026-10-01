@@ -5,7 +5,8 @@
 //!
 //! Without a file argument a procedural 6000×4000 source is used. Scenarios: a ~2.5 MP loupe render
 //! of the 2560 px preview (cold, and with a warm stage cache while a slider is dragged), a draft,
-//! and a full-size render + JPEG encode (export). Prints minimum wall-clock and minimum process CPU
+//! and a full-size render + JPEG encode (export); `ONLY=batch` with several files times a full-size
+//! export of each (decode + render + encode). Prints minimum wall-clock and minimum process CPU
 //! time: on a shared machine the CPU time shows the work done, wall-clock also the wait for cores.
 use std::time::Instant;
 
@@ -130,6 +131,23 @@ fn main() {
             drop(render_cached(&preview, &info, &t, &draft, &cache));
         });
         println!("loupe draft NR drag (warm):           {ms}");
+    }
+    if run("batch") && args.len() > 1 {
+        // full-size JPEG export of all the files given (decode + render + encode)
+        use lightcraft_engine::export::export_photo;
+        let mut session = lightcraft_engine::Session::new().with_fs();
+        let r = session.execute("library.import", &serde_json::json!({"paths": args})).expect("import");
+        let ids: Vec<_> = r["imported"].as_array().expect("ids").iter().filter_map(|v| v.as_u64()).map(lightcraft_engine::catalog::PhotoId).collect();
+        let items: Vec<_> = ids.iter().enumerate().map(|(i, id)| (*id, i + 1)).collect();
+        let o = ExportOptions::default();
+        let ms = best(n.min(3), || {
+            for &(id, seq) in &items {
+                drop(export_photo(&mut session, id, &o, seq).expect("export"));
+                session.media.forget(id); // as in a batch: every original is decoded once
+            }
+        });
+        println!("batch export of {} files (decode+render+JPEG): {ms}", items.len());
+        return;
     }
     if run("export") {
         let big = RenderRequest::fit(full.width, full.height);
