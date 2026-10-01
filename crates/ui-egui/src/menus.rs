@@ -275,7 +275,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "dialog.export" => {
-            app.ui.dialog = Some(Dialog::Export { format: "jpeg".into(), quality: 90, long_edge: 3000 });
+            app.ui.dialog =
+                Some(Dialog::Export { opts: Default::default(), long_edge: 2048, limit_kb: 0, dir: crate::control::default_export_dir() });
             Ok(Value::Null)
         }
         "app.about" => {

@@ -119,11 +119,28 @@ pub struct UiState {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Dialog {
-    NewAlbum { name: String, folder: bool },
-    RenameAlbum { id: u64, name: String },
-    CreatePreset { name: String, group: String },
-    CopySettings { groups: Vec<String> },
-    Export { format: String, quality: u32, long_edge: u32 },
+    NewAlbum {
+        name: String,
+        folder: bool,
+    },
+    RenameAlbum {
+        id: u64,
+        name: String,
+    },
+    CreatePreset {
+        name: String,
+        group: String,
+    },
+    CopySettings {
+        groups: Vec<String>,
+    },
+    /// `long_edge` 0 = full size; `limit_kb` 0 = no limit; `dir` empty = default export folder.
+    Export {
+        opts: lightcraft_engine::export::ExportOptions,
+        long_edge: u32,
+        limit_kb: u32,
+        dir: String,
+    },
     About,
     Shortcuts,
 }
