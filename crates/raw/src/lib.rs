@@ -12,7 +12,7 @@
 //! Formats: DNG (uncompressed, lossless JPEG, Deflate incl. floating point, tiled/stripped, CFA and LinearRaw),
 //! Canon CR2, Nikon NEF (uncompressed), Sony ARW (uncompressed, lossless), Fujifilm RAF (uncompressed Bayer and
 //! X-Trans), Panasonic RW2 (packed 12/14-bit), Pentax PEF
-//! (uncompressed, Huffman). See the crate README for sources and
+//! (uncompressed, Huffman), Olympus ORF (uncompressed). See the crate README for sources and
 //! gaps. The decoders never panic on malformed input.
 #![forbid(unsafe_code)]
 
@@ -149,6 +149,7 @@ pub fn decode(bytes: &[u8]) -> Result<RawImage> {
         RawFormat::Raf => vendor::raf::decode(bytes),
         RawFormat::Rw2 => vendor::rw2::decode(bytes),
         RawFormat::Pef => vendor::pef::decode(bytes),
+        RawFormat::Orf => vendor::orf::decode(bytes),
         other => Err(RawError::Unsupported(format!("{other:?} files are not decoded yet"))),
     }
 }

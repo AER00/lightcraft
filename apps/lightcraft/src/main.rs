@@ -72,8 +72,8 @@ fn services() -> Services {
                 .add_filter(
                     "Photos",
                     &[
-                        "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "nef", "nrw", "arw", "raf", "rw2", "pef", "psd", "jxl", "gif",
-                        "bmp",
+                        "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "nef", "nrw", "arw", "raf", "rw2", "pef", "orf", "psd", "jxl",
+                        "gif", "bmp",
                     ],
                 )
                 .pick_files()

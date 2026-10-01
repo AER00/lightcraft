@@ -86,6 +86,10 @@ pub fn embedded_preview(bytes: &[u8]) -> Option<Vec<u8>> {
             }
         }
     }
+    // Olympus: CameraSettings preview
+    if let Some(p) = crate::vendor::orf::preview(bytes) {
+        found.push(p);
+    }
     found.into_iter().filter(|s| is_dct_jpeg(s)).max_by_key(|s| s.len()).map(|s| trim_eoi(s).to_vec())
 }
 
