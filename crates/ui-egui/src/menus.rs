@@ -55,6 +55,9 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
     ("dialog.copySettings", "Choose Edit Settings to Copy…", Some("Cmd+Shift+C"), "Photo"),
     ("dialog.export", "Export…", Some("Cmd+Shift+E"), "File"),
+    ("dialog.mergeHdr", "Photo Merge ▸ HDR…", Some("Ctrl+H"), "Photo"),
+    ("dialog.mergePanorama", "Photo Merge ▸ Panorama…", Some("Ctrl+M"), "Photo"),
+    ("dialog.mergeHdrPanorama", "Photo Merge ▸ HDR Panorama…", None, "Photo"),
     ("file.addPhotos", "Add Photos…", Some("Cmd+Shift+I"), "File"),
     ("file.importPresets", "Import Presets…", None, "File"),
     ("file.exportPresets", "Export Presets…", None, "File"),
@@ -281,6 +284,9 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 Some(Dialog::Export { opts: Default::default(), long_edge: 2048, limit_kb: 0, dir: crate::control::default_export_dir() });
             Ok(Value::Null)
         }
+        "dialog.mergeHdr" => crate::merge::open(app, "merge.hdr"),
+        "dialog.mergePanorama" => crate::merge::open(app, "merge.panorama"),
+        "dialog.mergeHdrPanorama" => crate::merge::open(app, "merge.hdrPanorama"),
         "app.about" => {
             app.ui.dialog = Some(Dialog::About);
             Ok(Value::Null)
@@ -363,6 +369,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         s if s.starts_with("panel.") || s.starts_with("tool.") || s.starts_with("section.") => app.session.active().is_some() || s == "panel.close",
         "app.export" | "dialog.export" | "dialog.createPreset" | "dialog.copySettings" => app.session.active().is_some(),
         "file.exportPresets" => app.session.presets.iter().any(|p| !p.builtin),
+        s if s.starts_with("dialog.merge") => app.session.targets(&serde_json::json!({})).len() >= 2 && app.merge.final_task.is_none(),
         _ => true,
     }
 }

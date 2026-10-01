@@ -171,7 +171,7 @@ impl Headless {
 
     /// Is anything still in progress (renders, queued input)?
     pub fn busy(&self) -> bool {
-        self.app.renderer.in_flight() > 0 || !self.app.synthetic.is_empty() || !self.events.is_empty()
+        self.app.renderer.in_flight() > 0 || self.app.merge.busy() || !self.app.synthetic.is_empty() || !self.events.is_empty()
     }
 
     /// Run frames until nothing is pending (renders finished, input consumed) for a few frames in

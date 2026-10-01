@@ -141,6 +141,10 @@ pub enum Dialog {
         limit_kb: u32,
         dir: String,
     },
+    /// Photo Merge (HDR / Panorama / HDR Panorama) options; the preview lives in the app.
+    Merge {
+        opts: crate::merge::MergeDialog,
+    },
     About,
     Shortcuts,
 }

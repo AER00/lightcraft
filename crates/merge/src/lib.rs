@@ -20,6 +20,7 @@ pub mod linalg;
 pub mod output;
 pub mod pano;
 pub mod ransac;
+pub mod synth;
 
 pub use frame::{Frame, FrameColor, load_frame};
 pub use hdr::{Deghost, HdrOptions, HdrResult, merge_hdr};
