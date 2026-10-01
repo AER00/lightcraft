@@ -305,9 +305,16 @@ pub(crate) fn prepare(img: Arc<Rgb32f>, s: &DevelopSettings, frame: &Frame, px_p
     Prepared { img, log_l, base, clarity_blur, texture_blur, dark, air, masks, px_per_long }
 }
 
+/// The airlight is estimated from every `AIRLIGHT_STEP`-th value of the dark channel.
+pub const AIRLIGHT_STEP: usize = 7;
+
 /// Airlight estimate: bright end of the dark channel.
 pub fn airlight(dark: &Plane) -> f32 {
-    let mut v: Vec<f32> = dark.data.iter().step_by(7).copied().collect();
+    airlight_of(dark.data.iter().step_by(AIRLIGHT_STEP).copied().collect())
+}
+
+/// Airlight from the sampled dark-channel values (see [`airlight`]): their 99.5th percentile.
+pub fn airlight_of(mut v: Vec<f32>) -> f32 {
     if v.is_empty() {
         return 1.0;
     }

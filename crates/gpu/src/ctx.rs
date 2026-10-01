@@ -272,7 +272,6 @@ pub fn groups2(w: usize, h: usize, wg: [usize; 2]) -> [u32; 3] {
     [w.div_ceil(wg[0]).max(1) as u32, h.div_ceil(wg[1]).max(1) as u32, 1]
 }
 
-#[allow(dead_code)] // used by the plane kernels
 /// Workgroups for a 1-D kernel of `n` threads (256 per group) on a 2-D grid (see `lin_index`).
 pub fn groups1(n: usize) -> [u32; 3] {
     let g = n.div_ceil(256).max(1);
