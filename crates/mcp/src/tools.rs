@@ -173,9 +173,21 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
         tool(
             "export",
             "Export photo",
-            "Render a photo at full quality and write it to `path` (.png, .jpg, .tif or .webp; the desktop app writes PNG).",
-            json!({"id": photo_id, "path": {"type": "string"}, "longEdge": {"type": "integer", "description": "Default 3000"}, "quality": {"type": "integer", "description": "JPEG quality 1..100"}}),
-            &["path"],
+            "Render and write photos. Give `path` (one photo; format from the extension unless `format` is set) or `dir` (batch, file names from `naming`).",
+            json!({
+                "id": photo_id,
+                "ids": {"type": "array", "items": {"type": "integer"}, "description": "Photos to export (default: the given/active photo)"},
+                "path": {"type": "string"},
+                "dir": {"type": "string"},
+                "format": {"type": "string", "enum": ["jpeg", "png", "tiff", "webp", "avif"]},
+                "longEdge": {"type": "integer", "description": "Default 3000; 0 = full size"},
+                "quality": {"type": "integer", "description": "JPEG/AVIF quality 1..100"},
+                "limitKb": {"type": "integer", "description": "JPEG: largest quality that fits this many KB"},
+                "sharpen": {"type": "string", "enum": ["none", "screen", "matte", "glossy"]},
+                "sharpenAmount": {"type": "string", "enum": ["low", "standard", "high"]},
+                "naming": {"type": "string", "description": "e.g. {name}-{seq}"}
+            }),
+            &[],
         ),
     ];
     if has_ui {
@@ -499,7 +511,13 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
             }
         })),
         "render_photo" => render_photo(b, args),
-        "export" => ToolResult::from(activate(b, args).and_then(|_| exec(b, "app.export", obj(args, &["path", "longEdge", "quality"])))),
+        "export" => ToolResult::from(activate(b, args).and_then(|_| {
+            exec(
+                b,
+                "app.export",
+                obj(args, &["ids", "path", "dir", "format", "longEdge", "quality", "limitKb", "sharpen", "sharpenAmount", "naming"]),
+            )
+        })),
         "screenshot" => screenshot(b, args),
         "inspect_ui" => ToolResult::from(b.call("ui.inspect", json!({}))),
         "set_ui" => ToolResult::from(b.call("ui.set", args.get("state").cloned().unwrap_or(json!({})))),

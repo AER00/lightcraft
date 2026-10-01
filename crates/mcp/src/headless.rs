@@ -46,21 +46,43 @@ impl Headless {
         Ok(self.session.render_now(id, size, size)?.image)
     }
 
-    /// The UI command `app.export`, emulated: render and write PNG/JPEG/TIFF/WebP by extension.
+    /// The UI command `app.export`, emulated with the same parameters as the desktop app
+    /// (see `lightcraft_engine::export::ExportOptions::from_json`, plus `ids`, `dir`, `path`).
+    /// With `path` and no `format`, the format follows the path's extension.
     fn export(&mut self, p: &Value) -> Result<Value, String> {
-        let id = self.photo_or_active(p)?;
-        let img = self.render(&json!({"id": id.0, "size": p.get("longEdge").and_then(Value::as_u64).unwrap_or(3000)}), 3000)?;
-        let path = match p.get("path").and_then(Value::as_str) {
-            Some(path) => path.to_string(),
-            None => {
-                let name = self.session.catalog.photo(id).map(|p| p.file_name.clone()).unwrap_or_else(|| "export".into());
-                let stem = name.rsplit_once('.').map(|(a, _)| a.to_string()).unwrap_or(name);
-                format!("{stem}-lightcraft.png")
-            }
+        use lightcraft_engine::export::{ExportFormat, ExportOptions, export_photo};
+        let mut opts = ExportOptions::from_json(p);
+        if p.get("longEdge").is_none() {
+            opts.long_edge = Some(3000);
+        }
+        let exact = p.get("path").and_then(Value::as_str);
+        if let (Some(path), None) = (exact, p.get("format")) {
+            let ext = Path::new(path).extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
+            opts.format = ExportFormat::parse(&ext).unwrap_or(ExportFormat::Png);
+        }
+        let ids: Vec<_> = match p.get("ids").and_then(Value::as_array) {
+            Some(a) => a.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect(),
+            None => vec![self.photo_or_active(p)?],
         };
-        let quality = p.get("quality").and_then(Value::as_u64).unwrap_or(90).clamp(1, 100) as u8;
-        write_image(Path::new(&path), &img, quality)?;
-        Ok(json!({"path": path, "width": img.width, "height": img.height}))
+        let dir = p.get("dir").and_then(Value::as_str).unwrap_or("");
+        let mut files = Vec::new();
+        for (i, id) in ids.iter().enumerate() {
+            let e = export_photo(&mut self.session, *id, &opts, i + 1)?;
+            let path = match exact.filter(|_| ids.len() == 1) {
+                Some(path) => path.to_string(),
+                None if dir.is_empty() => e.file_name.clone(),
+                None => format!("{dir}/{}", e.file_name),
+            };
+            if let Some(parent) = Path::new(&path).parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+            }
+            std::fs::write(&path, &e.bytes).map_err(|err| format!("{path}: {err}"))?;
+            files.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len()}));
+        }
+        // Single-photo exports also report path/width/height at the top level (back-compat).
+        let mut out = files.first().cloned().unwrap_or_else(|| json!({}));
+        out["files"] = json!(files);
+        Ok(out)
     }
 }
 
@@ -140,18 +162,12 @@ pub fn expand_paths(paths: &[String]) -> Vec<String> {
     out
 }
 
-/// Encode by extension: `.png` (default), `.jpg`/`.jpeg` (quality), `.tif`/`.tiff`, `.webp` (lossless).
+/// Encode by extension: `.png` (default), `.jpg`/`.jpeg` (quality), `.tif`/`.tiff`, `.webp` (lossless),
+/// `.avif` — via the shared export encoder (embeds an sRGB profile).
 pub fn encode_image(ext: &str, img: &Rgba8, quality: u8) -> Result<Vec<u8>, String> {
-    use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, TiffCompression};
-    let e = EncodeImage::rgba8(img);
-    let m = EncodeMeta::default();
-    match ext.to_ascii_lowercase().as_str() {
-        "jpg" | "jpeg" => lightcraft_codecs::encode_jpeg(&e, quality, ChromaSubsampling::S444, &m),
-        "tif" | "tiff" => lightcraft_codecs::encode_tiff(&e, TiffCompression::Deflate, &m),
-        "webp" => lightcraft_codecs::encode_webp_lossless(&e, &m),
-        _ => lightcraft_codecs::encode_png(&e, &m),
-    }
-    .map_err(|e| e.to_string())
+    use lightcraft_engine::export::{ExportFormat, ExportOptions};
+    let format = ExportFormat::parse(ext).unwrap_or(ExportFormat::Png);
+    lightcraft_engine::export::encode_image(img, &ExportOptions { format, quality: quality.clamp(1, 100), ..Default::default() })
 }
 
 /// Encode by the path's extension and write the file.
