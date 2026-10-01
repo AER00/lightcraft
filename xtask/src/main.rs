@@ -6,6 +6,7 @@
 mod assets;
 mod layers;
 mod stats;
+mod web;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -16,7 +17,10 @@ usage: cargo xtask <command>
 commands:
   assets          every image/icon/font/media file is attributed in assets/ATTRIBUTION.md; no Adobe assets
   layers          enforce the crate dependency layering (plan/architecture.md §3)
-  wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
+  wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates (+ the web app)
+  web [--serve [port]] [--dev]
+                  build the browser app (apps/lightcraft-web) into <target>/web/;
+                  --serve serves it on http://127.0.0.1:<port> (default 8080)
   ci              fmt --check, clippy -D warnings, test, layers, assets, wasm (stops at first failure)
   corpus [--download]
                   show where test corpora live; --download fetches PngSuite into corpus/pngsuite
@@ -30,6 +34,7 @@ fn main() -> ExitCode {
         Some("layers") => cmd_layers(),
         Some("assets") => assets::run(&root()),
         Some("wasm") => cmd_wasm(),
+        Some("web") => web::run(&rest),
         Some("ci") => cmd_ci(),
         Some("corpus") => cmd_corpus(rest.contains(&"--download")),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
@@ -59,7 +64,7 @@ pub fn cargo() -> Command {
     c
 }
 
-fn run(mut cmd: Command, what: &str) -> Result<(), String> {
+pub fn run(mut cmd: Command, what: &str) -> Result<(), String> {
     eprintln!("$ {what}");
     let status = cmd.status().map_err(|e| format!("{what}: failed to spawn: {e}"))?;
     if status.success() { Ok(()) } else { Err(format!("{what}: exited with {status}")) }
@@ -108,7 +113,7 @@ fn cmd_layers() -> Result<(), String> {
 }
 
 /// Workspace packages that must build for wasm32: all L0–L5 crates plus
-/// the egui shell.
+/// the egui shell and the web app.
 fn wasm_set() -> Result<Vec<String>, String> {
     let crates = layers::from_metadata(&metadata()?)?;
     Ok(crates
@@ -119,6 +124,7 @@ fn wasm_set() -> Result<Vec<String>, String> {
             _ => false,
         })
         .map(|c| c.name)
+        .chain(std::iter::once("lightcraft-web".to_string()))
         .collect())
 }
 
