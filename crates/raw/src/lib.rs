@@ -11,7 +11,7 @@
 //!
 //! Formats: DNG (uncompressed, lossless JPEG, Deflate incl. floating point, tiled/stripped, CFA and LinearRaw),
 //! Canon CR2, Nikon NEF (uncompressed), Sony ARW (uncompressed, lossless), Fujifilm RAF (uncompressed Bayer and
-//! X-Trans). See the crate README for sources and
+//! X-Trans), Panasonic RW2 (packed 12/14-bit). See the crate README for sources and
 //! gaps. The decoders never panic on malformed input.
 #![forbid(unsafe_code)]
 
@@ -81,7 +81,7 @@ pub enum RawFormat {
 impl RawFormat {
     /// Whether [`decode`] supports this container (possibly not every compression inside it).
     pub fn is_supported(self) -> bool {
-        matches!(self, RawFormat::Dng | RawFormat::Cr2 | RawFormat::Nef | RawFormat::Nrw | RawFormat::Arw | RawFormat::Raf)
+        matches!(self, RawFormat::Dng | RawFormat::Cr2 | RawFormat::Nef | RawFormat::Nrw | RawFormat::Arw | RawFormat::Raf | RawFormat::Rw2)
     }
 }
 
@@ -143,6 +143,7 @@ pub fn decode(bytes: &[u8]) -> Result<RawImage> {
         RawFormat::Nef | RawFormat::Nrw => vendor::nef::decode(bytes),
         RawFormat::Arw => vendor::arw::decode(bytes),
         RawFormat::Raf => vendor::raf::decode(bytes),
+        RawFormat::Rw2 => vendor::rw2::decode(bytes),
         other => Err(RawError::Unsupported(format!("{other:?} files are not decoded yet"))),
     }
 }

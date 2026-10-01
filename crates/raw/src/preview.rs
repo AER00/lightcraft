@@ -33,6 +33,16 @@ fn is_dct_jpeg(b: &[u8]) -> bool {
 }
 
 fn candidates<'a>(data: &'a [u8], ifd: &Ifd, base: u64, out: &mut Vec<&'a [u8]>) {
+    // whole JPEG files stored as an undefined-type tag value (e.g. Panasonic `JpgFromRaw` 0x002e)
+    for e in &ifd.entries {
+        if matches!(e.value, lightcraft_tiff::Value::Undefined(_))
+            && e.count() > 1024
+            && let Some(s) = data.get(e.offset as usize..(e.offset.saturating_add(e.count() as u64) as usize).min(data.len()))
+            && s.starts_with(&[0xff, 0xd8])
+        {
+            out.push(s);
+        }
+    }
     if let (Some(off), Some(len)) = (ifd.u64(t::JPEG_INTERCHANGE_FORMAT), ifd.u64(t::JPEG_INTERCHANGE_FORMAT_LENGTH)) {
         let off = off.saturating_add(base);
         if let Some(s) = data.get(off as usize..(off.saturating_add(len) as usize).min(data.len())) {
