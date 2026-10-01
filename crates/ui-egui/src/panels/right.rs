@@ -117,40 +117,39 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         super::edit::apply_slider_out(app, &spec, out, |app, v| app.run("crop.straighten", json!({"angle": v})));
     }
     padded(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Overlay");
-            for (label, o) in [
-                ("Thirds", crate::state::CropOverlay::Thirds),
-                ("Grid", crate::state::CropOverlay::Grid),
-                ("Golden", crate::state::CropOverlay::Golden),
-                ("None", crate::state::CropOverlay::None),
-            ] {
-                if text_button(ui, &format!("cropOverlay-{}", label.to_lowercase()), label, app.ui.crop_overlay == o).clicked() {
-                    app.ui.crop_overlay = o;
-                }
+        ui.label("Overlay");
+        {
+            use crate::state::CropOverlay as O;
+            let opts = [(O::Thirds, "Thirds", "thirds"), (O::Grid, "Grid", "grid"), (O::Golden, "Golden", "golden"), (O::None, "None", "none")];
+            let items: Vec<(&str, &str)> = opts.iter().map(|(_, l, k)| (*l, *k)).collect();
+            let active = opts.iter().position(|(o, _, _)| *o == app.ui.crop_overlay);
+            if let Some(i) = crate::widgets::segmented(ui, "cropOverlay", &items, active, 4) {
+                app.ui.crop_overlay = opts[i].0;
             }
-        });
+        }
     });
     divider(ui);
     header(ui, "Geometry");
     padded(ui, |ui| {
         ui.label("Upright");
-        ui.horizontal_wrapped(|ui| {
+        {
             use lightcraft_develop::Upright;
-            for (label, mode, key) in [
+            let modes = [
                 ("Off", Upright::Off, "off"),
                 ("Auto", Upright::Auto, "auto"),
                 ("Guided", Upright::Guided, "guided"),
                 ("Level", Upright::Level, "level"),
                 ("Vertical", Upright::Vertical, "vertical"),
                 ("Full", Upright::Full, "full"),
-            ] {
-                if text_button(ui, &format!("upright-{key}"), label, d.geometry.upright == mode).clicked() {
-                    let _ = app.run("geometry.upright", json!({"mode": key}));
-                    app.ui.tool = if mode == Upright::Guided { "guidedUpright".into() } else { String::new() };
-                }
+            ];
+            let items: Vec<(&str, &str)> = modes.iter().map(|(l, _, k)| (*l, *k)).collect();
+            let active = modes.iter().position(|(_, m, _)| *m == d.geometry.upright);
+            if let Some(i) = crate::widgets::segmented(ui, "upright", &items, active, 3) {
+                let (_, mode, key) = modes[i];
+                let _ = app.run("geometry.upright", json!({"mode": key}));
+                app.ui.tool = if mode == Upright::Guided { "guidedUpright".into() } else { String::new() };
             }
-        });
+        }
         let guided = d.geometry.upright == lightcraft_develop::Upright::Guided;
         ui.horizontal_wrapped(|ui| {
             if !guided && d.geometry.upright != lightcraft_develop::Upright::Off && text_button(ui, "uprightUpdate", "Update", false).clicked() {
