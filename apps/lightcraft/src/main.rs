@@ -82,6 +82,19 @@ fn save_prefs(app: &LightcraftApp) {
 fn services() -> Services {
     Services {
         pick_folder: Some(Box::new(|| rfd::FileDialog::new().set_title("Open Library").pick_folder().map(|p| p.to_string_lossy().to_string()))),
+        open_url: Some(Box::new(|url: &str| {
+            if !url.starts_with("https://") {
+                return Err("only https links are opened".into());
+            }
+            let status = if cfg!(target_os = "macos") {
+                std::process::Command::new("open").arg(url).status()
+            } else if cfg!(target_os = "windows") {
+                std::process::Command::new("explorer").arg(url).status()
+            } else {
+                std::process::Command::new("xdg-open").arg(url).status()
+            };
+            status.map(|_| ()).map_err(|e| e.to_string())
+        })),
         reveal: Some(Box::new(|path: &str| {
             let status = if cfg!(target_os = "macos") {
                 std::process::Command::new("open").args(["-R", path]).status()

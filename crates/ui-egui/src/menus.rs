@@ -89,6 +89,10 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.settings", "Settings…", Some("Cmd+,"), "Edit"),
     ("app.openLibrary", "Open Library…", None, "File"),
     ("app.about", "About LightCraft", None, "Help"),
+    ("app.discord", "Join the ArtCraft Discord…", None, "Help"),
+    ("app.website", "LightCraft Website", None, "Help"),
+    ("app.github", "LightCraft on GitHub", None, "Help"),
+    ("app.artcraft", "ArtCraft Website", None, "Help"),
     ("app.shortcuts", "Keyboard Shortcuts", Some("Cmd+/"), "Help"),
     ("app.export", "Export Now", None, ""),
     ("app.showInFinder", "Show in Finder", Some("Cmd+R"), "Photo"),
@@ -602,6 +606,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "app.export" => crate::control::export_active(app, p),
         "app.showInFinder" => show_in_finder(app),
+        "app.discord" | "app.website" | "app.github" | "app.artcraft" => {
+            let url = crate::links::url_of(id).unwrap_or(crate::links::WEBSITE);
+            crate::links::open(app, url)
+        }
         "app.exportPrevious" => match app.session.last_export.clone() {
             Some(prev) => crate::control::export_active(app, &prev),
             None => Err("nothing exported yet — use Export…".into()),

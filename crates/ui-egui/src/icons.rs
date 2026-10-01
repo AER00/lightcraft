@@ -71,6 +71,9 @@ pub enum Icon {
     Edited,
     /// Targeted adjustment: a ring with a centre dot and up/down arrows (drag vertically).
     Target,
+    /// Community chat (opens the ArtCraft Discord): a speech bubble with three dots. Our own
+    /// generic drawing, not any service's logo.
+    Chat,
 }
 
 struct Pen<'a> {
@@ -430,6 +433,25 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.line(&[(15.5, 3.5), (15.5, 16.5)]);
             pen.line(&[(13.5, 5.5), (15.5, 3.5), (17.5, 5.5)]);
             pen.line(&[(13.5, 14.5), (15.5, 16.5), (17.5, 14.5)]);
+        }
+        Chat => {
+            // rounded bubble with a tail at the lower left
+            pen.closed(&[
+                (4.5, 3.5),
+                (15.5, 3.5),
+                (17.0, 5.0),
+                (17.0, 12.0),
+                (15.5, 13.5),
+                (9.0, 13.5),
+                (5.5, 16.8),
+                (5.5, 13.5),
+                (4.5, 13.5),
+                (3.0, 12.0),
+                (3.0, 5.0),
+            ]);
+            for x in [6.8, 10.0, 13.2] {
+                pen.dot(x, 8.5, 1.1);
+            }
         }
     }
 }

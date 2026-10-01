@@ -365,6 +365,26 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ui.label(egui::RichText::new("LightCraft").font(t.semibold(20.0)).color(t.text));
                     ui.label(format!("Version {} — a clean-room, pure-Rust photo library and raw developer.", env!("CARGO_PKG_VERSION")));
                     ui.label("MIT OR Apache-2.0. Font: Inter (OFL). Icons: original.");
+                    ui.add_space(10.0);
+                    let discord = egui::Button::new(egui::RichText::new("Join the ArtCraft Discord").font(t.semibold(15.0)).color(egui::Color32::WHITE))
+                        .fill(t.accent)
+                        .min_size(egui::vec2(260.0, 34.0));
+                    let r = ui.add(discord).on_hover_text(crate::links::DISCORD);
+                    crate::widgets::register(ui.ctx(), "button:aboutDiscord", r.rect);
+                    if r.clicked() {
+                        let _ = crate::links::open(app, crate::links::DISCORD);
+                    }
+                    ui.add_space(6.0);
+                    for (label, url) in [
+                        ("LightCraft website", crate::links::APP_PAGE),
+                        ("Source code on GitHub", crate::links::GITHUB),
+                        ("ArtCraft — more creative apps", crate::links::WEBSITE),
+                    ] {
+                        let r = ui.link(label).on_hover_text(url);
+                        if r.clicked() {
+                            let _ = crate::links::open(app, url);
+                        }
+                    }
                 }
                 Dialog::Shortcuts => {
                     egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {

@@ -97,6 +97,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             // right icons
             let mut x = full.right() - 18.0;
             for (id, icon, tip, cmd) in [
+                ("discord", Icon::Chat, "Join the ArtCraft community on Discord", "app.discord"),
                 ("cloud", Icon::Cloud, "Local library — no cloud account needed", ""),
                 ("help", Icon::Help, "Keyboard shortcuts", "app.shortcuts"),
                 ("share", Icon::Share, "Export", "dialog.export"),

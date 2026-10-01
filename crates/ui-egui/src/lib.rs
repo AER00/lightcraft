@@ -9,6 +9,7 @@ pub mod control;
 pub mod headless;
 pub mod icons;
 pub mod import;
+pub mod links;
 pub mod menubar;
 pub mod menus;
 pub mod merge;
@@ -40,6 +41,8 @@ pub type PngEncode = Box<dyn Fn(&lightcraft_raster::Rgba8) -> Vec<u8>>;
 pub type PickFolder = Box<dyn FnMut() -> Option<String>>;
 /// Reveal a file in the system file manager (Finder / Explorer / the folder on Linux).
 pub type RevealFn = Box<dyn FnMut(&str) -> Result<(), String>>;
+/// Open a URL in the user's browser.
+pub type OpenUrlFn = Box<dyn FnMut(&str) -> Result<(), String>>;
 
 /// Platform services injected by the host app (desktop or web).
 #[derive(Default)]
@@ -57,6 +60,8 @@ pub struct Services {
     pub reveal: Option<RevealFn>,
     /// Choose a folder (Settings → General → Open Library…; desktop only).
     pub pick_folder: Option<PickFolder>,
+    /// Open a web link in the browser (Help menu, About, Discord button).
+    pub open_url: Option<OpenUrlFn>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
