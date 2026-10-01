@@ -132,6 +132,9 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
         }
         "engine.commands" => ok(all_commands(app)),
         "ui.menu.list" => ok(serde_json::to_value(crate::menus::menu_entries(app)).unwrap_or_default()),
+        "ui.menu.tree" => {
+            ok(Value::Array(crate::menubar::menu_bar(app).into_iter().map(|(title, items)| json!({"label": title, "children": items})).collect()))
+        }
         "ui.inspect" => ok(inspect(app, ctx)),
         "ui.widgets" => {
             let filter = s("filter").unwrap_or("");

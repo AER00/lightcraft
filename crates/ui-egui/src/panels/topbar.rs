@@ -16,6 +16,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin { left, right: 12, top: 0, bottom: 0 }))
         .show(ui, |ui| {
             let full = ui.max_rect();
+            let mut sw = 640.0f32.min(full.width() - 460.0).max(200.0);
+            if !app.native_menu {
+                // leave room for the in-window menus left of the (centred) search field
+                let menus_right = full.left() + 140.0 + crate::menubar::bar_width(ui) + 24.0;
+                sw = sw.min(2.0 * (full.center().x - menus_right)).max(200.0);
+            }
+            let search_left = full.center().x - sw / 2.0;
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 if icon_button(ui, "sidebar", Icon::Sidebar, vec2(30.0, 30.0), app.ui.left_panel, true, "Show/hide My Photos panel").clicked() {
@@ -26,9 +33,14 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     let _ = app.run("view.back", json!({}));
                 }
                 icon_button(ui, "forward", Icon::Forward, vec2(30.0, 30.0), false, false, "Forward");
+                if !app.native_menu {
+                    // no native menu bar (web, Windows, Linux): menus in the top bar
+                    ui.add_space(10.0);
+                    let room = search_left - ui.cursor().left() - 16.0;
+                    crate::menubar::show_in_window(app, ui, room);
+                }
             });
             // search field (centred on the window)
-            let sw = 640.0f32.min(full.width() - 460.0).max(200.0);
             let sr = Rect::from_center_size(pos2(full.center().x, full.center().y), vec2(sw, 28.0));
             let id = egui::Id::new("search-field");
             let focused = ui.memory(|m| m.has_focus(id));

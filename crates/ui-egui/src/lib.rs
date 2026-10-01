@@ -8,6 +8,7 @@
 pub mod control;
 pub mod headless;
 pub mod icons;
+pub mod menubar;
 pub mod menus;
 pub mod panels;
 pub mod render;
@@ -59,8 +60,11 @@ pub struct LightcraftApp {
     pub perf: Perf,
     /// macOS: the host draws the traffic lights over our top bar.
     pub integrated_titlebar: bool,
-    /// The host installed a native menu bar.
+    /// The host installed a native menu bar (no in-window menus then).
     pub native_menu: bool,
+    /// Shortcuts the native menu bar currently handles (`Cmd+Z`, `G`…): the egui shortcut handler
+    /// leaves them alone so nothing fires twice.
+    pub native_shortcuts: std::collections::HashSet<String>,
     /// The host is [`headless::Headless`] (it answers viewport screenshot commands itself).
     pub headless_host: bool,
     control_rx: Option<Receiver<ControlRequest>>,
@@ -92,6 +96,7 @@ impl LightcraftApp {
             perf: Perf::default(),
             integrated_titlebar: false,
             native_menu: false,
+            native_shortcuts: Default::default(),
             headless_host: false,
             control_rx: None,
             pending_screenshots: vec![],

@@ -51,16 +51,18 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         return;
     }
     let mut fire: Vec<String> = Vec::new();
+    // shortcuts the native menu bar handles (it consumes those key presses itself)
+    let native = |sc: &str| app.native_shortcuts.contains(sc);
     ctx.input(|i| {
         for (id, _, sc, _) in crate::menus::UI_COMMANDS {
-            if let Some((m, k)) = sc.and_then(parse)
+            if let Some((m, k)) = sc.filter(|s| !native(s)).and_then(parse)
                 && matches(i, m, k)
             {
                 fire.push(id.to_string());
             }
         }
         for c in lightcraft_engine::command_specs() {
-            if let Some((m, k)) = c.shortcut.and_then(parse)
+            if let Some((m, k)) = c.shortcut.filter(|s| !native(s)).and_then(parse)
                 && matches(i, m, k)
             {
                 fire.push(c.id.to_string());
@@ -68,15 +70,15 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
         // rating 0-5, colour labels 6-9 (with Shift: and advance)
         for (n, key) in [Key::Num0, Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5].iter().enumerate() {
-            if matches(i, Modifiers::NONE, *key) {
+            if matches(i, Modifiers::NONE, *key) && !native(&n.to_string()) {
                 fire.push(format!("rate:{n}:0"));
             }
             if matches(i, Modifiers::SHIFT, *key) {
                 fire.push(format!("rate:{n}:1"));
             }
         }
-        for (label, key) in [("red", Key::Num6), ("yellow", Key::Num7), ("green", Key::Num8), ("blue", Key::Num9)] {
-            if matches(i, Modifiers::NONE, key) {
+        for (label, key, sc) in [("red", Key::Num6, "6"), ("yellow", Key::Num7, "7"), ("green", Key::Num8, "8"), ("blue", Key::Num9, "9")] {
+            if matches(i, Modifiers::NONE, key) && !native(sc) {
                 fire.push(format!("label:{label}"));
             }
         }

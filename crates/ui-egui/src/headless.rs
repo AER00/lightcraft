@@ -335,6 +335,8 @@ mod tests {
         h.request("ui.set", json!({"view": "survey"}), t);
         h.request("ui.key", json!({"key": "escape"}), t);
         assert_eq!(h.app.ui.view, crate::state::ViewMode::Detail);
+        // let in-flight renders finish: worker threads must not outlive the test process' TLS
+        h.settle(Duration::from_secs(20));
     }
 
     #[test]
