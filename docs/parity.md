@@ -26,7 +26,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | C. Views & navigation (VIEW) | 7 | 2 | 8 | 0 | 7/9 (78%) | 0/4 (0%) |
 | D. Search & filter (FILT) | 2 | 7 | 4 | 0 | 2/4 (50%) | 0/4 (0%) |
 | E. Metadata (META) | 2 | 2 | 2 | 0 | 2/2 (100%) | 0/2 (0%) |
-| F. Edit panel — global adjustments (EDIT) | 35 | 3 | 10 | 1 | 27/28 (96%) | 8/14 (57%) |
+| F. Edit panel — global adjustments (EDIT) | 36 | 2 | 10 | 1 | 28/28 (100%) | 8/14 (57%) |
 | G. Profiles (PROF) | 3 | 1 | 6 | 0 | 2/3 (67%) | 1/3 (33%) |
 | H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
 | I. Remove / healing (REM) | 3 | 3 | 4 | 2 | 2/4 (50%) | 1/3 (33%) |
@@ -48,7 +48,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 42 | 19 | 24 | 8 | 37/47 (79%) | 3/23 (13%) |
 | Z. Keyboard shortcuts (desktop) | 45 | 16 | 19 | 1 | 39/52 (75%) | 6/23 (26%) |
 | Lightroom Classic extras | 1 | 17 | 61 | 9 | — | 1/21 (5%) |
-| **Total** | 186 | 108 | 206 | 37 | 149/198 (75%) | 34/144 (24%) |
+| **Total** | 187 | 107 | 206 | 37 | 150/198 (76%) | 34/144 (24%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -265,7 +265,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-EFFECTS-TEXTURE | Texture | P0 | ✅ | `ctl:effects.texture` | |
 | LR-EDIT-EFFECTS-CLARITY | Clarity | P0 | ✅ | `ctl:effects.clarity` | |
 | LR-EDIT-EFFECTS-DEHAZE | Dehaze | P0 | ✅ | `ctl:effects.dehaze` | |
-| LR-EDIT-EFFECTS-VIGNETTE | Post-crop vignette | P0 | 🟡 | `ctl:vignette.*`, `crates/pipeline/src/finish.rs` | style (highlight / colour priority / paint) rendered but not selectable in the UI |
+| LR-EDIT-EFFECTS-VIGNETTE | Post-crop vignette | P0 | ✅ | `ctl:vignette.*`, `crates/pipeline/src/finish.rs`, `crates/ui-egui/src/panels/edit.rs` | style picker (Highlight / Color / Paint) in the Effects section |
 | LR-EDIT-EFFECTS-GRAIN | Grain | P1 | ✅ | `ctl:grain.*` | |
 | LR-EDIT-DETAIL-SHARPEN | Sharpening | P0 | ✅ | `ctl:detail.sharpenAmount`, `ctl:detail.sharpenRadius`, `ctl:detail.sharpenDetail`, `ctl:detail.sharpenMasking` | no Alt-drag mask preview |
 | LR-EDIT-DETAIL-NR | Luminance noise reduction | P0 | ✅ | `ctl:detail.nrLuminance`, `ctl:detail.nrDetail`, `ctl:detail.nrContrast` | |

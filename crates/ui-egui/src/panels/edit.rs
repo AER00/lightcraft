@@ -191,6 +191,26 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             control(app, ui, d, c, true);
         }
         sub_title(ui, "Vignette");
+        {
+            use lightcraft_develop::VignetteStyle as V;
+            let styles = [
+                (V::HighlightPriority, "Highlight", "highlightPriority"),
+                (V::ColorPriority, "Color", "colorPriority"),
+                (V::PaintOverlay, "Paint", "paintOverlay"),
+            ];
+            let items: Vec<(&str, &str)> = styles.iter().map(|(_, l, k)| (*l, *k)).collect();
+            let active = styles.iter().position(|(v, _, _)| *v == d.vignette.style);
+            let mut chosen = None;
+            egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 4 }).show(ui, |ui| {
+                chosen = crate::widgets::segmented(ui, "vignetteStyle", &items, active, 3);
+            });
+            if let Some(i) = chosen {
+                let _ = app.run(
+                    "develop.merge",
+                    serde_json::json!({"settings": {"vignette": {"style": serde_json::to_value(styles[i].0).unwrap_or_default()}}}),
+                );
+            }
+        }
         for c in ["vignette.amount", "vignette.midpoint", "vignette.feather", "vignette.roundness", "vignette.highlights"] {
             let enabled = c == "vignette.amount" || d.vignette.amount != 0.0;
             control(app, ui, d, c, enabled);
