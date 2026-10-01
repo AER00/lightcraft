@@ -13,6 +13,7 @@
 //! `{"id":1,"method":"ui.inspect","params":{}}` → `{"id":1,"ok":true,"result":…}`.
 //! See `lightcraft_ui_egui::control` for the methods.
 
+mod alloc_release;
 mod control_server;
 #[cfg(target_os = "macos")]
 mod native_menu;
@@ -185,6 +186,7 @@ OPTIONS:
 ";
 
 fn main() -> eframe::Result {
+    alloc_release::install();
     let mut control_port: Option<u16> = std::env::var("LIGHTCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
     let mut files = Vec::new();
     let mut seed_demo = true;

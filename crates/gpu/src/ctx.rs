@@ -1,6 +1,7 @@
 //! The wgpu device, the compiled kernels, buffers, dispatch and readback.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use wgpu::util::DeviceExt;
 
@@ -64,39 +65,107 @@ struct Kernel {
 /// as the queue then runs every earlier use before any later one. Reuse matters: allocating (and
 /// zero-filling) a fresh 100–300 MB buffer per pass costs as much as the pass itself.
 pub struct Buf {
-    buf: Option<wgpu::Buffer>,
+    buf: Option<Tracked>,
     pub len: usize,
 }
 
 impl Buf {
     pub fn raw(&self) -> &wgpu::Buffer {
-        self.buf.as_ref().expect("live buffer")
+        &self.buf.as_ref().expect("live buffer").0
     }
 }
 
 impl Drop for Buf {
     fn drop(&mut self) {
-        if let Some(b) = self.buf.take() {
-            // during thread teardown the list may already be gone: then the buffer leaks
-            let mut b = Some(b);
-            let _ = RETIRED.try_with(|r| r.0.borrow_mut().extend(b.take()));
-            if let Some(b) = b {
-                std::mem::forget(b);
+        let Some(b) = self.buf.take() else { return };
+        // Outside a render this thread has no commands recorded (only renders record), so the
+        // buffer is reusable at once; without this, buffers dropped on threads that rarely
+        // submit (the UI thread clearing a view's stages) would wait indefinitely.
+        let Ok(in_render) = IN_RENDER.try_with(|c| c.get() > 0) else {
+            // thread teardown: wgpu's thread-locals may be gone too, and dropping (or trimming
+            // the pool, which drops) could abort — leak it (the device owns its memory)
+            std::mem::forget(b);
+            return;
+        };
+        if !in_render && let Some(g) = crate::existing_device() {
+            g.pool([b]);
+            return;
+        }
+        // during thread teardown the list may already be gone: then the buffer leaks
+        let size = b.0.size();
+        let mut b = Some(b);
+        let _ = RETIRED.try_with(|r| r.0.borrow_mut().extend(b.take()));
+        match b {
+            Some(b) => std::mem::forget(b),
+            None => {
+                RETIRED_BYTES.fetch_add(size, Ordering::Relaxed);
             }
         }
     }
 }
 
 /// Buffers dropped on a thread since its last submit.
-struct Retired(std::cell::RefCell<Vec<wgpu::Buffer>>);
+struct Retired(std::cell::RefCell<Vec<Tracked>>);
 
 impl Drop for Retired {
     /// At thread exit wgpu's own thread-locals may already be destroyed, and dropping a buffer
     /// then aborts the process: leak the few buffers left instead (the device owns their memory).
     fn drop(&mut self) {
         for b in self.0.get_mut().drain(..) {
+            RETIRED_BYTES.fetch_sub(b.0.size(), Ordering::Relaxed);
             std::mem::forget(b);
         }
+    }
+}
+
+/// This thread's retired buffers (empty during thread teardown).
+fn take_retired() -> Vec<Tracked> {
+    let retired = RETIRED.try_with(|r| std::mem::take(&mut *r.0.borrow_mut())).unwrap_or_default();
+    RETIRED_BYTES.fetch_sub(retired.iter().map(|b| b.0.size()).sum(), Ordering::Relaxed);
+    retired
+}
+
+thread_local! {
+    /// Renders running on this thread (they may hold recorded, unsubmitted commands).
+    static IN_RENDER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Marks a render on this thread; when it ends, the buffers it released join the pool (everything
+/// it recorded has been submitted by then).
+pub(crate) struct RenderScope<'a>(&'a Gpu);
+
+impl<'a> RenderScope<'a> {
+    pub fn new(g: &'a Gpu) -> RenderScope<'a> {
+        IN_RENDER.with(|c| c.set(c.get() + 1));
+        RenderScope(g)
+    }
+}
+
+impl Drop for RenderScope<'_> {
+    fn drop(&mut self) {
+        let outer = IN_RENDER.with(|c| {
+            c.set(c.get().saturating_sub(1));
+            c.get() == 0
+        });
+        if outer {
+            self.0.pool(take_retired());
+        }
+    }
+}
+
+/// A device buffer, counted in [`ALLOCATED`] while it exists.
+pub(crate) struct Tracked(wgpu::Buffer);
+
+impl Tracked {
+    fn new(b: wgpu::Buffer) -> Tracked {
+        ALLOCATED.fetch_add(b.size(), Ordering::Relaxed);
+        Tracked(b)
+    }
+}
+
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        ALLOCATED.fetch_sub(self.0.size(), Ordering::Relaxed);
     }
 }
 
@@ -104,8 +173,32 @@ thread_local! {
     static RETIRED: Retired = const { Retired(std::cell::RefCell::new(Vec::new())) };
 }
 
-/// Most bytes kept in the free pool.
-const POOL_BYTES: u64 = 2 << 30;
+/// Bytes of device buffers that exist (in use, retired or pooled).
+static ALLOCATED: AtomicU64 = AtomicU64::new(0);
+/// Bytes waiting in per-thread retired lists.
+static RETIRED_BYTES: AtomicU64 = AtomicU64::new(0);
+/// Bytes in the free pool.
+static POOLED: AtomicU64 = AtomicU64::new(0);
+/// Most bytes kept in the free pool (see [`crate::set_pool_limit`]).
+pub(crate) static POOL_LIMIT: AtomicU64 = AtomicU64::new(DEFAULT_POOL_BYTES);
+
+/// Default for the most bytes kept in the free pool (apps derive it from their memory budget).
+pub(crate) const DEFAULT_POOL_BYTES: u64 = 256 << 20;
+
+/// Device buffers held by the renderer (bytes).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GpuMemory {
+    /// Every buffer that exists (in use + retired + pooled).
+    pub allocated: u64,
+    /// Of which recycled buffers waiting in the free pool.
+    pub pooled: u64,
+    /// Of which buffers dropped since their thread's last submit (pooled at its next submit).
+    pub retired: u64,
+}
+
+pub(crate) fn memory() -> GpuMemory {
+    GpuMemory { allocated: ALLOCATED.load(Ordering::Relaxed), pooled: POOLED.load(Ordering::Relaxed), retired: RETIRED_BYTES.load(Ordering::Relaxed) }
+}
 
 pub struct Gpu {
     pub device: wgpu::Device,
@@ -114,7 +207,7 @@ pub struct Gpu {
     kernels: HashMap<&'static str, Kernel>,
     dummy: wgpu::Buffer,
     /// Recycled buffers (see [`Buf`]).
-    free: std::sync::Mutex<Vec<wgpu::Buffer>>,
+    free: std::sync::Mutex<Vec<Tracked>>,
     /// Largest storage buffer the device accepts (bytes).
     pub max_buffer: u64,
 }
@@ -237,15 +330,27 @@ impl Gpu {
         let size = (len.max(1) * 4) as u64;
         let recycled = {
             let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
-            f.iter().position(|b| b.size() == size).map(|i| f.swap_remove(i))
+            // the smallest pooled buffer that holds `size` with at most 25 % to spare: photos of
+            // slightly different sizes reuse each other's buffers instead of piling up new ones
+            let b = f
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.0.size() >= size && b.0.size() <= size + size / 4)
+                .min_by_key(|(_, b)| b.0.size())
+                .map(|(i, _)| i)
+                .map(|i| f.swap_remove(i));
+            if let Some(b) = &b {
+                POOLED.fetch_sub(b.0.size(), Ordering::Relaxed);
+            }
+            b
         };
         let buf = recycled.unwrap_or_else(|| {
-            self.device.create_buffer(&wgpu::BufferDescriptor {
+            Tracked::new(self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
                 size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            })
+            }))
         });
         Buf { buf: Some(buf), len }
     }
@@ -253,12 +358,42 @@ impl Gpu {
     /// Submit command buffers, then make the buffers this thread dropped before reusable.
     pub fn submit(&self, cmds: impl IntoIterator<Item = wgpu::CommandBuffer>) {
         self.queue.submit(cmds);
-        let retired = RETIRED.with(|r| std::mem::take(&mut *r.0.borrow_mut()));
+        let retired = take_retired();
+        self.pool(retired);
+    }
+
+    /// Put reusable buffers into the free pool (trimmed to its limit).
+    fn pool(&self, bufs: impl IntoIterator<Item = Tracked>) {
+        let mut added = false;
+        {
+            let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
+            for b in bufs {
+                POOLED.fetch_add(b.0.size(), Ordering::Relaxed);
+                f.push(b);
+                added = true;
+            }
+        }
+        if added {
+            self.trim(POOL_LIMIT.load(Ordering::Relaxed));
+        }
+    }
+
+    /// Free pooled buffers (oldest first) until at most `keep` bytes stay pooled.
+    pub fn trim(&self, keep: u64) {
         let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
-        f.extend(retired);
-        let mut total: u64 = f.iter().map(|b| b.size()).sum();
-        while total > POOL_BYTES && !f.is_empty() {
-            total -= f.remove(0).size();
+        let mut total: u64 = f.iter().map(|b| b.0.size()).sum();
+        let mut dropped = Vec::new();
+        while total > keep && !f.is_empty() {
+            let b = f.remove(0);
+            total -= b.0.size();
+            POOLED.fetch_sub(b.0.size(), Ordering::Relaxed);
+            dropped.push(b);
+        }
+        drop(f);
+        if !dropped.is_empty() {
+            drop(dropped);
+            // let wgpu release the memory now rather than at its next maintenance
+            let _ = self.device.poll(wgpu::PollType::Poll);
         }
     }
 
@@ -274,7 +409,7 @@ impl Gpu {
             contents: bytes,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
         });
-        Buf { buf: Some(buf), len }
+        Buf { buf: Some(Tracked::new(buf)), len }
     }
 
     /// Whether a buffer of `len` 32-bit values fits the device limits.

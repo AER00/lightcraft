@@ -90,7 +90,14 @@ pub struct Renderer {
     quick_tried: HashMap<Slot, u64>,
     /// Prefetch slot → key of the last job submitted (each runs once).
     prefetched: HashMap<Slot, u64>,
+    /// Since when nothing has been pending, and whether the GPU pool was trimmed since.
+    #[cfg(not(target_arch = "wasm32"))]
+    idle: Option<(std::time::Instant, bool)>,
 }
+
+/// After this long without renders the GPU renderer's pool of recycled buffers is freed.
+#[cfg(not(target_arch = "wasm32"))]
+const IDLE_TRIM: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl Default for Renderer {
     fn default() -> Self {
@@ -108,6 +115,8 @@ impl Default for Renderer {
             stages: HashMap::new(),
             quick_tried: HashMap::new(),
             prefetched: HashMap::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            idle: None,
         }
     }
 }
@@ -149,7 +158,13 @@ impl Renderer {
             return;
         }
         let key = job.key;
-        self.pool.submit(slot, key, priority, Box::new(move || job.run()));
+        let background = matches!(slot, Slot::Thumb(_) | Slot::ThumbQuick(_) | Slot::Prefetch(_));
+        self.pool.submit(
+            slot,
+            key,
+            priority,
+            Box::new(move || if background { lightcraft_engine::memory::in_background(|| job.run()) } else { job.run() }),
+        );
     }
 
     /// Request a stand-in for `slot` (once per job key).
@@ -172,7 +187,7 @@ impl Renderer {
         self.prefetched.insert(slot, job.key);
         self.pending.insert(slot, (job.key, priority));
         let key = job.key;
-        self.pool.submit(slot, key, priority, Box::new(move || job.run()));
+        self.pool.submit(slot, key, priority, Box::new(move || lightcraft_engine::memory::in_background(|| job.run())));
     }
 
     /// Is a request for `slot` queued or running?
@@ -302,10 +317,47 @@ impl Renderer {
             }
             changed = true;
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.trim_when_idle(ctx);
         if !self.pending.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
         changed
+    }
+
+    /// Free the GPU renderer's recycled buffers once nothing has rendered for [`IDLE_TRIM`] (they
+    /// are reallocated by the next render; while working, renders reuse them).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn trim_when_idle(&mut self, ctx: &egui::Context) {
+        if !self.pending.is_empty() {
+            self.idle = None;
+            return;
+        }
+        let now = std::time::Instant::now();
+        let (since, trimmed) = *self.idle.get_or_insert((now, false));
+        if trimmed {
+            return;
+        }
+        let waited = now.duration_since(since);
+        if waited >= IDLE_TRIM {
+            lightcraft_engine::gpu::trim_pool(0);
+            lightcraft_engine::memory::release();
+            self.idle = Some((since, true));
+        } else {
+            ctx.request_repaint_after(IDLE_TRIM - waited);
+        }
+    }
+
+    /// What the renderer holds: per-view stage caches (CPU images and GPU buffers) and textures.
+    pub fn memory(&self) -> serde_json::Value {
+        let cpu: usize = self.stages.values().map(|s| s.bytes()).sum();
+        let gpu: usize = self.stages.values().map(|s| lightcraft_engine::gpu::stage_bytes(s)).sum();
+        let tex: usize = self.textures.values().map(|t| t.size[0] * t.size[1] * 4).sum();
+        let copies: usize = self.textures.values().filter_map(|t| t.pixels.as_ref()).map(|p| p.pixels.len() * 4).sum();
+        serde_json::json!({
+            "stageCaches": {"count": self.stages.len(), "cpuBytes": cpu, "gpuBytes": gpu},
+            "textures": {"count": self.textures.len(), "bytes": tex, "cpuCopyBytes": copies},
+        })
     }
 
     /// CPU copies of the current textures by id (see [`Self::keep_pixels`]).

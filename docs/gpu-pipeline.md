@@ -88,6 +88,33 @@ the device on their first GPU render. `lightcraft_gpu::ready()` asks without blo
   one is rendered (decoded source kept, view render cached): stepping through photos shows the
   developed image in ~50 ms.
 
+## Memory (M5.6)
+- `library.memory` reports what the engine's caches hold (decoded thumbnail / preview / full-size
+  sources, rendered previews) and the GPU renderer's device buffers (allocated, of which pooled
+  and retired); `ui.inspect` → `memory` adds the loupe's stage caches (CPU images, GPU buffers)
+  and the textures.
+- Heap profile: build `lightcraft-cli` with `--features dhat-heap`; `library.memory` then also
+  reports live/peak heap bytes and the run writes `dhat-heap.json` (`LIGHTCRAFT_DHAT_FILE`), whose
+  allocation sites at the peak (`t-gmax`) show who holds the memory.
+- Measuring the scenario (import 14 raws from `corpus/raw`, open the loupe, step 12 times):
+  `/usr/bin/time -l lightcraft-cli snapshot <files> --script steps.jsonl -o out.png` → "maximum
+  resident set size" and "peak memory footprint". Run it several times: the high-water mark is
+  noisy (allocator caching, scheduling). On Apple silicon GPU buffers count in the footprint.
+- Imports read raw headers only (`lightcraft_raw::probe_info`): no pixel data is decompressed.
+- One budget (`memory::budget`, default min(25 % of RAM, 1.5 GiB); `LIGHTCRAFT_MEMORY_MB` or
+  `app.memoryBudget {mb}`): half for the engine caches (decoded thumbnail / preview / full
+  sources and rendered previews, evicted least recently used *across* them; the photo on screen
+  stays), a quarter for decodes in flight (`memory::work_gate`: grid thumbnails, neighbour
+  prefetch and import probes wait for room, loupe and export loads never wait), an eighth for the
+  GPU buffer pool (reuse by best fit within 25 %; freed after 3 s idle).
+- Decodes free the file's bytes and the raw samples as soon as they are consumed and colour /
+  crop / orient in place. macOS keeps freed large blocks resident ("reusable") until the system
+  is short of memory, so the resident size climbed with every photo decoded; the apps install
+  `malloc_zone_pressure_relief` as `memory::set_release_hook`, called after each decode, import
+  and idle trim.
+- Result (M4 Pro, 14 raws, loupe, 12 steps): peak RSS 1.9–2.3 GB → 0.83–0.99 GB, peak footprint
+  2.5–2.6 GB → 0.91–0.96 GB, heap peak 930 → ~600 MB; stepping median ~13 ms (unchanged).
+
 ## Open items
 - Keep the loupe texture on the GPU (render into an `egui-wgpu` texture on eframe's device instead of
   reading back); share the device with eframe.

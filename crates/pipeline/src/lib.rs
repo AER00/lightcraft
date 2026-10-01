@@ -173,6 +173,39 @@ impl StageCache {
         t
     }
 
+    /// The per-view state of type `T` if there is one (unlike [`Self::extension`], never creates it).
+    pub fn peek_extension<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
+        self.ext.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|e| e.clone().downcast::<T>().ok())
+    }
+
+    /// Bytes of the intermediate images held (each buffer counted once; the sources they were
+    /// made from belong to their owner and are not counted).
+    pub fn bytes(&self) -> usize {
+        fn size<T>(i: &lightcraft_raster::Image<T>) -> usize {
+            i.data.len() * std::mem::size_of::<T>()
+        }
+        let mut seen: Vec<usize> = Vec::new();
+        let mut total = 0;
+        let mut add = |p: usize, n: usize| {
+            if !seen.contains(&p) {
+                seen.push(p);
+                total += n;
+            }
+        };
+        for e in self.lock().iter() {
+            add(Arc::as_ptr(&e.sampled) as usize, size(&e.sampled));
+            if let Some((_, l)) = &e.lin {
+                add(Arc::as_ptr(l) as usize, size(l));
+            }
+            let pl = &e.planes;
+            let planes = pl.log_l.iter().chain(pl.base.iter().map(|x| &x.1)).chain(pl.clarity.iter().map(|x| &x.1));
+            for p in planes.chain(pl.texture.iter().map(|x| &x.1)).chain(pl.dark.iter().map(|x| &x.1)) {
+                add(Arc::as_ptr(p) as usize, size(p));
+            }
+        }
+        total
+    }
+
     /// Number of cached output sizes.
     pub fn len(&self) -> usize {
         self.lock().len()
