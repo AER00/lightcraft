@@ -778,6 +778,14 @@ pub fn export_metadata(photo: &lightcraft_catalog::Photo, o: &ExportOptions) -> 
     }
     out.title = text(&m.title);
     out.caption = text(&m.caption);
+    out.alt_text = text(&m.alt_text);
+    out.extended_description = text(&m.extended_description);
+    if !o.remove_location {
+        out.sublocation = text(&m.location);
+        out.city = text(&m.city);
+        out.state = text(&m.state);
+        out.country = text(&m.country);
+    }
     out.keywords = m.keywords.clone();
     out.capture_time = photo.captured.as_deref().and_then(DateTime::parse_iso);
     out.rating = (photo.rating > 0).then_some(photo.rating as i8);

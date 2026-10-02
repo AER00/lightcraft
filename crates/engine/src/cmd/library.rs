@@ -246,7 +246,9 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "photo.copyMetadata", "Copy Metadata", ["Photo"], None, "{} — title, caption, copyright, creator, location and keywords of the active photo", has_active, |s, _| {
             let id = s.active().ok_or_else(|| bad("photo.copyMetadata", "no active photo"))?;
             let m = &s.catalog.photo(id).ok_or_else(|| bad("photo.copyMetadata", "no photo"))?.meta;
-            let v = json!({"title": m.title, "caption": m.caption, "copyright": m.copyright, "creator": m.creator, "location": m.location, "keywords": m.keywords});
+            let v = json!({"title": m.title, "caption": m.caption, "altText": m.alt_text, "extendedDescription": m.extended_description,
+                "copyright": m.copyright, "creator": m.creator, "location": m.location, "city": m.city, "state": m.state, "country": m.country,
+                "keywords": m.keywords});
             s.meta_clipboard = Some(v.clone());
             Ok(v)
         }),
@@ -359,7 +361,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit Info",
             [],
             None,
-            "{ids?, title?, caption?, copyright?, creator?, location?, keywords?: [..], addKeywords?: [..], removeKeywords?: [..]}",
+            "{ids?, title?, caption?, altText?, extendedDescription?, copyright?, creator?, location?, city?, state?, country?, keywords?: [..], addKeywords?: [..], removeKeywords?: [..]}",
             has_selection,
             |s, p| {
                 let strs =
@@ -375,6 +377,11 @@ pub fn specs() -> Vec<CommandSpec> {
                         ("copyright", &mut m.copyright),
                         ("creator", &mut m.creator),
                         ("location", &mut m.location),
+                        ("city", &mut m.city),
+                        ("state", &mut m.state),
+                        ("country", &mut m.country),
+                        ("altText", &mut m.alt_text),
+                        ("extendedDescription", &mut m.extended_description),
                     ] {
                         if let Some(v) = str_param(p, k) {
                             *field = v.to_string();

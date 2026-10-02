@@ -371,8 +371,8 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     header(ui, "Info");
     let t = Tokens::get(ui.ctx());
     padded(ui, |ui| {
-        ui.label(egui::RichText::new(&p.file_name).font(t.semibold(14.0)).color(t.text));
-        ui.label(egui::RichText::new(format!("{} × {}  ·  {}", p.width, p.height, p.format)).color(t.text_dim));
+        camera_card(ui, &p);
+        ui.add_space(6.0);
         if let Some(name) = &p.copy_name {
             let of = p.copy_of.and_then(|m| app.session.catalog.photo(m)).map(|m| m.file_name.clone()).unwrap_or_else(|| "a removed photo".into());
             ui.label(egui::RichText::new(format!("Virtual copy “{name}” of {of}")).color(t.text_label));
@@ -404,38 +404,141 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         });
     });
     divider(ui);
-    let mut title = p.meta.title.clone();
-    let mut caption = p.meta.caption.clone();
-    let mut copyright = p.meta.copyright.clone();
+    let m = p.meta.clone();
     padded(ui, |ui| {
-        for (label, val, key) in [("Title", &mut title, "title"), ("Caption", &mut caption, "caption"), ("Copyright", &mut copyright, "copyright")] {
-            ui.label(egui::RichText::new(label).color(t.text_dim));
-            let r = ui.add(egui::TextEdit::singleline(val).desired_width(f32::INFINITY));
-            register(ui.ctx(), format!("field:{key}"), r.rect);
-            if r.lost_focus() {
-                let _ = app.run("photo.setMeta", json!({key: val.clone()}));
+        for (label, key, value, lines) in [
+            ("Title", "title", &m.title, 1),
+            ("Caption", "caption", &m.caption, 2),
+            ("Alt Text", "altText", &m.alt_text, 2),
+            ("Extended Description", "extendedDescription", &m.extended_description, 3),
+            ("Copyright", "copyright", &m.copyright, 1),
+            ("Creator", "creator", &m.creator, 1),
+        ] {
+            meta_field(app, ui, label, key, value, lines);
+        }
+        // file: name (rename), path (reveal), capture time (edit)
+        let small = |ui: &mut egui::Ui, text: &str| ui.label(egui::RichText::new(text).size(11.5).color(t.text_dim));
+        small(ui, "File Name");
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), 22.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if crate::widgets::icon_button(ui, "infoRename", Icon::Pencil, vec2(20.0, 20.0), false, true, "Rename…").clicked() {
+                let _ = app.run("dialog.rename", json!({}));
             }
-            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(&p.file_name).color(t.text)).truncate());
+            });
+        });
+        ui.add_space(4.0);
+        small(ui, "File Path");
+        ui.horizontal(|ui| {
+            let path = match &p.source {
+                lightcraft_catalog::Source::File { path } => path.clone(),
+                lightcraft_catalog::Source::Demo { .. } => "Generated demo photo".into(),
+            };
+            ui.add(egui::Label::new(egui::RichText::new(path).size(12.0).color(t.text_label)).truncate());
+            if crate::menus::ui_enabled(app, "app.showInFinder") {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::widgets::icon_button(ui, "infoReveal", Icon::Folder, vec2(20.0, 20.0), false, true, "Show in Finder").clicked() {
+                        let _ = app.run("app.showInFinder", json!({}));
+                    }
+                });
+            }
+        });
+        ui.add_space(4.0);
+        small(ui, "Captured");
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), 22.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if crate::widgets::icon_button(ui, "editCaptureTime", Icon::Pencil, vec2(20.0, 20.0), false, true, "Edit Capture Time…").clicked() {
+                let _ = app.run("dialog.captureTime", json!({}));
+            }
+            let cap = p.captured.as_deref().map(lightcraft_catalog::dates::display_time).unwrap_or_else(|| "—".into());
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(cap).size(12.5).color(t.text)).truncate());
+            });
+        });
+        ui.add_space(6.0);
+        for (label, key, value) in [
+            ("Location", "location", &m.location),
+            ("City", "city", &m.city),
+            ("State / Province", "state", &m.state),
+            ("Country", "country", &m.country),
+        ] {
+            meta_field(app, ui, label, key, value, 1);
         }
+        small(ui, "GPS");
+        let gps = m.gps.map(|(la, lo)| {
+            format!("{:.5}° {}, {:.5}° {}", la.abs(), if la >= 0.0 { "N" } else { "S" }, lo.abs(), if lo >= 0.0 { "E" } else { "W" })
+        });
+        ui.label(egui::RichText::new(gps.unwrap_or_else(|| "—".into())).color(t.text_label));
     });
-    divider(ui);
-    header(ui, "Camera");
+}
+
+/// The camera card at the top of Info: camera, lens, size · file size and format, then the
+/// capture settings.
+fn camera_card(ui: &mut egui::Ui, p: &lightcraft_catalog::Photo) {
+    let t = Tokens::get(ui.ctx());
     let m = &p.meta;
-    let cap = p.captured.as_deref().map(|c| c.replace('T', " ")).unwrap_or_else(|| "—".into());
-    label_row(ui, "Captured", &cap);
-    padded(ui, |ui| {
-        if text_button(ui, "editCaptureTime", "Edit Capture Time…", false).clicked() {
-            let _ = app.run("dialog.captureTime", json!({}));
+    egui::Frame::NONE.fill(t.canvas).corner_radius(6.0).inner_margin(egui::Margin::symmetric(12, 10)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        let dim = |s: &str| egui::RichText::new(s.to_string()).size(12.0).color(t.text_label);
+        if !m.camera.is_empty() {
+            ui.label(dim(&m.camera));
+        }
+        if !m.lens.is_empty() {
+            ui.add(egui::Label::new(dim(&m.lens)).truncate());
+        }
+        ui.horizontal(|ui| {
+            ui.label(dim(&format!("{} × {}  ·  {}", p.width, p.height, human_size(p.file_size))));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                egui::Frame::NONE.fill(t.chrome).corner_radius(3.0).inner_margin(egui::Margin::symmetric(5, 1)).show(ui, |ui| {
+                    ui.label(egui::RichText::new(p.format.to_uppercase()).size(10.5).color(t.text_label));
+                });
+            });
+        });
+        let rows = [
+            ("Focal length", m.focal_mm.map(|f| format!("{f:.1} mm").replace(".0 mm", " mm"))),
+            ("Shutter speed", (!m.shutter.is_empty()).then(|| format!("{} sec", m.shutter))),
+            ("Aperture", m.aperture.map(|f| format!("f / {f:.1}").replace(".0", ""))),
+            ("ISO", m.iso.map(|i| i.to_string())),
+        ];
+        if rows.iter().any(|r| r.1.is_some()) {
+            ui.add_space(6.0);
+            egui::Grid::new("info-capture").num_columns(2).spacing([24.0, 3.0]).show(ui, |ui| {
+                for (k, v) in rows {
+                    ui.label(dim(k));
+                    ui.label(dim(&v.unwrap_or_else(|| "—".into())));
+                    ui.end_row();
+                }
+            });
         }
     });
-    label_row(ui, "Camera", &m.camera);
-    label_row(ui, "Lens", &m.lens);
-    label_row(ui, "Focal", &m.focal_mm.map(|f| format!("{f:.0} mm")).unwrap_or_default());
-    label_row(ui, "Aperture", &m.aperture.map(|f| format!("f/{f:.1}")).unwrap_or_default());
-    label_row(ui, "Shutter", &m.shutter);
-    label_row(ui, "ISO", &m.iso.map(|f| f.to_string()).unwrap_or_default());
-    label_row(ui, "Location", &m.location);
-    label_row(ui, "File size", &format!("{:.1} MB", p.file_size as f64 / 1e6));
+}
+
+fn human_size(bytes: u64) -> String {
+    match bytes {
+        b if b >= 1 << 20 => format!("{:.1} MB", b as f64 / (1u64 << 20) as f64),
+        b if b >= 1 << 10 => format!("{} KB", b >> 10),
+        b => format!("{b} B"),
+    }
+}
+
+/// A labelled metadata text field: the typed text lives in egui memory while focused and is
+/// saved (photo.setMeta `key`) when the field loses focus.
+fn meta_field(app: &mut LightcraftApp, ui: &mut egui::Ui, label: &str, key: &str, value: &str, lines: usize) {
+    let t = Tokens::get(ui.ctx());
+    ui.label(egui::RichText::new(label).size(11.5).color(t.text_dim));
+    let id = egui::Id::new(("info-field", key));
+    let mut text: String = ui.data(|d| d.get_temp(id)).unwrap_or_else(|| value.to_string());
+    let edit = if lines > 1 { egui::TextEdit::multiline(&mut text).desired_rows(lines) } else { egui::TextEdit::singleline(&mut text) };
+    let r = ui.add(edit.desired_width(f32::INFINITY));
+    register(ui.ctx(), format!("field:{key}"), r.rect);
+    if r.has_focus() {
+        ui.data_mut(|d| d.insert_temp(id, text.clone()));
+    } else {
+        ui.data_mut(|d| d.remove::<String>(id));
+    }
+    if r.lost_focus() && text != value {
+        let _ = app.run("photo.setMeta", json!({key: text}));
+    }
+    ui.add_space(6.0);
 }
 
 fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {

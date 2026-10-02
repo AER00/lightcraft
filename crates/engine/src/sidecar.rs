@@ -72,6 +72,11 @@ pub struct SidecarData {
     pub copyright: Option<String>,
     pub creator: Option<String>,
     pub location: Option<String>,
+    pub city: Option<String>,
+    pub state: Option<String>,
+    pub country: Option<String>,
+    pub alt_text: Option<String>,
+    pub extended_description: Option<String>,
     pub keywords: Option<Vec<String>>,
     pub develop: Option<DevelopPatch>,
 }
@@ -94,7 +99,12 @@ pub fn parse_sidecar(xmp: &str, raw: bool) -> std::result::Result<SidecarData, S
         caption: m.caption.clone(),
         copyright: m.copyright.clone(),
         creator: m.artist.clone(),
-        location: lc("location"),
+        location: lc("location").or_else(|| m.sublocation.clone()),
+        city: m.city.clone(),
+        state: m.state.clone(),
+        country: m.country.clone(),
+        alt_text: m.alt_text.clone(),
+        extended_description: m.extended_description.clone(),
         keywords: (!m.keywords.is_empty()).then(|| m.keywords.clone()),
         ..Default::default()
     };
@@ -139,6 +149,11 @@ pub fn merge_into(p: &mut Photo, sc: &SidecarData, now: &str) -> bool {
         (&sc.copyright, &mut m.copyright),
         (&sc.creator, &mut m.creator),
         (&sc.location, &mut m.location),
+        (&sc.city, &mut m.city),
+        (&sc.state, &mut m.state),
+        (&sc.country, &mut m.country),
+        (&sc.alt_text, &mut m.alt_text),
+        (&sc.extended_description, &mut m.extended_description),
     ] {
         if let Some(v) = src {
             *dst = v.clone();
@@ -171,6 +186,12 @@ pub fn sidecar_packet(p: &Photo) -> String {
         software: Some("LightCraft".into()),
         title: nz(&p.meta.title),
         caption: nz(&p.meta.caption),
+        alt_text: nz(&p.meta.alt_text),
+        extended_description: nz(&p.meta.extended_description),
+        sublocation: nz(&p.meta.location),
+        city: nz(&p.meta.city),
+        state: nz(&p.meta.state),
+        country: nz(&p.meta.country),
         copyright: nz(&p.meta.copyright),
         artist: nz(&p.meta.creator),
         keywords: p.meta.keywords.clone(),

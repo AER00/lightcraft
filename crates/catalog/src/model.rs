@@ -103,10 +103,17 @@ pub struct Meta {
     pub aperture: Option<f32>,
     pub shutter: String,
     pub iso: Option<u32>,
+    /// Place (sublocation, e.g. a landmark).
     pub location: String,
+    pub city: String,
+    pub state: String,
+    pub country: String,
     pub gps: Option<(f64, f64)>,
     pub title: String,
     pub caption: String,
+    /// Accessibility text and long description.
+    pub alt_text: String,
+    pub extended_description: String,
     pub copyright: String,
     pub creator: String,
     pub keywords: Vec<String>,

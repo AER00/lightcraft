@@ -83,6 +83,16 @@ pub struct Metadata {
     pub copyright: Option<String>,
     pub title: Option<String>,
     pub caption: Option<String>,
+    /// Accessibility text (`Iptc4xmpCore:AltTextAccessibility`).
+    pub alt_text: Option<String>,
+    /// Long accessibility description (`Iptc4xmpCore:ExtDescrAccessibility`).
+    pub extended_description: Option<String>,
+    /// Place within the city (`Iptc4xmpCore:Location`).
+    pub sublocation: Option<String>,
+    /// `photoshop:City`, `photoshop:State`, `photoshop:Country`.
+    pub city: Option<String>,
+    pub state: Option<String>,
+    pub country: Option<String>,
     pub keywords: Vec<String>,
     /// Hierarchical keywords, `|`-separated paths (`lr:hierarchicalSubject` convention).
     pub hierarchical_keywords: Vec<String>,
@@ -132,6 +142,12 @@ impl Metadata {
             copyright,
             title,
             caption,
+            alt_text,
+            extended_description,
+            sublocation,
+            city,
+            state,
+            country,
             rating,
             label
         );

@@ -644,6 +644,29 @@ mod tests {
         assert!(!h.app.ui.visualize_spots);
     }
 
+    /// Info panel: typing into a field survives frames and is saved when it loses focus; the new
+    /// accessibility and place fields reach the photo.
+    #[test]
+    fn info_fields_keep_typing_and_save() {
+        let mut h = demo([1300.0, 1000.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "info"}), t);
+        h.settle(SETTLE);
+        for (key, text) in [("altText", "A lake at dawn"), ("city", "Zermatt")] {
+            let r = h.request("ui.clickWidget", json!({"id": format!("field:{key}")}), t);
+            assert_eq!(r["ok"], true, "{r}");
+            h.request("ui.key", json!({"key": "A", "cmd": true}), t);
+            h.request("ui.text", json!({"text": text}), t);
+            h.step();
+            h.step();
+            // still being edited: not saved yet, not lost either
+            h.request("ui.key", json!({"key": "Tab"}), t);
+            h.settle(Duration::from_secs(5));
+        }
+        let m = &h.app.session.catalog.photo(h.app.session.active().unwrap()).unwrap().meta;
+        assert_eq!((m.alt_text.as_str(), m.city.as_str()), ("A lake at dawn", "Zermatt"));
+    }
+
     /// ⌘Q (File → Quit LightCraft) closes the window.
     #[test]
     fn cmd_q_quits() {
@@ -727,7 +750,7 @@ mod tests {
         h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [id.0]}}), t);
         h.request("ui.set", json!({"view": "detail", "right": "info"}), t);
         let before = h.app.session.catalog.photo(id).unwrap().captured.clone().unwrap();
-        let r = h.request("ui.clickWidget", json!({"id": "button:editCaptureTime"}), t);
+        let r = h.request("ui.clickWidget", json!({"id": "icon:editCaptureTime"}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.request("ui.clickWidget", json!({"id": "button:captureMode-2"}), t);
         if let Some(crate::state::Dialog::CaptureTime { zone, .. }) = &mut h.app.ui.dialog {

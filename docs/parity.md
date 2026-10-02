@@ -189,10 +189,10 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-META-INFO | Info panel | P0 | ✅ | `cmd:panel.info`, `cmd:photo.setMeta`, `crates/ui-egui/src/panels/right.rs` | no flash, creator field, map snippet or people |
+| LR-META-INFO | Info panel | P0 | ✅ | `cmd:panel.info`, `cmd:photo.setMeta`, `crates/ui-egui/src/panels/right.rs` (`info`, `camera_card`) | camera card (camera, lens, size, format, focal length / shutter / aperture / ISO); title, caption, alt text, extended description, copyright, creator; file name (rename), file path (reveal), capture time (edit); location, city, state, country; GPS. No flash, map snippet or people |
 | LR-META-COPYRIGHT-DEFAULT | Default copyright on import | P1 | ✅ | `cmd:library.preferences` (`import.copyright`, `import.creator`), `crates/ui-egui/src/panels/settings.rs` | Settings → Import → Metadata; fills only photos without their own |
-| LR-META-LOCATION | Location editing | P2 | 🟡 | `cmd:photo.setMeta` (`location`) | text field + GPS read; no map, no geocoding |
-| LR-META-COPYPASTE | Copy / paste metadata | P2 | ✅ | `cmd:photo.copyMetadata`, `cmd:photo.pasteMetadata` | title, caption, copyright, creator, location, keywords; `fields` picks a subset |
+| LR-META-LOCATION | Location editing | P2 | 🟡 | `cmd:photo.setMeta` (`location`, `city`, `state`, `country`) | place fields edited in Info, read/written as IPTC Core / Photoshop XMP; GPS read-only; no map, no geocoding |
+| LR-META-COPYPASTE | Copy / paste metadata | P2 | ✅ | `cmd:photo.copyMetadata`, `cmd:photo.pasteMetadata` | title, caption, alt text, extended description, copyright, creator, place fields, keywords; `fields` picks a subset |
 | LR-META-XMP | XMP read/write | P0 | ✅ | `cmd:photo.saveMetadataToFile`, `cmd:photo.readMetadataFromFile`, `cmd:library.xmpPreferences`, `crates/engine/src/sidecar.rs`, `docs/xmp-interop.md` | |
 | LR-META-EXIF-FULL | Full EXIF/IPTC [Classic] | P1 | 🟡 | `crates/meta/src/exif.rs`, `crates/meta/src/iptc.rs` | read and written on export; panel shows a subset; no metadata presets |
 
@@ -438,7 +438,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-MAP-INFO | Location in the info panel | P1 | 🟡 | `cmd:photo.setMeta` (`location`), `crates/ui-egui/src/panels/right.rs` | shown as text; not editable in the panel; no map |
+| LR-MAP-INFO | Location in the info panel | P1 | 🟡 | `cmd:photo.setMeta` (`location`, `city`, `state`, `country`), `crates/ui-egui/src/panels/right.rs` | location, city, state/province, country editable; GPS shown; no map |
 | LR-MAP-MODULE | Map module [Classic] | P2 | ⬜ | | |
 
 ## V. Preferences (PREF)

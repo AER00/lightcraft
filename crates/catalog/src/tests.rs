@@ -195,3 +195,13 @@ fn smart_albums_update_live() {
     assert_eq!(back.album_photos(id), vec![b, z]);
     assert!(Filter { rating: 3, keyword: Some("sea".into()), ..Default::default() }.describe().contains("rating ≥ 3, keyword sea"));
 }
+
+#[test]
+fn capture_times_display_like_the_info_panel() {
+    use crate::dates::display_time;
+    assert_eq!(display_time("2022-03-30T10:11:11"), "March 30, 2022 at 10:11:11 AM");
+    assert_eq!(display_time("2022-03-30T22:05:01.5-04:00"), "March 30, 2022 at 10:05:01 PM");
+    assert_eq!(display_time("2022-01-02T00:00:00"), "January 2, 2022 at 12:00:00 AM");
+    assert_eq!(display_time("2022-07-04"), "July 4, 2022");
+    assert_eq!(display_time("someday"), "someday");
+}

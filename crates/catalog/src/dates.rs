@@ -105,6 +105,27 @@ pub struct DateRun {
     pub count: usize,
 }
 
+/// A capture time for display: `2022-03-30T22:11:11` → "March 30, 2022 at 10:11:11 PM" (the
+/// date alone when there is no time; the input unchanged when it doesn't parse).
+pub fn display_time(iso: &str) -> String {
+    let num = |r: std::ops::Range<usize>| iso.get(r).and_then(|v| v.parse::<u32>().ok());
+    let (Some(y), Some(mo), Some(d)) = (num(0..4), num(5..7), num(8..10)) else { return iso.to_string() };
+    let Some(month) = MONTHS.get((mo as usize).wrapping_sub(1)) else { return iso.to_string() };
+    let date = format!("{month} {d}, {y}");
+    match (num(11..13), num(14..16), num(17..19)) {
+        (Some(h), Some(mi), s) => {
+            let (h12, ampm) = match h {
+                0 => (12, "AM"),
+                1..=11 => (h, "AM"),
+                12 => (12, "PM"),
+                _ => (h - 12, "PM"),
+            };
+            format!("{date} at {h12}:{mi:02}:{:02} {ampm}", s.unwrap_or(0))
+        }
+        _ => date,
+    }
+}
+
 /// Header text for a group key.
 pub fn group_label(key: &str) -> String {
     let month = |k: &str| k.get(5..7).and_then(|m| m.parse::<usize>().ok()).filter(|m| (1..=12).contains(m)).map(|m| MONTHS[m - 1]);

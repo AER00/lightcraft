@@ -348,6 +348,12 @@ pub fn parse_xmp(s: &str) -> Result<XmpData, XmpError> {
         height: num("tiff:ImageLength").or_else(|| num("exif:PixelYDimension")).map(|v| v as u32),
         title: first("dc:title"),
         caption: first("dc:description"),
+        alt_text: first("Iptc4xmpCore:AltTextAccessibility"),
+        extended_description: first("Iptc4xmpCore:ExtDescrAccessibility"),
+        sublocation: first("Iptc4xmpCore:Location"),
+        city: first("photoshop:City"),
+        state: first("photoshop:State"),
+        country: first("photoshop:Country"),
         copyright: first("dc:rights"),
         rating: num("xmp:Rating").map(|v| v.round().clamp(-1.0, 5.0) as i8),
         label: first("xmp:Label"),
@@ -444,6 +450,10 @@ pub fn write_xmp_lc(meta: &Metadata, lc: &[(&str, &str)]) -> String {
     push("exifEX:LensMake", meta.lens_make.clone());
     push("exifEX:LensModel", meta.lens_model.clone());
     push("exifEX:LensSerialNumber", meta.lens_serial_number.clone());
+    push("Iptc4xmpCore:Location", meta.sublocation.clone());
+    push("photoshop:City", meta.city.clone());
+    push("photoshop:State", meta.state.clone());
+    push("photoshop:Country", meta.country.clone());
     if let Some(g) = meta.gps {
         push("exif:GPSLatitude", Some(fmt_gps_coord(g.latitude, 'N', 'S')));
         push("exif:GPSLongitude", Some(fmt_gps_coord(g.longitude, 'E', 'W')));
@@ -488,6 +498,8 @@ pub fn write_xmp_lc(meta: &Metadata, lc: &[(&str, &str)]) -> String {
     let one = |v: &Option<String>| v.iter().cloned().collect::<Vec<_>>();
     array(&mut x, "dc:title", "Alt", &one(&meta.title), true);
     array(&mut x, "dc:description", "Alt", &one(&meta.caption), true);
+    array(&mut x, "Iptc4xmpCore:AltTextAccessibility", "Alt", &one(&meta.alt_text), true);
+    array(&mut x, "Iptc4xmpCore:ExtDescrAccessibility", "Alt", &one(&meta.extended_description), true);
     array(&mut x, "dc:rights", "Alt", &one(&meta.copyright), true);
     array(&mut x, "dc:creator", "Seq", &one(&meta.artist), false);
     array(&mut x, "dc:subject", "Bag", &meta.keywords, false);
@@ -545,6 +557,12 @@ mod tests {
             copyright: Some("© 2022".into()),
             title: Some("Tïtle".into()),
             caption: Some("Line one\nline two".into()),
+            alt_text: Some("A tree by the sea".into()),
+            extended_description: Some("Long <description>".into()),
+            sublocation: Some("Champ de Mars".into()),
+            city: Some("Paris".into()),
+            state: Some("Île-de-France".into()),
+            country: Some("France".into()),
             keywords: vec!["tree".into(), "sky & sea".into()],
             hierarchical_keywords: vec!["Places|France|Paris".into()],
             rating: Some(-1),
