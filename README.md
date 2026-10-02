@@ -7,6 +7,10 @@
   </a>
 </p>
 
+<p align="center">
+  <img alt="LightCraft app icon: an engraved lynx in paper and ink on LightCraft amber (#f2a516)" src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.lightcraft.png" width="128">
+</p>
+
 <h1 align="center">LightCraft</h1>
 
 <h3 align="center">Your photos. Your pixels. Your machine.</h3>

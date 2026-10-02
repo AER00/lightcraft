@@ -19,6 +19,10 @@ egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 
+[build-dependencies]
+# Icon + VERSIONINFO for lightcraft.exe; build.rs only uses it when targeting Windows.
+winresource = "0.1"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rfd = { workspace = true }
 
