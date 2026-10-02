@@ -10,6 +10,7 @@ mod layers;
 mod parity;
 mod stats;
 mod web;
+mod version;
 
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
@@ -43,6 +44,7 @@ fn main() -> ExitCode {
     let rest: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();
     let result = match args.first().map(String::as_str) {
         Some("ico") => ico::run(&rest),
+        Some("version") => version::run(&root(), &rest),
         Some("layers") => cmd_layers(),
         Some("assets") => assets::run(&root()),
         Some("bench") => bench::run(&root(), &rest),
