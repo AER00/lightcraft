@@ -44,11 +44,11 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 4 | 1 | 3 | 3 | 1/1 (100%) | 3/4 (75%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 10 | 3 | 4 | 1 | 7/8 (88%) | 3/5 (60%) |
+| X. Cross-cutting behaviours (BEHAV) | 11 | 2 | 4 | 1 | 8/8 (100%) | 3/5 (60%) |
 | Y. Menus | 56 | 16 | 13 | 8 | 41/47 (87%) | 13/23 (57%) |
 | Z. Keyboard shortcuts (desktop) | 56 | 13 | 11 | 1 | 47/52 (90%) | 9/23 (39%) |
 | Lightroom Classic extras | 4 | 20 | 55 | 9 | — | 3/21 (14%) |
-| **Total** | 264 | 80 | 156 | 37 | 182/198 (92%) | 72/144 (50%) |
+| **Total** | 265 | 79 | 156 | 37 | 183/198 (92%) | 72/144 (50%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -474,7 +474,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-BATCH | Batch apply to selection | P0 | ✅ | `cmd:photo.rate`, `cmd:develop.paste`, `cmd:preset.apply`, `cmd:app.export` | |
 | LR-BEHAV-PREVIEW-HOVER | Hover previews | P1 | 🟡 | `crates/ui-egui/src/panels/presets.rs`, `crates/ui-egui/src/panels/profiles.rs`, `crates/ui-egui/src/panels/detail.rs` | presets, profile menu and profile browser preview in the loupe; versions do not |
 | LR-BEHAV-PROGRESSIVE | Progressive rendering | P0 | ✅ | `crates/engine/src/media.rs`, `crates/preview/src/lib.rs` | |
-| LR-BEHAV-BG-TASKS | Background tasks | P0 | 🟡 | `crates/preview/src/lib.rs` (`JobPool`) | renders off the UI thread; no progress popover for import/export |
+| LR-BEHAV-BG-TASKS | Background tasks | P0 | ✅ | `crates/preview/src/lib.rs` (`JobPool`), `crates/ui-egui/src/export_task.rs`, `crates/ui-egui/src/import.rs` | renders off the UI thread; exports started from the UI run on a worker thread with a progress panel and Cancel (`ui.inspect` → `export`); imports show a progress window. No combined activity centre |
 | LR-BEHAV-OFFLINE | Offline editing | P1 | ✅ | | local-first: everything works offline |
 | LR-BEHAV-GPU | GPU acceleration | P0 | ✅ | `crates/gpu/src/render.rs`, `cmd:app.gpu`, `docs/gpu-pipeline.md` | CPU fallback |
 | LR-BEHAV-DRAGDROP | Drag and drop | P1 | 🟡 | `crates/ui-egui/src/lib.rs` | files → app only; no photos → albums |

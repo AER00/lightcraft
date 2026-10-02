@@ -141,6 +141,12 @@ fn services() -> Services {
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
+        write_shared: Some(std::sync::Arc::new(|p: &str, b: &[u8]| {
+            if let Some(dir) = std::path::Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(p, b).map_err(|e| e.to_string())
+        })),
         write: Some(Box::new(|p: &str, b: &[u8]| {
             if let Some(dir) = std::path::Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {
                 std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;

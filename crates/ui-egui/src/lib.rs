@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod control;
+pub mod export_task;
 pub mod headless;
 pub mod icons;
 pub mod import;
@@ -36,6 +37,8 @@ pub type PickFiles = Box<dyn FnMut() -> Vec<String>>;
 /// A save dialog: suggested file name → chosen path (`None` = cancelled).
 pub type SaveFile = Box<dyn FnMut(&str) -> Option<String>>;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
+/// A writer other threads can use (background export).
+pub type SharedWrite = std::sync::Arc<dyn Fn(&str, &[u8]) -> Result<(), String> + Send + Sync>;
 pub type PngEncode = Box<dyn Fn(&lightcraft_raster::Rgba8) -> Vec<u8>>;
 /// A folder chooser (`None` = cancelled).
 pub type PickFolder = Box<dyn FnMut() -> Option<String>>;
@@ -54,6 +57,8 @@ pub struct Services {
     /// Save dialog for an exported `.lcpreset` file.
     pub save_preset_file: Option<SaveFile>,
     pub write: Option<WriteFn>,
+    /// Thread-safe writer: with it, UI-started exports run in the background (desktop only).
+    pub write_shared: Option<SharedWrite>,
     /// PNG encoder (the host links an image encoder; the UI crate stays codec-free).
     pub png: Option<PngEncode>,
     /// Show a file in the system file manager (desktop only).
@@ -109,6 +114,10 @@ pub struct LightcraftApp {
     pub merge: merge::MergeState,
     /// An import in progress (the import review dialog's batches).
     pub import: Option<import::ImportTask>,
+    /// A background export in progress.
+    pub export: Option<export_task::ExportTask>,
+    /// The files of the last finished background export (`ui.inspect` → `export.last`).
+    pub last_export_result: Option<Value>,
     /// The look the loupe shows while the pointer rests on a preset or profile (set by the
     /// panels each frame; nothing is committed, no history entry).
     pub hover_preview: Option<HoverPreview>,
@@ -149,6 +158,8 @@ impl LightcraftApp {
             loupe_shown: None,
             merge: merge::MergeState::default(),
             import: None,
+            export: None,
+            last_export_result: None,
             hover_preview: None,
             window_is_fullscreen: false,
             gpu_applied: None,
@@ -429,6 +440,7 @@ impl LightcraftApp {
         });
         panels::dialogs::show(self, &ctx);
         import::progress(self, &ctx);
+        export_task::poll(self, &ctx);
         panels::toast(self, &ctx);
         self.widgets = widgets::take_registry(&ctx);
         self.perf.frame_ms = now_ms() - t0;

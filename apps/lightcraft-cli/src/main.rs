@@ -587,6 +587,12 @@ fn snapshot(args: &[String]) -> Result<(), String> {
         eprintln!("lightcraft-cli snapshot: imported {n} files in {:.0} ms", ti.elapsed().as_secs_f64() * 1e3);
     }
     let services = lightcraft_ui_egui::Services {
+        write_shared: Some(std::sync::Arc::new(|p: &str, b: &[u8]| {
+            if let Some(dir) = Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(p, b).map_err(|e| format!("{p}: {e}"))
+        })),
         write: Some(Box::new(|p: &str, b: &[u8]| {
             if let Some(dir) = Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {
                 std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -671,6 +677,15 @@ fn snapshot(args: &[String]) -> Result<(), String> {
             return Err(format!("screenshot failed: {}", r["error"]));
         }
         eprintln!("lightcraft-cli snapshot: wrote {path} ({}×{})", r["result"]["width"], r["result"]["height"]);
+    }
+    // a background export started by the script finishes before we exit (its files would be cut off)
+    if h.app.export.is_some() {
+        eprintln!("lightcraft-cli snapshot: waiting for the background export");
+        let te = std::time::Instant::now();
+        while h.app.export.is_some() && te.elapsed() < std::time::Duration::from_secs(3600) {
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
     eprintln!("lightcraft-cli snapshot: done in {:.2} s ({} frames)", t0.elapsed().as_secs_f64(), h.frames());
     Ok(())

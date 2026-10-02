@@ -820,57 +820,108 @@ pub fn output_size(p: &lightcraft_catalog::Photo, o: &ExportOptions) -> (usize, 
 /// Render photo `id` at the requested size and encode it (or copy / convert its original for
 /// [`ExportFormat::Original`] / [`ExportFormat::Dng`]).
 pub fn export_photo(session: &mut crate::Session, id: lightcraft_catalog::PhotoId, o: &ExportOptions, seq: usize) -> Result<Exported, String> {
-    let p = session.catalog.photo(id).ok_or("no such photo")?;
-    let file_name = o.file_name_for_dated(&p.file_name, seq, p.captured.as_deref());
-    if !o.format.is_rendered() {
-        return export_file(session, id, o, file_name);
-    }
-    let (w, h) = output_size(p, o);
-    let meta = export_metadata(p, o);
-    let r = session.render_export(id, w, h, o.effective_space(), o.effective_depth())?;
-    let bytes = encode_rendered(&r, o, meta.as_ref())?;
-    Ok(Exported { file_name, bytes, width: r.image.width, height: r.image.height, sidecars: Vec::new() })
+    prepare_export(session, id, o, seq)?.run()
 }
 
-/// [`ExportFormat::Original`] (the file's bytes + an XMP sidecar) or [`ExportFormat::Dng`] (the raw
-/// data re-encoded as a lossless DNG with the edits in its XMP).
-fn export_file(session: &mut crate::Session, id: lightcraft_catalog::PhotoId, o: &ExportOptions, file_name: String) -> Result<Exported, String> {
+/// One photo's export, set up from the session ([`prepare_export`]). [`PreparedExport::run`] does
+/// the heavy part (read, decode, render, encode) without the session, so it can run on another
+/// thread.
+pub struct PreparedExport {
+    pub photo: lightcraft_catalog::PhotoId,
+    pub file_name: String,
+    work: Work,
+}
+
+struct RenderWork {
+    job: crate::media::RenderJob,
+    meta: Option<Metadata>,
+    opts: ExportOptions,
+}
+
+enum Work {
+    Render(Box<RenderWork>),
+    /// [`ExportFormat::Original`] (the file's bytes + an XMP sidecar) or [`ExportFormat::Dng`] (the
+    /// raw data re-encoded as a lossless DNG with the edits in its XMP).
+    File {
+        path: String,
+        read: Option<crate::merge::ByteReader>,
+        packet: String,
+        dng: bool,
+        label: String,
+        size: (usize, usize),
+    },
+}
+
+/// Set up the export of photo `id` at 1-based position `seq` of a batch.
+pub fn prepare_export(
+    session: &mut crate::Session,
+    id: lightcraft_catalog::PhotoId,
+    o: &ExportOptions,
+    seq: usize,
+) -> Result<PreparedExport, String> {
     let p = session.catalog.photo(id).ok_or("no such photo")?;
-    let lightcraft_catalog::Source::File { path } = &p.source else {
-        return Err(format!("{} is a generated demo photo: it has no original file to export", p.file_name));
-    };
-    let read = session.media.file_bytes.clone();
-    let bytes = match &read {
-        Some(r) => r(path)?,
-        None => std::fs::read(path).map_err(|e| format!("{path}: {e}"))?,
-    };
-    let packet = crate::sidecar::sidecar_packet(p);
-    let (width, height) = (p.width as usize, p.height as usize);
-    match o.format {
-        ExportFormat::Dng => {
-            if lightcraft_raw::probe(&bytes).is_none() {
-                return Err(format!("{}: DNG export needs a raw photo", p.file_name));
-            }
-            let raw = lightcraft_raw::decode(&bytes).map_err(|e| format!("{}: {e}", p.file_name))?;
-            let dng = lightcraft_raw::write_dng(&raw, &lightcraft_raw::DngWriteOptions { xmp: Some(packet), ..Default::default() })
-                .map_err(|e| e.to_string())?;
-            Ok(Exported { file_name, bytes: dng, width: raw.width, height: raw.height, sidecars: Vec::new() })
+    let file_name = o.file_name_for_dated(&p.file_name, seq, p.captured.as_deref());
+    let work = if o.format.is_rendered() {
+        let (w, h) = output_size(p, o);
+        let meta = export_metadata(p, o);
+        let job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
+        Work::Render(Box::new(RenderWork { job, meta, opts: o.clone() }))
+    } else {
+        let lightcraft_catalog::Source::File { path } = &p.source else {
+            return Err(format!("{} is a generated demo photo: it has no original file to export", p.file_name));
+        };
+        Work::File {
+            path: path.clone(),
+            read: session.media.file_bytes.clone(),
+            packet: crate::sidecar::sidecar_packet(p),
+            dng: o.format == ExportFormat::Dng,
+            label: p.file_name.clone(),
+            size: (p.width as usize, p.height as usize),
         }
-        _ => Ok(Exported { file_name, bytes, width, height, sidecars: vec![("xmp", packet.into_bytes())] }),
+    };
+    Ok(PreparedExport { photo: id, file_name, work })
+}
+
+impl PreparedExport {
+    pub fn run(self) -> Result<Exported, String> {
+        let file_name = self.file_name;
+        match self.work {
+            Work::Render(w) => {
+                let RenderWork { job, meta, opts } = *w;
+                let r = job.run().rendered?;
+                let bytes = encode_rendered(&r, &opts, meta.as_ref())?;
+                Ok(Exported { file_name, bytes, width: r.image.width, height: r.image.height, sidecars: Vec::new() })
+            }
+            Work::File { path, read, packet, dng, label, size } => {
+                let bytes = match &read {
+                    Some(r) => r(&path)?,
+                    None => std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
+                };
+                if !dng {
+                    return Ok(Exported { file_name, bytes, width: size.0, height: size.1, sidecars: vec![("xmp", packet.into_bytes())] });
+                }
+                if lightcraft_raw::probe(&bytes).is_none() {
+                    return Err(format!("{label}: DNG export needs a raw photo"));
+                }
+                let raw = lightcraft_raw::decode(&bytes).map_err(|e| format!("{label}: {e}"))?;
+                drop(bytes);
+                let dng = lightcraft_raw::write_dng(&raw, &lightcraft_raw::DngWriteOptions { xmp: Some(packet), ..Default::default() })
+                    .map_err(|e| e.to_string())?;
+                Ok(Exported { file_name, bytes: dng, width: raw.width, height: raw.height, sidecars: Vec::new() })
+            }
+        }
     }
 }
 
 /// The destination of a batch: a folder (with `ExportOptions::subfolder` and the conflict policy
 /// applied), or one exact file path (single photo; overwritten).
-pub struct Destination<'a> {
-    pub dir: &'a str,
-    pub exact: Option<&'a str>,
+#[derive(Clone, Debug, Default)]
+pub struct Destination {
+    pub dir: String,
+    pub exact: Option<String>,
 }
 
-/// Export `ids` in order: render/encode each ([`export_photo`]), pick its path, and hand the
-/// bytes (and sidecars) to `write`. `exists` tells whether a path is taken (conflict policy).
-/// Returns one JSON object per photo: `{path, width, height, bytes, sidecars}` or
-/// `{skipped: path}`.
+/// Export `ids` in order ([`prepare_export`] + [`run_batch`]), stopping at the first error.
 pub fn export_batch(
     session: &mut crate::Session,
     ids: &[lightcraft_catalog::PhotoId],
@@ -879,14 +930,44 @@ pub fn export_batch(
     write: &mut dyn FnMut(&str, &[u8]) -> Result<(), String>,
     exists: &dyn Fn(&str) -> bool,
 ) -> Result<Vec<serde_json::Value>, String> {
+    let items = ids.iter().enumerate().map(|(i, id)| prepare_export(session, *id, o, i + 1)).collect::<Result<Vec<_>, _>>()?;
+    run_batch(items, o, to, write, exists, true, &mut |_, _| true)
+}
+
+/// Run prepared exports in order: pick each one's path, and hand the bytes (and sidecars) to
+/// `write`. `exists` tells whether a path is taken (conflict policy). `progress(done, next file)`
+/// is called before each photo; returning false cancels the rest. Returns one JSON object per
+/// photo: `{path, width, height, bytes, sidecars}`, `{skipped: path}` or (unless
+/// `stop_on_error`) `{photo, file, error}`.
+pub fn run_batch(
+    items: Vec<PreparedExport>,
+    o: &ExportOptions,
+    to: &Destination,
+    write: &mut dyn FnMut(&str, &[u8]) -> Result<(), String>,
+    exists: &dyn Fn(&str) -> bool,
+    stop_on_error: bool,
+    progress: &mut dyn FnMut(usize, &str) -> bool,
+) -> Result<Vec<serde_json::Value>, String> {
     use serde_json::json;
     let join = |a: &str, b: &str| if a.is_empty() { b.to_string() } else { format!("{}/{b}", a.trim_end_matches('/')) };
-    let dir = if o.subfolder.is_empty() { to.dir.to_string() } else { join(to.dir, &o.subfolder) };
+    let dir = if o.subfolder.is_empty() { to.dir.clone() } else { join(&to.dir, &o.subfolder) };
+    let single = items.len() == 1;
     let mut taken = std::collections::HashSet::new();
     let mut out = Vec::new();
-    for (i, id) in ids.iter().enumerate() {
-        let e = export_photo(session, *id, o, i + 1)?;
-        let path = match to.exact.filter(|_| ids.len() == 1) {
+    for (i, item) in items.into_iter().enumerate() {
+        if !progress(i, &item.file_name) {
+            break;
+        }
+        let (photo, name) = (item.photo, item.file_name.clone());
+        let e = match item.run() {
+            Ok(e) => e,
+            Err(err) if stop_on_error => return Err(err),
+            Err(err) => {
+                out.push(json!({"photo": photo.0, "file": name, "error": err}));
+                continue;
+            }
+        };
+        let path = match to.exact.as_deref().filter(|_| single) {
             Some(p) => p.to_string(),
             None => {
                 let mut path = join(&dir, &e.file_name);
@@ -908,15 +989,23 @@ pub fn export_batch(
                 path
             }
         };
-        write(&path, &e.bytes)?;
-        let mut sidecars = Vec::new();
-        for (ext, bytes) in &e.sidecars {
-            let sc = std::path::Path::new(&path).with_extension(ext).to_string_lossy().to_string();
-            write(&sc, bytes)?;
-            sidecars.push(sc);
+        let written = write(&path, &e.bytes).and_then(|()| {
+            let mut sidecars = Vec::new();
+            for (ext, bytes) in &e.sidecars {
+                let sc = std::path::Path::new(&path).with_extension(ext).to_string_lossy().to_string();
+                write(&sc, bytes)?;
+                sidecars.push(sc);
+            }
+            Ok(sidecars)
+        });
+        match written {
+            Ok(sidecars) => {
+                taken.insert(path.clone());
+                out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars}));
+            }
+            Err(err) if stop_on_error => return Err(err),
+            Err(err) => out.push(json!({"photo": photo.0, "file": path, "error": err})),
         }
-        taken.insert(path.clone());
-        out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars}));
     }
     Ok(out)
 }

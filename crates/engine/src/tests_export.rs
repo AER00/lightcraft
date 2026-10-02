@@ -121,7 +121,7 @@ fn presets_conflicts_and_subfolders() {
 
     // a fake file system: what exists, what was written
     let existing = ["out/Sub/LC01347.png".to_string()];
-    let to = Destination { dir: "out", exact: None };
+    let to = Destination { dir: "out".into(), exact: None };
     let batch = |s: &mut Session, ids: &[_], o: &ExportOptions| {
         let mut written: Vec<String> = Vec::new();
         let mut write = |p: &str, _: &[u8]| {
@@ -142,4 +142,35 @@ fn presets_conflicts_and_subfolders() {
     assert!(written.is_empty());
     let (_, written) = batch(&mut s, &ids[..1], &ExportOptions { conflict: crate::export::Conflict::Overwrite, ..o });
     assert_eq!(written, ["out/Sub/LC01347.png"]);
+}
+
+#[test]
+fn prepared_exports_run_on_another_thread() {
+    fn send<T: Send>(_: &T) {}
+    let mut s = Session::with_demo();
+    let id = s.active().unwrap();
+    let o = ExportOptions::from_json(&json!({"format": "png", "width": 48}));
+    let items: Vec<_> = (1..=2).map(|seq| crate::export::prepare_export(&mut s, id, &o, seq).unwrap()).collect();
+    send(&items);
+    let to = crate::export::Destination::default();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen2 = seen.clone();
+    let files = std::thread::spawn(move || {
+        let mut written = Vec::new();
+        let mut write = |p: &str, b: &[u8]| {
+            written.push((p.to_string(), b.len()));
+            Ok(())
+        };
+        // cancel after the first photo
+        crate::export::run_batch(items, &o, &to, &mut write, &|_| false, false, &mut |done, name| {
+            seen2.lock().unwrap().push((done, name.to_string()));
+            done < 1
+        })
+        .unwrap()
+    })
+    .join()
+    .unwrap();
+    assert_eq!(files.len(), 1, "cancelled before the second: {files:?}");
+    assert_eq!(files[0]["width"], 48);
+    assert_eq!(seen.lock().unwrap().len(), 2);
 }

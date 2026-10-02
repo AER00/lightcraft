@@ -653,13 +653,25 @@ impl crate::Session {
         space: lightcraft_pipeline::OutputSpace,
         depth: lightcraft_pipeline::OutputDepth,
     ) -> Result<Rendered, String> {
+        let r = self.export_job(id, max_w, max_h, space, depth)?.run();
+        self.accept(&r);
+        r.rendered
+    }
+
+    /// The job [`Self::render_export`] runs, to run elsewhere (e.g. a background export thread).
+    pub fn export_job(
+        &mut self,
+        id: PhotoId,
+        max_w: usize,
+        max_h: usize,
+        space: lightcraft_pipeline::OutputSpace,
+        depth: lightcraft_pipeline::OutputDepth,
+    ) -> Result<RenderJob, String> {
         let mut job = self.render_job(id, max_w, max_h, false, true).ok_or("no such photo")?;
         job.request.space = space;
         job.request.depth = depth;
         job.key ^= (space as u64 + 1).wrapping_mul(0xa076_1d64_78bd_642f) ^ (depth as u64 + 1).wrapping_mul(0xe703_7ed1_a0b4_28db);
-        let r = job.run();
-        self.accept(&r);
-        r.rendered
+        Ok(job)
     }
 
     /// The source proxy for pixel-statistics commands (auto tone/WB), loading synchronously.

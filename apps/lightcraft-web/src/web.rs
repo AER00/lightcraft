@@ -155,6 +155,8 @@ fn services(originals: Originals, backend: Option<Backend>, ctx: egui::Context) 
         pick_preset_files: None,
         save_preset_file: None,
         write: Some(Box::new(download)),
+        // downloads happen on the main thread: exports run in the foreground on the web
+        write_shared: None,
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),

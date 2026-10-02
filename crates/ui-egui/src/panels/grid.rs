@@ -540,7 +540,8 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     ui.menu_button("Export with Preset", |ui| {
         for (p, _) in app.session.all_export_presets() {
             if ui.button(&p.name).clicked() {
-                match app.run("app.export", json!({"preset": p.name})) {
+                match app.run("app.export", json!({"preset": p.name, "background": true})) {
+                    Ok(r) if r.get("background").is_some() => {}
                     Ok(r) => {
                         let n = r["files"].as_array().map_or(0, Vec::len);
                         app.toast(ui.ctx(), format!("Exported {n} photo{}", if n == 1 { "" } else { "s" }));

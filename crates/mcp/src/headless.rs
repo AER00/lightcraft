@@ -79,7 +79,10 @@ impl Headless {
             }
             std::fs::write(path, bytes).map_err(|err| format!("{path}: {err}"))
         };
-        let files = export_batch(&mut self.session, &ids, &opts, &Destination { dir, exact }, write, &|path| Path::new(path).exists())?;
+        let files =
+            export_batch(&mut self.session, &ids, &opts, &Destination { dir: dir.to_string(), exact: exact.map(str::to_string) }, write, &|path| {
+                Path::new(path).exists()
+            })?;
         // Single-photo exports also report path/width/height at the top level (back-compat).
         let mut out = files.first().cloned().unwrap_or_else(|| json!({}));
         out["files"] = json!(files);

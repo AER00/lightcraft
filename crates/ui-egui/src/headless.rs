@@ -174,6 +174,7 @@ impl Headless {
         self.app.renderer.in_flight() > 0
             || self.app.merge.busy()
             || self.app.import.is_some()
+            || self.app.export.is_some()
             || !self.app.synthetic.is_empty()
             || !self.events.is_empty()
     }
@@ -548,6 +549,46 @@ mod tests {
         assert!(name(vis[0]).starts_with("Trip-05."), "{}", name(vis[0]));
         assert!(name(vis[1]).starts_with("Trip-06."), "{}", name(vis[1]));
         h.settle(SETTLE);
+    }
+
+    /// The Export dialog hands its batch to a worker thread: the UI keeps drawing frames, shows
+    /// progress, and reports the result when the files are written.
+    #[test]
+    fn export_dialog_runs_in_the_background() {
+        let mut h = demo([1200.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let w = written.clone();
+        h.app.services.write_shared = Some(std::sync::Arc::new(move |p: &str, _: &[u8]| {
+            std::thread::sleep(Duration::from_millis(150)); // a slow disk: the UI must not wait for it
+            w.lock().unwrap().push(p.to_string());
+            Ok(())
+        }));
+        let ids: Vec<u64> = h.app.session.visible_cloned().iter().take(3).map(|p| p.0).collect();
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": ids}}), t);
+        h.request("engine.execute", json!({"command": "dialog.export", "params": {}}), t);
+        h.settle(SETTLE);
+        if let Some(crate::state::Dialog::Export { full_size, resize, dir, .. }) = &mut h.app.ui.dialog {
+            *full_size = false;
+            *resize = lightcraft_engine::export::Resize::long_edge(64);
+            *dir = "/lc-test-out".into();
+        }
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(h.app.export.is_some(), "running in the background");
+        let running = h.request("ui.inspect", json!({}), t);
+        assert_eq!(running["result"]["export"]["running"]["total"], 3, "{}", running["result"]["export"]);
+        let t0 = Instant::now();
+        while h.app.export.is_some() && t0.elapsed() < Duration::from_secs(60) {
+            h.step();
+        }
+        assert!(h.app.export.is_none(), "finished");
+        let w = written.lock().unwrap().clone();
+        assert_eq!(w.len(), 3, "{w:?}");
+        assert!(w.iter().all(|p| p.starts_with("/lc-test-out/")));
+        let last = h.request("ui.inspect", json!({}), t)["result"]["export"]["last"].clone();
+        assert_eq!(last["files"].as_array().map(Vec::len), Some(3), "{last}");
+        assert!(last["files"][0]["width"].as_u64().is_some_and(|w| w <= 64));
     }
 
     /// ⇧⌘V opens Paste Selected Settings (prefilled with the copied groups); unchecking a group

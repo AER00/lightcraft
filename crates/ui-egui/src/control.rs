@@ -81,6 +81,7 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "loupe": app.loupe_shown.map(|(p, src)| json!({"photo": p.0, "source": src, "pending": app.renderer.is_pending(crate::render::Slot::Main)})),
         "hoverPreview": app.hover_preview.as_ref().map(|h| h.label.clone()),
         "status": app.ui.status,
+        "export": {"running": app.export.as_ref().map(crate::export_task::ExportTask::status), "last": app.last_export_result},
         "memory": memory(app),
     })
 }
@@ -342,9 +343,19 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     // no folder given (e.g. File → Export with Preset): the last export's, else the default
     let last_dir = app.session.last_export.as_ref().and_then(|l| l.get("dir")).and_then(Value::as_str).map(str::to_string);
     let dir = p.get("dir").and_then(Value::as_str).map(str::to_string).or(last_dir).filter(|d| !d.is_empty()).unwrap_or_else(default_export_dir);
-    let to = Destination { dir: &dir, exact: p.get("path").and_then(Value::as_str) };
-    let w = app.services.write.as_mut().ok_or("no writer")?;
-    let out = export_batch(&mut app.session, &ids, &opts, &to, &mut |path, bytes| w(path, bytes), &|path| std::path::Path::new(path).exists())?;
+    let to = Destination { dir: dir.clone(), exact: p.get("path").and_then(Value::as_str).map(str::to_string) };
+    let background = p.get("background").and_then(Value::as_bool).unwrap_or(false) && app.services.write_shared.is_some();
+    let out = if background {
+        let items = ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| lightcraft_engine::export::prepare_export(&mut app.session, *id, &opts, i + 1))
+            .collect::<Result<Vec<_>, _>>()?;
+        crate::export_task::start(app, items, opts, to)?
+    } else {
+        let w = app.services.write.as_mut().ok_or("no writer")?;
+        json!({"files": export_batch(&mut app.session, &ids, &opts, &to, &mut |path, bytes| w(path, bytes), &|path| std::path::Path::new(path).exists())?})
+    };
     // remember for Export with Previous (and to prefill the dialog)
     let mut last = p.clone();
     if let Some(o) = last.as_object_mut() {
@@ -354,7 +365,7 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     }
     app.session.last_export = Some(last);
     let _ = app.session.save_prefs();
-    Ok(json!({"files": out}))
+    Ok(out)
 }
 
 pub fn save_screenshot(app: &mut LightcraftApp, image: &egui::ColorImage, path: Option<&str>) -> Value {
