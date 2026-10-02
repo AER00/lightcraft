@@ -227,7 +227,33 @@ pub fn summary_table(doc: &Doc) -> String {
         s += &row(name, c);
     }
     s += &row("**Total**", &total);
+    s += &format!("\n{}\n", weighted_line(doc));
     s
+}
+
+/// Weighted completion of the in-scope rows (✅ = 1, 🟡 = ½, ⬜ = 0; 🚫 left out) for `tier`
+/// (`None` = all): (percent, rows).
+pub fn weighted(doc: &Doc, tier: Option<&str>) -> (f64, usize) {
+    let rows: Vec<&Row> = doc.rows.iter().filter(|r| r.status != Status::OutOfScope && tier.is_none_or(|t| r.tier == t)).collect();
+    let score: f64 = rows
+        .iter()
+        .map(|r| match r.status {
+            Status::Done => 1.0,
+            Status::Partial => 0.5,
+            _ => 0.0,
+        })
+        .sum();
+    (if rows.is_empty() { 0.0 } else { score * 100.0 / rows.len() as f64 }, rows.len())
+}
+
+/// "Weighted completion: 65.7% of 500 rows (P0 …, P1 …, P2 …)".
+pub fn weighted_line(doc: &Doc) -> String {
+    let (all, n) = weighted(doc, None);
+    let tiers: Vec<String> = ["P0", "P1", "P2"]
+        .iter()
+        .filter_map(|t| Some(weighted(doc, Some(t))).filter(|w| w.1 > 0).map(|(p, n)| format!("{t} {p:.1}% of {n}")))
+        .collect();
+    format!("Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **{all:.1}%** of {n} in-scope rows — {}.", tiers.join(" · "))
 }
 
 /// Replace the summary between the markers.
@@ -397,6 +423,10 @@ old
         let table = summary_table(&d);
         assert!(table.contains("| A. Import (IMP) | 1 | 1 | 0 | 1 | 1/1 (100%) | 0/1 (0%) |"), "{table}");
         assert!(table.contains("| **Total** | 1 | 1 | 1 | 1 | 1/2 (50%) | 0/1 (0%) |"), "{table}");
+        // three in-scope rows: 1 + ½ + 0
+        assert_eq!(weighted(&d, None), (50.0, 3));
+        assert_eq!(weighted(&d, Some("P0")), (50.0, 2));
+        assert!(table.contains("**50.0%** of 3 in-scope rows — P0 50.0% of 2 · P1 50.0% of 1."), "{table}");
         let new = with_summary(SAMPLE, &table).unwrap();
         assert!(!new.contains("\nold\n"));
         assert!(new.contains(&format!("{BEGIN}\n{table}{END}")));

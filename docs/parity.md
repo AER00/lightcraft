@@ -49,6 +49,8 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Z. Keyboard shortcuts (desktop) | 61 | 12 | 7 | 1 | 49/52 (94%) | 12/23 (52%) |
 | Lightroom Classic extras | 7 | 19 | 53 | 9 | — | 6/21 (29%) |
 | **Total** | 297 | 63 | 140 | 37 | 192/198 (97%) | 95/144 (66%) |
+
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **65.7%** of 500 in-scope rows — P0 98.5% of 198 · P1 79.9% of 144 · P2 11.7% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
