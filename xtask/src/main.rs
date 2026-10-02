@@ -9,8 +9,8 @@ mod ico;
 mod layers;
 mod parity;
 mod stats;
-mod web;
 mod version;
+mod web;
 
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};

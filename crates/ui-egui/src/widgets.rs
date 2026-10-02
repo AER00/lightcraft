@@ -156,6 +156,23 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         if resp.drag_stopped() {
             out.drag_stopped = true;
         }
+        // ↑ / ↓ while the pointer rests on the row nudge the value (⇧: five times as much)
+        if enabled && out.value.is_none() && ui.rect_contains_pointer(row) {
+            let (up, down, shift) = ui.input_mut(|i| {
+                let shift = i.modifiers.shift;
+                let m = if shift { egui::Modifiers::SHIFT } else { egui::Modifiers::NONE };
+                (i.consume_key(m, egui::Key::ArrowUp), i.consume_key(m, egui::Key::ArrowDown), shift)
+            });
+            if up || down {
+                let nv = nudged(spec, value, if up { 1.0 } else { -1.0 } * if shift { 5.0 } else { 1.0 });
+                if (nv - value).abs() > 1e-12 {
+                    out.value = Some(nv);
+                    out.drag_started = true;
+                    out.drag_stopped = true;
+                    v = nv;
+                }
+            }
+        }
     }
     // paint
     let hovered = resp.hovered() || resp.dragged();
@@ -182,6 +199,14 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
     out
+}
+
+/// `value` moved by `steps` keyboard nudges: one nudge is about 1/200 of the range, a whole
+/// number of the control's steps (exposure 0.05, most sliders 1, temperature 50 K).
+pub fn nudged(spec: &ControlSpec, value: f64, steps: f64) -> f64 {
+    let step = spec.step.max(1e-9);
+    let unit = if spec.id == "wb.temp" { 50.0 } else { (((spec.max - spec.min) / 200.0 / step).round().max(1.0)) * step };
+    (((value + unit * steps) / step).round() * step).clamp(spec.min, spec.max)
 }
 
 /// Collapsible section header ("› Light"). Returns the response (click toggles).
@@ -364,4 +389,28 @@ pub fn dropdown(ui: &mut Ui, id: &str, text: &str, font: egui::FontId, color: Co
     ui.painter().galley(pos2(r.left(), r.center().y - galley.size().y / 2.0), galley, c);
     paint(ui.painter(), Rect::from_center_size(pos2(r.right() - 7.0, r.center().y + 1.0), vec2(12.0, 12.0)), Icon::ChevronDown, c);
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nudges_are_a_sensible_step() {
+        let spec = |id, min, max, step| ControlSpec {
+            id,
+            label: "",
+            section: lightcraft_develop::controls::Section::Light,
+            min,
+            max,
+            default: 0.0,
+            step,
+            decimals: 2,
+            track: Track::Plain,
+        };
+        assert!((nudged(&spec("light.exposure", -5.0, 5.0, 0.01), 0.0, 1.0) - 0.05).abs() < 1e-9);
+        assert_eq!(nudged(&spec("light.contrast", -100.0, 100.0, 1.0), 10.0, -5.0), 5.0);
+        assert_eq!(nudged(&spec("wb.temp", 2000.0, 50000.0, 1.0), 6500.0, 1.0), 6550.0);
+        assert_eq!(nudged(&spec("light.contrast", -100.0, 100.0, 1.0), 99.0, 5.0), 100.0, "clamped");
+    }
 }

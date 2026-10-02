@@ -15,7 +15,7 @@ mod library;
 mod manage;
 mod masks;
 mod merge;
-mod missing;
+pub mod missing;
 mod organize;
 mod prefs;
 mod preset_files;

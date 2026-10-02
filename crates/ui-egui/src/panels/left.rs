@@ -74,6 +74,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                         let _ = app.run("library.source", json!({"kind": id}));
                     }
                 }
+                // photos whose files can't be found (checked every few seconds, not every frame)
+                let missing = missing_count(app, ui);
+                if (missing > 0 || src == LibrarySource::Missing)
+                    && row(app, ui, "missing", Icon::Folder, "Missing Photos", Some(missing), src == LibrarySource::Missing, 0.0).clicked()
+                {
+                    let _ = app.run("library.source", json!({"kind": "missing"}));
+                }
                 ui.add_space(10.0);
                 // Albums header
                 let (ar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
@@ -127,6 +134,22 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
             });
         });
+}
+
+/// How many library photos have no file (cached in egui memory, refreshed every 5 s).
+fn missing_count(app: &mut LightcraftApp, ui: &mut egui::Ui) -> usize {
+    let id = egui::Id::new("missing-count");
+    let now = ui.input(|i| i.time);
+    let rev = app.session.catalog.revision;
+    if let Some((n, at, r)) = ui.data(|d| d.get_temp::<(usize, f64, u64)>(id))
+        && now - at < 5.0
+        && r == rev
+    {
+        return n;
+    }
+    let n = lightcraft_engine::cmd::missing::missing(&app.session).len();
+    ui.data_mut(|d| d.insert_temp(id, (n, now, rev)));
+    n
 }
 
 /// Folders on this computer to browse without adding (Lightroom's Local): Pictures, Desktop,

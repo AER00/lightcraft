@@ -728,6 +728,26 @@ mod tests {
         assert_eq!(exposure(&h), 1.0);
     }
 
+    /// ↑ / ↓ over a slider nudge it (one undo step each); ⇧Z picks and moves to the next photo.
+    #[test]
+    fn slider_nudge_and_pick_advance() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "edit"}), t);
+        h.settle(SETTLE);
+        let exposure = |h: &Headless| h.app.session.develop_of(h.app.session.active().unwrap()).unwrap().light.exposure;
+        assert_eq!(h.request("ui.hoverWidget", json!({"id": "slider:light.exposure"}), t)["ok"], true);
+        h.request("ui.key", json!({"key": "Up"}), t);
+        h.request("ui.key", json!({"key": "Up", "shift": true}), t);
+        assert!((exposure(&h) - 0.30).abs() < 1e-9, "{}", exposure(&h));
+        h.request("ui.key", json!({"key": "Down"}), t);
+        assert!((exposure(&h) - 0.25).abs() < 1e-9, "{}", exposure(&h));
+        let first = h.app.session.active().unwrap();
+        h.request("ui.key", json!({"key": "Z", "shift": true}), t);
+        assert_eq!(h.app.session.catalog.photo(first).unwrap().flag, lightcraft_catalog::Flag::Pick);
+        assert_ne!(h.app.session.active(), Some(first), "advanced");
+    }
+
     /// ⌘Q (File → Quit LightCraft) closes the window.
     #[test]
     fn cmd_q_quits() {

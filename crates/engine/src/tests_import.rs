@@ -166,6 +166,9 @@ fn missing_files_are_found_and_relinked() {
     std::fs::rename(dir.join("old/b.png"), dir.join("moved/deeper/b.png")).unwrap();
     let m = s.execute("library.missing", &serde_json::json!({})).unwrap();
     assert_eq!(m.as_array().map(Vec::len), Some(2));
+    s.execute("library.source", &serde_json::json!({"kind": "missing"})).unwrap();
+    assert_eq!(s.visible_cloned().len(), 2, "the Missing Photos source lists them");
+    s.execute("library.source", &serde_json::json!({"kind": "all"})).unwrap();
     // one by hand
     let id = m[0]["id"].as_u64().unwrap();
     let name = std::path::Path::new(m[0]["path"].as_str().unwrap()).file_name().unwrap().to_string_lossy().to_string();

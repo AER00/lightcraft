@@ -15,6 +15,7 @@ pub const ALIASES: &[(&str, &str, &str)] = &[
     ("Space", "view.zoomToggle", "{}"),
     ("Shift+M", "version.create", "{}"),
     ("Shift+X", "photo.flag", r#"{"flag": "reject", "advance": true}"#),
+    ("Shift+Z", "photo.flag", r#"{"flag": "pick", "advance": true}"#),
     ("Shift+U", "photo.flag", r#"{"flag": "none", "advance": true}"#),
     // Shift+[ / Shift+] arrive as { / } on most layouts
     ("Shift+{", "brush.featherLess", "{}"),

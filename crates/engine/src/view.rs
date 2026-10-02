@@ -17,6 +17,8 @@ pub enum LibrarySource {
     Picks,
     /// A folder on disk ([`crate::Session::browse`]): its files, added to the library or not.
     Folder,
+    /// Photos whose original file can't be found (`library.missing`).
+    Missing,
 }
 
 /// The folder a [`LibrarySource::Folder`] view shows.
@@ -40,7 +42,7 @@ impl LibrarySource {
             LibrarySource::RecentlyDeleted => f.deleted = true,
             LibrarySource::Picks => f.flag = Some(lightcraft_catalog::Flag::Pick),
             // the folder itself is filled in by the session (it holds the path)
-            LibrarySource::Folder => {}
+            LibrarySource::Folder | LibrarySource::Missing => {}
         }
         f
     }
@@ -53,6 +55,7 @@ impl LibrarySource {
             LibrarySource::RecentlyDeleted => "Recently Deleted".into(),
             LibrarySource::Picks => "Picks".into(),
             LibrarySource::Folder => "Folder".into(),
+            LibrarySource::Missing => "Missing Photos".into(),
         }
     }
 }

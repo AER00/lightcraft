@@ -128,28 +128,37 @@ fn select_by(s: &mut Session, p: &Value) -> Result<Value> {
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         // ---- view source / filter / sort
-        cmd!("library.source", "Show Source", [], None, "{kind: all|recentlyAdded|album|recentlyDeleted|picks, id?: albumId}", always, |s, p| {
-            let kind = str_param(p, "kind").unwrap_or("all");
-            s.source = match kind {
-                "all" => LibrarySource::All,
-                "recentlyAdded" => LibrarySource::RecentlyAdded,
-                "recentlyDeleted" => LibrarySource::RecentlyDeleted,
-                "picks" => LibrarySource::Picks,
-                "album" => {
-                    let a = album_param(p, "id", "library.source")?;
-                    if s.catalog.album(a).is_none_or(|a| a.folder) {
-                        return Err(bad("library.source", "no such album"));
+        cmd!(
+            "library.source",
+            "Show Source",
+            [],
+            None,
+            "{kind: all|recentlyAdded|album|recentlyDeleted|picks|missing, id?: albumId}",
+            always,
+            |s, p| {
+                let kind = str_param(p, "kind").unwrap_or("all");
+                s.source = match kind {
+                    "all" => LibrarySource::All,
+                    "recentlyAdded" => LibrarySource::RecentlyAdded,
+                    "recentlyDeleted" => LibrarySource::RecentlyDeleted,
+                    "picks" => LibrarySource::Picks,
+                    "missing" => LibrarySource::Missing,
+                    "album" => {
+                        let a = album_param(p, "id", "library.source")?;
+                        if s.catalog.album(a).is_none_or(|a| a.folder) {
+                            return Err(bad("library.source", "no such album"));
+                        }
+                        LibrarySource::Album(a)
                     }
-                    LibrarySource::Album(a)
+                    other => return Err(bad("library.source", format!("unknown source `{other}`"))),
+                };
+                let vis = s.visible_cloned();
+                if s.selection.active.is_none_or(|a| !vis.contains(&a)) {
+                    s.selection = vis.first().map(|f| Selection::single(*f)).unwrap_or_default();
                 }
-                other => return Err(bad("library.source", format!("unknown source `{other}`"))),
-            };
-            let vis = s.visible_cloned();
-            if s.selection.active.is_none_or(|a| !vis.contains(&a)) {
-                s.selection = vis.first().map(|f| Selection::single(*f)).unwrap_or_default();
+                Ok(json!({"count": vis.len()}))
             }
-            Ok(json!({"count": vis.len()}))
-        }),
+        ),
         cmd!(
             "library.filter",
             "Filter",

@@ -382,6 +382,10 @@ impl Session {
                     self.visible.reverse();
                 }
             }
+            if self.source == LibrarySource::Missing {
+                let missing: std::collections::HashSet<PhotoId> = cmd::missing::missing(self).into_iter().map(|m| m.0).collect();
+                self.visible.retain(|id| missing.contains(id));
+            }
             if self.source != LibrarySource::RecentlyDeleted {
                 self.visible = self.catalog.arrange_stacks(&self.visible);
             }

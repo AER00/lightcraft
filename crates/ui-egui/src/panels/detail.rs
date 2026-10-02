@@ -315,7 +315,17 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     // drawn and hit-tested above the loupe and its tools: clicks on it pan
     navigator(app, ui, canvas, img_rect, id);
-    resp.context_menu(|ui| super::grid::context_menu(app, ui, id));
+    resp.context_menu(|ui| {
+        ui.menu_button("Zoom", |ui| {
+            for (label, cmd) in [("Fit", "view.zoomFit"), ("100%", "view.zoom100"), ("Zoom In", "view.zoomIn"), ("Zoom Out", "view.zoomOut")] {
+                if ui.button(label).clicked() {
+                    let _ = app.run(cmd, json!({}));
+                }
+            }
+        });
+        ui.separator();
+        super::grid::context_menu(app, ui, id);
+    });
 }
 
 /// The info overlay at the canvas' top left (`view.infoOverlay`): file name with the capture date

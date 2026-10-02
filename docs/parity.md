@@ -45,12 +45,12 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 12 | 1 | 4 | 1 | 8/8 (100%) | 4/5 (80%) |
-| Y. Menus | 69 | 8 | 8 | 8 | 46/47 (98%) | 18/23 (78%) |
-| Z. Keyboard shortcuts (desktop) | 63 | 12 | 5 | 1 | 49/52 (94%) | 12/23 (52%) |
-| Lightroom Classic extras | 8 | 20 | 51 | 9 | — | 7/21 (33%) |
-| **Total** | 310 | 62 | 128 | 37 | 193/198 (97%) | 98/144 (68%) |
+| Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
+| Z. Keyboard shortcuts (desktop) | 65 | 10 | 5 | 1 | 49/52 (94%) | 14/23 (61%) |
+| Lightroom Classic extras | 10 | 19 | 50 | 9 | — | 9/21 (43%) |
+| **Total** | 315 | 58 | 127 | 37 | 193/198 (97%) | 103/144 (72%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **68.2%** of 500 in-scope rows — P0 98.7% of 198 · P1 81.6% of 144 · P2 17.7% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **68.8%** of 500 in-scope rows — P0 98.7% of 198 · P1 83.7% of 144 · P2 17.7% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -582,7 +582,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-HELP-FEEDBACK | Send feedback | P2 | ⬜ | | |
 | MENU-HELP-SYSINFO | System info | P2 | ⬜ | `cmd:library.info` | library info only |
 | MENU-CTX-GRID | Photo context menu | P0 | ✅ | `crates/ui-egui/src/panels/grid.rs` (`context_menu`) | rate, flag, label, add to / remove from album, rename, virtual copy, version, stack, copy / paste / paste selected, reset, merge, rotate, show in Finder, export / export with preset, set as album cover (in an album), delete |
-| MENU-CTX-DETAIL | Loupe context menu | P1 | 🟡 | `crates/ui-egui/src/panels/detail.rs` | same as grid; no zoom submenu |
+| MENU-CTX-DETAIL | Loupe context menu | P1 | ✅ | `crates/ui-egui/src/panels/detail.rs` | Zoom submenu (fit, 100%, in, out), then the photo menu |
 | MENU-CTX-ALBUM | Album / folder row menu | P0 | ✅ | `crates/ui-egui/src/panels/left.rs` (`folder_menu`), `cmd:album.move`, `cmd:dialog.export` | add selected, export album (dialog / preset), move to a folder or the top level, rename, delete; smart albums: update rules |
 | MENU-CTX-MASK | Mask / component menu | P0 | 🟡 | `crates/ui-egui/src/panels/masking.rs` (`mask_menu`) | mask rows: duplicate (and invert), invert, show/hide, move, rename, delete; components: add/subtract only (no per-component menu) |
 | MENU-CTX-PRESET | Preset menu | P1 | ✅ | `crates/ui-egui/src/panels/presets.rs` | favourite, update with current settings, rename, move to group, delete; group: export |
@@ -655,7 +655,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-MASKING | Masking — M | P0 | ✅ | `cmd:panel.masking` | |
 | KEY-ERASE | Erase while held — ⌥ | P0 | ✅ | `crates/ui-egui/src/panels/detail.rs`, `crates/ui-egui/src/panels/masking.rs` | ⌥ while painting flips Add ↔ Erase for that stroke; Add/Erase buttons too |
 | KEY-RATEADVANCE | Rate and advance — ⇧0…5 | P1 | ✅ | `crates/ui-egui/src/shortcuts.rs` → `cmd:photo.rate` (`advance`) | |
-| KEY-FLAGADVANCE | Flag and advance — ⇧Z / ⇧X / ⇧U | P1 | 🟡 | `cmd:photo.flag` (`advance`) | ⇧X and ⇧U bound; pick-and-advance has no key (⇧P = presets) |
+| KEY-FLAGADVANCE | Flag and advance — ⇧Z / ⇧X / ⇧U | P1 | ✅ | `cmd:photo.flag` (`advance`), `crates/ui-egui/src/shortcuts.rs` | ⇧Z pick, ⇧X reject, ⇧U unflag, each moving to the next photo |
 | KEY-NEXTPREV | Next / previous — → / ← | P0 | ✅ | `cmd:library.next`, `cmd:library.previous` | |
 | KEY-BA-CYCLE | Before/after — Y | P0 | ✅ | `cmd:view.beforeAfter` | toggles side by side (no cycling) |
 | KEY-BA-TOPBOTTOM | Before/after top/bottom — ⌥Y | P1 | ✅ | `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | ⌥Y, ⇧⌥Y |
@@ -670,7 +670,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-CROP-RESET | Reset crop — ⌥⌘R | P0 | ✅ | `cmd:crop.reset` | |
 | KEY-STRAIGHTEN | Straighten while held — ⌘ drag | P1 | ⬜ | | |
 | KEY-SLIDER-RESET | Reset slider — double-click | P0 | ✅ | `crates/ui-egui/src/widgets.rs` | |
-| KEY-SLIDER-NUDGE | Nudge slider — ↑/↓ | P1 | 🟡 | `cmd:develop.adjust` | command exists; keyboard nudging unverified |
+| KEY-SLIDER-NUDGE | Nudge slider — ↑/↓ | P1 | ✅ | `crates/ui-egui/src/widgets.rs` (`nudged`), `cmd:develop.adjust` | ↑/↓ over any slider: ≈ 1/200 of its range (exposure 0.05, most sliders 1, temperature 50 K); ⇧ ×5; one undo step each |
 | KEY-SHORTCUTS | Shortcut list — ⌘/ | P1 | ✅ | `cmd:app.shortcuts` | |
 | KEY-HELP | Help — F1 | P2 | ✅ | `cmd:app.help` | |
 | KEY-VIDEO-PLAY | Play/pause video — Space | P1 | ⬜ | | |
@@ -688,11 +688,11 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-IMPORT | Full import dialog | P1 | 🟡 | `cmd:library.import` (`mode: copy`) | copy/add + duplicate skip; no file renaming, apply-during-import, destination organising, import presets |
 | LRC-LIB-AUTOIMPORT | Watched-folder import | P2 | ⬜ | | |
 | LRC-LIB-TETHER | Tethered capture | P2 | ⬜ | | |
-| LRC-LIB-VIEWS | Grid / loupe / compare / survey / people | P1 | 🟡 | `cmd:view.photoGrid`, `cmd:view.detail` | no compare, survey, people; no grid cell styles beyond filenames |
+| LRC-LIB-VIEWS | Grid / loupe / compare / survey / people | P1 | 🟡 | `cmd:view.photoGrid`, `cmd:view.squareGrid`, `cmd:view.detail`, `cmd:view.compare`, `cmd:view.survey` | grid, square grid, loupe, compare, survey; no people view; grid cell styles: filenames only |
 | LRC-LIB-COMPARE | Compare view | P1 | ✅ | `cmd:view.compare` | ⇧C (C is Crop here); swap, make select; zoom always linked |
 | LRC-LIB-SURVEY | Survey view | P2 | ✅ | `cmd:view.survey` | N |
 | LRC-LIB-REFVIEW | Reference view | P2 | ⬜ | | |
-| LRC-LIB-CATALOG-PANEL | Catalog sets | P1 | 🟡 | `cmd:library.source` | all, recently added, picks, recently deleted; no missing/problem sets |
+| LRC-LIB-CATALOG-PANEL | Catalog sets | P1 | ✅ | `cmd:library.source` (`missing`) | all, recently added, picks, recently deleted, missing photos (when any) |
 | LRC-LIB-FOLDERS | Disk folder tree | P1 | 🟡 | `cmd:library.browse`, `crates/ui-egui/src/panels/left.rs` (`local_section`) | standard places + the browsed folder + Browse Folder…, breadcrumb navigation upwards; no expandable folder tree, no folder rename/move |
 | LRC-LIB-COLLECTIONS | Collections & sets | P1 | 🟡 | `cmd:album.create` | albums + folders; no smart / quick / target collections |
 | LRC-LIB-SMARTCOLL | Smart-collection rules | P1 | 🟡 | `cmd:album.createSmart`, `crates/catalog/src/query.rs` | the filter fields + date range; no rule editor, any/none groups or operators beyond ≥/=/≤ |
@@ -702,7 +702,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-VC | Virtual copies | P1 | ✅ | `cmd:photo.virtualCopy` | ⌘' |
 | LRC-LIB-LABELS | Colour-label sets | P1 | ⬜ | | |
 | LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | 🟡 | `crates/catalog/src/keywords.rs`, `cmd:keyword.list` | hierarchical `a\|b\|c` keywords (tree, parent filters include children, rename moves children); no keyword sets or painter |
-| LRC-LIB-METADATA | Metadata panel & presets | P1 | 🟡 | `cmd:photo.setMeta`, `cmd:photo.saveMetadataToFile`, `cmd:photo.readMetadataFromFile` | no metadata presets, capture-time edit, copyright status |
+| LRC-LIB-METADATA | Metadata panel & presets | P1 | 🟡 | `cmd:photo.setMeta`, `cmd:photo.saveMetadataToFile`, `cmd:photo.readMetadataFromFile`, `cmd:dialog.captureTime` | IPTC core fields, accessibility text, place, capture-time edit; no metadata presets, copyright status |
 | LRC-LIB-QUICKDEV | Quick develop | P2 | ⬜ | | |
 | LRC-LIB-PEOPLE | People view | P2 | ⬜ | | |
 | LRC-LIB-COMMENTS | Comments panel | P2 | ⬜ | | |
@@ -714,11 +714,11 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-DEV-SNAPSHOTS | Named snapshots | P1 | ✅ | `cmd:version.create`, `cmd:version.restore` | = versions |
 | LRC-DEV-HISTORY | Full history panel | P1 | ✅ | `cmd:history.list`, `cmd:history.restore`, `cmd:history.clear` | row menu: copy step to before, create version from step, clear history |
 | LRC-DEV-SOFTPROOF | Soft proofing | P2 | ⬜ | | |
-| LRC-DEV-AUTOSYNC | Sync / auto sync / paste previous | P1 | 🟡 | `cmd:develop.sync` | no auto sync or paste-from-previous |
+| LRC-DEV-AUTOSYNC | Sync / auto sync / paste previous | P1 | 🟡 | `cmd:develop.sync`, `cmd:develop.pastePrevious` | sync and paste from previous; no auto sync |
 | LRC-DEV-MATCHEXP | Match total exposures | P2 | ⬜ | | |
 | LRC-DEV-CALIB | Calibration panel | P1 | ✅ | `ctl:calibration.*` | |
 | LRC-DEV-TAT | Targeted adjustment tools | P1 | ✅ | `cmd:develop.targeted` (`target`: curve / hue / sat / lum) | |
-| LRC-DEV-DEFAULTS | Per-camera raw defaults | P1 | ⬜ | | |
+| LRC-DEV-DEFAULTS | Per-camera raw defaults | P1 | ✅ | `cmd:library.preferences` (`camera`, `import.perCamera`), `crates/ui-egui/src/panels/settings.rs` | Settings → Import: raw default and per-camera presets |
 | LRC-DEV-VIEWOPTIONS | Develop view options | P2 | ⬜ | | |
 | LRC-DEV-VIDEO | Video frame capture | P2 | ⬜ | | |
 | LRC-MAP-VIEW | Map view | P2 | ⬜ | | |
