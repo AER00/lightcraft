@@ -257,3 +257,41 @@ fn masks_reorder_and_duplicate_and_invert() {
     assert_eq!(d.masks[pos].components, d.masks[pos - 1].components);
     assert_eq!(s.active_mask, Some(copy));
 }
+
+#[test]
+fn before_is_the_import_state_and_can_be_set_copied_and_swapped() {
+    let mut s = demo();
+    let id = s.active().unwrap();
+    let import = s.catalog.photo(id).unwrap().import_defaults();
+    s.execute("develop.set", &json!({"values": {"light.exposure": 1.5}})).unwrap();
+    s.execute("crop.set", &json!({"rect": [0.1, 0.1, 0.9, 0.9]})).unwrap();
+    let before = |s: &Session| s.before_settings(s.catalog.photo(s.active().unwrap()).unwrap());
+    // default: the import state, with the current crop so both sides line up
+    let b = before(&s);
+    assert_eq!(b.light.exposure, import.light.exposure);
+    assert_eq!(b.crop, active_dev(&s).crop);
+    // from the current settings, then a history step
+    s.execute("beforeAfter.copyAfterToBefore", &json!({})).unwrap();
+    assert_eq!(before(&s).light.exposure, 1.5);
+    s.execute("develop.set", &json!({"values": {"light.exposure": -1.0}})).unwrap();
+    let steps = s.catalog.photo(id).unwrap().history.len();
+    let r = s.execute("beforeAfter.setBefore", &json!({"source": "history", "index": steps - 1})).unwrap();
+    assert_eq!(r["before"], "custom");
+    assert_eq!(before(&s).light.exposure, -1.0);
+    assert!(s.execute("beforeAfter.setBefore", &json!({"source": "history", "index": 999})).is_err());
+    // swap: the photo gets the before settings, the before side the old current ones
+    s.execute("beforeAfter.setBefore", &json!({"source": "import"})).unwrap();
+    s.execute("beforeAfter.swap", &json!({})).unwrap();
+    assert_eq!(active_dev(&s).light.exposure, import.light.exposure);
+    assert_eq!(before(&s).light.exposure, -1.0);
+    // copy before → after is one undoable edit
+    s.execute("beforeAfter.copyBeforeToAfter", &json!({})).unwrap();
+    assert_eq!(active_dev(&s).light.exposure, -1.0);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(active_dev(&s).light.exposure, import.light.exposure);
+    // the before render follows (the render key changes with the before settings)
+    let k1 = s.render_job(id, 64, 64, true, true).unwrap().key;
+    s.execute("beforeAfter.resetBefore", &json!({})).unwrap();
+    let k2 = s.render_job(id, 64, 64, true, true).unwrap().key;
+    assert_ne!(k1, k2);
+}

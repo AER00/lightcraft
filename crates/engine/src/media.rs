@@ -507,7 +507,7 @@ impl crate::Session {
         let p = self.catalog.photo(id)?.clone();
         let level = SourceLevel::for_size(max_w.max(max_h));
         let source = self.media.source_ref(&p, level);
-        let settings = if before { Arc::new(lightcraft_pipeline::before_settings(&p.develop)) } else { p.develop.clone() };
+        let settings = if before { Arc::new(self.before_settings(&p)) } else { p.develop.clone() };
         let request = RenderRequest { apply_crop, ..RenderRequest::fit(max_w, max_h) };
         // the photo id is part of the key: two photos with the same settings and size must not
         // share a result (a view slot showing photo A would otherwise look current for photo B)

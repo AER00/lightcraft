@@ -519,6 +519,11 @@ fn activity(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             if resp.clicked() {
                 let _ = app.run("history.restore", json!({"index": i}));
             }
+            resp.context_menu(|ui| {
+                if ui.button("Copy History Step Settings to Before").clicked() {
+                    let _ = app.run("beforeAfter.setBefore", json!({"source": "history", "index": i}));
+                }
+            });
         }
     });
 }

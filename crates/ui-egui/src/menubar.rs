@@ -113,6 +113,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "view.showOriginal",
             "view.beforeAfter",
             "view.beforeAfterSplit",
+            "@Before/After Settings",
             "---",
             "view.zoomIn",
             "view.zoomOut",

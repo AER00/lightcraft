@@ -107,6 +107,9 @@ pub struct Session {
     pub last_export: Option<serde_json::Value>,
     /// The user's export presets (built-ins: [`export::builtin_presets`]), persisted in prefs.json.
     pub export_presets: Vec<export::ExportPreset>,
+    /// Before/After: the "before" settings chosen per photo (this session; default: the photo's
+    /// import state). See `cmd/before.rs`.
+    pub before: std::collections::HashMap<PhotoId, Arc<DevelopSettings>>,
     /// File probes from the last import review (`library.importPreview`), reused by the import.
     pub import_probes: std::collections::HashMap<String, media::ProbeInfo>,
     /// Develop defaults applied on import (persisted in prefs.json).
@@ -150,6 +153,7 @@ impl Session {
             xmp: sidecar::XmpPrefs::default(),
             last_export: None,
             export_presets: Vec::new(),
+            before: Default::default(),
             import_probes: Default::default(),
             import_defaults: import::ImportDefaults::default(),
             cache_mb: 0,

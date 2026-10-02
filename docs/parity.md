@@ -23,7 +23,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 |---|---:|---:|---:|---:|---:|---:|
 | A. Import (IMP) | 5 | 3 | 5 | 1 | 2/4 (50%) | 2/4 (50%) |
 | B. Library management (LIB) | 17 | 2 | 6 | 2 | 9/9 (100%) | 7/9 (78%) |
-| C. Views & navigation (VIEW) | 13 | 1 | 3 | 0 | 8/9 (89%) | 4/4 (100%) |
+| C. Views & navigation (VIEW) | 14 | 0 | 3 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
 | E. Metadata (META) | 2 | 2 | 2 | 0 | 2/2 (100%) | 0/2 (0%) |
 | F. Edit panel — global adjustments (EDIT) | 36 | 2 | 10 | 1 | 28/28 (100%) | 8/14 (57%) |
@@ -48,7 +48,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 61 | 11 | 13 | 8 | 46/47 (98%) | 13/23 (57%) |
 | Z. Keyboard shortcuts (desktop) | 58 | 11 | 11 | 1 | 49/52 (94%) | 9/23 (39%) |
 | Lightroom Classic extras | 4 | 20 | 55 | 9 | — | 3/21 (14%) |
-| **Total** | 273 | 71 | 156 | 37 | 191/198 (96%) | 72/144 (50%) |
+| **Total** | 274 | 70 | 156 | 37 | 192/198 (97%) | 72/144 (50%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -155,7 +155,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-VIEW-FILMSTRIP | Filmstrip | P0 | ✅ | `cmd:view.filmstrip` | |
 | LR-VIEW-ZOOM | Zoom & pan | P0 | ✅ | `cmd:view.zoomFit`, `cmd:view.zoom100`, `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle` | steps 25–800 % (not 6–1600 %); Fill only in the bottom bar |
 | LR-VIEW-NAVIGATOR | Navigator mini map | P1 | ✅ | `cmd:view.navigator`, `crates/ui-egui/src/panels/detail.rs` | shown while zoomed (bottom right); click/drag pans |
-| LR-VIEW-BEFOREAFTER | Before / after | P0 | 🟡 | `cmd:view.showOriginal`, `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | all four layouts; "before" is always the original (no before-state from history) |
+| LR-VIEW-BEFOREAFTER | Before / after | P0 | ✅ | `cmd:view.showOriginal`, `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom`, `cmd:beforeAfter.setBefore`, `cmd:beforeAfter.copyAfterToBefore`, `cmd:beforeAfter.copyBeforeToAfter`, `cmd:beforeAfter.swap`, `cmd:beforeAfter.resetBefore` | all four layouts; before = the import state (defaults + import preset) or a chosen history step / version / the current settings; copy and swap (View → Before/After Settings, History row menu). The chosen before lasts for the session |
 | LR-VIEW-COMPARE | Compare two photos | P1 | ✅ | `cmd:view.compare`, `cmd:compare.swap`, `cmd:compare.makeSelect`, `crates/ui-egui/src/panels/compare.rs` | select / candidate, synced zoom + pan, arrows move the candidate; no zoom-link toggle |
 | LR-VIEW-SURVEY | Survey view [Classic] | P2 | ✅ | `cmd:view.survey`, `crates/ui-egui/src/panels/compare.rs` | selection tiled (≤ 48), keys act on the active photo, hover × removes |
 | LR-VIEW-INFOOVERLAY | Info overlay on the photo | P1 | ✅ | `cmd:view.infoOverlay` | off / file + date + size / exposure + camera; ⌘I cycles (I in full screen; elsewhere I stays the Info panel) |
