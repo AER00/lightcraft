@@ -205,6 +205,9 @@ pub struct UiState {
     /// A mask being renamed in the Masks list: its id and the edited name.
     #[serde(skip)]
     pub renaming_mask: Option<(u32, String)>,
+    /// Close the window on the next frame (File → Quit).
+    #[serde(skip)]
+    pub quit: bool,
     /// Selected curve channel in the Curve flyout.
     pub curve_channel: String,
     /// Selected mixer mode: "hue" | "saturation" | "luminance" | "all".
@@ -394,6 +397,7 @@ impl Default for UiState {
             search: String::new(),
             focus_search: false,
             renaming_mask: None,
+            quit: false,
             curve_channel: "parametric".into(),
             mixer_mode: "hue".into(),
             grading_mode: "3way".into(),

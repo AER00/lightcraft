@@ -45,10 +45,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 4 | 1 | 3 | 3 | 1/1 (100%) | 3/4 (75%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 11 | 2 | 4 | 1 | 8/8 (100%) | 3/5 (60%) |
-| Y. Menus | 59 | 13 | 13 | 8 | 44/47 (94%) | 13/23 (57%) |
-| Z. Keyboard shortcuts (desktop) | 56 | 13 | 11 | 1 | 47/52 (90%) | 9/23 (39%) |
+| Y. Menus | 61 | 11 | 13 | 8 | 46/47 (98%) | 13/23 (57%) |
+| Z. Keyboard shortcuts (desktop) | 58 | 11 | 11 | 1 | 49/52 (94%) | 9/23 (39%) |
 | Lightroom Classic extras | 4 | 20 | 55 | 9 | — | 3/21 (14%) |
-| **Total** | 269 | 75 | 156 | 37 | 187/198 (94%) | 72/144 (50%) |
+| **Total** | 273 | 71 | 156 | 37 | 191/198 (96%) | 72/144 (50%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -501,9 +501,9 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-APP-SYNC | Sync status / pause | OOS | 🚫 | | |
 | MENU-APP-SIGNOUT | Sign out | OOS | 🚫 | | |
 | MENU-APP-HIDE | Hide / hide others / show all | P1 | 🟡 | | platform window defaults (unverified) |
-| MENU-APP-QUIT | Quit | P0 | 🟡 | | platform window defaults (unverified) |
+| MENU-APP-QUIT | Quit | P0 | ✅ | `cmd:app.quit`, `apps/lightcraft/src/native_menu.rs` | macOS: app menu (native); elsewhere: File → Quit LightCraft |
 | MENU-FILE-ADDPHOTOS | Add Photos… | P0 | ✅ | `cmd:file.addPhotos` | |
-| MENU-FILE-ADDFOLDER | Add Folder… | P0 | 🟡 | `cmd:library.import` (folders, recursive) | no folder picker entry |
+| MENU-FILE-ADDFOLDER | Add Folder… | P0 | ✅ | `cmd:file.addFolder`, `cmd:library.importPreview` | folder picker (desktop) → the import review, subfolders included; `path` param for agents |
 | MENU-FILE-MIGRATE | Migrate photos | OOS | 🚫 | | |
 | MENU-FILE-NEWALBUM | New Album… | P0 | ✅ | `cmd:dialog.newAlbum` | |
 | MENU-FILE-NEWFOLDER | New Folder… | P0 | ✅ | `cmd:dialog.newFolder` | ⇧⌘N |
@@ -631,7 +631,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-STACK | Group / ungroup stack — ⌘G / ⇧⌘G | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup` | also S expand/collapse, ⇧S top of stack |
 | KEY-GUIDEDUPRIGHT | Guided Upright — ⇧G | P1 | 🟡 | `cmd:geometry.upright` | button in the crop panel; ⇧G = Square Grid |
 | KEY-HIDE | Hide / hide others — ⌘H / ⌥⌘H | P1 | 🟡 | | platform default (unverified) |
-| KEY-QUIT | Quit — ⌘Q | P0 | 🟡 | | platform default (unverified) |
+| KEY-QUIT | Quit — ⌘Q | P0 | ✅ | `cmd:app.quit` | ⌘Q (Ctrl+Q off macOS) |
 | KEY-CREATEVERSION | Create version — ⇧M | P1 | ✅ | `cmd:version.create` | secondary binding (primary ⌘⇧S) |
 | KEY-CLOSEWINDOW | Close window — ⌘W | P1 | 🟡 | | platform default (unverified) |
 | KEY-DELETE | Delete photo — ⌫ | P0 | ✅ | `cmd:photo.delete` | |
@@ -651,7 +651,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-RATING | Ratings — 0…5 | P0 | ✅ | `crates/ui-egui/src/shortcuts.rs` → `cmd:photo.rate` | |
 | KEY-LABELS | Labels — 6…9 | P1 | ✅ | `crates/ui-egui/src/shortcuts.rs` → `cmd:photo.label` | |
 | KEY-MASKING | Masking — M | P0 | ✅ | `cmd:panel.masking` | |
-| KEY-ERASE | Erase while held — ⌥ | P0 | 🟡 | `crates/ui-egui/src/panels/masking.rs` | Add/Erase toggle buttons; hold-to-erase unverified |
+| KEY-ERASE | Erase while held — ⌥ | P0 | ✅ | `crates/ui-egui/src/panels/detail.rs`, `crates/ui-egui/src/panels/masking.rs` | ⌥ while painting flips Add ↔ Erase for that stroke; Add/Erase buttons too |
 | KEY-RATEADVANCE | Rate and advance — ⇧0…5 | P1 | ✅ | `crates/ui-egui/src/shortcuts.rs` → `cmd:photo.rate` (`advance`) | |
 | KEY-FLAGADVANCE | Flag and advance — ⇧Z / ⇧X / ⇧U | P1 | 🟡 | `cmd:photo.flag` (`advance`) | ⇧X and ⇧U bound; pick-and-advance has no key (⇧P = presets) |
 | KEY-NEXTPREV | Next / previous — → / ← | P0 | ✅ | `cmd:library.next`, `cmd:library.previous` | |

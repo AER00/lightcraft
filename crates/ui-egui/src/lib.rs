@@ -97,6 +97,10 @@ pub struct LightcraftApp {
     shadow: Option<headless::HeadlessView>,
     /// Synthetic input events (from the control channel) injected one step per frame.
     pub synthetic: Vec<egui::Event>,
+    /// Modifiers announced for synthetic input (held from a button down to its release).
+    synthetic_mods: egui::Modifiers,
+    /// Clear `synthetic_mods` on the next frame.
+    synthetic_mods_release: bool,
     styled: bool,
     fonts_ready: bool,
     last_time: f64,
@@ -148,6 +152,8 @@ impl LightcraftApp {
             screenshot_token: 0,
             shadow: None,
             synthetic: vec![],
+            synthetic_mods: egui::Modifiers::NONE,
+            synthetic_mods_release: false,
             styled: false,
             fonts_ready: false,
             last_time: 0.0,
@@ -383,6 +389,11 @@ impl LightcraftApp {
 
     /// Inject synthetic events (pointer events one per frame; key sequences up to the release).
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
+        // the frame after a synthetic release / key: modifiers back up
+        if std::mem::take(&mut self.synthetic_mods_release) && self.synthetic_mods != egui::Modifiers::NONE {
+            self.synthetic_mods = egui::Modifiers::NONE;
+            raw.events.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        }
         if self.synthetic.is_empty() {
             return;
         }
@@ -392,6 +403,21 @@ impl LightcraftApp {
         };
         if let Some(egui::Event::PointerMoved(p) | egui::Event::PointerButton { pos: p, .. }) = self.synthetic.first() {
             raw.events.push(egui::Event::PointerMoved(*p));
+        }
+        // egui's `input.modifiers` follow `ModifiersChanged` events, not the modifiers carried by
+        // pointer/key events: announce the injected events' modifiers (held from button down to
+        // the frame after up), so ⌥-drag, ⇧-click … work through the control channel
+        let carried = self.synthetic[..n].iter().find_map(|e| match e {
+            egui::Event::PointerButton { pressed, modifiers, .. } => Some((*modifiers, !pressed)),
+            egui::Event::Key { modifiers, .. } => Some((*modifiers, true)),
+            _ => None,
+        });
+        if let Some((m, ends)) = carried {
+            if m != self.synthetic_mods {
+                self.synthetic_mods = m;
+                raw.events.push(egui::Event::ModifiersChanged(m));
+            }
+            self.synthetic_mods_release = ends;
         }
         raw.events.extend(self.synthetic.drain(..n));
     }
@@ -404,6 +430,9 @@ impl LightcraftApp {
             return;
         }
         let t0 = now_ms();
+        if std::mem::take(&mut self.ui.quit) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         // panels set it again this frame while the pointer rests on a preset or profile
         self.hover_preview = None;
         if self.ui.fullscreen {

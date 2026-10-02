@@ -591,6 +591,41 @@ mod tests {
         assert!(last["files"][0]["width"].as_u64().is_some_and(|w| w <= 64));
     }
 
+    /// ⌘Q (File → Quit LightCraft) closes the window.
+    #[test]
+    fn cmd_q_quits() {
+        let mut h = demo([900.0, 600.0]);
+        assert!(!h.quit_requested());
+        h.request("ui.key", json!({"key": "Q", "cmd": true}), Duration::from_secs(10));
+        h.step();
+        h.step();
+        assert!(h.quit_requested());
+    }
+
+    /// File → Add Folder… opens the import review for a folder (searched recursively).
+    #[test]
+    fn add_folder_opens_the_import_review() {
+        let mut h = demo([1200.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let dir = std::env::temp_dir().join(format!("lc-addfolder-{}", std::process::id()));
+        let sub = dir.join("day 2");
+        std::fs::create_dir_all(&sub).unwrap();
+        let img = lightcraft_raster::Rgba8::from_fn(24, 16, |x, y| [(x * 9) as u8, (y * 12) as u8, 80, 255]);
+        let png = lightcraft_engine::export::encode_image(
+            &img,
+            &lightcraft_engine::export::ExportOptions { format: lightcraft_engine::export::ExportFormat::Png, ..Default::default() },
+        )
+        .unwrap();
+        std::fs::write(dir.join("a.png"), &png).unwrap();
+        std::fs::write(sub.join("b.png"), &png).unwrap();
+        let r = h.request("engine.execute", json!({"command": "file.addFolder", "params": {"path": dir.to_string_lossy()}}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review: {:?}", h.app.ui.dialog) };
+        assert_eq!(opts.candidates.len(), 2, "both files, the subfolder's too");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// ⇧⌘V opens Paste Selected Settings (prefilled with the copied groups); unchecking a group
     /// leaves it alone. ⌘F puts typing into the search field.
     #[test]

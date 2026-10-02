@@ -104,6 +104,19 @@ fn brush_strokes_carry_auto_mask() {
     let d = develop(&h);
     let MaskShape::Brush { strokes } = &d.masks[0].components[0].shape else { panic!("brush") };
     assert!(strokes[0].auto_mask && strokes[0].points.len() >= 2, "{strokes:?}");
+    assert!(!strokes[0].erase);
+    // holding ⌥ paints an erase stroke without switching the brush to Erase
+    let r = h.request(
+        "ui.pointer",
+        json!({"events": [{"kind": "down", "x": 0.35, "y": 0.5}, {"kind": "drag", "x": 0.45, "y": 0.5}, {"kind": "up", "x": 0.45, "y": 0.5}], "alt": true}),
+        T,
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    let d = develop(&h);
+    let MaskShape::Brush { strokes } = &d.masks[0].components[0].shape else { panic!("brush") };
+    assert_eq!(strokes.len(), 2, "{strokes:?}");
+    assert!(strokes[1].erase, "⌥ erases");
+    assert!(!h.app.ui.brush_erase, "the brush mode is unchanged");
     h.settle(SETTLE);
 }
 

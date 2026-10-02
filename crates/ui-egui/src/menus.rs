@@ -86,6 +86,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.mergePanorama", "Panorama…", Some("Ctrl+M"), "Photo>Photo Merge"),
     ("dialog.mergeHdrPanorama", "HDR Panorama…", None, "Photo>Photo Merge"),
     ("file.addPhotos", "Add Photos…", Some("Cmd+Shift+I"), "File"),
+    ("file.addFolder", "Add Folder…", None, "File"),
+    ("app.quit", "Quit LightCraft", Some("Cmd+Q"), "File"),
     ("file.importPresets", "Import Presets…", None, "File"),
     ("file.exportPresets", "Export Presets…", None, "File"),
     ("app.settings", "Settings…", Some("Cmd+,"), "Edit"),
@@ -569,6 +571,21 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             // review first: the import dialog lists what was found
             crate::import::open(app, paths)
         }
+        "app.quit" => {
+            app.ui.quit = true;
+            Ok(Value::Null)
+        }
+        "file.addFolder" => {
+            // a folder (searched recursively) into the import review
+            let path = match p.get("path").and_then(Value::as_str) {
+                Some(x) => Some(x.to_string()),
+                None => app.services.pick_folder.as_mut().and_then(|f| f()),
+            };
+            match path {
+                Some(path) => crate::import::open(app, vec![path]),
+                None => Ok(Value::Null),
+            }
+        }
         "file.importPresets" => {
             let paths = match p.get("paths").and_then(Value::as_array) {
                 Some(a) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
@@ -656,7 +673,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         "file.exportPresets" => app.session.presets.iter().any(|p| !p.builtin),
         "view.compare" => app.session.catalog.len() > 1,
         "view.fullScreenPreview" | "view.infoOverlay" | "view.navigator" => app.session.active().is_some() || app.ui.fullscreen,
-        "app.openLibrary" => app.services.pick_folder.is_some(),
+        "app.openLibrary" | "file.addFolder" => app.services.pick_folder.is_some(),
         "compare.swap" | "compare.makeSelect" => app.ui.view == ViewMode::Compare,
         s if s.starts_with("dialog.merge") => app.session.targets(&serde_json::json!({})).len() >= 2 && app.merge.final_task.is_none(),
         _ => true,

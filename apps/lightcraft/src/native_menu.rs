@@ -224,8 +224,11 @@ impl NativeMenu {
                 ]);
             }
             // About and Settings live in the app menu on macOS
-            let nodes: Vec<MenuNode> =
-                nodes.iter().filter(|n| !matches!(n, MenuNode::Item { id, .. } if id == "app.about" || id == SETTINGS)).cloned().collect();
+            let nodes: Vec<MenuNode> = nodes
+                .iter()
+                .filter(|n| !matches!(n, MenuNode::Item { id, .. } if id == "app.about" || id == SETTINGS || id == QUIT))
+                .cloned()
+                .collect();
             let nodes = tidy_separators(nodes);
             self.append_nodes(&sub, &nodes);
             if title == "Window" {

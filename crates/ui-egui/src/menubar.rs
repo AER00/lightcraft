@@ -53,6 +53,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
         "File",
         &[
             "file.addPhotos",
+            "file.addFolder",
             "---",
             "app.openLibrary",
             "---",
@@ -69,6 +70,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "---",
             "library.toggleAutoWriteXmp",
             "---",
+            "app.quit",
         ],
     ),
     (
