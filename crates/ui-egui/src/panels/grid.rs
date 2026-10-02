@@ -467,12 +467,16 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
         }
     });
-    // in a (non-smart) album: take the selection out of it
+    // in a (non-smart) album: take the selection out of it, or make this photo its cover
     if let lightcraft_engine::LibrarySource::Album(aid) = app.session.source
         && app.session.catalog.album(aid).is_some_and(|a| !a.folder && !a.is_smart())
-        && ui.button("Remove from Album").clicked()
     {
-        let _ = app.run("album.removePhotos", json!({"id": aid.0}));
+        if ui.button("Remove from Album").clicked() {
+            let _ = app.run("album.removePhotos", json!({"id": aid.0}));
+        }
+        if ui.button("Set as Album Cover").clicked() {
+            let _ = app.run("album.setCover", json!({"id": aid.0, "photo": id.0}));
+        }
     }
     if ui.button("Rename…").clicked() {
         let _ = app.run("dialog.rename", json!({}));

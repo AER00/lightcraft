@@ -45,10 +45,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 4 | 1 | 3 | 3 | 1/1 (100%) | 3/4 (75%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 11 | 2 | 4 | 1 | 8/8 (100%) | 3/5 (60%) |
-| Y. Menus | 57 | 15 | 13 | 8 | 42/47 (89%) | 13/23 (57%) |
+| Y. Menus | 59 | 13 | 13 | 8 | 44/47 (94%) | 13/23 (57%) |
 | Z. Keyboard shortcuts (desktop) | 56 | 13 | 11 | 1 | 47/52 (90%) | 9/23 (39%) |
 | Lightroom Classic extras | 4 | 20 | 55 | 9 | — | 3/21 (14%) |
-| **Total** | 267 | 77 | 156 | 37 | 185/198 (93%) | 72/144 (50%) |
+| **Total** | 269 | 75 | 156 | 37 | 187/198 (94%) | 72/144 (50%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -579,9 +579,9 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-HELP-SHORTCUTS | Keyboard shortcuts | P1 | ✅ | `cmd:app.shortcuts` | |
 | MENU-HELP-FEEDBACK | Send feedback | P2 | ⬜ | | |
 | MENU-HELP-SYSINFO | System info | P2 | ⬜ | `cmd:library.info` | library info only |
-| MENU-CTX-GRID | Photo context menu | P0 | 🟡 | `crates/ui-egui/src/panels/grid.rs` (`context_menu`) | rate, flag, label, add to / remove from album, rename, virtual copy, version, stack, copy / paste / paste selected, reset, merge, rotate, show in Finder, export / export with preset, delete; no set-as-album-cover |
+| MENU-CTX-GRID | Photo context menu | P0 | ✅ | `crates/ui-egui/src/panels/grid.rs` (`context_menu`) | rate, flag, label, add to / remove from album, rename, virtual copy, version, stack, copy / paste / paste selected, reset, merge, rotate, show in Finder, export / export with preset, set as album cover (in an album), delete |
 | MENU-CTX-DETAIL | Loupe context menu | P1 | 🟡 | `crates/ui-egui/src/panels/detail.rs` | same as grid; no zoom submenu |
-| MENU-CTX-ALBUM | Album / folder row menu | P0 | 🟡 | `crates/ui-egui/src/panels/left.rs` | add selected, rename, delete; no move-to, export album |
+| MENU-CTX-ALBUM | Album / folder row menu | P0 | ✅ | `crates/ui-egui/src/panels/left.rs` (`folder_menu`), `cmd:album.move`, `cmd:dialog.export` | add selected, export album (dialog / preset), move to a folder or the top level, rename, delete; smart albums: update rules |
 | MENU-CTX-MASK | Mask / component menu | P0 | 🟡 | `crates/ui-egui/src/panels/masking.rs` (`mask_menu`) | mask rows: duplicate (and invert), invert, show/hide, move, rename, delete; components: add/subtract only (no per-component menu) |
 | MENU-CTX-PRESET | Preset menu | P1 | 🟡 | `crates/ui-egui/src/panels/presets.rs` | favourite, delete, export group; no rename/update/move |
 | MENU-CTX-PROFILE | Profile favourites | P2 | ⬜ | | |

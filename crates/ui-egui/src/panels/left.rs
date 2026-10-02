@@ -158,6 +158,45 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
         if a.is_smart() && ui.button("Update Rules from Current Filter").clicked() {
             let _ = app.run("album.setRules", json!({"id": a.id.0, "fromView": true}));
         }
+        if !a.folder {
+            // export: show the album, select its photos, then the dialog / a preset
+            let show_all = |app: &mut LightcraftApp| {
+                let _ = app.run("library.source", json!({"kind": "album", "id": a.id.0}));
+                let _ = app.run("library.selectAll", json!({}));
+            };
+            let has_photos = app.session.catalog.album_count(a.id) > 0;
+            if ui.add_enabled(has_photos, egui::Button::new("Export Album…")).clicked() {
+                show_all(app);
+                let _ = app.run("dialog.export", json!({}));
+            }
+            ui.add_enabled_ui(has_photos, |ui| {
+                ui.menu_button("Export Album with Preset", |ui| {
+                    for (p, _) in app.session.all_export_presets() {
+                        if ui.button(&p.name).clicked() {
+                            show_all(app);
+                            if let Err(e) = app.run("app.export", json!({"preset": p.name, "background": true})) {
+                                app.toast(ui.ctx(), e);
+                            }
+                        }
+                    }
+                });
+            });
+            ui.separator();
+        }
+        // move into another folder (not into itself or one of its own subfolders)
+        let mut folders: Vec<(u64, String)> =
+            app.session.catalog.albums().filter(|f| f.folder && !is_within(app, f.id, a.id)).map(|f| (f.id.0, f.name.clone())).collect();
+        folders.sort_by_key(|(_, n)| n.to_lowercase());
+        ui.menu_button("Move to", |ui| {
+            if ui.add_enabled(a.parent.is_some(), egui::Button::new("Top Level")).clicked() {
+                let _ = app.run("album.move", json!({"id": a.id.0, "parent": null}));
+            }
+            for (fid, name) in &folders {
+                if ui.add_enabled(a.parent.map(|p| p.0) != Some(*fid), egui::Button::new(name)).clicked() {
+                    let _ = app.run("album.move", json!({"id": a.id.0, "parent": fid}));
+                }
+            }
+        });
         if ui.button("Rename…").clicked() {
             app.ui.dialog = Some(crate::state::Dialog::RenameAlbum { id: a.id.0, name: a.name.clone() });
         }
@@ -165,6 +204,23 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
             let _ = app.run("album.delete", json!({"id": a.id.0}));
         }
     });
+}
+
+/// Whether `id` is `ancestor` or lies inside it.
+fn is_within(app: &LightcraftApp, id: lightcraft_catalog::AlbumId, ancestor: lightcraft_catalog::AlbumId) -> bool {
+    let mut cur = Some(id);
+    let mut guard = 0;
+    while let Some(c) = cur {
+        if c == ancestor {
+            return true;
+        }
+        cur = app.session.catalog.album(c).and_then(|x| x.parent);
+        guard += 1;
+        if guard > 64 {
+            break;
+        }
+    }
+    false
 }
 
 /// "Keywords": the library's keyword tree with photo counts (`a|b|c` keywords nest). A click
