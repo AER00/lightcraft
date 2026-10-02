@@ -48,6 +48,17 @@ fn prefs(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = i.get("creator").and_then(Value::as_str) {
             d.creator = v.trim().to_string();
         }
+        match i.get("metadataPreset") {
+            Some(Value::String(n)) if n.is_empty() || n == "none" => d.metadata_preset = None,
+            Some(Value::String(n)) => {
+                if !s.metadata_presets.iter().any(|m| m.name.eq_ignore_ascii_case(n)) {
+                    return Err(bad(ID, format!("unknown metadata preset `{n}` (see metadata.presets)")));
+                }
+                d.metadata_preset = Some(n.clone());
+            }
+            Some(Value::Null) => d.metadata_preset = None,
+            _ => {}
+        }
         if let Some(a) = i.get("cameras").and_then(Value::as_array) {
             d.cameras.clear();
             for c in a {

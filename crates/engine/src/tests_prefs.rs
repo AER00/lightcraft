@@ -163,3 +163,42 @@ fn default_copyright_and_creator_fill_gaps_on_import() {
     assert_eq!(s.import_defaults.creator, "Me");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn metadata_presets_apply_to_photos_and_imports() {
+    let dir = temp_dir("metapresets");
+    let lib = dir.join("lib");
+    png(&dir.join("new.png"));
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    s.execute("metadata.savePreset", &json!({"name": "Studio", "fields": {"copyright": "© Studio", "creator": "Ann", "keywords": ["studio"]}}))
+        .unwrap();
+    assert!(s.execute("metadata.savePreset", &json!({"name": "Bad", "fields": {"iso": "100"}})).is_err());
+    // on import
+    s.execute("library.preferences", &json!({"import": {"metadataPreset": "studio"}})).unwrap();
+    assert!(s.execute("library.preferences", &json!({"import": {"metadataPreset": "nope"}})).is_err());
+    s.execute("library.import", &json!({"paths": [dir.join("new.png").to_string_lossy()]})).unwrap();
+    let p = photo_named(&s, "new.png");
+    assert_eq!((p.meta.copyright.as_str(), p.meta.creator.as_str(), p.meta.keywords.clone()), ("© Studio", "Ann", vec!["studio".to_string()]));
+    let id = p.id;
+    // applied to a photo: text replaces, keywords add (one undo step)
+    s.execute("photo.setMeta", &json!({"ids": [id.0], "keywords": ["mine"], "creator": "Bob"})).unwrap();
+    s.execute("metadata.applyPreset", &json!({"name": "Studio", "ids": [id.0]})).unwrap();
+    let m = &s.catalog.photo(id).unwrap().meta;
+    assert_eq!(m.creator, "Ann");
+    assert_eq!(m.keywords, vec!["mine".to_string(), "studio".to_string()]);
+    // from the active photo, then persisted
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    s.execute("photo.setMeta", &json!({"city": "Lyon"})).unwrap();
+    s.execute("metadata.savePreset", &json!({"name": "Here"})).unwrap();
+    let saved = s.metadata_presets.iter().find(|m| m.name == "Here").unwrap().fields.clone();
+    assert_eq!(saved, json!({"copyright": "© Studio", "creator": "Ann", "city": "Lyon"}));
+    drop(s);
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    assert_eq!(s.metadata_presets.len(), 2);
+    assert_eq!(s.import_defaults.metadata_preset.as_deref(), Some("studio"));
+    s.execute("metadata.deletePreset", &json!({"name": "STUDIO"})).unwrap();
+    assert!(s.import_defaults.metadata_preset.is_none(), "deleting the import preset clears it");
+    let _ = std::fs::remove_dir_all(&dir);
+}

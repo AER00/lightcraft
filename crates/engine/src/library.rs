@@ -108,6 +108,8 @@ struct PrefsFile {
     last_export: Option<serde_json::Value>,
     /// The user's export presets.
     export_presets: Vec<crate::export::ExportPreset>,
+    /// Metadata presets.
+    metadata_presets: Vec<crate::cmd::metadata::MetadataPreset>,
     /// Develop defaults for imported photos.
     import: crate::import::ImportDefaults,
     /// Thumbnail disk cache budget (MB, 0 = default).
@@ -174,6 +176,7 @@ impl Session {
         self.xmp = prefs.xmp;
         self.last_export = prefs.last_export;
         self.export_presets = prefs.export_presets;
+        self.metadata_presets = prefs.metadata_presets;
         self.import_defaults = prefs.import;
         self.cache_mb = prefs.cache_mb;
         // view state
@@ -286,6 +289,7 @@ impl Session {
             xmp: self.xmp,
             last_export: self.last_export.clone(),
             export_presets: self.export_presets.clone(),
+            metadata_presets: self.metadata_presets.clone(),
             import: self.import_defaults.clone(),
             cache_mb: self.cache_mb,
         })

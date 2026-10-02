@@ -586,6 +586,9 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ("Ungroup Stack", "stack.ungroup", stacked),
             ("Remove from Stack", "stack.remove", stacked),
             ("Set as Top of Stack", "stack.setTop", stacked),
+            ("Move Up in Stack", "stack.moveUp", stacked),
+            ("Move Down in Stack", "stack.moveDown", stacked),
+            ("Split Stack", "stack.split", stacked),
             ("Expand/Collapse Stack", "stack.toggle", stacked),
         ] {
             if ui.add_enabled(on, egui::Button::new(label)).clicked() {

@@ -127,6 +127,8 @@ pub struct ImportDefaults {
     pub copyright: String,
     /// Creator given to imported photos that don't name one (empty = none).
     pub creator: String,
+    /// Metadata preset applied to every imported photo (`metadata.*`; `None` = none).
+    pub metadata_preset: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -163,6 +165,9 @@ pub fn apply_import_defaults(s: &Session, p: &mut Photo) {
     }
     if p.meta.creator.trim().is_empty() && !d.creator.trim().is_empty() {
         p.meta.creator = d.creator.trim().to_string();
+    }
+    if let Some(mp) = d.metadata_preset.as_ref().and_then(|n| s.metadata_presets.iter().find(|m| m.name.eq_ignore_ascii_case(n))) {
+        crate::cmd::metadata::apply_to(&mut p.meta, &mp.fields);
     }
     let base = p.camera_defaults();
     let raw = p.kind == lightcraft_catalog::MediaKind::Raw;

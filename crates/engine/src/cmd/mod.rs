@@ -15,6 +15,7 @@ mod library;
 mod manage;
 mod masks;
 mod merge;
+pub mod metadata;
 pub mod missing;
 mod organize;
 mod prefs;
@@ -125,6 +126,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(before::specs());
         v.extend(browse::specs());
         v.extend(missing::specs());
+        v.extend(metadata::specs());
         v
     })
 }

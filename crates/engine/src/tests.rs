@@ -381,3 +381,28 @@ fn paste_from_previous_and_copy_paste_metadata() {
     s.execute("photo.pasteMetadata", &json!({"ids": [ids[2].0]})).unwrap();
     assert_eq!(s.catalog.photo(ids[2]).unwrap().meta.creator, "Me");
 }
+
+#[test]
+fn stacks_move_and_split() {
+    let mut s = demo();
+    let ids: Vec<_> = s.visible().iter().copied().take(5).collect();
+    s.execute("library.select", &json!({"ids": ids.iter().map(|i| i.0).collect::<Vec<_>>(), "active": ids[0].0})).unwrap();
+    s.execute("stack.group", &json!({"collapsed": false})).unwrap();
+    let order = |s: &Session| s.catalog.stack_of(ids[0]).or(s.catalog.stack_of(ids[4])).map(|st| st.photos.clone()).unwrap_or_default();
+    let before = order(&s);
+    assert_eq!(before.len(), 5);
+    s.execute("stack.moveUp", &json!({"id": before[2].0})).unwrap();
+    assert_eq!(order(&s)[1], before[2]);
+    s.execute("stack.moveDown", &json!({"id": before[2].0})).unwrap();
+    assert_eq!(order(&s), before);
+    // split at the 4th photo: 3 stay, 2 form a new stack
+    s.execute("stack.split", &json!({"id": before[3].0})).unwrap();
+    assert_eq!(s.catalog.stack_of(before[0]).unwrap().photos, before[..3].to_vec());
+    assert_eq!(s.catalog.stack_of(before[3]).unwrap().photos, before[3..].to_vec());
+    // splitting at the last photo of a 2-stack leaves both unstacked
+    s.execute("stack.split", &json!({"id": before[4].0})).unwrap();
+    assert!(s.catalog.stack_of(before[3]).is_none() && s.catalog.stack_of(before[4]).is_none());
+    assert!(s.execute("stack.split", &json!({"id": before[0].0})).is_err(), "the top can't split");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.stack_of(before[3]).unwrap().photos.len(), 2);
+}

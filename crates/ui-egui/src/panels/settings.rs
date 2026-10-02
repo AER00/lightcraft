@@ -248,6 +248,29 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             }
         });
     }
+    if !app.session.metadata_presets.is_empty() {
+        row(ui, t, "Metadata preset", |ui| {
+            let cur = d.metadata_preset.clone();
+            let mut pick = None;
+            let r = egui::ComboBox::from_id_salt("settingsMetaPreset")
+                .width(240.0)
+                .selected_text(cur.clone().unwrap_or_else(|| "None".into()))
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(cur.is_none(), "None").clicked() {
+                        pick = Some(String::new());
+                    }
+                    for m in &app.session.metadata_presets {
+                        if ui.selectable_label(cur.as_deref() == Some(m.name.as_str()), &m.name).clicked() {
+                            pick = Some(m.name.clone());
+                        }
+                    }
+                });
+            register(ui.ctx(), "combo:settingsMetaPreset", r.response.rect);
+            if let Some(n) = pick {
+                let _ = app.run("library.preferences", json!({"import": {"metadataPreset": n}}));
+            }
+        });
+    }
     heading(ui, t, "XMP sidecars");
     let mut xmp = app.session.xmp;
     if check(ui, "settings.autoWriteXmp", &mut xmp.auto_write, "Automatically write changes into XMP sidecars") {

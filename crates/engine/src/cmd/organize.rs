@@ -164,6 +164,29 @@ pub fn specs() -> Vec<CommandSpec> {
             let op = s.catalog.set_top_ops(id);
             Ok(json!({"changed": commit_ops(s, "Set Top of Stack", op.into_iter().collect())?}))
         }),
+        cmd!("stack.moveUp", "Move Up in Stack", ["Photo", "Stack"], None, "{id?} — one place towards the top", in_stack, |s, p| {
+            let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or(s.active()).ok_or_else(|| bad("stack.moveUp", "no photo"))?;
+            let op = s.catalog.move_in_stack_ops(id, -1);
+            Ok(json!({"changed": commit_ops(s, "Move in Stack", op.into_iter().collect())?}))
+        }),
+        cmd!("stack.moveDown", "Move Down in Stack", ["Photo", "Stack"], None, "{id?} — one place away from the top", in_stack, |s, p| {
+            let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or(s.active()).ok_or_else(|| bad("stack.moveDown", "no photo"))?;
+            let op = s.catalog.move_in_stack_ops(id, 1);
+            Ok(json!({"changed": commit_ops(s, "Move in Stack", op.into_iter().collect())?}))
+        }),
+        cmd!(
+            "stack.split",
+            "Split Stack",
+            ["Photo", "Stack"],
+            None,
+            "{id?} — this photo and the ones after it become their own stack",
+            in_stack,
+            |s, p| {
+                let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or(s.active()).ok_or_else(|| bad("stack.split", "no photo"))?;
+                let op = s.catalog.split_stack_ops(id).ok_or_else(|| bad("stack.split", "pick a photo below the top of a stack"))?;
+                Ok(json!({"changed": commit_ops(s, "Split Stack", vec![op])?}))
+            }
+        ),
         cmd!("stack.toggle", "Expand/Collapse Stack", ["Photo", "Stack"], Some("S"), "{ids?, collapsed?: bool}", in_stack, |s, p| {
             let stacks = stacks_of(s, &s.targets(p));
             let first = stacks.first().and_then(|id| s.catalog.stack(*id)).map(|st| st.collapsed).unwrap_or(false);

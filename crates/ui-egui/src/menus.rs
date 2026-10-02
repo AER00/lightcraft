@@ -94,6 +94,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("file.addFromDevice", "Add from Device", None, ""),
     ("file.findMissing", "Find Missing Photos…", None, "File"),
     ("photo.locate", "Locate Missing File…", None, ""),
+    ("dialog.saveMetadataPreset", "Save Metadata Preset…", None, ""),
     ("app.quit", "Quit LightCraft", Some("Cmd+Q"), "File"),
     ("file.importPresets", "Import Presets…", None, "File"),
     ("file.exportPresets", "Export Presets…", None, "File"),
@@ -590,6 +591,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "app.quit" => {
             app.ui.quit = true;
+            Ok(Value::Null)
+        }
+        "dialog.saveMetadataPreset" => {
+            // from the active photo's copyright, creator and place
+            crate::panels::dialogs::prompt(app, "Save Metadata Preset", "Preset name", "", "metadata.savePreset", json!({}), "name");
             Ok(Value::Null)
         }
         "file.findMissing" => {

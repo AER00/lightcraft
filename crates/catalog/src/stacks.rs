@@ -93,6 +93,42 @@ impl Catalog {
         self.group_ops(result, sources, true)
     }
 
+    /// Move `photo` `delta` places within its stack (towards the top for negative; index 0 is the
+    /// top). `None` when it isn't stacked or can't move.
+    pub fn move_in_stack_ops(&self, photo: PhotoId, delta: isize) -> Option<Op> {
+        let st = self.stack_of(photo)?;
+        let i = st.photos.iter().position(|p| *p == photo)?;
+        let to = (i as isize + delta).clamp(0, st.photos.len() as isize - 1) as usize;
+        if to == i {
+            return None;
+        }
+        let mut photos = st.photos.clone();
+        let p = photos.remove(i);
+        photos.insert(to, p);
+        Some(Op::SetStack { id: st.id, photos, collapsed: st.collapsed })
+    }
+
+    /// Split `photo`'s stack in two: the photos before it stay, it and the ones after it form a
+    /// new stack (topped by it). A part with a single photo is no longer stacked.
+    pub fn split_stack_ops(&mut self, photo: PhotoId) -> Option<Op> {
+        let st = self.stack_of(photo)?.clone();
+        let i = st.photos.iter().position(|p| *p == photo)?;
+        if i == 0 {
+            return None;
+        }
+        let (head, tail) = st.photos.split_at(i);
+        let mut ops = vec![if head.len() >= 2 {
+            Op::SetStack { id: st.id, photos: head.to_vec(), collapsed: st.collapsed }
+        } else {
+            Op::RemoveStack { id: st.id }
+        }];
+        if tail.len() >= 2 {
+            let id = self.alloc_stack_id();
+            ops.push(Op::AddStack { stack: Stack { id, photos: tail.to_vec(), collapsed: st.collapsed } });
+        }
+        Some(Op::Batch { ops })
+    }
+
     /// Ops that dissolve every stack containing one of `photos`.
     pub fn ungroup_ops(&self, photos: &[PhotoId]) -> Vec<Op> {
         self.stacks.values().filter(|s| s.photos.iter().any(|p| photos.contains(p))).map(|s| Op::RemoveStack { id: s.id }).collect()

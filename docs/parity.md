@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 12 | 1 | 4 | 1 | 8/8 (100%) | 4/5 (80%) |
 | Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
 | Z. Keyboard shortcuts (desktop) | 65 | 10 | 5 | 1 | 49/52 (94%) | 14/23 (61%) |
-| Lightroom Classic extras | 10 | 19 | 50 | 9 | — | 9/21 (43%) |
-| **Total** | 315 | 58 | 127 | 37 | 193/198 (97%) | 103/144 (72%) |
+| Lightroom Classic extras | 12 | 17 | 50 | 9 | — | 11/21 (52%) |
+| **Total** | 317 | 56 | 127 | 37 | 193/198 (97%) | 105/144 (73%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **68.8%** of 500 in-scope rows — P0 98.7% of 198 · P1 83.7% of 144 · P2 17.7% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **69.0%** of 500 in-scope rows — P0 98.7% of 198 · P1 84.4% of 144 · P2 17.7% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -698,11 +698,11 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-SMARTCOLL | Smart-collection rules | P1 | 🟡 | `cmd:album.createSmart`, `crates/catalog/src/query.rs` | the filter fields + date range; no rule editor, any/none groups or operators beyond ≥/=/≤ |
 | LRC-LIB-PUBLISH | Publish services | P2 | ⬜ | | |
 | LRC-LIB-FILTERBAR | Library filter bar | P1 | 🟡 | `cmd:view.filterBar`, `crates/ui-egui/src/panels/filterbar.rs` | rating/flag/label/kind/edited/camera/lens/keyword, clear, save as smart album; no filter presets, lock, or multi-select columns |
-| LRC-LIB-STACKS | Stacks (full) | P1 | 🟡 | `crates/catalog/src/stacks.rs` | group/ungroup/toggle/top/remove/auto by time; no split stack or move up/down |
+| LRC-LIB-STACKS | Stacks (full) | P1 | ✅ | `crates/catalog/src/stacks.rs`, `cmd:stack.group`, `cmd:stack.split`, `cmd:stack.moveUp`, `cmd:stack.moveDown` | group / ungroup / toggle / set top / remove / auto by time / split / move up and down |
 | LRC-LIB-VC | Virtual copies | P1 | ✅ | `cmd:photo.virtualCopy` | ⌘' |
 | LRC-LIB-LABELS | Colour-label sets | P1 | ⬜ | | |
 | LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | 🟡 | `crates/catalog/src/keywords.rs`, `cmd:keyword.list` | hierarchical `a\|b\|c` keywords (tree, parent filters include children, rename moves children); no keyword sets or painter |
-| LRC-LIB-METADATA | Metadata panel & presets | P1 | 🟡 | `cmd:photo.setMeta`, `cmd:photo.saveMetadataToFile`, `cmd:photo.readMetadataFromFile`, `cmd:dialog.captureTime` | IPTC core fields, accessibility text, place, capture-time edit; no metadata presets, copyright status |
+| LRC-LIB-METADATA | Metadata panel & presets | P1 | ✅ | `cmd:photo.setMeta`, `cmd:metadata.savePreset`, `cmd:metadata.applyPreset`, `cmd:metadata.presets`, `cmd:metadata.deletePreset`, `cmd:dialog.captureTime` | IPTC core, accessibility, place, capture-time edit; metadata presets (Photo → Metadata Preset, Save Metadata Preset… from the active photo; applied on import from Settings); no copyright status field |
 | LRC-LIB-QUICKDEV | Quick develop | P2 | ⬜ | | |
 | LRC-LIB-PEOPLE | People view | P2 | ⬜ | | |
 | LRC-LIB-COMMENTS | Comments panel | P2 | ⬜ | | |

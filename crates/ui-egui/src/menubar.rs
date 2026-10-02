@@ -147,6 +147,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "@Set Rating",
             "@Set Flag",
             "@Set Color Label",
+            "@Metadata Preset",
             "view.autoAdvance",
             "---",
             "photo.rotateLeft",
@@ -352,6 +353,20 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
             } else {
                 devices.into_iter().map(|d| item("file.addFromDevice", json!({"path": d.path}), format!("{}…", d.name), None, true, None)).collect()
             }
+        }
+        "Metadata Preset" => {
+            let sel = !app.session.selection.ids.is_empty() || has;
+            let mut v: Vec<MenuNode> = app
+                .session
+                .metadata_presets
+                .iter()
+                .map(|m| item("metadata.applyPreset", json!({"name": m.name}), m.name.clone(), None, sel, None))
+                .collect();
+            if !v.is_empty() {
+                v.push(MenuNode::Separator);
+            }
+            v.push(item("dialog.saveMetadataPreset", Value::Null, "Save Metadata Preset…", None, has, None));
+            v
         }
         "Select by" => {
             let mut v: Vec<MenuNode> = [("pick", "Picks"), ("reject", "Rejects"), ("none", "Unflagged")]
@@ -769,6 +784,26 @@ mod tests {
         let p = app.session.catalog.photo(id).unwrap();
         assert_eq!(p.file_name, "one-renamed.png");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn metadata_preset_menu() {
+        let mut app = app();
+        app.session.execute("photo.setMeta", &json!({"copyright": "© Me", "creator": "Me"})).unwrap();
+        run_item(&mut app, "dialog.saveMetadataPreset", Value::Null).unwrap();
+        if let Some(crate::state::Dialog::TextPrompt { value, .. }) = &mut app.ui.dialog {
+            *value = "Mine".into();
+        }
+        let d = app.ui.dialog.take().unwrap();
+        crate::panels::dialogs::confirm_dialog(&mut app, &d).unwrap();
+        let bar = menu_bar(&app);
+        let all: Vec<MenuNode> = bar.iter().flat_map(|(_, v)| v.clone()).collect();
+        let Some(MenuNode::Item { id, params, .. }) = find(&all, "metadata.applyPreset") else { panic!("no preset item") };
+        assert_eq!(params["name"], "Mine");
+        let other = app.session.visible()[1];
+        app.session.execute("library.select", &json!({"ids": [other.0]})).unwrap();
+        run_item(&mut app, id, params.clone()).unwrap();
+        assert_eq!(app.session.catalog.photo(other).unwrap().meta.copyright, "© Me");
     }
 
     #[test]
