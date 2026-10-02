@@ -137,3 +137,29 @@ fn preferences_persist_with_the_library() {
     assert_eq!(s.import_defaults, Default::default());
     let _ = std::fs::remove_dir_all(&lib);
 }
+
+#[test]
+fn default_copyright_and_creator_fill_gaps_on_import() {
+    let dir = temp_dir("copyright");
+    let lib = dir.join("lib");
+    png(&dir.join("plain.png"));
+    // a DNG that names its own artist keeps it
+    let meta = lightcraft_meta::Metadata { artist: Some("Someone Else".into()), ..Default::default() };
+    std::fs::write(dir.join("own.dng"), crate::tests_xmp::synthetic_dng_with(None, meta)).unwrap();
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    let r = s.execute("library.preferences", &json!({"import": {"copyright": " © 2026 Me ", "creator": "Me"}})).unwrap();
+    assert_eq!(r["import"]["copyright"], "© 2026 Me");
+    s.execute("library.import", &json!({"paths": [dir.join("plain.png").to_string_lossy(), dir.join("own.dng").to_string_lossy()]})).unwrap();
+    let plain = photo_named(&s, "plain.png");
+    assert_eq!((plain.meta.copyright.as_str(), plain.meta.creator.as_str()), ("© 2026 Me", "Me"));
+    let own = photo_named(&s, "own.dng");
+    assert_eq!(own.meta.creator, "Someone Else", "the file's own creator wins");
+    assert_eq!(own.meta.copyright, "© 2026 Me");
+    // saved with the library
+    drop(s);
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    assert_eq!(s.import_defaults.creator, "Me");
+    let _ = std::fs::remove_dir_all(&dir);
+}

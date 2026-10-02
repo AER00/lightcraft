@@ -228,6 +228,26 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             let _ = app.run("library.preferences", json!({"import": {"otherPreset": v}}));
         }
     });
+    heading(ui, t, "Metadata");
+    hint(ui, t, "Added to photos you import that don't already have it.");
+    for (key, label, hint_text, value) in
+        [("copyright", "Copyright", "© 2026 Your Name", d.copyright.clone()), ("creator", "Creator", "Your Name", d.creator.clone())]
+    {
+        row(ui, t, label, |ui| {
+            let id = egui::Id::new(("settingsMeta", key));
+            let mut text: String = ui.data(|m| m.get_temp(id)).unwrap_or(value.clone());
+            let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text(hint_text).desired_width(240.0));
+            register(ui.ctx(), format!("field:settings.{key}"), r.rect);
+            if r.lost_focus() && text.trim() != value {
+                let _ = app.run("library.preferences", json!({"import": {key: text.trim()}}));
+            }
+            if r.has_focus() {
+                ui.data_mut(|m| m.insert_temp(id, text));
+            } else {
+                ui.data_mut(|m| m.remove::<String>(id));
+            }
+        });
+    }
     heading(ui, t, "XMP sidecars");
     let mut xmp = app.session.xmp;
     if check(ui, "settings.autoWriteXmp", &mut xmp.auto_write, "Automatically write changes into XMP sidecars") {

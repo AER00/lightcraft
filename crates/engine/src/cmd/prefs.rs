@@ -42,6 +42,12 @@ fn prefs(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = i.get("perCamera").and_then(Value::as_bool) {
             d.per_camera = v;
         }
+        if let Some(v) = i.get("copyright").and_then(Value::as_str) {
+            d.copyright = v.trim().to_string();
+        }
+        if let Some(v) = i.get("creator").and_then(Value::as_str) {
+            d.creator = v.trim().to_string();
+        }
         if let Some(a) = i.get("cameras").and_then(Value::as_array) {
             d.cameras.clear();
             for c in a {
@@ -84,7 +90,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Library Preferences",
         [],
         None,
-        "{import?: {rawPreset?: presetId|\"default\", otherPreset?: presetId|\"default\", perCamera?: bool, cameras?: [{camera: \"Make Model\", preset: presetId|null}]}, camera?: {camera, preset?, remove?: bool}, cacheMb?: n (0 = default)} — develop defaults applied on import (raws / other images / per camera) and the thumbnail cache size, saved with the library → {xmp, import, cacheMb, persistent}",
+        "{import?: {rawPreset?: presetId|\"default\", otherPreset?: presetId|\"default\", perCamera?: bool, cameras?: [{camera: \"Make Model\", preset: presetId|null}], copyright?: text, creator?: text (given to imported photos without one)}, camera?: {camera, preset?, remove?: bool}, cacheMb?: n (0 = default)} — develop defaults applied on import (raws / other images / per camera) and the thumbnail cache size, saved with the library → {xmp, import, cacheMb, persistent}",
         always,
         prefs
     )]

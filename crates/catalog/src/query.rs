@@ -235,18 +235,28 @@ impl Catalog {
         v.into_iter().map(|p| p.id).collect()
     }
 
-    /// Year → month → count tree for the "By Date" section.
+    /// Year → month → day counts for the "By Date" section (newest first).
     pub fn date_groups(&self) -> Vec<DateGroup> {
-        let mut map: std::collections::BTreeMap<String, std::collections::BTreeMap<String, usize>> = Default::default();
+        use std::collections::BTreeMap;
+        let mut years: BTreeMap<&str, (BTreeMap<&str, usize>, BTreeMap<&str, usize>)> = BTreeMap::new();
         for p in self.photos().filter(|p| !p.deleted) {
             let d = p.date();
-            if d.len() >= 7 {
-                *map.entry(d[..4].to_string()).or_default().entry(d[..7].to_string()).or_default() += 1;
+            if d.len() >= 10 {
+                let (months, days) = years.entry(&d[..4]).or_default();
+                *months.entry(&d[..7]).or_default() += 1;
+                *days.entry(&d[..10]).or_default() += 1;
             }
         }
-        map.into_iter()
+        let newest_first = |m: BTreeMap<&str, usize>| m.into_iter().rev().map(|(k, n)| (k.to_string(), n)).collect::<Vec<_>>();
+        years
+            .into_iter()
             .rev()
-            .map(|(year, months)| DateGroup { count: months.values().sum(), months: months.into_iter().rev().collect(), year })
+            .map(|(year, (months, days))| DateGroup {
+                year: year.to_string(),
+                count: months.values().sum(),
+                months: newest_first(months),
+                days: newest_first(days),
+            })
             .collect()
     }
 
@@ -266,5 +276,8 @@ impl Catalog {
 pub struct DateGroup {
     pub year: String,
     pub count: usize,
+    /// `YYYY-MM` and counts, newest first.
     pub months: Vec<(String, usize)>,
+    /// `YYYY-MM-DD` and counts, newest first.
+    pub days: Vec<(String, usize)>,
 }

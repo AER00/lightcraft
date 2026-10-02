@@ -120,6 +120,10 @@ pub struct ImportDefaults {
     pub cameras: Vec<CameraDefault>,
     /// Preset applied to non-raw images (JPEG, PNG, TIFF, HEIC…; `None` = none).
     pub other_preset: Option<String>,
+    /// Copyright notice given to imported photos that don't carry one (empty = none).
+    pub copyright: String,
+    /// Creator given to imported photos that don't name one (empty = none).
+    pub creator: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -149,6 +153,14 @@ impl ImportDefaults {
 /// Give a freshly imported photo its default settings: the camera defaults, then the matching
 /// default preset ([`ImportDefaults::preset_for`]), remembered as the photo's import look.
 pub fn apply_import_defaults(s: &Session, p: &mut Photo) {
+    // metadata defaults fill gaps only: the file's own copyright / creator win
+    let d = &s.import_defaults;
+    if p.meta.copyright.trim().is_empty() && !d.copyright.trim().is_empty() {
+        p.meta.copyright = d.copyright.trim().to_string();
+    }
+    if p.meta.creator.trim().is_empty() && !d.creator.trim().is_empty() {
+        p.meta.creator = d.creator.trim().to_string();
+    }
     let base = p.camera_defaults();
     let raw = p.kind == lightcraft_catalog::MediaKind::Raw;
     let preset = s.import_defaults.preset_for(raw, &p.meta.camera).and_then(|id| s.presets.iter().find(|x| x.id == id));

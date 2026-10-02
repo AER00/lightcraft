@@ -102,10 +102,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let (dr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
                 ui.painter().text(pos2(dr.left() + 18.0, dr.center().y), Align2::LEFT_CENTER, "By Date", t.semibold(13.5), t.text_label);
                 for g in app.session.catalog.date_groups() {
-                    let sel = app.session.filter.date.as_deref() == Some(g.year.as_str());
-                    if row(app, ui, &format!("year:{}", g.year), Icon::Clock, &g.year, Some(g.count), sel, 0.0).clicked() {
-                        let v = if sel { serde_json::Value::Null } else { json!(g.year) };
-                        let _ = app.run("library.filter", json!({"date": v}));
+                    // year → month → day; a click filters by that prefix, the triangle opens a level
+                    if date_row(app, ui, &g.year, &g.year, g.count, 0.0) {
+                        for (m, n) in &g.months {
+                            let label = lightcraft_catalog::dates::group_label(m).split(' ').next().unwrap_or(m).to_string();
+                            if date_row(app, ui, m, &label, *n, 16.0) {
+                                for (d, n) in g.days.iter().filter(|(d, _)| d.starts_with(m.as_str())) {
+                                    let label = lightcraft_catalog::dates::group_label(d);
+                                    // "Sunday, 20 September 2026" → "Sunday, 20"
+                                    let label = label.rsplitn(3, ' ').nth(2).unwrap_or(&label).to_string();
+                                    date_row(app, ui, d, &label, *n, 32.0);
+                                }
+                            }
+                        }
                     }
                 }
                 keywords_section(app, ui);
@@ -117,6 +126,37 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
             });
         });
+}
+
+/// One By Date row (`key`: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`); returns whether it is open.
+fn date_row(app: &mut LightcraftApp, ui: &mut egui::Ui, key: &str, label: &str, count: usize, indent: f32) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let open_id = egui::Id::new(("date-open", key.to_string()));
+    let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(false);
+    let sel = app.session.filter.date.as_deref() == Some(key);
+    let resp = row(app, ui, &format!("date:{key}"), Icon::Clock, label, Some(count), sel, indent);
+    if key.len() < 10 {
+        let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
+        let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
+        let tr = ui.interact(tri, egui::Id::new(("date-tri", key.to_string())), Sense::click());
+        register(ui.ctx(), format!("dateToggle:{key}"), tri);
+        let col = if tr.hovered() { t.text } else { t.text_dim };
+        let pts = if open {
+            vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
+        } else {
+            vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
+        };
+        ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+        if tr.clicked() {
+            open = !open;
+            ui.data_mut(|d| d.insert_temp(open_id, open));
+        }
+    }
+    if resp.clicked() {
+        let v = if sel { serde_json::Value::Null } else { json!(key) };
+        let _ = app.run("library.filter", json!({"date": v}));
+    }
+    open
 }
 
 fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent: Option<AlbumId>, indent: f32) {

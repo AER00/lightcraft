@@ -22,10 +22,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
 | A. Import (IMP) | 5 | 3 | 5 | 1 | 2/4 (50%) | 2/4 (50%) |
-| B. Library management (LIB) | 17 | 2 | 6 | 2 | 9/9 (100%) | 7/9 (78%) |
+| B. Library management (LIB) | 18 | 1 | 6 | 2 | 9/9 (100%) | 8/9 (89%) |
 | C. Views & navigation (VIEW) | 14 | 0 | 3 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
-| E. Metadata (META) | 2 | 2 | 2 | 0 | 2/2 (100%) | 0/2 (0%) |
+| E. Metadata (META) | 3 | 2 | 1 | 0 | 2/2 (100%) | 1/2 (50%) |
 | F. Edit panel — global adjustments (EDIT) | 40 | 2 | 6 | 1 | 28/28 (100%) | 12/14 (86%) |
 | G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
@@ -42,13 +42,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | S. Export (EXP) | 13 | 1 | 4 | 0 | 7/7 (100%) | 6/7 (86%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
-| V. Preferences (PREF) | 4 | 1 | 3 | 3 | 1/1 (100%) | 3/4 (75%) |
+| V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 11 | 2 | 4 | 1 | 8/8 (100%) | 3/5 (60%) |
 | Y. Menus | 65 | 9 | 11 | 8 | 46/47 (98%) | 17/23 (74%) |
 | Z. Keyboard shortcuts (desktop) | 59 | 12 | 9 | 1 | 49/52 (94%) | 10/23 (43%) |
 | Lightroom Classic extras | 7 | 19 | 53 | 9 | — | 6/21 (29%) |
-| **Total** | 289 | 67 | 144 | 37 | 192/198 (97%) | 87/144 (60%) |
+| **Total** | 292 | 65 | 143 | 37 | 192/198 (97%) | 90/144 (63%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -117,7 +117,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 |---|---|---|---|---|---|
 | LR-LIB-ALLPHOTOS | All photos | P0 | ✅ | `cmd:library.source`, `crates/ui-egui/src/panels/left.rs` | |
 | LR-LIB-RECENT-ADDED | Recently added | P1 | 🟡 | `cmd:library.source` (`recentlyAdded`) | not grouped by import session |
-| LR-LIB-BYDATE | Browse by date | P1 | 🟡 | `cmd:library.filter` (`date`), `crates/ui-egui/src/panels/left.rs` | years only; no month/day tree |
+| LR-LIB-BYDATE | Browse by date | P1 | ✅ | `cmd:library.filter` (`date`), `crates/ui-egui/src/panels/left.rs` (`date_row`), `crates/catalog/src/query.rs` (`date_groups`) | year → month → day tree with counts; a row filters by that date |
 | LR-LIB-ALBUM | Albums | P0 | ✅ | `cmd:album.create`, `cmd:album.rename`, `cmd:album.delete`, `cmd:album.addPhotos`, `cmd:album.removePhotos`, `cmd:dialog.newAlbum` | no drag photos onto album (LR-BEHAV-DRAGDROP), no album sort |
 | LR-LIB-FOLDER | Folders of albums | P0 | ✅ | `cmd:album.create` (`folder`), `cmd:album.move` | moving is command-only (no drag, no "Move to" menu) |
 | LR-LIB-SMARTALBUM | Smart albums | P1 | ✅ | `cmd:album.createSmart`, `cmd:album.setRules`, `crates/catalog/src/query.rs`, `crates/ui-egui/src/panels/filterbar.rs` | saved filters (rating/flag/label/kind/edited/keyword/camera/lens/date range/text/album), live; match-all only (no any/none rule groups, no rule editor dialog — rules come from the filter bar or `album.setRules`) |
@@ -188,7 +188,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
 | LR-META-INFO | Info panel | P0 | ✅ | `cmd:panel.info`, `cmd:photo.setMeta`, `crates/ui-egui/src/panels/right.rs` | no flash, creator field, map snippet or people |
-| LR-META-COPYRIGHT-DEFAULT | Default copyright on import | P1 | ⬜ | | |
+| LR-META-COPYRIGHT-DEFAULT | Default copyright on import | P1 | ✅ | `cmd:library.preferences` (`import.copyright`, `import.creator`), `crates/ui-egui/src/panels/settings.rs` | Settings → Import → Metadata; fills only photos without their own |
 | LR-META-LOCATION | Location editing | P2 | 🟡 | `cmd:photo.setMeta` (`location`) | text field + GPS read; no map, no geocoding |
 | LR-META-COPYPASTE | Copy / paste metadata | P2 | ⬜ | | |
 | LR-META-XMP | XMP read/write | P0 | ✅ | `cmd:photo.saveMetadataToFile`, `cmd:photo.readMetadataFromFile`, `cmd:library.xmpPreferences`, `crates/engine/src/sidecar.rs`, `docs/xmp-interop.md` | |
@@ -449,7 +449,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-PREF-INTERFACE | Interface options | P1 | ✅ | `cmd:app.settings` | filmstrip names/badges, grid badges (auto/always/never), square-grid names, navigator, info overlay |
 | LR-PREF-PERFORMANCE | GPU / performance | P1 | ✅ | `cmd:app.gpu`, `cmd:app.memoryBudget`, `cmd:app.settings` | GPU on/off, preview size (1600–5120 px), memory budget, thumbnail cache size in Settings |
 | LR-PREF-PEOPLE | Face recognition | P2 | ⬜ | | |
-| LR-PREF-WATERMARK | Watermark settings | P1 | 🟡 | `crates/ui-egui/src/panels/dialogs.rs` | per export in the dialog; not saved as a preference |
+| LR-PREF-WATERMARK | Watermark settings | P1 | ✅ | `cmd:export.savePreset`, `crates/ui-egui/src/panels/dialogs.rs` | set in the Export dialog; kept with Export with Previous and in saved export presets |
 | LR-PREF-SHORTCUTS | Shortcut customisation | — | 🚫 | | not customisable in the reference app either; a keymap editor would be an extra |
 | LR-PREF-TECHPREVIEW | Early-access toggles | P2 | ⬜ | | |
 | LR-PREF-NOTIFICATIONS | Notifications | OOS | 🚫 | | |

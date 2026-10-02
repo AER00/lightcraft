@@ -102,6 +102,10 @@ fn filter_search_sort() {
     let g = c.date_groups();
     assert_eq!(g[0].year, "2026");
     assert_eq!(g[0].count, 2);
+    assert_eq!(g[0].months.iter().map(|m| m.1).sum::<usize>(), 2);
+    assert_eq!(g[0].days.iter().map(|d| d.1).sum::<usize>(), 2);
+    assert!(g[0].days.iter().all(|(d, _)| d.len() == 10 && d.starts_with("2026")));
+    assert!(g[0].days.windows(2).all(|w| w[0].0 > w[1].0), "newest first");
     assert_eq!(c.keywords(), vec![("ocean".to_string(), 1), ("summer".to_string(), 1)]);
 }
 
