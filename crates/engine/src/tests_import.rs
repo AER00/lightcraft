@@ -185,3 +185,29 @@ fn missing_files_are_found_and_relinked() {
     assert!(dir.join("moved/a.png").exists() && dir.join("moved/deeper/b.png").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn recently_added_covers_recent_imports_newest_first() {
+    let dir = std::env::temp_dir().join(format!("lc-recent-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let png = |name: &str, seed: u8| {
+        let img = lightcraft_raster::Rgba8::from_fn(16, 12, |x, y| [(x * 9) as u8, (y * 11) as u8, seed, 255]);
+        let b = crate::export::encode_image(&img, &crate::export::ExportOptions { format: crate::export::ExportFormat::Png, ..Default::default() })
+            .unwrap();
+        std::fs::write(dir.join(name), b).unwrap();
+        dir.join(name).to_string_lossy().to_string()
+    };
+    let mut s = Session::new().with_fs();
+    // three imports: 60 days ago, 10 days ago, today
+    for (when, name, seed) in [("2026-08-01T09:00:00", "old.png", 1), ("2026-09-20T09:00:00", "mid.png", 2), ("2026-09-30T09:00:00", "new.png", 3)] {
+        let path = png(name, seed);
+        let w = when.to_string();
+        s.clock = Box::new(move || w.clone());
+        s.execute("library.import", &serde_json::json!({"paths": [path]})).unwrap();
+    }
+    s.execute("library.source", &serde_json::json!({"kind": "recentlyAdded"})).unwrap();
+    let names: Vec<String> = s.visible_cloned().iter().map(|id| s.catalog.photo(*id).unwrap().file_name.clone()).collect();
+    assert_eq!(names, ["new.png", "mid.png"], "the last 30 days, newest import first");
+    let _ = std::fs::remove_dir_all(&dir);
+}

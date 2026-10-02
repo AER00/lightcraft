@@ -385,6 +385,14 @@ impl Session {
                     self.visible.reverse();
                 }
             }
+            if self.source == LibrarySource::RecentlyAdded {
+                // newest import first, whatever the sort (the grid groups by import day)
+                let cat = &self.catalog;
+                self.visible.sort_by(|a, b| {
+                    let key = |id: &PhotoId| cat.photo(*id).map(|p| p.imported.clone()).unwrap_or_default();
+                    key(b).cmp(&key(a)).then(a.cmp(b))
+                });
+            }
             if self.source == LibrarySource::Missing {
                 let missing: std::collections::HashSet<PhotoId> = cmd::missing::missing(self).into_iter().map(|m| m.0).collect();
                 self.visible.retain(|id| missing.contains(id));

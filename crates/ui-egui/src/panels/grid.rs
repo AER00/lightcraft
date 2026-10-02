@@ -77,7 +77,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let runs = if app.session.source == lightcraft_engine::LibrarySource::RecentlyDeleted {
         Vec::new()
     } else {
-        app.session.catalog.date_runs(&ids, app.session.sort.key, by)
+        let key = if app.session.source == lightcraft_engine::LibrarySource::RecentlyAdded {
+            lightcraft_catalog::SortKey::ImportDate
+        } else {
+            app.session.sort.key
+        };
+        app.session.catalog.date_runs(&ids, key, by)
     };
     let spans: Vec<(usize, usize)> = runs.iter().map(|r| (r.start, r.count)).collect();
     let lay = layout(&aspects, &spans, avail_w, target, square);

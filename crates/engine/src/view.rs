@@ -29,14 +29,21 @@ pub struct Browse {
     pub subfolders: bool,
 }
 
+/// How far back Recently Added reaches from the latest import.
+pub const RECENT_DAYS: i64 = 30;
+
 impl LibrarySource {
     pub fn to_filter(&self, f: &Filter, cat: &Catalog) -> Filter {
         let mut f = f.clone();
         match self {
             LibrarySource::All => {}
+            // everything imported in the 30 days up to the latest import (by import, newest first)
             LibrarySource::RecentlyAdded => {
-                let latest = cat.photos().map(|p| p.imported.clone()).max().unwrap_or_default();
-                f.imported = Some(latest.get(..10).unwrap_or("").to_string());
+                let latest = cat.photos().filter(|p| p.in_library()).map(|p| p.imported.clone()).max().unwrap_or_default();
+                let from = lightcraft_catalog::stacks::iso_seconds(&latest)
+                    .map(|s| lightcraft_catalog::dates::civil(s - RECENT_DAYS * 86_400))
+                    .unwrap_or_else(|| latest.get(..10).unwrap_or("").to_string());
+                f.imported_from = Some(from);
             }
             LibrarySource::Album(a) => f.album = Some(*a),
             LibrarySource::RecentlyDeleted => f.deleted = true,

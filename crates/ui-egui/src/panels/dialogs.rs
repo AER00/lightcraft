@@ -377,9 +377,37 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         opts.watermark = wm_on.then(|| lightcraft_engine::export::Watermark { text: "© ".into(), ..Default::default() });
                     }
                     if let Some(wm) = &mut opts.watermark {
-                        field(ui, "Text", |ui| {
-                            ui.add(egui::TextEdit::singleline(&mut wm.text).hint_text("© Your Name").desired_width(f32::INFINITY))
-                        });
+                        // text, or a graphic (a logo with transparency)
+                        let mut graphic = !wm.image.is_empty() || ui.data(|d| d.get_temp::<bool>(egui::Id::new("wm-graphic"))).unwrap_or(false);
+                        let before = graphic;
+                        choices(ui, "Style", "exportWmStyle", &[(false, "Text"), (true, "Graphic")], &mut graphic);
+                        if graphic != before {
+                            ui.data_mut(|d| d.insert_temp(egui::Id::new("wm-graphic"), graphic));
+                            if !graphic {
+                                wm.image.clear();
+                            }
+                        }
+                        if graphic {
+                            field(ui, "Graphic", |ui| {
+                                let can_pick = app.services.pick_files.is_some();
+                                let w = ui.available_width() - if can_pick { 76.0 } else { 0.0 };
+                                ui.add(egui::TextEdit::singleline(&mut wm.image).hint_text("logo.png").desired_width(w));
+                                if can_pick
+                                    && crate::widgets::text_button(ui, "exportWmChoose", "Choose…", false).clicked()
+                                    && let Some(f) = app.services.pick_files.as_mut().and_then(|pick| pick().into_iter().next())
+                                {
+                                    wm.image = f;
+                                }
+                            });
+                            let mut width = wm.image_width as f64 * 100.0;
+                            if num(ui, &WM_IMAGE_WIDTH, &mut width) {
+                                wm.image_width = (width / 100.0) as f32;
+                            }
+                        } else {
+                            field(ui, "Text", |ui| {
+                                ui.add(egui::TextEdit::singleline(&mut wm.text).hint_text("© Your Name").desired_width(f32::INFINITY))
+                            });
+                        }
                         choices(
                             ui,
                             "Position",
@@ -388,14 +416,16 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                             &mut wm.anchor,
                         );
                         let mut size = wm.size as f64 * 100.0;
-                        if num(ui, &WM_SIZE, &mut size) {
+                        if !graphic && num(ui, &WM_SIZE, &mut size) {
                             wm.size = (size / 100.0) as f32;
                         }
                         let mut op = wm.opacity as f64 * 100.0;
                         if num(ui, &WM_OPACITY, &mut op) {
                             wm.opacity = (op / 100.0) as f32;
                         }
-                        ui.checkbox(&mut wm.shadow, "Shadow");
+                        if !graphic {
+                            ui.checkbox(&mut wm.shadow, "Shadow");
+                        }
                     }
                     }
                     ui.add_space(4.0);
@@ -758,6 +788,7 @@ fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut lightcraft_engine::ex
         *ppi = p as u16;
     }
 }
+const WM_IMAGE_WIDTH: ControlSpec = spec("export.watermarkImageWidth", "Width (% of photo)", 2.0, 100.0, 20.0, 1.0);
 const WM_SIZE: ControlSpec = spec("export.watermarkSize", "Size (% of short edge)", 1.0, 15.0, 3.5, 0.5);
 const WM_OPACITY: ControlSpec = spec("export.watermarkOpacity", "Opacity (%)", 5.0, 100.0, 70.0, 1.0);
 

@@ -40,8 +40,10 @@ pub struct Filter {
     /// `dateTo` as a prefix upper bound (`2026-04` includes all of April).
     pub date_from: Option<String>,
     pub date_to: Option<String>,
-    /// Import date prefix (Recently Added).
+    /// Import date prefix.
     pub imported: Option<String>,
+    /// Imported at or after this time (ISO; Recently Added).
+    pub imported_from: Option<String>,
     /// A folder on disk: its files only (browsed ones too); `subfolders` includes everything below.
     pub folder: Option<String>,
     pub subfolders: bool,
@@ -213,6 +215,11 @@ impl Filter {
         }
         if let Some(d) = &self.imported
             && !p.imported.starts_with(d.as_str())
+        {
+            return false;
+        }
+        if let Some(d) = &self.imported_from
+            && p.imported.as_str() < d.as_str()
         {
             return false;
         }

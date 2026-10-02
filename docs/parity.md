@@ -22,7 +22,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
 | A. Import (IMP) | 7 | 2 | 4 | 1 | 3/4 (75%) | 3/4 (75%) |
-| B. Library management (LIB) | 18 | 1 | 6 | 2 | 9/9 (100%) | 8/9 (89%) |
+| B. Library management (LIB) | 19 | 0 | 6 | 2 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 14 | 0 | 3 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
 | E. Metadata (META) | 4 | 2 | 0 | 0 | 2/2 (100%) | 1/2 (50%) |
@@ -39,7 +39,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 13 | 1 | 4 | 0 | 7/7 (100%) | 6/7 (86%) |
+| S. Export (EXP) | 14 | 0 | 4 | 0 | 7/7 (100%) | 7/7 (100%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
 | Z. Keyboard shortcuts (desktop) | 65 | 10 | 5 | 1 | 49/52 (94%) | 14/23 (61%) |
 | Lightroom Classic extras | 12 | 17 | 50 | 9 | — | 11/21 (52%) |
-| **Total** | 317 | 56 | 127 | 37 | 193/198 (97%) | 105/144 (73%) |
+| **Total** | 319 | 54 | 127 | 37 | 193/198 (97%) | 107/144 (74%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **69.0%** of 500 in-scope rows — P0 98.7% of 198 · P1 84.4% of 144 · P2 17.7% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **69.2%** of 500 in-scope rows — P0 98.7% of 198 · P1 85.1% of 144 · P2 17.7% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -118,7 +118,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
 | LR-LIB-ALLPHOTOS | All photos | P0 | ✅ | `cmd:library.source`, `crates/ui-egui/src/panels/left.rs` | |
-| LR-LIB-RECENT-ADDED | Recently added | P1 | 🟡 | `cmd:library.source` (`recentlyAdded`) | not grouped by import session |
+| LR-LIB-RECENT-ADDED | Recently added | P1 | ✅ | `cmd:library.source` (`recentlyAdded`), `crates/engine/src/view.rs` (`RECENT_DAYS`) | photos imported in the 30 days up to the latest import, newest import first, grouped by import day |
 | LR-LIB-BYDATE | Browse by date | P1 | ✅ | `cmd:library.filter` (`date`), `crates/ui-egui/src/panels/left.rs` (`date_row`), `crates/catalog/src/query.rs` (`date_groups`) | year → month → day tree with counts; a row filters by that date |
 | LR-LIB-ALBUM | Albums | P0 | ✅ | `cmd:album.create`, `cmd:album.rename`, `cmd:album.delete`, `cmd:album.addPhotos`, `cmd:album.removePhotos`, `cmd:dialog.newAlbum` | no drag photos onto album (LR-BEHAV-DRAGDROP), no album sort |
 | LR-LIB-FOLDER | Folders of albums | P0 | ✅ | `cmd:album.create` (`folder`), `cmd:album.move` | moving is command-only (no drag, no "Move to" menu) |
@@ -416,7 +416,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EXP-HDR | HDR output | P2 | ⬜ | | |
 | LR-EXP-SHARPEN | Output sharpening | P1 | ✅ | `cmd:app.export` (`sharpen`, `sharpenAmount`) | |
 | LR-EXP-METADATA | Metadata policy | P1 | ✅ | `cmd:app.export` (`metadata`, `removeLocation`) | |
-| LR-EXP-WATERMARK | Watermark | P1 | 🟡 | `crates/engine/src/export.rs` (`Watermark`) | text only; no graphic watermark |
+| LR-EXP-WATERMARK | Watermark | P1 | ✅ | `cmd:app.export` (`watermark`: text or `image` + `imageWidth`), `crates/engine/src/export.rs` (`Watermark`) | text (size, colour, shadow) or a graphic with transparency (width as % of the photo, converted to the output colour space); position, inset, opacity |
 | LR-EXP-NAMING | File naming | P1 | ✅ | `cmd:app.export` (`naming`: `{name}`, `{seq}`, `{date}`; `startNumber`) | free-form template rather than a list of named schemes |
 | LR-EXP-LOCATION | Destination folder | P0 | ✅ | `cmd:app.export` (`dir`, `subfolder`, `conflict`: unique / overwrite / skip), `crates/ui-egui/src/panels/dialogs.rs` (Choose… folder picker) | folder picker on the desktop; existing files get `-2`, `-3`… by default |
 | LR-EXP-PREVIOUS | Export with previous settings | P0 | ✅ | `cmd:app.exportPrevious`, `cmd:dialog.export` | last options persist in prefs.json; dialog prefilled; no named export presets yet |

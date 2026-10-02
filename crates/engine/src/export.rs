@@ -213,11 +213,29 @@ pub struct Watermark {
     pub color: [u8; 3],
     /// Soft dark drop shadow for legibility on bright areas.
     pub shadow: bool,
+    /// A graphic (PNG with transparency, JPEG, …) drawn instead of the text (empty = text).
+    pub image: String,
+    /// The graphic's width as a fraction of the photo's width.
+    pub image_width: f32,
+    /// The colour space the photo is in (set by the encoder; the graphic is converted into it).
+    #[serde(skip)]
+    pub target: Option<OutputSpace>,
 }
 
 impl Default for Watermark {
     fn default() -> Self {
-        Self { text: String::new(), size: 0.035, opacity: 0.7, anchor: Anchor::BottomRight, inset: 0.025, color: [255; 3], shadow: true }
+        Self {
+            text: String::new(),
+            size: 0.035,
+            opacity: 0.7,
+            anchor: Anchor::BottomRight,
+            inset: 0.025,
+            color: [255; 3],
+            shadow: true,
+            image: String::new(),
+            image_width: 0.2,
+            target: None,
+        }
     }
 }
 
@@ -261,6 +279,10 @@ pub fn draw_watermark_deep(img: &mut DeepImage, wm: &Watermark) {
 /// every covered pixel (shadow pass first).
 fn watermark_coverage(width: usize, height: usize, wm: &Watermark, mut blend_px: impl FnMut(usize, usize, f32, [u8; 3])) {
     use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
+    if !wm.image.trim().is_empty() {
+        logo_coverage(width, height, wm, blend_px);
+        return;
+    }
     let text = wm.text.trim();
     if text.is_empty() || width == 0 || height == 0 {
         return;
@@ -311,6 +333,74 @@ fn watermark_coverage(width: usize, height: usize, wm: &Watermark, mut blend_px:
                 let b = o.px_bounds();
                 o.draw(|gx, gy, cov| blend((ox + off + b.min.x) as i32 + gx as i32, (oy + off + b.min.y) as i32 + gy as i32, cov, col, a * alpha));
             }
+        }
+    }
+}
+
+/// A watermark graphic, decoded once per file (and again when the file changes).
+fn watermark_logo(path: &str) -> Option<std::sync::Arc<Rgba8>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    static CACHE: Mutex<Option<HashMap<String, (std::time::SystemTime, Arc<Rgba8>)>>> = Mutex::new(None);
+    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+    let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let map = c.get_or_insert_with(HashMap::new);
+    if let Some((m, img)) = map.get(path)
+        && *m == modified
+    {
+        return Some(img.clone());
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let img = Arc::new(lightcraft_codecs::decode(&bytes, Default::default()).ok()?.to_srgb8());
+    map.insert(path.to_string(), (modified, img.clone()));
+    Some(img)
+}
+
+/// The graphic watermark: scaled (premultiplied, so transparent edges stay clean) to
+/// `image_width` of the photo, placed like the text, blended with its alpha × opacity.
+fn logo_coverage(width: usize, height: usize, wm: &Watermark, mut blend_px: impl FnMut(usize, usize, f32, [u8; 3])) {
+    let Some(logo) = watermark_logo(wm.image.trim()) else {
+        log::warn!("watermark: can't read {}", wm.image);
+        return;
+    };
+    if width == 0 || height == 0 || logo.width == 0 || logo.height == 0 {
+        return;
+    }
+    let lw = ((wm.image_width.clamp(0.01, 1.0) * width as f32).round() as usize).clamp(1, width);
+    let lh = ((lw as f32 * logo.height as f32 / logo.width as f32).round() as usize).clamp(1, height);
+    let pre: lightcraft_raster::Image<[f32; 4]> = lightcraft_raster::Image::from_fn(logo.width, logo.height, |x, y| {
+        let p = logo.get(x, y);
+        let a = p[3] as f32 / 255.0;
+        [p[0] as f32 * a, p[1] as f32 * a, p[2] as f32 * a, a]
+    });
+    let scaled = lightcraft_raster::resample::resize(&pre, lw, lh, lightcraft_raster::resample::Filter::Mitchell);
+    let inset = wm.inset.clamp(0.0, 0.4) * width.min(height) as f32;
+    let (w, h, lwf, lhf) = (width as f32, height as f32, lw as f32, lh as f32);
+    use Anchor::*;
+    let ox = match wm.anchor {
+        TopLeft | Left | BottomLeft => inset,
+        Top | Center | Bottom => (w - lwf) / 2.0,
+        TopRight | Right | BottomRight => w - inset - lwf,
+    }
+    .max(0.0) as usize;
+    let oy = match wm.anchor {
+        TopLeft | Top | TopRight => inset,
+        Left | Center | Right => (h - lhf) / 2.0,
+        BottomLeft | Bottom | BottomRight => h - inset - lhf,
+    }
+    .max(0.0) as usize;
+    let space = wm.target.unwrap_or(OutputSpace::Srgb);
+    let op = wm.opacity.clamp(0.0, 1.0);
+    for y in 0..lh {
+        for x in 0..lw {
+            let [r, g, b, a] = scaled.get(x, y);
+            let a = a.clamp(0.0, 1.0);
+            let (px, py) = (ox + x, oy + y);
+            if a <= 1e-4 || px >= width || py >= height {
+                continue;
+            }
+            let c = [r, g, b].map(|v| (v / a).round().clamp(0.0, 255.0) as u8);
+            blend_px(px, py, a * op, srgb8_in(space, c));
         }
     }
 }
@@ -430,7 +520,7 @@ impl ExportOptions {
                 Some(v @ Value::Object(_)) => serde_json::from_value(v.clone()).ok(),
                 _ => None,
             }
-            .filter(|w: &Watermark| !w.text.trim().is_empty()),
+            .filter(|w: &Watermark| !w.text.trim().is_empty() || !w.image.trim().is_empty()),
             color_space: s("colorSpace").and_then(OutputSpace::parse).unwrap_or(d.color_space),
             bit_depth: u("bitDepth").filter(|b| matches!(b, 8 | 10 | 16 | 32)).map(|b| b as u8),
         }
@@ -648,7 +738,7 @@ pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metada
     output_sharpen(&mut img, o.sharpen, o.sharpen_amount);
     let space = o.effective_space();
     if let Some(wm) = &o.watermark {
-        let wm = Watermark { color: srgb8_in(space, wm.color), ..wm.clone() };
+        let wm = Watermark { color: srgb8_in(space, wm.color), target: Some(space), ..wm.clone() };
         draw_watermark(&mut img, &wm);
     }
     let profile = icc::write_named(named_space(space));
@@ -732,7 +822,7 @@ pub fn encode_deep(img: &DeepImage, o: &ExportOptions, meta: Option<&Metadata>) 
     let mut img = img.clone();
     output_sharpen_deep(&mut img, o.sharpen, o.sharpen_amount);
     if let Some(wm) = &o.watermark {
-        let wm = Watermark { color: srgb8_in(img.space, wm.color), ..wm.clone() };
+        let wm = Watermark { color: srgb8_in(img.space, wm.color), target: Some(img.space), ..wm.clone() };
         draw_watermark_deep(&mut img, &wm);
     }
     let profile = match img.samples {
@@ -1106,6 +1196,30 @@ mod tests {
         // string shorthand
         assert_eq!(ExportOptions::from_json(&serde_json::json!({"watermark": "© Me"})).watermark.unwrap().text, "© Me");
         assert!(ExportOptions::from_json(&serde_json::json!({"watermark": ""})).watermark.is_none());
+    }
+
+    #[test]
+    fn graphic_watermark_is_placed_scaled_and_blended() {
+        let dir = std::env::temp_dir().join(format!("lc-wm-logo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let logo_path = dir.join("logo.png");
+        // 40×20: left half opaque red, right half fully transparent
+        let logo = Rgba8::from_fn(40, 20, |x, _| if x < 20 { [255, 0, 0, 255] } else { [0, 255, 0, 0] });
+        let png = lightcraft_codecs::encode_png(&EncodeImage::rgba8(&logo), &EncodeMeta::default()).unwrap();
+        std::fs::write(&logo_path, png).unwrap();
+        let mut img = Rgba8::new(400, 300);
+        img.data.iter_mut().for_each(|p| *p = [0, 0, 0, 255]);
+        let wm = Watermark { image: logo_path.to_string_lossy().into(), image_width: 0.25, opacity: 1.0, inset: 0.0, ..Default::default() };
+        draw_watermark(&mut img, &wm);
+        // 100 px wide × 50 px high in the bottom-right corner
+        assert!(img.get(310, 280)[0] > 200, "opaque half: {:?}", img.get(310, 280));
+        assert_eq!(img.get(390, 280), [0, 0, 0, 255], "transparent half leaves the photo");
+        assert_eq!(img.get(310, 240), [0, 0, 0, 255], "above the logo");
+        assert_eq!(img.get(10, 10), [0, 0, 0, 255]);
+        // an image-only watermark survives the params (no text needed)
+        let o = ExportOptions::from_json(&json!({"watermark": {"image": logo_path.to_string_lossy(), "imageWidth": 0.1}}));
+        assert_eq!(o.watermark.as_ref().map(|w| w.image_width), Some(0.1));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
