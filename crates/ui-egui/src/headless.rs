@@ -799,8 +799,33 @@ mod tests {
         h.app.ui.dialog = None;
         let r = h.request("engine.execute", json!({"command": "file.addFromDevice", "params": {"path": sub.to_string_lossy()}}), t);
         assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
         let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review") };
         assert!(opts.copy);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The folder scan runs in the background: the request returns at once and the review opens
+    /// when the scan finishes (a folder on a network share must not freeze the window).
+    #[test]
+    fn add_folder_scans_in_the_background() {
+        let mut h = demo([1200.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let dir = std::env::temp_dir().join(format!("lc-scanbg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = lightcraft_raster::Rgba8::from_fn(8, 8, |x, y| [(x * 9) as u8, (y * 12) as u8, 80, 255]);
+        let png = lightcraft_engine::export::encode_image(
+            &img,
+            &lightcraft_engine::export::ExportOptions { format: lightcraft_engine::export::ExportFormat::Png, ..Default::default() },
+        )
+        .unwrap();
+        std::fs::write(dir.join("a.png"), &png).unwrap();
+        let r = h.request("engine.execute", json!({"command": "file.addFolder", "params": {"path": dir.to_string_lossy()}}), t);
+        assert_eq!(r["result"]["scanning"], true, "{r}");
+        assert!(h.app.scan.is_some() || h.app.ui.dialog.is_some());
+        h.settle(SETTLE);
+        assert!(h.app.scan.is_none());
+        assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::Import { .. })));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -914,9 +939,11 @@ mod tests {
         let n0 = h.app.session.catalog.len();
         let undo0 = h.app.session.undo.len();
         let r = h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [dir.to_string_lossy()]}}), t);
-        assert_eq!(r["result"]["candidates"], 6, "{r}");
-        assert_eq!(r["result"]["duplicates"], 1, "{r}");
+        assert_eq!(r["result"]["scanning"], true, "{r}");
         h.settle(SETTLE);
+        let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review") };
+        assert_eq!(opts.candidates.len(), 6);
+        assert_eq!(opts.candidates.iter().filter(|c| c.duplicate.is_some()).count(), 1);
         assert!(h.app.renderer.textures.keys().filter(|s| matches!(s, crate::render::Slot::Import(_))).count() >= 5, "thumbnails");
         // uncheck the first photo; name a new album and keywords
         let r = h.request("ui.clickWidget", json!({"id": "import:0"}), t);

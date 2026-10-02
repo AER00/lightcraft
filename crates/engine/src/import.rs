@@ -261,11 +261,12 @@ pub fn expand(paths: &[String], skip: Option<&Path>) -> Vec<String> {
 
 /// Probe files (headers + content hash) as an import would.
 pub(crate) fn probe_paths(s: &Session, paths: &[String]) -> Vec<Result<ProbeInfo, String>> {
-    probe_all(s, paths)
+    probe_all(s.media.file_probe.as_ref(), paths, &ScanProgress::default())
 }
 
-fn probe_all(s: &Session, paths: &[String]) -> Vec<Result<ProbeInfo, String>> {
-    let Some(probe) = s.media.file_probe.clone() else {
+fn probe_all(probe: Option<&crate::media::FileProbe>, paths: &[String], progress: &ScanProgress) -> Vec<Result<ProbeInfo, String>> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let Some(probe) = probe.cloned() else {
         return paths
             .iter()
             .map(|p| {
@@ -291,7 +292,11 @@ fn probe_all(s: &Session, paths: &[String]) -> Vec<Result<ProbeInfo, String>> {
                             if i >= paths.len() {
                                 break;
                             }
+                            if progress.cancel.load(Relaxed) {
+                                break;
+                            }
                             let r = probe(&paths[i]);
+                            progress.done.fetch_add(1, Relaxed);
                             out.lock().unwrap_or_else(|e| e.into_inner())[i] = Some(r);
                         }
                     });
@@ -300,7 +305,17 @@ fn probe_all(s: &Session, paths: &[String]) -> Vec<Result<ProbeInfo, String>> {
             return results.into_iter().map(|r| r.unwrap_or_else(|| Err("not probed".into()))).collect();
         }
     }
-    paths.iter().map(|p| probe(p)).collect()
+    paths
+        .iter()
+        .map(|p| {
+            if progress.cancel.load(Relaxed) {
+                return Err("cancelled".into());
+            }
+            let r = probe(p);
+            progress.done.fetch_add(1, Relaxed);
+            r
+        })
+        .collect()
 }
 
 /// Copy `src` into `root` (filed per `organize` by `date`) as `name` (default: its own name),
@@ -331,53 +346,107 @@ fn copy_into(root: &Path, src: &str, date: &str, organize: Organize, name: Optio
     Ok(dst.to_string_lossy().to_string())
 }
 
+/// What a [`scan`] needs from the session, so it can run on another thread (a folder on a network
+/// share can take minutes to read).
+pub struct ScanInput {
+    probe: Option<crate::media::FileProbe>,
+    skip: Option<PathBuf>,
+    /// path → (photo, its summary) for files already in the library.
+    by_path: HashMap<String, (PhotoId, ImportCandidate)>,
+    by_hash: HashMap<String, PhotoId>,
+    cache: HashMap<String, ProbeInfo>,
+}
+
+/// Progress and cancellation of a running [`scan_with`].
+#[derive(Default)]
+pub struct ScanProgress {
+    /// Files to probe, set once the folders are expanded.
+    pub total: std::sync::atomic::AtomicUsize,
+    pub done: std::sync::atomic::AtomicUsize,
+    pub cancel: std::sync::atomic::AtomicBool,
+}
+
+/// The result of [`scan_with`]: the candidates, and the probes to keep for the import that follows.
+pub struct ScanOutput {
+    pub candidates: Vec<ImportCandidate>,
+    pub probes: HashMap<String, ProbeInfo>,
+}
+
+impl ScanInput {
+    pub fn new(s: &mut Session, paths: &[String]) -> (Self, Vec<String>) {
+        let skip = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
+        let mut by_path = HashMap::new();
+        let mut by_hash = HashMap::new();
+        for p in s.catalog.photos() {
+            if let Source::File { path } = &p.source {
+                let c = ImportCandidate {
+                    path: path.clone(),
+                    format: p.format.clone(),
+                    kind: p.kind,
+                    width: p.width,
+                    height: p.height,
+                    file_size: p.file_size,
+                    captured: p.captured.clone(),
+                    duplicate: Some("path".into()),
+                    existing: Some(p.id.0),
+                    ..Default::default()
+                };
+                by_path.insert(path.clone(), (p.id, c));
+            }
+            if let Some(h) = &p.content_hash {
+                by_hash.insert(h.clone(), p.id);
+            }
+        }
+        let input = ScanInput { probe: s.media.file_probe.clone(), skip, by_path, by_hash, cache: std::mem::take(&mut s.import_probes) };
+        (input, paths.to_vec())
+    }
+}
+
 /// Find and probe what importing `paths` would add, marking duplicates (by path, or by content
 /// against the library and earlier candidates). Nothing is added; the probes are kept for the
 /// import that follows.
 pub fn scan(s: &mut Session, paths: &[String]) -> Vec<ImportCandidate> {
-    let lib_dir = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
-    let files = expand(paths, lib_dir.as_deref());
-    let mut by_path: HashMap<String, PhotoId> = HashMap::new();
-    let mut by_hash: HashMap<String, PhotoId> = HashMap::new();
-    for p in s.catalog.photos() {
-        if let Source::File { path } = &p.source {
-            by_path.insert(path.clone(), p.id);
-        }
-        if let Some(h) = &p.content_hash {
-            by_hash.insert(h.clone(), p.id);
-        }
-    }
-    let todo: Vec<String> = files.iter().filter(|f| !by_path.contains_key(f.as_str())).cloned().collect();
+    let (input, paths) = ScanInput::new(s, paths);
+    let out = scan_with(input, &paths, &ScanProgress::default());
+    s.import_probes = out.probes;
+    out.candidates
+}
+
+/// [`scan`] without the session, so it can run on a worker thread. Stops early (returning what it
+/// has) when `progress.cancel` is set.
+pub fn scan_with(mut input: ScanInput, paths: &[String], progress: &ScanProgress) -> ScanOutput {
+    use std::sync::atomic::Ordering::Relaxed;
+    let files = expand(paths, input.skip.as_deref());
+    let todo: Vec<String> = files.iter().filter(|f| !input.by_path.contains_key(f.as_str())).cloned().collect();
+    progress.total.store(todo.len(), Relaxed);
     // probes from a preceding `scan` are reused when the file is unchanged (same size)
     let cached: Vec<Option<ProbeInfo>> = todo
         .iter()
         .map(|f| {
-            let info = s.import_probes.remove(f)?;
+            let info = input.cache.remove(f)?;
             let size = std::fs::metadata(f).map(|m| m.len()).ok();
             (size.is_none() || size == Some(info.file_size)).then_some(info)
         })
         .collect();
     let missing: Vec<String> = todo.iter().zip(&cached).filter(|(_, c)| c.is_none()).map(|(f, _)| f.clone()).collect();
-    let mut fresh = probe_all(s, &missing).into_iter();
+    progress.done.store(todo.len() - missing.len(), Relaxed);
+    let mut fresh = probe_all(input.probe.as_ref(), &missing, progress).into_iter();
     let probed: Vec<Result<ProbeInfo, String>> =
         cached.into_iter().map(|c| c.map(Ok).unwrap_or_else(|| fresh.next().unwrap_or_else(|| Err("not probed".into())))).collect();
     crate::memory::release();
     let mut probes: HashMap<String, Result<ProbeInfo, String>> = todo.into_iter().zip(probed).collect();
-    let mut seen_hash: HashMap<String, Option<u64>> = by_hash.into_iter().map(|(h, id)| (h, Some(id.0))).collect();
+    let mut seen_hash: HashMap<String, Option<u64>> = input.by_hash.into_iter().map(|(h, id)| (h, Some(id.0))).collect();
     let mut out = Vec::with_capacity(files.len());
+    let mut kept = HashMap::new();
     for f in files {
-        let name = Path::new(&f).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| f.clone());
-        let mut c = ImportCandidate { path: f.clone(), name, ..Default::default() };
-        if let Some(id) = by_path.get(&f) {
-            c.duplicate = Some("path".into());
-            c.existing = Some(id.0);
-            if let Some(p) = s.catalog.photo(*id) {
-                (c.format, c.kind, c.width, c.height, c.file_size, c.captured) =
-                    (p.format.clone(), p.kind, p.width, p.height, p.file_size, p.captured.clone());
-            }
+        if let Some((_, c)) = input.by_path.get(&f) {
+            let mut c = c.clone();
+            c.name = Path::new(&f).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| f.clone());
             out.push(c);
             continue;
         }
+        let name = Path::new(&f).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| f.clone());
+        let mut c = ImportCandidate { path: f.clone(), name, ..Default::default() };
         match probes.remove(&f) {
             Some(Ok(info)) => {
                 (c.format, c.kind, c.width, c.height, c.file_size, c.captured) =
@@ -393,14 +462,14 @@ pub fn scan(s: &mut Session, paths: &[String]) -> Vec<ImportCandidate> {
                         }
                     }
                 }
-                s.import_probes.insert(f, info);
+                kept.insert(f, info);
             }
             Some(Err(e)) => c.error = Some(e),
             None => c.error = Some("not probed".into()),
         }
         out.push(c);
     }
-    out
+    ScanOutput { candidates: out, probes: kept }
 }
 
 /// Import files/folders. See the module docs.
@@ -454,7 +523,7 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         }
     }
 
-    let probed = probe_all(s, &todo);
+    let probed = probe_all(s.media.file_probe.as_ref(), &todo, &ScanProgress::default());
     crate::memory::release();
     let now = (s.clock)();
     let mut ops = promote;

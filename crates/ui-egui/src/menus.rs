@@ -879,8 +879,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 },
             };
             let r = crate::import::open(app, vec![path]);
-            if let Some(crate::state::Dialog::Import { opts }) = &mut app.ui.dialog {
-                opts.copy = true;
+            if let Some(t) = &mut app.scan {
+                t.copy = true;
             }
             r
         }
