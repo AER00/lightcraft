@@ -3,8 +3,8 @@
 #
 # Usage: packaging/web/package.sh [--skip-build]
 #
-# Needs: trunk (brew install trunk / cargo install trunk --locked) and the wasm32-unknown-unknown
-# target. The zip holds a self-contained static site in lightcraft-web-<version>/ that works
+# Needs: the wasm32-unknown-unknown target and the wasm-bindgen CLI at the version in Cargo.lock
+# (see docs/web.md); `cargo xtask web` builds it. The zip holds a self-contained static site in lightcraft-web-<version>/ that works
 # from any URL path and inside an <iframe>. Hosting notes: packaging/web/README.md.
 set -euo pipefail
 # shellcheck source=../env.sh
@@ -12,13 +12,12 @@ set -euo pipefail
 HERE="$ROOT/packaging/web"
 
 if [ "${1:-}" != "--skip-build" ]; then
-  command -v trunk >/dev/null || { echo "error: trunk not found (cargo install trunk --locked)" >&2; exit 1; }
-  (cd "$ROOT/apps/lightcraft-web" && trunk build --release)
+  (cd "$ROOT" && cargo xtask web)
 fi
 
-SITE="$ROOT/dist/web"
+SITE="$CARGO_TARGET_DIR/web"
 [ -f "$SITE/index.html" ] || { echo "error: $SITE/index.html missing; run without --skip-build" >&2; exit 1; }
-# Paths must be relative so the site works under any prefix (public_url = "./" in Trunk.toml).
+# Paths must be relative so the site works under any prefix.
 if grep -Eq '(src|href)="/[^/]' "$SITE/index.html"; then
   echo "error: $SITE/index.html has root-absolute URLs; it would break when served from a sub-path" >&2
   exit 1
