@@ -10,7 +10,7 @@ use serde_json::json;
 
 use crate::LightcraftApp;
 use crate::render::Slot;
-use crate::state::{BeforeAfter, CropOverlay, RightPanel, Zoom};
+use crate::state::{BeforeAfter, RightPanel, Zoom};
 use crate::theme::Tokens;
 use crate::widgets::register;
 
@@ -586,15 +586,11 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     // overlay guides
     let lerp = |a: Pos2, b: Pos2, t: f32| a + (b - a) * t;
     let guide = Stroke::new(0.8, Color32::from_white_alpha(150));
-    let fracs: Vec<f32> = match app.ui.crop_overlay {
-        CropOverlay::Thirds => vec![1.0 / 3.0, 2.0 / 3.0],
-        CropOverlay::Grid => (1..8).map(|i| i as f32 / 8.0).collect(),
-        CropOverlay::Golden => vec![0.382, 0.618],
-        CropOverlay::Diagonal | CropOverlay::None => vec![],
-    };
-    for f in fracs {
-        p.line_segment([lerp(pts[0], pts[1], f), lerp(pts[3], pts[2], f)], guide);
-        p.line_segment([lerp(pts[0], pts[3], f), lerp(pts[1], pts[2], f)], guide);
+    // (u, v) across / down the (rotated) crop frame
+    let at = |(u, v): (f32, f32)| pts[0] + (pts[1] - pts[0]) * u + (pts[3] - pts[0]) * v;
+    let (cw, ch) = (pts[0].distance(pts[1]), pts[0].distance(pts[3]));
+    for line in super::crop_overlay::paths(app.ui.crop_overlay, app.ui.crop_overlay_orient, cw, ch) {
+        p.add(egui::Shape::line(line.into_iter().map(at).collect(), guide));
     }
     // handles: 0..3 corners, 4..7 edges (top, right, bottom, left)
     let handles: Vec<Pos2> = (0..8).map(|i| if i < 4 { pts[i] } else { lerp(pts[i - 4], pts[(i - 3) % 4], 0.5) }).collect();

@@ -591,6 +591,29 @@ mod tests {
         assert!(last["files"][0]["width"].as_u64().is_some_and(|w| w <= 64));
     }
 
+    /// While cropping: O cycles the guides, ⇧O mirrors them, A locks / unlocks the aspect.
+    #[test]
+    fn crop_keys() {
+        let mut h = demo([1200.0, 800.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.request("engine.execute", json!({"command": "panel.crop"}), t);
+        assert_eq!(h.app.ui.crop_overlay, crate::state::CropOverlay::Thirds);
+        let mask_overlay = h.app.ui.mask_overlay;
+        h.request("ui.key", json!({"key": "O"}), t);
+        assert_eq!(h.app.ui.crop_overlay, crate::state::CropOverlay::Grid);
+        h.request("ui.key", json!({"key": "O", "shift": true}), t);
+        assert_eq!(h.app.ui.crop_overlay_orient, 1);
+        assert_eq!(h.app.ui.mask_overlay, mask_overlay, "O doesn't toggle the mask overlay while cropping");
+        let locked = |h: &Headless| h.app.session.develop_of(h.app.session.active().unwrap()).unwrap().crop.aspect.is_some();
+        assert!(!locked(&h));
+        h.request("ui.key", json!({"key": "A"}), t);
+        assert!(locked(&h));
+        h.request("ui.key", json!({"key": "A"}), t);
+        assert!(!locked(&h));
+        assert!(!h.app.ui.visualize_spots);
+    }
+
     /// ⌘Q (File → Quit LightCraft) closes the window.
     #[test]
     fn cmd_q_quits() {

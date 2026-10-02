@@ -132,11 +132,23 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.label("Overlay");
         {
             use crate::state::CropOverlay as O;
-            let opts = [(O::Thirds, "Thirds", "thirds"), (O::Grid, "Grid", "grid"), (O::Golden, "Golden", "golden"), (O::None, "None", "none")];
+            let opts = [
+                (O::Thirds, "Thirds", "thirds"),
+                (O::Grid, "Grid", "grid"),
+                (O::Golden, "Golden", "golden"),
+                (O::Diagonal, "Diagonal", "diagonal"),
+                (O::Triangle, "Triangle", "triangle"),
+                (O::Spiral, "Spiral", "spiral"),
+                (O::None, "None", "none"),
+            ];
             let items: Vec<(&str, &str)> = opts.iter().map(|(_, l, k)| (*l, *k)).collect();
             let active = opts.iter().position(|(o, _, _)| *o == app.ui.crop_overlay);
             if let Some(i) = crate::widgets::segmented(ui, "cropOverlay", &items, active, 4) {
                 app.ui.crop_overlay = opts[i].0;
+            }
+            if matches!(app.ui.crop_overlay, O::Triangle | O::Spiral) && text_button(ui, "cropOverlayOrient", "Flip Overlay (⇧O)", false).clicked()
+            {
+                let _ = app.run("view.cropOverlayOrientation", json!({}));
             }
         }
     });

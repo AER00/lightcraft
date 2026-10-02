@@ -339,3 +339,21 @@ fn presets_versions_history_and_select_by() {
     assert!(s.execute("library.selectBy", &json!({})).is_err());
     assert!(s.execute("library.selectBy", &json!({"label": "mauve"})).is_err());
 }
+
+#[test]
+fn crop_aspect_lock_current_and_toggle() {
+    let mut s = demo();
+    s.execute("crop.set", &json!({"rect": [0.1, 0.2, 0.7, 0.6]})).unwrap();
+    let rect = active_dev(&s).crop.geometry.rect;
+    s.execute("crop.aspect", &json!({"aspect": "toggle"})).unwrap();
+    let d = active_dev(&s);
+    assert_eq!(d.crop.geometry.rect, rect, "locking keeps the rectangle");
+    let (aw, ah) = d.crop.aspect.expect("locked");
+    let id = s.active().unwrap();
+    let p = s.catalog.photo(id).unwrap();
+    let (w, h) = if d.orientation.swaps_axes() { (p.height as f64, p.width as f64) } else { (p.width as f64, p.height as f64) };
+    let want = (rect.x1 - rect.x0) * w / ((rect.y1 - rect.y0) * h);
+    assert!((aw as f64 / ah as f64 - want).abs() < 0.01, "{aw}:{ah} vs {want}");
+    s.execute("crop.aspect", &json!({"aspect": "toggle"})).unwrap();
+    assert!(active_dev(&s).crop.aspect.is_none(), "toggle unlocks");
+}

@@ -40,6 +40,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.maskPins", "Show Mask Pins", None, "View"),
     ("view.visualizeSpots", "Visualize Spots", Some("A"), "View"),
     ("view.cropOverlay", "Cycle Crop Overlay", Some("Shift+O"), "View"),
+    ("view.cropOverlayOrientation", "Cycle Crop Overlay Orientation", None, "View"),
     ("view.back", "Back to Grid", Some("Escape"), ""),
     ("view.filterBar", "Filter Bar", Some("Shift+F"), "View"),
     ("view.fullScreenPreview", "Full Screen Preview", Some("F"), "View"),
@@ -380,10 +381,16 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 Thirds => Grid,
                 Grid => Golden,
                 Golden => Diagonal,
-                Diagonal => None,
+                Diagonal => Triangle,
+                Triangle => Spiral,
+                Spiral => None,
                 None => Thirds,
             };
-            Ok(Value::Null)
+            Ok(json!({"overlay": app.ui.crop_overlay}))
+        }
+        "view.cropOverlayOrientation" => {
+            app.ui.crop_overlay_orient = (app.ui.crop_overlay_orient + 1) % 4;
+            Ok(json!({"orientation": app.ui.crop_overlay_orient}))
         }
         "view.filterBar" => {
             app.ui.filter_bar = !app.ui.filter_bar;

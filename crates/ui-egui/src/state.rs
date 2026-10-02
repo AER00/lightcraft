@@ -74,6 +74,8 @@ pub enum CropOverlay {
     Grid,
     Golden,
     Diagonal,
+    Triangle,
+    Spiral,
     None,
 }
 
@@ -196,6 +198,8 @@ pub struct UiState {
     pub mask_overlay_color: [u8; 3],
     pub mask_overlay_opacity: f32,
     pub mask_pins: bool,
+    /// Mirroring of the triangle / spiral crop guides (0..4).
+    pub crop_overlay_orient: u8,
     pub crop_overlay: CropOverlay,
     pub show_filenames: bool,
     pub search: String,
@@ -403,6 +407,7 @@ impl Default for UiState {
             mask_overlay_opacity: 50.0,
             mask_pins: true,
             crop_overlay: CropOverlay::Thirds,
+            crop_overlay_orient: 0,
             show_filenames: true,
             search: String::new(),
             focus_search: false,

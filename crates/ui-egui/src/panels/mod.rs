@@ -2,6 +2,7 @@
 
 pub mod bottombar;
 pub mod compare;
+pub mod crop_overlay;
 pub mod detail;
 pub mod dialogs;
 pub mod edit;

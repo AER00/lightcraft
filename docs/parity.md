@@ -28,7 +28,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | E. Metadata (META) | 3 | 2 | 1 | 0 | 2/2 (100%) | 1/2 (50%) |
 | F. Edit panel — global adjustments (EDIT) | 40 | 2 | 6 | 1 | 28/28 (100%) | 12/14 (86%) |
 | G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
-| H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
+| H. Crop & rotate (CROP) | 8 | 1 | 0 | 1 | 6/6 (100%) | 2/3 (67%) |
 | I. Remove / healing (REM) | 6 | 1 | 3 | 2 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 1 | 0 | 1 | 0 | — | 1/1 (100%) |
 | K. Masking (MASK) | 11 | 5 | 7 | 0 | 8/8 (100%) | 3/5 (60%) |
@@ -46,9 +46,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 11 | 2 | 4 | 1 | 8/8 (100%) | 3/5 (60%) |
 | Y. Menus | 65 | 9 | 11 | 8 | 46/47 (98%) | 17/23 (74%) |
-| Z. Keyboard shortcuts (desktop) | 59 | 12 | 9 | 1 | 49/52 (94%) | 10/23 (43%) |
+| Z. Keyboard shortcuts (desktop) | 61 | 12 | 7 | 1 | 49/52 (94%) | 12/23 (52%) |
 | Lightroom Classic extras | 7 | 19 | 53 | 9 | — | 6/21 (29%) |
-| **Total** | 292 | 65 | 143 | 37 | 192/198 (97%) | 90/144 (63%) |
+| **Total** | 295 | 64 | 141 | 37 | 192/198 (97%) | 93/144 (65%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -274,7 +274,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-CROP-ANGLE | Angle slider | P0 | ✅ | `ctl:crop.angle` | |
 | LR-CROP-ROTATE90 | Rotate 90° | P0 | ✅ | `cmd:photo.rotateLeft`, `cmd:photo.rotateRight` | |
 | LR-CROP-FLIP | Flip | P0 | ✅ | `cmd:photo.flipHorizontal`, `cmd:photo.flipVertical` | |
-| LR-CROP-OVERLAY | Crop overlays | P1 | 🟡 | `cmd:view.cropOverlay` | thirds, grid, golden ratio, diagonal; no triangle / spiral / aspect overlays or orientation cycle |
+| LR-CROP-OVERLAY | Crop overlays | P1 | ✅ | `cmd:view.cropOverlay`, `cmd:view.cropOverlayOrientation`, `crates/ui-egui/src/panels/crop_overlay.rs` | thirds, grid, golden ratio, diagonal, triangle, golden spiral (mirrored with ⇧O while cropping); no aspect-ratio overlays |
 | LR-CROP-ZOOM | Zoom while cropping | P1 | 🟡 | | unverified |
 | LR-CROP-GENEXPAND | Generative expand | OOS | 🚫 | | |
 
@@ -662,9 +662,9 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-RESETALL | Reset all — ⇧⌘R | P0 | ✅ | `cmd:develop.reset` | |
 | KEY-GENAI | Generative toggles / variations — ⌥⇧G, ⌥←/→ | OOS | 🚫 | | |
 | KEY-DETECT | Detect objects — ⌥⇧O | P2 | ⬜ | | |
-| KEY-CROP-CONSTRAIN | Lock crop aspect — A | P1 | ⬜ | | |
+| KEY-CROP-CONSTRAIN | Lock crop aspect — A | P1 | ✅ | `cmd:crop.aspect` (`toggle`, `current`) | A while cropping locks the current shape / unlocks |
 | KEY-CROP-SWAP | Swap crop orientation — X | P0 | ✅ | `cmd:crop.rotateAspect` | |
-| KEY-CROP-OVERLAYORIENT | Crop overlay orientation — ⇧O | P1 | ⬜ | | |
+| KEY-CROP-OVERLAYORIENT | Crop overlay orientation — ⇧O | P1 | ✅ | `cmd:view.cropOverlayOrientation` | while cropping: O cycles the overlay, ⇧O its orientation |
 | KEY-CROP-RESET | Reset crop — ⌥⌘R | P0 | ✅ | `cmd:crop.reset` | |
 | KEY-STRAIGHTEN | Straighten while held — ⌘ drag | P1 | ⬜ | | |
 | KEY-SLIDER-RESET | Reset slider — double-click | P0 | ✅ | `crates/ui-egui/src/widgets.rs` | |

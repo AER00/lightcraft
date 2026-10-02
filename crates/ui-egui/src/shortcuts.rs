@@ -208,6 +208,19 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let _ = app.run("view.maskOverlayMode", json!({}));
                 continue;
             }
+            // while cropping: O cycles the guides, Shift+O their orientation, A locks the aspect
+            if app.ui.right == crate::state::RightPanel::Crop {
+                let crop_key = match f.as_str() {
+                    "view.maskOverlay" => Some(("view.cropOverlay", json!({}))),
+                    "view.cropOverlay" => Some(("view.cropOverlayOrientation", json!({}))),
+                    "view.visualizeSpots" => Some(("crop.aspect", json!({"aspect": "toggle"}))),
+                    _ => None,
+                };
+                if let Some((cmd, p)) = crop_key {
+                    let _ = app.run(cmd, p);
+                    continue;
+                }
+            }
             let _ = app.run(&f, json!({}));
             match f.as_str() {
                 "photo.pick" => app.toast(ctx, "Flagged as Pick"),

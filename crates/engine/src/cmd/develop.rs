@@ -400,12 +400,27 @@ pub fn specs() -> Vec<CommandSpec> {
             "Crop Aspect",
             [],
             None,
-            "{aspect: \"original\"|\"free\"|\"1x1\"|\"4x5\"|\"8.5x11\"|\"5x7\"|\"2x3\"|\"4x3\"|\"16x9\"|\"16x10\"|[w,h]}",
+            "{aspect: \"original\"|\"free\"|\"current\" (lock the crop's present shape)|\"toggle\" (lock ↔ free)|\"1x1\"|\"4x5\"|\"8.5x11\"|\"5x7\"|\"2x3\"|\"4x3\"|\"16x9\"|\"16x10\"|[w,h]}",
             has_active,
             |s, p| {
                 let id = active(s, "crop.aspect")?;
                 let (w, h) = crop_dims(s, id);
+                let locked = s.develop_of(id).is_some_and(|d| d.crop.aspect.is_some());
+                let lock_current = match p.get("aspect").and_then(Value::as_str) {
+                    Some("current") => true,
+                    Some("toggle") => !locked,
+                    _ => false,
+                };
+                if lock_current {
+                    // lock to the rectangle as it is: no refit
+                    return edit(s, "crop.aspect", "Lock Crop Aspect", |d| {
+                        let r = d.crop.geometry.rect_px(w, h);
+                        d.crop.aspect = Some(((r.width() * 100.0).round().max(1.0) as u32, (r.height() * 100.0).round().max(1.0) as u32));
+                        Ok(())
+                    });
+                }
                 let aspect = match p.get("aspect") {
+                    Some(Value::String(a)) if a == "toggle" => None,
                     Some(Value::String(a)) if a == "free" => None,
                     Some(Value::String(a)) if a == "original" => Some(((w * 100.0) as u32, (h * 100.0) as u32)),
                     Some(Value::String(a)) => {
