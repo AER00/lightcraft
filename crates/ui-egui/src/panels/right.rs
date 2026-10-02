@@ -610,19 +610,69 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 fn versions(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let Some(p) = app.session.catalog.photo(id).cloned() else { return };
     header(ui, "Versions");
+    let t = Tokens::get(ui.ctx());
     padded(ui, |ui| {
         if text_button(ui, "versionCreate", "Create Version", false).clicked() {
             let _ = app.run("version.create", json!({}));
         }
         ui.add_space(8.0);
-        for (i, v) in p.versions.iter().enumerate() {
-            ui.horizontal(|ui| {
-                let b = ui.button(&v.name).on_hover_text(&v.created);
-                register(ui.ctx(), format!("version:{i}"), b.rect);
-                if b.clicked() {
-                    let _ = app.run("version.restore", json!({"index": i}));
-                }
-                b.context_menu(|ui| {
+        // Named (made by you) and Auto (made by LightCraft) versions
+        let tab_id = egui::Id::new("versions-tab");
+        let mut auto: bool = ui.data(|d| d.get_temp(tab_id)).unwrap_or(false);
+        let named_n = p.versions.iter().filter(|v| !v.auto).count();
+        let items = [("Named", "named"), ("Auto", "auto")];
+        let labels = [format!("Named ({named_n})"), format!("Auto ({})", p.versions.len() - named_n)];
+        let items: Vec<(&str, &str)> = items.iter().zip(&labels).map(|((_, k), l)| (l.as_str(), *k)).collect();
+        if let Some(i) = crate::widgets::segmented(ui, "versionsTab", &items, Some(auto as usize), 2) {
+            auto = i == 1;
+            ui.data_mut(|d| d.insert_temp(tab_id, auto));
+        }
+        ui.add_space(6.0);
+        let shown: Vec<(usize, &lightcraft_catalog::Version)> = p.versions.iter().enumerate().filter(|(_, v)| v.auto == auto).collect();
+        if shown.is_empty() {
+            let msg = if auto { "No automatic versions." } else { "No versions yet. Create one to keep this look." };
+            ui.label(egui::RichText::new(msg).color(t.text_dim));
+        }
+        // newest first
+        for (i, v) in shown.into_iter().rev() {
+            let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::click());
+            register(ui.ctx(), format!("version:{i}"), r);
+            let current = *v.settings == *p.develop;
+            if resp.hovered() {
+                ui.painter().rect_filled(r, 4.0, t.hover.gamma_multiply(0.7));
+            }
+            // thumbnail of the version's look
+            let tr = Rect::from_min_size(r.min + vec2(4.0, 5.0), vec2(72.0, 48.0));
+            ui.painter().rect_filled(tr, 2.0, t.canvas);
+            if let Some(job) = app.session.variant_job(id, &v.settings, 160)
+                && let Some(tex) = app.renderer.variant(job)
+            {
+                ui.painter().image(tex.tex.id(), tr, crate::panels::presets::cover_uv(tr, tex.size), egui::Color32::WHITE);
+            }
+            let x = tr.right() + 10.0;
+            ui.painter().with_clip_rect(r.with_max_x(r.right() - 24.0)).text(
+                pos2(x, r.top() + 18.0),
+                Align2::LEFT_CENTER,
+                &v.name,
+                t.semibold(13.0),
+                t.text,
+            );
+            let painter = ui.painter().with_clip_rect(r);
+            painter.text(pos2(x, r.top() + 38.0), Align2::LEFT_CENTER, short_time(&v.created), t.font(11.0), t.text_dim);
+            if current {
+                paint(ui.painter(), Rect::from_center_size(pos2(r.right() - 14.0, r.center().y), vec2(14.0, 14.0)), Icon::Check, t.accent);
+            }
+            // resting on a version shows it in the loupe (nothing is changed)
+            if resp.hovered() && !current {
+                app.hover_preview = Some(crate::HoverPreview { label: format!("Version: {}", v.name), settings: (*v.settings).clone() });
+            }
+            if resp.double_clicked() {
+                crate::panels::dialogs::prompt(app, "Rename Version", "Version name", &v.name, "version.rename", json!({"index": i}), "name");
+            } else if resp.clicked() && !current {
+                let _ = app.run("version.restore", json!({"index": i}));
+            }
+            resp.on_hover_text(if current { "The photo has these settings" } else { "Click to restore · double-click to rename" }).context_menu(
+                |ui| {
                     if ui.button("Restore").clicked() {
                         let _ = app.run("version.restore", json!({"index": i}));
                     }
@@ -639,16 +689,25 @@ fn versions(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     if ui.button("Delete").clicked() {
                         let _ = app.run("version.delete", json!({"index": i}));
                     }
-                });
-                if ui.small_button("×").clicked() {
-                    let _ = app.run("version.delete", json!({"index": i}));
-                }
-            });
-        }
-        if p.versions.is_empty() {
-            ui.label("No versions yet.");
+                },
+            );
         }
     });
+}
+
+/// "Sep 30, 2026, 12:00 PM" from an ISO time.
+fn short_time(iso: &str) -> String {
+    let long = lightcraft_catalog::dates::display_time(iso);
+    // "September 30, 2026 at 12:00:00 PM" → month abbreviated, seconds dropped
+    let (date, time) = long.split_once(" at ").map_or((long.as_str(), None), |(d, t)| (d, Some(t)));
+    let date = match date.split_once(' ') {
+        Some((m, rest)) => format!("{} {rest}", m.chars().take(3).collect::<String>()),
+        None => date.to_string(),
+    };
+    match time.and_then(|t| t.rsplit_once(' ')) {
+        Some((hms, ampm)) => format!("{date}, {} {ampm}", hms.rsplit_once(':').map_or(hms, |x| x.0)),
+        None => date,
+    }
 }
 
 fn activity(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
@@ -685,4 +744,13 @@ fn activity(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             });
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn short_times() {
+        assert_eq!(super::short_time("2026-09-30T12:00:05"), "Sep 30, 2026, 12:00 PM");
+        assert_eq!(super::short_time("2026-01-02"), "Jan 2, 2026");
+    }
 }

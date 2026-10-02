@@ -33,7 +33,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
 | K. Masking (MASK) | 11 | 5 | 7 | 0 | 8/8 (100%) | 3/5 (60%) |
 | L. Presets (PRE) | 5 | 1 | 1 | 1 | 2/2 (100%) | 2/2 (100%) |
-| M. Versions & history (VER) | 3 | 1 | 1 | 0 | 1/1 (100%) | 2/3 (67%) |
+| M. Versions & history (VER) | 4 | 0 | 1 | 0 | 1/1 (100%) | 3/3 (100%) |
 | N. Copy / paste / sync (SYNC) | 4 | 1 | 0 | 0 | 3/3 (100%) | 1/1 (100%) |
 | O. Merge (MERGE) | 4 | 0 | 0 | 0 | — | — |
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 69 | 8 | 8 | 8 | 46/47 (98%) | 18/23 (78%) |
 | Z. Keyboard shortcuts (desktop) | 63 | 12 | 5 | 1 | 49/52 (94%) | 12/23 (52%) |
 | Lightroom Classic extras | 8 | 20 | 51 | 9 | — | 7/21 (33%) |
-| **Total** | 309 | 63 | 128 | 37 | 193/198 (97%) | 97/144 (67%) |
+| **Total** | 310 | 62 | 128 | 37 | 193/198 (97%) | 98/144 (68%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **68.1%** of 500 in-scope rows — P0 98.7% of 198 · P1 81.2% of 144 · P2 17.7% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **68.2%** of 500 in-scope rows — P0 98.7% of 198 · P1 81.6% of 144 · P2 17.7% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -350,7 +350,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
 | LR-VER-CREATE | Create version | P1 | ✅ | `cmd:version.create` | |
-| LR-VER-PANEL | Versions panel | P1 | 🟡 | `cmd:panel.versions`, `cmd:version.restore`, `cmd:version.delete`, `cmd:version.rename`, `cmd:version.update` | rename, update, set as before; no hover preview, named/auto tabs |
+| LR-VER-PANEL | Versions panel | P1 | ✅ | `cmd:panel.versions`, `cmd:version.create`, `cmd:version.restore`, `cmd:version.delete`, `cmd:version.rename`, `cmd:version.update`, `crates/ui-egui/src/panels/right.rs` (`versions`) | Named / Auto tabs, a thumbnail of each version's look, name and date, current marker; resting on a version previews it in the loupe; click restores, double-click renames; row menu (update, rename, set as before, delete). No automatic versions are created yet (LR-VER-AUTO) |
 | LR-VER-AUTO | Automatic versions | P2 | ⬜ | | `auto` flag reserved in the model |
 | LR-VER-HISTORY | Edit history | P1 | ✅ | `cmd:panel.activity`, `cmd:history.list`, `cmd:history.restore` | |
 | LR-VER-UNDO | Undo / redo | P0 | ✅ | `cmd:edit.undo`, `cmd:edit.redo` | |

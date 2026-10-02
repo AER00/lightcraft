@@ -706,6 +706,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Versions panel: resting on a version previews it in the loupe without changing the photo;
+    /// a click restores it.
+    #[test]
+    fn versions_preview_on_hover_and_restore_on_click() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let exec = |h: &mut Headless, c: &str, p: Value| h.request("engine.execute", json!({"command": c, "params": p}), t);
+        h.request("ui.set", json!({"view": "detail", "right": "versions"}), t);
+        exec(&mut h, "develop.set", json!({"values": {"light.exposure": 1.0}}));
+        exec(&mut h, "version.create", json!({"name": "Bright"}));
+        exec(&mut h, "develop.set", json!({"values": {"light.exposure": -1.0}}));
+        h.settle(SETTLE);
+        let exposure = |h: &Headless| h.app.session.develop_of(h.app.session.active().unwrap()).unwrap().light.exposure;
+        assert_eq!(h.request("ui.hoverWidget", json!({"id": "version:0"}), t)["ok"], true);
+        h.step();
+        assert_eq!(h.app.hover_preview.as_ref().map(|p| p.settings.light.exposure), Some(1.0));
+        assert_eq!(exposure(&h), -1.0, "hovering changes nothing");
+        assert_eq!(h.request("ui.clickWidget", json!({"id": "version:0"}), t)["ok"], true);
+        h.settle(Duration::from_secs(5));
+        assert_eq!(exposure(&h), 1.0);
+    }
+
     /// ⌘Q (File → Quit LightCraft) closes the window.
     #[test]
     fn cmd_q_quits() {
