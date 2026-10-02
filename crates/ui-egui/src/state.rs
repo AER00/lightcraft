@@ -334,6 +334,9 @@ pub enum Dialog {
         opts: lightcraft_engine::export::ExportOptions,
         full_size: bool,
         resize: lightcraft_engine::export::Resize,
+        /// Name typed for "Save as Preset".
+        #[serde(default)]
+        preset_name: String,
         limit_kb: u32,
         dir: String,
     },

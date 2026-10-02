@@ -233,10 +233,36 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     group_checklist(ui, "presetInclude", groups);
                 }
                 Dialog::CopySettings { groups } => group_checklist(ui, "copyGroup", groups),
-                Dialog::Export { opts, full_size, resize, limit_kb, dir } => {
+                Dialog::Export { opts, full_size, resize, preset_name, limit_kb, dir } => {
                     use lightcraft_engine::export::{Anchor as P, ExportFormat as F, MetadataPolicy as M, SharpenAmount as A, SharpenFor as S};
                     let n = app.session.selection.ids.len().max(1);
                     ui.label(egui::RichText::new(format!("{n} photo{}", if n == 1 { "" } else { "s" })).color(t.text_dim));
+                    // Preset: load a built-in or saved set of options into the dialog
+                    field(ui, "Preset", |ui| {
+                        let mut chosen = None;
+                        let c = egui::ComboBox::from_id_salt("exportPreset").width(220.0).selected_text("Choose…").show_ui(ui, |ui| {
+                            let mut builtin = true;
+                            for (p, b) in app.session.all_export_presets() {
+                                if builtin && !b {
+                                    ui.separator();
+                                }
+                                builtin = b;
+                                if ui.selectable_label(false, &p.name).clicked() {
+                                    chosen = Some(p.name);
+                                }
+                            }
+                        });
+                        crate::widgets::register(ui.ctx(), "combo:exportPreset", c.response.rect);
+                        if let Some(name) = chosen
+                            && let Ok(params) = app.session.export_params(&json!({"preset": name}))
+                        {
+                            let o = lightcraft_engine::export::ExportOptions::from_json(&params);
+                            *full_size = o.resize.is_none();
+                            *resize = o.resize.unwrap_or_default();
+                            *limit_kb = o.limit_kb.unwrap_or(0);
+                            *opts = o;
+                        }
+                    });
                     ui.add_space(4.0);
                     let before = opts.format;
                     choices(
@@ -355,10 +381,58 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     }
                     }
                     ui.add_space(4.0);
+                    if opts.format == F::Tiff {
+                        use lightcraft_engine::export::TiffCompression as Z;
+                        choices(ui, "Compression", "exportTiffCompression", &[(Z::None, "None"), (Z::Lzw, "LZW"), (Z::Deflate, "ZIP")], &mut opts.tiff_compression);
+                    }
                     field(ui, "File name", |ui| {
-                        ui.add(egui::TextEdit::singleline(&mut opts.naming).hint_text("{name}-{seq}").desired_width(f32::INFINITY))
+                        ui.add(egui::TextEdit::singleline(&mut opts.naming).hint_text("{name}-{seq}  ·  {date}").desired_width(f32::INFINITY))
                     });
-                    field(ui, "Folder", |ui| ui.add(egui::TextEdit::singleline(dir).desired_width(f32::INFINITY)));
+                    if opts.naming.contains("{seq}") {
+                        let mut v = opts.start_number as f64;
+                        if num(ui, &START_NUMBER, &mut v) {
+                            opts.start_number = v as u32;
+                        }
+                    }
+                    field(ui, "Folder", |ui| {
+                        let can_pick = app.services.pick_folder.is_some();
+                        let w = ui.available_width() - if can_pick { 76.0 } else { 0.0 };
+                        ui.add(egui::TextEdit::singleline(dir).desired_width(w));
+                        if can_pick
+                            && crate::widgets::text_button(ui, "exportChooseFolder", "Choose…", false).clicked()
+                            && let Some(pick) = app.services.pick_folder.as_mut()
+                            && let Some(d) = pick()
+                        {
+                            *dir = d;
+                        }
+                    });
+                    field(ui, "Subfolder", |ui| {
+                        ui.add(egui::TextEdit::singleline(&mut opts.subfolder).hint_text("none").desired_width(f32::INFINITY))
+                    });
+                    use lightcraft_engine::export::Conflict as K;
+                    choices(
+                        ui,
+                        "If file exists",
+                        "exportConflict",
+                        &[(K::Unique, "Add number"), (K::Overwrite, "Overwrite"), (K::Skip, "Skip")],
+                        &mut opts.conflict,
+                    );
+                    ui.add_space(4.0);
+                    field(ui, "Save preset", |ui| {
+                        let w = ui.available_width() - 60.0;
+                        ui.add(egui::TextEdit::singleline(preset_name).hint_text("Preset name").desired_width(w));
+                        let named = !preset_name.trim().is_empty();
+                        if crate::widgets::text_button(ui, "exportSavePreset", "Save", false).clicked() && named {
+                            let params = export_dialog_params(opts, *full_size, resize, *limit_kb);
+                            match app.run("export.savePreset", json!({"name": preset_name.trim(), "params": params})) {
+                                Ok(_) => {
+                                    app.toast(ui.ctx(), format!("Saved export preset “{}”", preset_name.trim()));
+                                    preset_name.clear();
+                                }
+                                Err(e) => app.toast(ui.ctx(), e),
+                            }
+                        }
+                    });
                 }
                 Dialog::Merge { opts } => crate::merge::body(app, ui, opts),
                 Dialog::Import { opts } => crate::import::body(app, ui, opts),
@@ -515,22 +589,9 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }),
         ),
         Dialog::CopySettings { groups } => app.run("develop.copy", json!({"groups": groups})),
-        Dialog::Export { opts, full_size, resize, limit_kb, dir } => {
-            let mut p = json!({
-                "format": opts.format, "quality": opts.quality, "limitKb": limit_kb,
-                "sharpen": opts.sharpen, "sharpenAmount": opts.sharpen_amount, "naming": opts.naming, "dir": dir,
-                "metadata": opts.metadata, "removeLocation": opts.remove_location, "watermark": opts.watermark,
-                "colorSpace": opts.color_space, "bitDepth": opts.bit_depth, "ppi": opts.ppi,
-            });
-            // full size is an explicit `longEdge: 0` (an absent size means "the default size" to agents)
-            let size = if *full_size {
-                json!({"longEdge": 0, "dontEnlarge": resize.dont_enlarge})
-            } else {
-                lightcraft_engine::export::ExportOptions::resize_json(Some(resize))
-            };
-            if let (Some(o), Some(sz)) = (p.as_object_mut(), size.as_object()) {
-                o.extend(sz.clone());
-            }
+        Dialog::Export { opts, full_size, resize, limit_kb, dir, .. } => {
+            let mut p = export_dialog_params(opts, *full_size, resize, *limit_kb);
+            p["dir"] = json!(dir);
             app.run("app.export", p)
         }
         Dialog::Merge { opts } => crate::merge::start_final(app, opts),
@@ -538,6 +599,21 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         Dialog::ConfirmDelete { .. } => app.run("photo.delete", json!({})),
         Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. } => Ok(serde_json::Value::Null),
     }
+}
+
+/// The Export dialog's choices as `app.export` params (without the folder).
+fn export_dialog_params(
+    opts: &lightcraft_engine::export::ExportOptions,
+    full_size: bool,
+    resize: &lightcraft_engine::export::Resize,
+    limit_kb: u32,
+) -> serde_json::Value {
+    let o = lightcraft_engine::export::ExportOptions {
+        resize: (!full_size).then_some(*resize),
+        limit_kb: (limit_kb > 0).then_some(limit_kb),
+        ..opts.clone()
+    };
+    o.to_json()
 }
 
 // ------------------------------------------------------------------------------------------ dialog widgets
@@ -587,6 +663,7 @@ const SIZE_W: ControlSpec = spec("export.sizeW", "Width (px)", 16.0, 20_000.0, 2
 const SIZE_H: ControlSpec = spec("export.sizeH", "Height (px)", 16.0, 20_000.0, 2048.0, 16.0);
 const SIZE_MP: ControlSpec = ControlSpec { decimals: 1, ..spec("export.sizeMp", "Megapixels", 0.1, 100.0, 12.0, 0.1) };
 const SIZE_PCT: ControlSpec = spec("export.sizePercent", "Percent", 1.0, 400.0, 50.0, 1.0);
+const START_NUMBER: ControlSpec = spec("export.startNumber", "Start number", 1.0, 9999.0, 1.0, 1.0);
 const PPI: ControlSpec = spec("export.ppi", "Resolution (ppi)", 1.0, 1200.0, 240.0, 1.0);
 
 /// Image Sizing: full size, or a resize mode and its value(s), don't enlarge, ppi.

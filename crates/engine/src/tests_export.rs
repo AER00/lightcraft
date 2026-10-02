@@ -97,3 +97,49 @@ fn dng_export_rejects_non_raw_photos() {
     assert!(err.contains("needs a raw photo"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn presets_conflicts_and_subfolders() {
+    use crate::export::{Destination, export_batch};
+    let mut s = Session::with_demo();
+    let ids: Vec<_> = s.visible().iter().copied().take(2).collect();
+    // built-ins and user presets; the call's own params override the preset's
+    let names: Vec<String> =
+        s.execute("export.presets", &json!({})).unwrap().as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap().to_string()).collect();
+    assert!(names.contains(&"JPEG (Small)".to_string()) && names.contains(&"Original + Settings".to_string()), "{names:?}");
+    let p = s.export_params(&json!({"preset": "jpeg (small)", "quality": 50})).unwrap();
+    assert_eq!((p["longEdge"].as_u64(), p["quality"].as_u64(), p.get("preset")), (Some(2048), Some(50), None));
+    assert!(s.export_params(&json!({"preset": "nope"})).unwrap_err().contains("unknown export preset"));
+    assert!(s.execute("export.savePreset", &json!({"name": "JPEG (Large)", "params": {}})).is_err(), "built-in names are reserved");
+    s.execute("export.savePreset", &json!({"name": "Web", "params": {"format": "png", "width": 64, "ids": [1], "dir": "/x"}})).unwrap();
+    let web = s.export_params(&json!({"preset": "Web"})).unwrap();
+    assert_eq!(web, json!({"format": "png", "width": 64}), "targets are not part of a preset");
+    s.execute("export.savePreset", &json!({"name": "web", "params": {"format": "webp"}})).unwrap();
+    assert_eq!(s.export_presets.len(), 1, "same name (any case) replaces");
+    s.execute("export.deletePreset", &json!({"name": "WEB"})).unwrap();
+    assert!(s.export_presets.is_empty());
+
+    // a fake file system: what exists, what was written
+    let existing = ["out/Sub/LC01347.png".to_string()];
+    let to = Destination { dir: "out", exact: None };
+    let batch = |s: &mut Session, ids: &[_], o: &ExportOptions| {
+        let mut written: Vec<String> = Vec::new();
+        let mut write = |p: &str, _: &[u8]| {
+            written.push(p.to_string());
+            Ok(())
+        };
+        let files = export_batch(s, ids, o, &to, &mut write, &|p| existing.contains(&p.to_string())).unwrap();
+        (files, written)
+    };
+    let o = ExportOptions::from_json(&json!({"format": "png", "width": 32, "subfolder": "Sub", "naming": "LC01347"}));
+    // both photos get the same name from the template: the first is renamed past the existing
+    // file, the second past the first
+    let (files, written) = batch(&mut s, &ids, &o);
+    assert_eq!(written, ["out/Sub/LC01347-2.png", "out/Sub/LC01347-3.png"]);
+    assert_eq!(files[0]["width"], 32);
+    let (files, written) = batch(&mut s, &ids, &ExportOptions { conflict: crate::export::Conflict::Skip, ..o.clone() });
+    assert_eq!(files.iter().filter(|f| f["skipped"] == "out/Sub/LC01347.png").count(), 2, "{files:?}");
+    assert!(written.is_empty());
+    let (_, written) = batch(&mut s, &ids[..1], &ExportOptions { conflict: crate::export::Conflict::Overwrite, ..o });
+    assert_eq!(written, ["out/Sub/LC01347.png"]);
+}

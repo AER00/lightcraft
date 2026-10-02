@@ -57,7 +57,8 @@ impl Headless {
     /// (see `lightcraft_engine::export::ExportOptions::from_json`, plus `ids`, `dir`, `path`).
     /// With `path` and no `format`, the format follows the path's extension.
     fn export(&mut self, p: &Value) -> Result<Value, String> {
-        use lightcraft_engine::export::{ExportFormat, ExportOptions, Resize, export_photo};
+        use lightcraft_engine::export::{Destination, ExportFormat, ExportOptions, Resize, export_batch};
+        let p = &self.session.export_params(p)?;
         let mut opts = ExportOptions::from_json(p);
         if !ExportOptions::has_size_param(p) {
             opts.resize = Some(Resize::long_edge(3000));
@@ -72,26 +73,13 @@ impl Headless {
             None => vec![self.photo_or_active(p)?],
         };
         let dir = p.get("dir").and_then(Value::as_str).unwrap_or("");
-        let mut files = Vec::new();
-        for (i, id) in ids.iter().enumerate() {
-            let e = export_photo(&mut self.session, *id, &opts, i + 1)?;
-            let path = match exact.filter(|_| ids.len() == 1) {
-                Some(path) => path.to_string(),
-                None if dir.is_empty() => e.file_name.clone(),
-                None => format!("{dir}/{}", e.file_name),
-            };
-            if let Some(parent) = Path::new(&path).parent().filter(|d| !d.as_os_str().is_empty()) {
+        let write = &mut |path: &str, bytes: &[u8]| {
+            if let Some(parent) = Path::new(path).parent().filter(|d| !d.as_os_str().is_empty()) {
                 std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
             }
-            std::fs::write(&path, &e.bytes).map_err(|err| format!("{path}: {err}"))?;
-            let mut sidecars = Vec::new();
-            for (ext, bytes) in &e.sidecars {
-                let sc = Path::new(&path).with_extension(ext).to_string_lossy().to_string();
-                std::fs::write(&sc, bytes).map_err(|err| format!("{sc}: {err}"))?;
-                sidecars.push(sc);
-            }
-            files.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars}));
-        }
+            std::fs::write(path, bytes).map_err(|err| format!("{path}: {err}"))
+        };
+        let files = export_batch(&mut self.session, &ids, &opts, &Destination { dir, exact }, write, &|path| Path::new(path).exists())?;
         // Single-photo exports also report path/width/height at the top level (back-compat).
         let mut out = files.first().cloned().unwrap_or_else(|| json!({}));
         out["files"] = json!(files);

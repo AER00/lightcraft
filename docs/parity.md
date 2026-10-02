@@ -22,7 +22,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
 | A. Import (IMP) | 5 | 3 | 5 | 1 | 2/4 (50%) | 2/4 (50%) |
-| B. Library management (LIB) | 16 | 2 | 7 | 2 | 8/9 (89%) | 7/9 (78%) |
+| B. Library management (LIB) | 17 | 2 | 6 | 2 | 9/9 (100%) | 7/9 (78%) |
 | C. Views & navigation (VIEW) | 13 | 1 | 3 | 0 | 8/9 (89%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
 | E. Metadata (META) | 2 | 2 | 2 | 0 | 2/2 (100%) | 0/2 (0%) |
@@ -39,16 +39,16 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 9 | 4 | 5 | 0 | 5/7 (71%) | 4/7 (57%) |
+| S. Export (EXP) | 13 | 1 | 4 | 0 | 7/7 (100%) | 6/7 (86%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 4 | 1 | 3 | 3 | 1/1 (100%) | 3/4 (75%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 10 | 3 | 4 | 1 | 7/8 (88%) | 3/5 (60%) |
-| Y. Menus | 53 | 17 | 15 | 8 | 38/47 (81%) | 13/23 (57%) |
-| Z. Keyboard shortcuts (desktop) | 53 | 14 | 13 | 1 | 44/52 (85%) | 9/23 (39%) |
+| Y. Menus | 54 | 17 | 14 | 8 | 39/47 (83%) | 13/23 (57%) |
+| Z. Keyboard shortcuts (desktop) | 54 | 13 | 13 | 1 | 45/52 (87%) | 9/23 (39%) |
 | Lightroom Classic extras | 4 | 20 | 55 | 9 | — | 3/21 (14%) |
-| **Total** | 253 | 85 | 162 | 37 | 173/198 (87%) | 70/144 (49%) |
+| **Total** | 260 | 81 | 159 | 37 | 178/198 (90%) | 72/144 (50%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -137,7 +137,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-DUPLICATE | Duplicate a photo | P2 | ⬜ | | |
 | LR-LIB-RENAME | Batch rename | P1 | ✅ | `cmd:photo.rename`, `cmd:photo.renamePreview`, `cmd:dialog.rename`, `crates/engine/src/rename.rs` | template tokens {name} {seq:N} {date:%Y%m%d} {camera} {title}; preview; renames files on disk with their XMP sidecars, never overwriting (-1, -2… suffixes), rolls back on failure; undo/redo move the files; virtual copies follow |
 | LR-LIB-CAPTURETIME | Edit capture time | P1 | ✅ | `cmd:photo.setCaptureTime`, `cmd:dialog.captureTime`, `crates/catalog/src/dates.rs` | set (the other selected photos shift by the same amount, or `each`), shift by days/hours/minutes, time-zone shift; one undo step, journaled; Info panel button; no “revert to original capture time” |
-| LR-LIB-SHOWFINDER | Reveal original in file manager | P0 | ⬜ | | |
+| LR-LIB-SHOWFINDER | Reveal original in file manager | P0 | ✅ | `cmd:app.showInFinder` | ⌘R (see MENU-FILE-SHOWFINDER) |
 | LR-LIB-COVER | Album cover | P2 | ✅ | `cmd:album.setCover` | |
 | LR-LIB-CULL | Assisted culling | P2 | ⬜ | | |
 | LR-LIB-ACTIVITY | Comments & likes | OOS | 🚫 | | |
@@ -405,19 +405,19 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-EXP-DIALOG | Export dialog | P0 | 🟡 | `cmd:dialog.export`, `cmd:app.export`, `crates/ui-egui/src/panels/dialogs.rs`, `crates/engine/src/export.rs` | batch export works; no built-in or saved export presets |
+| LR-EXP-DIALOG | Export dialog | P0 | ✅ | `cmd:dialog.export`, `cmd:app.export` (`preset`), `cmd:export.presets`, `cmd:export.savePreset`, `cmd:export.deletePreset`, `crates/ui-egui/src/panels/dialogs.rs`, `crates/engine/src/export.rs` | batch export; built-in presets (JPEG Small 2048 px / Large full size, Original + Settings, DNG) and saved user presets (library prefs) load into the dialog; deleting a user preset is command-only |
 | LR-EXP-TYPE | File types | P0 | ✅ | `cmd:app.export` (`format`), `crates/engine/src/export.rs` (`ExportFormat`), `crates/engine/src/tests_export.rs` | JPEG, PNG, TIFF, WebP, AVIF, DNG (raw photos: lossless re-encode with the edits in the embedded XMP), Original (+ XMP sidecar). No JXL encoder; non-raw → DNG not supported |
 | LR-EXP-DIM | Output size | P0 | ✅ | `cmd:app.export` (`longEdge`, `shortEdge`, `width`, `height`, `megapixels`, `percent`, `dontEnlarge`, `ppi`), `crates/engine/src/export.rs` (`Resize`), `crates/ui-egui/src/panels/dialogs.rs` | full size = the cropped native size (no longer upscaled); W × H fits either orientation; ppi written to JFIF / pHYs / TIFF tags |
 | LR-EXP-QUALITY | JPEG quality | P0 | ✅ | `cmd:app.export` (`quality`, `limitKb`) | |
 | LR-EXP-BITDEPTH | Bit depth | P1 | ✅ | `cmd:app.export` (`bitDepth`), `crates/pipeline/src/output.rs` (`OutputDepth`), `crates/engine/src/export.rs` | 16-bit PNG/TIFF rendered at 16 bits (TIFF defaults to 16), 32-bit float linear TIFF with a linear profile, 10-bit AVIF; high-bit-depth renders run on the CPU |
-| LR-EXP-COMPRESSION | TIFF compression | P1 | ⬜ | | always Deflate |
+| LR-EXP-COMPRESSION | TIFF compression | P1 | ✅ | `cmd:app.export` (`tiffCompression`: none / lzw / zip) | |
 | LR-EXP-COLORSPACE | Output colour space | P0 | ✅ | `cmd:app.export` (`colorSpace`), `crates/pipeline/src/output.rs`, `crates/engine/src/export.rs` | sRGB, Display P3, Adobe RGB (1998) compatible, ProPhoto RGB, Rec. 2020: rendered from the working space with gamut mapping into the target gamut (CPU + GPU), own ICC profile embedded; AVIF stays sRGB (muxer has no ICC) |
 | LR-EXP-HDR | HDR output | P2 | ⬜ | | |
 | LR-EXP-SHARPEN | Output sharpening | P1 | ✅ | `cmd:app.export` (`sharpen`, `sharpenAmount`) | |
 | LR-EXP-METADATA | Metadata policy | P1 | ✅ | `cmd:app.export` (`metadata`, `removeLocation`) | |
 | LR-EXP-WATERMARK | Watermark | P1 | 🟡 | `crates/engine/src/export.rs` (`Watermark`) | text only; no graphic watermark |
-| LR-EXP-NAMING | File naming | P1 | 🟡 | `cmd:app.export` (`naming`: `{name}`, `{seq}`) | no date tokens, custom start number |
-| LR-EXP-LOCATION | Destination folder | P0 | 🟡 | `crates/ui-egui/src/panels/dialogs.rs` (folder field) | no folder picker, subfolder or name-conflict policy |
+| LR-EXP-NAMING | File naming | P1 | ✅ | `cmd:app.export` (`naming`: `{name}`, `{seq}`, `{date}`; `startNumber`) | free-form template rather than a list of named schemes |
+| LR-EXP-LOCATION | Destination folder | P0 | ✅ | `cmd:app.export` (`dir`, `subfolder`, `conflict`: unique / overwrite / skip), `crates/ui-egui/src/panels/dialogs.rs` (Choose… folder picker) | folder picker on the desktop; existing files get `-2`, `-3`… by default |
 | LR-EXP-PREVIOUS | Export with previous settings | P0 | ✅ | `cmd:app.exportPrevious`, `cmd:dialog.export` | last options persist in prefs.json; dialog prefilled; no named export presets yet |
 | LR-EXP-DNGOPT | DNG options | P2 | ⬜ | | |
 | LR-EXP-ORIGINAL | Original + XMP | P1 | ✅ | `cmd:app.export` (`format: original`) | file copied byte for byte, sidecar named after the output |
@@ -512,7 +512,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-FILE-IMPORTPROFILES | Import Profiles & Presets… | P1 | 🟡 | `cmd:file.importPresets` | presets only |
 | MENU-FILE-EXPORT | Export… | P0 | ✅ | `cmd:dialog.export` | |
 | MENU-FILE-EXPORTPREV | Export with Previous | P0 | ✅ | `cmd:app.exportPrevious` | ⌥⇧⌘E |
-| MENU-FILE-EXPORTPRESETS | Export preset submenu | P0 | ⬜ | | |
+| MENU-FILE-EXPORTPRESETS | Export preset submenu | P0 | ✅ | `cmd:app.export` (`preset`), `crates/ui-egui/src/menubar.rs` (Export with Preset) | built-ins, then user presets, then Custom… (the dialog); exports to the last folder |
 | MENU-FILE-SHARE | Share / get link / invite | OOS | 🚫 | | |
 | MENU-FILE-PHOTOSHOP | Edit in external editor | P2 | ⬜ | | |
 | MENU-FILE-SHOWFINDER | Show in Finder | P0 | ✅ | `cmd:app.showInFinder` | ⌘R; Explorer on Windows, the folder on Linux; disabled for demo scenes and on the web |
@@ -626,7 +626,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-SHOWORIGINAL | Show original — \ | P0 | ✅ | `cmd:view.showOriginal` | |
 | KEY-TOGGLEZOOM | Toggle zoom — Space | P0 | ✅ | `cmd:view.zoomToggle` | Space is a secondary binding (primary Z) |
 | KEY-MASKCOLOR | Cycle mask colour — ⇧O | P1 | ⬜ | | ⇧O cycles crop overlays |
-| KEY-EXPORTPREV | Export with previous — ⌘E | P0 | 🟡 | `cmd:app.exportPrevious` | bound to ⌥⇧⌘E (Classic); ⌘E not bound |
+| KEY-EXPORTPREV | Export with previous — ⌘E | P0 | ✅ | `cmd:app.exportPrevious` | ⌘E (alias) and ⌥⇧⌘E (Classic) |
 | KEY-EXPORTDIALOG | Export dialog — ⇧E | P0 | ✅ | `cmd:dialog.export` | secondary binding (primary ⌘⇧E) |
 | KEY-ENTERFULLSCREEN | Window full screen — ⇧⌘F | P1 | ✅ | `cmd:view.enterFullScreen` | |
 | KEY-STACK | Group / ungroup stack — ⌘G / ⇧⌘G | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup` | also S expand/collapse, ⇧S top of stack |

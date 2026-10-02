@@ -11,6 +11,7 @@ use crate::LightcraftApp;
 pub const ALIASES: &[(&str, &str, &str)] = &[
     ("Cmd+D", "library.selectNone", "{}"),
     ("Shift+E", "dialog.export", "{}"),
+    ("Cmd+E", "app.exportPrevious", "{}"),
     ("Space", "view.zoomToggle", "{}"),
     ("Shift+M", "version.create", "{}"),
     ("Shift+X", "photo.flag", r#"{"flag": "reject", "advance": true}"#),

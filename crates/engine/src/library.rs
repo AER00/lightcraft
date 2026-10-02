@@ -105,6 +105,8 @@ struct PrefsFile {
     /// Parameters of the last export (for Export with Previous).
     #[serde(alias = "last_export")]
     last_export: Option<serde_json::Value>,
+    /// The user's export presets.
+    export_presets: Vec<crate::export::ExportPreset>,
     /// Develop defaults for imported photos.
     import: crate::import::ImportDefaults,
     /// Thumbnail disk cache budget (MB, 0 = default).
@@ -170,6 +172,7 @@ impl Session {
         let prefs = read_json::<PrefsFile>(files.as_mut(), "prefs.json").unwrap_or_default();
         self.xmp = prefs.xmp;
         self.last_export = prefs.last_export;
+        self.export_presets = prefs.export_presets;
         self.import_defaults = prefs.import;
         self.cache_mb = prefs.cache_mb;
         // view state
@@ -274,6 +277,7 @@ impl Session {
         let v = serde_json::to_vec_pretty(&PrefsFile {
             xmp: self.xmp,
             last_export: self.last_export.clone(),
+            export_presets: self.export_presets.clone(),
             import: self.import_defaults.clone(),
             cache_mb: self.cache_mb,
         })

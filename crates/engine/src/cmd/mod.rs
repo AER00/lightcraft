@@ -7,6 +7,7 @@
 mod color;
 mod develop;
 mod edit;
+mod export;
 mod keywords;
 mod library;
 mod manage;
@@ -117,6 +118,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(xmp::specs());
         v.extend(preset_files::specs());
         v.extend(prefs::specs());
+        v.extend(export::specs());
         v
     })
 }

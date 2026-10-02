@@ -4,7 +4,8 @@
 //! published primaries and curves, optional output sharpening and a JPEG file-size limit. Pure (bytes in, bytes out) so the desktop
 //! app, CLI, MCP and the web build share it; writing the file is the caller's job.
 
-use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, NamedSpace, Samples, TiffCompression, encode, icc};
+pub use lightcraft_codecs::TiffCompression;
+use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, NamedSpace, Samples, encode, icc};
 use lightcraft_meta::{DateTime, Gps, Metadata};
 pub use lightcraft_pipeline::{DeepImage, DeepSamples, OutputDepth, OutputSpace};
 use lightcraft_raster::Rgba8;
@@ -128,6 +129,36 @@ impl Resize {
         let k = self.scale(w, h);
         (((w * k).round() as usize).max(1), ((h * k).round() as usize).max(1))
     }
+}
+
+/// What happens when an output file already exists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Conflict {
+    /// Add `-2`, `-3`, … to the name.
+    #[default]
+    Unique,
+    Overwrite,
+    /// Leave the existing file and skip the photo.
+    Skip,
+}
+
+/// A named set of `app.export` params.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExportPreset {
+    pub name: String,
+    pub params: serde_json::Value,
+}
+
+/// The built-in export presets (File → Export with Preset).
+pub fn builtin_presets() -> Vec<ExportPreset> {
+    let p = |name: &str, params: serde_json::Value| ExportPreset { name: name.into(), params };
+    vec![
+        p("JPEG (Small)", serde_json::json!({"format": "jpeg", "quality": 85, "longEdge": 2048, "colorSpace": "srgb"})),
+        p("JPEG (Large)", serde_json::json!({"format": "jpeg", "quality": 92, "longEdge": 0, "colorSpace": "srgb"})),
+        p("Original + Settings", serde_json::json!({"format": "original"})),
+        p("DNG", serde_json::json!({"format": "dng"})),
+    ]
 }
 
 /// Output sharpening target (applied after resizing, in display-encoded values).
@@ -313,8 +344,17 @@ pub struct ExportOptions {
     pub limit_kb: Option<u32>,
     pub sharpen: SharpenFor,
     pub sharpen_amount: SharpenAmount,
-    /// File name template: `{name}` (original stem), `{seq}` (1-based, zero-padded to 3), `{ext}` is appended.
+    /// File name template: `{name}` (original stem), `{seq}` (zero-padded to 3, counting from
+    /// `start_number`), `{date}` (capture date, YYYYMMDD); the extension is appended.
     pub naming: String,
+    /// First `{seq}` value.
+    pub start_number: u32,
+    /// Created inside the destination folder (empty = none).
+    pub subfolder: String,
+    /// When a file of the same name exists in the destination folder.
+    pub conflict: Conflict,
+    /// TIFF compression.
+    pub tiff_compression: TiffCompression,
     pub metadata: MetadataPolicy,
     /// Strip GPS / location even when the policy would include it.
     pub remove_location: bool,
@@ -338,6 +378,10 @@ impl Default for ExportOptions {
             sharpen: SharpenFor::None,
             sharpen_amount: SharpenAmount::Standard,
             naming: "{name}".into(),
+            start_number: 1,
+            subfolder: String::new(),
+            conflict: Conflict::Unique,
+            tiff_compression: TiffCompression::Deflate,
             metadata: MetadataPolicy::All,
             remove_location: false,
             watermark: None,
@@ -370,6 +414,15 @@ impl ExportOptions {
             sharpen: enm(p, "sharpen").unwrap_or(d.sharpen),
             sharpen_amount: enm(p, "sharpenAmount").unwrap_or(d.sharpen_amount),
             naming: s("naming").map_or(d.naming, str::to_string),
+            start_number: u("startNumber").map_or(d.start_number, |v| v.min(999_999) as u32),
+            subfolder: s("subfolder").map_or(d.subfolder, |v| v.trim().replace(['\\', ':', '\0'], "_")),
+            conflict: enm(p, "conflict").unwrap_or(d.conflict),
+            tiff_compression: match s("tiffCompression").map(str::to_ascii_lowercase).as_deref() {
+                Some("none") => TiffCompression::None,
+                Some("lzw") => TiffCompression::Lzw,
+                Some("zip" | "deflate") => TiffCompression::Deflate,
+                _ => d.tiff_compression,
+            },
             metadata: enm(p, "metadata").unwrap_or(d.metadata),
             remove_location: p.get("removeLocation").and_then(Value::as_bool).unwrap_or(d.remove_location),
             watermark: match p.get("watermark") {
@@ -410,6 +463,23 @@ impl ExportOptions {
                 }
             }
         })
+    }
+
+    /// These options as `app.export` params ([`ExportOptions::from_json`] reads them back
+    /// unchanged; full size is written as `longEdge: 0`).
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut v = serde_json::to_value(self).unwrap_or_default();
+        if let Some(o) = v.as_object_mut() {
+            o.remove("resize");
+            if let Some(sz) = Self::resize_json(self.resize.as_ref()).as_object() {
+                o.extend(sz.clone());
+            }
+            if self.resize.is_none() {
+                o.insert("longEdge".into(), 0.into());
+            }
+            o.retain(|_, v| !v.is_null());
+        }
+        v
     }
 
     /// Whether `p` names an output size (any of the size params, even 0 = full size).
@@ -456,8 +526,15 @@ impl ExportOptions {
 
     /// Output file name for photo `stem` at 1-based position `seq` in a batch.
     pub fn file_name(&self, stem: &str, seq: usize) -> String {
+        self.file_name_dated(stem, seq, None)
+    }
+
+    /// [`ExportOptions::file_name`] with the capture time (ISO 8601) for `{date}`.
+    pub fn file_name_dated(&self, stem: &str, seq: usize, captured: Option<&str>) -> String {
         let base = if self.naming.trim().is_empty() { "{name}" } else { self.naming.as_str() };
-        let name = base.replace("{name}", stem).replace("{seq}", &format!("{seq:03}"));
+        let n = seq + self.start_number.max(1) as usize - 1;
+        let date: String = captured.map(|c| c.chars().take(10).filter(char::is_ascii_digit).collect()).unwrap_or_default();
+        let name = base.replace("{name}", stem).replace("{seq}", &format!("{n:03}")).replace("{date}", &date);
         let name: String = name.chars().map(|c| if matches!(c, '/' | '\\' | ':' | '\0') { '_' } else { c }).collect();
         format!("{name}.{}", self.format.extension())
     }
@@ -465,8 +542,13 @@ impl ExportOptions {
     /// Output file name for photo file `file_name` (the original's extension is kept for
     /// [`ExportFormat::Original`]).
     pub fn file_name_for(&self, file_name: &str, seq: usize) -> String {
+        self.file_name_for_dated(file_name, seq, None)
+    }
+
+    /// [`ExportOptions::file_name_for`] with the capture time for `{date}`.
+    pub fn file_name_for_dated(&self, file_name: &str, seq: usize, captured: Option<&str>) -> String {
         let (stem, ext) = file_name.rsplit_once('.').unwrap_or((file_name, ""));
-        let name = self.file_name(stem, seq);
+        let name = self.file_name_dated(stem, seq, captured);
         if self.format == ExportFormat::Original {
             let base = name.trim_end_matches('.');
             if ext.is_empty() { base.to_string() } else { format!("{base}.{ext}") }
@@ -603,7 +685,7 @@ pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metada
             }
         }
         ExportFormat::Png => encode::encode_png(&e, &meta),
-        ExportFormat::Tiff => encode::encode_tiff(&e, TiffCompression::Deflate, &meta),
+        ExportFormat::Tiff => encode::encode_tiff(&e, o.tiff_compression, &meta),
         ExportFormat::Webp => encode::encode_webp_lossless(&e, &meta),
         ExportFormat::Avif => encode::encode_avif(&e, o.quality, 8, &meta),
         f @ (ExportFormat::Original | ExportFormat::Dng) => return Err(format!("{f:?} export does not encode pixels")),
@@ -667,7 +749,7 @@ pub fn encode_deep(img: &DeepImage, o: &ExportOptions, meta: Option<&Metadata>) 
     };
     let r = match o.format {
         ExportFormat::Png => encode::encode_png(&e, &meta),
-        ExportFormat::Tiff => encode::encode_tiff(&e, TiffCompression::Deflate, &meta),
+        ExportFormat::Tiff => encode::encode_tiff(&e, o.tiff_compression, &meta),
         ExportFormat::Avif => encode::encode_avif(&e, o.quality, 8, &meta),
         f => return Err(format!("{f:?} export is 8-bit only")),
     };
@@ -739,7 +821,7 @@ pub fn output_size(p: &lightcraft_catalog::Photo, o: &ExportOptions) -> (usize, 
 /// [`ExportFormat::Original`] / [`ExportFormat::Dng`]).
 pub fn export_photo(session: &mut crate::Session, id: lightcraft_catalog::PhotoId, o: &ExportOptions, seq: usize) -> Result<Exported, String> {
     let p = session.catalog.photo(id).ok_or("no such photo")?;
-    let file_name = o.file_name_for(&p.file_name, seq);
+    let file_name = o.file_name_for_dated(&p.file_name, seq, p.captured.as_deref());
     if !o.format.is_rendered() {
         return export_file(session, id, o, file_name);
     }
@@ -776,6 +858,67 @@ fn export_file(session: &mut crate::Session, id: lightcraft_catalog::PhotoId, o:
         }
         _ => Ok(Exported { file_name, bytes, width, height, sidecars: vec![("xmp", packet.into_bytes())] }),
     }
+}
+
+/// The destination of a batch: a folder (with `ExportOptions::subfolder` and the conflict policy
+/// applied), or one exact file path (single photo; overwritten).
+pub struct Destination<'a> {
+    pub dir: &'a str,
+    pub exact: Option<&'a str>,
+}
+
+/// Export `ids` in order: render/encode each ([`export_photo`]), pick its path, and hand the
+/// bytes (and sidecars) to `write`. `exists` tells whether a path is taken (conflict policy).
+/// Returns one JSON object per photo: `{path, width, height, bytes, sidecars}` or
+/// `{skipped: path}`.
+pub fn export_batch(
+    session: &mut crate::Session,
+    ids: &[lightcraft_catalog::PhotoId],
+    o: &ExportOptions,
+    to: &Destination,
+    write: &mut dyn FnMut(&str, &[u8]) -> Result<(), String>,
+    exists: &dyn Fn(&str) -> bool,
+) -> Result<Vec<serde_json::Value>, String> {
+    use serde_json::json;
+    let join = |a: &str, b: &str| if a.is_empty() { b.to_string() } else { format!("{}/{b}", a.trim_end_matches('/')) };
+    let dir = if o.subfolder.is_empty() { to.dir.to_string() } else { join(to.dir, &o.subfolder) };
+    let mut taken = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for (i, id) in ids.iter().enumerate() {
+        let e = export_photo(session, *id, o, i + 1)?;
+        let path = match to.exact.filter(|_| ids.len() == 1) {
+            Some(p) => p.to_string(),
+            None => {
+                let mut path = join(&dir, &e.file_name);
+                let busy = |p: &str, taken: &std::collections::HashSet<String>| taken.contains(p) || exists(p);
+                if busy(&path, &taken) {
+                    match o.conflict {
+                        Conflict::Overwrite => {}
+                        Conflict::Skip => {
+                            out.push(json!({"skipped": path}));
+                            continue;
+                        }
+                        Conflict::Unique => {
+                            let (stem, ext) = e.file_name.rsplit_once('.').map_or((e.file_name.as_str(), None), |(a, b)| (a, Some(b)));
+                            let name = |n: usize| join(&dir, &ext.map_or(format!("{stem}-{n}"), |x| format!("{stem}-{n}.{x}")));
+                            path = (2..).map(name).find(|p| !busy(p, &taken)).expect("a free name");
+                        }
+                    }
+                }
+                path
+            }
+        };
+        write(&path, &e.bytes)?;
+        let mut sidecars = Vec::new();
+        for (ext, bytes) in &e.sidecars {
+            let sc = std::path::Path::new(&path).with_extension(ext).to_string_lossy().to_string();
+            write(&sc, bytes)?;
+            sidecars.push(sc);
+        }
+        taken.insert(path.clone());
+        out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars}));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -880,6 +1023,34 @@ mod tests {
         assert_eq!(orig.file_name_for("DSC_1.NEF", 2), "DSC_1-002.NEF");
         assert_eq!(orig.file_name_for("noext", 1), "noext-001");
         assert_eq!(ExportOptions { format: ExportFormat::Dng, ..Default::default() }.file_name_for("a.cr2", 1), "a.dng");
+    }
+
+    #[test]
+    fn params_round_trip() {
+        let o = ExportOptions {
+            format: ExportFormat::Tiff,
+            quality: 70,
+            resize: Some(Resize { mode: ResizeMode::Megapixels, value: 12.5, height: 0, dont_enlarge: false }),
+            ppi: 300,
+            limit_kb: Some(500),
+            sharpen: SharpenFor::Glossy,
+            naming: "{date}-{name}-{seq}".into(),
+            start_number: 42,
+            subfolder: "Client".into(),
+            conflict: Conflict::Skip,
+            tiff_compression: TiffCompression::Lzw,
+            metadata: MetadataPolicy::Copyright,
+            remove_location: true,
+            watermark: Some(Watermark { text: "© LC".into(), ..Default::default() }),
+            color_space: OutputSpace::ProPhoto,
+            bit_depth: Some(16),
+            ..Default::default()
+        };
+        assert_eq!(ExportOptions::from_json(&o.to_json()), o);
+        let full = ExportOptions::default();
+        assert_eq!(ExportOptions::from_json(&full.to_json()), full);
+        assert!(ExportOptions::has_size_param(&full.to_json()), "full size is explicit");
+        assert_eq!(o.file_name_dated("IMG", 2, Some("2026-09-30T10:00:00")), "20260930-IMG-043.tif");
     }
 
     #[test]

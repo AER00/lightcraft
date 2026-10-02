@@ -65,6 +65,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "---",
             "dialog.export",
             "app.exportPrevious",
+            "@Export with Preset",
             "---",
             "library.toggleAutoWriteXmp",
             "---",
@@ -333,6 +334,21 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 ("No Date Groups", GroupBy::None, "none"),
             ];
             v.extend(groups.into_iter().map(|(label, g, k)| item("library.sort", json!({"group": k}), label, None, true, Some(cur.group == g))));
+            v
+        }
+        "Export with Preset" => {
+            let sel = !app.session.selection.ids.is_empty() || has;
+            let mut v: Vec<MenuNode> = Vec::new();
+            let mut builtin = true;
+            for (p, b) in app.session.all_export_presets() {
+                if builtin && !b {
+                    v.push(MenuNode::Separator);
+                }
+                builtin = b;
+                v.push(item("app.export", json!({"preset": p.name}), p.name, None, sel, None));
+            }
+            v.push(MenuNode::Separator);
+            v.push(item("dialog.export", Value::Null, "Custom…", None, sel, None));
             v
         }
         "Add to Album" => {
@@ -617,6 +633,43 @@ mod tests {
         assert!(matches!(&rated[..], [MenuNode::Item { params, .. }] if params["rating"] == 3));
         let Some(MenuNode::Item { checked, .. }) = find(&all, "view.filmstrip") else { panic!() };
         assert_eq!(*checked, Some(app.ui.filmstrip));
+    }
+
+    #[test]
+    fn export_with_preset_submenu() {
+        let mut app = app();
+        let bar = menu_bar(&app);
+        let file = &bar.iter().find(|(t, _)| t == "File").unwrap().1;
+        let Some(MenuNode::Submenu { children, .. }) =
+            file.iter().find(|n| matches!(n, MenuNode::Submenu { label, .. } if label == "Export with Preset"))
+        else {
+            panic!("no Export with Preset submenu")
+        };
+        let presets: Vec<_> = children
+            .iter()
+            .filter_map(|n| match n {
+                MenuNode::Item { id, params, .. } if id == "app.export" => params["preset"].as_str().map(str::to_string),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(presets.first().map(String::as_str), Some("JPEG (Small)"));
+        assert!(find(children, "dialog.export").is_some(), "Custom… opens the dialog");
+        // a user preset appears after the built-ins; choosing it exports with its settings
+        app.session.execute("export.savePreset", &json!({"name": "Tiny PNG", "params": {"format": "png", "width": 40}})).unwrap();
+        let written = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, Vec<u8>)>::new()));
+        let w = written.clone();
+        app.services.write = Some(Box::new(move |p: &str, b: &[u8]| {
+            w.lock().unwrap().push((p.to_string(), b.to_vec()));
+            Ok(())
+        }));
+        let r = run_item(&mut app, "app.export", json!({"preset": "Tiny PNG", "dir": "/nonexistent-lc-test"})).unwrap();
+        assert_eq!(r["files"][0]["width"], 40, "{r}");
+        let w = written.lock().unwrap();
+        assert!(w[0].0.starts_with("/nonexistent-lc-test/") && w[0].0.ends_with(".png"), "{}", w[0].0);
+        assert!(w[0].1.starts_with(b"\x89PNG"));
+        // remembered (expanded) for Export with Previous, folder included
+        let last = app.session.last_export.clone().unwrap();
+        assert_eq!((last["format"].as_str(), last["width"].as_u64(), last.get("preset")), (Some("png"), Some(40), None));
     }
 
     #[test]

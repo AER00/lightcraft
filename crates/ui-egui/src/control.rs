@@ -317,7 +317,8 @@ pub fn default_export_dir() -> String {
 /// [`lightcraft_engine::export::ExportOptions::from_json`], plus `dir` (output folder) or `path`
 /// (exact output file, single photo), `ids` (default: the selection, else the active photo).
 pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
-    use lightcraft_engine::export::{ExportOptions, export_photo};
+    use lightcraft_engine::export::{Destination, ExportOptions, export_batch};
+    let p = &app.session.export_params(p)?;
     let mut opts = ExportOptions::from_json(p);
     if let (Some(path), None) = (p.get("path").and_then(Value::as_str), p.get("format")) {
         let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
@@ -338,27 +339,18 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     if ids.is_empty() {
         return Err("no photo selected".into());
     }
-    let dir = p.get("dir").and_then(Value::as_str).map(str::to_string).filter(|d| !d.is_empty()).unwrap_or_else(default_export_dir);
-    let exact = p.get("path").and_then(Value::as_str).filter(|_| ids.len() == 1).map(str::to_string);
-    let mut out = Vec::new();
-    for (i, id) in ids.into_iter().enumerate() {
-        let e = export_photo(&mut app.session, id, &opts, i + 1)?;
-        let path = exact.clone().unwrap_or_else(|| if dir.is_empty() { e.file_name.clone() } else { format!("{dir}/{}", e.file_name) });
-        let w = app.services.write.as_mut().ok_or("no writer")?;
-        w(&path, &e.bytes)?;
-        let mut sidecars = Vec::new();
-        for (ext, bytes) in &e.sidecars {
-            let sc = std::path::Path::new(&path).with_extension(ext).to_string_lossy().to_string();
-            w(&sc, bytes)?;
-            sidecars.push(sc);
-        }
-        out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars}));
-    }
+    // no folder given (e.g. File → Export with Preset): the last export's, else the default
+    let last_dir = app.session.last_export.as_ref().and_then(|l| l.get("dir")).and_then(Value::as_str).map(str::to_string);
+    let dir = p.get("dir").and_then(Value::as_str).map(str::to_string).or(last_dir).filter(|d| !d.is_empty()).unwrap_or_else(default_export_dir);
+    let to = Destination { dir: &dir, exact: p.get("path").and_then(Value::as_str) };
+    let w = app.services.write.as_mut().ok_or("no writer")?;
+    let out = export_batch(&mut app.session, &ids, &opts, &to, &mut |path, bytes| w(path, bytes), &|path| std::path::Path::new(path).exists())?;
     // remember for Export with Previous (and to prefill the dialog)
     let mut last = p.clone();
     if let Some(o) = last.as_object_mut() {
         o.remove("ids");
         o.remove("path");
+        o.insert("dir".into(), json!(dir));
     }
     app.session.last_export = Some(last);
     let _ = app.session.save_prefs();

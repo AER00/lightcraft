@@ -124,6 +124,11 @@ fn preferences_persist_with_the_library() {
     let r = s.execute("library.preferences", &json!({})).unwrap();
     assert_eq!(r["cacheMb"], 512);
     assert_eq!(r["persistent"], true);
+    // export presets are library preferences too
+    s.execute("export.savePreset", &json!({"name": "Proof", "params": {"format": "jpeg", "percent": 25}})).unwrap();
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    assert_eq!(s.export_params(&json!({"preset": "Proof"})).unwrap(), json!({"format": "jpeg", "percent": 25}));
     // older prefs.json files (snake_case `last_export`, no import section) still load
     std::fs::write(lib.join("prefs.json"), r#"{"xmp": {"autoWrite": false}, "last_export": {"format": "png"}}"#).unwrap();
     let mut s = Session::new().with_fs();
