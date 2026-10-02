@@ -42,6 +42,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.cropOverlay", "Cycle Crop Overlay", Some("Shift+O"), "View"),
     ("view.cropOverlayOrientation", "Cycle Crop Overlay Orientation", None, "View"),
     ("view.back", "Back to Grid", Some("Escape"), ""),
+    ("tool.done", "Done", Some("Enter"), ""),
     ("view.filterBar", "Filter Bar", Some("Shift+F"), "View"),
     ("view.fullScreenPreview", "Full Screen Preview", Some("F"), "View"),
     ("view.enterFullScreen", "Enter Full Screen", Some("Cmd+Shift+F"), "View"),
@@ -458,6 +459,16 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.presets = !app.ui.presets;
             if app.ui.presets && app.ui.view != ViewMode::Detail {
                 app.ui.view = ViewMode::Detail;
+            }
+            Ok(Value::Null)
+        }
+        "tool.done" => {
+            // Return commits a tool panel (crop, remove, red eye, masking): back to Edit
+            use RightPanel::*;
+            if app.ui.dialog.is_none() && matches!(app.ui.right, Crop | Remove | RedEye | Masking) {
+                let _ = app.session.end_interaction();
+                app.ui.tool.clear();
+                app.ui.right = Edit;
             }
             Ok(Value::Null)
         }

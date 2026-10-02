@@ -24,11 +24,11 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | A. Import (IMP) | 7 | 2 | 4 | 1 | 3/4 (75%) | 3/4 (75%) |
 | B. Library management (LIB) | 19 | 0 | 6 | 2 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 14 | 0 | 3 | 0 | 9/9 (100%) | 4/4 (100%) |
-| D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
+| D. Search & filter (FILT) | 8 | 2 | 3 | 0 | 4/4 (100%) | 3/4 (75%) |
 | E. Metadata (META) | 4 | 2 | 0 | 0 | 2/2 (100%) | 1/2 (50%) |
 | F. Edit panel — global adjustments (EDIT) | 40 | 2 | 6 | 1 | 28/28 (100%) | 12/14 (86%) |
 | G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
-| H. Crop & rotate (CROP) | 8 | 1 | 0 | 1 | 6/6 (100%) | 2/3 (67%) |
+| H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 6 | 1 | 3 | 2 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
 | K. Masking (MASK) | 11 | 5 | 7 | 0 | 8/8 (100%) | 3/5 (60%) |
@@ -44,13 +44,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 12 | 1 | 4 | 1 | 8/8 (100%) | 4/5 (80%) |
+| X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
-| Z. Keyboard shortcuts (desktop) | 65 | 10 | 5 | 1 | 49/52 (94%) | 14/23 (61%) |
+| Z. Keyboard shortcuts (desktop) | 66 | 9 | 5 | 1 | 49/52 (94%) | 15/23 (65%) |
 | Lightroom Classic extras | 12 | 17 | 50 | 9 | — | 11/21 (52%) |
-| **Total** | 319 | 54 | 127 | 37 | 193/198 (97%) | 107/144 (74%) |
+| **Total** | 323 | 51 | 126 | 37 | 193/198 (97%) | 110/144 (76%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **69.2%** of 500 in-scope rows — P0 98.7% of 198 · P1 85.1% of 144 · P2 17.7% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **69.7%** of 500 in-scope rows — P0 98.7% of 198 · P1 86.1% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -183,7 +183,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-FILT-PEOPLE | People filter | P2 | ⬜ | | |
 | LR-FILT-CULL | Culling-score filters | P2 | ⬜ | | |
 | LR-FILT-SORT | Sort | P0 | ✅ | `cmd:library.sort`, `crates/ui-egui/src/panels/bottombar.rs` | no colour-label or custom (manual) order |
-| LR-FILT-SAVED | Filter presets [Classic] | P2 | ⬜ | | |
+| LR-FILT-SAVED | Filter presets [Classic] | P2 | ✅ | `cmd:filter.savePreset`, `cmd:filter.applyPreset`, `cmd:filter.presets`, `cmd:filter.deletePreset`, `crates/ui-egui/src/panels/filterbar.rs` | filter bar → Presets: apply, save current filter, delete (right-click); saved with the library |
 
 ## E. Metadata (META)
 
@@ -277,7 +277,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-CROP-ROTATE90 | Rotate 90° | P0 | ✅ | `cmd:photo.rotateLeft`, `cmd:photo.rotateRight` | |
 | LR-CROP-FLIP | Flip | P0 | ✅ | `cmd:photo.flipHorizontal`, `cmd:photo.flipVertical` | |
 | LR-CROP-OVERLAY | Crop overlays | P1 | ✅ | `cmd:view.cropOverlay`, `cmd:view.cropOverlayOrientation`, `crates/ui-egui/src/panels/crop_overlay.rs` | thirds, grid, golden ratio, diagonal, triangle, golden spiral (mirrored with ⇧O while cropping); no aspect-ratio overlays |
-| LR-CROP-ZOOM | Zoom while cropping | P1 | 🟡 | | unverified |
+| LR-CROP-ZOOM | Zoom while cropping | P1 | ✅ | `cmd:view.zoom100`, `cmd:view.zoomIn`, `crates/ui-egui/src/panels/detail.rs` | zoom levels apply with the crop tool open (verified: 100% shows the photo at native size with the crop frame) |
 | LR-CROP-GENEXPAND | Generative expand | OOS | 🚫 | | |
 
 ## I. Remove / healing (REM)
@@ -474,7 +474,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-UNDO | Global undo | P0 | ✅ | `cmd:edit.undo`, `crates/engine/src/tests.rs` (`rating_flag_undo_redo`) | covers ratings, albums, deletes, edits |
 | LR-BEHAV-MULTISELECT | Multi-selection | P0 | ✅ | `cmd:library.select` (`replace`/`add`/`toggle`/`range`), `cmd:library.selectAll` | |
 | LR-BEHAV-BATCH | Batch apply to selection | P0 | ✅ | `cmd:photo.rate`, `cmd:develop.paste`, `cmd:preset.apply`, `cmd:app.export` | |
-| LR-BEHAV-PREVIEW-HOVER | Hover previews | P1 | 🟡 | `crates/ui-egui/src/panels/presets.rs`, `crates/ui-egui/src/panels/profiles.rs`, `crates/ui-egui/src/panels/detail.rs` | presets, profile menu and profile browser preview in the loupe; versions do not |
+| LR-BEHAV-PREVIEW-HOVER | Hover previews | P1 | ✅ | `crates/ui-egui/src/panels/presets.rs`, `crates/ui-egui/src/panels/profiles.rs`, `crates/ui-egui/src/panels/right.rs` (`versions`), `crates/ui-egui/src/panels/detail.rs` | presets, profile menu, profile browser and versions preview in the loupe |
 | LR-BEHAV-PROGRESSIVE | Progressive rendering | P0 | ✅ | `crates/engine/src/media.rs`, `crates/preview/src/lib.rs` | |
 | LR-BEHAV-BG-TASKS | Background tasks | P0 | ✅ | `crates/preview/src/lib.rs` (`JobPool`), `crates/ui-egui/src/export_task.rs`, `crates/ui-egui/src/import.rs` | renders off the UI thread; exports started from the UI run on a worker thread with a progress panel and Cancel (`ui.inspect` → `export`); imports show a progress window. No combined activity centre |
 | LR-BEHAV-OFFLINE | Offline editing | P1 | ✅ | | local-first: everything works offline |
@@ -675,7 +675,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-HELP | Help — F1 | P2 | ✅ | `cmd:app.help` | |
 | KEY-VIDEO-PLAY | Play/pause video — Space | P1 | ⬜ | | |
 | KEY-ESC | Leave tool / view — Esc | P0 | ✅ | `cmd:view.back` | |
-| KEY-COMMIT | Commit tool — Return | P1 | 🟡 | | edits apply live; no explicit commit step |
+| KEY-COMMIT | Commit tool — Return | P1 | ✅ | `cmd:tool.done` | Return closes Crop / Remove / Red Eye / Masking back to Edit (edits apply live, as in Lightroom) |
 | KEY-DELETE-PIN | Delete selected pin — ⌫ | P0 | ✅ | `cmd:mask.delete`, `cmd:spot.delete` | ⌫ deletes the active mask (Masking) or the selected spot (Remove), never the photo while retouching |
 | KEY-HIDEPINS | Hide pins — H | P2 | ⬜ | | H = Remove panel |
 
@@ -697,7 +697,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-COLLECTIONS | Collections & sets | P1 | 🟡 | `cmd:album.create` | albums + folders; no smart / quick / target collections |
 | LRC-LIB-SMARTCOLL | Smart-collection rules | P1 | 🟡 | `cmd:album.createSmart`, `crates/catalog/src/query.rs` | the filter fields + date range; no rule editor, any/none groups or operators beyond ≥/=/≤ |
 | LRC-LIB-PUBLISH | Publish services | P2 | ⬜ | | |
-| LRC-LIB-FILTERBAR | Library filter bar | P1 | 🟡 | `cmd:view.filterBar`, `crates/ui-egui/src/panels/filterbar.rs` | rating/flag/label/kind/edited/camera/lens/keyword, clear, save as smart album; no filter presets, lock, or multi-select columns |
+| LRC-LIB-FILTERBAR | Library filter bar | P1 | 🟡 | `cmd:view.filterBar`, `cmd:filter.applyPreset`, `crates/ui-egui/src/panels/filterbar.rs` | rating/flag/label/kind/edited/camera/lens/keyword, clear, save as smart album, filter presets; no lock or multi-select columns |
 | LRC-LIB-STACKS | Stacks (full) | P1 | ✅ | `crates/catalog/src/stacks.rs`, `cmd:stack.group`, `cmd:stack.split`, `cmd:stack.moveUp`, `cmd:stack.moveDown` | group / ungroup / toggle / set top / remove / auto by time / split / move up and down |
 | LRC-LIB-VC | Virtual copies | P1 | ✅ | `cmd:photo.virtualCopy` | ⌘' |
 | LRC-LIB-LABELS | Colour-label sets | P1 | ⬜ | | |

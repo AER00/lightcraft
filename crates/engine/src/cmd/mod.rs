@@ -10,6 +10,7 @@ mod color;
 mod develop;
 mod edit;
 mod export;
+pub mod filters;
 mod keywords;
 mod library;
 mod manage;
@@ -127,6 +128,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(browse::specs());
         v.extend(missing::specs());
         v.extend(metadata::specs());
+        v.extend(filters::specs());
         v
     })
 }

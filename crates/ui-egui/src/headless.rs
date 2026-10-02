@@ -748,6 +748,20 @@ mod tests {
         assert_ne!(h.app.session.active(), Some(first), "advanced");
     }
 
+    /// Return commits a tool panel back to Edit; elsewhere it does nothing.
+    #[test]
+    fn return_commits_the_crop_tool() {
+        let mut h = demo([1200.0, 800.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.request("engine.execute", json!({"command": "panel.crop"}), t);
+        assert_eq!(h.app.ui.right, crate::state::RightPanel::Crop);
+        h.request("ui.key", json!({"key": "Enter"}), t);
+        assert_eq!(h.app.ui.right, crate::state::RightPanel::Edit);
+        h.request("ui.key", json!({"key": "Enter"}), t);
+        assert_eq!(h.app.ui.right, crate::state::RightPanel::Edit, "no-op outside tools");
+    }
+
     /// ⌘Q (File → Quit LightCraft) closes the window.
     #[test]
     fn cmd_q_quits() {

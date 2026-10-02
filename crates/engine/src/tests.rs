@@ -406,3 +406,18 @@ fn stacks_move_and_split() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(s.catalog.stack_of(before[3]).unwrap().photos.len(), 2);
 }
+
+#[test]
+fn filter_presets_save_and_apply() {
+    let mut s = demo();
+    assert!(s.execute("filter.savePreset", &json!({"name": "Empty"})).is_err(), "nothing to save");
+    s.execute("library.filter", &json!({"rating": 4})).unwrap();
+    let four = s.visible_cloned().len();
+    s.execute("filter.savePreset", &json!({"name": "Best"})).unwrap();
+    s.execute("library.clearFilter", &json!({})).unwrap();
+    assert!(s.visible_cloned().len() > four);
+    let r = s.execute("filter.applyPreset", &json!({"name": "best"})).unwrap();
+    assert_eq!(r["photos"].as_u64(), Some(four as u64));
+    s.execute("filter.deletePreset", &json!({"name": "Best"})).unwrap();
+    assert!(s.filter_presets.is_empty());
+}

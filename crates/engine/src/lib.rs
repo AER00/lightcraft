@@ -116,6 +116,8 @@ pub struct Session {
     pub export_presets: Vec<export::ExportPreset>,
     /// Metadata presets (`metadata.*`), persisted in prefs.json.
     pub metadata_presets: Vec<cmd::metadata::MetadataPreset>,
+    /// Saved filter-bar settings (`filter.*`), persisted in prefs.json.
+    pub filter_presets: Vec<cmd::filters::FilterPreset>,
     /// Before/After: the "before" settings chosen per photo (this session; default: the photo's
     /// import state). See `cmd/before.rs`.
     pub before: std::collections::HashMap<PhotoId, Arc<DevelopSettings>>,
@@ -166,6 +168,7 @@ impl Session {
             last_export: None,
             export_presets: Vec::new(),
             metadata_presets: Vec::new(),
+            filter_presets: Vec::new(),
             before: Default::default(),
             import_probes: Default::default(),
             import_defaults: import::ImportDefaults::default(),

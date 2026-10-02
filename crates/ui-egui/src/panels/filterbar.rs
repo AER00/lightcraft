@@ -253,4 +253,28 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         app.ui.search.clear();
         let _ = app.run("library.clearFilter", json!({}));
     }
+    // filter presets: apply one, save the current filter, delete
+    let presets = ui.button(egui::RichText::new("Presets ▾").font(t.font(12.5)));
+    register(ui.ctx(), "button:filterPresets", presets.rect);
+    egui::Popup::menu(&presets).show(|ui| {
+        let names: Vec<String> = app.session.filter_presets.iter().map(|f| f.name.clone()).collect();
+        for n in &names {
+            let r = ui.button(n);
+            if r.clicked() {
+                let _ = app.run("filter.applyPreset", json!({"name": n}));
+            }
+            r.context_menu(|ui| {
+                if ui.button("Delete Preset").clicked() {
+                    let _ = app.run("filter.deletePreset", json!({"name": n}));
+                }
+            });
+        }
+        if names.is_empty() {
+            ui.label(egui::RichText::new("No filter presets yet").color(t.text_dim));
+        }
+        ui.separator();
+        if ui.add_enabled(filtering, egui::Button::new("Save Current Filter as Preset…")).clicked() {
+            crate::panels::dialogs::prompt(app, "Save Filter Preset", "Preset name", "", "filter.savePreset", json!({}), "name");
+        }
+    });
 }
