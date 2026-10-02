@@ -193,6 +193,28 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(())
             })
         }),
+        cmd!(
+            "develop.autoBwMix",
+            "Auto B&W Mix",
+            [],
+            None,
+            "{} — sets the black & white mix from the photo's colours (and switches to B&W)",
+            has_active,
+            |s, _| {
+                let id = active(s, "develop.autoBwMix")?;
+                let src = s.source_now(id, SourceLevel::Thumb).map_err(|e| bad("develop.autoBwMix", e))?;
+                let info = s.catalog.photo(id).map(|p| crate::media::source_info(p)).unwrap_or_default();
+                let d = s.develop_of(id).unwrap_or_default();
+                let m = lightcraft_pipeline::auto::auto_bw_mix(&src, &info, &d);
+                edit(s, "develop.autoBwMix", "Auto B&W Mix", |d| {
+                    d.treatment = Treatment::Bw;
+                    let b = &mut d.bw_mix;
+                    [b.red, b.orange, b.yellow, b.green, b.aqua, b.blue, b.purple, b.magenta] = m;
+                    Ok(())
+                })?;
+                Ok(json!({"mix": m}))
+            }
+        ),
         cmd!("develop.auto", "Auto Settings", ["Photo"], Some("Shift+A"), "{}", has_active, |s, _| {
             let id = active(s, "develop.auto")?;
             let src = s.source_now(id, SourceLevel::Thumb).map_err(|e| bad("develop.auto", e))?;

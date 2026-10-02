@@ -188,12 +188,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         Some(MediaKind::Raw) => "Raw",
         Some(MediaKind::Video) => "Videos",
     };
+    let kind_label = match f.merged.as_deref() {
+        Some("hdr") => "HDR",
+        Some("panorama") => "Panoramas",
+        Some("hdrPanorama") => "HDR Panoramas",
+        Some(_) => "Merged",
+        None => kind_label,
+    };
     picker(
         app,
         ui,
         "kind",
         kind_label,
-        f.kind.is_some(),
+        f.kind.is_some() || f.merged.is_some(),
         [
             ("All types", Value::Null, None),
             ("Photos", json!("image"), Some(MediaKind::Image)),
@@ -201,7 +208,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ("Videos", json!("video"), Some(MediaKind::Video)),
         ]
         .into_iter()
-        .map(|(l, v, k)| (l.to_string(), json!({"kind": v}), f.kind == k))
+        .map(|(l, v, k)| (l.to_string(), json!({"kind": v, "merged": null}), f.kind == k && f.merged.is_none()))
+        .chain(
+            [("HDR", "hdr"), ("Panoramas", "panorama"), ("HDR Panoramas", "hdrPanorama")]
+                .into_iter()
+                .map(|(l, m)| (l.to_string(), json!({"kind": null, "merged": m}), f.merged.as_deref() == Some(m))),
+        )
         .collect(),
     );
     let edited_label = match f.edited {

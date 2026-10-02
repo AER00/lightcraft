@@ -24,9 +24,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | A. Import (IMP) | 7 | 2 | 4 | 1 | 3/4 (75%) | 3/4 (75%) |
 | B. Library management (LIB) | 19 | 0 | 6 | 2 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 14 | 0 | 3 | 0 | 9/9 (100%) | 4/4 (100%) |
-| D. Search & filter (FILT) | 8 | 2 | 3 | 0 | 4/4 (100%) | 3/4 (75%) |
+| D. Search & filter (FILT) | 9 | 1 | 3 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 4 | 2 | 0 | 0 | 2/2 (100%) | 1/2 (50%) |
-| F. Edit panel — global adjustments (EDIT) | 40 | 2 | 6 | 1 | 28/28 (100%) | 12/14 (86%) |
+| F. Edit panel — global adjustments (EDIT) | 41 | 1 | 6 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 6 | 1 | 3 | 2 | 4/4 (100%) | 2/3 (67%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
 | Z. Keyboard shortcuts (desktop) | 66 | 9 | 5 | 1 | 49/52 (94%) | 15/23 (65%) |
 | Lightroom Classic extras | 12 | 17 | 50 | 9 | — | 11/21 (52%) |
-| **Total** | 323 | 51 | 126 | 37 | 193/198 (97%) | 110/144 (76%) |
+| **Total** | 325 | 49 | 126 | 37 | 193/198 (97%) | 112/144 (78%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **69.7%** of 500 in-scope rows — P0 98.7% of 198 · P1 86.1% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **69.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 86.8% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -176,7 +176,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-FILT-RATING | Rating filter | P0 | ✅ | `cmd:library.filter` (`rating`, `ratingOp`), `crates/ui-egui/src/panels/filterbar.rs` | ≥ / = / ≤ stars in the filter bar (`cmd:view.filterBar`) |
 | LR-FILT-FLAG | Flag filter | P0 | ✅ | `cmd:library.filter` (`flag`), `crates/ui-egui/src/panels/filterbar.rs` | picked / rejected / unflagged (one at a time) |
 | LR-FILT-LABEL | Colour-label filter | P1 | ✅ | `cmd:library.filter` (`label`), `crates/ui-egui/src/panels/filterbar.rs` | one label at a time; no “no label” choice |
-| LR-FILT-TYPE | Type / edited filter | P1 | 🟡 | `cmd:library.filter` (`kind`, `edited`), `crates/ui-egui/src/panels/filterbar.rs` | photos / raw / videos, edited / unedited; no HDR/panorama/depth kinds |
+| LR-FILT-TYPE | Type / edited filter | P1 | ✅ | `cmd:library.filter` (`kind`, `merged`, `edited`), `crates/ui-egui/src/panels/filterbar.rs`, `crates/catalog/src/query.rs` (`merged_kind`) | photos / raw / videos / HDR / panoramas / HDR panoramas (merge results by name), edited / unedited; no depth kind |
 | LR-FILT-KEYWORD | Keyword filter | P1 | ✅ | `cmd:library.filter` (`keyword`), `crates/ui-egui/src/panels/filterbar.rs` | keyword picker |
 | LR-FILT-CAMERA | Camera / lens filter | P1 | ✅ | `cmd:library.filter` (`camera`, `lens`), `crates/ui-egui/src/panels/filterbar.rs` | camera and lens pickers |
 | LR-FILT-LOCATION | Location filter | P2 | 🟡 | `cmd:library.filter` (`text`) | free-text match on the location field only |
@@ -221,7 +221,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-COLOR-VIBRANCE | Vibrance | P0 | ✅ | `ctl:color.vibrance` | |
 | LR-EDIT-COLOR-SATURATION | Saturation | P0 | ✅ | `ctl:color.saturation` | |
 | LR-EDIT-COLOR-MIXER-HSL | 8-band colour mixer | P0 | ✅ | `ctl:mixer.*` | no targeted (drag-on-image) mode |
-| LR-EDIT-COLOR-MIXER-BW | B&W mix | P1 | 🟡 | `ctl:bw.*` | no auto mix |
+| LR-EDIT-COLOR-MIXER-BW | B&W mix | P1 | ✅ | `ctl:bw.*`, `cmd:develop.autoBwMix` | eight bands; Auto pushes each hue band's colourful pixels away from the mean lightness (own rule) |
 | LR-EDIT-COLOR-POINTCOLOR | Point colour | P1 | ✅ | `cmd:pointColor.pick`, `cmd:pointColor.delete` | |
 | LR-EDIT-COLOR-GRADING | Colour grading wheels | P0 | ✅ | `ctl:grading.*` | |
 | LR-EDIT-EFFECTS-TEXTURE | Texture | P0 | ✅ | `ctl:effects.texture` | |

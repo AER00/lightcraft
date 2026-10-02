@@ -730,6 +730,12 @@ fn mixer(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
     });
     let b = bands[sel];
     if crate::is_bw(d) {
+        ui.horizontal(|ui| {
+            ui.add_space(24.0);
+            if crate::widgets::text_button(ui, "bwAuto", "Auto", false).on_hover_text("Set the mix from the photo's colours").clicked() {
+                let _ = app.run("develop.autoBwMix", json!({}));
+            }
+        });
         control(app, ui, d, &format!("bw.{b}"), true);
     } else {
         for k in ["hue", "sat", "lum"] {

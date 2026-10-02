@@ -58,6 +58,46 @@ pub fn auto_tone(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings) -> AutoTo
     }
 }
 
+/// An automatic black & white mix (slider values, red … magenta) for `src` under `s`'s white
+/// balance and tone: each hue band's colourful pixels are pushed away from the image's mean
+/// lightness — bands brighter than average get brighter, darker ones darker — so areas that
+/// differ only in colour stay apart in grey. Bands with almost no colourful pixels stay at 0.
+pub fn auto_bw_mix(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings) -> [f64; 8] {
+    use lightcraft_color::perceptual::{lab_to_lch, oklab_from_2020};
+    let mut img = lightcraft_raster::resample::fit(src, 512, 512, lightcraft_raster::resample::Filter::Box);
+    let base = DevelopSettings { wb: s.wb, light: s.light, ..DevelopSettings::default() };
+    crate::local::scene_linear_pre(&mut img, info, &base);
+    let gain = 2f32.powf(base.light.exposure as f32);
+    let (mut mass, mut sum_l) = ([0f64; 8], [0f64; 8]);
+    let (mut all_l, mut n) = (0f64, 0usize);
+    for p in &img.data {
+        let lch = lab_to_lch(oklab_from_2020(p.map(|v| (v * gain).max(0.0))));
+        all_l += lch[0] as f64;
+        n += 1;
+        let k = (lch[1] / 0.2).min(1.0) as f64; // as in the B&W conversion
+        if k < 0.05 {
+            continue;
+        }
+        let w = crate::colorops::band_weights(lch[2]);
+        for i in 0..8 {
+            mass[i] += w[i] as f64 * k;
+            sum_l[i] += w[i] as f64 * k * lch[0] as f64;
+        }
+    }
+    if n == 0 {
+        return [0.0; 8];
+    }
+    let mean = all_l / n as f64;
+    let total: f64 = mass.iter().sum();
+    std::array::from_fn(|i| {
+        if total <= 0.0 || mass[i] / total < 0.01 {
+            return 0.0;
+        }
+        let sep = sum_l[i] / mass[i] - mean;
+        (sep * 400.0).clamp(-60.0, 60.0).round()
+    })
+}
+
 /// Grey-world white balance weighted towards mid-tone, low-chroma pixels. Returns (temp, tint).
 pub fn auto_wb(src: &Rgb32f, info: &SourceInfo) -> (f64, f64) {
     let img = lightcraft_raster::resample::fit(src, 256, 256, lightcraft_raster::resample::Filter::Box);
@@ -132,5 +172,22 @@ mod tests {
         crate::local::scene_linear_pre(&mut out, &SourceInfo::default(), &s);
         let c = out.get(0, 0);
         assert!((c[0] - c[2]).abs() < 0.02, "{c:?}");
+    }
+}
+
+#[cfg(test)]
+mod bw_tests {
+    use super::*;
+
+    #[test]
+    fn auto_bw_mix_pushes_light_and_dark_hues_apart() {
+        // left: a light yellow, right: a dark blue (scene-linear Rec. 2020)
+        let src = Rgb32f::from_fn(64, 32, |x, _| if x < 32 { [0.55, 0.5, 0.05] } else { [0.01, 0.02, 0.12] });
+        let m = auto_bw_mix(&src, &SourceInfo::default(), &DevelopSettings::default());
+        let (yellow, blue) = (m[2], m[5]);
+        assert!(yellow > 0.0 && blue < 0.0, "{m:?}");
+        // an image without colour leaves the mix alone
+        let grey = Rgb32f::from_fn(16, 16, |x, _| [x as f32 / 16.0; 3]);
+        assert_eq!(auto_bw_mix(&grey, &SourceInfo::default(), &DevelopSettings::default()), [0.0; 8]);
     }
 }

@@ -44,6 +44,8 @@ pub struct Filter {
     pub imported: Option<String>,
     /// Imported at or after this time (ISO; Recently Added).
     pub imported_from: Option<String>,
+    /// Photo Merge results: `hdr`, `panorama`, `hdrPanorama` or `any` (see [`merged_kind`]).
+    pub merged: Option<String>,
     /// A folder on disk: its files only (browsed ones too); `subfolders` includes everything below.
     pub folder: Option<String>,
     pub subfolders: bool,
@@ -188,6 +190,12 @@ impl Filter {
         if self.edited.is_some_and(|e| e != p.is_edited()) {
             return false;
         }
+        if let Some(want) = &self.merged {
+            match merged_kind(&p.file_name) {
+                Some(k) if want == "any" || want == k => {}
+                _ => return false,
+            }
+        }
         if let Some(a) = self.album
             && !cat.album_contains(a, p)
         {
@@ -310,4 +318,21 @@ pub fn in_folder(path: &str, dir: &str, deep: bool) -> bool {
     let Some(rest) = path.strip_prefix(dir) else { return false };
     let Some(rest) = rest.strip_prefix(['/', '\\']) else { return false };
     !rest.is_empty() && (deep || !rest.contains(['/', '\\']))
+}
+
+/// The kind of Photo Merge result a file is, from the name merges give it (`IMG_1-HDR.dng`,
+/// `IMG_1-Pano.dng`, `IMG_1-HDR-Pano.dng` — also the names other raw editors use):
+/// `hdr`, `panorama` or `hdrPanorama`.
+pub fn merged_kind(file_name: &str) -> Option<&'static str> {
+    let stem = file_name.rsplit_once('.').map_or(file_name, |(s, _)| s).to_ascii_lowercase();
+    let stem = stem.trim_end_matches(|c: char| c.is_ascii_digit() || c == '-' || c == ' ');
+    if stem.ends_with("-hdr-pano") {
+        Some("hdrPanorama")
+    } else if stem.ends_with("-hdr") {
+        Some("hdr")
+    } else if stem.ends_with("-pano") {
+        Some("panorama")
+    } else {
+        None
+    }
 }

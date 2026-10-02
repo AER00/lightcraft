@@ -60,6 +60,10 @@ fn hdr_merge_command_creates_and_imports_a_dng() {
     assert!(r2["path"].as_str().unwrap().ends_with("IMG_0-HDR-2.dng"));
     let id2 = lightcraft_catalog::PhotoId(r2["id"].as_u64().unwrap());
     assert!(s.catalog.stack_of(id2).is_none(), "no stack without the option");
+    // the type filter finds merge results (and only them)
+    s.execute("library.filter", &json!({"merged": "hdr"})).unwrap();
+    let found: std::collections::HashSet<_> = s.catalog.query(&s.filter, &Default::default()).into_iter().collect();
+    assert_eq!(found, [id, id2].into_iter().collect());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

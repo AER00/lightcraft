@@ -421,3 +421,16 @@ fn filter_presets_save_and_apply() {
     s.execute("filter.deletePreset", &json!({"name": "Best"})).unwrap();
     assert!(s.filter_presets.is_empty());
 }
+
+#[test]
+fn auto_bw_mix_separates_colours() {
+    let mut s = demo();
+    s.execute("develop.autoBwMix", &json!({})).unwrap();
+    let d = active_dev(&s);
+    assert_eq!(d.treatment, lightcraft_develop::Treatment::Bw);
+    let m = d.bw_mix.bands();
+    assert!(m.iter().any(|v| *v != 0.0), "some band moved: {m:?}");
+    assert!(m.iter().all(|v| v.abs() <= 60.0));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_ne!(active_dev(&s).treatment, lightcraft_develop::Treatment::Bw, "one undo step");
+}
