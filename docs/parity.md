@@ -21,7 +21,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 <!-- parity:summary -->
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
-| A. Import (IMP) | 6 | 3 | 4 | 1 | 2/4 (50%) | 3/4 (75%) |
+| A. Import (IMP) | 7 | 2 | 4 | 1 | 3/4 (75%) | 3/4 (75%) |
 | B. Library management (LIB) | 18 | 1 | 6 | 2 | 9/9 (100%) | 8/9 (89%) |
 | C. Views & navigation (VIEW) | 14 | 0 | 3 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
@@ -45,12 +45,12 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 12 | 1 | 4 | 1 | 8/8 (100%) | 4/5 (80%) |
-| Y. Menus | 68 | 9 | 8 | 8 | 46/47 (98%) | 17/23 (74%) |
+| Y. Menus | 69 | 8 | 8 | 8 | 46/47 (98%) | 18/23 (78%) |
 | Z. Keyboard shortcuts (desktop) | 63 | 12 | 5 | 1 | 49/52 (94%) | 12/23 (52%) |
-| Lightroom Classic extras | 7 | 19 | 53 | 9 | — | 6/21 (29%) |
-| **Total** | 306 | 64 | 130 | 37 | 192/198 (97%) | 95/144 (66%) |
+| Lightroom Classic extras | 7 | 20 | 52 | 9 | — | 6/21 (29%) |
+| **Total** | 308 | 63 | 129 | 37 | 193/198 (97%) | 96/144 (67%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **67.6%** of 500 in-scope rows — P0 98.5% of 198 · P1 79.9% of 144 · P2 17.7% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **67.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 80.6% of 144 · P2 17.7% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -107,7 +107,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-IMP-RAWDEFAULT | Raw defaults | P1 | ✅ | `cmd:library.preferences`, `crates/engine/src/import.rs`, `crates/ui-egui/src/panels/settings.rs` | LightCraft default / a preset / per camera (make + model); non-raw default too; the preset look counts as unedited and Reset returns to it |
 | LR-IMP-MIGRATE | Migrate other catalogs | OOS | 🚫 | | |
 | LR-IMP-PROFILES | Import profiles & presets | P1 | 🟡 | `cmd:file.importPresets`, `cmd:preset.import` | presets (.lcpreset, XMP `crs:`) only; no profile import; Adobe profile formats are deliberately unsupported |
-| LR-IMP-LOCAL | Work on files in place | P0 | 🟡 | `cmd:library.import` (mode add), `cmd:library.importPreview`, `crates/engine/src/sidecar.rs`, `cmd:library.toggleAutoWriteXmp` | files referenced in place with XMP sidecars; the import review shows a folder's photos before adding (“Add in place” or “Copy into library”); no browse-a-folder-without-adding view in the main grid |
+| LR-IMP-LOCAL | Work on files in place | P0 | ✅ | `cmd:library.browse`, `cmd:photo.addToLibrary`, `cmd:library.import` (mode add), `crates/engine/src/cmd/browse.rs`, `crates/ui-egui/src/panels/left.rs` (`local_section`), `crates/ui-egui/src/panels/grid.rs` (`folder_header`) | Local: browse Pictures / Desktop / Downloads / Home or any folder without adding it (breadcrumb, Include subfolders, Add N to My Photos); browsed photos stay out of All Photos, albums and counts; edits go to XMP sidecars; importing promotes them |
 | LR-IMP-SIDECAR-SPLIT | Separate XMP sidecar variants | P2 | ⬜ | `cmd:library.xmpPreferences` | sidecar naming option exists (stem/full), no split sidecars |
 | LR-IMP-FORMATS | Supported formats | P0 | 🟡 | `crates/codecs/src/lib.rs`, `crates/raw/src/lib.rs` | JPEG, PNG, TIFF, WebP, JXL, PSD, GIF, BMP; DNG, CR2, ARW, NEF, RAF, RW2, PEF, ORF. Missing: CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only), HEIC/AVIF decode |
 | LR-IMP-CULL-AT-IMPORT | Culling analysis at import | P2 | ⬜ | | |
@@ -547,7 +547,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-VIEW-ZOOM | Zoom in / out / toggle / fit / 1:1 | P0 | ✅ | `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle`, `cmd:view.zoomFit`, `cmd:view.zoom100` | |
 | MENU-VIEW-CLIPPING | Show Clipping | P0 | ✅ | `cmd:view.clipping` | |
 | MENU-VIEW-MASKOVERLAY | Mask overlay / cycle colour | P0 | ✅ | `cmd:view.maskOverlay`, `cmd:view.maskOverlayMode`, `cmd:view.maskOverlayColor` | colour cycles through the panel's swatches (no params) or takes `color` / `opacity` |
-| MENU-VIEW-INCLUDESUBFOLDERS | Include subfolders | P1 | 🟡 | `cmd:library.import` | folder import is always recursive |
+| MENU-VIEW-INCLUDESUBFOLDERS | Include subfolders | P1 | ✅ | `cmd:library.browse` (`subfolders`) | toggle in the folder header; imports of folders are recursive |
 | MENU-VIEW-SORT | Sort submenu | P0 | ✅ | `cmd:library.sort` | no colour-label key |
 | MENU-VIEW-STACKS | Expand/collapse stacks | P1 | ✅ | `cmd:stack.expandAll`, `cmd:stack.collapseAll` | |
 | MENU-VIEW-PHOTOCOUNT | Show photo counts | P2 | 🟡 | `crates/ui-egui/src/panels/left.rs` | counts always shown; no toggle |
@@ -693,7 +693,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-SURVEY | Survey view | P2 | ✅ | `cmd:view.survey` | N |
 | LRC-LIB-REFVIEW | Reference view | P2 | ⬜ | | |
 | LRC-LIB-CATALOG-PANEL | Catalog sets | P1 | 🟡 | `cmd:library.source` | all, recently added, picks, recently deleted; no missing/problem sets |
-| LRC-LIB-FOLDERS | Disk folder tree | P1 | ⬜ | | |
+| LRC-LIB-FOLDERS | Disk folder tree | P1 | 🟡 | `cmd:library.browse`, `crates/ui-egui/src/panels/left.rs` (`local_section`) | standard places + the browsed folder + Browse Folder…, breadcrumb navigation upwards; no expandable folder tree, no folder rename/move |
 | LRC-LIB-COLLECTIONS | Collections & sets | P1 | 🟡 | `cmd:album.create` | albums + folders; no smart / quick / target collections |
 | LRC-LIB-SMARTCOLL | Smart-collection rules | P1 | 🟡 | `cmd:album.createSmart`, `crates/catalog/src/query.rs` | the filter fields + date range; no rule editor, any/none groups or operators beyond ≥/=/≤ |
 | LRC-LIB-PUBLISH | Publish services | P2 | ⬜ | | |

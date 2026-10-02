@@ -49,6 +49,9 @@ pub struct ImportOptions {
     pub preset: Option<lightcraft_develop::Preset>,
     /// Added to every imported photo.
     pub keywords: Vec<String>,
+    /// Browsing a folder: photos come in as `local` (not in the library), and a file with the
+    /// same content as one already known is still listed.
+    pub local: bool,
 }
 
 /// A file found by [`scan`], for the import review.
@@ -372,8 +375,14 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         }
     }
     let mut todo = Vec::new();
+    // a file that was only browsed (Local) joins the library when it is imported for real
+    let mut promote = Vec::new();
     for f in files {
         match by_path.get(f.as_str()) {
+            Some(id) if !opts.local && s.catalog.photo(*id).is_some_and(|p| p.local) => {
+                promote.push(Op::SetLocal { id: *id, local: false });
+                report.imported.push(id.0);
+            }
             Some(id) => report.duplicates.push(Duplicate { path: f, existing: Some(id.0), reason: "path" }),
             None => todo.push(f),
         }
@@ -382,7 +391,7 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
     let probed = probe_all(s, &todo);
     crate::memory::release();
     let now = (s.clock)();
-    let mut ops = Vec::new();
+    let mut ops = promote;
     for (path, info) in todo.into_iter().zip(probed) {
         let info = match info {
             Ok(i) => i,
@@ -393,6 +402,7 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
             }
         };
         if let Some(h) = &info.content_hash
+            && !opts.local
             && let Some(id) = by_hash.get(h)
         {
             report.duplicates.push(Duplicate { path, existing: Some(id.0), reason: "content" });
@@ -452,6 +462,7 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
             p.history.push(lightcraft_catalog::HistoryStep { label, settings: d });
         }
         report.imported.push(id.0);
+        p.local = opts.local;
         ops.push(Op::AddPhoto { photo: Box::new(p) });
     }
     if !ops.is_empty() {

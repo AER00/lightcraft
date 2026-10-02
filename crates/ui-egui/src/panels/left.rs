@@ -59,10 +59,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.y = 0.0;
             let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
             ui.painter().text(pos2(hr.left() + 18.0, hr.center().y), Align2::LEFT_CENTER, "My Photos", t.semibold(15.0), t.text);
-            let stats: Vec<_> = app.session.catalog.photos().filter(|p| !p.deleted).map(|p| p.flag).collect();
+            let stats: Vec<_> = app.session.catalog.photos().filter(|p| p.in_library()).map(|p| p.flag).collect();
             let total = stats.len();
             let picks = stats.iter().filter(|f| **f == lightcraft_catalog::Flag::Pick).count();
-            let deleted = app.session.catalog.photos().filter(|p| p.deleted).count();
+            let deleted = app.session.catalog.photos().filter(|p| p.deleted && !p.local).count();
             egui::ScrollArea::vertical().id_salt("left-scroll").auto_shrink([false, false]).show(ui, |ui| {
                 let src = app.session.source;
                 for (id, icon, label, count, s) in [
@@ -98,6 +98,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let albums: Vec<Album> = app.session.catalog.albums().cloned().collect();
                 albums_tree(app, ui, &albums, None, 0.0);
                 ui.add_space(10.0);
+                local_section(app, ui);
                 // By date
                 let (dr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
                 ui.painter().text(pos2(dr.left() + 18.0, dr.center().y), Align2::LEFT_CENTER, "By Date", t.semibold(13.5), t.text_label);
@@ -126,6 +127,51 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
             });
         });
+}
+
+/// Folders on this computer to browse without adding (Lightroom's Local): Pictures, Desktop,
+/// Downloads, the home folder, the folder being browsed, and Browse Folder….
+fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    if cfg!(target_arch = "wasm32") {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    let (lr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+    ui.painter().text(pos2(lr.left() + 18.0, lr.center().y), Align2::LEFT_CENTER, "Local", t.semibold(13.5), t.text_label);
+    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
+    let mut places: Vec<(String, String)> = Vec::new();
+    if !home.is_empty() {
+        for (name, sub) in [("Pictures", "Pictures"), ("Desktop", "Desktop"), ("Downloads", "Downloads"), ("Home", "")] {
+            let p = if sub.is_empty() { home.clone() } else { format!("{home}/{sub}") };
+            if std::path::Path::new(&p).is_dir() {
+                places.push((name.to_string(), p));
+            }
+        }
+    }
+    let browsing = app.session.browse.clone().filter(|_| app.session.source == LibrarySource::Folder);
+    if let Some(b) = &browsing
+        && !places.iter().any(|(_, p)| *p == b.path)
+    {
+        let name = std::path::Path::new(&b.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| b.path.clone());
+        places.push((name, b.path.clone()));
+    }
+    for (name, path) in places {
+        let sel = browsing.as_ref().is_some_and(|b| b.path == path);
+        if row(app, ui, &format!("local:{path}"), Icon::Folder, &name, None, sel, 0.0).on_hover_text(&path).clicked()
+            && let Err(e) = app.run("library.browse", json!({"path": path}))
+        {
+            app.toast(ui.ctx(), e);
+        }
+    }
+    if app.services.pick_folder.is_some() && row(app, ui, "local:browse", Icon::Plus, "Browse Folder…", None, false, 0.0).clicked() {
+        let picked = app.services.pick_folder.as_mut().and_then(|f| f());
+        if let Some(path) = picked
+            && let Err(e) = app.run("library.browse", json!({"path": path}))
+        {
+            app.toast(ui.ctx(), e);
+        }
+    }
+    ui.add_space(10.0);
 }
 
 /// One By Date row (`key`: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`); returns whether it is open.

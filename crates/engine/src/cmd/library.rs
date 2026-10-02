@@ -568,7 +568,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 {
                     return Err(bad("library.import", "album must be a regular album"));
                 }
-                let opts = crate::import::ImportOptions { mode, preset, keywords: strs(p, "keywords") };
+                let opts = crate::import::ImportOptions { mode, preset, keywords: strs(p, "keywords"), ..Default::default() };
                 let undo0 = s.undo.len();
                 let mut report = serde_json::to_value(crate::import::import_with(s, &paths, &opts)?).unwrap_or_default();
                 let imported: Vec<u64> = report["imported"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();

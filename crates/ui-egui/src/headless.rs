@@ -667,6 +667,45 @@ mod tests {
         assert_eq!((m.alt_text.as_str(), m.city.as_str()), ("A lake at dawn", "Zermatt"));
     }
 
+    /// Local: a folder's photos show without joining the library; the breadcrumb, Include
+    /// subfolders and Add to My Photos work from the grid header.
+    #[test]
+    fn browse_a_local_folder() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let dir = std::env::temp_dir().join(format!("lc-ui-browse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("inner")).unwrap();
+        let img = lightcraft_raster::Rgba8::from_fn(24, 16, |x, y| [(x * 9) as u8, (y * 12) as u8, 80, 255]);
+        let o = lightcraft_engine::export::ExportOptions { format: lightcraft_engine::export::ExportFormat::Png, ..Default::default() };
+        for (i, p) in [dir.join("a.png"), dir.join("inner/b.png")].iter().enumerate() {
+            let mut img = img.clone();
+            img.data[0][0] = i as u8; // different bytes per file
+            std::fs::write(p, lightcraft_engine::export::encode_image(&img, &o).unwrap()).unwrap();
+        }
+        let library_before = h.app.session.catalog.photos().filter(|p| !p.local).count();
+        let r = h.request("engine.execute", json!({"command": "library.browse", "params": {"path": dir.to_string_lossy()}}), t);
+        assert_eq!(r["result"]["photos"], 1, "{r}");
+        assert!(h.settle(SETTLE), "a thumbnail that can't load must not keep the renderer busy");
+        // this test session has no file hooks: the thumbnail fails once, is remembered, and isn't retried
+        let id = h.app.session.visible_cloned()[0];
+        assert!(h.app.renderer.failure(crate::render::Slot::Thumb(id)).is_some());
+        let done = h.app.renderer.completed;
+        for _ in 0..30 {
+            h.step();
+        }
+        assert_eq!(h.app.renderer.completed, done, "no retry loop");
+        let w = h.request("ui.widgets", json!({"filter": "crumb:"}), t);
+        assert!(w["result"].as_array().is_some_and(|a| !a.is_empty()), "breadcrumb: {w}");
+        assert_eq!(h.request("ui.clickWidget", json!({"id": "check:includeSubfolders"}), t)["ok"], true);
+        h.settle(SETTLE);
+        assert_eq!(h.app.session.visible_cloned().len(), 2);
+        assert_eq!(h.request("ui.clickWidget", json!({"id": "button:addToLibrary"}), t)["ok"], true);
+        h.settle(SETTLE);
+        assert_eq!(h.app.session.catalog.photos().filter(|p| !p.local).count(), library_before + 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// ⌘Q (File → Quit LightCraft) closes the window.
     #[test]
     fn cmd_q_quits() {

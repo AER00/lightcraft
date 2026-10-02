@@ -81,6 +81,7 @@ struct PresetsFile {
 #[serde(default)]
 struct ViewFile {
     source: LibrarySource,
+    browse: Option<crate::Browse>,
     filter: lightcraft_catalog::Filter,
     sort: lightcraft_catalog::Sort,
     selection: Selection,
@@ -178,6 +179,7 @@ impl Session {
         // view state
         if let Some(v) = read_json::<ViewFile>(files.as_mut(), "view.json") {
             self.source = v.source;
+            self.browse = v.browse;
             self.filter = v.filter;
             self.sort = v.sort;
             self.selection = v.selection;
@@ -251,7 +253,13 @@ impl Session {
     }
 
     fn view_json(&self) -> Vec<u8> {
-        let view = ViewFile { source: self.source, filter: self.filter.clone(), sort: self.sort, selection: self.selection.clone() };
+        let view = ViewFile {
+            source: self.source,
+            browse: self.browse.clone(),
+            filter: self.filter.clone(),
+            sort: self.sort,
+            selection: self.selection.clone(),
+        };
         serde_json::to_vec_pretty(&view).unwrap_or_default()
     }
 

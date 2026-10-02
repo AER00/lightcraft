@@ -66,7 +66,7 @@ pub fn specs() -> Vec<CommandSpec> {
             Ok(json!({"total": ids.len(), "photos": items}))
         }),
         cmd!(query "catalog.stats", "Catalog Statistics", [], None, "{}", always, |s, _| {
-            let all: Vec<_> = s.catalog.photos().filter(|p| !p.deleted).collect();
+            let all: Vec<_> = s.catalog.photos().filter(|p| p.in_library()).collect();
             Ok(json!({
                 "photos": all.len(),
                 "edited": all.iter().filter(|p| p.is_edited()).count(),

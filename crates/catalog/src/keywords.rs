@@ -75,7 +75,7 @@ impl Catalog {
         }
         let mut roots = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        for p in self.photos().filter(|p| !p.deleted) {
+        for p in self.photos().filter(|p| p.in_library()) {
             for k in &p.meta.keywords {
                 let parts: Vec<&str> = k.split(SEP).map(str::trim).filter(|s| !s.is_empty()).collect();
                 insert(&mut roots, &parts, "", p.id.0, &mut seen);
@@ -162,7 +162,7 @@ impl Catalog {
         } else {
             let mut co: std::collections::HashMap<String, i64> = Default::default();
             if !current.is_empty() {
-                for p in self.photos().filter(|p| !p.deleted) {
+                for p in self.photos().filter(|p| p.in_library()) {
                     if p.meta.keywords.iter().any(|k| has(k)) {
                         for k in p.meta.keywords.iter().filter(|k| !has(k)) {
                             *co.entry(k.clone()).or_default() += 1;

@@ -101,3 +101,45 @@ fn civil_dates() {
     assert_eq!(crate::import::civil(951_782_400), "2000-02-29T00:00:00");
     assert_eq!(crate::import::civil(1_790_000_000), "2026-09-21T14:13:20");
 }
+
+#[test]
+fn browsing_a_folder_lists_its_photos_without_adding_them() {
+    use crate::LibrarySource;
+    let dir = std::env::temp_dir().join(format!("lc-browse-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let png = |p: &std::path::Path, seed: u8| {
+        let img = lightcraft_raster::Rgba8::from_fn(16, 12, |x, y| [(x * 9) as u8, (y * 11) as u8, seed, 255]);
+        let b = crate::export::encode_image(&img, &crate::export::ExportOptions { format: crate::export::ExportFormat::Png, ..Default::default() })
+            .unwrap();
+        std::fs::write(p, b).unwrap();
+    };
+    png(&dir.join("a.png"), 1);
+    png(&dir.join("b.png"), 2);
+    png(&dir.join("sub/c.png"), 3);
+    std::fs::write(dir.join("notes.txt"), "x").unwrap();
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.browse", &serde_json::json!({"path": dir.to_string_lossy()})).unwrap();
+    assert_eq!(r["photos"], 2, "{r}");
+    assert_eq!(s.source, LibrarySource::Folder);
+    assert_eq!(s.visible_cloned().len(), 2);
+    // not in the library
+    s.execute("library.source", &serde_json::json!({"kind": "all"})).unwrap();
+    assert!(s.visible_cloned().is_empty(), "browsed photos stay out of All Photos");
+    assert_eq!(s.execute("catalog.stats", &serde_json::json!({})).unwrap()["photos"], 0, "nor in the counts");
+    assert!(s.catalog.date_groups().is_empty());
+    // subfolders; browsing again reuses the photos
+    let r = s.execute("library.browse", &serde_json::json!({"path": dir.to_string_lossy(), "subfolders": true})).unwrap();
+    assert_eq!((r["photos"].as_u64(), r["new"].as_u64()), (Some(3), Some(1)));
+    // add one to the library
+    let first = s.visible_cloned()[0];
+    s.execute("photo.addToLibrary", &serde_json::json!({"ids": [first.0]})).unwrap();
+    // importing the folder for real brings in the rest (no duplicates of the browsed ones)
+    let r = s.execute("library.import", &serde_json::json!({"paths": [dir.to_string_lossy()]})).unwrap();
+    assert_eq!(r["imported"].as_array().map(Vec::len), Some(2), "{r}");
+    s.execute("library.source", &serde_json::json!({"kind": "all"})).unwrap();
+    assert_eq!(s.visible_cloned().len(), 3);
+    assert_eq!(s.catalog.photos().count(), 3);
+    assert!(s.execute("library.browse", &serde_json::json!({"path": dir.join("a.png").to_string_lossy()})).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -15,6 +15,16 @@ pub enum LibrarySource {
     RecentlyDeleted,
     /// Photos with picks.
     Picks,
+    /// A folder on disk ([`crate::Session::browse`]): its files, added to the library or not.
+    Folder,
+}
+
+/// The folder a [`LibrarySource::Folder`] view shows.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Browse {
+    pub path: String,
+    pub subfolders: bool,
 }
 
 impl LibrarySource {
@@ -29,6 +39,8 @@ impl LibrarySource {
             LibrarySource::Album(a) => f.album = Some(*a),
             LibrarySource::RecentlyDeleted => f.deleted = true,
             LibrarySource::Picks => f.flag = Some(lightcraft_catalog::Flag::Pick),
+            // the folder itself is filled in by the session (it holds the path)
+            LibrarySource::Folder => {}
         }
         f
     }
@@ -40,6 +52,7 @@ impl LibrarySource {
             LibrarySource::Album(a) => cat.album(*a).map(|a| a.name.clone()).unwrap_or_else(|| "Album".into()),
             LibrarySource::RecentlyDeleted => "Recently Deleted".into(),
             LibrarySource::Picks => "Picks".into(),
+            LibrarySource::Folder => "Folder".into(),
         }
     }
 }

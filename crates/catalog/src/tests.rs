@@ -205,3 +205,14 @@ fn capture_times_display_like_the_info_panel() {
     assert_eq!(display_time("2022-07-04"), "July 4, 2022");
     assert_eq!(display_time("someday"), "someday");
 }
+
+#[test]
+fn folder_paths() {
+    use crate::query::in_folder;
+    assert!(in_folder("/a/b/c.jpg", "/a/b", false));
+    assert!(in_folder("/a/b/c.jpg", "/a/b/", false));
+    assert!(!in_folder("/a/b/x/c.jpg", "/a/b", false));
+    assert!(in_folder("/a/b/x/c.jpg", "/a/b", true));
+    assert!(!in_folder("/a/bc/d.jpg", "/a/b", true), "a sibling with the same prefix");
+    assert!(in_folder("C:\\Pics\\a.jpg", "C:\\Pics", false));
+}

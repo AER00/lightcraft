@@ -42,6 +42,9 @@ pub struct Filter {
     pub date_to: Option<String>,
     /// Import date prefix (Recently Added).
     pub imported: Option<String>,
+    /// A folder on disk: its files only (browsed ones too); `subfolders` includes everything below.
+    pub folder: Option<String>,
+    pub subfolders: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +159,17 @@ impl Filter {
         if p.deleted != self.deleted {
             return false;
         }
+        match &self.folder {
+            // browsed photos only show in folder views
+            None if p.local => return false,
+            None => {}
+            Some(dir) => {
+                let crate::Source::File { path } = &p.source else { return false };
+                if !in_folder(path, dir, self.subfolders) {
+                    return false;
+                }
+            }
+        }
         if self.rating > 0 {
             let ok = match self.rating_op {
                 RatingOp::AtLeast => p.rating >= self.rating,
@@ -239,7 +253,7 @@ impl Catalog {
     pub fn date_groups(&self) -> Vec<DateGroup> {
         use std::collections::BTreeMap;
         let mut years: BTreeMap<&str, (BTreeMap<&str, usize>, BTreeMap<&str, usize>)> = BTreeMap::new();
-        for p in self.photos().filter(|p| !p.deleted) {
+        for p in self.photos().filter(|p| p.in_library()) {
             let d = p.date();
             if d.len() >= 10 {
                 let (months, days) = years.entry(&d[..4]).or_default();
@@ -263,7 +277,7 @@ impl Catalog {
     /// All keywords with usage counts, sorted by name.
     pub fn keywords(&self) -> Vec<(String, usize)> {
         let mut m: std::collections::BTreeMap<String, usize> = Default::default();
-        for p in self.photos().filter(|p| !p.deleted) {
+        for p in self.photos().filter(|p| p.in_library()) {
             for k in &p.meta.keywords {
                 *m.entry(k.clone()).or_default() += 1;
             }
@@ -280,4 +294,13 @@ pub struct DateGroup {
     pub months: Vec<(String, usize)>,
     /// `YYYY-MM-DD` and counts, newest first.
     pub days: Vec<(String, usize)>,
+}
+
+/// Whether file `path` is directly in `dir` (or anywhere below it with `deep`). Both `/` and `\\`
+/// separate.
+pub fn in_folder(path: &str, dir: &str, deep: bool) -> bool {
+    let dir = dir.trim_end_matches(['/', '\\']);
+    let Some(rest) = path.strip_prefix(dir) else { return false };
+    let Some(rest) = rest.strip_prefix(['/', '\\']) else { return false };
+    !rest.is_empty() && (deep || !rest.contains(['/', '\\']))
 }

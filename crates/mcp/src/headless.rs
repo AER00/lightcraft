@@ -70,6 +70,11 @@ impl Headless {
         }
         let ids: Vec<_> = match p.get("ids").and_then(Value::as_array) {
             Some(a) => a.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect(),
+            // like the desktop app: the selection (in grid order), else the given / active photo
+            None if p.get("id").is_none() && self.session.selection.ids.len() > 1 => {
+                let sel: std::collections::HashSet<_> = self.session.selection.ids.iter().copied().collect();
+                self.session.visible_cloned().into_iter().filter(|id| sel.contains(id)).collect()
+            }
             None => vec![self.photo_or_active(p)?],
         };
         let dir = p.get("dir").and_then(Value::as_str).unwrap_or("");
@@ -179,4 +184,30 @@ pub fn write_image(path: &Path, img: &Rgba8, quality: u8) -> Result<(), String> 
     let ext = path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
     let bytes = encode_image(&ext, img, quality)?;
     std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `app.export` without `ids` exports the selection (as the desktop app does), else the active photo.
+    #[test]
+    fn export_follows_the_selection() {
+        let dir = std::env::temp_dir().join(format!("lc-mcp-export-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut h = Headless::demo();
+        let ids: Vec<u64> = h.session.visible_cloned().iter().take(3).map(|p| p.0).collect();
+        h.call("engine.execute", json!({"command": "library.select", "params": {"ids": ids}})).unwrap();
+        let r = h
+            .call("engine.execute", json!({"command": "app.export", "params": {"dir": dir.to_string_lossy(), "longEdge": 64, "format": "png"}}))
+            .unwrap();
+        assert_eq!(r["files"].as_array().map(Vec::len), Some(3), "{r}");
+        // one photo selected: that one
+        h.call("engine.execute", json!({"command": "library.select", "params": {"ids": [ids[0]]}})).unwrap();
+        let r = h
+            .call("engine.execute", json!({"command": "app.export", "params": {"dir": dir.to_string_lossy(), "longEdge": 64, "format": "png"}}))
+            .unwrap();
+        assert_eq!(r["files"].as_array().map(Vec::len), Some(1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -30,18 +30,25 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let ids = app.session.visible_cloned();
     // header: source title + count
     let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
-    let title = app.session.source.label(&app.session.catalog);
     ui.painter().rect_filled(hr, 0.0, t.canvas);
-    ui.painter().text(pos2(hr.left() + 20.0, hr.center().y), Align2::LEFT_CENTER, &title, t.semibold(17.0), t.text);
     let sel_n = app.session.selection.ids.len();
     let cnt = if sel_n > 1 { format!("{sel_n} of {} photos", ids.len()) } else { format!("{} photos", ids.len()) };
-    ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
+    match app.session.browse.clone().filter(|_| app.session.source == lightcraft_engine::LibrarySource::Folder) {
+        Some(b) => folder_header(app, ui, hr, &b, &ids, &cnt),
+        None => {
+            let title = app.session.source.label(&app.session.catalog);
+            ui.painter().text(pos2(hr.left() + 20.0, hr.center().y), Align2::LEFT_CENTER, &title, t.semibold(17.0), t.text);
+            ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
+        }
+    }
     if app.ui.filter_bar {
         super::filterbar::show(app, ui);
     }
     app.canvas_rect = Some(ui.max_rect());
     if ids.is_empty() {
-        if app.session.filter != Default::default() {
+        if app.session.source == lightcraft_engine::LibrarySource::Folder {
+            super::empty_message(ui, ui.max_rect(), "No photos in this folder", "Turn on Include subfolders, or pick another folder under Local");
+        } else if app.session.filter != Default::default() {
             super::empty_message(ui, ui.max_rect(), "No matching photos", "Change the filter, or clear it (View → Clear Filters)");
         } else {
             super::empty_message(ui, ui.max_rect(), "No photos", "Add photos with File → Add Photos (Cmd+Shift+I), or drop them here");
@@ -300,7 +307,12 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
             p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::from_gray(170)), StrokeKind::Outside);
         }
     } else {
-        p.rect_filled(img_rect.shrink(if square { 20.0 } else { 0.0 }), 0.0, Color32::from_gray(38));
+        let ph = img_rect.shrink(if square { 20.0 } else { 0.0 });
+        p.rect_filled(ph, 0.0, Color32::from_gray(38));
+        if app.renderer.failure(Slot::Thumb(id)).is_some() {
+            // unreadable / missing file
+            p.text(ph.center(), Align2::CENTER_CENTER, "!", t.semibold(18.0), t.text_dim);
+        }
     }
     // labels and badges
     if square && app.ui.show_filenames {
@@ -385,6 +397,58 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         app.ui.dragging_photos = Some(app.session.selection.ids.iter().map(|p| p.0).collect());
     }
     resp.context_menu(|ui| context_menu(app, ui, id));
+}
+
+/// The header of a Local folder view: the path as a breadcrumb (each part opens that folder),
+/// Include subfolders, Add to My Photos.
+fn folder_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: Rect, b: &lightcraft_engine::Browse, ids: &[PhotoId], cnt: &str) {
+    let t = Tokens::get(ui.ctx());
+    let mut child =
+        ui.new_child(egui::UiBuilder::new().max_rect(hr.shrink2(vec2(16.0, 6.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    child.spacing_mut().item_spacing.x = 4.0;
+    let parts: Vec<&str> = b.path.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
+    // the last few parts (the root side is elided)
+    let skip = parts.len().saturating_sub(4);
+    if skip > 0 {
+        child.label(egui::RichText::new("…  ›").color(t.text_dim));
+    }
+    for (i, part) in parts.iter().enumerate().skip(skip) {
+        let last = i + 1 == parts.len();
+        let text = egui::RichText::new(*part).size(13.0).color(if last { t.text } else { t.text_label });
+        let r = child.add(egui::Label::new(if last { text.strong() } else { text }).sense(Sense::click()));
+        register(child.ctx(), format!("crumb:{i}"), r.rect);
+        if !last {
+            if r.hovered() {
+                child.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if r.clicked() {
+                let prefix = if b.path.starts_with('/') { format!("/{}", parts[..=i].join("/")) } else { parts[..=i].join("/") };
+                let _ = app.run("library.browse", json!({"path": prefix}));
+            }
+            child.label(egui::RichText::new("›").color(t.text_dim));
+        }
+    }
+    child.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.label(egui::RichText::new(cnt).size(12.5).color(t.text_dim));
+        ui.add_space(10.0);
+        let local: Vec<u64> = ids.iter().filter(|id| app.session.catalog.photo(**id).is_some_and(|p| p.local)).map(|id| id.0).collect();
+        if !local.is_empty() {
+            let label = format!("Add {} to My Photos", local.len());
+            if crate::widgets::text_button(ui, "addToLibrary", &label, false).clicked() {
+                let n = local.len();
+                match app.run("photo.addToLibrary", json!({"ids": local})) {
+                    Ok(_) => app.toast(ui.ctx(), format!("Added {n} photo{} to My Photos", if n == 1 { "" } else { "s" })),
+                    Err(e) => app.toast(ui.ctx(), e),
+                }
+            }
+        }
+        let mut sub = b.subfolders;
+        let c = ui.checkbox(&mut sub, "Include subfolders");
+        register(ui.ctx(), "check:includeSubfolders", c.rect);
+        if c.changed() {
+            let _ = app.run("library.browse", json!({"path": b.path, "subfolders": sub}));
+        }
+    });
 }
 
 /// While photos are dragged: a badge at the pointer; the drag ends when the button is up

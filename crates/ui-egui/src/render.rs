@@ -101,6 +101,9 @@ pub struct Renderer {
     stages: HashMap<Slot, Arc<StageCache>>,
     /// Slot → key of the last quick job requested for it (each is tried once).
     quick_tried: HashMap<Slot, u64>,
+    /// Jobs that failed (unreadable or missing file…), by slot and job key, with the error: not
+    /// requested again until the key changes (an edit, another size) — the grid asks every frame.
+    failed: HashMap<Slot, (u64, String)>,
     /// Prefetch slot → key of the last job submitted (each runs once).
     prefetched: HashMap<Slot, u64>,
     /// Variant key → frame it was last asked for (LRU of [`Slot::Variant`] textures).
@@ -131,6 +134,7 @@ impl Default for Renderer {
             keep_pixels: false,
             stages: HashMap::new(),
             quick_tried: HashMap::new(),
+            failed: HashMap::new(),
             prefetched: HashMap::new(),
             variant_used: HashMap::new(),
             frame: 0,
@@ -157,7 +161,7 @@ impl Renderer {
 
     /// Request a render for `slot` (no-op if already current or pending at the same priority).
     pub fn request(&mut self, slot: Slot, job: RenderJob, priority: u32) {
-        if self.textures.get(&slot).is_some_and(|t| t.key == job.key) {
+        if self.textures.get(&slot).is_some_and(|t| t.key == job.key) || self.failed.get(&slot).is_some_and(|f| f.0 == job.key) {
             return;
         }
         if let Some(&(key, prio)) = self.pending.get(&slot)
@@ -216,6 +220,7 @@ impl Renderer {
         self.textures.clear();
         self.stages.clear();
         self.quick_tried.clear();
+        self.failed.clear();
         self.prefetched.clear();
         self.pending.clear();
         self.queue.clear();
@@ -249,6 +254,16 @@ impl Renderer {
     /// Requests queued or running.
     pub fn in_flight(&self) -> usize {
         self.pending.len()
+    }
+
+    /// Why the last render for `slot` failed (until a render with another key succeeds).
+    pub fn failure(&self, slot: Slot) -> Option<&str> {
+        self.failed.get(&slot).map(|f| f.1.as_str())
+    }
+
+    /// The slots with a render pending (diagnostics: `ui.inspect`).
+    pub fn pending_slots(&self) -> Vec<String> {
+        self.pending.keys().map(|s| format!("{s:?}")).collect()
     }
 
     /// Thumbnail textures currently loaded.
@@ -343,8 +358,18 @@ impl Renderer {
             if self.pending.get(&slot).is_some_and(|p| p.0 == r.key) {
                 self.pending.remove(&slot);
             }
-            let Ok(rendered) = r.rendered else {
-                continue;
+            let rendered = match r.rendered {
+                Ok(x) => {
+                    self.failed.remove(&slot);
+                    x
+                }
+                Err(e) => {
+                    if !matches!(slot, Slot::Prefetch(_)) {
+                        log::warn!("render {slot:?}: {e}");
+                        self.failed.insert(slot, (r.key, e));
+                    }
+                    continue;
+                }
             };
             if matches!(slot, Slot::Prefetch(_)) {
                 continue;

@@ -168,6 +168,10 @@ pub struct Photo {
     /// In "Recently Deleted".
     #[serde(default)]
     pub deleted: bool,
+    /// Seen while browsing a folder on disk (Local), not added to the library: only folder views
+    /// show it until it is added.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub local: bool,
     /// Video duration in seconds.
     #[serde(default)]
     pub duration: Option<f64>,
@@ -217,6 +221,7 @@ impl Photo {
             versions: Vec::new(),
             history: Vec::new(),
             deleted: false,
+            local: false,
             duration: None,
             as_shot_wb: None,
             content_hash: None,
@@ -245,6 +250,10 @@ impl Photo {
             d.optics.lens_profile = true;
         }
         d
+    }
+    /// In the library: not deleted and not only browsed (Local).
+    pub fn in_library(&self) -> bool {
+        !self.deleted && !self.local
     }
     /// Edited by the user: settings differ from what import gave the photo.
     pub fn is_edited(&self) -> bool {

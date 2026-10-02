@@ -33,7 +33,7 @@ use lightcraft_catalog::{Catalog, Filter, Op, PhotoId, Sort};
 use lightcraft_develop::DevelopSettings;
 pub use media::{RenderJob, SourceLevel};
 use serde_json::Value;
-pub use view::{LibrarySource, Selection};
+pub use view::{Browse, LibrarySource, Selection};
 pub use {lightcraft_catalog as catalog, lightcraft_develop as develop, lightcraft_gpu as gpu, lightcraft_pipeline as pipeline};
 
 #[derive(Debug, thiserror::Error)]
@@ -81,6 +81,8 @@ pub struct Session {
     pub interaction: Option<Interaction>,
     /// Copied develop settings (partial JSON) for Paste.
     pub clipboard: Option<Value>,
+    /// The folder on disk the [`LibrarySource::Folder`] view browses.
+    pub browse: Option<Browse>,
     /// Copied metadata (`photo.copyMetadata`): photo.setMeta params.
     pub meta_clipboard: Option<Value>,
     /// The photo that was active before the current one (Paste Settings from Previous).
@@ -144,6 +146,7 @@ impl Session {
             interaction: None,
             clipboard: None,
             meta_clipboard: None,
+            browse: None,
             previous_active: None,
             copy_groups: lightcraft_develop::SettingsGroup::default_copy(),
             presets: presets::builtin(),
@@ -356,9 +359,15 @@ impl Session {
 
     /// Photos shown in the grid/filmstrip for the current source, filter and sort.
     pub fn visible(&mut self) -> &[PhotoId] {
-        let key = (self.catalog.revision, format!("{:?}|{:?}|{:?}", self.source, self.filter, self.sort));
+        let key = (self.catalog.revision, format!("{:?}|{:?}|{:?}|{:?}", self.source, self.filter, self.sort, self.browse));
         if self.visible_key.as_ref() != Some(&key) {
-            let f = self.source.to_filter(&self.filter, &self.catalog);
+            let mut f = self.source.to_filter(&self.filter, &self.catalog);
+            if self.source == LibrarySource::Folder {
+                // no folder chosen: nothing (an empty path matches nothing)
+                let b = self.browse.clone().unwrap_or_default();
+                f.folder = Some(b.path);
+                f.subfolders = b.subfolders;
+            }
             self.visible = self.catalog.query(&f, &self.sort);
             if matches!(self.source, LibrarySource::Album(_))
                 && self.sort.key == lightcraft_catalog::SortKey::CaptureDate

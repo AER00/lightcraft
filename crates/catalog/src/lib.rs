@@ -84,6 +84,11 @@ pub enum Op {
         id: PhotoId,
         deleted: bool,
     },
+    /// Browsed-only (`true`) or part of the library.
+    SetLocal {
+        id: PhotoId,
+        local: bool,
+    },
     SetVersions {
         id: PhotoId,
         versions: Vec<Version>,
@@ -338,6 +343,10 @@ impl Catalog {
             Op::SetDeleted { id, deleted } => {
                 let p = self.photo_mut(id)?;
                 Op::SetDeleted { id, deleted: std::mem::replace(&mut p.deleted, deleted) }
+            }
+            Op::SetLocal { id, local } => {
+                let p = self.photo_mut(id)?;
+                Op::SetLocal { id, local: std::mem::replace(&mut p.local, local) }
             }
             Op::SetVersions { id, versions } => {
                 let p = self.photo_mut(id)?;

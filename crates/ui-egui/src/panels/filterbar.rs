@@ -223,7 +223,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 
     // metadata pickers
     let ui: &mut egui::Ui = if two_rows { &mut row2 } else { &mut row1 };
-    let photos: Vec<_> = app.session.catalog.photos().filter(|p| !p.deleted).cloned().collect();
+    let photos: Vec<_> = app.session.catalog.photos().filter(|p| p.in_library()).cloned().collect();
     let cameras = distinct(photos.iter().map(|p| p.meta.camera.clone()).collect());
     let lenses = distinct(photos.iter().map(|p| p.meta.lens.clone()).collect());
     let keywords: Vec<String> = app.session.catalog.keywords().into_iter().map(|(k, _)| k).collect();

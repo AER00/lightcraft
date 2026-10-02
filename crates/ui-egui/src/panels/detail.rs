@@ -271,7 +271,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     } else {
         shown = draw(Slot::Main, img_rect);
         if shown == "none" {
-            p.text(canvas.center(), Align2::CENTER_CENTER, "Rendering…", t.font(13.0), t.text_dim);
+            match app.renderer.failure(Slot::Main) {
+                Some(e) => {
+                    p.text(canvas.center() - vec2(0.0, 10.0), Align2::CENTER_CENTER, "This photo can't be opened", t.semibold(14.0), t.text);
+                    p.text(canvas.center() + vec2(0.0, 12.0), Align2::CENTER_CENTER, e, t.font(12.0), t.text_dim);
+                }
+                None => {
+                    p.text(canvas.center(), Align2::CENTER_CENTER, "Rendering…", t.font(13.0), t.text_dim);
+                }
+            }
         }
     }
     app.loupe_shown = Some((id, shown));
