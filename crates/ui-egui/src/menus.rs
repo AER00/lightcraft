@@ -36,7 +36,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.maskOverlay", "Show Mask Overlay", Some("O"), "View"),
     // Shift+O in the Masking panel (elsewhere it cycles the crop overlay)
     ("view.maskOverlayMode", "Cycle Mask Overlay Mode", None, "View"),
-    ("view.maskOverlayColor", "Mask Overlay Color", None, ""),
+    ("view.maskOverlayColor", "Cycle Mask Overlay Color", None, "View"),
     ("view.maskPins", "Show Mask Pins", None, "View"),
     ("view.visualizeSpots", "Visualize Spots", Some("A"), "View"),
     ("view.cropOverlay", "Cycle Crop Overlay", Some("Shift+O"), "View"),
@@ -331,6 +331,12 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(json!({"mode": next.name()}))
         }
         "view.maskOverlayColor" => {
+            // no params: the next of the panel's swatch colours
+            if p.get("color").is_none() && p.get("opacity").is_none() {
+                let all = crate::panels::masking::OVERLAY_COLORS;
+                let i = all.iter().position(|c| *c == app.ui.mask_overlay_color).map_or(0, |i| (i + 1) % all.len());
+                app.ui.mask_overlay_color = all[i];
+            }
             if let Some(c) = p.get("color") {
                 match parse_rgb(c) {
                     Some(rgb) => app.ui.mask_overlay_color = rgb,

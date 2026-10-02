@@ -202,6 +202,9 @@ pub struct UiState {
     /// Focus the search field on the next frame (Edit → Find…).
     #[serde(skip)]
     pub focus_search: bool,
+    /// A mask being renamed in the Masks list: its id and the edited name.
+    #[serde(skip)]
+    pub renaming_mask: Option<(u32, String)>,
     /// Selected curve channel in the Curve flyout.
     pub curve_channel: String,
     /// Selected mixer mode: "hue" | "saturation" | "luminance" | "all".
@@ -390,6 +393,7 @@ impl Default for UiState {
             show_filenames: true,
             search: String::new(),
             focus_search: false,
+            renaming_mask: None,
             curve_channel: "parametric".into(),
             mixer_mode: "hue".into(),
             grading_mode: "3way".into(),

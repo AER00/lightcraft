@@ -228,3 +228,32 @@ fn paste_selected_settings_pastes_only_chosen_copied_groups() {
     s.execute("develop.paste", &json!({"ids": [ids[1].0]})).unwrap();
     assert_eq!(s.develop_of(ids[1]).unwrap().color.vibrance, 30.0);
 }
+
+#[test]
+fn masks_reorder_and_duplicate_and_invert() {
+    let mut s = demo();
+    for kind in ["linear", "radial", "brush"] {
+        s.execute("mask.add", &json!({"kind": kind})).unwrap();
+    }
+    let ids = |s: &Session| active_dev(s).masks.iter().map(|m| m.id).collect::<Vec<_>>();
+    let [a, b, c] = ids(&s)[..] else { panic!("{:?}", ids(&s)) };
+    s.execute("mask.move", &json!({"id": c, "to": 0})).unwrap();
+    assert_eq!(ids(&s), [c, a, b]);
+    s.execute("mask.move", &json!({"id": c, "delta": 1})).unwrap();
+    assert_eq!(ids(&s), [a, c, b]);
+    s.execute("mask.move", &json!({"id": a, "delta": -5})).unwrap();
+    assert_eq!(ids(&s), [a, c, b], "clamped at the top");
+    assert!(s.execute("mask.move", &json!({"id": a})).is_err());
+    // one undo step per move
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(ids(&s), [c, a, b]);
+    // duplicate and invert: right after the original, inverted, selected
+    let r = s.execute("mask.duplicate", &json!({"id": a, "invert": true})).unwrap();
+    let copy = r["activeMask"].as_u64().unwrap() as u32;
+    let d = active_dev(&s);
+    let pos = d.masks.iter().position(|m| m.id == copy).unwrap();
+    assert_eq!(d.masks[pos - 1].id, a);
+    assert!(d.masks[pos].invert && !d.masks[pos - 1].invert);
+    assert_eq!(d.masks[pos].components, d.masks[pos - 1].components);
+    assert_eq!(s.active_mask, Some(copy));
+}

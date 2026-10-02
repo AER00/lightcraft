@@ -232,16 +232,49 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(())
             })
         }),
-        cmd!("mask.duplicate", "Duplicate Mask", [], None, "{id?}", has_active, |s, p| {
-            let mid = mask_id(p, s.active_mask, "mask.duplicate")?;
-            let next = s.active().and_then(|id| s.develop_of(id)).map(|d| d.next_mask_id()).unwrap_or(1);
-            masks_edit(s, "mask.duplicate", "Duplicate Mask", |masks, active| {
-                let i = find(masks, mid, "mask.duplicate")?;
-                let mut m = masks[i].clone();
-                m.id = next;
-                m.name = format!("{} copy", m.name);
-                masks.push(m);
-                *active = Some(next);
+        cmd!(
+            "mask.duplicate",
+            "Duplicate Mask",
+            [],
+            None,
+            "{id?, invert?: bool (Duplicate and Invert)} — the copy goes right after the original and is selected",
+            has_active,
+            |s, p| {
+                let mid = mask_id(p, s.active_mask, "mask.duplicate")?;
+                let invert = bool_or(p, "invert", false);
+                let next = s.active().and_then(|id| s.develop_of(id)).map(|d| d.next_mask_id()).unwrap_or(1);
+                let label = if invert { "Duplicate and Invert Mask" } else { "Duplicate Mask" };
+                masks_edit(s, "mask.duplicate", label, |masks, active| {
+                    let i = find(masks, mid, "mask.duplicate")?;
+                    let mut m = masks[i].clone();
+                    m.id = next;
+                    m.name = format!("{} copy", m.name);
+                    if invert {
+                        m.invert = !m.invert;
+                    }
+                    masks.insert(i + 1, m);
+                    *active = Some(next);
+                    Ok(())
+                })
+            }
+        ),
+        cmd!("mask.move", "Move Mask", [], None, "{id?, to?: index (0 = top), delta?: ±n} — reorder the masks list", has_active, |s, p| {
+            let mid = mask_id(p, s.active_mask, "mask.move")?;
+            let mut masks = s.active().and_then(|id| s.develop_of(id)).map(|d| d.masks.clone()).unwrap_or_default();
+            let i = find(&mut masks, mid, "mask.move")?;
+            let to = match (p.get("to").and_then(Value::as_i64), p.get("delta").and_then(Value::as_i64)) {
+                (Some(t), _) => t,
+                (None, Some(d)) => i as i64 + d,
+                (None, None) => return Err(bad("mask.move", "give `to` (index) or `delta`")),
+            }
+            .clamp(0, masks.len() as i64 - 1) as usize;
+            if to == i {
+                return Ok(json!({"activeMask": s.active_mask}));
+            }
+            masks_edit(s, "mask.move", "Reorder Masks", |masks, _| {
+                let i = find(masks, mid, "mask.move")?;
+                let m = masks.remove(i);
+                masks.insert(to, m);
                 Ok(())
             })
         }),

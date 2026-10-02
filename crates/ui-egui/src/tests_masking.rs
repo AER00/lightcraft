@@ -168,3 +168,37 @@ fn remove_spots_by_pointer_and_keyboard() {
     assert_eq!(spots(&h).len(), 1, "nothing selected: nothing deleted");
     h.settle(SETTLE);
 }
+
+/// Masks list: double-click renames in place, the hover eye hides a mask, the overlay colour
+/// cycles through the swatches.
+#[test]
+fn mask_list_rename_hide_and_overlay_colour() {
+    let mut h = detail("panel.masking");
+    exec(&mut h, "mask.add", json!({"kind": "linear"}));
+    exec(&mut h, "mask.add", json!({"kind": "radial"}));
+    h.settle(SETTLE);
+    let first = develop(&h).masks[0].id;
+    let r = h.request("ui.clickWidget", json!({"id": format!("mask:{first}"), "count": 2}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(Duration::from_secs(5));
+    assert_eq!(h.app.ui.renaming_mask.as_ref().map(|r| r.0), Some(first), "double-click starts renaming");
+    h.request("ui.key", json!({"key": "A", "cmd": true}), T);
+    h.request("ui.text", json!({"text": "Sky"}), T);
+    h.request("ui.key", json!({"key": "Enter"}), T);
+    h.settle(Duration::from_secs(5));
+    assert!(h.app.ui.renaming_mask.is_none());
+    assert_eq!(develop(&h).masks[0].name, "Sky");
+    // hover the row, then click its eye
+    let r = h.request("ui.hoverWidget", json!({"id": format!("mask:{first}")}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(Duration::from_secs(5));
+    let r = h.request("ui.clickWidget", json!({"id": format!("maskVisible:{first}")}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(!develop(&h).masks[0].visible);
+    // overlay colour: no params = next swatch
+    let before = h.app.ui.mask_overlay_color;
+    exec(&mut h, "view.maskOverlayColor", json!({}));
+    let all = crate::panels::masking::OVERLAY_COLORS;
+    let i = all.iter().position(|c| *c == before).unwrap();
+    assert_eq!(h.app.ui.mask_overlay_color, all[(i + 1) % all.len()]);
+}

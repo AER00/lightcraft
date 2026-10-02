@@ -116,8 +116,28 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         if d.masks.is_empty() {
             ui.label(egui::RichText::new("No masks yet. Choose a mask type above.").color(t.text_dim));
         }
-        for m in &d.masks {
+        let count = d.masks.len();
+        for (index, m) in d.masks.iter().enumerate() {
             let sel = app.session.active_mask == Some(m.id);
+            if let Some((rid, name)) = app.ui.renaming_mask.as_mut().filter(|(rid, _)| *rid == m.id) {
+                // inline rename: Enter (or leaving the field) commits, Escape cancels
+                let rid = *rid;
+                let r = ui.add(egui::TextEdit::singleline(name).desired_width(ui.available_width()).id_salt(("maskRename", rid)));
+                register(ui.ctx(), format!("maskRename:{rid}"), r.rect);
+                if !r.has_focus() && !r.lost_focus() {
+                    r.request_focus();
+                }
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    app.ui.renaming_mask = None;
+                } else if r.lost_focus() {
+                    let name = name.trim().to_string();
+                    app.ui.renaming_mask = None;
+                    if !name.is_empty() && name != m.name {
+                        let _ = app.run("mask.rename", json!({"id": rid, "name": name}));
+                    }
+                }
+                continue;
+            }
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
             register(ui.ctx(), format!("mask:{}", m.id), r);
             ui.painter().rect_filled(
@@ -140,9 +160,29 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 t.font(13.0),
                 if m.visible { t.text } else { t.text_disabled },
             );
+            // show / hide on hover (and always while hidden)
+            // (the pointer test, not `hovered`: over the eye, the row itself no longer counts as hovered)
+            if ui.rect_contains_pointer(r) || !m.visible {
+                let er = Rect::from_center_size(pos2(r.right() - 16.0, r.center().y), vec2(22.0, 22.0));
+                register(ui.ctx(), format!("maskVisible:{}", m.id), er);
+                let eye = ui.interact(er, egui::Id::new(("maskVisible", m.id)), Sense::click());
+                paint(
+                    ui.painter(),
+                    er.shrink(3.0),
+                    if m.visible { Icon::Eye } else { Icon::EyeOff },
+                    if eye.hovered() { t.text } else { t.text_dim },
+                );
+                if eye.clicked() {
+                    let _ = app.run("mask.visible", json!({"id": m.id}));
+                }
+            }
             if resp.clicked() {
                 let _ = app.run("mask.select", json!({"id": m.id}));
             }
+            if resp.double_clicked() {
+                app.ui.renaming_mask = Some((m.id, m.name.clone()));
+            }
+            resp.context_menu(|ui| mask_menu(app, ui, m.id, &m.name, m.visible, index, count));
         }
         if !d.masks.is_empty() {
             ui.add_space(6.0);
@@ -208,8 +248,34 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let _ = Stroke::NONE;
 }
 
+/// The right-click menu of a mask in the Masks list.
+fn mask_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: u32, name: &str, visible: bool, index: usize, count: usize) {
+    let mut run = |ui: &mut egui::Ui, label: &str, enabled: bool, cmd: &str, p: serde_json::Value| {
+        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+            let _ = app.run(cmd, p);
+            ui.close();
+        }
+    };
+    run(ui, "Duplicate Mask", true, "mask.duplicate", json!({"id": id}));
+    run(ui, "Duplicate and Invert Mask", true, "mask.duplicate", json!({"id": id, "invert": true}));
+    run(ui, "Invert Mask", true, "mask.invert", json!({"id": id}));
+    run(ui, if visible { "Hide Mask" } else { "Show Mask" }, true, "mask.visible", json!({"id": id}));
+    ui.separator();
+    run(ui, "Move Up", index > 0, "mask.move", json!({"id": id, "delta": -1}));
+    run(ui, "Move Down", index + 1 < count, "mask.move", json!({"id": id, "delta": 1}));
+    ui.separator();
+    if ui.button("Rename…").clicked() {
+        app.ui.renaming_mask = Some((id, name.to_string()));
+        ui.close();
+    }
+    if ui.button("Delete Mask").clicked() {
+        let _ = app.run("mask.delete", json!({"id": id}));
+        ui.close();
+    }
+}
+
 /// Overlay colours offered as swatches (the colour of the selected one is used for the tint).
-const OVERLAY_COLORS: [[u8; 3]; 5] = [[230, 30, 40], [40, 200, 70], [40, 110, 240], [250, 210, 30], [255, 255, 255]];
+pub const OVERLAY_COLORS: [[u8; 3]; 5] = [[230, 30, 40], [40, 200, 70], [40, 110, 240], [250, 210, 30], [255, 255, 255]];
 
 /// How the selected mask is shown: overlay mode, colour, opacity, pins.
 fn overlay_options(app: &mut LightcraftApp, ui: &mut egui::Ui) {

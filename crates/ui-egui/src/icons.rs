@@ -19,6 +19,8 @@ pub enum Icon {
     Eraser,
     Mask,
     Eye,
+    /// Eye with a slash (hidden).
+    EyeOff,
     Presets,
     Versions,
     Activity,
@@ -208,6 +210,12 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.arc(10.0, 16.0, 9.0, 212.0, 328.0);
             pen.arc(10.0, 4.0, 9.0, 32.0, 148.0);
             pen.circle(10.0, 10.0, 2.5);
+        }
+        EyeOff => {
+            pen.arc(10.0, 16.0, 9.0, 212.0, 328.0);
+            pen.arc(10.0, 4.0, 9.0, 32.0, 148.0);
+            pen.circle(10.0, 10.0, 2.5);
+            pen.line(&[(3.5, 3.5), (16.5, 16.5)]);
         }
         Presets => {
             pen.circle(8.0, 8.0, 5.0);

@@ -121,6 +121,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "view.clipping",
             "view.maskOverlay",
             "view.maskOverlayMode",
+            "view.maskOverlayColor",
             "view.maskPins",
             "view.cropOverlay",
             "---",

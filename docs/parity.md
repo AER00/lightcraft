@@ -31,7 +31,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
 | I. Remove / healing (REM) | 5 | 1 | 4 | 2 | 4/4 (100%) | 1/3 (33%) |
 | J. Red eye (EYE) | 0 | 0 | 2 | 0 | — | 0/1 (0%) |
-| K. Masking (MASK) | 10 | 6 | 7 | 0 | 7/8 (88%) | 3/5 (60%) |
+| K. Masking (MASK) | 11 | 5 | 7 | 0 | 8/8 (100%) | 3/5 (60%) |
 | L. Presets (PRE) | 3 | 2 | 2 | 1 | 2/2 (100%) | 1/2 (50%) |
 | M. Versions & history (VER) | 3 | 1 | 1 | 0 | 1/1 (100%) | 2/3 (67%) |
 | N. Copy / paste / sync (SYNC) | 4 | 0 | 1 | 0 | 3/3 (100%) | 1/1 (100%) |
@@ -45,10 +45,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 4 | 1 | 3 | 3 | 1/1 (100%) | 3/4 (75%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 11 | 2 | 4 | 1 | 8/8 (100%) | 3/5 (60%) |
-| Y. Menus | 56 | 16 | 13 | 8 | 41/47 (87%) | 13/23 (57%) |
+| Y. Menus | 57 | 15 | 13 | 8 | 42/47 (89%) | 13/23 (57%) |
 | Z. Keyboard shortcuts (desktop) | 56 | 13 | 11 | 1 | 47/52 (90%) | 9/23 (39%) |
 | Lightroom Classic extras | 4 | 20 | 55 | 9 | — | 3/21 (14%) |
-| **Total** | 265 | 79 | 156 | 37 | 183/198 (92%) | 72/144 (50%) |
+| **Total** | 267 | 77 | 156 | 37 | 185/198 (93%) | 72/144 (50%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -306,7 +306,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-MASK-PANEL | Masks panel | P0 | 🟡 | `cmd:panel.masking`, `cmd:mask.add`, `cmd:mask.select`, `cmd:mask.rename`, `cmd:mask.duplicate`, `cmd:mask.visible`, `cmd:mask.delete` | no reorder, no one-step duplicate-and-invert |
+| LR-MASK-PANEL | Masks panel | P0 | ✅ | `cmd:panel.masking`, `cmd:mask.add`, `cmd:mask.select`, `cmd:mask.rename`, `cmd:mask.duplicate` (`invert`), `cmd:mask.move`, `cmd:mask.visible`, `cmd:mask.delete`, `crates/ui-egui/src/panels/masking.rs` | list with per-mask show/hide eye, double-click rename, right-click menu (duplicate, duplicate and invert, invert, hide, move up/down, rename, delete); no drag-to-reorder |
 | LR-MASK-SUBJECT | Select subject | P2 | 🟡 | `cmd:mask.add` (`subject`), `crates/pipeline/src/masks.rs` | saliency heuristic, no segmentation model |
 | LR-MASK-SKY | Select sky | P2 | 🟡 | `cmd:mask.add` (`sky`) | heuristic |
 | LR-MASK-BACKGROUND | Select background | P2 | 🟡 | `cmd:mask.add` (`background`) | inverse of the subject heuristic |
@@ -544,7 +544,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-VIEW-BEFOREAFTER | Before/After submenu | P0 | ✅ | `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | |
 | MENU-VIEW-ZOOM | Zoom in / out / toggle / fit / 1:1 | P0 | ✅ | `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle`, `cmd:view.zoomFit`, `cmd:view.zoom100` | |
 | MENU-VIEW-CLIPPING | Show Clipping | P0 | ✅ | `cmd:view.clipping` | |
-| MENU-VIEW-MASKOVERLAY | Mask overlay / cycle colour | P0 | 🟡 | `cmd:view.maskOverlay` | no colour cycle |
+| MENU-VIEW-MASKOVERLAY | Mask overlay / cycle colour | P0 | ✅ | `cmd:view.maskOverlay`, `cmd:view.maskOverlayMode`, `cmd:view.maskOverlayColor` | colour cycles through the panel's swatches (no params) or takes `color` / `opacity` |
 | MENU-VIEW-INCLUDESUBFOLDERS | Include subfolders | P1 | 🟡 | `cmd:library.import` | folder import is always recursive |
 | MENU-VIEW-SORT | Sort submenu | P0 | ✅ | `cmd:library.sort` | no colour-label key |
 | MENU-VIEW-STACKS | Expand/collapse stacks | P1 | ✅ | `cmd:stack.expandAll`, `cmd:stack.collapseAll` | |
@@ -582,7 +582,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-CTX-GRID | Photo context menu | P0 | 🟡 | `crates/ui-egui/src/panels/grid.rs` (`context_menu`) | rate, flag, label, add to / remove from album, rename, virtual copy, version, stack, copy / paste / paste selected, reset, merge, rotate, show in Finder, export / export with preset, delete; no set-as-album-cover |
 | MENU-CTX-DETAIL | Loupe context menu | P1 | 🟡 | `crates/ui-egui/src/panels/detail.rs` | same as grid; no zoom submenu |
 | MENU-CTX-ALBUM | Album / folder row menu | P0 | 🟡 | `crates/ui-egui/src/panels/left.rs` | add selected, rename, delete; no move-to, export album |
-| MENU-CTX-MASK | Mask / component menu | P0 | 🟡 | `crates/ui-egui/src/panels/masking.rs` | add/subtract component; rename/duplicate by command only |
+| MENU-CTX-MASK | Mask / component menu | P0 | 🟡 | `crates/ui-egui/src/panels/masking.rs` (`mask_menu`) | mask rows: duplicate (and invert), invert, show/hide, move, rename, delete; components: add/subtract only (no per-component menu) |
 | MENU-CTX-PRESET | Preset menu | P1 | 🟡 | `crates/ui-egui/src/panels/presets.rs` | favourite, delete, export group; no rename/update/move |
 | MENU-CTX-PROFILE | Profile favourites | P2 | ⬜ | | |
 | MENU-CTX-VERSION | Version menu | P1 | ⬜ | | delete button only |
