@@ -240,6 +240,9 @@ pub fn specs() -> Vec<CommandSpec> {
             s.selection = Selection { active: s.selection.active.filter(|a| vis.contains(a)).or(vis.first().copied()), ids: vis };
             Ok(json!({"selected": s.selection.ids.len()}))
         }),
+        cmd!(query "library.devices", "Cameras and Cards", [], None, "{} → [{name, path (its DCIM folder), root}] — mounted volumes with a DCIM folder", always, |_, _| {
+            Ok(serde_json::to_value(crate::devices::devices()).unwrap_or_default())
+        }),
         cmd!(
             "library.selectBy",
             "Select by Flag, Rating or Label",

@@ -224,3 +224,21 @@ fn run_subcommand_chains_commands_and_persists_a_library() {
     let (ok, _, err) = run_cli(&["--demo", "x=1"], None);
     assert!(!ok && err.contains("before any command"), "{err}");
 }
+
+#[test]
+fn devices_are_listed_and_imported_from() {
+    let base = tmp("devices");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("CARD/DCIM/100TEST")).unwrap();
+    gradient_png(&base.join("CARD/DCIM/100TEST/IMG_0001.png"));
+    let o = Command::new(BIN).env("LIGHTCRAFT_DEVICE_ROOTS", &base).args(["run", "--demo", "library.devices"]).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let line: Value = serde_json::from_slice(o.stdout.split(|b| *b == b'\n').next().unwrap()).unwrap();
+    let dev = &line["result"][0];
+    assert_eq!(dev["name"], "CARD", "{line}");
+    // the import review of its DCIM folder finds the photo
+    let dcim = dev["path"].as_str().unwrap().to_string();
+    let o = Command::new(BIN).args(["run", "library.importPreview", &format!("paths=[\"{dcim}\"]")]).output().unwrap();
+    let line: Value = serde_json::from_slice(o.stdout.split(|b| *b == b'\n').next().unwrap()).unwrap();
+    assert_eq!(line["result"]["candidates"].as_array().map(Vec::len), Some(1), "{line}");
+}

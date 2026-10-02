@@ -13,6 +13,7 @@
 pub mod cmd;
 pub mod crs;
 pub mod demo;
+pub mod devices;
 pub mod export;
 pub mod files;
 pub mod import;

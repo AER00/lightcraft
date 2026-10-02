@@ -54,6 +54,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
         &[
             "file.addPhotos",
             "file.addFolder",
+            "@Add from Device",
             "---",
             "app.openLibrary",
             "---",
@@ -343,6 +344,14 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
             ];
             v.extend(groups.into_iter().map(|(label, g, k)| item("library.sort", json!({"group": k}), label, None, true, Some(cur.group == g))));
             v
+        }
+        "Add from Device" => {
+            let devices = lightcraft_engine::devices::devices();
+            if devices.is_empty() {
+                vec![item("file.addFromDevice", Value::Null, "No Camera or Card Found", None, false, None)]
+            } else {
+                devices.into_iter().map(|d| item("file.addFromDevice", json!({"path": d.path}), format!("{}…", d.name), None, true, None)).collect()
+            }
         }
         "Select by" => {
             let mut v: Vec<MenuNode> = [("pick", "Picks"), ("reject", "Rejects"), ("none", "Unflagged")]

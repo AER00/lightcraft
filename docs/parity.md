@@ -21,7 +21,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 <!-- parity:summary -->
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
-| A. Import (IMP) | 5 | 3 | 5 | 1 | 2/4 (50%) | 2/4 (50%) |
+| A. Import (IMP) | 6 | 3 | 4 | 1 | 2/4 (50%) | 3/4 (75%) |
 | B. Library management (LIB) | 18 | 1 | 6 | 2 | 9/9 (100%) | 8/9 (89%) |
 | C. Views & navigation (VIEW) | 14 | 0 | 3 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
@@ -48,7 +48,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 65 | 9 | 11 | 8 | 46/47 (98%) | 17/23 (74%) |
 | Z. Keyboard shortcuts (desktop) | 61 | 12 | 7 | 1 | 49/52 (94%) | 12/23 (52%) |
 | Lightroom Classic extras | 7 | 19 | 53 | 9 | — | 6/21 (29%) |
-| **Total** | 296 | 63 | 141 | 37 | 192/198 (97%) | 94/144 (65%) |
+| **Total** | 297 | 63 | 140 | 37 | 192/198 (97%) | 95/144 (66%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -99,7 +99,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-IMP-ADD-DIALOG | Add photos/folders | P0 | ✅ | `cmd:file.addPhotos`, `cmd:library.importPreview`, `cmd:library.import` (`mode`, `album`, `albumName`, `preset`, `keywords`), `crates/ui-egui/src/import.rs` | review dialog: candidate grid with thumbnails and checkboxes (duplicates by path/content marked and unchecked), destination, album (existing/new), preset, keywords; batched import with a progress window; one undo step. Drag-and-drop still imports directly |
 | LR-IMP-DRAGDROP | Drop files/folders to import | P0 | ✅ | `crates/ui-egui/src/lib.rs` (dropped files → `cmd:library.import`) | dropping onto a specific album not supported |
 | LR-IMP-DUPES | Skip duplicates by content | P1 | ✅ | `crates/engine/src/import.rs`, `crates/engine/src/tests_import.rs` | |
-| LR-IMP-DEVICE | Import from camera/card | P1 | ⬜ | | no device detection |
+| LR-IMP-DEVICE | Import from camera/card | P1 | ✅ | `cmd:library.devices`, `cmd:file.addFromDevice`, `crates/engine/src/devices.rs` | mounted volumes with a DCIM folder (macOS /Volumes, Linux /media and /run/media, Windows drive letters); File → Add from Device → the import review, copying into the library by default; no PTP/MTP (cameras that don't mount as a disk) |
 | LR-IMP-AUTO | Watched-folder auto import | P2 | ⬜ | | |
 | LR-IMP-PRESET | Preset on import | P2 | ✅ | `cmd:library.import` (`preset`) | chosen in the import review; one History entry |
 | LR-IMP-RAWDEFAULT | Raw defaults | P1 | ✅ | `cmd:library.preferences`, `crates/engine/src/import.rs`, `crates/ui-egui/src/panels/settings.rs` | LightCraft default / a preset / per camera (make + model); non-raw default too; the preset look counts as unedited and Reset returns to it |

@@ -88,6 +88,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.mergeHdrPanorama", "HDR Panorama…", None, "Photo>Photo Merge"),
     ("file.addPhotos", "Add Photos…", Some("Cmd+Shift+I"), "File"),
     ("file.addFolder", "Add Folder…", None, "File"),
+    ("file.addFromDevice", "Add from Device", None, ""),
     ("app.quit", "Quit LightCraft", Some("Cmd+Q"), "File"),
     ("file.importPresets", "Import Presets…", None, "File"),
     ("file.exportPresets", "Export Presets…", None, "File"),
@@ -581,6 +582,21 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "app.quit" => {
             app.ui.quit = true;
             Ok(Value::Null)
+        }
+        "file.addFromDevice" => {
+            // a camera / card: review its DCIM folder, copying into the library by default
+            let path = match p.get("path").and_then(Value::as_str) {
+                Some(x) => x.to_string(),
+                None => match lightcraft_engine::devices::devices().into_iter().next() {
+                    Some(d) => d.path,
+                    None => return Some(Err("no camera or memory card found".into())),
+                },
+            };
+            let r = crate::import::open(app, vec![path]);
+            if let Some(crate::state::Dialog::Import { opts }) = &mut app.ui.dialog {
+                opts.copy = true;
+            }
+            r
         }
         "file.addFolder" => {
             // a folder (searched recursively) into the import review

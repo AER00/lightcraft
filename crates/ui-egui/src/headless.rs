@@ -676,6 +676,13 @@ mod tests {
         h.settle(SETTLE);
         let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review: {:?}", h.app.ui.dialog) };
         assert_eq!(opts.candidates.len(), 2, "both files, the subfolder's too");
+        assert!(!opts.copy, "a folder is added in place by default");
+        // a camera / card folder: copied into the library by default
+        h.app.ui.dialog = None;
+        let r = h.request("engine.execute", json!({"command": "file.addFromDevice", "params": {"path": sub.to_string_lossy()}}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review") };
+        assert!(opts.copy);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
