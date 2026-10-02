@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::Session;
 
-fn temp_dir(tag: &str) -> PathBuf {
+pub(crate) fn temp_dir(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("lc-xmp-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();

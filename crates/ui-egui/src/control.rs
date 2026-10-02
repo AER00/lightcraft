@@ -346,7 +346,13 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
         let path = exact.clone().unwrap_or_else(|| if dir.is_empty() { e.file_name.clone() } else { format!("{dir}/{}", e.file_name) });
         let w = app.services.write.as_mut().ok_or("no writer")?;
         w(&path, &e.bytes)?;
-        out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len()}));
+        let mut sidecars = Vec::new();
+        for (ext, bytes) in &e.sidecars {
+            let sc = std::path::Path::new(&path).with_extension(ext).to_string_lossy().to_string();
+            w(&sc, bytes)?;
+            sidecars.push(sc);
+        }
+        out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars}));
     }
     // remember for Export with Previous (and to prefill the dialog)
     let mut last = p.clone();

@@ -36,7 +36,7 @@ fn jpeg_roundtrip_with_metadata() {
     let icc = write_named(NamedSpace::Srgb);
     let exif = minimal_exif(6);
     let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF/></x:xmpmeta>"#;
-    let meta = EncodeMeta { icc: Some(&icc), exif: Some(&exif), xmp: Some(xmp) };
+    let meta = EncodeMeta { icc: Some(&icc), exif: Some(&exif), xmp: Some(xmp), ..Default::default() };
     for sub in [ChromaSubsampling::S444, ChromaSubsampling::S422, ChromaSubsampling::S420] {
         let bytes = encode_jpeg(&EncodeImage::rgba8(&img), 95, sub, &meta).unwrap();
         assert_eq!(sniff(&bytes), Some(Format::Jpeg));
@@ -130,7 +130,7 @@ fn png_8_and_16_bit_exact() {
 fn png_metadata_and_gray_alpha() {
     let data: Vec<u8> = (0..20 * 10).flat_map(|i| [(i % 256) as u8, 128]).collect();
     let exif = minimal_exif(3);
-    let meta = EncodeMeta { icc: None, exif: Some(&exif), xmp: Some("<xmp/>") };
+    let meta = EncodeMeta { exif: Some(&exif), xmp: Some("<xmp/>"), ..Default::default() };
     let bytes = encode_png(&EncodeImage::new(20, 10, 2, Samples::U8(&data)), &meta).unwrap();
     let d = decode(&bytes, DecodeOptions::default()).unwrap();
     assert!(d.grayscale && d.has_alpha);
@@ -250,7 +250,7 @@ fn webp_lossless_exact() {
     let img = gradient(31, 19);
     let icc = write_named(NamedSpace::Srgb);
     let exif = minimal_exif(2);
-    let meta = EncodeMeta { icc: Some(&icc), exif: Some(&exif), xmp: Some("<w/>") };
+    let meta = EncodeMeta { icc: Some(&icc), exif: Some(&exif), xmp: Some("<w/>"), ..Default::default() };
     let bytes = encode_webp_lossless(&EncodeImage::rgba8(&img), &meta).unwrap();
     assert_eq!(sniff(&bytes), Some(Format::WebP));
     let d = decode(&bytes, DecodeOptions::default()).unwrap();
@@ -533,4 +533,31 @@ fn thumbnail_from_mpf_preview() {
     assert_eq!(t.source, ThumbnailSource::MpfPreview);
     assert_eq!((t.image.width, t.image.height), (256, 192));
     assert!(t.image.get(5, 5)[1] > 150);
+}
+
+#[test]
+fn print_resolution_is_written() {
+    let data = vec![128u8; 4 * 4 * 3];
+    let img = EncodeImage::new(4, 4, 3, Samples::U8(&data));
+    let meta = EncodeMeta { ppi: Some(300), ..Default::default() };
+    for sub in [ChromaSubsampling::S444, ChromaSubsampling::S422] {
+        let j = encode_jpeg(&img, 90, sub, &meta).unwrap();
+        // SOI, APP0 "JFIF\0" v1.2, units = 1 (dpi), Xdensity, Ydensity
+        assert_eq!(&j[2..4], &[0xFF, 0xE0], "{sub:?}");
+        assert_eq!(&j[6..11], b"JFIF\0");
+        assert_eq!(&j[13..18], &[1, 1, 44, 1, 44], "{sub:?}");
+        assert_eq!(j.windows(4).filter(|w| *w == [0xFF, 0xE0, 0, 16]).count(), 1, "one APP0");
+    }
+    let png = encode_png(&img, &meta).unwrap();
+    let i = png.windows(4).position(|w| w == b"pHYs").expect("pHYs chunk");
+    assert_eq!(u32::from_be_bytes(png[i + 4..i + 8].try_into().unwrap()), 11811, "300 ppi in pixels per metre");
+    assert_eq!(png[i + 12], 1, "unit = metre");
+    let tif = encode_tiff(&img, TiffCompression::Deflate, &meta).unwrap();
+    let mut d = tiff::decoder::Decoder::new(std::io::Cursor::new(tif)).unwrap();
+    let x = d.get_tag(tiff::tags::Tag::XResolution).unwrap();
+    assert_eq!(x.into_u32_vec().ok(), Some(vec![300, 1]));
+    assert_eq!(d.get_tag_u32(tiff::tags::Tag::ResolutionUnit).unwrap(), 2, "inch");
+    // without a ppi: JFIF density stays an aspect ratio
+    let j = encode_jpeg(&img, 90, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap();
+    assert_eq!(&j[13..18], &[0, 0, 1, 0, 1]);
 }

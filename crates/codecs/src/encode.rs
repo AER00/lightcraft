@@ -63,6 +63,8 @@ pub struct EncodeMeta<'a> {
     /// TIFF-structured EXIF (starting at `II`/`MM`, no `Exif\0\0` prefix).
     pub exif: Option<&'a [u8]>,
     pub xmp: Option<&'a str>,
+    /// Print resolution in pixels per inch (JPEG JFIF density, PNG `pHYs`, TIFF X/YResolution).
+    pub ppi: Option<u16>,
 }
 
 /// JPEG chroma subsampling.
@@ -96,6 +98,11 @@ pub fn encode_jpeg(img: &EncodeImage, quality: u8, subsampling: ChromaSubsamplin
     if subsampling != ChromaSubsampling::S422 {
         // Parallel encoder (restart-interval bands on all cores).
         let mut segs: Vec<(u8, Vec<u8>)> = Vec::new();
+        let ppi = meta.ppi.filter(|p| *p > 0).map_or([0u8, 0, 1, 0, 1], |p| {
+            let [hi, lo] = p.to_be_bytes();
+            [1, hi, lo, hi, lo]
+        });
+        segs.push((0xE0, [&b"JFIF\0\x01\x02"[..], &ppi, &[0, 0]].concat()));
         if let Some(exif) = meta.exif {
             if exif.len() > 65_527 {
                 return Err(Error::Encode("EXIF larger than one APP1 segment (64 KiB)".into()));
@@ -133,6 +140,9 @@ pub fn encode_jpeg(img: &EncodeImage, quality: u8, subsampling: ChromaSubsamplin
     // Standard tables: jpeg-encoder's optimized-table mode writes non-interleaved scans, which some
     // decoders (incl. zune-jpeg 0.5) mishandle. Interleaved baseline is universally supported.
     let e = |e: jpeg_encoder::EncodingError| Error::Encode(e.to_string());
+    if let Some(ppi) = meta.ppi.filter(|p| *p > 0) {
+        enc.set_density(jpeg_encoder::PixelDensity::dpi(ppi));
+    }
     if let Some(exif) = meta.exif {
         if exif.len() > 65_527 {
             return Err(Error::Encode("EXIF larger than one APP1 segment (64 KiB)".into()));
@@ -173,6 +183,10 @@ pub fn encode_png(img: &EncodeImage, meta: &EncodeMeta) -> Result<Vec<u8>> {
     info.bit_depth = depth;
     info.icc_profile = meta.icc.map(|b| b.to_vec().into());
     info.exif_metadata = meta.exif.map(|b| b.to_vec().into());
+    info.pixel_dims = meta.ppi.filter(|p| *p > 0).map(|p| {
+        let ppm = (p as f64 / 0.0254).round() as u32;
+        png::PixelDimensions { xppu: ppm, yppu: ppm, unit: png::Unit::Meter }
+    });
     let mut out = Vec::new();
     let e = |e: png::EncodingError| Error::Encode(e.to_string());
     {
@@ -224,6 +238,9 @@ pub fn encode_tiff(img: &EncodeImage, compression: TiffCompression, meta: &Encod
     macro_rules! write {
         ($ct:ty, $data:expr, $alpha:expr) => {{
             let mut im = enc.new_image::<$ct>(w, h).map_err(e)?;
+            if let Some(ppi) = meta.ppi.filter(|p| *p > 0) {
+                im.resolution(tiff::tags::ResolutionUnit::Inch, tiff::encoder::Rational { n: ppi as u32, d: 1 });
+            }
             if let Some(icc) = meta.icc {
                 im.encoder().write_tag(tiff::tags::Tag::IccProfile, icc).map_err(e)?;
             }

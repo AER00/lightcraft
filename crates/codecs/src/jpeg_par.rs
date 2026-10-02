@@ -371,7 +371,10 @@ pub fn encode(
     // headers
     let mut out = Vec::with_capacity(coded.iter().map(Vec::len).sum::<usize>() + 4096);
     out.extend_from_slice(&[0xFF, 0xD8]);
-    segment(&mut out, 0xE0, &[b'J', b'F', b'I', b'F', 0, 1, 2, 0, 0, 1, 0, 1, 0, 0]);
+    // JFIF APP0 first (callers may pass their own, e.g. with a print density)
+    if !app_segments.iter().any(|(m, _)| *m == 0xE0) {
+        segment(&mut out, 0xE0, &[b'J', b'F', b'I', b'F', 0, 1, 2, 0, 0, 1, 0, 1, 0, 0]);
+    }
     for (marker, payload) in app_segments {
         segment(&mut out, *marker, payload);
     }

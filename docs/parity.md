@@ -39,7 +39,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 6 | 6 | 6 | 0 | 3/7 (43%) | 3/7 (43%) |
+| S. Export (EXP) | 9 | 4 | 5 | 0 | 5/7 (71%) | 4/7 (57%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 4 | 1 | 3 | 3 | 1/1 (100%) | 3/4 (75%) |
@@ -48,18 +48,16 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 53 | 17 | 15 | 8 | 38/47 (81%) | 13/23 (57%) |
 | Z. Keyboard shortcuts (desktop) | 53 | 14 | 13 | 1 | 44/52 (85%) | 9/23 (39%) |
 | Lightroom Classic extras | 4 | 20 | 55 | 9 | — | 3/21 (14%) |
-| **Total** | 250 | 87 | 163 | 37 | 171/198 (86%) | 69/144 (48%) |
+| **Total** | 253 | 85 | 162 | 37 | 173/198 (87%) | 70/144 (49%) |
 <!-- /parity:summary -->
 
 ## Top gaps
 
 Ordered by tier, then user value, then (low) effort. Take the first one nobody is working on.
 
-1. **LR-EXP-TYPE + LR-EXP-DIM** (P0) — Original (+XMP) and DNG export (writer exists in
-    `crates/raw/src/dngwrite.rs`), short edge / width / height / megapixels, "don't enlarge", ppi.
-2. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
+1. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
     permissive pure-Rust decoder yet). High value, high effort (clean sources needed).
-3. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
+2. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
 
 ## Shortcuts: conflicts and missing bindings
 
@@ -408,8 +406,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
 | LR-EXP-DIALOG | Export dialog | P0 | 🟡 | `cmd:dialog.export`, `cmd:app.export`, `crates/ui-egui/src/panels/dialogs.rs`, `crates/engine/src/export.rs` | batch export works; no built-in or saved export presets |
-| LR-EXP-TYPE | File types | P0 | 🟡 | `crates/engine/src/export.rs` (`ExportFormat`) | JPEG, PNG, TIFF, WebP, AVIF; no DNG, JXL or original (+XMP) |
-| LR-EXP-DIM | Output size | P0 | 🟡 | `crates/ui-egui/src/panels/dialogs.rs` (long edge / full size) | no short edge / width / height / megapixels, ppi, don't-enlarge |
+| LR-EXP-TYPE | File types | P0 | ✅ | `cmd:app.export` (`format`), `crates/engine/src/export.rs` (`ExportFormat`), `crates/engine/src/tests_export.rs` | JPEG, PNG, TIFF, WebP, AVIF, DNG (raw photos: lossless re-encode with the edits in the embedded XMP), Original (+ XMP sidecar). No JXL encoder; non-raw → DNG not supported |
+| LR-EXP-DIM | Output size | P0 | ✅ | `cmd:app.export` (`longEdge`, `shortEdge`, `width`, `height`, `megapixels`, `percent`, `dontEnlarge`, `ppi`), `crates/engine/src/export.rs` (`Resize`), `crates/ui-egui/src/panels/dialogs.rs` | full size = the cropped native size (no longer upscaled); W × H fits either orientation; ppi written to JFIF / pHYs / TIFF tags |
 | LR-EXP-QUALITY | JPEG quality | P0 | ✅ | `cmd:app.export` (`quality`, `limitKb`) | |
 | LR-EXP-BITDEPTH | Bit depth | P1 | ✅ | `cmd:app.export` (`bitDepth`), `crates/pipeline/src/output.rs` (`OutputDepth`), `crates/engine/src/export.rs` | 16-bit PNG/TIFF rendered at 16 bits (TIFF defaults to 16), 32-bit float linear TIFF with a linear profile, 10-bit AVIF; high-bit-depth renders run on the CPU |
 | LR-EXP-COMPRESSION | TIFF compression | P1 | ⬜ | | always Deflate |
@@ -422,7 +420,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EXP-LOCATION | Destination folder | P0 | 🟡 | `crates/ui-egui/src/panels/dialogs.rs` (folder field) | no folder picker, subfolder or name-conflict policy |
 | LR-EXP-PREVIOUS | Export with previous settings | P0 | ✅ | `cmd:app.exportPrevious`, `cmd:dialog.export` | last options persist in prefs.json; dialog prefilled; no named export presets yet |
 | LR-EXP-DNGOPT | DNG options | P2 | ⬜ | | |
-| LR-EXP-ORIGINAL | Original + XMP | P1 | ⬜ | | |
+| LR-EXP-ORIGINAL | Original + XMP | P1 | ✅ | `cmd:app.export` (`format: original`) | file copied byte for byte, sidecar named after the output |
 | LR-EXP-PHOTOS | Export to the system photo library | P2 | ⬜ | | |
 | LR-EXP-PSD | Round trip to an external editor | P2 | ⬜ | | |
 

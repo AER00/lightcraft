@@ -17,7 +17,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use lightcraft_engine::Session;
-use lightcraft_mcp::{Backend, DEFAULT_ADDR, Headless, Remote, Server, expand_paths, write_image};
+use lightcraft_mcp::{Backend, DEFAULT_ADDR, Headless, Remote, Server, expand_paths};
 use serde_json::{Value, json};
 
 const USAGE: &str = "\
@@ -32,12 +32,17 @@ USAGE:
         --library DIR     headless: open (or create) a persistent LightCraft library; edits are saved
         --compact         list only the helper tools (every command stays reachable via run_command)
   lightcraft-cli render <IN> -o <OUT> [OPTIONS]
-      Develop one file and write the result (.png, .jpg, .tif or .webp by extension). Options:
+      Develop one file and export it (.jpg, .png, .tif, .webp, .avif or .dng by extension) with the
+      same encoder as the app's Export dialog. Options:
         --set CONTROL=VALUE  set a develop slider, repeatable (e.g. --set light.exposure=0.5)
         --settings FILE      merge a partial develop-settings JSON file
         --preset ID          apply a preset (see `commands`/presets.list)
-        --size N             long edge in pixels (default: full size)
-        --quality Q          JPEG quality 1..100 (default 92)
+        --size N             long edge in pixels (default: full size, cropped)
+        --quality Q          JPEG/AVIF quality 1..100 (default 92)
+        --opt KEY=VALUE      any export option of `app.export`, repeatable (VALUE is JSON or a
+                             string), e.g. --opt colorSpace=displayP3 --opt bitDepth=16
+                             --opt percent=50 --opt shortEdge=1080 --opt ppi=300
+                             --opt format=original (copy + XMP sidecar) --opt metadata=none
   lightcraft-cli snapshot [OPTIONS] [FILES/FOLDERS…]
       Run the full app UI headlessly (no window, no GPU: CPU-rasterized egui) and write PNGs.
       Options:
@@ -298,6 +303,7 @@ fn render(args: &[String]) -> Result<(), String> {
     let mut preset = None;
     let mut size: Option<u64> = None;
     let mut quality = 92u8;
+    let mut opts = serde_json::Map::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -316,6 +322,11 @@ fn render(args: &[String]) -> Result<(), String> {
             "--preset" => preset = Some(take_value(args, &mut i, "--preset")?.to_string()),
             "--size" => size = Some(take_value(args, &mut i, "--size")?.parse().map_err(|_| "--size expects a number")?),
             "--quality" => quality = take_value(args, &mut i, "--quality")?.parse().map_err(|_| "--quality expects 1..100")?,
+            "--opt" => {
+                let kv = take_value(args, &mut i, "--opt")?;
+                let (k, v) = kv.split_once('=').ok_or_else(|| format!("--opt expects key=value, got `{kv}`"))?;
+                opts.insert(k.trim().to_string(), serde_json::from_str(v).unwrap_or_else(|_| json!(v)));
+            }
             a if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
             f if input.is_none() => input = Some(f.to_string()),
             f => return Err(format!("unexpected argument `{f}`")),
@@ -339,12 +350,28 @@ fn render(args: &[String]) -> Result<(), String> {
     if !values.is_empty() {
         run(&mut s, "develop.set", json!({"values": values}))?;
     }
-    let photo = s.catalog.photo(lightcraft_engine::catalog::PhotoId(id)).ok_or("photo vanished")?;
-    let full = photo.width.max(photo.height).max(1) as u64;
-    let edge = size.unwrap_or(full) as usize;
-    let img = s.render_now(lightcraft_engine::catalog::PhotoId(id), edge, edge)?.image;
-    write_image(Path::new(&output), &img, quality)?;
-    eprintln!("lightcraft-cli: wrote {output} ({}×{})", img.width, img.height);
+    use lightcraft_engine::export::{ExportFormat, ExportOptions, export_photo};
+    let mut p = json!({"quality": quality});
+    if let Some(n) = size {
+        p["longEdge"] = json!(n);
+    }
+    for (k, v) in opts {
+        p[k] = v;
+    }
+    let mut o = ExportOptions::from_json(&p);
+    if p.get("format").is_none() {
+        let ext = Path::new(&output).extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
+        o.format = ExportFormat::parse(&ext)
+            .ok_or_else(|| format!("{output}: unknown extension (use .jpg .png .tif .webp .avif .dng or --opt format=…)"))?;
+    }
+    let e = export_photo(&mut s, lightcraft_engine::catalog::PhotoId(id), &o, 1)?;
+    std::fs::write(&output, &e.bytes).map_err(|err| format!("{output}: {err}"))?;
+    for (ext, bytes) in &e.sidecars {
+        let sc = Path::new(&output).with_extension(ext);
+        std::fs::write(&sc, bytes).map_err(|err| format!("{}: {err}", sc.display()))?;
+        eprintln!("lightcraft-cli: wrote {}", sc.display());
+    }
+    eprintln!("lightcraft-cli: wrote {output} ({}×{})", e.width, e.height);
     Ok(())
 }
 

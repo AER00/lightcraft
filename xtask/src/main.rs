@@ -10,7 +10,7 @@ mod parity;
 mod stats;
 mod web;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
 const USAGE: &str = "\
@@ -65,7 +65,11 @@ fn main() -> ExitCode {
 
 /// Workspace root (parent of the xtask crate).
 pub fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask has a parent dir").to_path_buf()
+    // `cargo run` sets it at run time; prefer that over the compile-time value, which goes stale
+    // when the checkout moves and the cached xtask binary isn't rebuilt
+    let dir = std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from).filter(|d| d.join("Cargo.toml").is_file());
+    let dir = dir.unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    dir.parent().expect("xtask has a parent dir").to_path_buf()
 }
 
 pub fn cargo() -> Command {

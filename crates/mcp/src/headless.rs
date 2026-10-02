@@ -57,10 +57,10 @@ impl Headless {
     /// (see `lightcraft_engine::export::ExportOptions::from_json`, plus `ids`, `dir`, `path`).
     /// With `path` and no `format`, the format follows the path's extension.
     fn export(&mut self, p: &Value) -> Result<Value, String> {
-        use lightcraft_engine::export::{ExportFormat, ExportOptions, export_photo};
+        use lightcraft_engine::export::{ExportFormat, ExportOptions, Resize, export_photo};
         let mut opts = ExportOptions::from_json(p);
-        if p.get("longEdge").is_none() {
-            opts.long_edge = Some(3000);
+        if !ExportOptions::has_size_param(p) {
+            opts.resize = Some(Resize::long_edge(3000));
         }
         let exact = p.get("path").and_then(Value::as_str);
         if let (Some(path), None) = (exact, p.get("format")) {
@@ -84,7 +84,13 @@ impl Headless {
                 std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
             }
             std::fs::write(&path, &e.bytes).map_err(|err| format!("{path}: {err}"))?;
-            files.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len()}));
+            let mut sidecars = Vec::new();
+            for (ext, bytes) in &e.sidecars {
+                let sc = Path::new(&path).with_extension(ext).to_string_lossy().to_string();
+                std::fs::write(&sc, bytes).map_err(|err| format!("{sc}: {err}"))?;
+                sidecars.push(sc);
+            }
+            files.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars}));
         }
         // Single-photo exports also report path/width/height at the top level (back-compat).
         let mut out = files.first().cloned().unwrap_or_else(|| json!({}));

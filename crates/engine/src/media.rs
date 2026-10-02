@@ -648,11 +648,12 @@ impl crate::Session {
     pub fn render_export(
         &mut self,
         id: PhotoId,
-        max: usize,
+        max_w: usize,
+        max_h: usize,
         space: lightcraft_pipeline::OutputSpace,
         depth: lightcraft_pipeline::OutputDepth,
     ) -> Result<Rendered, String> {
-        let mut job = self.render_job(id, max, max, false, true).ok_or("no such photo")?;
+        let mut job = self.render_job(id, max_w, max_h, false, true).ok_or("no such photo")?;
         job.request.space = space;
         job.request.depth = depth;
         job.key ^= (space as u64 + 1).wrapping_mul(0xa076_1d64_78bd_642f) ^ (depth as u64 + 1).wrapping_mul(0xe703_7ed1_a0b4_28db);

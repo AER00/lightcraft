@@ -87,6 +87,35 @@ fn render_subcommand() {
 }
 
 #[test]
+fn render_export_options() {
+    let input = tmp("o-in.png");
+    gradient_png(&input);
+    let out = tmp("o-out.tif");
+    let st = Command::new(BIN)
+        .args(["render", input.to_str().unwrap(), "-o", out.to_str().unwrap()])
+        .args(["--opt", "shortEdge=40", "--opt", "colorSpace=displayP3", "--opt", "bitDepth=16"])
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let d = lightcraft_codecs::decode(&std::fs::read(&out).unwrap(), Default::default()).unwrap();
+    assert_eq!((d.width, d.height), (60, 40));
+    assert_eq!(d.space.named, Some(lightcraft_codecs::NamedSpace::DisplayP3));
+    // original + sidecar named after the output
+    let out = tmp("o-copy.png");
+    let st = Command::new(BIN)
+        .args(["render", input.to_str().unwrap(), "-o", out.to_str().unwrap(), "--set", "light.exposure=1", "--opt", "format=original"])
+        .status()
+        .unwrap();
+    assert!(st.success());
+    assert_eq!(std::fs::read(&out).unwrap(), std::fs::read(&input).unwrap());
+    let xmp = std::fs::read_to_string(out.with_extension("xmp")).unwrap();
+    assert!(xmp.contains("exposure"), "{xmp}");
+    // unknown extension fails with a hint
+    let o = Command::new(BIN).args(["render", input.to_str().unwrap(), "-o", tmp("x.bmp").to_str().unwrap()]).output().unwrap();
+    assert!(!o.status.success() && String::from_utf8_lossy(&o.stderr).contains("unknown extension"));
+}
+
+#[test]
 fn commands_subcommand_lists_registry() {
     let o = Command::new(BIN).args(["commands", "--json"]).output().unwrap();
     assert!(o.status.success());

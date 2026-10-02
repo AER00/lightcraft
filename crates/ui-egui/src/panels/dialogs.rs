@@ -233,7 +233,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     group_checklist(ui, "presetInclude", groups);
                 }
                 Dialog::CopySettings { groups } => group_checklist(ui, "copyGroup", groups),
-                Dialog::Export { opts, long_edge, limit_kb, dir } => {
+                Dialog::Export { opts, full_size, resize, limit_kb, dir } => {
                     use lightcraft_engine::export::{Anchor as P, ExportFormat as F, MetadataPolicy as M, SharpenAmount as A, SharpenFor as S};
                     let n = app.session.selection.ids.len().max(1);
                     ui.label(egui::RichText::new(format!("{n} photo{}", if n == 1 { "" } else { "s" })).color(t.text_dim));
@@ -243,20 +243,30 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         ui,
                         "Format",
                         "exportFormat",
-                        &[(F::Jpeg, "JPEG"), (F::Png, "PNG"), (F::Tiff, "TIFF"), (F::Webp, "WebP"), (F::Avif, "AVIF")],
+                        &[(F::Jpeg, "JPEG"), (F::Png, "PNG"), (F::Tiff, "TIFF"), (F::Webp, "WebP"), (F::Avif, "AVIF"), (F::Dng, "DNG"), (F::Original, "Original")],
                         &mut opts.format,
                     );
+                    if !opts.format.is_rendered() {
+                        let note = if opts.format == F::Dng {
+                            "Raw photos as DNG, with the edits embedded. Size, color and output options don't apply."
+                        } else {
+                            "The original files, unchanged, each with an XMP sidecar holding its edits."
+                        };
+                        ui.label(egui::RichText::new(note).color(t.text_dim));
+                    }
                     if opts.format != before {
                         // each format starts at its own default depth (TIFF 16-bit, others 8-bit)
                         opts.bit_depth = None;
                     }
+                    let rendered = opts.format.is_rendered();
                     let depths = lightcraft_engine::export::ExportOptions::bit_depths(opts.format);
-                    if depths.len() > 1 {
+                    if rendered && depths.len() > 1 {
                         let mut bd = opts.bit_depth.filter(|b| depths.iter().any(|d| d.0 == *b)).unwrap_or(depths[0].0);
                         choices(ui, "Bit depth", "exportBitDepth", depths, &mut bd);
                         opts.bit_depth = Some(bd);
                     }
-                    if opts.format == F::Avif {
+                    if !rendered {
+                    } else if opts.format == F::Avif {
                         ui.label(egui::RichText::new("Color space: sRGB (AVIF)").color(t.text_dim));
                     } else {
                         use lightcraft_engine::export::OutputSpace as C;
@@ -286,16 +296,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                             *limit_kb = k as u32;
                         }
                     }
-                    let mut full = *long_edge == 0;
-                    if ui.checkbox(&mut full, "Full size").changed() {
-                        *long_edge = if full { 0 } else { 2048 };
+                    if rendered {
+                        export_size(ui, full_size, resize, &mut opts.ppi);
                     }
-                    if !full {
-                        let mut e = *long_edge as f64;
-                        if num(ui, &LONG_EDGE, &mut e) {
-                            *long_edge = e as u32;
-                        }
-                    }
+                    if rendered {
                     choices(
                         ui,
                         "Sharpen",
@@ -312,6 +316,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                             &mut opts.sharpen_amount,
                         );
                     }
+                    }
+                    if rendered {
                     choices(
                         ui,
                         "Metadata",
@@ -346,6 +352,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                             wm.opacity = (op / 100.0) as f32;
                         }
                         ui.checkbox(&mut wm.shadow, "Shadow");
+                    }
                     }
                     ui.add_space(4.0);
                     field(ui, "File name", |ui| {
@@ -508,15 +515,24 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }),
         ),
         Dialog::CopySettings { groups } => app.run("develop.copy", json!({"groups": groups})),
-        Dialog::Export { opts, long_edge, limit_kb, dir } => app.run(
-            "app.export",
-            json!({
-                "format": opts.format, "quality": opts.quality, "longEdge": long_edge, "limitKb": limit_kb,
+        Dialog::Export { opts, full_size, resize, limit_kb, dir } => {
+            let mut p = json!({
+                "format": opts.format, "quality": opts.quality, "limitKb": limit_kb,
                 "sharpen": opts.sharpen, "sharpenAmount": opts.sharpen_amount, "naming": opts.naming, "dir": dir,
                 "metadata": opts.metadata, "removeLocation": opts.remove_location, "watermark": opts.watermark,
-                "colorSpace": opts.color_space, "bitDepth": opts.bit_depth,
-            }),
-        ),
+                "colorSpace": opts.color_space, "bitDepth": opts.bit_depth, "ppi": opts.ppi,
+            });
+            // full size is an explicit `longEdge: 0` (an absent size means "the default size" to agents)
+            let size = if *full_size {
+                json!({"longEdge": 0, "dontEnlarge": resize.dont_enlarge})
+            } else {
+                lightcraft_engine::export::ExportOptions::resize_json(Some(resize))
+            };
+            if let (Some(o), Some(sz)) = (p.as_object_mut(), size.as_object()) {
+                o.extend(sz.clone());
+            }
+            app.run("app.export", p)
+        }
         Dialog::Merge { opts } => crate::merge::start_final(app, opts),
         Dialog::Import { opts } => crate::import::start(app, opts),
         Dialog::ConfirmDelete { .. } => app.run("photo.delete", json!({})),
@@ -566,7 +582,74 @@ const fn spec(id: &'static str, label: &'static str, min: f64, max: f64, default
 }
 const QUALITY: ControlSpec = spec("export.quality", "Quality", 1.0, 100.0, 90.0, 1.0);
 const LIMIT_KB: ControlSpec = spec("export.limitKb", "Limit file size (KB, 0 = off)", 0.0, 20_000.0, 0.0, 10.0);
-const LONG_EDGE: ControlSpec = spec("export.longEdge", "Long edge (px)", 256.0, 12_000.0, 2048.0, 16.0);
+const SIZE_PX: ControlSpec = spec("export.sizePx", "Pixels", 16.0, 20_000.0, 2048.0, 16.0);
+const SIZE_W: ControlSpec = spec("export.sizeW", "Width (px)", 16.0, 20_000.0, 2048.0, 16.0);
+const SIZE_H: ControlSpec = spec("export.sizeH", "Height (px)", 16.0, 20_000.0, 2048.0, 16.0);
+const SIZE_MP: ControlSpec = ControlSpec { decimals: 1, ..spec("export.sizeMp", "Megapixels", 0.1, 100.0, 12.0, 0.1) };
+const SIZE_PCT: ControlSpec = spec("export.sizePercent", "Percent", 1.0, 400.0, 50.0, 1.0);
+const PPI: ControlSpec = spec("export.ppi", "Resolution (ppi)", 1.0, 1200.0, 240.0, 1.0);
+
+/// Image Sizing: full size, or a resize mode and its value(s), don't enlarge, ppi.
+fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut lightcraft_engine::export::Resize, ppi: &mut u16) {
+    use lightcraft_engine::export::ResizeMode as R;
+    const MODES: [(R, &str); 7] = [
+        (R::LongEdge, "Long Edge"),
+        (R::ShortEdge, "Short Edge"),
+        (R::Width, "Width"),
+        (R::Height, "Height"),
+        (R::Dimensions, "Width × Height"),
+        (R::Megapixels, "Megapixels"),
+        (R::Percent, "Percentage"),
+    ];
+    let r_full = ui.checkbox(full, "Full size");
+    crate::widgets::register(ui.ctx(), "check:exportFullSize", r_full.rect);
+    if !*full {
+        field(ui, "Resize to", |ui| {
+            let cur = MODES.iter().find(|m| m.0 == r.mode).map_or("Long Edge", |m| m.1);
+            let before = r.mode;
+            let c = egui::ComboBox::from_id_salt("exportResizeMode").width(150.0).selected_text(cur).show_ui(ui, |ui| {
+                for (m, l) in MODES {
+                    ui.selectable_value(&mut r.mode, m, l);
+                }
+            });
+            crate::widgets::register(ui.ctx(), "combo:exportResizeMode", c.response.rect);
+            if r.mode != before {
+                // a sensible value for the new unit
+                r.value = match r.mode {
+                    R::Megapixels => 12.0,
+                    R::Percent => 50.0,
+                    _ if matches!(before, R::Megapixels | R::Percent) => 2048.0,
+                    _ => r.value,
+                };
+                if r.mode == R::Dimensions && r.height == 0 {
+                    r.height = r.value as u32;
+                }
+            }
+        });
+        let mut v = r.value as f64;
+        let spec = match r.mode {
+            R::Megapixels => &SIZE_MP,
+            R::Percent => &SIZE_PCT,
+            R::Dimensions => &SIZE_W,
+            _ => &SIZE_PX,
+        };
+        if num(ui, spec, &mut v) {
+            r.value = v as f32;
+        }
+        if r.mode == R::Dimensions {
+            let mut h = r.height as f64;
+            if num(ui, &SIZE_H, &mut h) {
+                r.height = h as u32;
+            }
+        }
+        let c = ui.checkbox(&mut r.dont_enlarge, "Don't enlarge");
+        crate::widgets::register(ui.ctx(), "check:exportDontEnlarge", c.rect);
+    }
+    let mut p = *ppi as f64;
+    if num(ui, &PPI, &mut p) {
+        *ppi = p as u16;
+    }
+}
 const WM_SIZE: ControlSpec = spec("export.watermarkSize", "Size (% of short edge)", 1.0, 15.0, 3.5, 0.5);
 const WM_OPACITY: ControlSpec = spec("export.watermarkOpacity", "Opacity (%)", 5.0, 100.0, 70.0, 1.0);
 

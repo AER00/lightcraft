@@ -42,7 +42,7 @@ fn seeds() -> &'static Vec<Vec<u8>> {
         let img = Rgba8::from_fn(24, 16, |x, y| [(x * 10) as u8, (y * 15) as u8, ((x ^ y) * 8) as u8, (x * y) as u8]);
         let icc = write_named(NamedSpace::DisplayP3);
         let exif = minimal_exif(6);
-        let meta = EncodeMeta { icc: Some(&icc), exif: Some(&exif), xmp: Some("<x/>") };
+        let meta = EncodeMeta { icc: Some(&icc), exif: Some(&exif), xmp: Some("<x/>"), ..Default::default() };
         let e = EncodeImage::rgba8(&img);
         let u16s: Vec<u16> = (0..24 * 16 * 3).map(|i| (i * 331) as u16).collect();
         let f32s: Vec<f32> = (0..24 * 16 * 3).map(|i| i as f32 * 0.01).collect();

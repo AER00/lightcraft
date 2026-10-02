@@ -1,4 +1,5 @@
-//! Export: encode a rendered image to JPEG / PNG / TIFF / WebP / AVIF in sRGB, Display P3, Adobe RGB
+//! Export: encode a rendered image to JPEG / PNG / TIFF / WebP / AVIF (or copy the original / write a
+//! DNG, each with the edits in XMP) in sRGB, Display P3, Adobe RGB
 //! (1998) compatible, ProPhoto RGB or Rec. 2020 with an embedded ICC profile we generate from the
 //! published primaries and curves, optional output sharpening and a JPEG file-size limit. Pure (bytes in, bytes out) so the desktop
 //! app, CLI, MCP and the web build share it; writing the file is the caller's job.
@@ -18,6 +19,10 @@ pub enum ExportFormat {
     Tiff,
     Webp,
     Avif,
+    /// The original file, unchanged, with an XMP sidecar holding the edits.
+    Original,
+    /// A DNG of the raw data (raw photos only), the edits embedded as XMP.
+    Dng,
 }
 
 impl ExportFormat {
@@ -28,6 +33,8 @@ impl ExportFormat {
             "tiff" | "tif" => Self::Tiff,
             "webp" => Self::Webp,
             "avif" => Self::Avif,
+            "original" => Self::Original,
+            "dng" => Self::Dng,
             _ => return None,
         })
     }
@@ -38,7 +45,88 @@ impl ExportFormat {
             Self::Tiff => "tif",
             Self::Webp => "webp",
             Self::Avif => "avif",
+            // the original keeps its own extension (see `ExportOptions::file_name_for`)
+            Self::Original => "",
+            Self::Dng => "dng",
         }
+    }
+
+    /// Formats that render pixels (everything but `Original` and `Dng`).
+    pub fn is_rendered(self) -> bool {
+        !matches!(self, Self::Original | Self::Dng)
+    }
+}
+
+/// How the output size is chosen (see [`Resize`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResizeMode {
+    /// `value` = long edge in pixels.
+    #[default]
+    LongEdge,
+    /// `value` = short edge in pixels.
+    ShortEdge,
+    /// `value` = width in pixels.
+    Width,
+    /// `value` = height in pixels.
+    Height,
+    /// Fit inside `value × height` pixels, whichever way round the photo is (long edge ≤ the larger).
+    Dimensions,
+    /// `value` = megapixels.
+    Megapixels,
+    /// `value` = percent of the full size.
+    Percent,
+}
+
+/// Output size: a mode, its value(s) and whether smaller photos are left at their own size.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Resize {
+    pub mode: ResizeMode,
+    pub value: f32,
+    /// Second dimension for [`ResizeMode::Dimensions`].
+    pub height: u32,
+    /// Never upscale past the photo's own (cropped) size.
+    pub dont_enlarge: bool,
+}
+
+impl Default for Resize {
+    fn default() -> Self {
+        Self { mode: ResizeMode::LongEdge, value: 2048.0, height: 2048, dont_enlarge: true }
+    }
+}
+
+impl Resize {
+    pub fn long_edge(px: u32) -> Self {
+        Self { value: px as f32, ..Default::default() }
+    }
+
+    /// Scale factor from a `w × h` (cropped, full-resolution) photo to the output.
+    pub fn scale(&self, w: f64, h: f64) -> f64 {
+        let (w, h) = (w.max(1.0), h.max(1.0));
+        let (long, short) = (w.max(h), w.min(h));
+        let v = (self.value as f64).max(0.0);
+        let k = match self.mode {
+            ResizeMode::LongEdge => v / long,
+            ResizeMode::ShortEdge => v / short,
+            ResizeMode::Width => v / w,
+            ResizeMode::Height => v / h,
+            ResizeMode::Dimensions => {
+                let (a, b) = (v, self.height as f64);
+                (a.max(b) / long).min(a.min(b) / short)
+            }
+            ResizeMode::Megapixels => (v * 1e6 / (w * h)).sqrt(),
+            ResizeMode::Percent => v / 100.0,
+        };
+        let k = if self.dont_enlarge { k.min(1.0) } else { k };
+        // at least one pixel, at most the encoders' 65535 limit
+        k.clamp(1.0 / short, 65_535.0 / long)
+    }
+
+    /// Output size for a `w × h` (cropped, full-resolution) photo.
+    pub fn apply(&self, w: f64, h: f64) -> (usize, usize) {
+        let k = self.scale(w, h);
+        (((w * k).round() as usize).max(1), ((h * k).round() as usize).max(1))
     }
 }
 
@@ -217,8 +305,10 @@ pub struct ExportOptions {
     pub format: ExportFormat,
     /// 1–100 (JPEG, AVIF).
     pub quality: u8,
-    /// Resize so the long edge is at most this many pixels (`None` = full size).
-    pub long_edge: Option<u32>,
+    /// Output size (`None` = full size).
+    pub resize: Option<Resize>,
+    /// Print resolution written into the file (pixels per inch).
+    pub ppi: u16,
     /// JPEG only: largest quality whose file fits in this many KB.
     pub limit_kb: Option<u32>,
     pub sharpen: SharpenFor,
@@ -242,7 +332,8 @@ impl Default for ExportOptions {
         Self {
             format: ExportFormat::Jpeg,
             quality: 90,
-            long_edge: None,
+            resize: None,
+            ppi: 240,
             limit_kb: None,
             sharpen: SharpenFor::None,
             sharpen_amount: SharpenAmount::Standard,
@@ -257,8 +348,11 @@ impl Default for ExportOptions {
 }
 
 impl ExportOptions {
-    /// Read options from command params (`format`, `quality`, `longEdge`, `limitKb`, `sharpen`,
-    /// `sharpenAmount`, `naming`, `metadata`, `removeLocation`, `watermark`, `colorSpace`, `bitDepth`).
+    /// Read options from command params (`format`, `quality`, `limitKb`, `sharpen`, `sharpenAmount`,
+    /// `naming`, `metadata`, `removeLocation`, `watermark`, `colorSpace`, `bitDepth`, `ppi`) and the
+    /// size: one of `longEdge`, `shortEdge`, `width`, `height` (both = fit inside W × H),
+    /// `megapixels`, `percent` (absent or 0 = full size), or a [`Resize`] object as `resize`; plus
+    /// `dontEnlarge` (default true).
     pub fn from_json(p: &serde_json::Value) -> Self {
         use serde_json::Value;
         let d = Self::default();
@@ -270,7 +364,8 @@ impl ExportOptions {
         Self {
             format: s("format").and_then(ExportFormat::parse).unwrap_or(d.format),
             quality: u("quality").map_or(d.quality, |q| q.clamp(1, 100) as u8),
-            long_edge: u("longEdge").filter(|v| *v > 0).map(|v| v.min(65_535) as u32),
+            resize: Self::resize_from_json(p),
+            ppi: u("ppi").filter(|v| *v > 0).map_or(d.ppi, |v| v.min(u16::MAX as u64) as u16),
             limit_kb: u("limitKb").filter(|v| *v > 0).map(|v| v.min(u32::MAX as u64) as u32),
             sharpen: enm(p, "sharpen").unwrap_or(d.sharpen),
             sharpen_amount: enm(p, "sharpenAmount").unwrap_or(d.sharpen_amount),
@@ -288,10 +383,52 @@ impl ExportOptions {
         }
     }
 
+    fn resize_from_json(p: &serde_json::Value) -> Option<Resize> {
+        use serde_json::Value;
+        let f = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| *v > 0.0);
+        let dont_enlarge = p.get("dontEnlarge").and_then(Value::as_bool).unwrap_or(true);
+        if let Some(r) = p.get("resize").filter(|v| v.is_object()) {
+            let r: Resize = serde_json::from_value(r.clone()).ok()?;
+            return (r.value > 0.0).then_some(Resize { dont_enlarge: p.get("dontEnlarge").and_then(Value::as_bool).unwrap_or(r.dont_enlarge), ..r });
+        }
+        let r = |mode, value: f64| Resize { mode, value: value.min(65_535.0) as f32, height: 0, dont_enlarge };
+        Some(match (f("width"), f("height")) {
+            (Some(w), Some(h)) => Resize { height: h.min(65_535.0) as u32, ..r(ResizeMode::Dimensions, w) },
+            (Some(w), None) => r(ResizeMode::Width, w),
+            (None, Some(h)) => r(ResizeMode::Height, h),
+            (None, None) => {
+                if let Some(v) = f("longEdge") {
+                    r(ResizeMode::LongEdge, v)
+                } else if let Some(v) = f("shortEdge") {
+                    r(ResizeMode::ShortEdge, v)
+                } else if let Some(v) = f("megapixels") {
+                    r(ResizeMode::Megapixels, v)
+                } else if let Some(v) = f("percent") {
+                    r(ResizeMode::Percent, v)
+                } else {
+                    return None;
+                }
+            }
+        })
+    }
+
+    /// Whether `p` names an output size (any of the size params, even 0 = full size).
+    pub fn has_size_param(p: &serde_json::Value) -> bool {
+        ["resize", "longEdge", "shortEdge", "width", "height", "megapixels", "percent"].iter().any(|k| p.get(k).is_some())
+    }
+
+    /// The size params of [`ExportOptions::from_json`] for `resize` (`{}` = full size).
+    pub fn resize_json(resize: Option<&Resize>) -> serde_json::Value {
+        match resize {
+            None => serde_json::json!({}),
+            Some(r) => serde_json::json!({"resize": r, "dontEnlarge": r.dont_enlarge}),
+        }
+    }
+
     /// The sample format the file is written with (unsupported requests fall back to the closest).
     pub fn effective_depth(&self) -> OutputDepth {
         match (self.format, self.bit_depth) {
-            (ExportFormat::Jpeg | ExportFormat::Webp, _) => OutputDepth::U8,
+            (ExportFormat::Jpeg | ExportFormat::Webp | ExportFormat::Original | ExportFormat::Dng, _) => OutputDepth::U8,
             (ExportFormat::Png, Some(16 | 32)) => OutputDepth::U16,
             (ExportFormat::Png, _) => OutputDepth::U8,
             (ExportFormat::Tiff, Some(8)) => OutputDepth::U8,
@@ -305,7 +442,7 @@ impl ExportOptions {
     /// The bit depths `format` offers (value, label); the first is its default.
     pub fn bit_depths(format: ExportFormat) -> &'static [(u8, &'static str)] {
         match format {
-            ExportFormat::Jpeg | ExportFormat::Webp => &[(8, "8-bit")],
+            ExportFormat::Jpeg | ExportFormat::Webp | ExportFormat::Original | ExportFormat::Dng => &[(8, "8-bit")],
             ExportFormat::Png => &[(8, "8-bit"), (16, "16-bit")],
             ExportFormat::Tiff => &[(16, "16-bit"), (8, "8-bit"), (32, "32-bit float")],
             ExportFormat::Avif => &[(8, "8-bit"), (10, "10-bit")],
@@ -323,6 +460,19 @@ impl ExportOptions {
         let name = base.replace("{name}", stem).replace("{seq}", &format!("{seq:03}"));
         let name: String = name.chars().map(|c| if matches!(c, '/' | '\\' | ':' | '\0') { '_' } else { c }).collect();
         format!("{name}.{}", self.format.extension())
+    }
+
+    /// Output file name for photo file `file_name` (the original's extension is kept for
+    /// [`ExportFormat::Original`]).
+    pub fn file_name_for(&self, file_name: &str, seq: usize) -> String {
+        let (stem, ext) = file_name.rsplit_once('.').unwrap_or((file_name, ""));
+        let name = self.file_name(stem, seq);
+        if self.format == ExportFormat::Original {
+            let base = name.trim_end_matches('.');
+            if ext.is_empty() { base.to_string() } else { format!("{base}.{ext}") }
+        } else {
+            name
+        }
     }
 }
 
@@ -422,7 +572,7 @@ pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metada
     let profile = icc::write_named(named_space(space));
     let exif = meta.map(lightcraft_meta::write_exif);
     let xmp = meta.map(|m| lightcraft_meta::write_xmp(m, None));
-    let meta = EncodeMeta { icc: Some(&profile), exif: exif.as_deref(), xmp: xmp.as_deref() };
+    let meta = EncodeMeta { icc: Some(&profile), exif: exif.as_deref(), xmp: xmp.as_deref(), ppi: Some(o.ppi) };
     let e = EncodeImage::rgba8(&img);
     let r = match o.format {
         ExportFormat::Jpeg => {
@@ -456,6 +606,7 @@ pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metada
         ExportFormat::Tiff => encode::encode_tiff(&e, TiffCompression::Deflate, &meta),
         ExportFormat::Webp => encode::encode_webp_lossless(&e, &meta),
         ExportFormat::Avif => encode::encode_avif(&e, o.quality, 8, &meta),
+        f @ (ExportFormat::Original | ExportFormat::Dng) => return Err(format!("{f:?} export does not encode pixels")),
     };
     r.map_err(|e| e.to_string())
 }
@@ -508,7 +659,7 @@ pub fn encode_deep(img: &DeepImage, o: &ExportOptions, meta: Option<&Metadata>) 
     };
     let exif = meta.map(lightcraft_meta::write_exif);
     let xmp = meta.map(|m| lightcraft_meta::write_xmp(m, None));
-    let meta = EncodeMeta { icc: Some(&profile), exif: exif.as_deref(), xmp: xmp.as_deref() };
+    let meta = EncodeMeta { icc: Some(&profile), exif: exif.as_deref(), xmp: xmp.as_deref(), ppi: Some(o.ppi) };
     let (w, h) = (img.width as u32, img.height as u32);
     let e = match &img.samples {
         DeepSamples::U16(v) => EncodeImage::new(w, h, 3, Samples::U16(v)),
@@ -570,23 +721,67 @@ pub struct Exported {
     pub bytes: Vec<u8>,
     pub width: usize,
     pub height: usize,
+    /// Files written next to it, named like it with another extension: `(extension, bytes)` (the
+    /// XMP sidecar of an `Original` export).
+    pub sidecars: Vec<(&'static str, Vec<u8>)>,
 }
 
-/// Render photo `id` at the requested size (full size when `long_edge` is `None`) and encode it.
+/// Output size of photo `p` under `o` (its cropped full size when `o.resize` is `None`).
+pub fn output_size(p: &lightcraft_catalog::Photo, o: &ExportOptions) -> (usize, usize) {
+    let (w, h) = lightcraft_pipeline::native_output_size(p.width.max(1) as usize, p.height.max(1) as usize, &p.develop);
+    match &o.resize {
+        Some(r) => r.apply(w, h),
+        None => ((w.round() as usize).max(1), (h.round() as usize).max(1)),
+    }
+}
+
+/// Render photo `id` at the requested size and encode it (or copy / convert its original for
+/// [`ExportFormat::Original`] / [`ExportFormat::Dng`]).
 pub fn export_photo(session: &mut crate::Session, id: lightcraft_catalog::PhotoId, o: &ExportOptions, seq: usize) -> Result<Exported, String> {
     let p = session.catalog.photo(id).ok_or("no such photo")?;
-    let stem = p.file_name.rsplit_once('.').map_or(p.file_name.as_str(), |(a, _)| a).to_string();
-    let full = p.width.max(p.height).max(1) as usize;
-    let size = o.long_edge.map_or(full, |l| l as usize);
+    let file_name = o.file_name_for(&p.file_name, seq);
+    if !o.format.is_rendered() {
+        return export_file(session, id, o, file_name);
+    }
+    let (w, h) = output_size(p, o);
     let meta = export_metadata(p, o);
-    let r = session.render_export(id, size, o.effective_space(), o.effective_depth())?;
+    let r = session.render_export(id, w, h, o.effective_space(), o.effective_depth())?;
     let bytes = encode_rendered(&r, o, meta.as_ref())?;
-    Ok(Exported { file_name: o.file_name(&stem, seq), bytes, width: r.image.width, height: r.image.height })
+    Ok(Exported { file_name, bytes, width: r.image.width, height: r.image.height, sidecars: Vec::new() })
+}
+
+/// [`ExportFormat::Original`] (the file's bytes + an XMP sidecar) or [`ExportFormat::Dng`] (the raw
+/// data re-encoded as a lossless DNG with the edits in its XMP).
+fn export_file(session: &mut crate::Session, id: lightcraft_catalog::PhotoId, o: &ExportOptions, file_name: String) -> Result<Exported, String> {
+    let p = session.catalog.photo(id).ok_or("no such photo")?;
+    let lightcraft_catalog::Source::File { path } = &p.source else {
+        return Err(format!("{} is a generated demo photo: it has no original file to export", p.file_name));
+    };
+    let read = session.media.file_bytes.clone();
+    let bytes = match &read {
+        Some(r) => r(path)?,
+        None => std::fs::read(path).map_err(|e| format!("{path}: {e}"))?,
+    };
+    let packet = crate::sidecar::sidecar_packet(p);
+    let (width, height) = (p.width as usize, p.height as usize);
+    match o.format {
+        ExportFormat::Dng => {
+            if lightcraft_raw::probe(&bytes).is_none() {
+                return Err(format!("{}: DNG export needs a raw photo", p.file_name));
+            }
+            let raw = lightcraft_raw::decode(&bytes).map_err(|e| format!("{}: {e}", p.file_name))?;
+            let dng = lightcraft_raw::write_dng(&raw, &lightcraft_raw::DngWriteOptions { xmp: Some(packet), ..Default::default() })
+                .map_err(|e| e.to_string())?;
+            Ok(Exported { file_name, bytes: dng, width: raw.width, height: raw.height, sidecars: Vec::new() })
+        }
+        _ => Ok(Exported { file_name, bytes, width, height, sidecars: vec![("xmp", packet.into_bytes())] }),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn test_image() -> Rgba8 {
         let mut img = Rgba8::new(96, 64);
@@ -678,8 +873,47 @@ mod tests {
         let o = ExportOptions::from_json(&serde_json::json!({"format": "jpg", "quality": 150, "longEdge": 2048, "naming": "{name}-{seq}"}));
         assert_eq!(o.format, ExportFormat::Jpeg);
         assert_eq!(o.quality, 100);
-        assert_eq!(o.long_edge, Some(2048));
+        assert_eq!(o.resize, Some(Resize { dont_enlarge: true, height: 0, ..Resize::long_edge(2048) }));
         assert_eq!(o.file_name("IMG/1", 7), "IMG_1-007.jpg");
+        assert_eq!(o.ppi, 240);
+        let orig = ExportOptions { format: ExportFormat::Original, naming: "{name}-{seq}".into(), ..Default::default() };
+        assert_eq!(orig.file_name_for("DSC_1.NEF", 2), "DSC_1-002.NEF");
+        assert_eq!(orig.file_name_for("noext", 1), "noext-001");
+        assert_eq!(ExportOptions { format: ExportFormat::Dng, ..Default::default() }.file_name_for("a.cr2", 1), "a.dng");
+    }
+
+    #[test]
+    fn resize_modes() {
+        let size = |p: serde_json::Value, w: f64, h: f64| ExportOptions::from_json(&p).resize.map(|r| r.apply(w, h));
+        // a 6000 × 4000 landscape and a 4000 × 6000 portrait
+        assert_eq!(size(json!({"longEdge": 1500}), 6000.0, 4000.0), Some((1500, 1000)));
+        assert_eq!(size(json!({"longEdge": 1500}), 4000.0, 6000.0), Some((1000, 1500)));
+        assert_eq!(size(json!({"shortEdge": 1080}), 6000.0, 4000.0), Some((1620, 1080)));
+        assert_eq!(size(json!({"width": 3000}), 4000.0, 6000.0), Some((3000, 4500)));
+        assert_eq!(size(json!({"height": 1000}), 6000.0, 4000.0), Some((1500, 1000)));
+        // W × H fits either orientation: the long edge gets the larger number
+        assert_eq!(size(json!({"width": 1000, "height": 800}), 6000.0, 4000.0), Some((1000, 667)));
+        assert_eq!(size(json!({"width": 1000, "height": 800}), 4000.0, 6000.0), Some((667, 1000)));
+        assert_eq!(size(json!({"width": 1000, "height": 500}), 6000.0, 4000.0), Some((750, 500)));
+        let (w, h) = size(json!({"megapixels": 6}), 6000.0, 4000.0).unwrap();
+        assert!(((w * h) as f64 - 6e6).abs() < 6e6 * 0.002, "{w}×{h}");
+        assert_eq!(size(json!({"percent": 25}), 6000.0, 4000.0), Some((1500, 1000)));
+        // don't enlarge (default) vs enlarge
+        assert_eq!(size(json!({"longEdge": 8000}), 6000.0, 4000.0), Some((6000, 4000)));
+        assert_eq!(size(json!({"longEdge": 9000, "dontEnlarge": false}), 6000.0, 4000.0), Some((9000, 6000)));
+        // full size / absent
+        assert_eq!(size(json!({"longEdge": 0}), 6000.0, 4000.0), None);
+        assert_eq!(size(json!({}), 6000.0, 4000.0), None);
+        assert!(ExportOptions::has_size_param(&json!({"longEdge": 0})) && !ExportOptions::has_size_param(&json!({"quality": 3})));
+        // the `resize` object form round-trips (what the dialog and prefs store)
+        let r = Resize { mode: ResizeMode::ShortEdge, value: 720.0, height: 0, dont_enlarge: false };
+        let back = ExportOptions::from_json(&ExportOptions::resize_json(Some(&r))).resize;
+        assert_eq!(back, Some(r));
+        assert_eq!(ExportOptions::from_json(&ExportOptions::resize_json(None)).resize, None);
+        assert_eq!(ExportOptions::from_json(&json!({"ppi": 300})).ppi, 300);
+        // never larger than the encoders' limit, never empty
+        assert_eq!(size(json!({"percent": 10000, "dontEnlarge": false}), 6000.0, 4000.0), Some((65535, 43690)));
+        assert_eq!(size(json!({"width": 1}), 6000.0, 40.0).map(|s| s.1), Some(1));
     }
 
     /// A flat field of a saturated green inside Display P3 but outside sRGB, rendered into `space`.

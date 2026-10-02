@@ -521,12 +521,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             let prev = app.session.last_export.clone().unwrap_or_default();
             let u = |k: &str, d: u64| prev.get(k).and_then(Value::as_u64).unwrap_or(d);
             let dir = prev.get("dir").and_then(Value::as_str).map(str::to_string).unwrap_or_else(crate::control::default_export_dir);
-            app.ui.dialog = Some(Dialog::Export {
-                opts: lightcraft_engine::export::ExportOptions::from_json(&prev),
-                long_edge: u("longEdge", 2048) as u32,
-                limit_kb: u("limitKb", 0) as u32,
-                dir,
-            });
+            let opts = lightcraft_engine::export::ExportOptions::from_json(&prev);
+            // no previous export: 2048 px long edge; a previous full-size export: full size
+            let full_size = opts.resize.is_none() && lightcraft_engine::export::ExportOptions::has_size_param(&prev);
+            let resize = opts.resize.unwrap_or_default();
+            app.ui.dialog = Some(Dialog::Export { opts, full_size, resize, limit_kb: u("limitKb", 0) as u32, dir });
             Ok(Value::Null)
         }
         "dialog.mergeHdr" => crate::merge::open(app, "merge.hdr"),

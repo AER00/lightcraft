@@ -329,10 +329,11 @@ pub enum Dialog {
     CopySettings {
         groups: Vec<String>,
     },
-    /// `long_edge` 0 = full size; `limit_kb` 0 = no limit; `dir` empty = default export folder.
+    /// `resize` is used unless `full_size`; `limit_kb` 0 = no limit; `dir` empty = default export folder.
     Export {
         opts: lightcraft_engine::export::ExportOptions,
-        long_edge: u32,
+        full_size: bool,
+        resize: lightcraft_engine::export::Resize,
         limit_kb: u32,
         dir: String,
     },

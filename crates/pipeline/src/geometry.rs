@@ -135,6 +135,12 @@ impl Frame {
         r.width() / r.height()
     }
 
+    /// Size of the (cropped) output at the source's own resolution, in pixels.
+    pub fn native_size(&self) -> (f64, f64) {
+        let r = self.crop.rect_px(self.ow, self.oh);
+        (r.width(), r.height())
+    }
+
     pub fn fit(&self, max_w: usize, max_h: usize) -> (usize, usize) {
         let a = self.aspect();
         let (mw, mh) = (max_w.max(1) as f64, max_h.max(1) as f64);

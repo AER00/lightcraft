@@ -133,6 +133,12 @@ pub fn output_size(src_w: usize, src_h: usize, s: &DevelopSettings, req: &Render
     geometry::Frame::new(src_w, src_h, s, req.apply_crop).fit(req.max_w, req.max_h)
 }
 
+/// Size of the cropped output of a `src_w × src_h` source under `s` at the source's own resolution
+/// (what a full-size export produces).
+pub fn native_output_size(src_w: usize, src_h: usize, s: &DevelopSettings) -> (f64, f64) {
+    geometry::Frame::new(src_w, src_h, s, true).native_size()
+}
+
 /// The geometric frame `render` uses for `src` (lens data, automatic CA estimate included).
 pub fn frame_for(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, apply_crop: bool) -> geometry::Frame {
     let mut frame = geometry::Frame::with_lens(src.width, src.height, s, apply_crop, info.lens.as_ref());
