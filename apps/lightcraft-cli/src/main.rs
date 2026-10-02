@@ -1,6 +1,7 @@
 //! `lightcraft-cli`: headless LightCraft.
 //!
 //! ```text
+//! lightcraft-cli run [--demo | --library DIR | --connect [ADDR]] [--import PATH]… CMD [key=value…]…
 //! lightcraft-cli mcp [--connect [ADDR]] [--demo] [--compact] [FILES/FOLDERS…]
 //! lightcraft-cli render <in> -o <out> [--set control=value]… [--settings FILE.json] [--preset ID] [--size N] [--quality Q]
 //! lightcraft-cli snapshot [--library DIR | --demo] [--script FILE.jsonl] [-o OUT.png] [--size WxH] [--scale S] [FILES…]
@@ -24,6 +25,21 @@ const USAGE: &str = "\
 lightcraft-cli — headless LightCraft (photo library + raw developer)
 
 USAGE:
+  lightcraft-cli run [OPTIONS] COMMAND [key=value | '{json}']… [COMMAND …]…
+      Run one or more commands (ids from `commands`, or control-protocol methods such as
+      engine.commands / ui.inspect / ui.screenshot) and print one JSON line per command:
+      {\"command\", \"ok\", \"result\" | \"error\", \"ms\"}. A word without `=` starts the next
+      command; values are JSON when they parse (1, true, [1,2], {…}), else strings. Exit status
+      is non-zero when a command fails. Example:
+        lightcraft-cli run --import ~/Photos/a.jpg develop.set control=light.exposure value=0.7 \\
+            develop.auto app.export path=/tmp/a.jpg longEdge=1600
+      Options:
+        --demo            headless, the procedural demo library
+        --library DIR     headless, open (or create) a LightCraft library; edits are saved
+        --import PATH     headless, import a file or folder first (repeatable)
+        --connect [ADDR]  drive the running app (`lightcraft --control 7980`; default 127.0.0.1:7980)
+        --script FILE|-   also run JSON lines {\"command\": id, \"params\": {…}} (or {\"method\": …})
+        --keep-going      continue after a failed command
   lightcraft-cli mcp [OPTIONS] [FILES/FOLDERS…]
       MCP server (JSON-RPC 2.0 over stdio). Headless by default: an in-process session with the
       given files imported. Options:
@@ -88,6 +104,7 @@ fn main() -> ExitCode {
     alloc_release::install();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
+        Some("run") => run(&args[1..]),
         Some("mcp") => mcp(&args[1..]),
         Some("render") => render(&args[1..]),
         Some("snapshot") => snapshot(&args[1..]),
@@ -288,6 +305,151 @@ fn synth_merge(args: &[String]) -> Result<(), String> {
         println!("{}", p.display());
     }
     Ok(())
+}
+
+/// One step of `lightcraft-cli run`: a command id (or control-protocol method) and its params.
+#[derive(Debug, PartialEq)]
+struct Step {
+    id: String,
+    params: Value,
+}
+
+/// Parse `CMD [key=value | {json}]… CMD …` into steps. A token without `=` that doesn't start
+/// with `{` begins a new command; values are JSON when they parse, else strings.
+fn parse_steps(tokens: &[String]) -> Result<Vec<Step>, String> {
+    let mut steps: Vec<Step> = Vec::new();
+    for t in tokens {
+        if t.starts_with('{') {
+            let v: Value = serde_json::from_str(t).map_err(|e| format!("bad JSON params `{t}`: {e}"))?;
+            let step = steps.last_mut().ok_or_else(|| format!("params `{t}` before any command"))?;
+            match (step.params.as_object_mut(), v) {
+                (Some(o), Value::Object(m)) => o.extend(m),
+                _ => return Err(format!("params `{t}` must be a JSON object")),
+            }
+        } else if let Some((k, v)) = t.split_once('=') {
+            let step = steps.last_mut().ok_or_else(|| format!("param `{t}` before any command"))?;
+            let v = serde_json::from_str(v).unwrap_or_else(|_| json!(v));
+            step.params[k.trim()] = v;
+        } else {
+            steps.push(Step { id: t.clone(), params: json!({}) });
+        }
+    }
+    Ok(steps)
+}
+
+/// Run one step: control-protocol methods (`ui.*`, `engine.*`) directly, everything else as a
+/// command through `engine.execute`.
+fn run_step(b: &mut dyn Backend, s: &Step) -> Result<Value, String> {
+    let direct = s.id.starts_with("ui.") || s.id.starts_with("engine.") || s.id == "app.quit";
+    if direct { b.call(&s.id, s.params.clone()) } else { b.call("engine.execute", json!({"command": s.id, "params": s.params})) }
+}
+
+fn run(args: &[String]) -> Result<(), String> {
+    let mut connect: Option<String> = None;
+    let mut demo = false;
+    let mut library: Option<String> = None;
+    let mut imports = Vec::new();
+    let mut script: Option<String> = None;
+    let mut keep_going = false;
+    let mut i = 0;
+    while i < args.len() && args[i].starts_with("--") {
+        match args[i].as_str() {
+            "--" => {
+                i += 1;
+                break;
+            }
+            "--connect" => match args.get(i + 1).filter(|a| a.contains(':') && !a.contains('=')) {
+                Some(a) => {
+                    connect = Some(a.clone());
+                    i += 1;
+                }
+                None => connect = Some(DEFAULT_ADDR.to_string()),
+            },
+            a if a.starts_with("--connect=") => connect = Some(a["--connect=".len()..].to_string()),
+            "--demo" => demo = true,
+            "--library" => library = Some(take_value(args, &mut i, "--library")?.to_string()),
+            "--import" => imports.push(take_value(args, &mut i, "--import")?.to_string()),
+            "--script" => script = Some(take_value(args, &mut i, "--script")?.to_string()),
+            "--keep-going" => keep_going = true,
+            a => return Err(format!("unknown option `{a}`")),
+        }
+        i += 1;
+    }
+    let mut steps = parse_steps(&args[i..])?;
+    if let Some(path) = &script {
+        let text = if path == "-" {
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut s).map_err(|e| e.to_string())?;
+            s
+        } else {
+            std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?
+        };
+        for (n, line) in text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty() && !l.trim_start().starts_with('#')) {
+            let v: Value = serde_json::from_str(line).map_err(|e| format!("{path}:{}: {e}", n + 1))?;
+            // `{"command": id, "params": …}` or a control request `{"method": m, "params": …}`
+            let id = v
+                .get("command")
+                .or(v.get("method"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("{path}:{}: needs `command` or `method`", n + 1))?;
+            let params = v.get("params").cloned().filter(|p| p.is_object()).unwrap_or_else(|| json!({}));
+            steps.push(Step { id: id.to_string(), params });
+        }
+    }
+    if steps.is_empty() {
+        return Err("run: no command given (see `lightcraft-cli commands`)".into());
+    }
+    let mut backend: Box<dyn Backend> = match connect {
+        Some(addr) => {
+            if demo || library.is_some() || !imports.is_empty() {
+                return Err("--demo, --library and --import apply to headless mode only".into());
+            }
+            Box::new(
+                Remote::connect(&addr)
+                    .map_err(|e| format!("LightCraft is not reachable at {addr} ({e}); start it with `lightcraft --control 7980`"))?,
+            )
+        }
+        None => {
+            let mut h = match &library {
+                Some(dir) => {
+                    let mut h = Headless::default();
+                    h.session.open_library(dir, demo).map_err(|e| e.to_string())?;
+                    h
+                }
+                None if demo => Headless::demo(),
+                None => Headless::default(),
+            };
+            if !imports.is_empty() {
+                let paths = expand_paths(&imports);
+                let r = h.session.execute("library.import", &json!({"paths": paths})).map_err(|e| e.to_string())?;
+                // what follows acts on the imported photos (already-known files are reported as duplicates)
+                let mut ids: Vec<Value> = r["imported"].as_array().cloned().unwrap_or_default();
+                ids.extend(r["duplicates"].as_array().into_iter().flatten().filter_map(|d| d.get("existing").filter(|v| v.is_u64()).cloned()));
+                if let Some(first) = ids.first().cloned() {
+                    h.session.execute("library.select", &json!({"ids": ids, "active": first})).map_err(|e| e.to_string())?;
+                }
+            }
+            Box::new(h)
+        }
+    };
+    let mut out = std::io::stdout().lock();
+    let mut failed = 0;
+    for s in &steps {
+        let t = std::time::Instant::now();
+        let line = match run_step(backend.as_mut(), s) {
+            Ok(r) => json!({"command": s.id, "ok": true, "result": r, "ms": (t.elapsed().as_secs_f64() * 1e4).round() / 10.0}),
+            Err(e) => {
+                failed += 1;
+                json!({"command": s.id, "ok": false, "error": e})
+            }
+        };
+        writeln!(out, "{line}").map_err(|e| e.to_string())?;
+        if failed > 0 && !keep_going {
+            break;
+        }
+    }
+    drop(backend); // a library session is flushed here
+    if failed > 0 { Err(format!("{failed} command(s) failed")) } else { Ok(()) }
 }
 
 fn take_value<'a>(args: &'a [String], i: &mut usize, flag: &str) -> Result<&'a str, String> {

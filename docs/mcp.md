@@ -141,9 +141,30 @@ results with `isError: true` so the model can read and correct them; malformed J
 standard error codes (-32700 parse, -32600 invalid request, -32601 method not found, -32602
 invalid params, -32002 resource not found).
 
+## One-shot commands: `lightcraft-cli run`
+
+For agents that prefer a shell over an MCP session: run any chain of commands in one process and read one JSON
+line per command (`{"command", "ok", "result" | "error", "ms"}`; non-zero exit status on failure). A word without
+`=` starts the next command; `key=value` values are JSON when they parse, else strings; a `'{…}'` argument merges a
+JSON object into the params.
+
+```sh
+# headless: import, edit, export
+lightcraft-cli run --import ~/Pictures/a.dng develop.set control=light.exposure value=0.7 \
+    develop.auto app.export path=/tmp/a.jpg shortEdge=1080 colorSpace=displayP3
+# a persistent library: edits are saved, later invocations see them
+lightcraft-cli run --library ~/lc-lib --import ~/Pictures/shoot library.info
+lightcraft-cli run --library ~/lc-lib library.select ids=[3] develop.get
+# the running app (same commands, plus ui.* methods)
+lightcraft-cli run --connect ui.set view=detail ui.screenshot path=/tmp/ui.png
+# JSON lines from a file or stdin: {"command": id, "params": {…}} or {"method": "ui.inspect"}
+lightcraft-cli run --demo --script steps.jsonl --keep-going
+```
+
 ## Other CLI subcommands
 
 ```sh
+lightcraft-cli render in.dng -o out.tif --opt colorSpace=displayP3 --opt bitDepth=16 --opt percent=50
 lightcraft-cli render in.dng -o out.jpg --set light.exposure=0.5 --set light.contrast=20 --size 2048
 lightcraft-cli render in.jpg -o out.png --settings look.json --preset <presetId>
 lightcraft-cli commands [--json]   # the command registry

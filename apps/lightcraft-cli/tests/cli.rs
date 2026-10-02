@@ -164,3 +164,63 @@ fn snapshot_subcommand_renders_the_ui_headlessly() {
     let d = lightcraft_codecs::decode(&std::fs::read(&a).unwrap(), Default::default()).unwrap();
     assert_eq!((d.width, d.height), (640, 480));
 }
+
+fn run_cli(args: &[&str], stdin: Option<&str>) -> (bool, Vec<Value>, String) {
+    let mut child = Command::new(BIN).arg("run").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    if let Some(text) = stdin {
+        child.stdin.take().unwrap().write_all(text.as_bytes()).unwrap();
+    }
+    drop(child.stdin.take());
+    let o = child.wait_with_output().unwrap();
+    let lines = String::from_utf8_lossy(&o.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    (o.status.success(), lines, String::from_utf8_lossy(&o.stderr).to_string())
+}
+
+#[test]
+fn run_subcommand_chains_commands_and_persists_a_library() {
+    let input = tmp("run-in.png");
+    gradient_png(&input);
+    let lib = tmp("run-lib");
+    let _ = std::fs::remove_dir_all(&lib);
+    let out = tmp("run-out.jpg");
+    let (lib_s, in_s, out_s) = (lib.to_str().unwrap(), input.to_str().unwrap(), out.to_str().unwrap());
+    // import into a library, edit, export, in one invocation
+    let (ok, lines, err) = run_cli(
+        &[
+            "--library",
+            lib_s,
+            "--import",
+            in_s,
+            "develop.set",
+            "control=light.exposure",
+            "value=0.75",
+            "app.export",
+            &format!("path={out_s}"),
+            "width=60",
+        ],
+        None,
+    );
+    assert!(ok, "{err}");
+    assert_eq!(lines.len(), 2);
+    assert!(lines.iter().all(|l| l["ok"] == true), "{lines:?}");
+    assert_eq!(lines[1]["result"]["width"], 60);
+    assert!(out.exists());
+    // a second invocation sees the saved edit (same file: selected again, not re-imported)
+    let (ok, lines, err) = run_cli(&["--library", lib_s, "--import", in_s, "develop.get"], None);
+    assert!(ok, "{err}");
+    assert_eq!(lines[0]["result"]["light"]["exposure"], 0.75);
+    // JSON-lines script from stdin, a failing command stops the run with a non-zero status
+    let script = "{\"command\": \"library.info\"}\n# comment\n{\"command\": \"no.such\"}\n{\"command\": \"library.info\"}\n";
+    let (ok, lines, _) = run_cli(&["--demo", "--script", "-"], Some(script));
+    assert!(!ok);
+    assert_eq!(lines.len(), 2, "stopped after the failure: {lines:?}");
+    assert_eq!(lines[1]["ok"], false);
+    let (ok, lines, _) = run_cli(&["--demo", "--keep-going", "--script", "-"], Some(script));
+    assert!(!ok);
+    assert_eq!(lines.len(), 3);
+    // control-protocol methods work headlessly too; bad usage is reported
+    let (ok, lines, _) = run_cli(&["--demo", "engine.commands"], None);
+    assert!(ok && lines[0]["result"].as_array().is_some_and(|a| a.len() > 50));
+    let (ok, _, err) = run_cli(&["--demo", "x=1"], None);
+    assert!(!ok && err.contains("before any command"), "{err}");
+}

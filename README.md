@@ -244,7 +244,9 @@ lightcraft --control 7980 ~/Pictures/trip
   claude mcp add lightcraft -- "$PWD/target/release/lightcraft-cli" mcp ~/Pictures/shoot          # headless
   claude mcp add lightcraft-app -- "$PWD/target/release/lightcraft-cli" mcp --connect 127.0.0.1:7980  # live app
   ```
-- **Scriptable CLI:** `lightcraft-cli render in.dng -o out.jpg --set light.exposure=0.7 --preset …`.
+- **Scriptable CLI:** `lightcraft-cli run --import in.dng develop.set control=light.exposure value=0.7 app.export
+  path=out.jpg longEdge=2048` runs any chain of commands (headless, on a saved library, or against the running app)
+  and prints one JSON result per command; `lightcraft-cli render in.dng -o out.jpg --set light.exposure=0.7 --preset …`.
 - **Undo for everything**, including agent actions: a slider drag (or a scripted burst of updates) is one undo step.
 - **Every widget is addressable** (`ui.widgets`) and clickable by name, so agents operate the real UI, not a
   side door.
