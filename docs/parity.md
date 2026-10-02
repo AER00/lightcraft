@@ -26,11 +26,11 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | C. Views & navigation (VIEW) | 14 | 0 | 3 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
 | E. Metadata (META) | 2 | 2 | 2 | 0 | 2/2 (100%) | 0/2 (0%) |
-| F. Edit panel — global adjustments (EDIT) | 36 | 2 | 10 | 1 | 28/28 (100%) | 8/14 (57%) |
+| F. Edit panel — global adjustments (EDIT) | 40 | 2 | 6 | 1 | 28/28 (100%) | 12/14 (86%) |
 | G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 7 | 2 | 0 | 1 | 6/6 (100%) | 1/3 (33%) |
-| I. Remove / healing (REM) | 5 | 1 | 4 | 2 | 4/4 (100%) | 1/3 (33%) |
-| J. Red eye (EYE) | 0 | 0 | 2 | 0 | — | 0/1 (0%) |
+| I. Remove / healing (REM) | 6 | 1 | 3 | 2 | 4/4 (100%) | 2/3 (67%) |
+| J. Red eye (EYE) | 1 | 0 | 1 | 0 | — | 1/1 (100%) |
 | K. Masking (MASK) | 11 | 5 | 7 | 0 | 8/8 (100%) | 3/5 (60%) |
 | L. Presets (PRE) | 3 | 2 | 2 | 1 | 2/2 (100%) | 1/2 (50%) |
 | M. Versions & history (VER) | 3 | 1 | 1 | 0 | 1/1 (100%) | 2/3 (67%) |
@@ -46,9 +46,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 11 | 2 | 4 | 1 | 8/8 (100%) | 3/5 (60%) |
 | Y. Menus | 61 | 11 | 13 | 8 | 46/47 (98%) | 13/23 (57%) |
-| Z. Keyboard shortcuts (desktop) | 58 | 11 | 11 | 1 | 49/52 (94%) | 9/23 (39%) |
-| Lightroom Classic extras | 4 | 20 | 55 | 9 | — | 3/21 (14%) |
-| **Total** | 274 | 70 | 156 | 37 | 192/198 (97%) | 72/144 (50%) |
+| Z. Keyboard shortcuts (desktop) | 59 | 12 | 9 | 1 | 49/52 (94%) | 10/23 (43%) |
+| Lightroom Classic extras | 6 | 20 | 53 | 9 | — | 5/21 (24%) |
+| **Total** | 283 | 71 | 146 | 37 | 192/198 (97%) | 81/144 (56%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -210,8 +210,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-LIGHT-CURVE-PARAM | Parametric curve | P0 | ✅ | `ctl:curve.highlights`, `ctl:curve.lights`, `ctl:curve.darks`, `ctl:curve.shadows`, `ctl:curve.split*` | |
 | LR-EDIT-LIGHT-CURVE-POINT | Point curve | P0 | ✅ | `cmd:develop.curve`, `crates/ui-egui/src/panels/edit.rs` | no curve presets (linear / medium / strong) |
 | LR-EDIT-LIGHT-CURVE-RGB | Per-channel curves | P0 | ✅ | `cmd:develop.curve` (`channel`) | |
-| LR-EDIT-LIGHT-CURVE-REFINESAT | Curve saturation compensation | P1 | ⬜ | | |
-| LR-EDIT-LIGHT-CURVE-TAT | Drag-on-image curve adjust | P1 | ⬜ | | |
+| LR-EDIT-LIGHT-CURVE-REFINESAT | Curve saturation compensation | P1 | ✅ | `ctl:curve.refineSaturation` | |
+| LR-EDIT-LIGHT-CURVE-TAT | Drag-on-image curve adjust | P1 | ✅ | `cmd:develop.targeted` (`target: curve`) | |
 | LR-EDIT-COLOR-WB-PRESET | White-balance presets | P0 | ✅ | `cmd:develop.wb` | |
 | LR-EDIT-COLOR-WB-PICKER | White-balance eyedropper | P0 | ✅ | `cmd:tool.wbPicker`, `cmd:develop.wbPick` | no magnified loupe while picking |
 | LR-EDIT-COLOR-TEMP | Temperature | P0 | ✅ | `ctl:wb.temp` | relative scale for non-raw in the UI |
@@ -220,7 +220,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-COLOR-SATURATION | Saturation | P0 | ✅ | `ctl:color.saturation` | |
 | LR-EDIT-COLOR-MIXER-HSL | 8-band colour mixer | P0 | ✅ | `ctl:mixer.*` | no targeted (drag-on-image) mode |
 | LR-EDIT-COLOR-MIXER-BW | B&W mix | P1 | 🟡 | `ctl:bw.*` | no auto mix |
-| LR-EDIT-COLOR-POINTCOLOR | Point colour | P1 | ⬜ | | |
+| LR-EDIT-COLOR-POINTCOLOR | Point colour | P1 | ✅ | `cmd:pointColor.pick`, `cmd:pointColor.delete` | |
 | LR-EDIT-COLOR-GRADING | Colour grading wheels | P0 | ✅ | `ctl:grading.*` | |
 | LR-EDIT-EFFECTS-TEXTURE | Texture | P0 | ✅ | `ctl:effects.texture` | |
 | LR-EDIT-EFFECTS-CLARITY | Clarity | P0 | ✅ | `ctl:effects.clarity` | |
@@ -243,7 +243,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-GEOM-CONSTRAIN | Constrain crop | P1 | ✅ | `crates/ui-egui/src/panels/right.rs` (checkbox → `cmd:develop.merge`) | |
 | LR-EDIT-GEOM-GRID | Grid while transforming | P2 | ⬜ | | |
 | LR-EDIT-LENSBLUR | Lens blur | P2 | ⬜ | | settings field reserved, not rendered |
-| LR-EDIT-CALIB | Calibration [Classic] | P1 | ⬜ | | needed for XMP interop |
+| LR-EDIT-CALIB | Calibration [Classic] | P1 | ✅ | `ctl:calibration.*` | shadows tint, red/green/blue primary hue and saturation; read/written in XMP |
 | LR-EDIT-SECTION-TOGGLE | Section on/off | P1 | ✅ | `cmd:develop.sectionEnabled` | |
 | LR-EDIT-RESET | Reset all / section / slider | P0 | ✅ | `cmd:develop.reset`, `cmd:develop.resetSection`, `cmd:develop.resetControl`, `crates/ui-egui/src/widgets.rs` (double-click) | no "reset to open" |
 | LR-EDIT-SHOWORIG | Show original | P0 | ✅ | `cmd:view.showOriginal` | |
@@ -289,7 +289,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-REM-DETECT | Object detection for remove | P2 | ⬜ | | |
 | LR-REM-BRUSH-PARAMS | Brush size / feather / opacity | P0 | ✅ | `cmd:spot.add` (`size`, `feather`, `opacity`), `cmd:brush.smaller`, `cmd:brush.larger`, `cmd:brush.featherLess`, `cmd:brush.featherMore`, `crates/ui-egui/src/panels/right.rs` | Size / Feather / Opacity sliders (for new spots and the selected one); `[` `]` size, ⇧`[` ⇧`]` feather (also the Masking brush) |
 | LR-REM-SPOT-EDIT | Edit existing spots | P0 | ✅ | `cmd:spot.select`, `cmd:spot.update`, `cmd:spot.refreshSource`, `cmd:spot.delete` | click a pin to select, drag target or source, ⌫ deletes the selected spot, `/` picks another source; automatic sources are resolved when the spot is added |
-| LR-REM-VISUALIZE | Visualize spots | P1 | ⬜ | | |
+| LR-REM-VISUALIZE | Visualize spots | P1 | ✅ | `cmd:view.visualizeSpots` | |
 | LR-REM-PEOPLE | Remove people (generative) | OOS | 🚫 | | |
 | LR-REM-REFLECT | Remove reflections | P2 | ⬜ | | |
 | LR-REM-DUST | Dust detection | P2 | ⬜ | | |
@@ -299,7 +299,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-EYE-RED | Red-eye correction | P1 | ⬜ | `cmd:panel.redeye` | placeholder panel; settings field not rendered |
+| LR-EYE-RED | Red-eye correction | P1 | ✅ | `cmd:panel.redeye`, `cmd:redeye.add`, `cmd:redeye.delete`, `cmd:redeye.catchlight` | red eye and pet eye (with catchlight) |
 | LR-EYE-PET | Pet eye | P2 | ⬜ | | |
 
 ## K. Masking (MASK)
@@ -614,7 +614,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-PASTESELECTED | Paste selected — ⇧⌘V | P0 | ✅ | `cmd:dialog.pasteSettings` | |
 | KEY-PREFS | Settings — ⌘, | P0 | ✅ | `cmd:app.settings` | |
 | KEY-SEARCH | Search — ⌘F | P0 | ✅ | `cmd:view.focusSearch` | |
-| KEY-VISUALIZESPOTS | Visualize spots — A | P1 | ⬜ | | |
+| KEY-VISUALIZESPOTS | Visualize spots — A | P1 | ✅ | `cmd:view.visualizeSpots` | |
 | KEY-CYCLEOVERLAY | Cycle overlay — O | P0 | ✅ | `cmd:view.maskOverlay`, `cmd:view.maskOverlayMode`, `cmd:view.cropOverlay` | O toggles the mask overlay; ⇧O cycles mask overlay modes while masking, crop overlays elsewhere |
 | KEY-PHOTOSPANEL | Photos panel — P | P0 | 🟡 | `cmd:view.leftPanel` | bound to ⌘⇧L; P = pick |
 | KEY-LINEAR | Linear gradient — L | P0 | ✅ | `cmd:tool.linear` | |
@@ -624,7 +624,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-FILMSTRIP | Filmstrip — / | P0 | ✅ | `cmd:view.filmstrip` | |
 | KEY-SHOWORIGINAL | Show original — \ | P0 | ✅ | `cmd:view.showOriginal` | |
 | KEY-TOGGLEZOOM | Toggle zoom — Space | P0 | ✅ | `cmd:view.zoomToggle` | Space is a secondary binding (primary Z) |
-| KEY-MASKCOLOR | Cycle mask colour — ⇧O | P1 | ⬜ | | ⇧O cycles crop overlays |
+| KEY-MASKCOLOR | Cycle mask colour — ⇧O | P1 | 🟡 | `cmd:view.maskOverlayColor` | View → Cycle Mask Overlay Color; ⇧O cycles the overlay mode while masking (crop overlays elsewhere) |
 | KEY-EXPORTPREV | Export with previous — ⌘E | P0 | ✅ | `cmd:app.exportPrevious` | ⌘E (alias) and ⌥⇧⌘E (Classic) |
 | KEY-EXPORTDIALOG | Export dialog — ⇧E | P0 | ✅ | `cmd:dialog.export` | secondary binding (primary ⌘⇧E) |
 | KEY-ENTERFULLSCREEN | Window full screen — ⇧⌘F | P1 | ✅ | `cmd:view.enterFullScreen` | |
@@ -714,8 +714,8 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-DEV-SOFTPROOF | Soft proofing | P2 | ⬜ | | |
 | LRC-DEV-AUTOSYNC | Sync / auto sync / paste previous | P1 | 🟡 | `cmd:develop.sync` | no auto sync or paste-from-previous |
 | LRC-DEV-MATCHEXP | Match total exposures | P2 | ⬜ | | |
-| LRC-DEV-CALIB | Calibration panel | P1 | ⬜ | | |
-| LRC-DEV-TAT | Targeted adjustment tools | P1 | ⬜ | | |
+| LRC-DEV-CALIB | Calibration panel | P1 | ✅ | `ctl:calibration.*` | |
+| LRC-DEV-TAT | Targeted adjustment tools | P1 | ✅ | `cmd:develop.targeted` (`target`: curve / hue / sat / lum) | |
 | LRC-DEV-DEFAULTS | Per-camera raw defaults | P1 | ⬜ | | |
 | LRC-DEV-VIEWOPTIONS | Develop view options | P2 | ⬜ | | |
 | LRC-DEV-VIDEO | Video frame capture | P2 | ⬜ | | |
