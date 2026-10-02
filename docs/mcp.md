@@ -146,7 +146,7 @@ invalid params, -32002 resource not found).
 For agents that prefer a shell over an MCP session: run any chain of commands in one process and read one JSON
 line per command (`{"command", "ok", "result" | "error", "ms"}`; non-zero exit status on failure). A word without
 `=` starts the next command; `key=value` values are JSON when they parse, else strings; a `'{…}'` argument merges a
-JSON object into the params.
+JSON object into the params. Quote values with brackets or spaces for your shell (`'ids=[3,4]'`; zsh treats `[…]` as a glob).
 
 ```sh
 # headless: import, edit, export
