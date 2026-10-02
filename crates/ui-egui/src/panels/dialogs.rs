@@ -32,6 +32,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::AutoStack { .. } => "Auto-Stack by Capture Time",
         Dialog::CreatePreset { .. } => "Create Preset",
         Dialog::CopySettings { .. } => "Choose Edit Settings to Copy",
+        Dialog::PasteSettings { .. } => "Paste Selected Settings",
         Dialog::Export { .. } => "Export",
         Dialog::Merge { opts } => opts.title(),
         Dialog::Settings { .. } => "Settings",
@@ -233,6 +234,14 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     group_checklist(ui, "presetInclude", groups);
                 }
                 Dialog::CopySettings { groups } => group_checklist(ui, "copyGroup", groups),
+                Dialog::PasteSettings { groups } => {
+                    let n = app.session.targets(&json!({})).len();
+                    ui.label(
+                        egui::RichText::new(format!("Paste into {n} photo{} — only settings that were copied are pasted", if n == 1 { "" } else { "s" }))
+                            .color(t.text_dim),
+                    );
+                    group_checklist(ui, "pasteGroup", groups);
+                }
                 Dialog::Export { opts, full_size, resize, preset_name, limit_kb, dir } => {
                     use lightcraft_engine::export::{Anchor as P, ExportFormat as F, MetadataPolicy as M, SharpenAmount as A, SharpenFor as S};
                     let n = app.session.selection.ids.len().max(1);
@@ -589,6 +598,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }),
         ),
         Dialog::CopySettings { groups } => app.run("develop.copy", json!({"groups": groups})),
+        Dialog::PasteSettings { groups } => app.run("develop.paste", json!({"groups": groups})),
         Dialog::Export { opts, full_size, resize, limit_kb, dir, .. } => {
             let mut p = export_dialog_params(opts, *full_size, resize, *limit_kb);
             p["dir"] = json!(dir);

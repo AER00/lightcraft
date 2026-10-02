@@ -199,6 +199,9 @@ pub struct UiState {
     pub crop_overlay: CropOverlay,
     pub show_filenames: bool,
     pub search: String,
+    /// Focus the search field on the next frame (Edit → Find…).
+    #[serde(skip)]
+    pub focus_search: bool,
     /// Selected curve channel in the Curve flyout.
     pub curve_channel: String,
     /// Selected mixer mode: "hue" | "saturation" | "luminance" | "all".
@@ -329,6 +332,10 @@ pub enum Dialog {
     CopySettings {
         groups: Vec<String>,
     },
+    /// Paste Selected Settings: which of the copied groups to paste.
+    PasteSettings {
+        groups: Vec<String>,
+    },
     /// `resize` is used unless `full_size`; `limit_kb` 0 = no limit; `dir` empty = default export folder.
     Export {
         opts: lightcraft_engine::export::ExportOptions,
@@ -382,6 +389,7 @@ impl Default for UiState {
             crop_overlay: CropOverlay::Thirds,
             show_filenames: true,
             search: String::new(),
+            focus_search: false,
             curve_channel: "parametric".into(),
             mixer_mode: "hue".into(),
             grading_mode: "3way".into(),

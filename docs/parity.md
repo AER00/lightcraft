@@ -45,10 +45,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 4 | 1 | 3 | 3 | 1/1 (100%) | 3/4 (75%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 10 | 3 | 4 | 1 | 7/8 (88%) | 3/5 (60%) |
-| Y. Menus | 54 | 17 | 14 | 8 | 39/47 (83%) | 13/23 (57%) |
-| Z. Keyboard shortcuts (desktop) | 54 | 13 | 13 | 1 | 45/52 (87%) | 9/23 (39%) |
+| Y. Menus | 56 | 16 | 13 | 8 | 41/47 (87%) | 13/23 (57%) |
+| Z. Keyboard shortcuts (desktop) | 56 | 13 | 11 | 1 | 47/52 (90%) | 9/23 (39%) |
 | Lightroom Classic extras | 4 | 20 | 55 | 9 | — | 3/21 (14%) |
-| **Total** | 260 | 81 | 159 | 37 | 178/198 (90%) | 72/144 (50%) |
+| **Total** | 264 | 80 | 156 | 37 | 182/198 (92%) | 72/144 (50%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -85,9 +85,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Select None | ⌘⇧A (+ ⌘D) | ⌘D | — |
 
 **Still missing / broken:**
-- No command yet: F full-screen preview, ⇧⌘F window full screen, ⇧⌘V paste selected,
-  ⌘, settings, ⌘F focus search, ⌘G / ⇧⌘G stacks, A visualize spots, ⌃H / ⌃M merges, F1 help,
-  ⇧6–9 label + advance.
+- No command yet: F1 help, ⇧6–9 label + advance (verify the rest of the old list: full screen, settings, stacks,
+  visualize spots and merges have commands now).
 - `H` opens Remove; Lightroom also uses it (Classic) to hide pins — pins toggle from View → Show Mask Pins.
 - ⌘M / ⌘H / ⌘Q / ⌘W rely on the platform window defaults (unverified).
 
@@ -522,11 +521,11 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-EDIT-REDO | Redo | P0 | ✅ | `cmd:edit.redo` | |
 | MENU-EDIT-COPYPASTE | Copy / paste (edit settings) | P0 | ✅ | `cmd:develop.copy`, `cmd:develop.paste` | |
 | MENU-EDIT-CHOOSECOPY | Choose Edit Settings to Copy… | P0 | ✅ | `cmd:dialog.copySettings` | |
-| MENU-EDIT-PASTESELECTED | Paste Selected Settings | P0 | ⬜ | | |
+| MENU-EDIT-PASTESELECTED | Paste Selected Settings | P0 | ✅ | `cmd:dialog.pasteSettings`, `cmd:develop.paste` (`groups`) | checklist prefilled with the copied groups; only copied groups can be pasted |
 | MENU-EDIT-SELECTALL | Select All | P0 | ✅ | `cmd:library.selectAll` | |
 | MENU-EDIT-SELECTNONE | Select None | P0 | ✅ | `cmd:library.selectNone` | |
 | MENU-EDIT-SELECTBY | Select by flag / rating | P1 | ⬜ | | |
-| MENU-EDIT-FIND | Find… | P0 | 🟡 | `crates/ui-egui/src/panels/topbar.rs` | search field; no command to focus it |
+| MENU-EDIT-FIND | Find… | P0 | ✅ | `cmd:view.focusSearch`, `crates/ui-egui/src/panels/topbar.rs` | ⌘F focuses the search field |
 | MENU-VIEW-PHOTOGRID | Photo Grid | P0 | ✅ | `cmd:view.photoGrid` | |
 | MENU-VIEW-SQUAREGRID | Square Grid | P0 | ✅ | `cmd:view.squareGrid` | |
 | MENU-VIEW-DETAIL | Detail | P0 | ✅ | `cmd:view.detail` | |
@@ -580,7 +579,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-HELP-SHORTCUTS | Keyboard shortcuts | P1 | ✅ | `cmd:app.shortcuts` | |
 | MENU-HELP-FEEDBACK | Send feedback | P2 | ⬜ | | |
 | MENU-HELP-SYSINFO | System info | P2 | ⬜ | `cmd:library.info` | library info only |
-| MENU-CTX-GRID | Photo context menu | P0 | 🟡 | `crates/ui-egui/src/panels/grid.rs` (`context_menu`) | rate, flag, add to album, copy/paste, reset, rotate, delete; no label, remove from album, export, reveal, version, cover |
+| MENU-CTX-GRID | Photo context menu | P0 | 🟡 | `crates/ui-egui/src/panels/grid.rs` (`context_menu`) | rate, flag, label, add to / remove from album, rename, virtual copy, version, stack, copy / paste / paste selected, reset, merge, rotate, show in Finder, export / export with preset, delete; no set-as-album-cover |
 | MENU-CTX-DETAIL | Loupe context menu | P1 | 🟡 | `crates/ui-egui/src/panels/detail.rs` | same as grid; no zoom submenu |
 | MENU-CTX-ALBUM | Album / folder row menu | P0 | 🟡 | `crates/ui-egui/src/panels/left.rs` | add selected, rename, delete; no move-to, export album |
 | MENU-CTX-MASK | Mask / component menu | P0 | 🟡 | `crates/ui-egui/src/panels/masking.rs` | add/subtract component; rename/duplicate by command only |
@@ -612,9 +611,9 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-ZOOM | Zoom in / out — ⌘= / ⌘− | P0 | ✅ | `cmd:view.zoomIn`, `cmd:view.zoomOut` | |
 | KEY-SELECTALL | Select all — ⌘A | P0 | ✅ | `cmd:library.selectAll` | |
 | KEY-SELECTNONE | Select none — ⌘D | P0 | ✅ | `cmd:library.selectNone` | secondary binding (primary ⌘⇧A) |
-| KEY-PASTESELECTED | Paste selected — ⇧⌘V | P0 | ⬜ | | no command |
+| KEY-PASTESELECTED | Paste selected — ⇧⌘V | P0 | ✅ | `cmd:dialog.pasteSettings` | |
 | KEY-PREFS | Settings — ⌘, | P0 | ✅ | `cmd:app.settings` | |
-| KEY-SEARCH | Search — ⌘F | P0 | ⬜ | | no focus-search command |
+| KEY-SEARCH | Search — ⌘F | P0 | ✅ | `cmd:view.focusSearch` | |
 | KEY-VISUALIZESPOTS | Visualize spots — A | P1 | ⬜ | | |
 | KEY-CYCLEOVERLAY | Cycle overlay — O | P0 | ✅ | `cmd:view.maskOverlay`, `cmd:view.maskOverlayMode`, `cmd:view.cropOverlay` | O toggles the mask overlay; ⇧O cycles mask overlay modes while masking, crop overlays elsewhere |
 | KEY-PHOTOSPANEL | Photos panel — P | P0 | 🟡 | `cmd:view.leftPanel` | bound to ⌘⇧L; P = pick |

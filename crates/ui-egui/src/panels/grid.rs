@@ -467,11 +467,21 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
         }
     });
+    // in a (non-smart) album: take the selection out of it
+    if let lightcraft_engine::LibrarySource::Album(aid) = app.session.source
+        && app.session.catalog.album(aid).is_some_and(|a| !a.folder && !a.is_smart())
+        && ui.button("Remove from Album").clicked()
+    {
+        let _ = app.run("album.removePhotos", json!({"id": aid.0}));
+    }
     if ui.button("Rename…").clicked() {
         let _ = app.run("dialog.rename", json!({}));
     }
     if ui.button("Create Virtual Copy").clicked() {
         let _ = app.run("photo.virtualCopy", json!({}));
+    }
+    if ui.button("Create Version").clicked() {
+        let _ = app.run("version.create", json!({}));
     }
     ui.menu_button("Stack", |ui| {
         let stacked = app.session.catalog.stack_of(id).is_some();
@@ -499,6 +509,9 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if ui.add_enabled(app.session.clipboard.is_some(), egui::Button::new("Paste Edit Settings")).clicked() {
         let _ = app.run("develop.paste", json!({}));
     }
+    if ui.add_enabled(app.session.clipboard.is_some(), egui::Button::new("Paste Selected Settings…")).clicked() {
+        let _ = app.run("dialog.pasteSettings", json!({}));
+    }
     if ui.button("Reset Edits").clicked() {
         let _ = app.run("develop.reset", json!({}));
     }
@@ -517,6 +530,26 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if ui.button("Rotate Right").clicked() {
         let _ = app.run("photo.rotateRight", json!({}));
     }
+    ui.separator();
+    if ui.add_enabled(crate::menus::ui_enabled(app, "app.showInFinder"), egui::Button::new("Show in Finder")).clicked() {
+        let _ = app.run("app.showInFinder", json!({}));
+    }
+    if ui.button("Export…").clicked() {
+        let _ = app.run("dialog.export", json!({}));
+    }
+    ui.menu_button("Export with Preset", |ui| {
+        for (p, _) in app.session.all_export_presets() {
+            if ui.button(&p.name).clicked() {
+                match app.run("app.export", json!({"preset": p.name})) {
+                    Ok(r) => {
+                        let n = r["files"].as_array().map_or(0, Vec::len);
+                        app.toast(ui.ctx(), format!("Exported {n} photo{}", if n == 1 { "" } else { "s" }));
+                    }
+                    Err(e) => app.toast(ui.ctx(), e),
+                }
+            }
+        }
+    });
     ui.separator();
     if ui.button("Delete Photo").clicked() {
         let _ = app.run("photo.delete", json!({}));

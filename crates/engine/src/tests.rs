@@ -209,3 +209,22 @@ fn memory_report_counts_decoded_sources_and_renders() {
     assert_eq!(m.thumb_sources.count, 1);
     assert!(m.rendered.count >= 1, "the thumbnail render is cached");
 }
+
+#[test]
+fn paste_selected_settings_pastes_only_chosen_copied_groups() {
+    let mut s = demo();
+    let ids: Vec<_> = s.visible().iter().copied().take(2).collect();
+    s.execute("library.select", &json!({"ids": [ids[0].0]})).unwrap();
+    s.execute("develop.set", &json!({"values": {"light.exposure": 1.0, "color.vibrance": 30, "detail.sharpenAmount": 90}})).unwrap();
+    s.execute("develop.copy", &json!({"groups": ["light", "color"]})).unwrap();
+    // `detail` was not copied: asking for it pastes nothing for it
+    s.execute("develop.paste", &json!({"ids": [ids[1].0], "groups": ["light", "detail"]})).unwrap();
+    let d = s.develop_of(ids[1]).unwrap();
+    let base = lightcraft_develop::DevelopSettings::default();
+    assert_eq!(d.light.exposure, 1.0);
+    assert_eq!(d.color.vibrance, base.color.vibrance);
+    assert_ne!(d.detail.sharpen_amount, 90.0);
+    // without groups: everything copied
+    s.execute("develop.paste", &json!({"ids": [ids[1].0]})).unwrap();
+    assert_eq!(s.develop_of(ids[1]).unwrap().color.vibrance, 30.0);
+}

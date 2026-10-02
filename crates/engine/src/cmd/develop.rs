@@ -503,18 +503,32 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"groups": s.copy_groups}))
             }
         ),
-        cmd!("develop.paste", "Paste Edit Settings", ["Edit"], Some("Cmd+V"), "{ids?}", has_clipboard, |s, p| {
-            let clip = s.clipboard.clone().unwrap_or_default();
-            let ids = s.targets(p);
-            let ops = ids
-                .iter()
-                .filter_map(|id| s.develop_of(*id).map(|d| (*id, d)))
-                .filter_map(|(id, d)| s.develop_op(id, lightcraft_develop::apply_partial(&d, &clip, 1.0), "Paste Settings"))
-                .collect::<Vec<_>>();
-            let n = ops.len();
-            s.commit("Paste Settings", Op::Batch { ops })?;
-            Ok(json!({"changed": n}))
-        }),
+        cmd!(
+            "develop.paste",
+            "Paste Edit Settings",
+            ["Edit"],
+            Some("Cmd+V"),
+            "{ids?, groups?: [settingsGroup] (paste only these of the copied groups)}",
+            has_clipboard,
+            |s, p| {
+                let mut clip = s.clipboard.clone().unwrap_or_default();
+                if let Some(only) = groups_param(p) {
+                    // the clipboard holds whole groups: rebuild it with just the chosen (copied) ones
+                    let only: Vec<_> = only.into_iter().filter(|g| s.copy_groups.contains(g)).collect();
+                    let full = lightcraft_develop::apply_partial(&DevelopSettings::default(), &clip, 1.0);
+                    clip = lightcraft_develop::extract_groups(&full, &only);
+                }
+                let ids = s.targets(p);
+                let ops = ids
+                    .iter()
+                    .filter_map(|id| s.develop_of(*id).map(|d| (*id, d)))
+                    .filter_map(|(id, d)| s.develop_op(id, lightcraft_develop::apply_partial(&d, &clip, 1.0), "Paste Settings"))
+                    .collect::<Vec<_>>();
+                let n = ops.len();
+                s.commit("Paste Settings", Op::Batch { ops })?;
+                Ok(json!({"changed": n}))
+            }
+        ),
         cmd!(
             "develop.sync",
             "Sync Settings",

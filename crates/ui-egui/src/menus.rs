@@ -79,6 +79,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
     ("dialog.autoStack", "Auto-Stack by Capture Time…", None, "Photo>Stack"),
     ("dialog.copySettings", "Choose Edit Settings to Copy…", Some("Cmd+Shift+C"), "Edit"),
+    ("dialog.pasteSettings", "Paste Selected Settings…", Some("Cmd+Shift+V"), "Edit"),
+    ("view.focusSearch", "Find…", Some("Cmd+F"), "Edit"),
     ("dialog.export", "Export…", Some("Cmd+Shift+E"), "File"),
     ("dialog.mergeHdr", "HDR…", Some("Ctrl+H"), "Photo>Photo Merge"),
     ("dialog.mergePanorama", "Panorama…", Some("Ctrl+M"), "Photo>Photo Merge"),
@@ -511,6 +513,17 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.dialog = Some(Dialog::create_preset());
             Ok(Value::Null)
         }
+        "dialog.pasteSettings" => {
+            let groups =
+                app.session.copy_groups.iter().filter_map(|g| serde_json::to_value(g).ok().and_then(|v| v.as_str().map(str::to_string))).collect();
+            app.ui.dialog = Some(Dialog::PasteSettings { groups });
+            Ok(Value::Null)
+        }
+        "view.focusSearch" => {
+            // the search field lives in the top bar of the library and detail views alike
+            app.ui.focus_search = true;
+            Ok(Value::Null)
+        }
         "dialog.copySettings" => {
             let groups =
                 app.session.copy_groups.iter().filter_map(|g| serde_json::to_value(g).ok().and_then(|v| v.as_str().map(str::to_string))).collect();
@@ -625,6 +638,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
             app.session.active().is_some()
         }
         "app.exportPrevious" => app.session.active().is_some() && app.session.last_export.is_some(),
+        "dialog.pasteSettings" => app.session.active().is_some() && app.session.clipboard.is_some(),
         "app.showInFinder" => {
             app.services.reveal.is_some()
                 && app

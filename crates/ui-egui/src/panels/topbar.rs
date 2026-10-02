@@ -43,6 +43,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             // search field (centred on the window)
             let sr = Rect::from_center_size(pos2(full.center().x, full.center().y), vec2(sw, 28.0));
             let id = egui::Id::new("search-field");
+            if std::mem::take(&mut app.ui.focus_search) {
+                ui.memory_mut(|m| m.request_focus(id));
+            }
             let focused = ui.memory(|m| m.has_focus(id));
             ui.painter().rect(
                 sr,

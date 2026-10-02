@@ -550,6 +550,38 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// ⇧⌘V opens Paste Selected Settings (prefilled with the copied groups); unchecking a group
+    /// leaves it alone. ⌘F puts typing into the search field.
+    #[test]
+    fn paste_selected_settings_and_find() {
+        let mut h = demo([1200.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let ids: Vec<u64> = h.app.session.visible_cloned().iter().take(2).map(|p| p.0).collect();
+        let exec = |h: &mut Headless, c: &str, p: Value| h.request("engine.execute", json!({"command": c, "params": p}), t);
+        exec(&mut h, "library.select", json!({"ids": [ids[0]]}));
+        exec(&mut h, "develop.set", json!({"values": {"light.exposure": 1.0, "color.vibrance": 30}}));
+        exec(&mut h, "develop.copy", json!({"groups": ["light", "color"]}));
+        exec(&mut h, "library.select", json!({"ids": [ids[1]]}));
+        h.request("ui.key", json!({"key": "V", "cmd": true, "shift": true}), t);
+        h.settle(SETTLE);
+        let Some(crate::state::Dialog::PasteSettings { groups }) = &h.app.ui.dialog else { panic!("dialog not open: {:?}", h.app.ui.dialog) };
+        assert_eq!(groups, &["light", "color"]);
+        let r = h.request("ui.clickWidget", json!({"id": "pasteGroup:color"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert_eq!(h.request("ui.dialog.confirm", json!({}), t)["ok"], true);
+        let d = h.app.session.develop_of(lightcraft_catalog::PhotoId(ids[1])).unwrap();
+        assert_eq!((d.light.exposure, d.color.vibrance), (1.0, 0.0));
+        // ⌘F, then typing filters the grid by text
+        h.request("ui.set", json!({"view": "grid"}), t);
+        h.request("ui.key", json!({"key": "F", "cmd": true}), t);
+        h.settle(SETTLE);
+        h.request("ui.text", json!({"text": "zz-no-such-photo"}), t);
+        h.settle(SETTLE);
+        assert_eq!(h.app.ui.search, "zz-no-such-photo");
+        assert!(h.app.session.visible_cloned().is_empty());
+    }
+
     /// Info panel → Edit Capture Time…: a time-zone shift moves the selected photos.
     #[test]
     fn capture_time_dialog_shifts_time_zone() {
