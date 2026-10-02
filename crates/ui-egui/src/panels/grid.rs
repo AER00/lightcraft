@@ -377,7 +377,34 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         let _ = app.run("library.select", json!({"ids": [id.0]}));
         let _ = app.run("view.detail", json!({}));
     }
+    // drag the selection (this photo joins it, or replaces it when it wasn't selected)
+    if resp.drag_started() {
+        if !app.session.selection.contains(id) {
+            let _ = app.run("library.select", json!({"ids": [id.0]}));
+        }
+        app.ui.dragging_photos = Some(app.session.selection.ids.iter().map(|p| p.0).collect());
+    }
     resp.context_menu(|ui| context_menu(app, ui, id));
+}
+
+/// While photos are dragged: a badge at the pointer; the drag ends when the button is up
+/// (drop targets act on the release frame, before this runs).
+pub fn drag_feedback(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let Some(ids) = &app.ui.dragging_photos else { return };
+    let (released, down, pos) = ctx.input(|i| (i.pointer.any_released(), i.pointer.any_down(), i.pointer.latest_pos()));
+    if released || !down {
+        app.ui.dragging_photos = None;
+        return;
+    }
+    let Some(pos) = pos else { return };
+    let t = Tokens::get(ctx);
+    let n = ids.len();
+    ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+    egui::Area::new(egui::Id::new("drag-photos")).order(egui::Order::Tooltip).interactable(false).fixed_pos(pos + vec2(14.0, 10.0)).show(ctx, |ui| {
+        egui::Frame::NONE.fill(t.accent).corner_radius(10.0).inner_margin(egui::Margin::symmetric(9, 3)).show(ui, |ui| {
+            ui.label(egui::RichText::new(format!("{n} photo{}", if n == 1 { "" } else { "s" })).color(Color32::WHITE).font(t.semibold(12.0)));
+        });
+    });
 }
 
 pub use super::filterbar::label_color;

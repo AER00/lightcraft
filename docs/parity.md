@@ -44,11 +44,11 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 11 | 2 | 4 | 1 | 8/8 (100%) | 3/5 (60%) |
+| X. Cross-cutting behaviours (BEHAV) | 12 | 1 | 4 | 1 | 8/8 (100%) | 4/5 (80%) |
 | Y. Menus | 65 | 9 | 11 | 8 | 46/47 (98%) | 17/23 (74%) |
 | Z. Keyboard shortcuts (desktop) | 61 | 12 | 7 | 1 | 49/52 (94%) | 12/23 (52%) |
 | Lightroom Classic extras | 7 | 19 | 53 | 9 | — | 6/21 (29%) |
-| **Total** | 295 | 64 | 141 | 37 | 192/198 (97%) | 93/144 (65%) |
+| **Total** | 296 | 63 | 141 | 37 | 192/198 (97%) | 94/144 (65%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -477,7 +477,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-BG-TASKS | Background tasks | P0 | ✅ | `crates/preview/src/lib.rs` (`JobPool`), `crates/ui-egui/src/export_task.rs`, `crates/ui-egui/src/import.rs` | renders off the UI thread; exports started from the UI run on a worker thread with a progress panel and Cancel (`ui.inspect` → `export`); imports show a progress window. No combined activity centre |
 | LR-BEHAV-OFFLINE | Offline editing | P1 | ✅ | | local-first: everything works offline |
 | LR-BEHAV-GPU | GPU acceleration | P0 | ✅ | `crates/gpu/src/render.rs`, `cmd:app.gpu`, `docs/gpu-pipeline.md` | CPU fallback |
-| LR-BEHAV-DRAGDROP | Drag and drop | P1 | 🟡 | `crates/ui-egui/src/lib.rs` | files → app only; no photos → albums |
+| LR-BEHAV-DRAGDROP | Drag and drop | P1 | ✅ | `crates/ui-egui/src/lib.rs`, `crates/ui-egui/src/panels/grid.rs` (`drag_feedback`), `crates/ui-egui/src/panels/left.rs` (`drop_target`) | files → app (import); grid photos → an album row (adds the selection, with a count badge while dragging) |
 | LR-BEHAV-TOAST | Toast notifications | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` | |
 | LR-BEHAV-EMPTY-STATES | Empty states | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`empty_message`) | |
 | LR-BEHAV-TOOLTIPS | Tooltips with shortcuts | P0 | ✅ | `crates/ui-egui/src/panels/bottombar.rs` | |

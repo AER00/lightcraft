@@ -591,6 +591,36 @@ mod tests {
         assert!(last["files"][0]["width"].as_u64().is_some_and(|w| w <= 64));
     }
 
+    /// Dragging grid photos onto an album row adds them to the album.
+    #[test]
+    fn drag_photos_onto_an_album() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.request("engine.execute", json!({"command": "view.leftPanel"}), t);
+        let r = h.request("engine.execute", json!({"command": "album.create", "params": {"name": "Dropped"}}), t);
+        let album = r["result"]["id"].as_u64().unwrap_or_else(|| panic!("{r}"));
+        h.settle(SETTLE);
+        let rect = |h: &mut Headless, id: &str| {
+            let w = h.request("ui.widgets", json!({"filter": id}), t);
+            let r = w["result"]
+                .as_array()
+                .and_then(|a| a.iter().find(|x| x["id"] == id))
+                .map(|x| x["rect"].clone())
+                .unwrap_or_else(|| panic!("{id}: {w}"));
+            let f = |i: usize| r[i].as_f64().unwrap();
+            (f(0) + f(2) / 2.0, f(1) + f(3) / 2.0)
+        };
+        let first = h.app.session.visible_cloned()[0].0;
+        let (x, y) = rect(&mut h, &format!("thumb:{first}"));
+        let (tx, ty) = rect(&mut h, &format!("source:album:{album}"));
+        let r = h.request("ui.drag", json!({"x": x, "y": y, "toX": tx, "toY": ty, "steps": 12}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        let members = h.app.session.catalog.album(lightcraft_catalog::AlbumId(album)).unwrap().photos.clone();
+        assert_eq!(members, vec![lightcraft_catalog::PhotoId(first)]);
+        assert!(h.app.ui.dragging_photos.is_none(), "the drag ended");
+    }
+
     /// While cropping: O cycles the guides, ⇧O mirrors them, A locks / unlocks the aspect.
     #[test]
     fn crop_keys() {

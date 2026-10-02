@@ -179,6 +179,9 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
             let icon = if a.is_smart() { Icon::SmartAlbum } else { Icon::Album };
             let n = app.session.catalog.album_count(a.id);
             let mut resp = row(app, ui, &format!("album:{}", a.id.0), icon, &a.name, Some(n), sel, indent);
+            if !a.is_smart() {
+                drop_target(app, ui, &resp, a);
+            }
             if let Some(rules) = &a.smart {
                 resp = resp.on_hover_text(format!("Smart album: {}", rules.describe()));
             }
@@ -187,6 +190,26 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
             }
             folder_menu(app, &resp, a);
         }
+    }
+}
+
+/// An album row while photos are dragged from the grid: highlighted under the pointer; a
+/// release there adds them.
+fn drop_target(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, a: &Album) {
+    let Some(ids) = app.ui.dragging_photos.clone() else { return };
+    let over = ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| resp.rect.contains(p));
+    if !over {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    ui.painter().rect_stroke(resp.rect.shrink2(vec2(8.0, 1.0)), 4.0, egui::Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
+    if ui.input(|i| i.pointer.any_released()) {
+        let n = ids.len();
+        match app.run("album.addPhotos", json!({"id": a.id.0, "ids": ids})) {
+            Ok(_) => app.toast(ui.ctx(), format!("Added {n} photo{} to “{}”", if n == 1 { "" } else { "s" }, a.name)),
+            Err(e) => app.toast(ui.ctx(), e),
+        }
+        app.ui.dragging_photos = None;
     }
 }
 

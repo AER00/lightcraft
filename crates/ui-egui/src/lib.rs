@@ -470,6 +470,7 @@ impl LightcraftApp {
         panels::dialogs::show(self, &ctx);
         import::progress(self, &ctx);
         export_task::poll(self, &ctx);
+        panels::grid::drag_feedback(self, &ctx);
         panels::toast(self, &ctx);
         self.widgets = widgets::take_registry(&ctx);
         self.perf.frame_ms = now_ms() - t0;
