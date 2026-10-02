@@ -87,6 +87,44 @@ fn flip(s: &mut Session, p: &Value, horizontal: bool) -> Result<Value> {
     Ok(json!({"changed": n}))
 }
 
+/// `library.selectBy`: select the photos in view that match every given criterion.
+fn select_by(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "library.selectBy";
+    let flag: Option<lightcraft_catalog::Flag> = match p.get("flag") {
+        Some(v) => Some(serde_json::from_value(v.clone()).map_err(|_| bad(C, "flag is pick, reject or none"))?),
+        None => None,
+    };
+    let rating = p.get("rating").and_then(Value::as_u64).map(|r| r.min(5) as u8);
+    let op = p.get("ratingOp").and_then(Value::as_str).unwrap_or("gte");
+    let label: Option<Option<lightcraft_catalog::ColorLabel>> = match p.get("label").and_then(Value::as_str) {
+        Some("none") => Some(None),
+        Some(l) => Some(Some(serde_json::from_value(json!(l)).map_err(|_| bad(C, format!("unknown label `{l}`")))?)),
+        None => None,
+    };
+    if flag.is_none() && rating.is_none() && label.is_none() {
+        return Err(bad(C, "give flag, rating and/or label"));
+    }
+    let matches = |ph: &lightcraft_catalog::Photo| {
+        flag.is_none_or(|f| ph.flag == f)
+            && rating.is_none_or(|r| match op {
+                "eq" => ph.rating == r,
+                "lte" => ph.rating <= r,
+                _ => ph.rating >= r,
+            })
+            && label.is_none_or(|l| ph.label == l)
+    };
+    let mut ids: Vec<PhotoId> = if bool_or(p, "add", false) { s.selection.ids.clone() } else { Vec::new() };
+    for id in s.visible_cloned() {
+        if !ids.contains(&id) && s.catalog.photo(id).is_some_and(|ph| matches(ph)) {
+            ids.push(id);
+        }
+    }
+    let active = s.selection.active.filter(|a| ids.contains(a)).or(ids.first().copied());
+    let n = ids.len();
+    s.selection = Selection { ids, active };
+    Ok(json!({"selected": n}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         // ---- view source / filter / sort
@@ -202,6 +240,15 @@ pub fn specs() -> Vec<CommandSpec> {
             s.selection = Selection { active: s.selection.active.filter(|a| vis.contains(a)).or(vis.first().copied()), ids: vis };
             Ok(json!({"selected": s.selection.ids.len()}))
         }),
+        cmd!(
+            "library.selectBy",
+            "Select by Flag, Rating or Label",
+            [],
+            None,
+            "{flag?: pick|reject|none, rating?: 0..5, ratingOp?: gte|eq|lte (default gte), label?: red|…|none, add?: bool (extend the selection)} — among the photos in view",
+            always,
+            select_by
+        ),
         cmd!("library.selectNone", "Deselect All", ["Edit"], Some("Cmd+Shift+A"), "{}", always, |s, _| {
             let a = s.selection.active;
             s.selection = Selection { ids: a.into_iter().collect(), active: a };

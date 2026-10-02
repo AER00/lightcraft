@@ -18,7 +18,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     });
     let mut close = false;
     let mut confirm = false;
-    let title = match &dlg {
+    let title: String = match &dlg {
+        Dialog::TextPrompt { title, .. } => title.as_str(),
         Dialog::NewAlbum { folder: true, .. } => "Create Folder",
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
@@ -39,7 +40,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::ConfirmDelete { .. } => "Delete Photos",
         Dialog::About => "About LightCraft",
         Dialog::Shortcuts => "Keyboard Shortcuts",
-    };
+    }
+    .to_string();
     let frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::symmetric(16, 12));
     let shown = egui::Window::new(title)
         .collapsible(false)
@@ -219,6 +221,13 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                             }
                         }
                     });
+                }
+                Dialog::TextPrompt { value, hint, .. } => {
+                    let r = ui.add(egui::TextEdit::singleline(value).hint_text(hint.as_str()).desired_width(f32::INFINITY));
+                    r.request_focus();
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        confirm = true;
+                    }
                 }
                 Dialog::NewAlbum { name, .. } | Dialog::RenameAlbum { name, .. } => {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text("Name").desired_width(f32::INFINITY));
@@ -569,6 +578,11 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
     match dlg {
         Dialog::NewAlbum { name, folder } => app.run("album.create", json!({"name": name, "folder": folder, "addSelected": !folder})),
         Dialog::RenameAlbum { id, name } => app.run("album.rename", json!({"id": id, "name": name})),
+        Dialog::TextPrompt { value, command, params, key, .. } => {
+            let mut p = params.clone();
+            p[key.as_str()] = json!(value.trim());
+            app.run(command, p)
+        }
         Dialog::CaptureTime { mode, time, days, hours, minutes, zone } => app.run(
             "photo.setCaptureTime",
             match mode.as_str() {
@@ -610,6 +624,12 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         Dialog::ConfirmDelete { .. } => app.run("photo.delete", json!({})),
         Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. } => Ok(serde_json::Value::Null),
     }
+}
+
+/// Open a one-field dialog that runs `command` with `params` + `{key: typed value}`.
+pub fn prompt(app: &mut LightcraftApp, title: &str, hint: &str, value: &str, command: &str, params: serde_json::Value, key: &str) {
+    app.ui.dialog =
+        Some(Dialog::TextPrompt { title: title.into(), hint: hint.into(), value: value.into(), command: command.into(), params, key: key.into() });
 }
 
 /// The Export dialog's choices as `app.export` params (without the folder).

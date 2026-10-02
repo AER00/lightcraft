@@ -148,10 +148,54 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                             ui.data_mut(|d| d.insert_temp(amt_id, (pid.clone(), 100.0)));
                             app.toast(ui.ctx(), format!("Preset: {name}"));
                         }
+                        let (builtin, group) = (pr.builtin, pr.group.clone());
                         resp.context_menu(|ui| {
                             if ui.button(if fav { "Remove from Favorites" } else { "Add to Favorites" }).clicked() {
                                 let _ = app.run("preset.favorite", json!({"id": pid}));
                             }
+                            if builtin {
+                                return;
+                            }
+                            ui.separator();
+                            if ui.add_enabled(app.session.active().is_some(), egui::Button::new("Update with Current Settings")).clicked() {
+                                match app.run("preset.update", json!({"id": pid})) {
+                                    Ok(_) => app.toast(ui.ctx(), format!("Updated “{name}”")),
+                                    Err(e) => app.toast(ui.ctx(), e),
+                                }
+                            }
+                            if ui.button("Rename…").clicked() {
+                                crate::panels::dialogs::prompt(
+                                    app,
+                                    "Rename Preset",
+                                    "Preset name",
+                                    &name,
+                                    "preset.rename",
+                                    json!({"id": pid}),
+                                    "name",
+                                );
+                            }
+                            ui.menu_button("Move to Group", |ui| {
+                                let mut groups: Vec<String> = app.session.presets.iter().filter(|p| !p.builtin).map(|p| p.group.clone()).collect();
+                                groups.sort();
+                                groups.dedup();
+                                for g in groups.iter().filter(|g| **g != group) {
+                                    if ui.button(g).clicked() {
+                                        let _ = app.run("preset.move", json!({"id": pid, "group": g}));
+                                    }
+                                }
+                                if ui.button("New Group…").clicked() {
+                                    crate::panels::dialogs::prompt(
+                                        app,
+                                        "Move Preset to New Group",
+                                        "Group name",
+                                        "",
+                                        "preset.move",
+                                        json!({"id": pid}),
+                                        "group",
+                                    );
+                                }
+                            });
+                            ui.separator();
                             if ui.button("Delete Preset").clicked() {
                                 let _ = app.run("preset.delete", json!({"id": pid}));
                             }

@@ -295,3 +295,47 @@ fn before_is_the_import_state_and_can_be_set_copied_and_swapped() {
     let k2 = s.render_job(id, 64, 64, true, true).unwrap().key;
     assert_ne!(k1, k2);
 }
+
+#[test]
+fn presets_versions_history_and_select_by() {
+    let mut s = demo();
+    s.execute("develop.set", &json!({"values": {"light.exposure": 0.5}})).unwrap();
+    let pid = s.execute("preset.create", &json!({"name": "Warm", "groups": ["light"]})).unwrap()["id"].as_str().unwrap().to_string();
+    let preset = |s: &Session| s.presets.iter().find(|p| p.id == pid).cloned().unwrap();
+    s.execute("preset.rename", &json!({"id": pid, "name": "Warmer"})).unwrap();
+    s.execute("preset.move", &json!({"id": pid, "group": "Mine"})).unwrap();
+    assert_eq!((preset(&s).name.as_str(), preset(&s).group.as_str()), ("Warmer", "Mine"));
+    // update keeps the preset's groups and takes the current values
+    s.execute("develop.set", &json!({"values": {"light.exposure": 1.25, "color.vibrance": 40}})).unwrap();
+    s.execute("preset.update", &json!({"id": pid})).unwrap();
+    assert_eq!(preset(&s).settings["light"]["exposure"], 1.25);
+    assert!(preset(&s).settings.get("color").is_none(), "only the groups it already had");
+    let builtin = s.presets.iter().find(|p| p.builtin).unwrap().id.clone();
+    assert!(s.execute("preset.rename", &json!({"id": builtin, "name": "x"})).is_err());
+    // versions
+    s.execute("version.create", &json!({"name": "A"})).unwrap();
+    s.execute("version.rename", &json!({"index": 0, "name": "First"})).unwrap();
+    s.execute("develop.set", &json!({"values": {"light.exposure": -2.0}})).unwrap();
+    s.execute("version.update", &json!({"index": 0})).unwrap();
+    let v = s.catalog.photo(s.active().unwrap()).unwrap().versions[0].clone();
+    assert_eq!((v.name.as_str(), v.settings.light.exposure), ("First", -2.0));
+    // history
+    s.execute("history.clear", &json!({})).unwrap();
+    let h = &s.catalog.photo(s.active().unwrap()).unwrap().history;
+    assert_eq!(h.len(), 1);
+    assert_eq!(h[0].settings.light.exposure, -2.0);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(s.catalog.photo(s.active().unwrap()).unwrap().history.len() > 1, "undoable");
+    // select by: the demo has rated and picked photos
+    let vis = s.visible_cloned();
+    let picks = vis.iter().filter(|id| s.catalog.photo(**id).unwrap().flag == lightcraft_catalog::Flag::Pick).count();
+    let r = s.execute("library.selectBy", &json!({"flag": "pick"})).unwrap();
+    assert_eq!(r["selected"].as_u64(), Some(picks as u64));
+    assert!(picks > 0);
+    let four = vis.iter().filter(|id| s.catalog.photo(**id).unwrap().rating >= 4).count();
+    assert_eq!(s.execute("library.selectBy", &json!({"rating": 4})).unwrap()["selected"].as_u64(), Some(four as u64));
+    let r = s.execute("library.selectBy", &json!({"rating": 0, "ratingOp": "eq", "add": true})).unwrap();
+    assert!(r["selected"].as_u64().unwrap() >= four as u64);
+    assert!(s.execute("library.selectBy", &json!({})).is_err());
+    assert!(s.execute("library.selectBy", &json!({"label": "mauve"})).is_err());
+}

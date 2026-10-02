@@ -86,6 +86,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "---",
             "library.selectAll",
             "library.selectNone",
+            "@Select by",
             "---",
             "view.focusSearch",
             "---",
@@ -341,6 +342,23 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 ("No Date Groups", GroupBy::None, "none"),
             ];
             v.extend(groups.into_iter().map(|(label, g, k)| item("library.sort", json!({"group": k}), label, None, true, Some(cur.group == g))));
+            v
+        }
+        "Select by" => {
+            let mut v: Vec<MenuNode> = [("pick", "Picks"), ("reject", "Rejects"), ("none", "Unflagged")]
+                .into_iter()
+                .map(|(f, label)| item("library.selectBy", json!({"flag": f}), label, None, true, None))
+                .collect();
+            v.push(MenuNode::Separator);
+            v.extend(
+                (1..=5u8).map(|r| item("library.selectBy", json!({"rating": r}), format!("{} and higher", "★".repeat(r as usize)), None, true, None)),
+            );
+            v.push(item("library.selectBy", json!({"rating": 0, "ratingOp": "eq"}), "Unrated", None, true, None));
+            v.push(MenuNode::Separator);
+            v.extend(lightcraft_catalog::ColorLabel::ALL.iter().map(|l| {
+                let name = format!("{l:?}");
+                item("library.selectBy", json!({"label": name.to_lowercase()}), format!("{name} Label"), None, true, None)
+            }));
             v
         }
         "Export with Preset" => {
@@ -677,6 +695,30 @@ mod tests {
         // remembered (expanded) for Export with Previous, folder included
         let last = app.session.last_export.clone().unwrap();
         assert_eq!((last["format"].as_str(), last["width"].as_u64(), last.get("preset")), (Some("png"), Some(40), None));
+    }
+
+    #[test]
+    fn select_by_submenu_and_text_prompt() {
+        let mut app = app();
+        let bar = menu_bar(&app);
+        let edit = &bar.iter().find(|(t, _)| t == "Edit").unwrap().1;
+        let Some(MenuNode::Submenu { children, .. }) = edit.iter().find(|n| matches!(n, MenuNode::Submenu { label, .. } if label == "Select by"))
+        else {
+            panic!("no Select by submenu")
+        };
+        let Some(MenuNode::Item { id, params, .. }) = children.first() else { panic!() };
+        let r = run_item(&mut app, id, params.clone()).unwrap();
+        assert!(r["selected"].as_u64().is_some_and(|n| n > 0), "{r}");
+        // the one-field prompt runs its command with the typed value
+        app.session.execute("version.create", &json!({"name": "A"})).unwrap();
+        crate::panels::dialogs::prompt(&mut app, "Rename Version", "Version name", "A", "version.rename", json!({"index": 0}), "name");
+        if let Some(crate::state::Dialog::TextPrompt { value, .. }) = &mut app.ui.dialog {
+            *value = "  Final  ".into();
+        }
+        let d = app.ui.dialog.take().unwrap();
+        crate::panels::dialogs::confirm_dialog(&mut app, &d).unwrap();
+        let id = app.session.active().unwrap();
+        assert_eq!(app.session.catalog.photo(id).unwrap().versions[0].name, "Final");
     }
 
     #[test]

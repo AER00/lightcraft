@@ -32,7 +32,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | I. Remove / healing (REM) | 6 | 1 | 3 | 2 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 1 | 0 | 1 | 0 | — | 1/1 (100%) |
 | K. Masking (MASK) | 11 | 5 | 7 | 0 | 8/8 (100%) | 3/5 (60%) |
-| L. Presets (PRE) | 3 | 2 | 2 | 1 | 2/2 (100%) | 1/2 (50%) |
+| L. Presets (PRE) | 4 | 1 | 2 | 1 | 2/2 (100%) | 2/2 (100%) |
 | M. Versions & history (VER) | 3 | 1 | 1 | 0 | 1/1 (100%) | 2/3 (67%) |
 | N. Copy / paste / sync (SYNC) | 4 | 0 | 1 | 0 | 3/3 (100%) | 1/1 (100%) |
 | O. Merge (MERGE) | 3 | 0 | 1 | 0 | — | — |
@@ -45,10 +45,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 4 | 1 | 3 | 3 | 1/1 (100%) | 3/4 (75%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 11 | 2 | 4 | 1 | 8/8 (100%) | 3/5 (60%) |
-| Y. Menus | 61 | 11 | 13 | 8 | 46/47 (98%) | 13/23 (57%) |
+| Y. Menus | 65 | 9 | 11 | 8 | 46/47 (98%) | 17/23 (74%) |
 | Z. Keyboard shortcuts (desktop) | 59 | 12 | 9 | 1 | 49/52 (94%) | 10/23 (43%) |
-| Lightroom Classic extras | 6 | 20 | 53 | 9 | — | 5/21 (24%) |
-| **Total** | 283 | 71 | 146 | 37 | 192/198 (97%) | 81/144 (56%) |
+| Lightroom Classic extras | 7 | 19 | 53 | 9 | — | 6/21 (29%) |
+| **Total** | 289 | 67 | 144 | 37 | 192/198 (97%) | 87/144 (60%) |
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -336,7 +336,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 |---|---|---|---|---|---|
 | LR-PRE-PANEL | Presets panel | P0 | ✅ | `cmd:panel.presets`, `cmd:preset.apply`, `crates/ui-egui/src/panels/presets.rs` | grouped list with amount; resting on a preset previews it in the loupe (no history entry); optional live thumbnails (⋯ → Show Thumbnails) |
 | LR-PRE-CREATE | Create preset | P0 | ✅ | `cmd:dialog.createPreset`, `cmd:preset.create` (`groups`) | name, group and a checklist of settings groups (crop, masks, remove, red eye off by default; All / None) |
-| LR-PRE-MANAGE | Manage presets | P1 | 🟡 | `cmd:preset.delete`, `cmd:preset.favorite`, `cmd:preset.import`, `cmd:preset.export` | no rename, update-with-current, move group, hide groups |
+| LR-PRE-MANAGE | Manage presets | P1 | ✅ | `cmd:preset.delete`, `cmd:preset.favorite`, `cmd:preset.import`, `cmd:preset.export`, `cmd:preset.rename`, `cmd:preset.update`, `cmd:preset.move` | rename, update with current settings, move to a group (existing or new); no hiding of groups |
 | LR-PRE-AMOUNT | Preset amount | P1 | ✅ | `cmd:preset.apply` (`amount` 0–200) | |
 | LR-PRE-ADAPTIVE | Adaptive presets | P2 | ⬜ | | |
 | LR-PRE-PREMIUM | Built-in presets (own) | P2 | 🟡 | `crates/engine/src/presets.rs` | 18 own-authored presets |
@@ -348,7 +348,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
 | LR-VER-CREATE | Create version | P1 | ✅ | `cmd:version.create` | |
-| LR-VER-PANEL | Versions panel | P1 | 🟡 | `cmd:panel.versions`, `cmd:version.restore`, `cmd:version.delete` | no rename, update, hover preview, named/auto tabs |
+| LR-VER-PANEL | Versions panel | P1 | 🟡 | `cmd:panel.versions`, `cmd:version.restore`, `cmd:version.delete`, `cmd:version.rename`, `cmd:version.update` | rename, update, set as before; no hover preview, named/auto tabs |
 | LR-VER-AUTO | Automatic versions | P2 | ⬜ | | `auto` flag reserved in the model |
 | LR-VER-HISTORY | Edit history | P1 | ✅ | `cmd:panel.activity`, `cmd:history.list`, `cmd:history.restore` | |
 | LR-VER-UNDO | Undo / redo | P0 | ✅ | `cmd:edit.undo`, `cmd:edit.redo` | |
@@ -524,7 +524,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-EDIT-PASTESELECTED | Paste Selected Settings | P0 | ✅ | `cmd:dialog.pasteSettings`, `cmd:develop.paste` (`groups`) | checklist prefilled with the copied groups; only copied groups can be pasted |
 | MENU-EDIT-SELECTALL | Select All | P0 | ✅ | `cmd:library.selectAll` | |
 | MENU-EDIT-SELECTNONE | Select None | P0 | ✅ | `cmd:library.selectNone` | |
-| MENU-EDIT-SELECTBY | Select by flag / rating | P1 | ⬜ | | |
+| MENU-EDIT-SELECTBY | Select by flag / rating | P1 | ✅ | `cmd:library.selectBy` | Edit → Select by: picks, rejects, unflagged, ★…★★★★★ and higher, unrated, colour labels; `add` extends the selection |
 | MENU-EDIT-FIND | Find… | P0 | ✅ | `cmd:view.focusSearch`, `crates/ui-egui/src/panels/topbar.rs` | ⌘F focuses the search field |
 | MENU-VIEW-PHOTOGRID | Photo Grid | P0 | ✅ | `cmd:view.photoGrid` | |
 | MENU-VIEW-SQUAREGRID | Square Grid | P0 | ✅ | `cmd:view.squareGrid` | |
@@ -583,10 +583,10 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-CTX-DETAIL | Loupe context menu | P1 | 🟡 | `crates/ui-egui/src/panels/detail.rs` | same as grid; no zoom submenu |
 | MENU-CTX-ALBUM | Album / folder row menu | P0 | ✅ | `crates/ui-egui/src/panels/left.rs` (`folder_menu`), `cmd:album.move`, `cmd:dialog.export` | add selected, export album (dialog / preset), move to a folder or the top level, rename, delete; smart albums: update rules |
 | MENU-CTX-MASK | Mask / component menu | P0 | 🟡 | `crates/ui-egui/src/panels/masking.rs` (`mask_menu`) | mask rows: duplicate (and invert), invert, show/hide, move, rename, delete; components: add/subtract only (no per-component menu) |
-| MENU-CTX-PRESET | Preset menu | P1 | 🟡 | `crates/ui-egui/src/panels/presets.rs` | favourite, delete, export group; no rename/update/move |
+| MENU-CTX-PRESET | Preset menu | P1 | ✅ | `crates/ui-egui/src/panels/presets.rs` | favourite, update with current settings, rename, move to group, delete; group: export |
 | MENU-CTX-PROFILE | Profile favourites | P2 | ⬜ | | |
-| MENU-CTX-VERSION | Version menu | P1 | ⬜ | | delete button only |
-| MENU-CTX-KEYWORD | Keyword chip menu | P1 | 🟡 | `crates/ui-egui/src/panels/right.rs` | click removes; no rename/delete keyword |
+| MENU-CTX-VERSION | Version menu | P1 | ✅ | `crates/ui-egui/src/panels/right.rs` (`versions`) | restore, update with current settings, rename, set as before, delete |
+| MENU-CTX-KEYWORD | Keyword chip menu | P1 | ✅ | `crates/ui-egui/src/panels/right.rs`, `cmd:keyword.delete` | remove from photo, show photos with keyword, rename keyword, delete keyword |
 
 ## Z. Keyboard shortcuts (desktop)
 
@@ -710,7 +710,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-PREVIEWS | Build / discard previews | P1 | 🟡 | `cmd:library.clearPreviews`, `crates/preview/src/lib.rs` | disk thumbnail cache; no build-1:1 / smart previews |
 | LRC-LIB-SLIDESHOW-IMPROMPTU | Impromptu slideshow | P2 | ⬜ | | |
 | LRC-DEV-SNAPSHOTS | Named snapshots | P1 | ✅ | `cmd:version.create`, `cmd:version.restore` | = versions |
-| LRC-DEV-HISTORY | Full history panel | P1 | 🟡 | `cmd:history.list`, `cmd:history.restore` | no clear, no snapshot-from-step |
+| LRC-DEV-HISTORY | Full history panel | P1 | ✅ | `cmd:history.list`, `cmd:history.restore`, `cmd:history.clear` | row menu: copy step to before, create version from step, clear history |
 | LRC-DEV-SOFTPROOF | Soft proofing | P2 | ⬜ | | |
 | LRC-DEV-AUTOSYNC | Sync / auto sync / paste previous | P1 | 🟡 | `cmd:develop.sync` | no auto sync or paste-from-previous |
 | LRC-DEV-MATCHEXP | Match total exposures | P2 | ⬜ | | |

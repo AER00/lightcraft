@@ -48,6 +48,28 @@ fn set_aspect(d: &mut DevelopSettings, w: f64, h: f64, aspect: Option<(u32, u32)
     d.crop.geometry = crop_fit_angle(w, h, angle, a);
 }
 
+/// The user preset named by `p.id` (built-ins can't be changed).
+fn user_preset<'a>(s: &'a mut Session, p: &Value, c: &str) -> Result<&'a mut Preset> {
+    let pid = str_param(p, "id").ok_or_else(|| bad(c, "missing id"))?;
+    let pr = s.presets.iter_mut().find(|x| x.id == pid).ok_or_else(|| bad(c, format!("unknown preset `{pid}`")))?;
+    if pr.builtin {
+        return Err(bad(c, "built-in presets can't be changed"));
+    }
+    Ok(pr)
+}
+
+/// Change version `p.index` of the active photo (`f` gets it and the current settings).
+fn edit_version(s: &mut Session, p: &Value, c: &str, label: &str, f: impl FnOnce(&mut Version, std::sync::Arc<DevelopSettings>)) -> Result<Value> {
+    let id = active(s, c)?;
+    let i = f64_req(p, "index", c)? as usize;
+    let ph = s.catalog.photo(id).ok_or_else(|| bad(c, "no photo"))?;
+    let mut versions = ph.versions.clone();
+    let v = versions.get_mut(i).ok_or_else(|| bad(c, "no such version"))?;
+    f(v, ph.develop.clone());
+    s.commit(label, Op::SetVersions { id, versions })?;
+    ok()
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -594,6 +616,42 @@ pub fn specs() -> Vec<CommandSpec> {
             pr.favorite = bool_or(p, "favorite", !pr.favorite);
             ok()
         }),
+        cmd!("preset.rename", "Rename Preset", [], None, "{id, name}", always, |s, p| {
+            let c = "preset.rename";
+            let name = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad(c, "missing name"))?.to_string();
+            user_preset(s, p, c)?.name = name;
+            ok()
+        }),
+        cmd!("preset.move", "Move Preset to Group", [], None, "{id, group}", always, |s, p| {
+            let c = "preset.move";
+            let group = str_param(p, "group").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad(c, "missing group"))?.to_string();
+            user_preset(s, p, c)?.group = group;
+            ok()
+        }),
+        cmd!(
+            "preset.update",
+            "Update Preset with Current Settings",
+            [],
+            None,
+            "{id, groups?: [settingsGroup] (default: the groups the preset already sets)} — from the active photo",
+            has_active,
+            |s, p| {
+                let c = "preset.update";
+                let id = active(s, c)?;
+                let current = s.develop_of(id).unwrap_or_default().to_json();
+                let groups = groups_param(p);
+                let pr = user_preset(s, p, c)?;
+                pr.settings = match groups {
+                    Some(g) => lightcraft_develop::extract_groups(&serde_json::from_value(current).unwrap_or_default(), &g),
+                    // the same keys as before, with the current values
+                    None => {
+                        let keys: Vec<String> = pr.settings.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+                        Value::Object(keys.into_iter().filter_map(|k| current.get(&k).cloned().map(|v| (k, v))).collect())
+                    }
+                };
+                ok()
+            }
+        ),
         // ---- versions & history
         cmd!("version.create", "Create Version", ["Photo"], Some("Cmd+Shift+S"), "{name?}", has_active, |s, p| {
             let id = active(s, "version.create")?;
@@ -620,6 +678,21 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             versions.remove(i);
             s.commit("Delete Version", Op::SetVersions { id, versions })?;
+            ok()
+        }),
+        cmd!("version.rename", "Rename Version", [], None, "{index, name}", has_active, |s, p| {
+            let c = "version.rename";
+            let name = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad(c, "missing name"))?.to_string();
+            edit_version(s, p, c, "Rename Version", |v, _| v.name = name)
+        }),
+        cmd!("version.update", "Update Version with Current Settings", [], None, "{index}", has_active, |s, p| {
+            edit_version(s, p, "version.update", "Update Version", |v, current| v.settings = current)
+        }),
+        cmd!("history.clear", "Clear History", [], None, "{} — keeps the current settings as the only step", has_active, |s, _| {
+            let id = active(s, "history.clear")?;
+            let d = s.develop_of(id).unwrap_or_default();
+            let history = vec![lightcraft_catalog::HistoryStep { label: "Cleared History".into(), settings: d }];
+            s.commit("Clear History", Op::SetHistory { id, history })?;
             ok()
         }),
         cmd!("history.restore", "Go to History Step", [], None, "{index}", has_active, |s, p| {

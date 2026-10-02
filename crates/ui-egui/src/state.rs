@@ -287,6 +287,16 @@ pub enum Dialog {
         id: u64,
         name: String,
     },
+    /// One text field; OK runs `command` with `params` plus `{key: value}` (rename a preset or a
+    /// version, move a preset to a new group…).
+    TextPrompt {
+        title: String,
+        hint: String,
+        value: String,
+        command: String,
+        params: serde_json::Value,
+        key: String,
+    },
     /// Edit Capture Time: `mode` "set" (`time`; the others shift along), "shift" (by `days`,
     /// `hours`, `minutes`) or "zone" (time-zone shift by `zone` hours).
     CaptureTime {
