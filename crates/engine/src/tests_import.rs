@@ -143,3 +143,42 @@ fn browsing_a_folder_lists_its_photos_without_adding_them() {
     assert!(s.execute("library.browse", &serde_json::json!({"path": dir.join("a.png").to_string_lossy()})).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn missing_files_are_found_and_relinked() {
+    let dir = std::env::temp_dir().join(format!("lc-missing-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("old")).unwrap();
+    std::fs::create_dir_all(dir.join("moved/deeper")).unwrap();
+    let png = |p: &std::path::Path, seed: u8| {
+        let img = lightcraft_raster::Rgba8::from_fn(16, 12, |x, y| [(x * 9) as u8, (y * 11) as u8, seed, 255]);
+        let b = crate::export::encode_image(&img, &crate::export::ExportOptions { format: crate::export::ExportFormat::Png, ..Default::default() })
+            .unwrap();
+        std::fs::write(p, b).unwrap();
+    };
+    png(&dir.join("old/a.png"), 1);
+    png(&dir.join("old/b.png"), 2);
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &serde_json::json!({"paths": [dir.join("old").to_string_lossy()]})).unwrap();
+    assert_eq!(s.execute("library.missing", &serde_json::json!({})).unwrap().as_array().map(Vec::len), Some(0));
+    // the files move away
+    std::fs::rename(dir.join("old/a.png"), dir.join("moved/a.png")).unwrap();
+    std::fs::rename(dir.join("old/b.png"), dir.join("moved/deeper/b.png")).unwrap();
+    let m = s.execute("library.missing", &serde_json::json!({})).unwrap();
+    assert_eq!(m.as_array().map(Vec::len), Some(2));
+    // one by hand
+    let id = m[0]["id"].as_u64().unwrap();
+    let name = std::path::Path::new(m[0]["path"].as_str().unwrap()).file_name().unwrap().to_string_lossy().to_string();
+    let new = if name == "a.png" { dir.join("moved/a.png") } else { dir.join("moved/deeper/b.png") };
+    s.execute("photo.relink", &serde_json::json!({"id": id, "path": new.to_string_lossy()})).unwrap();
+    assert_eq!(s.execute("library.missing", &serde_json::json!({})).unwrap().as_array().map(Vec::len), Some(1));
+    assert!(s.execute("photo.relink", &serde_json::json!({"id": id, "path": dir.join("nope.png").to_string_lossy()})).is_err());
+    // the rest by searching a folder
+    let r = s.execute("library.findMissing", &serde_json::json!({"folder": dir.join("moved").to_string_lossy()})).unwrap();
+    assert_eq!((r["found"].as_array().map(Vec::len), r["missing"].as_u64()), (Some(1), Some(0)), "{r}");
+    // undo points the photo back at the old path but doesn't move any file
+    s.execute("edit.undo", &serde_json::json!({})).unwrap();
+    assert_eq!(s.execute("library.missing", &serde_json::json!({})).unwrap().as_array().map(Vec::len), Some(1));
+    assert!(dir.join("moved/a.png").exists() && dir.join("moved/deeper/b.png").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}

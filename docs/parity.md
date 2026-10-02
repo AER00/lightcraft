@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 12 | 1 | 4 | 1 | 8/8 (100%) | 4/5 (80%) |
 | Y. Menus | 69 | 8 | 8 | 8 | 46/47 (98%) | 18/23 (78%) |
 | Z. Keyboard shortcuts (desktop) | 63 | 12 | 5 | 1 | 49/52 (94%) | 12/23 (52%) |
-| Lightroom Classic extras | 7 | 20 | 52 | 9 | — | 6/21 (29%) |
-| **Total** | 308 | 63 | 129 | 37 | 193/198 (97%) | 96/144 (67%) |
+| Lightroom Classic extras | 8 | 20 | 51 | 9 | — | 7/21 (33%) |
+| **Total** | 309 | 63 | 128 | 37 | 193/198 (97%) | 97/144 (67%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **67.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 80.6% of 144 · P2 17.7% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **68.1%** of 500 in-scope rows — P0 98.7% of 198 · P1 81.2% of 144 · P2 17.7% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -707,7 +707,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-PEOPLE | People view | P2 | ⬜ | | |
 | LRC-LIB-COMMENTS | Comments panel | P2 | ⬜ | | |
 | LRC-LIB-VISUALSEARCH | Find similar photos | P2 | ⬜ | | |
-| LRC-LIB-MISSING | Missing files & relink | P1 | ⬜ | | |
+| LRC-LIB-MISSING | Missing files & relink | P1 | ✅ | `cmd:library.missing`, `cmd:photo.relink`, `cmd:library.findMissing`, `cmd:file.findMissing`, `cmd:photo.locate` | File → Find Missing Photos… (same name and size anywhere in a folder, one undo step), photo menu → Locate Missing File…; unreadable files show "!" in the grid and a reason in the loupe; undo never moves files. No missing-photos collection |
 | LRC-LIB-CONVERT | Convert to DNG | P2 | ⬜ | `crates/raw/src/dngwrite.rs` | writer exists, not exposed |
 | LRC-LIB-PREVIEWS | Build / discard previews | P1 | 🟡 | `cmd:library.clearPreviews`, `crates/preview/src/lib.rs` | disk thumbnail cache; no build-1:1 / smart previews |
 | LRC-LIB-SLIDESHOW-IMPROMPTU | Impromptu slideshow | P2 | ⬜ | | |

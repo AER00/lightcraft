@@ -1,0 +1,118 @@
+//! Missing originals: photos whose file is no longer where the library expects it (moved,
+//! renamed, on an unplugged drive), and relinking them — one at a time (`photo.relink`) or by
+//! searching a folder for files with the same name and size (`library.findMissing`).
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use lightcraft_catalog::{Op, PhotoId, Source};
+use serde_json::{Value, json};
+
+use super::{CommandSpec, always, bad, cmd, str_param};
+use crate::{Result, Session};
+
+/// Library photos whose original file can't be found: (id, path).
+pub fn missing(s: &Session) -> Vec<(PhotoId, String)> {
+    if cfg!(target_arch = "wasm32") {
+        return Vec::new();
+    }
+    s.catalog
+        .photos()
+        .filter_map(|p| match &p.source {
+            Source::File { path } if !p.deleted && !Path::new(path).exists() => Some((p.id, path.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn relink_op(id: PhotoId, path: &str) -> Op {
+    let file_name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
+    Op::Relink { id, file_name, source: Source::File { path: path.to_string() } }
+}
+
+fn relink(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "photo.relink";
+    let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or(s.active()).ok_or_else(|| bad(C, "no photo (give `id`)"))?;
+    let path = str_param(p, "path").ok_or_else(|| bad(C, "missing `path`"))?;
+    let abs = std::path::absolute(path).map_err(|e| bad(C, e.to_string()))?;
+    if !abs.is_file() {
+        return Err(bad(C, format!("{path}: no such file")));
+    }
+    if !matches!(s.catalog.photo(id).map(|p| &p.source), Some(Source::File { .. })) {
+        return Err(bad(C, "only photos from files can be relinked"));
+    }
+    let abs = abs.to_string_lossy().to_string();
+    s.commit("Relink Photo", relink_op(id, &abs))?;
+    s.media.forget(id);
+    Ok(json!({"id": id.0, "path": abs}))
+}
+
+/// Search `folder` (recursively) for each missing photo's file name — and its size when the
+/// library knows it — and relink every match in one undoable step.
+fn find_missing(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "library.findMissing";
+    let folder = str_param(p, "folder").ok_or_else(|| bad(C, "missing `folder`"))?;
+    if !Path::new(folder).is_dir() {
+        return Err(bad(C, format!("{folder}: not a folder")));
+    }
+    let lost = missing(s);
+    if lost.is_empty() {
+        return Ok(json!({"found": [], "missing": 0}));
+    }
+    // file name (lower case) → candidate paths
+    let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
+    for f in crate::import::expand(&[folder.to_string()], None) {
+        if let Some(n) = Path::new(&f).file_name() {
+            by_name.entry(n.to_string_lossy().to_lowercase()).or_default().push(f);
+        }
+    }
+    let mut ops = Vec::new();
+    let mut found = Vec::new();
+    for (id, old) in &lost {
+        let name = Path::new(old).file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let size = s.catalog.photo(*id).map(|p| p.file_size).unwrap_or(0);
+        let hit = by_name.get(&name).and_then(|c| {
+            c.iter().find(|f| size == 0 || std::fs::metadata(f).is_ok_and(|m| m.len() == size)).or_else(|| (c.len() == 1 && size == 0).then(|| &c[0]))
+        });
+        if let Some(path) = hit {
+            ops.push(relink_op(*id, path));
+            found.push(json!({"id": id.0, "from": old, "to": path}));
+        }
+    }
+    let still = lost.len() - found.len();
+    if !ops.is_empty() {
+        s.commit("Find Missing Photos", Op::Batch { ops })?;
+        for f in &found {
+            if let Some(id) = f["id"].as_u64() {
+                s.media.forget(PhotoId(id));
+            }
+        }
+    }
+    Ok(json!({"found": found, "missing": still}))
+}
+
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        cmd!(query "library.missing", "Missing Photos", [], None, "{} → [{id, path}] — photos whose original file isn't where the library expects it", always, |s, _| {
+            Ok(Value::Array(missing(s).into_iter().map(|(id, path)| json!({"id": id.0, "path": path})).collect()))
+        }),
+        cmd!(
+            "photo.relink",
+            "Locate Photo",
+            [],
+            None,
+            "{id?, path} — point a photo at its file's new location (undo never moves files)",
+            always,
+            relink
+        ),
+        cmd!(
+            "library.findMissing",
+            "Find Missing Photos",
+            [],
+            None,
+            "{folder} — relink every missing photo whose file (same name and size) is somewhere in the folder → {found: [{id, from, to}], missing}",
+            always,
+            find_missing
+        ),
+    ]
+}

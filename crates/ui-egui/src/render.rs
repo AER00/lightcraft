@@ -103,7 +103,10 @@ pub struct Renderer {
     quick_tried: HashMap<Slot, u64>,
     /// Jobs that failed (unreadable or missing file…), by slot and job key, with the error: not
     /// requested again until the key changes (an edit, another size) — the grid asks every frame.
-    failed: HashMap<Slot, (u64, String)>,
+    failed: HashMap<Slot, (u64, String, u64)>,
+    /// The catalog revision seen at the last poll: a failure is retried once the catalog changes
+    /// (a relinked or re-imported file).
+    catalog_rev: u64,
     /// Prefetch slot → key of the last job submitted (each runs once).
     prefetched: HashMap<Slot, u64>,
     /// Variant key → frame it was last asked for (LRU of [`Slot::Variant`] textures).
@@ -135,6 +138,7 @@ impl Default for Renderer {
             stages: HashMap::new(),
             quick_tried: HashMap::new(),
             failed: HashMap::new(),
+            catalog_rev: 0,
             prefetched: HashMap::new(),
             variant_used: HashMap::new(),
             frame: 0,
@@ -161,7 +165,9 @@ impl Renderer {
 
     /// Request a render for `slot` (no-op if already current or pending at the same priority).
     pub fn request(&mut self, slot: Slot, job: RenderJob, priority: u32) {
-        if self.textures.get(&slot).is_some_and(|t| t.key == job.key) || self.failed.get(&slot).is_some_and(|f| f.0 == job.key) {
+        if self.textures.get(&slot).is_some_and(|t| t.key == job.key)
+            || self.failed.get(&slot).is_some_and(|f| f.0 == job.key && f.2 == self.catalog_rev)
+        {
             return;
         }
         if let Some(&(key, prio)) = self.pending.get(&slot)
@@ -333,6 +339,7 @@ impl Renderer {
 
     /// Collect finished jobs into textures. Returns true if anything changed.
     pub fn poll(&mut self, ctx: &egui::Context, session: &mut Session) -> bool {
+        self.catalog_rev = session.catalog.revision;
         self.frame += 1;
         // wasm: run one job per frame on this thread, timed with the host clock
         #[cfg(target_arch = "wasm32")]
@@ -366,7 +373,7 @@ impl Renderer {
                 Err(e) => {
                     if !matches!(slot, Slot::Prefetch(_)) {
                         log::warn!("render {slot:?}: {e}");
-                        self.failed.insert(slot, (r.key, e));
+                        self.failed.insert(slot, (r.key, e, self.catalog_rev));
                     }
                     continue;
                 }

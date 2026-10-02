@@ -748,6 +748,30 @@ mod tests {
     }
 
     #[test]
+    fn find_missing_and_locate() {
+        let dir = std::env::temp_dir().join(format!("lc-ui-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("a")).unwrap();
+        std::fs::create_dir_all(dir.join("b")).unwrap();
+        let img = lightcraft_raster::Rgba8::from_fn(16, 12, |x, y| [(x * 9) as u8, (y * 11) as u8, 50, 255]);
+        let o = lightcraft_engine::export::ExportOptions { format: lightcraft_engine::export::ExportFormat::Png, ..Default::default() };
+        std::fs::write(dir.join("a/one.png"), lightcraft_engine::export::encode_image(&img, &o).unwrap()).unwrap();
+        let mut app = LightcraftApp::new(lightcraft_engine::Session::new().with_fs(), Default::default());
+        app.session.execute("library.import", &json!({"paths": [dir.join("a").to_string_lossy()]})).unwrap();
+        std::fs::rename(dir.join("a/one.png"), dir.join("b/one.png")).unwrap();
+        let r = run_item(&mut app, "file.findMissing", json!({"folder": dir.join("b").to_string_lossy()})).unwrap();
+        assert_eq!(r["found"].as_array().map(Vec::len), Some(1), "{r}");
+        // Locate: an explicit file
+        std::fs::rename(dir.join("b/one.png"), dir.join("one-renamed.png")).unwrap();
+        let id = app.session.catalog.photos().next().unwrap().id;
+        app.session.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+        run_item(&mut app, "photo.locate", json!({"path": dir.join("one-renamed.png").to_string_lossy()})).unwrap();
+        let p = app.session.catalog.photo(id).unwrap();
+        assert_eq!(p.file_name, "one-renamed.png");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn shortcut_text_per_platform() {
         assert_eq!(shortcut_text("Cmd+Shift+Z", true), "⌘⇧Z");
         assert_eq!(shortcut_text("Cmd+Shift+Z", false), "Ctrl+Shift+Z");

@@ -154,6 +154,13 @@ pub enum Op {
         file_name: String,
         source: Source,
     },
+    /// Point a photo at its file's new location (a moved or renamed original found again). Unlike
+    /// [`Op::SetFile`], undo and redo never move files.
+    Relink {
+        id: PhotoId,
+        file_name: String,
+        source: Source,
+    },
     /// The name shown for a colour label (`None` = its colour's name).
     SetLabelName {
         label: ColorLabel,
@@ -467,6 +474,11 @@ impl Catalog {
                 }
                 let p = self.photo_mut(id)?;
                 Op::SetCaptured { id, captured: std::mem::replace(&mut p.captured, captured) }
+            }
+            Op::Relink { id, file_name, source } => {
+                let p = self.photo_mut(id)?;
+                let old_name = std::mem::replace(&mut p.file_name, file_name);
+                Op::Relink { id, file_name: old_name, source: std::mem::replace(&mut p.source, source) }
             }
             Op::SetFile { id, file_name, source } => {
                 if file_name.trim().is_empty() {

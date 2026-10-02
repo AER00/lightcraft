@@ -92,6 +92,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("file.addPhotos", "Add Photos…", Some("Cmd+Shift+I"), "File"),
     ("file.addFolder", "Add Folder…", None, "File"),
     ("file.addFromDevice", "Add from Device", None, ""),
+    ("file.findMissing", "Find Missing Photos…", None, "File"),
+    ("photo.locate", "Locate Missing File…", None, ""),
     ("app.quit", "Quit LightCraft", Some("Cmd+Q"), "File"),
     ("file.importPresets", "Import Presets…", None, "File"),
     ("file.exportPresets", "Export Presets…", None, "File"),
@@ -589,6 +591,31 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "app.quit" => {
             app.ui.quit = true;
             Ok(Value::Null)
+        }
+        "file.findMissing" => {
+            let folder = match p.get("folder").and_then(Value::as_str) {
+                Some(f) => Some(f.to_string()),
+                None => app.services.pick_folder.as_mut().and_then(|f| f()),
+            };
+            let Some(folder) = folder else { return Some(Ok(Value::Null)) };
+            let r = app.run("library.findMissing", json!({"folder": folder}));
+            if let Ok(v) = &r {
+                let n = v["found"].as_array().map_or(0, Vec::len);
+                let left = v["missing"].as_u64().unwrap_or(0);
+                app.toast(&egui::Context::default(), format!("Found {n} missing photo{}; {left} still missing", if n == 1 { "" } else { "s" }));
+            }
+            r
+        }
+        "photo.locate" => {
+            let Some(id) = app.session.active() else { return Some(Err("no photo selected".into())) };
+            let path = match p.get("path").and_then(Value::as_str) {
+                Some(x) => Some(x.to_string()),
+                None => app.services.pick_files.as_mut().and_then(|f| f().into_iter().next()),
+            };
+            match path {
+                Some(path) => app.run("photo.relink", json!({"id": id.0, "path": path})),
+                None => Ok(Value::Null),
+            }
         }
         "file.addFromDevice" => {
             // a camera / card: review its DCIM folder, copying into the library by default

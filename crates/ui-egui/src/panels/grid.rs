@@ -626,6 +626,11 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let _ = app.run("photo.rotateRight", json!({}));
     }
     ui.separator();
+    // the original moved or its drive is gone: point the photo at the file again
+    let missing = matches!(&app.session.catalog.photo(id).map(|p| p.source.clone()), Some(lightcraft_catalog::Source::File { path }) if !std::path::Path::new(path).exists());
+    if missing && ui.button("Locate Missing File…").clicked() {
+        let _ = app.run("photo.locate", json!({}));
+    }
     if ui.add_enabled(crate::menus::ui_enabled(app, "app.showInFinder"), egui::Button::new("Show in Finder")).clicked() {
         let _ = app.run("app.showInFinder", json!({}));
     }
