@@ -122,6 +122,18 @@ fn accelerator(sc: &str) -> Option<Accelerator> {
         "'" => Code::Quote,
         "," => Code::Comma,
         "Delete" => Code::Backspace,
+        "F1" => Code::F1,
+        "F2" => Code::F2,
+        "F3" => Code::F3,
+        "F4" => Code::F4,
+        "F5" => Code::F5,
+        "F6" => Code::F6,
+        "F7" => Code::F7,
+        "F8" => Code::F8,
+        "F9" => Code::F9,
+        "F10" => Code::F10,
+        "F11" => Code::F11,
+        "F12" => Code::F12,
         _ => return None,
     };
     Some(Accelerator::new(mods, code))

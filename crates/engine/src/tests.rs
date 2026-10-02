@@ -357,3 +357,27 @@ fn crop_aspect_lock_current_and_toggle() {
     s.execute("crop.aspect", &json!({"aspect": "toggle"})).unwrap();
     assert!(active_dev(&s).crop.aspect.is_none(), "toggle unlocks");
 }
+
+#[test]
+fn paste_from_previous_and_copy_paste_metadata() {
+    let mut s = demo();
+    let ids: Vec<_> = s.visible().iter().copied().take(3).collect();
+    s.execute("library.select", &json!({"ids": [ids[0].0]})).unwrap();
+    assert!(s.execute("develop.pastePrevious", &json!({})).is_err(), "nothing before");
+    s.execute("develop.set", &json!({"values": {"light.exposure": 0.8}})).unwrap();
+    s.execute("photo.setMeta", &json!({"title": "Dawn", "keywords": ["sky", "red"], "creator": "Me"})).unwrap();
+    s.execute("photo.copyMetadata", &json!({})).unwrap();
+    // move on: the first photo becomes "previous"
+    s.execute("library.select", &json!({"ids": [ids[1].0]})).unwrap();
+    assert_eq!(s.previous_active, Some(ids[0]));
+    let r = s.execute("develop.pastePrevious", &json!({})).unwrap();
+    assert_eq!(r["from"].as_u64(), Some(ids[0].0));
+    assert_eq!(active_dev(&s).light.exposure, 0.8);
+    // metadata: only the chosen fields
+    s.execute("photo.pasteMetadata", &json!({"fields": ["title", "keywords"]})).unwrap();
+    let m = &s.catalog.photo(ids[1]).unwrap().meta;
+    assert_eq!((m.title.as_str(), m.keywords.clone()), ("Dawn", vec!["sky".to_string(), "red".to_string()]));
+    assert_ne!(m.creator, "Me");
+    s.execute("photo.pasteMetadata", &json!({"ids": [ids[2].0]})).unwrap();
+    assert_eq!(s.catalog.photo(ids[2]).unwrap().meta.creator, "Me");
+}

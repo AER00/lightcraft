@@ -541,6 +541,30 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            "develop.pastePrevious",
+            "Paste Settings from Previous",
+            ["Edit"],
+            Some("Cmd+Alt+V"),
+            "{ids?, groups?: [settingsGroup] (default: the copy groups)} — from the photo that was active before this one",
+            has_active,
+            |s, p| {
+                let c = "develop.pastePrevious";
+                let prev =
+                    s.previous_active.filter(|id| s.catalog.photo(*id).is_some_and(|ph| !ph.deleted)).ok_or_else(|| bad(c, "no previous photo"))?;
+                let groups = groups_param(p).unwrap_or_else(|| s.copy_groups.clone());
+                let partial = lightcraft_develop::extract_groups(&s.develop_of(prev).unwrap_or_default(), &groups);
+                let ids: Vec<PhotoId> = s.targets(p).into_iter().filter(|id| *id != prev).collect();
+                let ops = ids
+                    .iter()
+                    .filter_map(|id| s.develop_of(*id).map(|d| (*id, d)))
+                    .filter_map(|(id, d)| s.develop_op(id, lightcraft_develop::apply_partial(&d, &partial, 1.0), "Paste from Previous"))
+                    .collect::<Vec<_>>();
+                let n = ops.len();
+                s.commit("Paste from Previous", Op::Batch { ops })?;
+                Ok(json!({"changed": n, "from": prev.0}))
+            }
+        ),
+        cmd!(
             "develop.paste",
             "Paste Edit Settings",
             ["Edit"],

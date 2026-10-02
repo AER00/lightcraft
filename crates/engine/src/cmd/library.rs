@@ -243,6 +243,37 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "library.devices", "Cameras and Cards", [], None, "{} → [{name, path (its DCIM folder), root}] — mounted volumes with a DCIM folder", always, |_, _| {
             Ok(serde_json::to_value(crate::devices::devices()).unwrap_or_default())
         }),
+        cmd!(query "photo.copyMetadata", "Copy Metadata", ["Photo"], None, "{} — title, caption, copyright, creator, location and keywords of the active photo", has_active, |s, _| {
+            let id = s.active().ok_or_else(|| bad("photo.copyMetadata", "no active photo"))?;
+            let m = &s.catalog.photo(id).ok_or_else(|| bad("photo.copyMetadata", "no photo"))?.meta;
+            let v = json!({"title": m.title, "caption": m.caption, "copyright": m.copyright, "creator": m.creator, "location": m.location, "keywords": m.keywords});
+            s.meta_clipboard = Some(v.clone());
+            Ok(v)
+        }),
+        cmd!(
+            "photo.pasteMetadata",
+            "Paste Metadata",
+            ["Photo"],
+            None,
+            "{ids?, fields?: [title|caption|copyright|creator|location|keywords] (default: all copied)}",
+            has_selection,
+            |s, p| {
+                let c = "photo.pasteMetadata";
+                let clip = s.meta_clipboard.clone().ok_or_else(|| bad(c, "nothing copied (photo.copyMetadata)"))?;
+                let fields: Option<Vec<String>> =
+                    p.get("fields").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect());
+                let mut params = serde_json::Map::new();
+                for (k, v) in clip.as_object().into_iter().flatten() {
+                    if fields.as_ref().is_none_or(|f| f.iter().any(|x| x == k)) {
+                        params.insert(k.clone(), v.clone());
+                    }
+                }
+                if let Some(ids) = p.get("ids") {
+                    params.insert("ids".into(), ids.clone());
+                }
+                s.execute("photo.setMeta", &Value::Object(params))
+            }
+        ),
         cmd!(
             "library.selectBy",
             "Select by Flag, Rating or Label",

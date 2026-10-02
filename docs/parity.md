@@ -25,17 +25,17 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | B. Library management (LIB) | 18 | 1 | 6 | 2 | 9/9 (100%) | 8/9 (89%) |
 | C. Views & navigation (VIEW) | 14 | 0 | 3 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 7 | 2 | 4 | 0 | 4/4 (100%) | 3/4 (75%) |
-| E. Metadata (META) | 3 | 2 | 1 | 0 | 2/2 (100%) | 1/2 (50%) |
+| E. Metadata (META) | 4 | 2 | 0 | 0 | 2/2 (100%) | 1/2 (50%) |
 | F. Edit panel — global adjustments (EDIT) | 40 | 2 | 6 | 1 | 28/28 (100%) | 12/14 (86%) |
 | G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 8 | 1 | 0 | 1 | 6/6 (100%) | 2/3 (67%) |
 | I. Remove / healing (REM) | 6 | 1 | 3 | 2 | 4/4 (100%) | 2/3 (67%) |
-| J. Red eye (EYE) | 1 | 0 | 1 | 0 | — | 1/1 (100%) |
+| J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
 | K. Masking (MASK) | 11 | 5 | 7 | 0 | 8/8 (100%) | 3/5 (60%) |
-| L. Presets (PRE) | 4 | 1 | 2 | 1 | 2/2 (100%) | 2/2 (100%) |
+| L. Presets (PRE) | 5 | 1 | 1 | 1 | 2/2 (100%) | 2/2 (100%) |
 | M. Versions & history (VER) | 3 | 1 | 1 | 0 | 1/1 (100%) | 2/3 (67%) |
-| N. Copy / paste / sync (SYNC) | 4 | 0 | 1 | 0 | 3/3 (100%) | 1/1 (100%) |
-| O. Merge (MERGE) | 3 | 0 | 1 | 0 | — | — |
+| N. Copy / paste / sync (SYNC) | 4 | 1 | 0 | 0 | 3/3 (100%) | 1/1 (100%) |
+| O. Merge (MERGE) | 4 | 0 | 0 | 0 | — | — |
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
@@ -45,12 +45,12 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 12 | 1 | 4 | 1 | 8/8 (100%) | 4/5 (80%) |
-| Y. Menus | 65 | 9 | 11 | 8 | 46/47 (98%) | 17/23 (74%) |
-| Z. Keyboard shortcuts (desktop) | 61 | 12 | 7 | 1 | 49/52 (94%) | 12/23 (52%) |
+| Y. Menus | 68 | 9 | 8 | 8 | 46/47 (98%) | 17/23 (74%) |
+| Z. Keyboard shortcuts (desktop) | 63 | 12 | 5 | 1 | 49/52 (94%) | 12/23 (52%) |
 | Lightroom Classic extras | 7 | 19 | 53 | 9 | — | 6/21 (29%) |
-| **Total** | 297 | 63 | 140 | 37 | 192/198 (97%) | 95/144 (66%) |
+| **Total** | 306 | 64 | 130 | 37 | 192/198 (97%) | 95/144 (66%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **65.7%** of 500 in-scope rows — P0 98.5% of 198 · P1 79.9% of 144 · P2 11.7% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **67.6%** of 500 in-scope rows — P0 98.5% of 198 · P1 79.9% of 144 · P2 17.7% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -192,7 +192,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-META-INFO | Info panel | P0 | ✅ | `cmd:panel.info`, `cmd:photo.setMeta`, `crates/ui-egui/src/panels/right.rs` | no flash, creator field, map snippet or people |
 | LR-META-COPYRIGHT-DEFAULT | Default copyright on import | P1 | ✅ | `cmd:library.preferences` (`import.copyright`, `import.creator`), `crates/ui-egui/src/panels/settings.rs` | Settings → Import → Metadata; fills only photos without their own |
 | LR-META-LOCATION | Location editing | P2 | 🟡 | `cmd:photo.setMeta` (`location`) | text field + GPS read; no map, no geocoding |
-| LR-META-COPYPASTE | Copy / paste metadata | P2 | ⬜ | | |
+| LR-META-COPYPASTE | Copy / paste metadata | P2 | ✅ | `cmd:photo.copyMetadata`, `cmd:photo.pasteMetadata` | title, caption, copyright, creator, location, keywords; `fields` picks a subset |
 | LR-META-XMP | XMP read/write | P0 | ✅ | `cmd:photo.saveMetadataToFile`, `cmd:photo.readMetadataFromFile`, `cmd:library.xmpPreferences`, `crates/engine/src/sidecar.rs`, `docs/xmp-interop.md` | |
 | LR-META-EXIF-FULL | Full EXIF/IPTC [Classic] | P1 | 🟡 | `crates/meta/src/exif.rs`, `crates/meta/src/iptc.rs` | read and written on export; panel shows a subset; no metadata presets |
 
@@ -302,7 +302,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
 | LR-EYE-RED | Red-eye correction | P1 | ✅ | `cmd:panel.redeye`, `cmd:redeye.add`, `cmd:redeye.delete`, `cmd:redeye.catchlight` | red eye and pet eye (with catchlight) |
-| LR-EYE-PET | Pet eye | P2 | ⬜ | | |
+| LR-EYE-PET | Pet eye | P2 | ✅ | `cmd:redeye.add` (`pet`), `cmd:redeye.catchlight` | |
 
 ## K. Masking (MASK)
 
@@ -343,7 +343,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-PRE-ADAPTIVE | Adaptive presets | P2 | ⬜ | | |
 | LR-PRE-PREMIUM | Built-in presets (own) | P2 | 🟡 | `crates/engine/src/presets.rs` | 18 own-authored presets |
 | LR-PRE-RECOMMENDED | Community recommendations | OOS | 🚫 | | |
-| LR-PRE-ONIMPORT | Apply during import | P2 | ⬜ | | |
+| LR-PRE-ONIMPORT | Apply during import | P2 | ✅ | `cmd:library.import` (`preset`) | chosen in the import review; raw / per-camera defaults in Settings |
 
 ## M. Versions & history (VER)
 
@@ -363,7 +363,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-SYNC-CHOOSE | Choose settings to copy | P0 | ✅ | `cmd:dialog.copySettings` | groups are coarser than per-slider |
 | LR-SYNC-PASTE | Paste to selection | P0 | ✅ | `cmd:develop.paste` | no separate "paste selected" (choose at copy time instead) |
 | LR-SYNC-SYNCBTN | Sync active → selected | P1 | ✅ | `cmd:develop.sync` | |
-| LR-SYNC-PREVIOUS | Paste from previous / auto sync [Classic] | P2 | ⬜ | | |
+| LR-SYNC-PREVIOUS | Paste from previous / auto sync [Classic] | P2 | 🟡 | `cmd:develop.pastePrevious` | ⌥⌘V pastes the previously active photo's settings (copy groups); no auto sync |
 
 ## O. Merge (MERGE)
 
@@ -372,7 +372,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-MERGE-HDR | HDR merge | P2 | ✅ | `cmd:merge.hdr`, `cmd:dialog.mergeHdr` | auto align, deghost None–High + overlay, auto settings, float DNG, Create Stack; JPEG brackets treated as linear |
 | LR-MERGE-PANO | Panorama | P2 | ✅ | `cmd:merge.panorama`, `cmd:dialog.mergePanorama` | spherical/cylindrical/perspective + auto, boundary warp, auto crop, fill edges (diffusion), DNG; no lens model / 360° wrap |
 | LR-MERGE-HDRPANO | HDR panorama | P2 | ✅ | `cmd:merge.hdrPanorama`, `cmd:dialog.mergeHdrPanorama` | brackets grouped by EXIF |
-| LR-MERGE-HEADLESS | Merge with last settings | P2 | ⬜ | | |
+| LR-MERGE-HEADLESS | Merge with last settings | P2 | ✅ | `cmd:merge.hdrLast`, `cmd:merge.panoramaLast`, `cmd:merge.hdrPanoramaLast` | no dialog; the options of the last merge of that kind (defaults the first time) |
 
 ## P. Enhance (ENH)
 
@@ -561,7 +561,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-PHOTO-FLIP | Flip horizontal / vertical | P0 | ✅ | `cmd:photo.flipHorizontal`, `cmd:photo.flipVertical` | |
 | MENU-PHOTO-CREATEVERSION | Create Version… | P1 | ✅ | `cmd:version.create` | no name prompt |
 | MENU-PHOTO-STACK | Stack submenu | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup`, `cmd:dialog.autoStack` | |
-| MENU-PHOTO-MERGE | Photo merge submenu | P2 | ⬜ | | |
+| MENU-PHOTO-MERGE | Photo merge submenu | P2 | ✅ | `cmd:dialog.mergeHdr`, `cmd:dialog.mergePanorama`, `cmd:dialog.mergeHdrPanorama`, `cmd:merge.hdrLast` | |
 | MENU-PHOTO-ENHANCE | Enhance… | P2 | ⬜ | | |
 | MENU-PHOTO-AUTO | Auto settings | P0 | ✅ | `cmd:develop.auto` | |
 | MENU-PHOTO-BW | Convert to B&W | P0 | ✅ | `cmd:develop.treatment` | |
@@ -575,7 +575,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-WINDOW-MINIMIZE | Minimize / zoom | P1 | 🟡 | | platform window defaults (unverified) |
 | MENU-WINDOW-PANELS | Panel switches | P0 | ✅ | `cmd:panel.edit`, `cmd:panel.crop`, `cmd:panel.remove`, `cmd:panel.masking`, `cmd:panel.presets`, `cmd:panel.versions` | |
 | MENU-WINDOW-BRINGFRONT | Bring all to front | P2 | 🟡 | | platform window defaults (unverified) |
-| MENU-HELP-HELP | Help | P2 | ⬜ | | |
+| MENU-HELP-HELP | Help | P2 | ✅ | `cmd:app.help` | opens the documentation |
 | MENU-HELP-TUTORIALS | Tutorials | OOS | 🚫 | | |
 | MENU-HELP-WHATSNEW | What's new | P2 | ⬜ | | |
 | MENU-HELP-SHORTCUTS | Keyboard shortcuts | P1 | ✅ | `cmd:app.shortcuts` | |
@@ -586,7 +586,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-CTX-ALBUM | Album / folder row menu | P0 | ✅ | `crates/ui-egui/src/panels/left.rs` (`folder_menu`), `cmd:album.move`, `cmd:dialog.export` | add selected, export album (dialog / preset), move to a folder or the top level, rename, delete; smart albums: update rules |
 | MENU-CTX-MASK | Mask / component menu | P0 | 🟡 | `crates/ui-egui/src/panels/masking.rs` (`mask_menu`) | mask rows: duplicate (and invert), invert, show/hide, move, rename, delete; components: add/subtract only (no per-component menu) |
 | MENU-CTX-PRESET | Preset menu | P1 | ✅ | `crates/ui-egui/src/panels/presets.rs` | favourite, update with current settings, rename, move to group, delete; group: export |
-| MENU-CTX-PROFILE | Profile favourites | P2 | ⬜ | | |
+| MENU-CTX-PROFILE | Profile favourites | P2 | ✅ | `cmd:profile.favorite`, `crates/ui-egui/src/panels/profiles.rs` | star in the profile browser; Favorites group first |
 | MENU-CTX-VERSION | Version menu | P1 | ✅ | `crates/ui-egui/src/panels/right.rs` (`versions`) | restore, update with current settings, rename, set as before, delete |
 | MENU-CTX-KEYWORD | Keyword chip menu | P1 | ✅ | `crates/ui-egui/src/panels/right.rs`, `cmd:keyword.delete` | remove from photo, show photos with keyword, rename keyword, delete keyword |
 
@@ -646,7 +646,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-BRUSHFEATHER | Brush feather — ⇧`[` / ⇧`]` | P0 | ✅ | `cmd:brush.featherLess`, `cmd:brush.featherMore` | |
 | KEY-BRUSH | Brush — B | P0 | ✅ | `cmd:tool.brush` | |
 | KEY-HEAL | Remove / heal — H | P0 | ✅ | `cmd:panel.remove` | |
-| KEY-MERGE | HDR / panorama merges — ⌃H ⇧⌃H ⌃M ⇧⌃M | P2 | ⬜ | | |
+| KEY-MERGE | HDR / panorama merges — ⌃H ⇧⌃H ⌃M ⇧⌃M | P2 | ✅ | `cmd:dialog.mergeHdr`, `cmd:dialog.mergePanorama`, `cmd:merge.hdrLast`, `cmd:merge.panoramaLast` | |
 | KEY-PICK | Pick — Z | P0 | 🟡 | `cmd:photo.pick` | bound to P; Z toggles zoom |
 | KEY-UNFLAG | Unflag — U | P0 | ✅ | `cmd:photo.unflag` | |
 | KEY-REJECT | Reject — X | P0 | ✅ | `cmd:photo.reject` | swaps crop aspect while cropping |
@@ -672,7 +672,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-SLIDER-RESET | Reset slider — double-click | P0 | ✅ | `crates/ui-egui/src/widgets.rs` | |
 | KEY-SLIDER-NUDGE | Nudge slider — ↑/↓ | P1 | 🟡 | `cmd:develop.adjust` | command exists; keyboard nudging unverified |
 | KEY-SHORTCUTS | Shortcut list — ⌘/ | P1 | ✅ | `cmd:app.shortcuts` | |
-| KEY-HELP | Help — F1 | P2 | ⬜ | | |
+| KEY-HELP | Help — F1 | P2 | ✅ | `cmd:app.help` | |
 | KEY-VIDEO-PLAY | Play/pause video — Space | P1 | ⬜ | | |
 | KEY-ESC | Leave tool / view — Esc | P0 | ✅ | `cmd:view.back` | |
 | KEY-COMMIT | Commit tool — Return | P1 | 🟡 | | edits apply live; no explicit commit step |

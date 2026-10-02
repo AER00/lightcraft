@@ -105,6 +105,8 @@ pub struct MergeState {
     pub last_result: Option<Value>,
     /// Photos the dialog merges (the selection when it opened).
     pub ids: Vec<PhotoId>,
+    /// The options of the last merge started, per kind ("merge.hdr" …): Merge with Last Settings.
+    pub last: std::collections::HashMap<String, MergeDialog>,
 }
 
 impl MergeState {
@@ -165,7 +167,20 @@ pub fn start_final(app: &mut LightcraftApp, opts: &MergeDialog) -> Result<Value,
     let ids = app.merge.ids.clone();
     let task = spawn(app, opts, &ids, false)?;
     app.merge.final_task = Some(task);
+    app.merge.last.insert(opts.command.clone(), opts.clone());
     Ok(json!({"started": true, "photos": ids.len()}))
+}
+
+/// Merge the selection without the dialog, with the options last used for `command` (the
+/// defaults the first time).
+pub fn start_last(app: &mut LightcraftApp, command: &str) -> Result<Value, String> {
+    let ids = app.session.targets(&json!({}));
+    if ids.len() < 2 {
+        return Err("select at least 2 photos to merge".into());
+    }
+    app.merge.ids = ids;
+    let opts = app.merge.last.get(command).cloned().unwrap_or_else(|| MergeDialog::for_command(command));
+    start_final(app, &opts)
 }
 
 /// Per frame: keep the preview in sync with the dialog's options, collect finished jobs.

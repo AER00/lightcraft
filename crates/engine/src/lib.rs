@@ -81,6 +81,10 @@ pub struct Session {
     pub interaction: Option<Interaction>,
     /// Copied develop settings (partial JSON) for Paste.
     pub clipboard: Option<Value>,
+    /// Copied metadata (`photo.copyMetadata`): photo.setMeta params.
+    pub meta_clipboard: Option<Value>,
+    /// The photo that was active before the current one (Paste Settings from Previous).
+    pub previous_active: Option<PhotoId>,
     /// Groups last used for Copy (Lightroom remembers them).
     pub copy_groups: Vec<lightcraft_develop::SettingsGroup>,
     pub presets: Vec<lightcraft_develop::Preset>,
@@ -139,6 +143,8 @@ impl Session {
             redo: Vec::new(),
             interaction: None,
             clipboard: None,
+            meta_clipboard: None,
+            previous_active: None,
             copy_groups: lightcraft_develop::SettingsGroup::default_copy(),
             presets: presets::builtin(),
             profile_favorites: Vec::new(),
@@ -175,9 +181,13 @@ impl Session {
         let empty = Value::Object(Default::default());
         let params = if params.is_null() { &empty } else { params };
         let log_start = self.pending_log.len();
+        let was_active = self.active();
         self.depth += 1;
         let r = (spec.run)(self, params);
         self.depth -= 1;
+        if self.depth == 0 && was_active.is_some() && self.active() != was_active {
+            self.previous_active = was_active;
+        }
         if r.is_ok() && spec.journal && self.depth == 0 {
             self.journal.push((id.to_string(), params.clone()));
             if self.journal.len() > 10_000 {

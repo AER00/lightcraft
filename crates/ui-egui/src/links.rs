@@ -12,7 +12,11 @@ pub const APP_PAGE: &str = "https://getartcraft.com/apps/lightcraft";
 pub const GITHUB: &str = "https://github.com/storytold/lightcraft";
 
 /// (UI command id, menu label, URL) for each link, in Help-menu order.
+/// The user documentation (docs/ in the repository).
+pub const HELP: &str = "https://github.com/storytold/lightcraft/tree/main/docs";
+
 pub const LINKS: &[(&str, &str, &str)] = &[
+    ("app.help", "LightCraft Help", HELP),
     ("app.discord", "Join the ArtCraft Discord…", DISCORD),
     ("app.website", "LightCraft Website", APP_PAGE),
     ("app.github", "LightCraft on GitHub", GITHUB),

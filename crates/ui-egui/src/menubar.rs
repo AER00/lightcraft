@@ -731,6 +731,23 @@ mod tests {
     }
 
     #[test]
+    fn help_opens_the_docs_and_merge_last_needs_photos() {
+        let mut app = app();
+        let opened = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let o = opened.clone();
+        app.services.open_url = Some(Box::new(move |u: &str| {
+            o.lock().unwrap().push(u.to_string());
+            Ok(())
+        }));
+        run_item(&mut app, "app.help", Value::Null).unwrap();
+        assert_eq!(opened.lock().unwrap().as_slice(), [crate::links::HELP]);
+        // merging with the last settings needs a selection of two or more
+        let first = app.session.visible()[0].0;
+        app.session.execute("library.select", &json!({"ids": [first]})).unwrap();
+        assert!(run_item(&mut app, "merge.hdrLast", Value::Null).is_err());
+    }
+
+    #[test]
     fn shortcut_text_per_platform() {
         assert_eq!(shortcut_text("Cmd+Shift+Z", true), "⌘⇧Z");
         assert_eq!(shortcut_text("Cmd+Shift+Z", false), "Ctrl+Shift+Z");
