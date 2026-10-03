@@ -36,6 +36,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::AllMetadata { .. } => "All Metadata",
         Dialog::SystemInfo { .. } => "System Info",
         Dialog::WhatsNew => "What's New",
+        Dialog::Cull { .. } => "Assisted Culling",
         Dialog::SmartRules { id: None, .. } => "New Smart Album",
         Dialog::SmartRules { .. } => "Edit Smart Album",
         Dialog::AutoStack { .. } => "Auto-Stack by Capture Time",
@@ -79,6 +80,18 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ui.label(
                         egui::RichText::new(format!("Creates {} stacks from {} of {scope}", preview["stacks"], preview["photos"])).color(t.text_dim),
                     );
+                }
+                Dialog::Cull { reject_below, pick_best } => {
+                    let n = app.session.selection.ids.len();
+                    let scope = if n > 1 { format!("the {n} selected photos") } else { format!("the {} photos in view", app.session.visible_cloned().len()) };
+                    ui.label(egui::RichText::new(format!("Scores {scope} for focus and exposure and finds similar shots taken within seconds of each other (bursts).")).color(t.text_label));
+                    ui.add_space(6.0);
+                    let r = ui.add(egui::Slider::new(reject_below, 0.0..=80.0).text("Reject below focus").step_by(1.0));
+                    crate::widgets::register(ui.ctx(), "field:cullReject", r.rect);
+                    ui.label(egui::RichText::new(if *reject_below > 0.0 { "Blurry photos below the score are flagged as rejects." } else { "0: nothing is rejected." }).color(t.text_dim));
+                    let r = ui.checkbox(pick_best, "Pick the sharpest photo of each burst");
+                    crate::widgets::register(ui.ctx(), "check:cullPick", r.rect);
+                    ui.label(egui::RichText::new("Scores stay on the photos: filter or make smart albums with Focus and Best of Similar Shots.").color(t.text_dim));
                 }
                 Dialog::WhatsNew => {
                     egui::ScrollArea::vertical().max_height(460.0).auto_shrink([false, true]).show(ui, |ui| {
@@ -767,6 +780,13 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),
         Dialog::AllMetadata { .. } | Dialog::SystemInfo { .. } | Dialog::WhatsNew => Ok(serde_json::Value::Null),
+        Dialog::Cull { reject_below, pick_best } => {
+            let mut p = json!({"pickBest": pick_best});
+            if *reject_below > 0.0 {
+                p["rejectBelow"] = json!(reject_below);
+            }
+            app.run("photo.analyze", p)
+        }
         Dialog::SmartRules { id, name, rules } => {
             let name = if name.trim().is_empty() { "Smart Album".to_string() } else { name.trim().to_string() };
             match id {

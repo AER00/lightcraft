@@ -80,6 +80,8 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     ("hasGps", "Has GPS", Kind::Bool),
     ("virtualCopy", "Virtual Copy", Kind::Bool),
     ("album", "Album", Kind::Number),
+    ("sharpness", "Focus (assisted culling)", Kind::Number),
+    ("bestOfGroup", "Best of Similar Shots", Kind::Bool),
 ];
 
 /// The operators for a field kind: (id, label).
@@ -316,6 +318,8 @@ impl Rule {
             "aperture" => num_op(op, m.aperture.map(|v| v as f64), value),
             "focalLength" => num_op(op, m.focal_mm.map(|v| v as f64), value),
             "megapixels" => num_op(op, Some(p.width as f64 * p.height as f64 / 1e6), value),
+            "sharpness" => num_op(op, p.analysis.map(|a| a.sharpness as f64), value),
+            "bestOfGroup" => p.analysis.is_some_and(|a| a.best || a.group.is_none()) == value.as_bool().unwrap_or(true),
             "album" => {
                 let id = number(value).map(|v| crate::AlbumId(v as u64));
                 id.is_some_and(|a| cat.album(a).is_some_and(|al| !al.is_smart()) && cat.album_contains(a, p)) == (op == "is")

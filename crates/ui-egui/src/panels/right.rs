@@ -493,6 +493,17 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 }
             });
         }
+        if let Some(a) = p.analysis {
+            let mut line = format!("Focus {:.0}", a.sharpness);
+            if a.clipped > 0.02 {
+                line.push_str(&format!(" · {:.0}% clipped", a.clipped * 100.0));
+            }
+            if a.group.is_some() {
+                line.push_str(if a.best { " · best of its burst" } else { " · in a burst" });
+            }
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(line).color(t.text_dim));
+        }
         // offline originals / smart previews
         if let lightcraft_catalog::Source::File { path } = &p.source {
             let online = std::path::Path::new(path).exists();

@@ -197,6 +197,22 @@ pub struct Photo {
     /// unedited, and Reset returns to them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import_look: Option<Arc<DevelopSettings>>,
+    /// Assisted culling scores (`None` until analysed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<Analysis>,
+}
+
+/// What assisted culling measured on a photo.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Analysis {
+    /// Focus: 0 (blurred) .. 100 (crisp), from the detail in the photo's sharpest area.
+    pub sharpness: f32,
+    /// Exposure: share of clipped pixels, 0..1 (shadows + highlights).
+    pub clipped: f32,
+    /// Similar-shot group (burst), when the photo has neighbours that look alike.
+    pub group: Option<u32>,
+    /// The best photo of its group.
+    pub best: bool,
 }
 
 impl Photo {
@@ -229,6 +245,7 @@ impl Photo {
             copy_of: None,
             copy_name: None,
             import_look: None,
+            analysis: None,
         }
     }
     /// The develop settings import gave this photo: [`Photo::camera_defaults`], or the user's

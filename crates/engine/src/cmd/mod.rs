@@ -8,6 +8,7 @@ mod before;
 mod browse;
 mod color;
 pub(crate) mod convert;
+mod cull;
 mod develop;
 mod edit;
 mod export;
@@ -123,6 +124,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(manage::specs());
         v.extend(previews::specs());
         v.extend(lut_profiles::specs());
+        v.extend(cull::specs());
         v.extend(convert::specs());
         v.extend(convert::edit_specs());
         v.extend(merge::specs());

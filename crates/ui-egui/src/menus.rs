@@ -115,6 +115,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.about", "About LightCraft", None, "Help"),
     ("app.systemInfo", "System Info…", None, "Help"),
     ("app.whatsNew", "What's New", None, "Help"),
+    ("dialog.cull", "Assisted Culling…", None, "Photo"),
     ("app.help", "LightCraft Help", Some("F1"), "Help"),
     ("app.discord", "Join the ArtCraft Discord…", None, "Help"),
     ("app.feedback", "Send Feedback…", None, "Help"),
@@ -730,6 +731,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
             app.toast(&ctx, format!("{name} opened for editing; it is stacked with the original"));
             Ok(r)
+        }
+        "dialog.cull" => {
+            app.ui.dialog = Some(Dialog::Cull { reject_below: 0.0, pick_best: true });
+            Ok(Value::Null)
         }
         "app.whatsNew" => {
             app.ui.dialog = Some(Dialog::WhatsNew);

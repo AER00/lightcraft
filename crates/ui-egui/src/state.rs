@@ -384,6 +384,12 @@ pub enum Dialog {
     },
     /// Help ▸ What's New.
     WhatsNew,
+    /// Photo ▸ Assisted Culling: reject photos below this focus score (0 = none), pick the best
+    /// of each burst.
+    Cull {
+        reject_below: f32,
+        pick_best: bool,
+    },
     /// Help ▸ System Info: (label, value) rows.
     SystemInfo {
         rows: Vec<(String, String)>,

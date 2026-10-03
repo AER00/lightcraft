@@ -409,3 +409,76 @@ fn folders_rename_and_move_with_their_photos() {
     assert_eq!(path(&s), root.join("Archive/Italy 2026/one.png").to_string_lossy());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Assisted culling: a burst (same scene, seconds apart) of a sharp and two soft shots, plus an
+/// unrelated photo: the burst is grouped, the sharp one is its best, blurry shots can be rejected.
+#[test]
+fn assisted_culling_groups_bursts_and_scores_focus() {
+    let dir = temp_dir("cull");
+    let scene = lightcraft_scenes::demo_library()[0].render(480, 320);
+    let soften = |img: &lightcraft_raster::Rgb32f, r: usize| {
+        let (w, h) = (img.width, img.height);
+        let mut out = img.clone();
+        for y in 0..h {
+            for x in 0..w {
+                let (mut acc, mut n) = ([0f32; 3], 0.0);
+                for yy in y.saturating_sub(r)..(y + r + 1).min(h) {
+                    for xx in x.saturating_sub(r)..(x + r + 1).min(w) {
+                        let c = img.data[yy * w + xx];
+                        acc = [acc[0] + c[0], acc[1] + c[1], acc[2] + c[2]];
+                        n += 1.0;
+                    }
+                }
+                out.data[y * w + x] = acc.map(|v| v / n);
+            }
+        }
+        out
+    };
+    let save = |img: &lightcraft_raster::Rgb32f, name: &str| {
+        let data: Vec<[u8; 4]> = img
+            .data
+            .iter()
+            .map(|c| {
+                let e = |v: f32| (lightcraft_color::transfer::linear_to_srgb(v.clamp(0.0, 1.0)) * 255.0).round() as u8;
+                [e(c[0]), e(c[1]), e(c[2]), 255]
+            })
+            .collect();
+        let png = lightcraft_codecs::encode_png(
+            &lightcraft_codecs::EncodeImage::rgba8(&lightcraft_raster::Rgba8 { width: img.width, height: img.height, data }),
+            &Default::default(),
+        )
+        .unwrap();
+        std::fs::write(dir.join(name), png).unwrap();
+    };
+    save(&soften(&scene, 3), "a_soft.png");
+    save(&scene, "b_sharp.png");
+    save(&soften(&scene, 6), "c_softer.png");
+    save(&lightcraft_scenes::demo_library()[7].render(480, 320), "d_other.png");
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [dir.to_string_lossy()]})).unwrap();
+    let ids: Vec<u64> = r["imported"].as_array().unwrap().iter().filter_map(Value::as_u64).collect();
+    let by_name = |s: &Session, n: &str| s.catalog.photos().find(|p| p.file_name == n).unwrap().id;
+    for (i, n) in ["a_soft.png", "b_sharp.png", "c_softer.png"].iter().enumerate() {
+        let id = by_name(&s, n);
+        s.commit("t", lightcraft_catalog::Op::SetCaptured { id, captured: Some(format!("2026-05-01T10:00:0{i}")) }).unwrap();
+    }
+    let other = by_name(&s, "d_other.png");
+    s.commit("t", lightcraft_catalog::Op::SetCaptured { id: other, captured: Some("2026-05-01T10:00:04".into()) }).unwrap();
+    let r = s.execute("photo.analyze", &json!({"ids": ids, "rejectBelow": 0.0, "pickBest": true})).unwrap();
+    assert_eq!(r["groups"], 1, "{r}");
+    let a = |s: &Session, n: &str| s.catalog.photo(by_name(s, n)).unwrap().analysis.unwrap();
+    let (soft, sharp, softer, odd) = (a(&s, "a_soft.png"), a(&s, "b_sharp.png"), a(&s, "c_softer.png"), a(&s, "d_other.png"));
+    eprintln!("sharpness: sharp {} soft {} softer {} other {}", sharp.sharpness, soft.sharpness, softer.sharpness, odd.sharpness);
+    assert!(sharp.sharpness > soft.sharpness && soft.sharpness > softer.sharpness);
+    assert!(sharp.best && !soft.best && sharp.group.is_some() && sharp.group == softer.group);
+    assert!(odd.group.is_none(), "an unrelated photo isn't in the burst");
+    assert_eq!(s.catalog.photo(by_name(&s, "b_sharp.png")).unwrap().flag, lightcraft_catalog::Flag::Pick);
+    // reject the blurry ones (by score), as a rule too
+    let cut = (soft.sharpness + sharp.sharpness) / 2.0;
+    s.execute("photo.analyze", &json!({"ids": ids, "rejectBelow": cut})).unwrap();
+    assert_eq!(s.catalog.photo(by_name(&s, "c_softer.png")).unwrap().flag, lightcraft_catalog::Flag::Reject);
+    s.execute("library.filter", &json!({"ruleSet": {"rules": [{"field": "bestOfGroup", "op": "is", "value": true}]}})).unwrap();
+    let vis = s.visible_cloned();
+    assert!(vis.contains(&by_name(&s, "b_sharp.png")) && !vis.contains(&by_name(&s, "a_soft.png")) && vis.contains(&other));
+    let _ = std::fs::remove_dir_all(&dir);
+}
