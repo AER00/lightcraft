@@ -64,10 +64,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.y = 0.0;
             let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
             ui.painter().text(pos2(hr.left() + 18.0, hr.center().y), Align2::LEFT_CENTER, "My Photos", t.semibold(15.0), t.text);
-            let stats: Vec<_> = app.session.catalog.photos().filter(|p| p.in_library()).map(|p| p.flag).collect();
-            let total = stats.len();
-            let picks = stats.iter().filter(|f| **f == lightcraft_catalog::Flag::Pick).count();
-            let deleted = app.session.catalog.photos().filter(|p| p.deleted && !p.local).count();
+            let counts = app.caches.counts(&app.session.catalog);
+            let (total, picks, deleted) = (counts.total, counts.picks, counts.deleted);
             egui::ScrollArea::vertical().id_salt("left-scroll").auto_shrink([false, false]).show(ui, |ui| {
                 let src = app.session.source;
                 for (id, icon, label, count, s) in [
@@ -121,7 +119,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 // By date
                 let (dr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
                 ui.painter().text(pos2(dr.left() + 18.0, dr.center().y), Align2::LEFT_CENTER, "By Date", t.semibold(13.5), t.text_label);
-                for g in app.session.catalog.date_groups() {
+                for g in app.caches.date_groups(&app.session.catalog).iter() {
                     // year → month → day; a click filters by that prefix, the triangle opens a level
                     if date_row(app, ui, &g.year, &g.year, g.count, 0.0) {
                         for (m, n) in &g.months {

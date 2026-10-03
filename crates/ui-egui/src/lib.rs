@@ -631,6 +631,25 @@ pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
     date_runs: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateRun>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
+    counts: Option<(u64, LibraryCounts)>,
+    date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
+    filter_values: Option<(u64, std::sync::Arc<FilterValues>)>,
+}
+
+/// The left panel's counts.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LibraryCounts {
+    pub total: usize,
+    pub picks: usize,
+    pub deleted: usize,
+}
+
+/// The values the filter bar's pickers offer.
+#[derive(Clone, Debug, Default)]
+pub struct FilterValues {
+    pub cameras: Vec<String>,
+    pub lenses: Vec<String>,
+    pub keywords: Vec<String>,
 }
 
 fn key_of(parts: impl std::hash::Hash) -> u64 {
@@ -647,6 +666,60 @@ impl Caches {
                 let t = std::sync::Arc::new(cat.keyword_tree());
                 self.keyword_tree = Some((cat.revision, t.clone()));
                 t
+            }
+        }
+    }
+    /// All Photos / Picks / Recently Deleted counts.
+    pub fn counts(&mut self, cat: &lightcraft_catalog::Catalog) -> LibraryCounts {
+        if let Some((r, c)) = self.counts
+            && r == cat.revision
+        {
+            return c;
+        }
+        let mut c = LibraryCounts::default();
+        for p in cat.photos() {
+            if p.in_library() {
+                c.total += 1;
+                if p.flag == lightcraft_catalog::Flag::Pick {
+                    c.picks += 1;
+                }
+            } else if p.deleted && !p.local {
+                c.deleted += 1;
+            }
+        }
+        self.counts = Some((cat.revision, c));
+        c
+    }
+    /// The By Date tree.
+    pub fn date_groups(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::DateGroup>> {
+        match &self.date_groups {
+            Some((r, g)) if *r == cat.revision => g.clone(),
+            _ => {
+                let g = std::sync::Arc::new(cat.date_groups());
+                self.date_groups = Some((cat.revision, g.clone()));
+                g
+            }
+        }
+    }
+    /// Cameras, lenses and keywords in the library (filter bar pickers).
+    pub fn filter_values(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<FilterValues> {
+        match &self.filter_values {
+            Some((r, v)) if *r == cat.revision => v.clone(),
+            _ => {
+                let distinct = |mut v: Vec<String>| {
+                    v.retain(|s| !s.trim().is_empty());
+                    v.sort_by_key(|s| s.to_lowercase());
+                    v.dedup();
+                    v
+                };
+                let lib = || cat.photos().filter(|p| p.in_library());
+                let v = std::sync::Arc::new(FilterValues {
+                    cameras: distinct(lib().map(|p| p.meta.camera.clone()).collect()),
+                    lenses: distinct(lib().map(|p| p.meta.lens.clone()).collect()),
+                    keywords: cat.keywords().into_iter().map(|(k, _)| k).collect(),
+                });
+                self.filter_values = Some((cat.revision, v.clone()));
+                v
             }
         }
     }
