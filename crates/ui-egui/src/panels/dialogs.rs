@@ -30,6 +30,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::RenameKeyword { .. } => "Rename Keyword",
         Dialog::MergeKeywords { .. } => "Merge Keywords",
         Dialog::NewSmartAlbum { .. } => "Create Smart Album",
+        Dialog::AllMetadata { .. } => "All Metadata",
         Dialog::SmartRules { id: None, .. } => "New Smart Album",
         Dialog::SmartRules { .. } => "Edit Smart Album",
         Dialog::AutoStack { .. } => "Auto-Stack by Capture Time",
@@ -53,6 +54,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         .default_width(match dlg {
             Dialog::Import { .. } => 760.0,
             Dialog::SmartRules { .. } => 680.0,
+            Dialog::AllMetadata { .. } => 620.0,
             _ => 380.0,
         })
         .show(ctx, |ui| {
@@ -72,6 +74,50 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ui.label(
                         egui::RichText::new(format!("Creates {} stacks from {} of {scope}", preview["stacks"], preview["photos"])).color(t.text_dim),
                     );
+                }
+                Dialog::AllMetadata { title, rows, search } => {
+                    ui.label(egui::RichText::new(title.as_str()).color(t.text_label));
+                    let r = ui.add(egui::TextEdit::singleline(search).hint_text("Filter fields").desired_width(f32::INFINITY));
+                    crate::widgets::register(ui.ctx(), "field:metadataSearch", r.rect);
+                    let q = search.trim().to_lowercase();
+                    let keep = |n: &str, v: &str| q.is_empty() || n.to_lowercase().contains(&q) || v.to_lowercase().contains(&q);
+                    let mut groups: Vec<(String, Vec<(String, String)>)> = Vec::new();
+                    for row in rows["exif"].as_array().into_iter().flatten() {
+                        let (g, n, v) = (row["group"].as_str().unwrap_or(""), row["name"].as_str().unwrap_or(""), row["value"].as_str().unwrap_or(""));
+                        if !keep(n, v) {
+                            continue;
+                        }
+                        match groups.iter_mut().find(|(x, _)| x == g) {
+                            Some((_, list)) => list.push((n.into(), v.into())),
+                            None => groups.push((g.into(), vec![(n.into(), v.into())])),
+                        }
+                    }
+                    let xmp: Vec<(String, String)> = rows["xmp"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|r| (r["name"].as_str().unwrap_or("").to_string(), r["value"].as_str().unwrap_or("").to_string()))
+                        .filter(|(n, v)| keep(n, v))
+                        .collect();
+                    if !xmp.is_empty() {
+                        groups.push(("XMP".into(), xmp));
+                    }
+                    egui::ScrollArea::vertical().max_height(440.0).auto_shrink([false, true]).show(ui, |ui| {
+                        if groups.is_empty() {
+                            ui.label(egui::RichText::new(rows["note"].as_str().unwrap_or("No metadata found")).color(t.text_dim));
+                        }
+                        for (g, list) in &groups {
+                            ui.add_space(6.0);
+                            ui.label(egui::RichText::new(g).font(t.semibold(12.5)).color(t.text));
+                            egui::Grid::new(format!("meta-{g}")).num_columns(2).spacing([16.0, 3.0]).striped(true).show(ui, |ui| {
+                                for (n, v) in list {
+                                    ui.label(egui::RichText::new(n).color(t.text_dim));
+                                    ui.add(egui::Label::new(egui::RichText::new(v).color(t.text_label)).wrap());
+                                    ui.end_row();
+                                }
+                            });
+                        }
+                    });
                 }
                 Dialog::SmartRules { name, rules, .. } => {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text("Name").desired_width(f32::INFINITY));
@@ -679,6 +725,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         Dialog::RenameKeyword { from, to } => app.run("keyword.rename", json!({"from": from, "to": to})),
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),
+        Dialog::AllMetadata { .. } => Ok(serde_json::Value::Null),
         Dialog::SmartRules { id, name, rules } => {
             let name = if name.trim().is_empty() { "Smart Album".to_string() } else { name.trim().to_string() };
             match id {

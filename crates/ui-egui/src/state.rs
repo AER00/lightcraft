@@ -353,6 +353,12 @@ pub enum Dialog {
     NewSmartAlbum {
         name: String,
     },
+    /// Every metadata field of a photo's file (`photo.allMetadata`), filtered by `search`.
+    AllMetadata {
+        title: String,
+        rows: serde_json::Value,
+        search: String,
+    },
     /// Create (`id` None) or edit a smart album's rules.
     SmartRules {
         id: Option<u64>,

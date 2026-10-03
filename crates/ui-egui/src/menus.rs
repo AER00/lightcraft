@@ -81,6 +81,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.newAlbum", "New Album…", Some("Cmd+N"), "File"),
     ("dialog.newFolder", "New Folder…", Some("Cmd+Shift+N"), "File"),
     ("dialog.smartAlbum", "New Smart Album…", None, "File"),
+    ("dialog.allMetadata", "All Metadata…", None, "Photo"),
     ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
     ("dialog.autoStack", "Auto-Stack by Capture Time…", None, "Photo>Stack"),
@@ -541,6 +542,15 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "dialog.autoStack" => {
             app.ui.dialog = Some(Dialog::AutoStack { gap: p.get("gap").and_then(Value::as_f64).unwrap_or(60.0) as f32 });
+            Ok(Value::Null)
+        }
+        "dialog.allMetadata" => {
+            let r = match app.session.execute("photo.allMetadata", p) {
+                Ok(r) => r,
+                Err(e) => return Some(Err(e.to_string())),
+            };
+            let title = app.session.active().and_then(|id| app.session.catalog.photo(id)).map(|p| p.file_name.clone()).unwrap_or_default();
+            app.ui.dialog = Some(Dialog::AllMetadata { title, rows: r, search: String::new() });
             Ok(Value::Null)
         }
         "dialog.smartAlbum" => {

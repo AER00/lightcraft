@@ -25,7 +25,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | B. Library management (LIB) | 19 | 0 | 6 | 2 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 14 | 0 | 3 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 9 | 1 | 3 | 0 | 4/4 (100%) | 4/4 (100%) |
-| E. Metadata (META) | 4 | 2 | 0 | 0 | 2/2 (100%) | 1/2 (50%) |
+| E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
 | F. Edit panel — global adjustments (EDIT) | 41 | 1 | 6 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 73 | 4 | 8 | 8 | 46/47 (98%) | 22/23 (96%) |
 | Z. Keyboard shortcuts (desktop) | 73 | 3 | 4 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 18 | 12 | 49 | 9 | — | 17/21 (81%) |
-| **Total** | 343 | 33 | 124 | 37 | 193/198 (97%) | 130/144 (90%) |
+| **Total** | 344 | 32 | 124 | 37 | 193/198 (97%) | 131/144 (91%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **71.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 93.8% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **72.0%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.1% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -194,7 +194,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-META-LOCATION | Location editing | P2 | 🟡 | `cmd:photo.setMeta` (`location`, `city`, `state`, `country`) | place fields edited in Info, read/written as IPTC Core / Photoshop XMP; GPS read-only; no map, no geocoding |
 | LR-META-COPYPASTE | Copy / paste metadata | P2 | ✅ | `cmd:photo.copyMetadata`, `cmd:photo.pasteMetadata` | title, caption, alt text, extended description, copyright, creator, place fields, keywords; `fields` picks a subset |
 | LR-META-XMP | XMP read/write | P0 | ✅ | `cmd:photo.saveMetadataToFile`, `cmd:photo.readMetadataFromFile`, `cmd:library.xmpPreferences`, `crates/engine/src/sidecar.rs`, `docs/xmp-interop.md` | |
-| LR-META-EXIF-FULL | Full EXIF/IPTC [Classic] | P1 | 🟡 | `crates/meta/src/exif.rs`, `crates/meta/src/iptc.rs` | read and written on export; panel shows a subset; no metadata presets |
+| LR-META-EXIF-FULL | Full EXIF/IPTC [Classic] | P1 | ✅ | `cmd:photo.allMetadata`, `cmd:dialog.allMetadata`, `crates/meta/src/tags.rs`, `crates/meta/src/exif.rs`, `crates/meta/src/iptc.rs` | read and written on export; Info ▸ All Metadata…: every TIFF / EXIF / GPS / interop tag (named, common values spelled out) and the XMP fields, searchable; metadata presets |
 
 ## F. Edit panel — global adjustments (EDIT)
 

@@ -249,3 +249,25 @@ fn demo_photos_have_no_sidecar() {
     assert_eq!(r["written"].as_array().unwrap().len(), 0);
     assert_eq!(r["failed"].as_array().unwrap().len(), 1);
 }
+
+/// All Metadata: EXIF rows from the file and its XMP, for a photo on disk.
+#[test]
+fn all_metadata_lists_exif_and_xmp() {
+    let dir = temp_dir("allmeta");
+    let path = dir.join("tagged.jpg");
+    let img = lightcraft_raster::Rgba8 { width: 16, height: 8, data: vec![[90, 120, 200, 255]; 128] };
+    let exif = lightcraft_meta::write_exif(&lightcraft_meta::Metadata { make: Some("Maker".into()), iso: Some(800), ..Default::default() });
+    let meta = lightcraft_codecs::EncodeMeta { exif: Some(&exif), ..Default::default() };
+    let jpg = lightcraft_codecs::encode_jpeg(&lightcraft_codecs::EncodeImage::rgba8(&img), 90, Default::default(), &meta).unwrap();
+    std::fs::write(&path, jpg).unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+    s.execute("photo.setMeta", &json!({"title": "A title"})).unwrap();
+    s.execute("photo.saveMetadataToFile", &json!({})).unwrap();
+    let r = s.execute("photo.allMetadata", &json!({})).unwrap();
+    let exif = r["exif"].as_array().unwrap();
+    assert!(exif.iter().any(|e| e["name"] == "Make" && e["value"] == "Maker"), "{r}");
+    assert!(exif.iter().any(|e| e["name"] == "ISO Speed" && e["value"] == "800"));
+    assert!(r["xmp"].as_array().unwrap().iter().any(|x| x["name"] == "dc:title" && x["value"] == "A title"), "the sidecar's fields: {r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
