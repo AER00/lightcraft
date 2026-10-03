@@ -990,8 +990,10 @@ mod tests {
         let mut h = Headless::new(app, [1300.0, 900.0], 1.0);
         let t = Duration::from_secs(10);
         let r = h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [src.to_string_lossy()]}}), t);
-        assert_eq!(r["result"]["candidates"], 10, "{r}");
+        assert_eq!(r["result"]["scanning"], true, "{r}");
         h.settle(SETTLE);
+        let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review") };
+        assert_eq!(opts.candidates.len(), 10);
         for id in ["button:importCopy", "button:importDest"] {
             let r = h.request("ui.clickWidget", json!({"id": id}), t);
             assert_eq!(r["ok"], true, "{id}: {r}");
