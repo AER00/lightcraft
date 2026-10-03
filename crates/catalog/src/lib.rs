@@ -166,6 +166,15 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         format: Option<String>,
     },
+    /// What a photo's file is now (after it changed on disk: Reload).
+    SetContent {
+        id: PhotoId,
+        width: u32,
+        height: u32,
+        file_size: u64,
+        #[serde(default)]
+        content_hash: Option<String>,
+    },
     /// The name shown for a colour label (`None` = its colour's name).
     SetLabelName {
         label: ColorLabel,
@@ -495,6 +504,16 @@ impl Catalog {
                 let old_name = std::mem::replace(&mut p.file_name, file_name);
                 let old_format = format.map(|f| std::mem::replace(&mut p.format, f));
                 Op::Relink { id, file_name: old_name, source: std::mem::replace(&mut p.source, source), format: old_format }
+            }
+            Op::SetContent { id, width, height, file_size, content_hash } => {
+                let p = self.photo_mut(id)?;
+                Op::SetContent {
+                    id,
+                    width: std::mem::replace(&mut p.width, width),
+                    height: std::mem::replace(&mut p.height, height),
+                    file_size: std::mem::replace(&mut p.file_size, file_size),
+                    content_hash: std::mem::replace(&mut p.content_hash, content_hash),
+                }
             }
             Op::SetFile { id, file_name, source } => {
                 if file_name.trim().is_empty() {

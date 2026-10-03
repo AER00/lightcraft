@@ -253,6 +253,11 @@ pub fn expand(paths: &[String], skip: Option<&Path>) -> Vec<String> {
     out
 }
 
+/// Probe files (headers + content hash) as an import would.
+pub(crate) fn probe_paths(s: &Session, paths: &[String]) -> Vec<Result<ProbeInfo, String>> {
+    probe_all(s, paths)
+}
+
 fn probe_all(s: &Session, paths: &[String]) -> Vec<Result<ProbeInfo, String>> {
     let Some(probe) = s.media.file_probe.clone() else {
         return paths

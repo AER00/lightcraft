@@ -511,12 +511,15 @@ impl crate::Session {
         let request = RenderRequest { apply_crop, ..RenderRequest::fit(max_w, max_h) };
         // the photo id is part of the key: two photos with the same settings and size must not
         // share a result (a view slot showing photo A would otherwise look current for photo B)
+        // …and so is the file's content: a file changed on disk (Reload) renders afresh
+        let content = Hasher128::new().str(&content_key(&p)).finish().0 as u64;
         let key = settings.hash64()
             ^ ((max_w as u64) << 40)
             ^ ((max_h as u64) << 20)
             ^ (apply_crop as u64)
             ^ (level as u64) << 60
-            ^ id.0.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            ^ id.0.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            ^ content.rotate_left(17);
         let cache = thumb_bucket.map(|b| {
             let k = Hasher128::new().str(&content_key(&p)).u64(settings.hash64()).u64(b as u64).u64(RENDER_CACHE_VERSION).finish();
             (self.media.rendered.clone(), k)

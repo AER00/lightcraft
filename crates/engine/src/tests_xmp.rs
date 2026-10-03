@@ -354,3 +354,24 @@ fn external_edit_copy_is_stacked() {
     assert!(r2["path"].as_str().unwrap().ends_with("beach-Edit-Edit.tif") || r2["path"].as_str().unwrap().contains("-2"), "{r2}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Reload: a file changed on disk (an external editor saved it) gets its new size / hash, the
+/// cached source is dropped and renders change; unchanged files are left alone.
+#[test]
+fn reload_picks_up_changed_files() {
+    let dir = temp_dir("reload");
+    let f = dir.join("x.png");
+    write_png(&f, 10);
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [f.to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    let before = s.render_now(id, 32, 32).unwrap().image.data;
+    let key0 = s.thumb_job(id, 128).unwrap().key;
+    assert_eq!(s.execute("photo.reload", &json!({})).unwrap()["reloaded"], json!([]), "unchanged");
+    write_png(&f, 200);
+    let r = s.execute("photo.reload", &json!({})).unwrap();
+    assert_eq!(r["reloaded"], json!([id.0]));
+    assert_ne!(s.thumb_job(id, 128).unwrap().key, key0, "the UI sees a new render key");
+    assert_ne!(s.render_now(id, 32, 32).unwrap().image.data, before, "renders the new pixels");
+    let _ = std::fs::remove_dir_all(&dir);
+}

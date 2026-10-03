@@ -681,6 +681,9 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 Err(e) => return Some(Err(e.to_string())),
             };
             let path = r["path"].as_str().unwrap_or_default().to_string();
+            if let Some(id) = r["id"].as_u64() {
+                app.ui.external_edits.push(id);
+            }
             let editor = p.get("app").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| app.ui.settings.external_editor.clone());
             if let Some(f) = app.services.open_with.as_mut()
                 && let Err(e) = f(&path, &editor)

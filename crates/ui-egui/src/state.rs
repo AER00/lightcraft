@@ -213,6 +213,12 @@ pub struct UiState {
     pub show_filenames: bool,
     /// Photo counts next to sources and albums in the left panel.
     pub show_counts: bool,
+    /// Copies opened in an external editor this session (reloaded when the window is focused
+    /// again), and whether the window had focus last frame.
+    #[serde(skip)]
+    pub external_edits: Vec<u64>,
+    #[serde(skip)]
+    pub was_focused: bool,
     /// The develop control whose slider is being dragged (geometry sliders show a grid).
     #[serde(skip)]
     pub dragging_control: Option<String>,
@@ -452,6 +458,8 @@ impl Default for UiState {
             show_filenames: true,
             show_counts: true,
             dragging_control: None,
+            external_edits: Vec::new(),
+            was_focused: true,
             search: String::new(),
             focus_search: false,
             renaming_mask: None,

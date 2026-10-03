@@ -148,14 +148,60 @@ fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"path": out, "id": new, "original": id.0}))
 }
 
+/// Re-read photos whose files changed on disk (an external editor saved them): new size,
+/// dimensions and content hash, cached sources dropped. → {reloaded: [ids]}
+fn reload(s: &mut Session, p: &Value) -> Result<Value> {
+    let ids = s.targets(p);
+    let paths: Vec<(lightcraft_catalog::PhotoId, String)> = ids
+        .iter()
+        .filter_map(|id| match s.catalog.photo(*id).map(|ph| ph.source.clone()) {
+            Some(Source::File { path }) => Some((*id, path)),
+            _ => None,
+        })
+        .collect();
+    let probed = crate::import::probe_paths(s, &paths.iter().map(|(_, p)| p.clone()).collect::<Vec<_>>());
+    let mut ops = Vec::new();
+    let mut reloaded = Vec::new();
+    for ((id, _), info) in paths.into_iter().zip(probed) {
+        let (Ok(info), Some(ph)) = (info, s.catalog.photo(id)) else { continue };
+        if info.content_hash == ph.content_hash && info.file_size == ph.file_size && (info.width, info.height) == (ph.width, ph.height) {
+            continue;
+        }
+        ops.push(Op::SetContent { id, width: info.width, height: info.height, file_size: info.file_size, content_hash: info.content_hash });
+        // virtual copies share the file
+        for c in s.catalog.photos().filter(|c| c.copy_of == Some(id)) {
+            reloaded.push(c.id);
+        }
+        reloaded.push(id);
+    }
+    for id in &reloaded {
+        s.media.forget(*id);
+    }
+    if !ops.is_empty() {
+        s.commit("Reload Changed Files", Op::Batch { ops })?;
+    }
+    Ok(json!({"reloaded": reloaded.iter().map(|i| i.0).collect::<Vec<_>>()}))
+}
+
 pub fn edit_specs() -> Vec<CommandSpec> {
-    vec![cmd!(
-        "photo.editExternal",
-        "Edit Copy for External Editor",
-        [],
-        None,
-        "{colorSpace?: adobeRgb (default) | proPhoto | displayP3 | srgb, dir?} — render the active photo with its edits as a 16-bit TIFF `<name>-Edit.tif` next to it, add it stacked on the original and select it → {path, id, original} (the app then opens it in the external editor)",
-        has_active,
-        edit_external
-    )]
+    vec![
+        cmd!(
+            "photo.reload",
+            "Reload from Disk",
+            [],
+            None,
+            "{ids?} — re-read photos whose files changed on disk (e.g. saved by an external editor) → {reloaded}",
+            has_selection,
+            reload
+        ),
+        cmd!(
+            "photo.editExternal",
+            "Edit Copy for External Editor",
+            [],
+            None,
+            "{colorSpace?: adobeRgb (default) | proPhoto | displayP3 | srgb, dir?} — render the active photo with its edits as a 16-bit TIFF `<name>-Edit.tif` next to it, add it stacked on the original and select it → {path, id, original} (the app then opens it in the external editor)",
+            has_active,
+            edit_external
+        ),
+    ]
 }
