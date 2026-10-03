@@ -98,7 +98,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-IMP-ADD-DIALOG | Add photos/folders | P0 | ✅ | `cmd:file.addPhotos`, `cmd:library.importPreview`, `cmd:library.import` (`mode`, `album`, `albumName`, `preset`, `keywords`), `crates/ui-egui/src/import.rs` | review dialog: candidate grid with thumbnails and checkboxes (duplicates by path/content marked and unchecked), destination, album (existing/new), preset, keywords; batched import with a progress window; one undo step. Drag-and-drop still imports directly |
+| LR-IMP-ADD-DIALOG | Add photos/folders | P0 | ✅ | `cmd:file.addPhotos`, `cmd:library.importPreview`, `cmd:library.import` (`mode`, `album`, `albumName`, `preset`, `keywords`), `crates/ui-egui/src/import.rs` | review dialog: candidate grid with thumbnails and checkboxes (duplicates by path/content marked and unchecked), destination, album (existing/new), preset, keywords; the folder scan runs on a background thread with a progress window and Cancel (a NAS folder no longer freezes the window); batched import with a progress window; one undo step. Drag-and-drop still imports directly |
 | LR-IMP-DRAGDROP | Drop files/folders to import | P0 | ✅ | `crates/ui-egui/src/lib.rs` (dropped files → `cmd:library.import`) | dropping onto a specific album not supported |
 | LR-IMP-DUPES | Skip duplicates by content | P1 | ✅ | `crates/engine/src/import.rs`, `crates/engine/src/tests_import.rs` | |
 | LR-IMP-DEVICE | Import from camera/card | P1 | ✅ | `cmd:library.devices`, `cmd:file.addFromDevice`, `crates/engine/src/devices.rs` | mounted volumes with a DCIM folder (macOS /Volumes, Linux /media and /run/media, Windows drive letters); File → Add from Device → the import review, copying into the library by default; no PTP/MTP (cameras that don't mount as a disk) |
@@ -269,7 +269,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-CROP-RECT | Crop rectangle | P0 | ✅ | `cmd:crop.set`, `crates/ui-egui/src/panels/detail.rs` | |
+| LR-CROP-RECT | Crop rectangle | P0 | ✅ | `cmd:crop.set`, `crates/ui-egui/src/panels/detail.rs` | double-click inside the box applies the crop (like Return) |
 | LR-CROP-ASPECT | Aspect ratios | P0 | ✅ | `cmd:crop.aspect`, `cmd:crop.rotateAspect` | no "As Shot"; custom ratio via command params only |
 | LR-CROP-STRAIGHTEN | Straighten tool | P0 | ✅ | `cmd:crop.straighten`, `cmd:crop.autoStraighten` | Straighten Tool button: drag along a horizon/vertical; double-click or Auto levels automatically |
 | LR-CROP-AUTO | Auto straighten | P1 | ✅ | `cmd:crop.autoStraighten` | crop-angle leveling from detected horizon/plumb lines (consensus required) |

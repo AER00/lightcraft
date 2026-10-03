@@ -5,9 +5,10 @@
 //! frame, with a progress window; the whole import is one undo step.
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
-use lightcraft_engine::import::ImportCandidate;
+use lightcraft_engine::import::{ImportCandidate, ScanInput, ScanOutput, ScanProgress, scan_with};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::atomic::Ordering;
 
 use crate::LightcraftApp;
 use crate::render::Slot;
@@ -79,19 +80,82 @@ pub struct ImportTask {
     first: Option<u64>,
 }
 
-/// Scan `paths` and open the review dialog. Returns the candidate counts.
+/// A folder scan running on a worker thread (a network share can take minutes to read; the
+/// window must keep answering meanwhile).
+pub struct ScanTask {
+    progress: std::sync::Arc<ScanProgress>,
+    rx: std::sync::mpsc::Receiver<ScanOutput>,
+    /// Open the review with "copy into the library" checked (a camera / card).
+    pub copy: bool,
+}
+
+/// Scan `paths` in the background, then open the review dialog (see [`poll_scan`]).
 pub fn open(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String> {
-    let r = app.session.execute("library.importPreview", &json!({"paths": paths})).map_err(|e| e.to_string())?;
-    let candidates: Vec<ImportCandidate> = serde_json::from_value(r["candidates"].clone()).unwrap_or_default();
-    if candidates.is_empty() {
-        app.toast(&egui::Context::default(), "No photos found");
-        return Ok(json!({"candidates": 0}));
+    if app.scan.is_some() {
+        return Err("a scan is already running".into());
+    }
+    let (input, paths) = ScanInput::new(&mut app.session, &paths);
+    let progress = std::sync::Arc::new(ScanProgress::default());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let p = progress.clone();
+    let job = move || {
+        let _ = tx.send(scan_with(input, &paths, &p));
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    std::thread::spawn(job);
+    #[cfg(target_arch = "wasm32")]
+    job();
+    app.scan = Some(ScanTask { progress, rx, copy: false });
+    Ok(json!({"scanning": true}))
+}
+
+/// Collect a finished scan and open the review (called every frame).
+pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let Some(task) = app.scan.as_ref() else { return };
+    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    let out = match task.rx.try_recv() {
+        Ok(o) => o,
+        Err(std::sync::mpsc::TryRecvError::Empty) => return,
+        Err(_) => {
+            app.scan = None;
+            app.toast(ctx, "Scan failed");
+            return;
+        }
+    };
+    let task = app.scan.take().expect("scan task");
+    if task.progress.cancel.load(Ordering::Relaxed) {
+        return;
+    }
+    app.session.import_probes = out.probes;
+    if out.candidates.is_empty() {
+        app.toast(ctx, "No photos found");
+        return;
     }
     app.renderer.forget_imports();
-    let d = ImportDialog::new(candidates);
-    let out = json!({"candidates": d.candidates.len(), "duplicates": r["duplicates"]});
+    let mut d = ImportDialog::new(out.candidates);
+    d.copy = task.copy;
     app.ui.dialog = Some(crate::state::Dialog::Import { opts: Box::new(d) });
-    Ok(out)
+}
+
+/// The progress window while a folder is being scanned.
+pub fn scan_progress(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let Some(task) = &app.scan else { return };
+    let t = Tokens::get(ctx);
+    let total = task.progress.total.load(Ordering::Relaxed);
+    let done = task.progress.done.load(Ordering::Relaxed);
+    let text = if total == 0 { "Looking for photos…".to_string() } else { format!("Reading photos… {done} of {total}") };
+    let mut cancel = false;
+    egui::Window::new("Scanning").title_bar(false).resizable(false).anchor(Align2::CENTER_BOTTOM, [0.0, -80.0]).fixed_size([340.0, 80.0]).show(
+        ctx,
+        |ui| {
+            ui.label(egui::RichText::new(text).color(t.text));
+            ui.add(egui::ProgressBar::new(done as f32 / total.max(1) as f32).desired_width(320.0));
+            cancel = ui.button("Cancel").clicked();
+        },
+    );
+    if cancel {
+        task.progress.cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Start importing the dialog's checked files (the dialog's OK / `ui.dialog.confirm`).

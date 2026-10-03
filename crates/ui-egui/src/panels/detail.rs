@@ -609,7 +609,10 @@ fn general_interaction(
         app.ui.zoom_anim = true;
     }
     if zoomed {
-        ui.ctx().set_cursor_icon(if resp.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
+        // only over the photo: a panel drawn earlier (sliders) must keep its own cursor
+        if resp.dragged() || resp.hovered() {
+            ui.ctx().set_cursor_icon(if resp.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
+        }
         if resp.dragged() {
             let dlt = resp.drag_delta();
             app.ui.pan.0 = (app.ui.pan.0 - dlt.x / img.width()).clamp(0.0, 1.0);
@@ -692,6 +695,15 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
             None if inside(hq) => egui::CursorIcon::Move,
             None => egui::CursorIcon::Alias,
         });
+    }
+    // double-click inside the crop box applies the crop (same as Return / Done)
+    if resp.double_clicked()
+        && let Some(q) = resp.interact_pointer_pos()
+        && inside(q)
+        && !handles.iter().any(|h| h.distance(q) < 12.0)
+    {
+        let _ = app.run("tool.done", json!({}));
+        return;
     }
     if resp.drag_started()
         && let Some(q) = resp.interact_pointer_pos()

@@ -237,6 +237,18 @@ fn command_drag_straightens_in_crop() {
 }
 
 #[test]
+fn double_click_in_crop_box_applies_the_crop() {
+    let mut h = detail("panel.crop");
+    h.settle(SETTLE);
+    assert_eq!(h.app.ui.right, crate::state::RightPanel::Crop);
+    let c = h.app.image_rect.expect("image on screen").center();
+    let r = h.request("ui.click", json!({"x": c.x, "y": c.y, "count": 2}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!(h.app.ui.right, crate::state::RightPanel::Edit, "double-click leaves the crop tool");
+}
+
+#[test]
 fn option_digit_toggles_keyword_from_set() {
     let mut h = detail("panel.keywords");
     exec(&mut h, "photo.setMeta", json!({"addKeywords": ["alpha"]}));
