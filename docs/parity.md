@@ -45,12 +45,12 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 14 | 1 | 2 | 1 | 8/8 (100%) | 5/5 (100%) |
-| Y. Menus | 80 | 1 | 4 | 8 | 46/47 (98%) | 23/23 (100%) |
+| Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 29 | 8 | 42 | 9 | — | 20/21 (95%) |
-| **Total** | 382 | 25 | 93 | 37 | 193/198 (97%) | 136/144 (94%) |
+| Lightroom Classic extras | 29 | 9 | 41 | 9 | — | 20/21 (95%) |
+| **Total** | 383 | 25 | 92 | 37 | 194/198 (98%) | 136/144 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **78.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 96.2% of 144 · P2 38.3% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.1%** of 500 in-scope rows — P0 99.0% of 198 · P1 96.2% of 144 · P2 38.6% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -584,7 +584,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-CTX-GRID | Photo context menu | P0 | ✅ | `crates/ui-egui/src/panels/grid.rs` (`context_menu`) | rate, flag, label, add to / remove from album, rename, virtual copy, version, stack, copy / paste / paste selected, reset, merge, rotate, show in Finder, export / export with preset, set as album cover (in an album), delete |
 | MENU-CTX-DETAIL | Loupe context menu | P1 | ✅ | `crates/ui-egui/src/panels/detail.rs` | Zoom submenu (fit, 100%, in, out), then the photo menu |
 | MENU-CTX-ALBUM | Album / folder row menu | P0 | ✅ | `crates/ui-egui/src/panels/left.rs` (`folder_menu`), `cmd:album.move`, `cmd:dialog.export` | add selected, export album (dialog / preset), move to a folder or the top level, rename, delete; smart albums: update rules |
-| MENU-CTX-MASK | Mask / component menu | P0 | 🟡 | `crates/ui-egui/src/panels/masking.rs` (`mask_menu`) | mask rows: duplicate (and invert), invert, show/hide, move, rename, delete; components: add/subtract only (no per-component menu) |
+| MENU-CTX-MASK | Mask / component menu | P0 | ✅ | `crates/ui-egui/src/panels/masking.rs` (`mask_menu`, `component_row_menu`), `cmd:mask.component` | mask rows: duplicate (and invert), invert, show/hide, move, rename, delete; component rows (right-click or "…"): invert, duplicate, mode (add / subtract / intersect), intersect with / subtract a new component, rename (also double-click), delete (the last one deletes the mask) |
 | MENU-CTX-PRESET | Preset menu | P1 | ✅ | `crates/ui-egui/src/panels/presets.rs` | favourite, update with current settings, rename, move to group, delete; group: export |
 | MENU-CTX-PROFILE | Profile favourites | P2 | ✅ | `cmd:profile.favorite`, `crates/ui-egui/src/panels/profiles.rs` | star in the profile browser; Favorites group first |
 | MENU-CTX-VERSION | Version menu | P1 | ✅ | `crates/ui-egui/src/panels/right.rs` (`versions`) | restore, update with current settings, rename, set as before, delete |
@@ -713,7 +713,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-SLIDESHOW-IMPROMPTU | Impromptu slideshow | P2 | ✅ | `cmd:view.slideshow` | see LR-VIEW-SLIDESHOW |
 | LRC-DEV-SNAPSHOTS | Named snapshots | P1 | ✅ | `cmd:version.create`, `cmd:version.restore` | = versions |
 | LRC-DEV-HISTORY | Full history panel | P1 | ✅ | `cmd:history.list`, `cmd:history.restore`, `cmd:history.clear` | row menu: copy step to before, create version from step, clear history |
-| LRC-DEV-SOFTPROOF | Soft proofing | P2 | ⬜ | | |
+| LRC-DEV-SOFTPROOF | Soft proofing | P2 | 🟡 | `cmd:view.softProof`, `crates/pipeline/src/output.rs` (`Proof`), `crates/ui-egui/src/panels/edit.rs` (`soft_proofing`) | S in the loupe (in grids S stays Expand/Collapse Stack): paper-white surround and "Proof Preview", proof profile (sRGB / Display P3 / Adobe RGB / ProPhoto / Rec. 2020), destination (red) and display (blue) gamut warnings, Create Proof Copy (a named virtual copy). Missing: printer ICC profiles, rendering intent, Simulate Paper & Ink |
 | LRC-DEV-AUTOSYNC | Sync / auto sync / paste previous | P1 | ✅ | `cmd:develop.sync`, `cmd:develop.autoSync`, `cmd:develop.pastePrevious` | Edit ▸ Sync Settings / Auto Sync (⌥⇧⌘A): only the changed settings carry over, one undo step, slider drags sync on release, spots / red eye stay per photo; Edit panel banner |
 | LRC-DEV-MATCHEXP | Match total exposures | P2 | ✅ | `cmd:develop.matchExposure` | Photo ▸ Match Total Exposures: the selected photos' Exposure set so shutter × ISO ÷ aperture² plus the slider matches the active photo's |
 | LRC-DEV-CALIB | Calibration panel | P1 | ✅ | `ctl:calibration.*` | |

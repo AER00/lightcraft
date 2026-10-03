@@ -565,3 +565,46 @@ fn reference_view_pins_a_photo_beside_the_active_one() {
     h.settle(SETTLE);
     assert!(h.app.renderer.textures.get(&crate::render::Slot::Compare(0)).is_some_and(|t| t.photo == first), "the reference is drawn");
 }
+
+#[test]
+fn soft_proofing_flags_out_of_gamut_colours_and_makes_proof_copies() {
+    let mut h = detail("panel.edit");
+    if h.app.ui.right != RightPanel::Edit {
+        exec(&mut h, "panel.edit", json!({}));
+    }
+    assert_eq!(h.app.ui.right, RightPanel::Edit);
+    h.app.renderer.keep_pixels = true;
+    exec(&mut h, "develop.set", json!({"control": "color.saturation", "value": 100}));
+    exec(&mut h, "develop.set", json!({"control": "color.vibrance", "value": 100}));
+    let red = |h: &Headless| {
+        let t = h.app.renderer.textures.get(&crate::render::Slot::Main).expect("loupe render");
+        t.pixels.as_ref().expect("pixels kept").pixels.iter().filter(|c| c.r() == 255 && c.g() == 0 && c.b() == 0).count()
+    };
+    h.settle(SETTLE);
+    let before = red(&h);
+    // S in the loupe: soft proofing on; the warning is the proof's own setting
+    let r = h.request("ui.key", json!({"key": "s"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(h.app.ui.soft_proof);
+    let st = exec(&mut h, "view.softProof", json!({"space": "srgb", "destWarning": true}));
+    assert_eq!(st, json!({"on": true, "space": "srgb", "destWarning": true, "displayWarning": false}));
+    h.settle(SETTLE);
+    assert!(red(&h) > before, "out-of-gamut colours are painted red");
+    let r = h.request("engine.execute", json!({"command": "view.softProof", "params": {"space": "cmyk"}}), T);
+    assert_ne!(r["ok"], true);
+    // Create Proof Copy: a virtual copy named after the proof
+    let n = h.app.session.catalog.photos().count();
+    let r = h.request("ui.clickWidget", json!({"id": "button:createProofCopy"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(h.app.session.catalog.photos().count(), n + 1);
+    let copy = (**h.app.session.catalog.photos().max_by_key(|p| p.id.0).unwrap()).clone();
+    assert_eq!(copy.copy_name.as_deref(), Some("Proof Copy (sRGB)"));
+    // S again turns it off; in a grid S is Expand/Collapse Stack (the copy made a stack)
+    h.request("ui.key", json!({"key": "s"}), T);
+    assert!(!h.app.ui.soft_proof);
+    exec(&mut h, "view.photoGrid", json!({}));
+    let stack = h.app.session.catalog.stack_of(copy.id).cloned().expect("stacked with its original");
+    h.request("ui.key", json!({"key": "s"}), T);
+    assert!(!h.app.ui.soft_proof);
+    assert_ne!(h.app.session.catalog.stack_of(copy.id).unwrap().collapsed, stack.collapsed, "S toggled the stack");
+}

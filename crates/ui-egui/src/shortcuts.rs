@@ -170,6 +170,9 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             app.toast(ctx, label);
         } else if let Some(l) = f.strip_prefix("label:") {
             cull(app, "photo.label", json!({"label": l}), false);
+        } else if f == "view.softProof" && matches!(app.ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid) {
+            // S in a grid: expand / collapse the stack (Lightroom's Library binding)
+            let _ = app.run("stack.toggle", json!({}));
         } else if compare::culling(app) && (f == "library.next" || f == "library.previous") {
             let d = if f == "library.next" { 1 } else { -1 };
             let _ = if app.ui.view == crate::state::ViewMode::Compare { compare::compare_step(app, d) } else { compare::survey_step(app, d) };

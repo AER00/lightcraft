@@ -41,7 +41,7 @@ pub mod transform;
 pub mod upright;
 pub mod visualize;
 
-pub use output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc};
+pub use output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc, Proof};
 pub use visualize::{MaskView, Overlay};
 
 use lightcraft_develop::{DevelopSettings, Treatment};
@@ -93,11 +93,22 @@ pub struct RenderRequest {
     pub space: OutputSpace,
     /// Sample format: 8-bit only, or also a 16-bit / linear float [`Rendered::deep`] (exports).
     pub depth: OutputDepth,
+    /// Soft proofing (CPU only; see [`Proof`]).
+    pub proof: Option<Proof>,
 }
 
 impl RenderRequest {
     pub fn fit(max_w: usize, max_h: usize) -> Self {
-        Self { max_w, max_h, quality: Quality::Full, apply_crop: true, overlay: Overlay::None, space: OutputSpace::Srgb, depth: OutputDepth::U8 }
+        Self {
+            max_w,
+            max_h,
+            quality: Quality::Full,
+            apply_crop: true,
+            overlay: Overlay::None,
+            space: OutputSpace::Srgb,
+            depth: OutputDepth::U8,
+            proof: None,
+        }
     }
 }
 
@@ -398,13 +409,13 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((lin_key, lin)), planes });
     }
     if req.depth != OutputDepth::U8 {
-        let deep = finish::finish_deep(&prep, s, frame, info, req.space, req.depth);
+        let deep = finish::finish_deep(&prep, s, frame, info, req.space, req.depth, req.proof);
         let image = deep.to_rgba8();
         let histogram = Histogram::of_srgb8(&image);
         lap("finish (deep)", &mut t);
         return Rendered { image, histogram, deep: Some(deep) };
     }
-    let image = finish::finish(&prep, s, frame, info, req.space);
+    let image = finish::finish(&prep, s, frame, info, req.space, req.proof);
     lap("finish", &mut t);
     let histogram = Histogram::of_srgb8(&image);
     lap("histogram", &mut t);

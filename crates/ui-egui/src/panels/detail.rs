@@ -186,7 +186,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     if let Some(job) = app.session.loupe_job(id, rw.max(8), rh.max(8), !crop_tool) {
         let job = if interacting { job.draft() } else { job };
-        let job = job.with_overlay(view_overlay(app, &d));
+        let job = job.with_overlay(view_overlay(app, &d)).with_proof(app.ui.soft_proof.then_some(app.ui.proof));
         app.renderer.request(Slot::Main, job, 100);
     }
     // hovering a preset or profile: the photo with that look, shown instead of the loupe render
@@ -249,6 +249,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         p.image(tex.tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         what
     };
+    // soft proofing: a paper-white surround and the proof's name, as Lightroom shows it
+    if app.ui.soft_proof && !fullscreen {
+        p.rect_filled(canvas, 0.0, Color32::from_gray(238));
+        let label = format!("Proof Preview · {}", app.ui.proof.space.label());
+        p.text(pos2(canvas.right() - 16.0, canvas.top() + 14.0), Align2::RIGHT_CENTER, label, t.font(12.5), Color32::from_gray(60));
+    }
     let shown;
     if split {
         let br = fit_rect(areas[0], aspect, app.ui.zoom, native, ppp, app.ui.pan);

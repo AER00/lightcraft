@@ -639,3 +639,35 @@ fn quick_develop_adds_to_each_photo() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(s.develop_of(PhotoId(ids[0])).unwrap().light.exposure, before[0], "one undo step");
 }
+
+#[test]
+fn mask_components_invert_duplicate_rename_change_mode_and_delete() {
+    use lightcraft_develop::MaskOp;
+    let mut s = demo();
+    s.execute("mask.add", &json!({"kind": "radial"})).unwrap();
+    s.execute("mask.addComponent", &json!({"op": "subtract", "kind": "linear"})).unwrap();
+    let mask = |s: &Session| active_dev(s).masks[0].clone();
+    let id = mask(&s).id;
+    s.execute("mask.component", &json!({"component": 1, "action": "invert"})).unwrap();
+    assert!(mask(&s).components[1].invert);
+    s.execute("mask.component", &json!({"component": 1, "action": "op", "op": "intersect"})).unwrap();
+    assert_eq!(mask(&s).components[1].op, MaskOp::Intersect);
+    s.execute("mask.component", &json!({"component": 0, "action": "rename", "name": " Face "})).unwrap();
+    assert_eq!(mask(&s).components[0].name.as_deref(), Some("Face"));
+    s.execute("mask.component", &json!({"component": 0, "action": "duplicate"})).unwrap();
+    assert_eq!(mask(&s).components.len(), 3);
+    assert_eq!(mask(&s).components[1].name.as_deref(), Some("Face"));
+    // a cleared name falls back to the kind; one undo step each
+    s.execute("mask.component", &json!({"component": 1, "action": "rename", "name": ""})).unwrap();
+    assert_eq!(mask(&s).components[1].name, None);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(mask(&s).components[1].name.as_deref(), Some("Face"));
+    assert!(s.execute("mask.component", &json!({"component": 9, "action": "invert"})).is_err());
+    assert!(s.execute("mask.component", &json!({"component": 0, "action": "explode"})).is_err());
+    // deleting the last component deletes the mask
+    for _ in 0..3 {
+        s.execute("mask.component", &json!({"id": id, "component": 0, "action": "delete"})).unwrap();
+    }
+    assert!(active_dev(&s).masks.is_empty());
+    assert_eq!(s.active_mask, None);
+}

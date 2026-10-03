@@ -167,6 +167,8 @@ pub struct FinishParams {
     pub to_out: [[f32; 3]; 3],
     pub out_luma: [f32; 3],
     pub out_trc: OutputTrc,
+    /// Soft proofing (CPU only; the GPU path declines proof renders).
+    pub proof: Option<crate::output::ProofParams>,
     pub hl: f32,
     pub sh: f32,
     pub clar: f32,
@@ -232,6 +234,7 @@ impl FinishParams {
             to_out: space.from_working(),
             out_luma: space.luma(),
             out_trc: space.trc(),
+            proof: None,
             hl: (s.light.highlights / 100.0) as f32,
             sh: (s.light.shadows / 100.0) as f32,
             clar,
@@ -254,9 +257,10 @@ impl FinishParams {
     }
 }
 
-pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo, space: OutputSpace) -> Rgba8 {
+pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo, space: OutputSpace, proof: Option<crate::Proof>) -> Rgba8 {
     let (w, h) = (p.img.width, p.img.height);
-    let fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
+    let mut fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
+    fp.proof = proof.map(|pr| pr.params(space));
     let trc = fp.out_trc;
     let data = finish_with(p, &fp, false, |e| match trc {
         OutputTrc::Srgb => [enc(e[0]), enc(e[1]), enc(e[2]), 255],
@@ -269,10 +273,20 @@ pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &So
 }
 
 /// [`finish`] into 16-bit display-encoded or 32-bit float linear samples (output primaries).
-pub(crate) fn finish_deep(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo, space: OutputSpace, depth: OutputDepth) -> DeepImage {
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn finish_deep(
+    p: &Prepared,
+    s: &DevelopSettings,
+    frame: &Frame,
+    info: &SourceInfo,
+    space: OutputSpace,
+    depth: OutputDepth,
+    proof: Option<crate::Proof>,
+) -> DeepImage {
     use lightcraft_color::transfer::srgb_to_linear;
     let (w, h) = (p.img.width, p.img.height);
-    let fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
+    let mut fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
+    fp.proof = proof.map(|pr| pr.params(space));
     let trc = fp.out_trc;
     let samples = match depth {
         OutputDepth::F32Linear => {
@@ -507,25 +521,25 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 }
             }
 
-            // --- gamut map to the output space (desaturate towards luminance until in range)
-            let m = to_out;
-            let mut r = [
-                m[0][0] * d[0] + m[0][1] * d[1] + m[0][2] * d[2],
-                m[1][0] * d[0] + m[1][1] * d[1] + m[1][2] * d[2],
-                m[2][0] * d[0] + m[2][1] * d[1] + m[2][2] * d[2],
-            ];
-            let yy = (out_luma[0] * r[0] + out_luma[1] * r[1] + out_luma[2] * r[2]).clamp(0.0, 1.0);
-            let mut t = 1.0f32;
-            for c in r {
-                if c < 0.0 {
-                    t = t.min(yy / (yy - c).max(1e-9));
-                } else if c > 1.0 {
-                    t = t.min((1.0 - yy) / (c - yy).max(1e-9));
+            // --- gamut map to the output space (desaturate towards luminance until in range);
+            // soft proofing maps into the proof space first and shows that in the output space
+            let mut warn = None;
+            let mut r = match &fp.proof {
+                Some(pp) => {
+                    let q0 = mul3(&pp.to_proof, d);
+                    let (q, t) = gamut_map(q0, pp.luma);
+                    if pp.dest_warning && out_of_gamut(q0, t) {
+                        warn = Some(crate::output::PROOF_DEST_WARNING);
+                    }
+                    mul3(&pp.proof_to_out, q)
                 }
+                None => mul3(to_out, d),
+            };
+            let (mapped, t) = gamut_map(r, *out_luma);
+            if fp.proof.is_some_and(|pp| pp.display_warning) && warn.is_none() && out_of_gamut(r, t) {
+                warn = Some(crate::output::PROOF_DISPLAY_WARNING);
             }
-            if t < 1.0 {
-                r = r.map(|c| yy + (c - yy) * t);
-            }
+            r = mapped;
 
             // --- encode, curves, grain
             let mut e = if exact { r.map(|v| linear_to_srgb(v.clamp(0.0, 1.0))) } else { r.map(|v| encode_srgb(srgb, v)) };
@@ -553,10 +567,47 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 }
                 None => e,
             };
-            *px = store(e);
+            *px = store(warn.unwrap_or(e));
         }
     });
     out
+}
+
+/// A colour needing more desaturation than this (scale < `GAMUT_WARN`) to fit is out of gamut for
+/// the gamut warnings (tolerates rounding at the gamut boundary).
+const GAMUT_WARN: f32 = 0.995;
+
+/// For the gamut warnings: `r` needed desaturating by `t` to fit, and isn't simply a neutral
+/// beyond white or below black (that's clipping, which the clipping warnings show).
+#[inline]
+fn out_of_gamut(r: [f32; 3], t: f32) -> bool {
+    let (lo, hi) = (r[0].min(r[1]).min(r[2]), r[0].max(r[1]).max(r[2]));
+    t < GAMUT_WARN && (hi - lo) > 0.02 * hi.abs().max(1e-3) && hi - lo > 1e-3 && (lo < -1e-3 || (hi > 1.0 && lo < 1.0))
+}
+
+#[inline]
+fn mul3(m: &[[f32; 3]; 3], d: [f32; 3]) -> [f32; 3] {
+    [
+        m[0][0] * d[0] + m[0][1] * d[1] + m[0][2] * d[2],
+        m[1][0] * d[0] + m[1][1] * d[1] + m[1][2] * d[2],
+        m[2][0] * d[0] + m[2][1] * d[1] + m[2][2] * d[2],
+    ]
+}
+
+/// Desaturate linear `r` towards its luminance (weights `luma`) until every channel is in 0..1;
+/// returns the mapped colour and the chroma scale used (1 = already in gamut).
+#[inline]
+pub fn gamut_map(r: [f32; 3], luma: [f32; 3]) -> ([f32; 3], f32) {
+    let yy = (luma[0] * r[0] + luma[1] * r[1] + luma[2] * r[2]).clamp(0.0, 1.0);
+    let mut t = 1.0f32;
+    for c in r {
+        if c < 0.0 {
+            t = t.min(yy / (yy - c).max(1e-9));
+        } else if c > 1.0 {
+            t = t.min((1.0 - yy) / (c - yy).max(1e-9));
+        }
+    }
+    if t < 1.0 { (r.map(|c| yy + (c - yy) * t), t) } else { (r, 1.0) }
 }
 
 /// Local Defringe weight of a scene-linear colour `c` whose log luminance differs by `det` from

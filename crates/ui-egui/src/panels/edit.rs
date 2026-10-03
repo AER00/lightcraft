@@ -2,7 +2,7 @@
 //! sections, built from the engine's control specs.
 
 use egui::epaint::{Mesh, Vertex};
-use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, pos2, vec2};
+use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Stroke, pos2, vec2};
 use lightcraft_catalog::PhotoId;
 use lightcraft_develop::{ControlSpec, DevelopSettings, Section, Track, WbMode, controls};
 use lightcraft_geom::Point;
@@ -79,6 +79,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 
     if app.ui.histogram {
         histogram(app, ui, id);
+    }
+    if app.ui.soft_proof {
+        soft_proofing(app, ui, id);
     }
     // header: Edit + Auto / B&W / HDR
     let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
@@ -511,6 +514,53 @@ fn histogram(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             p.text(pos2(x, y), align, s, t.font(12.5), t.text_label);
         }
     }
+}
+
+// ------------------------------------------------------------------------------ soft proofing
+
+/// The Soft Proofing strip under the histogram: proof profile, gamut warnings, Create Proof Copy.
+fn soft_proofing(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
+    use lightcraft_engine::pipeline::OutputSpace;
+    let t = Tokens::get(ui.ctx());
+    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 8, bottom: 6 }).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Soft Proofing").color(t.text).strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut dest = app.ui.proof.dest_warning;
+                let r = ui
+                    .toggle_value(&mut dest, RichText::new("■").color(Color32::from_rgb(255, 40, 40)))
+                    .on_hover_text("Show destination gamut warning");
+                register(ui.ctx(), "button:proofDestWarning", r.rect);
+                let mut disp = app.ui.proof.display_warning;
+                let r2 =
+                    ui.toggle_value(&mut disp, RichText::new("■").color(Color32::from_rgb(40, 90, 255))).on_hover_text("Show display gamut warning");
+                register(ui.ctx(), "button:proofDisplayWarning", r2.rect);
+                if dest != app.ui.proof.dest_warning || disp != app.ui.proof.display_warning {
+                    let _ = app.run("view.softProof", json!({"destWarning": dest, "displayWarning": disp}));
+                }
+            });
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Profile:").color(t.text_label));
+            let cur = app.ui.proof.space;
+            egui::ComboBox::from_id_salt("proof-space").width(170.0).selected_text(cur.label()).show_ui(ui, |ui| {
+                for s in OutputSpace::ALL {
+                    if ui.selectable_label(cur == s, s.label()).clicked() {
+                        let _ = app.run("view.softProof", json!({"space": s}));
+                    }
+                }
+            });
+        });
+        let r = ui.button("Create Proof Copy");
+        register(ui.ctx(), "button:createProofCopy", r.rect);
+        if r.clicked() {
+            let name = format!("Proof Copy ({})", app.ui.proof.space.label());
+            if app.run("photo.virtualCopy", json!({"ids": [id.0], "name": name})).is_ok() {
+                app.toast(ui.ctx(), "Proof copy created");
+            }
+        }
+    });
+    divider(ui);
 }
 
 // ------------------------------------------------------------------------------ tone curve

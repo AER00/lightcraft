@@ -105,6 +105,7 @@ mod tests {
         s.masks.push(Mask {
             id: 1,
             components: vec![MaskComponent {
+                name: None,
                 op: MaskOp::Add,
                 invert: false,
                 shape: MaskShape::Radial {

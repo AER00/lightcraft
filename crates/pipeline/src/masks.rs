@@ -364,7 +364,7 @@ mod tests {
         let shape = MaskShape::Radial { center: Point::new(0.5, 0.5), rx: 0.2, ry: 0.2, angle: 0.0, feather: 20.0, invert: false };
         let a = shape_alpha(&shape, &f, 100, 100, &img, &l, 0.0);
         assert!(a.get(50, 50) > 0.99 && a.get(5, 5) < 0.01);
-        let m = Mask { components: vec![MaskComponent { op: MaskOp::Add, invert: true, shape }], ..Default::default() };
+        let m = Mask { components: vec![MaskComponent { name: None, op: MaskOp::Add, invert: true, shape }], ..Default::default() };
         let e = evaluate(&[m], &f, 100, 100, &img, &l, 0.0);
         assert!(e[0].alpha.get(50, 50) < 0.01);
     }
@@ -377,7 +377,7 @@ mod tests {
         let stroke = BrushStroke { points: vec![Point::new(0.1, 0.5), Point::new(0.9, 0.5)], size: 0.05, ..Default::default() };
         let erase = BrushStroke { points: vec![Point::new(0.5, 0.5)], size: 0.05, erase: true, feather: 0.0, ..Default::default() };
         let m = Mask {
-            components: vec![MaskComponent { op: MaskOp::Add, invert: false, shape: MaskShape::Brush { strokes: vec![stroke, erase] } }],
+            components: vec![MaskComponent { name: None, op: MaskOp::Add, invert: false, shape: MaskShape::Brush { strokes: vec![stroke, erase] } }],
             ..Default::default()
         };
         let e = evaluate(&[m], &f, 200, 100, &img, &l, 0.0);
@@ -428,6 +428,7 @@ mod tests {
         let f = Frame::new(w, h, &Default::default(), true);
         let soft = Mask {
             components: vec![MaskComponent {
+                name: None,
                 op: MaskOp::Add,
                 invert: false,
                 shape: MaskShape::Linear { start: Point::new(0.75, 0.5), end: Point::new(0.25, 0.5) },

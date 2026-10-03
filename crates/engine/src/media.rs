@@ -374,6 +374,20 @@ impl RenderJob {
         self
     }
 
+    /// Soft-proof the result (see [`lightcraft_pipeline::Proof`]). Gets its own result key and is
+    /// never kept as the photo's cached preview.
+    pub fn with_proof(mut self, proof: Option<lightcraft_pipeline::Proof>) -> Self {
+        if self.request.proof != proof {
+            let k = |p: Option<lightcraft_pipeline::Proof>| p.map_or(0, |p| p.key()).wrapping_mul(0xc2b2_ae3d_27d4_eb4f);
+            self.key ^= k(self.request.proof) ^ k(proof);
+            self.request.proof = proof;
+        }
+        if proof.is_some() {
+            self.view_cache = None;
+        }
+        self
+    }
+
     /// Reuse `stages` across this view's renders.
     pub fn with_stages(mut self, stages: Arc<StageCache>) -> Self {
         self.stages = Some(stages);
@@ -432,6 +446,7 @@ pub fn develop(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &
     if gpu
         && !lightcraft_pipeline::lut::is_lut_profile(&s.profile.id)
         && !s.masks.iter().any(|m| m.visible && m.refine > 0.0)
+        && req.proof.is_none()
         && let Some(r) = lightcraft_gpu::render(src, info, s, req, stages)
     {
         return r;

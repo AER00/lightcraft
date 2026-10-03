@@ -78,7 +78,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     masks.push(Mask {
                         id: next,
                         name: name.unwrap_or_else(|| format!("Mask {next}")),
-                        components: vec![MaskComponent { op: MaskOp::Add, invert: false, shape }],
+                        components: vec![MaskComponent { name: None, op: MaskOp::Add, invert: false, shape }],
                         ..Default::default()
                     });
                     *active = Some(next);
@@ -102,7 +102,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let mid = mask_id(p, active, "mask.addComponent")?;
                 masks_edit(s, "mask.addComponent", "Edit Mask", |masks, _| {
                     let i = find(masks, mid, "mask.addComponent")?;
-                    masks[i].components.push(MaskComponent { op, invert: bool_or(p, "invert", false), shape });
+                    masks[i].components.push(MaskComponent { name: None, op, invert: bool_or(p, "invert", false), shape });
                     Ok(())
                 })
             }
@@ -144,12 +144,17 @@ pub fn specs() -> Vec<CommandSpec> {
                         }
                     };
                     let m = &mut masks[i];
-                    if let Some(MaskComponent { shape: MaskShape::Brush { strokes }, .. }) =
+                    if let Some(MaskComponent { name: None, shape: MaskShape::Brush { strokes }, .. }) =
                         m.components.iter_mut().rev().find(|c| matches!(c.shape, MaskShape::Brush { .. }))
                     {
                         strokes.push(stroke);
                     } else {
-                        m.components.push(MaskComponent { op: MaskOp::Add, invert: false, shape: MaskShape::Brush { strokes: vec![stroke] } });
+                        m.components.push(MaskComponent {
+                            name: None,
+                            op: MaskOp::Add,
+                            invert: false,
+                            shape: MaskShape::Brush { strokes: vec![stroke] },
+                        });
                     }
                     Ok(())
                 })
@@ -312,6 +317,54 @@ pub fn specs() -> Vec<CommandSpec> {
                     }
                     masks.insert(i + 1, m);
                     *active = Some(next);
+                    Ok(())
+                })
+            }
+        ),
+        cmd!(
+            "mask.component",
+            "Edit Mask Component",
+            [],
+            None,
+            "{id?, component: index, action: invert|duplicate|delete|rename|op, name? (rename; empty clears), op?: add|subtract|intersect} — one component of a mask (deleting the last one deletes the mask)",
+            has_active,
+            |s, p| {
+                let c = "mask.component";
+                let mid = mask_id(p, s.active_mask, c)?;
+                let k = p.get("component").and_then(Value::as_u64).ok_or_else(|| bad(c, "missing component"))? as usize;
+                let action = str_param(p, "action").ok_or_else(|| bad(c, "missing action"))?.to_string();
+                let op: Option<MaskOp> = match p.get("op") {
+                    Some(v) => Some(serde_json::from_value(v.clone()).map_err(|e| bad(c, e.to_string()))?),
+                    None => None,
+                };
+                let label = match action.as_str() {
+                    "invert" => "Invert Component",
+                    "duplicate" => "Duplicate Component",
+                    "delete" => "Delete Component",
+                    "rename" => "Rename Component",
+                    "op" => "Change Component Mode",
+                    a => return Err(bad(c, format!("unknown action {a:?} (invert|duplicate|delete|rename|op)"))),
+                };
+                masks_edit(s, c, label, |masks, active| {
+                    let i = find(masks, mid, c)?;
+                    let comps = &mut masks[i].components;
+                    let comp = comps.get_mut(k).ok_or_else(|| bad(c, "no such component"))?;
+                    match action.as_str() {
+                        "invert" => comp.invert = !comp.invert,
+                        "rename" => comp.name = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).map(str::to_string),
+                        "op" => comp.op = op.ok_or_else(|| bad(c, "missing op"))?,
+                        "duplicate" => {
+                            let copy = comp.clone();
+                            comps.insert(k + 1, copy);
+                        }
+                        _ => {
+                            comps.remove(k);
+                            if comps.is_empty() {
+                                masks.remove(i);
+                                *active = masks.last().map(|m| m.id);
+                            }
+                        }
+                    }
                     Ok(())
                 })
             }

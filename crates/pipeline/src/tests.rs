@@ -106,6 +106,7 @@ fn mask_brightens_only_inside() {
     let mut s = DevelopSettings::default();
     s.masks.push(Mask {
         components: vec![MaskComponent {
+            name: None,
             op: MaskOp::Add,
             invert: false,
             shape: MaskShape::Radial { center: Point::new(0.5, 0.5), rx: 0.2, ry: 0.2, angle: 0.0, feather: 10.0, invert: false },
@@ -286,4 +287,46 @@ fn refine_saturation_tames_a_contrast_curve() {
     // the curve's tone change stays
     let y = |p: [u8; 4]| 0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32;
     assert!((y(full) - y(refined)).abs() < 2.0);
+}
+
+#[test]
+fn soft_proof_maps_into_the_proof_gamut_and_flags_what_does_not_fit() {
+    use crate::{OutputSpace, Proof};
+    let src = scene();
+    let mut s = DevelopSettings::default();
+    s.color.saturation = 100.0;
+    s.color.vibrance = 100.0;
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let req = |space, proof| RenderRequest { space, proof, ..RenderRequest::fit(120, 120) };
+    let red = |img: &lightcraft_raster::Rgba8| img.data.iter().filter(|p| p[..3] == [255, 0, 0]).count();
+    let blue = |img: &lightcraft_raster::Rgba8| img.data.iter().filter(|p| p[2] == 255 && p[0] == 0 && p[1] < 80).count();
+
+    // proofing sRGB on an sRGB render changes nothing but the warning
+    let plain = render(&src, &info, &s, &req(OutputSpace::Srgb, None)).image;
+    let same = render(&src, &info, &s, &req(OutputSpace::Srgb, Some(Proof { space: OutputSpace::Srgb, ..Default::default() }))).image;
+    assert_eq!(plain, same);
+    let warned =
+        render(&src, &info, &s, &req(OutputSpace::Srgb, Some(Proof { space: OutputSpace::Srgb, dest_warning: true, display_warning: false }))).image;
+    let n = red(&warned);
+    assert!(n > 0 && n < warned.len(), "{n}");
+    // …and nothing is flagged on an unsaturated edit of a neutral ramp
+    let grey = Rgb32f::from_fn(64, 8, |x, _| [0.002 * 1.12f32.powi(x as i32); 3]);
+    let g = render(
+        &grey,
+        &info,
+        &DevelopSettings::default(),
+        &RenderRequest { proof: Some(Proof { space: OutputSpace::Srgb, dest_warning: true, display_warning: true }), ..RenderRequest::fit(64, 8) },
+    );
+    assert_eq!(red(&g.image) + blue(&g.image), 0);
+
+    // a wide-gamut render proofed for sRGB loses the colours sRGB can't hold
+    let wide = render(&src, &info, &s, &req(OutputSpace::DisplayP3, None)).image;
+    let proofed = render(&src, &info, &s, &req(OutputSpace::DisplayP3, Some(Proof { space: OutputSpace::Srgb, ..Default::default() }))).image;
+    assert_ne!(wide, proofed);
+    // proofing a wider space than the display: what the display can't show is flagged blue
+    let pro =
+        render(&src, &info, &s, &req(OutputSpace::Srgb, Some(Proof { space: OutputSpace::ProPhoto, dest_warning: true, display_warning: true })))
+            .image;
+    assert!(blue(&pro) > 0);
+    assert!(red(&pro) < n, "ProPhoto holds more than sRGB");
 }

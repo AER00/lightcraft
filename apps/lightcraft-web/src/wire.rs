@@ -92,6 +92,7 @@ impl WireJob {
             // workers render previews (exports run in-process)
             space: lightcraft_engine::pipeline::OutputSpace::Srgb,
             depth: lightcraft_engine::pipeline::OutputDepth::U8,
+            proof: None,
         }
     }
 

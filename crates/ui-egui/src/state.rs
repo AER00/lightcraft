@@ -199,6 +199,9 @@ pub struct UiState {
     pub single_panel: bool,
     pub show_clipping: bool,
     pub histogram: bool,
+    /// Soft proofing (S in the loupe): render as `proof` would hold the photo.
+    pub soft_proof: bool,
+    pub proof: lightcraft_engine::pipeline::Proof,
     /// Masking: show the selected mask as a rendered overlay (O), how (`MaskView` name, ⇧O cycles),
     /// in which colour and opacity (0..100, colour views), and whether pins are drawn.
     pub mask_overlay: bool,
@@ -237,6 +240,8 @@ pub struct UiState {
     /// A mask being renamed in the Masks list: its id and the edited name.
     #[serde(skip)]
     pub renaming_mask: Option<(u32, String)>,
+    /// A mask component being renamed inline: (mask id, component index, name).
+    pub renaming_component: Option<(u32, usize, String)>,
     /// Close the window on the next frame (File → Quit).
     #[serde(skip)]
     pub quit: bool,
@@ -472,6 +477,8 @@ impl Default for UiState {
             single_panel: false,
             show_clipping: false,
             histogram: true,
+            soft_proof: false,
+            proof: lightcraft_engine::pipeline::Proof { dest_warning: false, ..Default::default() },
             mask_overlay: true,
             mask_overlay_mode: "color".into(),
             mask_overlay_color: [230, 30, 40],
@@ -489,6 +496,7 @@ impl Default for UiState {
             search: String::new(),
             focus_search: false,
             renaming_mask: None,
+            renaming_component: None,
             quit: false,
             dragging_photos: None,
             curve_channel: "parametric".into(),

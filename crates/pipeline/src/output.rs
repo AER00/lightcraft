@@ -138,6 +138,49 @@ impl OutputSpace {
     }
 }
 
+/// Soft proofing: render as if the result were converted to `space` (colours outside its gamut
+/// are mapped into it, then shown in the render's own space), optionally painting what the
+/// destination can't hold (`dest_warning`, red) and what the display can't show
+/// (`display_warning`, blue) — Lightroom's destination and monitor gamut warnings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Proof {
+    pub space: OutputSpace,
+    pub dest_warning: bool,
+    pub display_warning: bool,
+}
+
+/// Warning colours (sRGB-encoded): destination gamut red, display gamut blue.
+pub const PROOF_DEST_WARNING: [f32; 3] = [1.0, 0.0, 0.0];
+pub const PROOF_DISPLAY_WARNING: [f32; 3] = [0.0, 0.25, 1.0];
+
+/// [`Proof`] as the per-pixel stage uses it.
+#[derive(Clone, Copy, Debug)]
+pub struct ProofParams {
+    /// Linear Rec.2020 → linear proof RGB, its luminance weights, linear proof → linear output RGB.
+    pub to_proof: [[f32; 3]; 3],
+    pub luma: [f32; 3],
+    pub proof_to_out: [[f32; 3]; 3],
+    pub dest_warning: bool,
+    pub display_warning: bool,
+}
+
+impl Proof {
+    pub fn key(self) -> u64 {
+        (self.space as u64 + 1) | (self.dest_warning as u64) << 8 | (self.display_warning as u64) << 9
+    }
+
+    pub fn params(self, out: OutputSpace) -> ProofParams {
+        ProofParams {
+            to_proof: self.space.from_working(),
+            luma: self.space.luma(),
+            proof_to_out: self.space.rgb_space().to_space(&out.rgb_space()).to_f32(),
+            dest_warning: self.dest_warning,
+            display_warning: self.display_warning,
+        }
+    }
+}
+
 /// Sample format of a render.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

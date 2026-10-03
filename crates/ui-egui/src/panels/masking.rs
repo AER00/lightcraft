@@ -200,7 +200,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     divider(ui);
     egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 8, bottom: 8 }).show(ui, |ui| {
         for (i, c) in m.components.iter().enumerate() {
-            let (label, icon) = kind_label(&c.shape);
+            let (kind, icon) = kind_label(&c.shape);
+            let label = c.name.clone().unwrap_or_else(|| kind.to_string());
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
                 paint(ui.painter(), r, icon, t.text_label);
@@ -209,7 +210,35 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     lightcraft_develop::MaskOp::Subtract => "− ",
                     lightcraft_develop::MaskOp::Intersect => "∩ ",
                 };
-                ui.label(format!("{op}{label}{}", if c.invert { " (inverted)" } else { "" }));
+                if let Some((_, _, name)) = app.ui.renaming_component.as_mut().filter(|(mid, k, _)| *mid == m.id && *k == i) {
+                    // inline rename: Enter (or leaving the field) commits, Escape cancels
+                    let r = ui.add(egui::TextEdit::singleline(name).desired_width(ui.available_width() - 30.0).id_salt(("compRename", m.id, i)));
+                    register(ui.ctx(), format!("componentRename:{i}"), r.rect);
+                    if !r.has_focus() && !r.lost_focus() {
+                        r.request_focus();
+                    }
+                    if ui.input(|inp| inp.key_pressed(egui::Key::Escape)) {
+                        app.ui.renaming_component = None;
+                    } else if r.lost_focus() {
+                        let name = name.trim().to_string();
+                        app.ui.renaming_component = None;
+                        if Some(&name) != c.name.as_ref() {
+                            let _ = app.run("mask.component", json!({"id": m.id, "component": i, "action": "rename", "name": name}));
+                        }
+                    }
+                    return;
+                }
+                let resp = ui.add(egui::Label::new(format!("{op}{label}{}", if c.invert { " (inverted)" } else { "" })).sense(Sense::click()));
+                register(ui.ctx(), format!("component:{i}"), resp.rect);
+                if resp.double_clicked() {
+                    app.ui.renaming_component = Some((m.id, i, label.clone()));
+                }
+                resp.context_menu(|ui| component_row_menu(app, ui, m.id, i, &label, m.components.len()));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let more = ui.small_button("…").on_hover_text("Component options");
+                    register(ui.ctx(), format!("button:componentMenu{i}"), more.rect);
+                    egui::Popup::menu(&more).show(|ui| component_row_menu(app, ui, m.id, i, &label, m.components.len()));
+                });
             });
             range_controls(app, ui, i, &c.shape);
         }
@@ -219,6 +248,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             egui::Popup::menu(&add).show(|ui| component_menu(app, ui, "add"));
             let sub = text_button(ui, "maskSubComp", "Subtract", false);
             egui::Popup::menu(&sub).show(|ui| component_menu(app, ui, "subtract"));
+            let int = text_button(ui, "maskIntComp", "Intersect", false);
+            egui::Popup::menu(&int).show(|ui| component_menu(app, ui, "intersect"));
             if text_button(ui, "maskInvert", "Invert", m.invert).clicked() {
                 let _ = app.run("mask.invert", json!({}));
             }
@@ -470,6 +501,40 @@ fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: usize, shape
     }
 }
 
+/// The right-click / "…" menu of one component of the selected mask.
+fn component_row_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, mask: u32, k: usize, label: &str, count: usize) {
+    let mut run = |ui: &mut egui::Ui, text: &str, p: serde_json::Value| {
+        if ui.button(text).clicked() {
+            let mut p = p;
+            p["id"] = json!(mask);
+            p["component"] = json!(k);
+            let _ = app.run("mask.component", p);
+            ui.close();
+        }
+    };
+    run(ui, "Invert", json!({"action": "invert"}));
+    run(ui, &format!("Duplicate \"{label}\""), json!({"action": "duplicate"}));
+    if k > 0 {
+        ui.menu_button("Mode", |ui| {
+            for (op, text) in [("add", "Add"), ("subtract", "Subtract"), ("intersect", "Intersect")] {
+                run(ui, text, json!({"action": "op", "op": op}));
+            }
+        });
+    }
+    ui.menu_button("Intersect with", |ui| component_menu(app, ui, "intersect"));
+    ui.menu_button("Subtract", |ui| component_menu(app, ui, "subtract"));
+    ui.separator();
+    if ui.button("Rename…").clicked() {
+        app.ui.renaming_component = Some((mask, k, label.to_string()));
+        ui.close();
+    }
+    let del = if count == 1 { format!("Delete \"{label}\" (and the mask)") } else { format!("Delete \"{label}\"") };
+    if ui.button(del).clicked() {
+        let _ = app.run("mask.component", json!({"id": mask, "component": k, "action": "delete"}));
+        ui.close();
+    }
+}
+
 fn component_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, op: &str) {
     for (kind, label) in [
         ("brush", "Brush"),
@@ -479,6 +544,10 @@ fn component_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, op: &str) {
         ("subject", "Subject"),
         ("luminanceRange", "Luminance Range"),
     ] {
+        // painting only adds or erases
+        if kind == "brush" && op == "intersect" {
+            continue;
+        }
         if ui.button(label).clicked() {
             if kind == "brush" {
                 app.ui.tool = "brush".into();

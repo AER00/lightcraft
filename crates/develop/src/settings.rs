@@ -786,6 +786,9 @@ pub enum MaskShape {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MaskComponent {
+    /// A name given in the Masking panel (Rename); `None` shows the shape's kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default)]
     pub op: MaskOp,
     #[serde(default)]
