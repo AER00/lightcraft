@@ -189,3 +189,23 @@ fn smart_album_rule_sets() {
     let a = list.as_array().unwrap().iter().find(|a| a["name"] == "Good ones").unwrap().clone();
     assert!(a.to_string().contains("rating is ≥ 4"), "{a}");
 }
+
+/// The filter bar's label multi-select: any of the chosen labels.
+#[test]
+fn filter_any_of_several_labels() {
+    use lightcraft_catalog::ColorLabel;
+    let mut s = crate::Session::with_demo();
+    let ids: Vec<u64> = s.catalog.photos().take(3).map(|p| p.id.0).collect();
+    for (id, l) in ids.iter().zip(["red", "yellow", "green"]) {
+        s.execute("photo.label", &serde_json::json!({"ids": [id], "label": l})).unwrap();
+    }
+    s.execute("library.filter", &serde_json::json!({"labels": ["red", "yellow"]})).unwrap();
+    let vis = s.visible_cloned();
+    let want = s.catalog.photos().filter(|p| p.in_library() && matches!(p.label, Some(ColorLabel::Red | ColorLabel::Yellow))).count();
+    assert_eq!(want, 2);
+    assert_eq!(vis.len(), want);
+    assert!(vis.iter().all(|id| matches!(s.catalog.photo(*id).unwrap().label, Some(ColorLabel::Red | ColorLabel::Yellow))));
+    assert!(s.filter.describe().contains("label red or yellow"));
+    s.execute("library.filter", &serde_json::json!({"labels": []})).unwrap();
+    assert!(s.visible_cloned().len() > want);
+}

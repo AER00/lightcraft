@@ -24,6 +24,9 @@ pub struct Filter {
     pub rating_op: RatingOp,
     pub flag: Option<Flag>,
     pub label: Option<ColorLabel>,
+    /// Any of these labels (the filter bar's multi-select); empty = no constraint.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<ColorLabel>,
     pub kind: Option<MediaKind>,
     pub edited: Option<bool>,
     pub album: Option<AlbumId>,
@@ -137,6 +140,9 @@ impl Filter {
         if let Some(l) = self.label {
             v.push(format!("label {}", format!("{l:?}").to_lowercase()));
         }
+        if !self.labels.is_empty() {
+            v.push(format!("label {}", self.labels.iter().map(|l| format!("{l:?}").to_lowercase()).collect::<Vec<_>>().join(" or ")));
+        }
         if let Some(k) = self.kind {
             v.push(format!("kind {}", format!("{k:?}").to_lowercase()));
         }
@@ -199,6 +205,9 @@ impl Filter {
         if let Some(rs) = &self.rule_set
             && !rs.matches(p, cat)
         {
+            return false;
+        }
+        if !self.labels.is_empty() && !p.label.is_some_and(|l| self.labels.contains(&l)) {
             return false;
         }
         if let Some(want) = &self.merged {
