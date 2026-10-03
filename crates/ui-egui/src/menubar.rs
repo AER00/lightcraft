@@ -103,6 +103,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
         &[
             "view.photoGrid",
             "view.squareGrid",
+            "@Grid Info",
             "view.detail",
             "view.compare",
             "view.survey",
@@ -390,6 +391,11 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
             v.push(item("dialog.labelNames", Value::Null, "Edit Label Names…", None, true, None));
             v
         }
+        "Grid Info" => ["filename", "exposure", "date"]
+            .into_iter()
+            .zip(["File Name", "Exposure (shutter · aperture · ISO)", "Capture Date"])
+            .map(|(k, label)| item("view.gridInfo", json!({"info": k}), label, None, true, Some(app.ui.grid_info == k)))
+            .collect(),
         "Sort" => {
             use lightcraft_catalog::SortKey::*;
             let cur = app.session.sort;

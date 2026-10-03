@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 14 | 1 | 2 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 79 | 2 | 4 | 8 | 46/47 (98%) | 22/23 (96%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 22 | 10 | 47 | 9 | — | 18/21 (86%) |
-| **Total** | 370 | 26 | 104 | 37 | 193/198 (97%) | 132/144 (92%) |
+| Lightroom Classic extras | 23 | 9 | 47 | 9 | — | 19/21 (90%) |
+| **Total** | 371 | 25 | 104 | 37 | 193/198 (97%) | 133/144 (92%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **76.6%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 32.6% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **76.7%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.8% of 144 · P2 32.6% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -688,7 +688,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-IMPORT | Full import dialog | P1 | ✅ | `cmd:library.import` (`mode`, `destination`, `organize`, `rename`, `metadataPreset`, `preset`, `keywords`, `album`), `crates/ui-egui/src/import.rs` | review grid with duplicates skipped; add in place or copy (library Originals or any folder; by day / by month / one folder; rename template with live example, numbered across the import); develop preset, metadata preset, keywords, album on import |
 | LRC-LIB-AUTOIMPORT | Watched-folder import | P2 | ✅ | `cmd:library.autoImport` | see LR-IMP-AUTO |
 | LRC-LIB-TETHER | Tethered capture | P2 | ⬜ | | |
-| LRC-LIB-VIEWS | Grid / loupe / compare / survey / people | P1 | 🟡 | `cmd:view.photoGrid`, `cmd:view.squareGrid`, `cmd:view.detail`, `cmd:view.compare`, `cmd:view.survey` | grid, square grid, loupe, compare, survey; no people view; grid cell styles: filenames only |
+| LRC-LIB-VIEWS | Grid / loupe / compare / survey / people | P1 | 🟡 | `cmd:view.photoGrid`, `cmd:view.squareGrid`, `cmd:view.detail`, `cmd:view.compare`, `cmd:view.survey`, `cmd:view.gridInfo` | grid, square grid, loupe, compare, survey, second window; square-grid captions: file name, exposure or capture date (View ▸ Grid Info); no people view |
 | LRC-LIB-COMPARE | Compare view | P1 | ✅ | `cmd:view.compare` | ⇧C (C is Crop here); swap, make select; zoom always linked |
 | LRC-LIB-SURVEY | Survey view | P2 | ✅ | `cmd:view.survey` | N |
 | LRC-LIB-REFVIEW | Reference view | P2 | ⬜ | | |
@@ -701,7 +701,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-STACKS | Stacks (full) | P1 | ✅ | `crates/catalog/src/stacks.rs`, `cmd:stack.group`, `cmd:stack.split`, `cmd:stack.moveUp`, `cmd:stack.moveDown` | group / ungroup / toggle / set top / remove / auto by time / split / move up and down |
 | LRC-LIB-VC | Virtual copies | P1 | ✅ | `cmd:photo.virtualCopy` | ⌘' |
 | LRC-LIB-LABELS | Colour-label sets | P1 | ✅ | `cmd:label.sets`, `cmd:label.applySet`, `cmd:label.saveSet`, `cmd:label.deleteSet`, `cmd:label.setNames`, `crates/engine/src/cmd/manage.rs` | built-in Colors / Review sets + user sets (Photo ▸ Set Color Label, Edit Label Names… dialog); names written to and read from `xmp:Label` |
-| LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | 🟡 | `crates/catalog/src/keywords.rs`, `cmd:keyword.list`, `cmd:keyword.sets`, `cmd:keyword.toggleFromSet`, `cmd:keyword.saveSet` | hierarchical `a\|b\|c` keywords (tree, parent filters include children, rename moves children); keyword sets + Recent Keywords in the Keywords panel, ⌥1–⌥9 toggle; no keyword painter |
+| LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | ✅ | `crates/catalog/src/keywords.rs`, `cmd:keyword.list`, `cmd:keyword.sets`, `cmd:keyword.toggleFromSet`, `cmd:keyword.saveSet`, `cmd:tool.keywordPainter` | hierarchical `a\|b\|c` keywords (tree, parent filters include children, rename moves children); keyword sets + Recent Keywords (⌥1–⌥9); keyword painter (Keywords panel ▸ Paint: click photos in the grid to toggle a keyword, Esc stops) |
 | LRC-LIB-METADATA | Metadata panel & presets | P1 | ✅ | `cmd:photo.setMeta`, `cmd:metadata.savePreset`, `cmd:metadata.applyPreset`, `cmd:metadata.presets`, `cmd:metadata.deletePreset`, `cmd:dialog.captureTime` | IPTC core, accessibility, place, capture-time edit; metadata presets (Photo → Metadata Preset, Save Metadata Preset… from the active photo; applied on import from Settings); no copyright status field |
 | LRC-LIB-QUICKDEV | Quick develop | P2 | ⬜ | | |
 | LRC-LIB-PEOPLE | People view | P2 | ⬜ | | |

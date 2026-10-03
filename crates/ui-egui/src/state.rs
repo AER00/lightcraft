@@ -211,6 +211,9 @@ pub struct UiState {
     pub crop_overlay_orient: u8,
     pub crop_overlay: CropOverlay,
     pub show_filenames: bool,
+    /// What the square grid's caption shows: `filename`, `exposure` (shutter · aperture · ISO ·
+    /// focal length) or `date`.
+    pub grid_info: String,
     /// Photo counts next to sources and albums in the left panel.
     pub show_counts: bool,
     /// Copies opened in an external editor this session (reloaded when the window is focused
@@ -274,6 +277,9 @@ pub struct UiState {
     pub fullscreen: bool,
     /// Window ▸ Second Window.
     pub second_window: bool,
+    /// The keyword painter: clicking a photo in the grid toggles this keyword on it.
+    #[serde(skip)]
+    pub keyword_painter: Option<String>,
     /// A running slideshow (full screen): seconds per photo, when the next one is due (egui
     /// time), paused.
     #[serde(skip)]
@@ -463,6 +469,7 @@ impl Default for UiState {
             crop_overlay: CropOverlay::Thirds,
             crop_overlay_orient: 0,
             show_filenames: true,
+            grid_info: "filename".into(),
             show_counts: true,
             dragging_control: None,
             external_edits: Vec::new(),
@@ -495,6 +502,7 @@ impl Default for UiState {
             fullscreen: false,
             slideshow: None,
             second_window: false,
+            keyword_painter: None,
             info_overlay: InfoOverlay::Off,
             navigator: true,
             settings: AppSettings::default(),

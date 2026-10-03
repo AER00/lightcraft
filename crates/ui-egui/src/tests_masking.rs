@@ -502,3 +502,47 @@ fn grid_frame_100k() {
     let ms = t.elapsed().as_secs_f64() * 1e3 / n as f64;
     eprintln!("grid frame at 100k photos: {ms:.1} ms (UI thread, renders excluded)");
 }
+
+#[test]
+fn keyword_painter_toggles_on_click() {
+    let mut h = detail("panel.edit");
+    exec(&mut h, "tool.keywordPainter", json!({"keyword": "harbour"}));
+    assert_eq!(h.app.ui.view, crate::state::ViewMode::PhotoGrid);
+    h.settle(SETTLE);
+    let target = h.app.session.visible_cloned()[0];
+    let has = |h: &Headless| h.app.session.catalog.photo(target).unwrap().meta.keywords.iter().any(|k| k == "harbour");
+    let sel = h.app.session.selection.clone();
+    // a click: press and release on separate frames, no movement
+    let click = |h: &mut Headless| {
+        let w = h.request("ui.widgets", json!({}), T);
+        let r = w["result"]
+            .as_array()
+            .and_then(|a| a.iter().find(|x| x["id"] == format!("thumb:{}", target.0)))
+            .map(|x| x["rect"].clone())
+            .expect("thumb on screen");
+        let (x, y) = (r[0].as_f64().unwrap() + r[2].as_f64().unwrap() / 2.0, r[1].as_f64().unwrap() + r[3].as_f64().unwrap() / 2.0);
+        let r = h.request("ui.drag", json!({"x": x, "y": y, "toX": x, "toY": y, "steps": 2}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    };
+    click(&mut h);
+    assert!(has(&h), "painted");
+    assert_eq!(h.app.session.selection, sel, "painting doesn't select");
+    click(&mut h);
+    assert!(!has(&h), "a second click takes it away");
+    h.request("ui.key", json!({"key": "escape"}), T);
+    assert!(h.app.ui.keyword_painter.is_none());
+    h.settle(SETTLE);
+}
+
+#[test]
+fn grid_info_cycles_caption() {
+    let mut h = detail("panel.edit");
+    assert_eq!(exec(&mut h, "view.gridInfo", json!({}))["info"], "exposure");
+    assert_eq!(exec(&mut h, "view.gridInfo", json!({}))["info"], "date");
+    assert_eq!(exec(&mut h, "view.gridInfo", json!({"info": "filename"}))["info"], "filename");
+    let r = h.request("engine.execute", json!({"command": "view.gridInfo", "params": {"info": "lens"}}), T);
+    assert_ne!(r["ok"], true);
+    exec(&mut h, "view.squareGrid", json!({}));
+    exec(&mut h, "view.gridInfo", json!({"info": "exposure"}));
+    h.settle(SETTLE);
+}

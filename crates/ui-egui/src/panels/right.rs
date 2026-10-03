@@ -627,6 +627,23 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         });
         ui.add_space(10.0);
         keyword_set(app, ui, &p.meta.keywords);
+        ui.add_space(8.0);
+        // the painter: click photos in the grid to give them (or take away) a keyword
+        ui.horizontal(|ui| {
+            let pid = egui::Id::new("kw-painter");
+            let painting = app.ui.keyword_painter.clone();
+            let mut k: String = ui.data(|d| d.get_temp(pid)).unwrap_or_else(|| painting.clone().unwrap_or_default());
+            let r = ui.add_enabled(painting.is_none(), egui::TextEdit::singleline(&mut k).hint_text("Keyword to paint").desired_width(130.0));
+            register(ui.ctx(), "field:keywordPainter", r.rect);
+            ui.data_mut(|d| d.insert_temp(pid, k.clone()));
+            let label = if painting.is_some() { "Stop" } else { "Paint" };
+            if text_button(ui, "keywordPaint", label, painting.is_some())
+                .on_hover_text("Click photos in the grid to toggle the keyword; Esc stops")
+                .clicked()
+            {
+                let _ = app.run("tool.keywordPainter", json!({"keyword": if painting.is_some() { serde_json::Value::Null } else { json!(k) }}));
+            }
+        });
         ui.add_space(10.0);
         // suggestions: completions of the typed text, else keywords used together with this
         // photo's keywords, else the most used ones

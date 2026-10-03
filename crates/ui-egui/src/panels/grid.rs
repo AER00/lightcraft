@@ -344,7 +344,25 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     }
     // labels and badges
     if square && app.ui.show_filenames {
-        let name = photo.file_name.rsplit_once('.').map(|(n, _)| n.to_string()).unwrap_or(photo.file_name.clone());
+        let m = &photo.meta;
+        let name = match app.ui.grid_info.as_str() {
+            "exposure" => {
+                let parts: Vec<String> = [
+                    // whole seconds read "8 s"; fractions as written ("1/250")
+                    (!m.shutter.is_empty())
+                        .then(|| if m.shutter.contains('/') || m.shutter.ends_with('s') { m.shutter.clone() } else { format!("{} s", m.shutter) }),
+                    m.aperture.map(|a| format!("f/{a:.1}").replace(".0", "")),
+                    m.iso.map(|i| format!("ISO {i}")),
+                    m.focal_mm.map(|f| format!("{f:.0} mm")),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                if parts.is_empty() { "—".to_string() } else { parts.join(" · ") }
+            }
+            "date" => photo.captured.as_deref().map(lightcraft_catalog::dates::display_time).unwrap_or_else(|| "No date".into()),
+            _ => photo.file_name.rsplit_once('.').map(|(n, _)| n.to_string()).unwrap_or(photo.file_name.clone()),
+        };
         p.text(pos2(r.left() + 8.0, r.top() + 12.0), Align2::LEFT_CENTER, name, t.font(10.5), t.text_dim);
         let fmt = photo.format.clone();
         let g = p.layout_no_wrap(fmt, t.semibold(9.0), t.text_label);
@@ -402,6 +420,18 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         p.rect_filled(img_rect, 0.0, Color32::from_black_alpha(110));
     }
     // interaction
+    if let Some(k) = app.ui.keyword_painter.clone() {
+        // painting: a click toggles the keyword on this photo
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
+        if resp.clicked() {
+            let has = photo.meta.keywords.iter().any(|x| x.eq_ignore_ascii_case(&k));
+            let key = if has { "removeKeywords" } else { "addKeywords" };
+            let _ = app.run("photo.setMeta", json!({"ids": [id.0], key: [k]}));
+        }
+        return;
+    }
     if resp.clicked() {
         let m = ui.input(|i| i.modifiers);
         let mode = if m.shift {

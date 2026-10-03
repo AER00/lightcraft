@@ -84,6 +84,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.photoCounts", "Show Photo Counts", None, "View"),
     ("view.slideshow", "Slideshow", Some("Cmd+Alt+Enter"), "View"),
     ("view.secondWindow", "Second Window", Some("Cmd+F11"), "Window"),
+    ("tool.keywordPainter", "Keyword Painter", None, ""),
+    ("view.gridInfo", "Grid Info", None, ""),
     ("dialog.allMetadata", "All Metadata…", None, "Photo"),
     ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
@@ -196,6 +198,32 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.view = ViewMode::SquareGrid;
             Ok(Value::Null)
         }
+        "view.gridInfo" => {
+            // {info?: filename | exposure | date} (cycles when omitted)
+            let next = match p.get("info").and_then(Value::as_str) {
+                Some(i @ ("filename" | "exposure" | "date")) => i.to_string(),
+                Some(other) => return Some(Err(format!("view.gridInfo: unknown `{other}` (filename|exposure|date)"))),
+                None => match app.ui.grid_info.as_str() {
+                    "filename" => "exposure".into(),
+                    "exposure" => "date".into(),
+                    _ => "filename".into(),
+                },
+            };
+            app.ui.grid_info = next;
+            app.ui.show_filenames = true;
+            Ok(json!({"info": app.ui.grid_info}))
+        }
+        "tool.keywordPainter" => {
+            // {keyword?}: paint that keyword onto photos in the grid by clicking them; no keyword stops
+            app.ui.keyword_painter = p.get("keyword").and_then(Value::as_str).map(str::trim).filter(|k| !k.is_empty()).map(str::to_string);
+            if app.ui.keyword_painter.is_some() && !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+                app.ui.view = ViewMode::PhotoGrid;
+            }
+            if let Some(k) = app.ui.keyword_painter.clone() {
+                app.toast(&ctx, format!("Painting “{k}”: click photos to add or remove it · Esc stops"));
+            }
+            Ok(json!({"keyword": app.ui.keyword_painter}))
+        }
         "view.secondWindow" => {
             app.ui.second_window = p.get("show").and_then(Value::as_bool).unwrap_or(!app.ui.second_window);
             Ok(json!({"show": app.ui.second_window}))
@@ -227,6 +255,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "view.back" => {
             if app.ui.dialog.is_some() {
                 app.ui.dialog = None;
+            } else if app.ui.keyword_painter.is_some() {
+                app.ui.keyword_painter = None;
             } else if app.ui.fullscreen {
                 app.ui.fullscreen = false;
                 app.ui.slideshow = None;
