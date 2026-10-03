@@ -34,6 +34,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.zoomFit", "Zoom to Fit", Some("Cmd+0"), "View"),
     ("view.zoom100", "Zoom 100%", Some("Cmd+Alt+0"), "View"),
     ("view.zoomToggle", "Toggle Zoom", Some("Z"), "View"),
+    // the ratio a click (and Z / Space) zooms to
+    ("view.clickZoom", "Click Zoom Ratio", None, ""),
     ("view.zoomIn", "Zoom In", Some("Cmd+="), "View"),
     ("view.zoomOut", "Zoom Out", Some("Cmd+-"), "View"),
     ("view.clipping", "Show Clipping", Some("J"), "View"),
@@ -403,8 +405,21 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "view.zoomToggle" => {
-            app.ui.zoom = if app.ui.zoom == Zoom::Fit { Zoom::Percent(100) } else { Zoom::Fit };
+            // the same ratio a click on the photo zooms to
+            app.ui.zoom = if app.ui.zoom == Zoom::Fit { Zoom::Percent(app.ui.click_zoom) } else { Zoom::Fit };
+            app.ui.zoom_anim = true;
             Ok(Value::Null)
+        }
+        "view.clickZoom" => {
+            // {ratio?: 1|2|3|4|8} → {ratio}
+            if let Some(r) = p.get("ratio").and_then(Value::as_f64) {
+                let pct = (r * 100.0).round() as u32;
+                if !crate::state::CLICK_ZOOMS.contains(&pct) {
+                    return Some(Err(format!("view.clickZoom: ratio {r} (1, 2, 3, 4 or 8)")));
+                }
+                app.ui.click_zoom = pct;
+            }
+            Ok(json!({"ratio": app.ui.click_zoom / 100}))
         }
         "view.zoomIn" | "view.zoomOut" => {
             let steps = [25u32, 50, 100, 200, 400, 800];

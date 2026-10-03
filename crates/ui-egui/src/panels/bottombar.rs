@@ -167,9 +167,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let cz =
                     crate::widgets::dropdown(&mut child, "clickZoom", &format!("Click {}:1", app.ui.click_zoom / 100), t.font(13.0), t.text_label);
                 egui::Popup::menu(&cz).show(|ui| {
-                    for n in [2u32, 3, 5] {
-                        if ui.selectable_label(app.ui.click_zoom == n * 100, format!("{n}:1")).clicked() {
-                            app.ui.click_zoom = n * 100;
+                    for pct in crate::state::CLICK_ZOOMS {
+                        if ui.selectable_label(app.ui.click_zoom == pct, format!("{}:1", pct / 100)).clicked() {
+                            let _ = app.run("view.clickZoom", json!({"ratio": pct / 100}));
                         }
                     }
                 });

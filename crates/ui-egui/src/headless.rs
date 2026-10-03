@@ -1118,23 +1118,46 @@ mod tests {
         h.settle(SETTLE);
     }
 
-    /// A click on the image zooms to the chosen click-zoom ratio, animating the loupe, and a second click returns to Fit.
+    /// A click on the image zooms to the chosen click-zoom ratio (1:1 by default), animating the
+    /// loupe while rendering once at the final size; Z uses the same ratio; a second click returns to Fit.
     #[test]
     fn click_zoom_ratio_animates() {
+        use crate::render::Slot;
+        use crate::state::Zoom;
         let mut h = demo([1000.0, 700.0]);
         let t = Duration::from_secs(10);
         h.request("ui.set", json!({"view": "detail", "right": "none"}), t);
         h.settle(SETTLE);
-        h.app.ui.click_zoom = 300;
+        assert_eq!(h.app.ui.click_zoom, 100, "1:1 by default");
+        let r = h.request("engine.execute", json!({"command": "view.clickZoom", "params": {"ratio": 3}}), t);
+        assert_eq!(r["result"]["ratio"], 3, "{r}");
+        let r = h.request("engine.execute", json!({"command": "view.clickZoom", "params": {"ratio": 5}}), t);
+        assert_ne!(r["ok"], true, "{r}");
         let fit = h.app.image_rect.unwrap();
         h.request("ui.clickWidget", json!({"id": "canvas:image", "fx": 0.5, "fy": 0.5}), t);
-        assert_eq!(h.app.ui.zoom, crate::state::Zoom::Percent(300));
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(300));
         assert!(h.app.ui.zoom_anim, "animation started");
+        // every animation frame asks for the same (final-size) render
+        let mut keys = std::collections::HashSet::new();
+        for _ in 0..40 {
+            h.step();
+            keys.extend(h.app.renderer.wanted(Slot::Main));
+            if !h.app.ui.zoom_anim {
+                break;
+            }
+        }
+        assert_eq!(keys.len(), 1, "one render for the whole animation: {keys:?}");
         h.settle(SETTLE);
         assert!(!h.app.ui.zoom_anim, "animation finished");
         assert!(h.app.image_rect.unwrap().width() > fit.width());
         h.request("ui.clickWidget", json!({"id": "canvas:image", "fx": 0.5, "fy": 0.5}), t);
-        assert_eq!(h.app.ui.zoom, crate::state::Zoom::Fit);
+        assert_eq!(h.app.ui.zoom, Zoom::Fit);
+        // Z zooms to the same ratio as a click
+        h.request("ui.key", json!({"key": "z"}), t);
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(300));
+        h.request("ui.key", json!({"key": "z"}), t);
+        assert_eq!(h.app.ui.zoom, Zoom::Fit);
+        h.settle(SETTLE);
     }
 
     /// The Navigator appears when zoomed in; clicking it pans to that point.

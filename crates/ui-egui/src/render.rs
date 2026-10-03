@@ -161,6 +161,11 @@ impl Renderer {
     }
 
     /// Is the slot's current texture (or pending request) already for `key`?
+    /// Key of what `slot` shows or is rendering next (the pending request wins).
+    pub fn wanted(&self, slot: Slot) -> Option<u64> {
+        self.pending.get(&slot).map(|p| p.0).or_else(|| self.textures.get(&slot).map(|t| t.key))
+    }
+
     pub fn is_current(&self, slot: Slot, key: u64) -> bool {
         self.textures.get(&slot).is_some_and(|t| t.key == key) || self.pending.get(&slot).is_some_and(|p| p.0 == key)
     }
