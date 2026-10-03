@@ -370,16 +370,33 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit Info",
             [],
             None,
-            "{ids?, title?, caption?, altText?, extendedDescription?, copyright?, creator?, location?, city?, state?, country?, keywords?: [..], addKeywords?: [..], removeKeywords?: [..]}",
+            "{ids?, title?, caption?, altText?, extendedDescription?, copyright?, creator?, location?, city?, state?, country?, gps?: \"lat, lon\" | [lat, lon] | null, keywords?: [..], addKeywords?: [..], removeKeywords?: [..]}",
             has_selection,
             |s, p| {
                 let strs =
                     |k: &str| p.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>());
                 let targets = s.targets(p);
+                // GPS: "lat, lon" (decimal or 51°30'26"N 0°7'39"W), [lat, lon], or null / "" to clear
+                let gps: Option<Option<(f64, f64)>> = match p.get("gps") {
+                    None => None,
+                    Some(Value::Null) => Some(None),
+                    Some(Value::String(t)) if t.trim().is_empty() => Some(None),
+                    Some(Value::String(t)) => Some(Some(
+                        parse_gps(t).ok_or_else(|| bad("photo.setMeta", format!("can't read `{t}` as coordinates (e.g. 51.5072, -0.1276)")))?,
+                    )),
+                    Some(Value::Array(a)) if a.len() == 2 => match (a[0].as_f64(), a[1].as_f64()) {
+                        (Some(la), Some(lo)) if la.abs() <= 90.0 && lo.abs() <= 180.0 => Some(Some((la, lo))),
+                        _ => return Err(bad("photo.setMeta", "gps is [latitude, longitude] in degrees")),
+                    },
+                    Some(_) => return Err(bad("photo.setMeta", "gps is \"lat, lon\", [lat, lon] or null")),
+                };
                 let mut ops = Vec::new();
                 for id in targets {
                     let Some(ph) = s.catalog.photo(id) else { continue };
                     let mut m = ph.meta.clone();
+                    if let Some(g) = gps {
+                        m.gps = g;
+                    }
                     for (k, field) in [
                         ("title", &mut m.title),
                         ("caption", &mut m.caption),
@@ -899,4 +916,49 @@ impl Session {
 
 fn has_library(s: &Session) -> std::result::Result<(), String> {
     if s.library.is_some() { Ok(()) } else { Err("no library is open (in-memory session)".into()) }
+}
+
+/// Coordinates typed by a person: "51.5072, -0.1276", "51.5072 N 0.1276 W",
+/// "51°30'26\"N 0°7'39\"W" (degrees, minutes, seconds; N/S/E/W or signs).
+pub(crate) fn parse_gps(t: &str) -> Option<(f64, f64)> {
+    let t = t.trim();
+    // split into the two coordinates: at a comma, else after the first N/S hemisphere letter
+    let (a, b) = match t.split_once(',') {
+        Some((a, b)) => (a.trim().to_string(), b.trim().to_string()),
+        None => {
+            let i = t.find(['N', 'S', 'n', 's']).map(|i| i + 1).or_else(|| t.find(char::is_whitespace))?;
+            (t[..i].trim().to_string(), t[i..].trim().to_string())
+        }
+    };
+    let one = |s: &str, pos: char, neg: char| -> Option<f64> {
+        let up = s.to_ascii_uppercase();
+        let sign = if up.contains(neg) || up.trim_start().starts_with('-') { -1.0 } else { 1.0 };
+        let nums: Vec<f64> =
+            up.split(|c: char| !(c.is_ascii_digit() || c == '.')).filter(|x| !x.is_empty()).map(|x| x.parse::<f64>().ok()).collect::<Option<_>>()?;
+        let v = match nums.as_slice() {
+            [d] => *d,
+            [d, m] => d + m / 60.0,
+            [d, m, s] => d + m / 60.0 + s / 3600.0,
+            _ => return None,
+        };
+        let _ = pos;
+        Some(sign * v)
+    };
+    let (la, lo) = (one(&a, 'N', 'S')?, one(&b, 'E', 'W')?);
+    (la.abs() <= 90.0 && lo.abs() <= 180.0).then_some((la, lo))
+}
+
+#[cfg(test)]
+mod gps_tests {
+    #[test]
+    fn coordinates_people_type() {
+        let p = super::parse_gps;
+        assert_eq!(p("51.5072, -0.1276"), Some((51.5072, -0.1276)));
+        let (la, lo) = p("51°30'26\"N 0°7'39\"W").unwrap();
+        assert!((la - 51.50722).abs() < 1e-4 && (lo + 0.1275).abs() < 1e-4, "{la} {lo}");
+        let (la, lo) = p("33.8688 S, 151.2093 E").unwrap();
+        assert!((la + 33.8688).abs() < 1e-9 && (lo - 151.2093).abs() < 1e-9);
+        assert_eq!(p("95, 10"), None);
+        assert_eq!(p("hello"), None);
+    }
 }

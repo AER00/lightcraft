@@ -399,3 +399,19 @@ fn duplicate_copies_the_file_and_the_edits() {
     assert!(s.catalog.photo(dup).is_none(), "one undo step");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn gps_typed_in_is_saved_to_xmp() {
+    let mut s = Session::with_demo();
+    let id = s.active().unwrap_or_else(|| s.catalog.photos().next().unwrap().id);
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    s.execute("photo.setMeta", &json!({"gps": "48°51'30\"N 2°17'40\"E"})).unwrap();
+    let (la, lo) = s.catalog.photo(id).unwrap().meta.gps.unwrap();
+    assert!((la - 48.8583).abs() < 1e-3 && (lo - 2.2944).abs() < 1e-3, "{la} {lo}");
+    let x = crate::sidecar::sidecar_packet(s.catalog.photo(id).unwrap(), &s.catalog);
+    let back = lightcraft_meta::parse_xmp(&x).unwrap().metadata.gps.unwrap();
+    assert!((back.latitude - la).abs() < 1e-5 && (back.longitude - lo).abs() < 1e-5);
+    assert!(s.execute("photo.setMeta", &json!({"gps": "north pole-ish"})).is_err());
+    s.execute("photo.setMeta", &json!({"gps": null})).unwrap();
+    assert!(s.catalog.photo(id).unwrap().meta.gps.is_none());
+}

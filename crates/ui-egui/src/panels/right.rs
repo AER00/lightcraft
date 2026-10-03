@@ -463,11 +463,36 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ] {
             meta_field(app, ui, label, key, value, 1);
         }
-        small(ui, "GPS");
-        let gps = m.gps.map(|(la, lo)| {
-            format!("{:.5}° {}, {:.5}° {}", la.abs(), if la >= 0.0 { "N" } else { "S" }, lo.abs(), if lo >= 0.0 { "E" } else { "W" })
-        });
-        ui.label(egui::RichText::new(gps.unwrap_or_else(|| "—".into())).color(t.text_label));
+        // GPS: typed as "lat, lon" (or degrees / minutes / seconds); empty clears it
+        let gps = m.gps.map(|(la, lo)| format!("{la:.6}, {lo:.6}")).unwrap_or_default();
+        let gid = egui::Id::new("info-gps");
+        ui.label(egui::RichText::new("GPS").size(11.5).color(t.text_dim));
+        let mut text: String = ui.data(|d| d.get_temp(gid)).unwrap_or_else(|| gps.clone());
+        let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text("latitude, longitude").desired_width(f32::INFINITY));
+        register(ui.ctx(), "field:gps", r.rect);
+        if r.has_focus() {
+            ui.data_mut(|d| d.insert_temp(gid, text.clone()));
+        } else {
+            ui.data_mut(|d| d.remove::<String>(gid));
+        }
+        if r.lost_focus()
+            && text.trim() != gps
+            && let Err(e) = app.run("photo.setMeta", json!({"gps": text.trim()}))
+        {
+            app.toast(ui.ctx(), e);
+        }
+        if let Some((la, lo)) = m.gps {
+            let pretty = format!("{:.5}° {}, {:.5}° {}", la.abs(), if la >= 0.0 { "N" } else { "S" }, lo.abs(), if lo >= 0.0 { "E" } else { "W" });
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(pretty).size(11.0).color(t.text_dim));
+                if text_button(ui, "showOnMap", "Show on Map", false).on_hover_text("Open the place in OpenStreetMap").clicked() {
+                    let url = format!("https://www.openstreetmap.org/?mlat={la:.6}&mlon={lo:.6}#map=15/{la:.6}/{lo:.6}");
+                    if let Err(e) = crate::links::open(app, &url) {
+                        app.toast(ui.ctx(), e);
+                    }
+                }
+            });
+        }
         // offline originals / smart previews
         if let lightcraft_catalog::Source::File { path } = &p.source {
             let online = std::path::Path::new(path).exists();
