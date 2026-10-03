@@ -112,8 +112,10 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.openLibrary", "Open Library…", None, "File"),
     ("app.about", "About LightCraft", None, "Help"),
     ("app.systemInfo", "System Info…", None, "Help"),
+    ("app.whatsNew", "What's New", None, "Help"),
     ("app.help", "LightCraft Help", Some("F1"), "Help"),
     ("app.discord", "Join the ArtCraft Discord…", None, "Help"),
+    ("app.feedback", "Send Feedback…", None, "Help"),
     ("app.website", "LightCraft Website", None, "Help"),
     ("app.github", "LightCraft on GitHub", None, "Help"),
     ("app.artcraft", "ArtCraft Website", None, "Help"),
@@ -699,6 +701,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.toast(&ctx, format!("{name} opened for editing; it is stacked with the original"));
             Ok(r)
         }
+        "app.whatsNew" => {
+            app.ui.dialog = Some(Dialog::WhatsNew);
+            Ok(json!({"text": crate::panels::dialogs::WHATS_NEW}))
+        }
         "app.systemInfo" => {
             let info = app.session.execute("library.info", &json!({})).unwrap_or_default();
             let gpu = (lightcraft_engine::gpu::ready() && lightcraft_engine::gpu::available()).then(lightcraft_engine::gpu::adapter_name).flatten();
@@ -869,7 +875,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "app.export" => crate::control::export_active(app, p),
         "app.showInFinder" => show_in_finder(app),
-        "app.discord" | "app.website" | "app.github" | "app.artcraft" | "app.help" => {
+        "app.discord" | "app.website" | "app.github" | "app.artcraft" | "app.help" | "app.feedback" => {
             let url = crate::links::url_of(id).unwrap_or(crate::links::WEBSITE);
             crate::links::open(app, url)
         }

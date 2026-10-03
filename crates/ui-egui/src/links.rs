@@ -21,7 +21,11 @@ pub const LINKS: &[(&str, &str, &str)] = &[
     ("app.website", "LightCraft Website", APP_PAGE),
     ("app.github", "LightCraft on GitHub", GITHUB),
     ("app.artcraft", "ArtCraft Website", WEBSITE),
+    ("app.feedback", "Send Feedback…", FEEDBACK),
 ];
+
+/// Where feedback and bug reports go.
+pub const FEEDBACK: &str = "https://github.com/storytold/lightcraft/issues/new";
 
 /// The URL behind a link command id.
 pub fn url_of(cmd: &str) -> Option<&'static str> {

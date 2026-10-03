@@ -376,6 +376,8 @@ pub enum Dialog {
     NewSmartAlbum {
         name: String,
     },
+    /// Help ▸ What's New.
+    WhatsNew,
     /// Help ▸ System Info: (label, value) rows.
     SystemInfo {
         rows: Vec<(String, String)>,

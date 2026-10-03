@@ -198,7 +198,23 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "@Tools",
         ],
     ),
-    ("Help", &["app.discord", "---", "app.website", "app.github", "app.artcraft", "---", "app.shortcuts", "---", "app.about"]),
+    (
+        "Help",
+        &[
+            "app.discord",
+            "app.feedback",
+            "---",
+            "app.website",
+            "app.github",
+            "app.artcraft",
+            "---",
+            "app.whatsNew",
+            "app.shortcuts",
+            "app.systemInfo",
+            "---",
+            "app.about",
+        ],
+    ),
 ];
 
 /// Registry entries that are reached another way (parameterized commands are expanded into

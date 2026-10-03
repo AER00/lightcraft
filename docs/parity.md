@@ -44,13 +44,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 13 | 1 | 3 | 1 | 8/8 (100%) | 5/5 (100%) |
-| Y. Menus | 77 | 2 | 6 | 8 | 46/47 (98%) | 22/23 (96%) |
+| X. Cross-cutting behaviours (BEHAV) | 14 | 1 | 2 | 1 | 8/8 (100%) | 5/5 (100%) |
+| Y. Menus | 79 | 2 | 4 | 8 | 46/47 (98%) | 22/23 (96%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 22 | 10 | 47 | 9 | — | 18/21 (86%) |
-| **Total** | 367 | 25 | 108 | 37 | 193/198 (97%) | 132/144 (92%) |
+| **Total** | 370 | 25 | 105 | 37 | 193/198 (97%) | 132/144 (92%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **75.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 30.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **76.5%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 32.3% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -486,7 +486,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-ACCESS | Accessibility | P2 | 🟡 | `crates/ui-egui/src/widgets.rs`, `crates/ui-egui/src/panels/grid.rs` | AccessKit (VoiceOver / Narrator / AT-SPI): sliders announce control and value, buttons / icon buttons / dropdowns / section headers / sources their labels and state, grid thumbnails file name, rating, flag and label; the canvas tools (crop, masks) are pointer-only; not audited with a screen reader |
 | LR-BEHAV-LOCALIZE | Localisation | P2 | ⬜ | | |
 | LR-BEHAV-LEARN | Tutorials | OOS | 🚫 | | |
-| LR-BEHAV-WHATSNEW | What's new | P2 | ⬜ | | |
+| LR-BEHAV-WHATSNEW | What's new | P2 | ✅ | `cmd:app.whatsNew`, `docs/whats-new.md` | Help ▸ What's New: release highlights |
 | LR-BEHAV-AI-EA | Early-access badges | P2 | ⬜ | | |
 
 ## Y. Menus
@@ -577,9 +577,9 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-WINDOW-BRINGFRONT | Bring all to front | P2 | ✅ | `apps/lightcraft/src/native_menu.rs` | the system's item at the end of Window |
 | MENU-HELP-HELP | Help | P2 | ✅ | `cmd:app.help` | opens the documentation |
 | MENU-HELP-TUTORIALS | Tutorials | OOS | 🚫 | | |
-| MENU-HELP-WHATSNEW | What's new | P2 | ⬜ | | |
+| MENU-HELP-WHATSNEW | What's new | P2 | ✅ | `cmd:app.whatsNew` | |
 | MENU-HELP-SHORTCUTS | Keyboard shortcuts | P1 | ✅ | `cmd:app.shortcuts` | |
-| MENU-HELP-FEEDBACK | Send feedback | P2 | ⬜ | | |
+| MENU-HELP-FEEDBACK | Send feedback | P2 | ✅ | `cmd:app.feedback` | opens a new issue on the project's GitHub |
 | MENU-HELP-SYSINFO | System info | P2 | ✅ | `cmd:app.systemInfo`, `cmd:library.info` | Help ▸ System Info…: version, OS, CPU threads, GPU, memory budget, preview size, library, timings; Copy to Clipboard; JSON for agents (`open: false`) |
 | MENU-CTX-GRID | Photo context menu | P0 | ✅ | `crates/ui-egui/src/panels/grid.rs` (`context_menu`) | rate, flag, label, add to / remove from album, rename, virtual copy, version, stack, copy / paste / paste selected, reset, merge, rotate, show in Finder, export / export with preset, set as album cover (in an album), delete |
 | MENU-CTX-DETAIL | Loupe context menu | P1 | ✅ | `crates/ui-egui/src/panels/detail.rs` | Zoom submenu (fit, 100%, in, out), then the photo menu |

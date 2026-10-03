@@ -7,6 +7,9 @@ use crate::LightcraftApp;
 use crate::state::Dialog;
 use crate::theme::Tokens;
 
+/// Help ▸ What's New (docs/whats-new.md).
+pub const WHATS_NEW: &str = include_str!("../../../../docs/whats-new.md");
+
 pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let Some(mut dlg) = app.ui.dialog.clone() else { return };
     let t = Tokens::get(ctx);
@@ -32,6 +35,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewSmartAlbum { .. } => "Create Smart Album",
         Dialog::AllMetadata { .. } => "All Metadata",
         Dialog::SystemInfo { .. } => "System Info",
+        Dialog::WhatsNew => "What's New",
         Dialog::SmartRules { id: None, .. } => "New Smart Album",
         Dialog::SmartRules { .. } => "Edit Smart Album",
         Dialog::AutoStack { .. } => "Auto-Stack by Capture Time",
@@ -75,6 +79,25 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ui.label(
                         egui::RichText::new(format!("Creates {} stacks from {} of {scope}", preview["stacks"], preview["photos"])).color(t.text_dim),
                     );
+                }
+                Dialog::WhatsNew => {
+                    egui::ScrollArea::vertical().max_height(460.0).auto_shrink([false, true]).show(ui, |ui| {
+                        for line in WHATS_NEW.lines() {
+                            let l = line.trim_end();
+                            if let Some(h) = l.strip_prefix("### ") {
+                                ui.add_space(6.0);
+                                ui.label(egui::RichText::new(h).font(t.semibold(12.5)).color(t.text));
+                            } else if let Some(h) = l.strip_prefix("## ") {
+                                ui.add_space(8.0);
+                                ui.label(egui::RichText::new(h).font(t.semibold(14.0)).color(t.text));
+                            } else if l.starts_with("# ") || l.is_empty() {
+                            } else if let Some(b) = l.strip_prefix("- ") {
+                                ui.label(egui::RichText::new(format!("•  {}", b.replace('`', ""))).color(t.text_label));
+                            } else {
+                                ui.label(egui::RichText::new(l.trim().replace('`', "")).color(t.text_label));
+                            }
+                        }
+                    });
                 }
                 Dialog::SystemInfo { rows } => {
                     egui::Grid::new("sysinfo").num_columns(2).spacing([16.0, 4.0]).striped(true).show(ui, |ui| {
@@ -739,7 +762,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         Dialog::RenameKeyword { from, to } => app.run("keyword.rename", json!({"from": from, "to": to})),
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),
-        Dialog::AllMetadata { .. } | Dialog::SystemInfo { .. } => Ok(serde_json::Value::Null),
+        Dialog::AllMetadata { .. } | Dialog::SystemInfo { .. } | Dialog::WhatsNew => Ok(serde_json::Value::Null),
         Dialog::SmartRules { id, name, rules } => {
             let name = if name.trim().is_empty() { "Smart Album".to_string() } else { name.trim().to_string() };
             match id {
