@@ -482,3 +482,42 @@ fn assisted_culling_groups_bursts_and_scores_focus() {
     assert!(vis.contains(&by_name(&s, "b_sharp.png")) && !vis.contains(&by_name(&s, "a_soft.png")) && vis.contains(&other));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Find Dust Spots: soft dark spots on a smooth sky are found and healed (one undo step).
+#[test]
+fn dust_spots_are_found_and_healed() {
+    let dir = temp_dir("dust");
+    let (w, h) = (900usize, 600usize);
+    let spots = [(180.0f32, 140.0f32), (600.0, 300.0)];
+    let data: Vec<[u8; 4]> = (0..w * h)
+        .map(|i| {
+            let (x, y) = ((i % w) as f32, (i / w) as f32);
+            let mut v = 0.5 + 0.3 * (y / h as f32);
+            for (cx, cy) in spots {
+                v -= 0.07 * (-((x - cx).powi(2) + (y - cy).powi(2)) / (2.0 * 25.0)).exp();
+            }
+            let b = (v * 255.0) as u8;
+            [b, b, (b as f32 * 1.15).min(255.0) as u8, 255]
+        })
+        .collect();
+    let png = lightcraft_codecs::encode_png(
+        &lightcraft_codecs::EncodeImage::rgba8(&lightcraft_raster::Rgba8 { width: w, height: h, data }),
+        &Default::default(),
+    )
+    .unwrap();
+    std::fs::write(dir.join("sky.png"), png).unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [dir.join("sky.png").to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    let before = s.render_now(id, 900, 600).unwrap().image;
+    let r = s.execute("spot.findDust", &json!({})).unwrap();
+    assert_eq!(r["added"], 2, "{r}");
+    let after = s.render_now(id, 900, 600).unwrap().image;
+    let at = |img: &lightcraft_raster::Rgba8, x: usize, y: usize| img.data[y * 900 + x][0] as i32;
+    for (cx, cy) in spots {
+        assert!(at(&after, cx as usize, cy as usize) > at(&before, cx as usize, cy as usize) + 6, "the spot at {cx},{cy} is lifted");
+    }
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(s.develop_of(id).unwrap().spots.is_empty(), "one undo step");
+    let _ = std::fs::remove_dir_all(&dir);
+}

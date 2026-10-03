@@ -224,6 +224,22 @@ fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
         ui.label(format!("{} spot(s) on this photo", d.spots.len()));
         ui.add_space(4.0);
+        if text_button(ui, "findDust", "Find Dust Spots", false)
+            .on_hover_text("Heal the small, soft dark spots sensor dust leaves on smooth areas")
+            .clicked()
+        {
+            match app.run("spot.findDust", json!({})) {
+                Ok(r) => {
+                    let n = r["added"].as_u64().unwrap_or(0);
+                    app.toast(
+                        ui.ctx(),
+                        if n == 0 { "No dust spots found".to_string() } else { format!("Healed {n} dust spot{}", if n == 1 { "" } else { "s" }) },
+                    );
+                }
+                Err(e) => app.toast(ui.ctx(), e),
+            }
+        }
+        ui.add_space(4.0);
         ui.label(egui::RichText::new("Paint over a distraction on the photo to remove it.").color(Tokens::get(ui.ctx()).text_dim));
     });
     // brush settings; with a spot selected they edit that spot too

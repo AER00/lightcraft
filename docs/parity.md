@@ -29,7 +29,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | F. Edit panel — global adjustments (EDIT) | 42 | 1 | 5 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 6 | 1 | 3 | 0 | 3/3 (100%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
-| I. Remove / healing (REM) | 6 | 1 | 3 | 2 | 4/4 (100%) | 2/3 (67%) |
+| I. Remove / healing (REM) | 7 | 1 | 2 | 2 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
 | K. Masking (MASK) | 13 | 3 | 7 | 0 | 8/8 (100%) | 5/5 (100%) |
 | L. Presets (PRE) | 6 | 0 | 1 | 1 | 2/2 (100%) | 2/2 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 80 | 1 | 4 | 8 | 46/47 (98%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 24 | 8 | 47 | 9 | — | 20/21 (95%) |
-| **Total** | 375 | 25 | 100 | 37 | 193/198 (97%) | 136/144 (94%) |
+| **Total** | 376 | 25 | 99 | 37 | 193/198 (97%) | 136/144 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **77.5%** of 500 in-scope rows — P0 98.7% of 198 · P1 96.2% of 144 · P2 33.9% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **77.7%** of 500 in-scope rows — P0 98.7% of 198 · P1 96.2% of 144 · P2 34.5% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -294,7 +294,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-REM-VISUALIZE | Visualize spots | P1 | ✅ | `cmd:view.visualizeSpots` | |
 | LR-REM-PEOPLE | Remove people (generative) | OOS | 🚫 | | |
 | LR-REM-REFLECT | Remove reflections | P2 | ⬜ | | |
-| LR-REM-DUST | Dust detection | P2 | ⬜ | | |
+| LR-REM-DUST | Dust detection | P2 | ✅ | `cmd:spot.findDust`, `crates/pipeline/src/dust.rs` | Remove panel ▸ Find Dust Spots: small, soft, round dark spots on smooth areas become heal spots (sensitivity; one undo step); Visualize Spots for checking by eye |
 | LR-REM-SYNC | Sync spots | P1 | ✅ | `cmd:develop.copy` (`groups`), `crates/develop/src/presets.rs` | |
 
 ## J. Red eye (EYE)

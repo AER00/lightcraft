@@ -25,6 +25,7 @@
 pub mod auto;
 pub mod colorops;
 pub mod cull;
+pub mod dust;
 pub mod finish;
 pub mod geometry;
 pub mod local;
