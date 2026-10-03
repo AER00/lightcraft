@@ -593,7 +593,10 @@ fn general_interaction(
         app.ui.zoom = Zoom::Fit;
     }
     if zoomed {
-        ui.ctx().set_cursor_icon(if resp.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
+        // only over the photo: a panel drawn earlier (sliders) must keep its own cursor
+        if resp.dragged() || resp.hovered() {
+            ui.ctx().set_cursor_icon(if resp.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
+        }
         if resp.dragged() {
             let dlt = resp.drag_delta();
             app.ui.pan.0 = (app.ui.pan.0 - dlt.x / img.width()).clamp(0.0, 1.0);
