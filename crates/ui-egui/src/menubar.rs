@@ -71,6 +71,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "@Export with Preset",
             "---",
             "library.toggleAutoWriteXmp",
+            "@Previews",
             "---",
             "app.quit",
         ],
@@ -278,6 +279,24 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
     let active = app.session.active().and_then(|id| app.session.catalog.photo(id).cloned());
     let has = active.is_some();
     Some(match name {
+        "Previews" => {
+            let running = app.session.preview_build.as_ref().is_some_and(|b| !b.finished.load(std::sync::atomic::Ordering::Relaxed));
+            let scope = if app.session.selection.ids.len() > 1 { "Selected" } else { "Visible" };
+            vec![
+                item(
+                    "library.buildPreviews",
+                    json!({"size": "standard", "edge": app.ui.settings.preview_edge}),
+                    format!("Build Standard-Sized Previews ({scope})"),
+                    None,
+                    !running,
+                    None,
+                ),
+                item("library.buildPreviews", json!({"size": "full"}), format!("Build 1:1 Previews ({scope})"), None, !running, None),
+                item("library.cancelPreviews", Value::Null, "Stop Building Previews", None, running, None),
+                MenuNode::Separator,
+                item("library.clearPreviews", Value::Null, "Discard Preview Cache", None, true, None),
+            ]
+        }
         "Set Rating" => (0..=5u8)
             .map(|r| {
                 let label = if r == 0 { "None".to_string() } else { "★".repeat(r as usize) };

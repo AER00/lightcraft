@@ -170,6 +170,9 @@ pub const PREVIEW_EDGES: [u32; 4] = [1600, 2560, 3840, 5120];
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
+    /// The Build Previews run last announced (its identity, finished?).
+    #[serde(skip)]
+    pub preview_build_seen: Option<(usize, bool)>,
     pub view: ViewMode,
     pub left_panel: bool,
     pub right: RightPanel,
@@ -397,6 +400,7 @@ pub enum Dialog {
 impl Default for UiState {
     fn default() -> Self {
         UiState {
+            preview_build_seen: None,
             view: ViewMode::Detail,
             left_panel: false,
             right: RightPanel::Edit,

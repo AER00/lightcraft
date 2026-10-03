@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
 | Z. Keyboard shortcuts (desktop) | 68 | 8 | 4 | 1 | 49/52 (94%) | 17/23 (74%) |
-| Lightroom Classic extras | 17 | 13 | 49 | 9 | — | 16/21 (76%) |
-| **Total** | 332 | 44 | 124 | 37 | 193/198 (97%) | 119/144 (83%) |
+| Lightroom Classic extras | 18 | 12 | 49 | 9 | — | 17/21 (81%) |
+| **Total** | 333 | 43 | 124 | 37 | 193/198 (97%) | 120/144 (83%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **70.8%** of 500 in-scope rows — P0 98.7% of 198 · P1 89.9% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **70.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 90.3% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -709,7 +709,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-VISUALSEARCH | Find similar photos | P2 | ⬜ | | |
 | LRC-LIB-MISSING | Missing files & relink | P1 | ✅ | `cmd:library.missing`, `cmd:photo.relink`, `cmd:library.findMissing`, `cmd:file.findMissing`, `cmd:photo.locate` | File → Find Missing Photos… (same name and size anywhere in a folder, one undo step), photo menu → Locate Missing File…; unreadable files show "!" in the grid and a reason in the loupe; undo never moves files. No missing-photos collection |
 | LRC-LIB-CONVERT | Convert to DNG | P2 | ⬜ | `crates/raw/src/dngwrite.rs` | writer exists, not exposed |
-| LRC-LIB-PREVIEWS | Build / discard previews | P1 | 🟡 | `cmd:library.clearPreviews`, `crates/preview/src/lib.rs` | disk thumbnail cache; no build-1:1 / smart previews |
+| LRC-LIB-PREVIEWS | Build / discard previews | P1 | ✅ | `cmd:library.buildPreviews`, `cmd:library.previewProgress`, `cmd:library.cancelPreviews`, `cmd:library.clearPreviews`, `crates/engine/src/cmd/previews.rs`, `crates/preview/src/lib.rs` | File ▸ Previews: build standard-sized (Settings → Performance size) or 1:1 previews of the selected / visible photos in the background (progress toasts, stop), discard the cache; disk thumbnail + view cache; no smart previews (offline proxies) |
 | LRC-LIB-SLIDESHOW-IMPROMPTU | Impromptu slideshow | P2 | ⬜ | | |
 | LRC-DEV-SNAPSHOTS | Named snapshots | P1 | ✅ | `cmd:version.create`, `cmd:version.restore` | = versions |
 | LRC-DEV-HISTORY | Full history panel | P1 | ✅ | `cmd:history.list`, `cmd:history.restore`, `cmd:history.clear` | row menu: copy step to before, create version from step, clear history |

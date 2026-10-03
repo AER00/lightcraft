@@ -481,3 +481,41 @@ fn json_delta_keeps_only_changes() {
     assert_eq!(crate::json_delta(&a, &b), Some(json!({"light": {"exposure": 1}, "masks": [1, 2]})));
     assert_eq!(crate::json_delta(&a, &a), None);
 }
+
+#[test]
+fn build_previews_fills_the_cache() {
+    use lightcraft_catalog::PhotoId;
+    let mut s = demo();
+    let ids: Vec<u64> = s.catalog.photos().take(3).map(|p| p.id.0).collect();
+    let cached = |s: &mut Session, id: u64| {
+        let t = s.thumb_job(PhotoId(id), 512).unwrap();
+        let (c, k) = t.cache.clone().unwrap();
+        let q = s.quick_view_job(PhotoId(id), 1024, true).unwrap();
+        let (vc, vk) = q.cached[0].clone();
+        (c.get(k).is_some(), vc.get(vk).is_some())
+    };
+    assert_eq!(cached(&mut s, ids[0]), (false, false));
+    let r = s.execute("library.buildPreviews", &json!({"ids": [ids[0], ids[1]], "size": "standard", "edge": 512, "wait": true})).unwrap();
+    assert_eq!((r["total"].as_u64(), r["done"].as_u64(), r["failed"].as_u64(), r["running"].as_bool()), (Some(2), Some(2), Some(0), Some(false)));
+    // view previews are written to the cache in the background
+    let t0 = std::time::Instant::now();
+    while cached(&mut s, ids[1]) != (true, true) && t0.elapsed().as_secs() < 20 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(cached(&mut s, ids[0]), (true, true), "thumbnail and loupe view are ready");
+    assert_eq!(cached(&mut s, ids[2]), (false, false), "only the photos asked for");
+    // background build: returns at once, progress by command
+    let r = s.execute("library.buildPreviews", &json!({"ids": [ids[2]], "edge": 512})).unwrap();
+    assert_eq!(r["total"], 1);
+    let t0 = std::time::Instant::now();
+    loop {
+        let p = s.execute("library.previewProgress", &json!({})).unwrap();
+        if p["running"] == false {
+            assert_eq!(p["done"], 1);
+            break;
+        }
+        assert!(t0.elapsed().as_secs() < 60, "build finishes");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(s.execute("library.buildPreviews", &json!({"size": "huge"})).is_err());
+}

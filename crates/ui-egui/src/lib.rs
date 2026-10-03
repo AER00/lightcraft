@@ -193,6 +193,30 @@ impl LightcraftApp {
     }
 
     /// Show a transient toast at the bottom of the canvas (like the reference app's HUD).
+    /// Announce the start and end of a Build Previews run.
+    fn preview_build_status(&mut self, ctx: &egui::Context) {
+        use std::sync::atomic::Ordering;
+        let Some(b) = self.session.preview_build.clone() else { return };
+        let key = std::sync::Arc::as_ptr(&b) as usize;
+        if b.finished.load(Ordering::Relaxed) {
+            if self.ui.preview_build_seen != Some((key, true)) {
+                self.ui.preview_build_seen = Some((key, true));
+                let (done, failed) = (b.done.load(Ordering::Relaxed), b.failed.load(Ordering::Relaxed));
+                let mut msg = format!("Previews ready for {done} photo{}", if done == 1 { "" } else { "s" });
+                if failed > 0 {
+                    msg.push_str(&format!(" · {failed} couldn't be rendered"));
+                }
+                self.toast(ctx, msg);
+            }
+        } else {
+            if self.ui.preview_build_seen != Some((key, false)) {
+                self.ui.preview_build_seen = Some((key, false));
+                self.toast(ctx, format!("Building previews for {} photos…", b.total));
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
+    }
+
     pub fn toast(&mut self, ctx: &egui::Context, text: impl Into<String>) {
         let t = ctx.input(|i| i.time);
         self.ui.toast = Some((text.into(), t + 1.4));
@@ -349,6 +373,7 @@ impl LightcraftApp {
         self.renderer.poll(ctx, &mut self.session);
         merge::poll(self, ctx);
         import::tick(self, ctx);
+        self.preview_build_status(ctx);
         self.session.persist_if_dirty();
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);

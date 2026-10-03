@@ -43,6 +43,7 @@ pub struct JobPool<S, R> {
     shared: Arc<Shared<S, R>>,
     tx: Sender<Done<S, R>>,
     rx: Receiver<Done<S, R>>,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     threads: usize,
     started: bool,
     seq: u64,
