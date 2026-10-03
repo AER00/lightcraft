@@ -286,6 +286,20 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     let resp = ui.interact(r, egui::Id::new(("cell", id.0)), Sense::click_and_drag());
     register(ui.ctx(), format!("thumb:{}", id.0), r);
     let selected = app.session.selection.contains(id);
+    // screen readers: the file, then rating / flag / label
+    let mut spoken = photo.file_name.clone();
+    if photo.rating > 0 {
+        spoken.push_str(&format!(", {} star{}", photo.rating, if photo.rating == 1 { "" } else { "s" }));
+    }
+    match photo.flag {
+        lightcraft_catalog::Flag::Pick => spoken.push_str(", picked"),
+        lightcraft_catalog::Flag::Reject => spoken.push_str(", rejected"),
+        lightcraft_catalog::Flag::None => {}
+    }
+    if let Some(l) = photo.label {
+        spoken.push_str(&format!(", {} label", app.session.catalog.label_name(l)));
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &spoken));
     let active = app.session.selection.active == Some(id);
     let p = ui.painter();
     let img_rect = if square {

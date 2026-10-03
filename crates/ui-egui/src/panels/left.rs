@@ -23,6 +23,11 @@ fn row(
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 29.0), Sense::click());
     register(ui.ctx(), format!("source:{id}"), r);
+    let name = match count {
+        Some(n) => format!("{label}, {n} photos"),
+        None => label.to_string(),
+    };
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name));
     let inner = r.shrink2(vec2(8.0, 0.0));
     if selected {
         ui.painter().rect_filled(inner, 4.0, t.canvas);
