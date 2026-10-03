@@ -19,6 +19,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.detail", "Detail", Some("D"), "View"),
     ("view.compare", "Compare", Some("Shift+C"), "View"),
     ("view.survey", "Survey", Some("N"), "View"),
+    ("view.reference", "Reference View", Some("Shift+R"), "View"),
+    ("photo.setReference", "Set as Reference Photo", None, ""),
     ("compare.swap", "Swap Compare Photos", None, "View"),
     ("compare.makeSelect", "Make Candidate the Select", None, "View"),
     ("view.autoAdvance", "Auto Advance", None, "Photo"),
@@ -245,6 +247,30 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "view.survey" => {
             app.ui.view = ViewMode::Survey;
             Ok(json!({"photos": crate::panels::compare::survey_photos(app).len()}))
+        }
+        "view.reference" => {
+            // the reference: the one set before, else the active photo (the next one becomes active)
+            let vis = app.session.visible_cloned();
+            let reference = app
+                .ui
+                .reference
+                .filter(|r| app.session.catalog.photo(lightcraft_catalog::PhotoId(*r)).is_some())
+                .or_else(|| app.session.active().map(|a| a.0));
+            let Some(r) = reference else { return Some(Err("select a photo to use as the reference".into())) };
+            app.ui.reference = Some(r);
+            if app.session.active().is_none_or(|a| a.0 == r)
+                && let Some(i) = vis.iter().position(|x| x.0 == r)
+                && let Some(next) = vis.get(i + 1).or(i.checked_sub(1).and_then(|j| vis.get(j)))
+            {
+                let _ = app.session.execute("library.select", &json!({"ids": [next.0]}));
+            }
+            app.ui.view = ViewMode::Reference;
+            Ok(json!({"reference": r, "active": app.session.active().map(|a| a.0)}))
+        }
+        "photo.setReference" => {
+            let id = p.get("id").and_then(Value::as_u64).or_else(|| app.session.active().map(|a| a.0));
+            app.ui.reference = id;
+            Ok(json!({"reference": id}))
         }
         "compare.swap" => crate::panels::compare::swap(app),
         "compare.makeSelect" => crate::panels::compare::make_select(app),

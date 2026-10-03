@@ -592,6 +592,9 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if ui.button("Open in Detail").clicked() {
         let _ = app.run("view.detail", json!({}));
     }
+    if ui.button("Set as Reference Photo").clicked() {
+        let _ = app.run("photo.setReference", json!({"id": id.0}));
+    }
     ui.separator();
     ui.menu_button("Set Rating", |ui| {
         for r in 0..=5 {

@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 14 | 1 | 2 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 80 | 1 | 4 | 8 | 46/47 (98%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 24 | 8 | 47 | 9 | — | 20/21 (95%) |
-| **Total** | 377 | 25 | 98 | 37 | 193/198 (97%) | 136/144 (94%) |
+| Lightroom Classic extras | 25 | 8 | 46 | 9 | — | 20/21 (95%) |
+| **Total** | 378 | 25 | 97 | 37 | 193/198 (97%) | 136/144 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **77.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 96.2% of 144 · P2 35.1% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **78.1%** of 500 in-scope rows — P0 98.7% of 198 · P1 96.2% of 144 · P2 35.8% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -691,7 +691,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-VIEWS | Grid / loupe / compare / survey / people | P1 | 🟡 | `cmd:view.photoGrid`, `cmd:view.squareGrid`, `cmd:view.detail`, `cmd:view.compare`, `cmd:view.survey`, `cmd:view.gridInfo` | grid, square grid, loupe, compare, survey, second window; square-grid captions: file name, exposure or capture date (View ▸ Grid Info); no people view |
 | LRC-LIB-COMPARE | Compare view | P1 | ✅ | `cmd:view.compare` | ⇧C (C is Crop here); swap, make select; zoom always linked |
 | LRC-LIB-SURVEY | Survey view | P2 | ✅ | `cmd:view.survey` | N |
-| LRC-LIB-REFVIEW | Reference view | P2 | ⬜ | | |
+| LRC-LIB-REFVIEW | Reference view | P2 | ✅ | `cmd:view.reference`, `cmd:photo.setReference`, `crates/ui-egui/src/panels/compare.rs` (`show_reference`) | View ▸ Reference View (⇧R): the reference photo beside the active one (edited with the Edit panel); photo menu ▸ Set as Reference Photo |
 | LRC-LIB-CATALOG-PANEL | Catalog sets | P1 | ✅ | `cmd:library.source` (`missing`) | all, recently added, picks, recently deleted, missing photos (when any) |
 | LRC-LIB-FOLDERS | Disk folder tree | P1 | ✅ | `cmd:library.browse`, `cmd:folder.rename`, `cmd:folder.move`, `crates/ui-egui/src/panels/left.rs` (`local_section`, `folder_tree`) | standard places + the browsed folder + Browse Folder…, each an expandable tree of subfolders, breadcrumb navigation; context menu: Rename Folder…, Move Folder To…, Show in Finder (on disk, photos relinked; like the file manager, not an undo step) |
 | LRC-LIB-COLLECTIONS | Collections & sets | P1 | ✅ | `cmd:album.create`, `cmd:album.createSmart`, `cmd:album.toggleTarget`, `cmd:album.setTarget`, `cmd:album.clearQuick` | albums + folders (sets), smart albums (rule editor), Quick Collection and target album (B in the grids adds / removes the selection; album menu ▸ Set as Target Album; the target is marked +) |

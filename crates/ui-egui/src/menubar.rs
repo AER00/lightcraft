@@ -251,6 +251,7 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
         "view.detail" => Some(u.view == ViewMode::Detail),
         "view.compare" => Some(u.view == ViewMode::Compare),
         "view.survey" => Some(u.view == ViewMode::Survey),
+        "view.reference" => Some(u.view == ViewMode::Reference),
         "view.leftPanel" => Some(u.left_panel),
         "view.filmstrip" => Some(u.filmstrip),
         "view.histogram" => Some(u.histogram),

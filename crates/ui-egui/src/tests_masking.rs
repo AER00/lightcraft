@@ -546,3 +546,22 @@ fn grid_info_cycles_caption() {
     exec(&mut h, "view.gridInfo", json!({"info": "exposure"}));
     h.settle(SETTLE);
 }
+
+#[test]
+fn reference_view_pins_a_photo_beside_the_active_one() {
+    let mut h = detail("panel.edit");
+    let first = h.app.session.active().unwrap();
+    exec(&mut h, "photo.setReference", json!({}));
+    let r = h.request("ui.key", json!({"key": "r", "shift": true}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(h.app.ui.view, crate::state::ViewMode::Reference);
+    assert_eq!(h.app.ui.reference, Some(first.0));
+    let active = h.app.session.active().unwrap();
+    assert_ne!(active, first, "the next photo is the one being edited");
+    // edits go to the active photo, the reference stays put
+    exec(&mut h, "develop.set", json!({"control": "light.exposure", "value": 0.7}));
+    assert_eq!(h.app.session.develop_of(active).unwrap().light.exposure, 0.7);
+    assert_ne!(h.app.session.develop_of(first).unwrap().light.exposure, 0.7);
+    h.settle(SETTLE);
+    assert!(h.app.renderer.textures.get(&crate::render::Slot::Compare(0)).is_some_and(|t| t.photo == first), "the reference is drawn");
+}

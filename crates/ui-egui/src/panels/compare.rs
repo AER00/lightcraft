@@ -337,3 +337,31 @@ pub fn show_survey(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ui.painter().text(pos2(canvas.right() - 16.0, canvas.top() + 10.0), Align2::RIGHT_TOP, msg, t.font(12.0), t.text_dim);
     }
 }
+
+/// Reference view: the reference photo (left, fixed) beside the active photo (right) — the one
+/// the Edit panel works on, so a look can be matched by eye.
+pub fn show_reference(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let canvas = area_and_filmstrip(app, ui);
+    let reference = app.ui.reference.map(PhotoId).filter(|r| app.session.catalog.photo(*r).is_some());
+    let (Some(r), Some(active)) = (reference, app.session.active()) else {
+        super::empty_message(ui, canvas, "No reference photo", "Right-click a photo ▸ Set as Reference Photo, then View → Reference View (Shift+R)");
+        return;
+    };
+    let area = canvas.shrink(18.0);
+    let half = (area.width() - 16.0) / 2.0;
+    let zoom = app.ui.zoom;
+    let left = Rect::from_min_size(area.min, vec2(half, area.height()));
+    let right = Rect::from_min_size(pos2(area.right() - half, area.top()), vec2(half, area.height()));
+    let (_, lresp) = photo_tile(app, ui, r, Slot::Compare(0), left, "Reference", zoom);
+    let (img, resp) = photo_tile(app, ui, active, Slot::Compare(1), right, "Active", zoom);
+    app.image_rect = Some(img);
+    pan(app, &resp, img);
+    lresp.context_menu(|ui| {
+        if ui.button("Clear Reference").clicked() {
+            app.ui.reference = None;
+            app.ui.view = ViewMode::Detail;
+        }
+    });
+    let mid = area.center().x;
+    ui.painter().line_segment([pos2(mid, area.top()), pos2(mid, area.bottom())], Stroke::new(1.0, Tokens::get(ui.ctx()).divider));
+}

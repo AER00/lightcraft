@@ -14,6 +14,8 @@ pub enum ViewMode {
     Compare,
     /// The selected photos tiled.
     Survey,
+    /// A reference photo (left, fixed) beside the active photo (right, being edited).
+    Reference,
 }
 
 /// The right-hand tool/panel shown next to the tool strip.
@@ -296,6 +298,9 @@ pub struct UiState {
     /// Compare view: (select, candidate) photo ids.
     #[serde(skip)]
     pub compare: Option<(u64, u64)>,
+    /// Reference view: the reference photo.
+    #[serde(skip)]
+    pub reference: Option<u64>,
     /// Transient toast text and its expiry (seconds of app time).
     #[serde(skip)]
     pub toast: Option<(String, f64)>,
@@ -515,6 +520,7 @@ impl Default for UiState {
             window_fullscreen: None,
             filter_bar: false,
             compare: None,
+            reference: None,
             toast: None,
             status: String::new(),
             dialog: None,
