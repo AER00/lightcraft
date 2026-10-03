@@ -21,7 +21,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 <!-- parity:summary -->
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
-| A. Import (IMP) | 8 | 2 | 3 | 1 | 3/4 (75%) | 3/4 (75%) |
+| A. Import (IMP) | 9 | 2 | 2 | 1 | 3/4 (75%) | 3/4 (75%) |
 | B. Library management (LIB) | 21 | 0 | 4 | 2 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 15 | 0 | 2 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 10 | 0 | 3 | 0 | 4/4 (100%) | 4/4 (100%) |
@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 77 | 2 | 6 | 8 | 46/47 (98%) | 22/23 (96%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 21 | 10 | 48 | 9 | — | 18/21 (86%) |
-| **Total** | 362 | 25 | 113 | 37 | 193/198 (97%) | 132/144 (92%) |
+| Lightroom Classic extras | 22 | 10 | 47 | 9 | — | 18/21 (86%) |
+| **Total** | 364 | 25 | 111 | 37 | 193/198 (97%) | 132/144 (92%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **74.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 27.2% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **75.3%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 28.5% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -102,7 +102,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-IMP-DRAGDROP | Drop files/folders to import | P0 | ✅ | `crates/ui-egui/src/lib.rs` (dropped files → `cmd:library.import`) | dropping onto a specific album not supported |
 | LR-IMP-DUPES | Skip duplicates by content | P1 | ✅ | `crates/engine/src/import.rs`, `crates/engine/src/tests_import.rs` | |
 | LR-IMP-DEVICE | Import from camera/card | P1 | ✅ | `cmd:library.devices`, `cmd:file.addFromDevice`, `crates/engine/src/devices.rs` | mounted volumes with a DCIM folder (macOS /Volumes, Linux /media and /run/media, Windows drive letters); File → Add from Device → the import review, copying into the library by default; no PTP/MTP (cameras that don't mount as a disk) |
-| LR-IMP-AUTO | Watched-folder auto import | P2 | ⬜ | | |
+| LR-IMP-AUTO | Watched-folder auto import | P2 | ✅ | `cmd:library.autoImport`, `cmd:library.autoImportScan`, `crates/ui-egui/src/panels/settings.rs` | Settings ▸ Import ▸ Auto Import: a watched folder whose new photos are added (in place or copied) once complete, into an optional album; scanned every 3 s |
 | LR-IMP-PRESET | Preset on import | P2 | ✅ | `cmd:library.import` (`preset`) | chosen in the import review; one History entry |
 | LR-IMP-RAWDEFAULT | Raw defaults | P1 | ✅ | `cmd:library.preferences`, `crates/engine/src/import.rs`, `crates/ui-egui/src/panels/settings.rs` | LightCraft default / a preset / per camera (make + model); non-raw default too; the preset look counts as unedited and Reset returns to it |
 | LR-IMP-MIGRATE | Migrate other catalogs | OOS | 🚫 | | |
@@ -686,7 +686,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
 | LRC-LIB-IMPORT | Full import dialog | P1 | ✅ | `cmd:library.import` (`mode`, `destination`, `organize`, `rename`, `metadataPreset`, `preset`, `keywords`, `album`), `crates/ui-egui/src/import.rs` | review grid with duplicates skipped; add in place or copy (library Originals or any folder; by day / by month / one folder; rename template with live example, numbered across the import); develop preset, metadata preset, keywords, album on import |
-| LRC-LIB-AUTOIMPORT | Watched-folder import | P2 | ⬜ | | |
+| LRC-LIB-AUTOIMPORT | Watched-folder import | P2 | ✅ | `cmd:library.autoImport` | see LR-IMP-AUTO |
 | LRC-LIB-TETHER | Tethered capture | P2 | ⬜ | | |
 | LRC-LIB-VIEWS | Grid / loupe / compare / survey / people | P1 | 🟡 | `cmd:view.photoGrid`, `cmd:view.squareGrid`, `cmd:view.detail`, `cmd:view.compare`, `cmd:view.survey` | grid, square grid, loupe, compare, survey; no people view; grid cell styles: filenames only |
 | LRC-LIB-COMPARE | Compare view | P1 | ✅ | `cmd:view.compare` | ⇧C (C is Crop here); swap, make select; zoom always linked |

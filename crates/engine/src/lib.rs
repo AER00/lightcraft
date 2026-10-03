@@ -127,6 +127,9 @@ pub struct Session {
     pub label_sets: Vec<cmd::manage::LabelSet>,
     /// The target album B adds to (`None` = the Quick Collection).
     pub target_album: Option<lightcraft_catalog::AlbumId>,
+    /// Auto import: files seen in the watched folder and their size then (a file is imported once
+    /// its size held between two scans).
+    pub auto_import_seen: std::collections::HashMap<String, u64>,
     /// Keyword sets (⌥1–⌥9 apply the current set's keywords), the one in use (`None` = Recent
     /// Keywords) and the recently added keywords, newest first.
     pub keyword_sets: Vec<cmd::keywords::KeywordSet>,
@@ -188,6 +191,7 @@ impl Session {
             filter_presets: Vec::new(),
             label_sets: Vec::new(),
             target_album: None,
+            auto_import_seen: Default::default(),
             keyword_sets: Vec::new(),
             keyword_set: None,
             recent_keywords: Vec::new(),

@@ -164,6 +164,12 @@ pub struct ImportDefaults {
     pub creator: String,
     /// Metadata preset applied to every imported photo (`metadata.*`; `None` = none).
     pub metadata_preset: Option<String>,
+    /// Auto import: a watched folder whose new photos are added as they arrive (`None` = off),
+    /// copied into the library's Originals instead of added in place when `auto_copy`, and an
+    /// album they go to.
+    pub auto_folder: Option<String>,
+    pub auto_copy: bool,
+    pub auto_album: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

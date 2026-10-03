@@ -414,6 +414,21 @@ impl LightcraftApp {
             }
         }
         self.ui.was_focused = focused;
+        // auto import: scan the watched folder every few seconds
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.session.import_defaults.auto_folder.is_some() {
+            let now = ctx.input(|i| i.time);
+            if now - self.ui.auto_import_at >= 3.0 {
+                self.ui.auto_import_at = now;
+                if let Ok(r) = self.session.execute("library.autoImportScan", &serde_json::json!({})) {
+                    let n = r["imported"].as_array().map_or(0, Vec::len);
+                    if n > 0 {
+                        self.toast(ctx, format!("Auto Import: added {n} photo{}", if n == 1 { "" } else { "s" }));
+                    }
+                }
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(3));
+        }
         self.session.persist_if_dirty();
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);

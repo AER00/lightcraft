@@ -256,3 +256,34 @@ fn copy_with_destination_organize_rename_and_metadata_preset() {
         let _ = std::fs::remove_dir_all(d);
     }
 }
+
+/// Auto import: files in the watched folder are added once their size held between two scans,
+/// into the named album; non-photos are tried once; the selection stays put.
+#[test]
+fn auto_import_watched_folder() {
+    let dir = temp_dir("watch");
+    let mut s = Session::new().with_fs();
+    assert!(s.execute("library.autoImport", &json!({"folder": dir.join("nope").to_string_lossy()})).is_err());
+    s.execute("library.autoImport", &json!({"folder": dir.to_string_lossy(), "album": "Tethered"})).unwrap();
+    assert_eq!(s.execute("library.autoImportScan", &json!({})).unwrap()["imported"], json!([]));
+    write_png(&dir.join("one.png"), 1);
+    std::fs::write(dir.join("notes.txt"), "not a photo").unwrap();
+    // first sight: wait (it may still be copying)
+    assert_eq!(s.execute("library.autoImportScan", &json!({})).unwrap()["imported"], json!([]));
+    let r = s.execute("library.autoImportScan", &json!({})).unwrap();
+    assert_eq!(r["imported"].as_array().unwrap().len(), 1, "{r}");
+    let album = s.catalog.albums().find(|a| a.name == "Tethered").expect("album").id;
+    assert_eq!(s.catalog.album_count(album), 1);
+    assert!(s.selection.ids.is_empty(), "arrivals don't take the selection");
+    // nothing new: nothing happens, and the text file isn't retried
+    for _ in 0..2 {
+        assert_eq!(s.execute("library.autoImportScan", &json!({})).unwrap()["imported"], json!([]));
+    }
+    write_png(&dir.join("two.png"), 2);
+    s.execute("library.autoImportScan", &json!({})).unwrap();
+    s.execute("library.autoImportScan", &json!({})).unwrap();
+    assert_eq!(s.catalog.album_count(album), 2);
+    s.execute("library.autoImport", &json!({"folder": null})).unwrap();
+    assert_eq!(s.execute("library.autoImportScan", &json!({})).unwrap()["folder"], json!(null));
+    let _ = std::fs::remove_dir_all(&dir);
+}

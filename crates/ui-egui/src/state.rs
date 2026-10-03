@@ -219,6 +219,9 @@ pub struct UiState {
     pub external_edits: Vec<u64>,
     #[serde(skip)]
     pub was_focused: bool,
+    /// When the watched folder was last scanned (egui time).
+    #[serde(skip)]
+    pub auto_import_at: f64,
     /// The develop control whose slider is being dragged (geometry sliders show a grid).
     #[serde(skip)]
     pub dragging_control: Option<String>,
@@ -460,6 +463,7 @@ impl Default for UiState {
             dragging_control: None,
             external_edits: Vec::new(),
             was_focused: true,
+            auto_import_at: 0.0,
             search: String::new(),
             focus_search: false,
             renaming_mask: None,

@@ -596,6 +596,88 @@ pub fn specs() -> Vec<CommandSpec> {
             )?;
             ok()
         }),
+        cmd!(
+            "library.autoImport",
+            "Auto Import Settings",
+            [],
+            None,
+            "{folder?: path | null (off), copy?: bool (copy into the library's Originals, else add in place), album?: name | null} — a watched folder whose new photos are added as they arrive (library.autoImportScan; the app scans every few seconds) → the settings",
+            always,
+            |s, p| {
+                if let Some(f) = p.get("folder") {
+                    s.import_defaults.auto_folder = match f.as_str().map(str::trim).filter(|f| !f.is_empty()) {
+                        Some(f) if std::path::Path::new(f).is_dir() || cfg!(target_arch = "wasm32") => Some(f.to_string()),
+                        Some(f) => return Err(bad("library.autoImport", format!("`{f}` is not a folder"))),
+                        None => None,
+                    };
+                }
+                if let Some(c) = p.get("copy").and_then(Value::as_bool) {
+                    s.import_defaults.auto_copy = c;
+                }
+                if let Some(a) = p.get("album") {
+                    s.import_defaults.auto_album = a.as_str().map(str::trim).filter(|a| !a.is_empty()).map(str::to_string);
+                }
+                s.save_prefs()?;
+                let d = &s.import_defaults;
+                Ok(json!({"folder": d.auto_folder, "copy": d.auto_copy, "album": d.auto_album}))
+            }
+        ),
+        cmd!(
+            "library.autoImportScan",
+            "Auto Import Now",
+            [],
+            None,
+            "{} — add the watched folder's new photos (files the library doesn't have yet; partial / still-copying files wait for the next scan) → {imported, folder}",
+            always,
+            |s, _| {
+                let Some(folder) = s.import_defaults.auto_folder.clone() else { return Ok(json!({"imported": [], "folder": null})) };
+                // only files that stopped growing: a file still being written is left for later
+                let known: std::collections::HashSet<String> = s
+                    .catalog
+                    .photos()
+                    .filter_map(|p| match &p.source {
+                        lightcraft_catalog::Source::File { path } => Some(path.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let mut fresh = Vec::new();
+                for e in std::fs::read_dir(&folder).map_err(|e| bad("library.autoImportScan", format!("{folder}: {e}")))?.flatten() {
+                    let path = e.path();
+                    let ps = path.to_string_lossy().to_string();
+                    if !path.is_file() || known.contains(&ps) || path.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
+                        continue;
+                    }
+                    // each file is tried once (a non-photo isn't retried every scan)
+                    if s.auto_import_seen.get(&ps) == Some(&u64::MAX) {
+                        continue;
+                    }
+                    let size = e.metadata().map(|m| m.len()).unwrap_or(0);
+                    let seen = s.auto_import_seen.insert(ps.clone(), size);
+                    if size > 0 && seen == Some(size) {
+                        fresh.push(ps);
+                    }
+                }
+                if fresh.is_empty() {
+                    return Ok(json!({"imported": [], "folder": folder}));
+                }
+                let mode = if s.import_defaults.auto_copy { "copy" } else { "add" };
+                let mut params = json!({"paths": fresh, "mode": mode});
+                if let Some(a) = s.import_defaults.auto_album.clone() {
+                    match s.catalog.albums().find(|al| al.name.eq_ignore_ascii_case(&a) && !al.folder && !al.is_smart()) {
+                        Some(al) => params["album"] = json!(al.id.0),
+                        None => params["albumName"] = json!(a),
+                    }
+                }
+                for f in &fresh {
+                    s.auto_import_seen.insert(f.clone(), u64::MAX);
+                }
+                let sel = s.selection.clone();
+                let r = s.execute("library.import", &params)?;
+                // arriving photos don't take over the selection
+                s.selection = sel;
+                Ok(json!({"imported": r["imported"], "folder": folder}))
+            }
+        ),
         cmd!("album.removePhotos", "Remove from Album", [], None, "{id: albumId, ids?}", has_selection, |s, p| {
             let id = album_param(p, "id", "album.removePhotos")?;
             let targets = ids_param(p).unwrap_or_else(|| s.targets(&Value::Null));
@@ -697,6 +779,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 if let Some(a) = album
                     && !imported.is_empty()
                 {
+                    // (album.addPhotos wants a selection: the new photos are about to be it)
+                    s.selection = Selection::single(PhotoId(imported[0]));
                     s.execute("album.addPhotos", &json!({"id": a, "ids": imported}))?;
                     report["album"] = json!(a);
                 }
