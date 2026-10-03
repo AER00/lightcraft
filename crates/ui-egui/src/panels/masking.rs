@@ -204,8 +204,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     lightcraft_develop::MaskOp::Intersect => "∩ ",
                 };
                 ui.label(format!("{op}{label}{}", if c.invert { " (inverted)" } else { "" }));
-                let _ = i;
             });
+            range_controls(app, ui, i, &c.shape);
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -327,6 +327,113 @@ fn overlay_options(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let mut pins = app.ui.mask_pins;
     if ui.checkbox(&mut pins, "Show Pins").changed() {
         let _ = app.run("view.maskPins", json!({"show": pins}));
+    }
+}
+
+/// Controls for a range component: the selected range (two handles over a dark → light bar),
+/// Smoothness, and Show Luminance Map; colour ranges get Refine.
+fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: usize, shape: &MaskShape) {
+    let t = Tokens::get(ui.ctx());
+    let update = |app: &mut LightcraftApp, shape: MaskShape| {
+        let _ = app.run("mask.update", json!({"component": comp, "shape": shape}));
+    };
+    match shape {
+        MaskShape::LuminanceRange { lo, hi, lo_feather, hi_feather } => {
+            ui.label(egui::RichText::new("Select Luminance Range").color(t.text_dim).size(11.5));
+            let (lo, hi) = (*lo, *hi);
+            let w = ui.available_width().min(240.0);
+            let (rect, resp) = ui.allocate_exact_size(vec2(w, 18.0), Sense::click_and_drag());
+            register(ui.ctx(), format!("lumRange:{comp}"), rect);
+            let p = ui.painter();
+            // dark → light ramp, the selected span outlined
+            let n = 24;
+            for k in 0..n {
+                let a = k as f32 / n as f32;
+                let r = Rect::from_min_max(
+                    pos2(rect.left() + a * w, rect.top() + 4.0),
+                    pos2(rect.left() + (a + 1.0 / n as f32) * w + 0.5, rect.bottom() - 4.0),
+                );
+                let g = (a * 255.0) as u8;
+                p.rect_filled(r, 0.0, egui::Color32::from_gray(g));
+            }
+            let x = |v: f64| rect.left() + v.clamp(0.0, 1.0) as f32 * w;
+            p.rect_stroke(
+                Rect::from_min_max(pos2(x(lo), rect.top() + 2.0), pos2(x(hi), rect.bottom() - 2.0)),
+                2.0,
+                Stroke::new(1.5, t.accent),
+                egui::StrokeKind::Middle,
+            );
+            for v in [lo, hi] {
+                p.circle_filled(pos2(x(v), rect.center().y), 5.0, egui::Color32::WHITE);
+                p.circle_stroke(pos2(x(v), rect.center().y), 5.0, Stroke::new(1.0, egui::Color32::from_gray(40)));
+            }
+            // drag the nearer handle; one undo step per drag
+            if resp.drag_started() {
+                let _ = app.run("develop.beginInteraction", json!({"label": "Luminance Range"}));
+            }
+            if (resp.dragged() || resp.clicked())
+                && let Some(pos) = resp.interact_pointer_pos()
+            {
+                let v = (((pos.x - rect.left()) / w) as f64).clamp(0.0, 1.0);
+                let (nlo, nhi) = if (v - lo).abs() <= (v - hi).abs() { (v.min(hi - 0.01), hi) } else { (lo, v.max(lo + 0.01)) };
+                update(app, MaskShape::LuminanceRange { lo: nlo, hi: nhi, lo_feather: *lo_feather, hi_feather: *hi_feather });
+            }
+            if resp.drag_stopped() {
+                let _ = app.run("develop.endInteraction", json!({}));
+            }
+            // Smoothness: both falloffs at once
+            let smooth = ControlSpec {
+                id: "smoothness",
+                label: "Smoothness",
+                section: Section::Light,
+                min: 0.0,
+                max: 100.0,
+                default: 20.0,
+                step: 1.0,
+                decimals: 0,
+                track: Track::Plain,
+            };
+            let cur = ((lo_feather + hi_feather) / 2.0 / 0.5 * 100.0).clamp(0.0, 100.0);
+            let out = slider(ui, &smooth, cur, true, None);
+            apply_slider_out(app, &smooth, out, |app, v| {
+                let f = v / 100.0 * 0.5;
+                app.run("mask.update", json!({"component": comp, "shape": MaskShape::LuminanceRange { lo, hi, lo_feather: f, hi_feather: f }}))
+            });
+            let mut map = app.ui.mask_overlay && app.ui.mask_overlay_mode == "colorOnBw";
+            let r = ui.checkbox(&mut map, "Show Luminance Map");
+            register(ui.ctx(), format!("check:lumMap{comp}"), r.rect);
+            if r.changed() {
+                // the luminance map: the photo in black & white with the selected range tinted
+                if map {
+                    app.ui.luminance_map_restore = Some((app.ui.mask_overlay, app.ui.mask_overlay_mode.clone()));
+                    app.ui.mask_overlay = true;
+                    app.ui.mask_overlay_mode = "colorOnBw".into();
+                } else {
+                    let (on, mode) = app.ui.luminance_map_restore.take().unwrap_or((false, "color".into()));
+                    app.ui.mask_overlay = on;
+                    app.ui.mask_overlay_mode = if mode == "colorOnBw" { "color".into() } else { mode };
+                }
+            }
+        }
+        MaskShape::ColorRange { samples, refine } => {
+            let spec = ControlSpec {
+                id: "refine",
+                label: "Refine",
+                section: Section::Color,
+                min: 0.0,
+                max: 100.0,
+                default: 50.0,
+                step: 1.0,
+                decimals: 0,
+                track: Track::Plain,
+            };
+            let out = slider(ui, &spec, *refine, true, None);
+            let samples = samples.clone();
+            apply_slider_out(app, &spec, out, |app, v| {
+                app.run("mask.update", json!({"component": comp, "shape": MaskShape::ColorRange { samples: samples.clone(), refine: v }}))
+            });
+        }
+        _ => {}
     }
 }
 

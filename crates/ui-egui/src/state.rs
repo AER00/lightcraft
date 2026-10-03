@@ -201,6 +201,9 @@ pub struct UiState {
     pub mask_overlay_color: [u8; 3],
     pub mask_overlay_opacity: f32,
     pub mask_pins: bool,
+    /// The overlay (on, mode) to go back to when Show Luminance Map is turned off.
+    #[serde(skip)]
+    pub luminance_map_restore: Option<(bool, String)>,
     /// Mirroring of the triangle / spiral crop guides (0..4).
     pub crop_overlay_orient: u8,
     pub crop_overlay: CropOverlay,
@@ -401,6 +404,7 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             preview_build_seen: None,
+            luminance_map_restore: None,
             view: ViewMode::Detail,
             left_panel: false,
             right: RightPanel::Edit,

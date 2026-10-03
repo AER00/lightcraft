@@ -299,3 +299,30 @@ fn g_toggles_grids_and_shift_g_starts_guided_upright() {
     assert_eq!(develop(&h).geometry.upright, lightcraft_develop::Upright::Guided);
     h.settle(SETTLE);
 }
+
+#[test]
+fn luminance_range_controls_and_map() {
+    let mut h = detail("panel.masking");
+    exec(&mut h, "mask.add", json!({"kind": "luminanceRange", "lo": 0.6, "hi": 1.0}));
+    h.settle(SETTLE);
+    let lum = |h: &Headless| match &develop(h).masks[0].components[0].shape {
+        MaskShape::LuminanceRange { lo, hi, lo_feather, .. } => (*lo, *hi, *lo_feather),
+        s => panic!("{s:?}"),
+    };
+    let undo0 = h.app.session.undo.len();
+    // drag the high handle from the right end to 80 %
+    let r = h.request("ui.dragWidget", json!({"id": "lumRange:0", "fx": 1.0, "fy": 0.5, "dx": -48.0}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let (lo, hi, _) = lum(&h);
+    assert_eq!(lo, 0.6, "the nearer handle moves");
+    assert!(hi < 0.9 && hi > 0.6, "{hi}");
+    assert_eq!(h.app.session.undo.len(), undo0 + 1, "one undo step per drag");
+    // Show Luminance Map: black-and-white overlay, and back
+    let r = h.request("ui.clickWidget", json!({"id": "check:lumMap0"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(h.app.ui.mask_overlay && h.app.ui.mask_overlay_mode == "colorOnBw");
+    let r = h.request("ui.clickWidget", json!({"id": "check:lumMap0"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_ne!(h.app.ui.mask_overlay_mode, "colorOnBw");
+    h.settle(SETTLE);
+}
