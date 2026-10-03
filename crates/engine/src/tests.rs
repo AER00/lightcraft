@@ -434,3 +434,50 @@ fn auto_bw_mix_separates_colours() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert_ne!(active_dev(&s).treatment, lightcraft_develop::Treatment::Bw, "one undo step");
 }
+
+#[test]
+fn auto_sync_carries_only_the_changed_settings() {
+    use lightcraft_catalog::PhotoId;
+    let mut s = demo();
+    let ids: Vec<u64> = s.catalog.photos().take(3).map(|p| p.id.0).collect();
+    // the second photo has its own contrast, which must survive
+    s.execute("library.select", &json!({"ids": [ids[1]]})).unwrap();
+    s.execute("develop.set", &json!({"control": "light.contrast", "value": 25})).unwrap();
+    s.execute("library.select", &json!({"ids": ids})).unwrap();
+    s.selection.active = Some(PhotoId(ids[0]));
+    assert_eq!(s.execute("develop.autoSync", &json!({})).unwrap(), json!({"on": true}));
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.7})).unwrap();
+    for id in &ids {
+        assert_eq!(s.develop_of(PhotoId(*id)).unwrap().light.exposure, 0.7, "photo {id}");
+    }
+    assert_eq!(s.develop_of(PhotoId(ids[1])).unwrap().light.contrast, 25.0, "untouched settings stay");
+    // a slider drag syncs once, on release
+    let shadows: Vec<f64> = ids.iter().map(|id| s.develop_of(PhotoId(*id)).unwrap().light.shadows).collect();
+    s.begin_interaction("Shadows").unwrap();
+    let mut d = (*s.develop_of(PhotoId(ids[0])).unwrap()).clone();
+    d.light.shadows = 40.0;
+    s.set_develop(PhotoId(ids[0]), d, "Shadows").unwrap();
+    assert_eq!(s.develop_of(PhotoId(ids[2])).unwrap().light.shadows, shadows[2], "not while dragging");
+    s.end_interaction().unwrap();
+    assert_eq!(s.develop_of(PhotoId(ids[2])).unwrap().light.shadows, 40.0);
+    // one undo step reverts every photo
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(ids.iter().map(|id| s.develop_of(PhotoId(*id)).unwrap().light.shadows).collect::<Vec<_>>(), shadows);
+    // spot removal belongs to one photo
+    let mut d = (*s.develop_of(PhotoId(ids[0])).unwrap()).clone();
+    d.spots.push(lightcraft_develop::Spot::default());
+    s.set_develop(PhotoId(ids[0]), d, "Remove").unwrap();
+    assert!(s.develop_of(PhotoId(ids[1])).unwrap().spots.is_empty());
+    // off: only the active photo
+    s.execute("develop.autoSync", &json!({"on": false})).unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": -1})).unwrap();
+    assert_eq!(s.develop_of(PhotoId(ids[1])).unwrap().light.exposure, 0.7);
+}
+
+#[test]
+fn json_delta_keeps_only_changes() {
+    let a = json!({"light": {"exposure": 0, "contrast": 5}, "masks": [1], "x": 1});
+    let b = json!({"light": {"exposure": 1, "contrast": 5}, "masks": [1, 2], "x": 1});
+    assert_eq!(crate::json_delta(&a, &b), Some(json!({"light": {"exposure": 1}, "masks": [1, 2]})));
+    assert_eq!(crate::json_delta(&a, &a), None);
+}

@@ -577,8 +577,17 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         return;
     }
     if app.ui.tool == "straighten" {
-        straighten_overlay(app, ui, resp);
+        straighten_overlay(app, ui, resp, false);
         return;
+    }
+    // hold ⌘ and drag: draw a straighten line without leaving the crop tool
+    let cmd_drag = resp.drag_started() && ui.input(|i| i.modifiers.command);
+    if cmd_drag || matches!(app.gesture, Some(Gesture::StraightenLine { .. })) {
+        straighten_overlay(app, ui, resp, true);
+        return;
+    }
+    if resp.hovered() && ui.input(|i| i.modifiers.command) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }
     let quad = frame_crop_quad(d, frame);
     let pts: Vec<Pos2> = quad.iter().map(|q| map.screen(*q)).collect();
@@ -1227,9 +1236,10 @@ fn film_badges(p: &egui::Painter, t: &Tokens, fr: Rect, ph: &lightcraft_catalog:
 
 /// Straighten tool: drag along a horizon (or a vertical) to set the crop angle; double-click = Auto.
 /// The image is shown unrotated in the crop view, so the line's on-screen angle is its image angle.
-fn straighten_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response) {
+/// `held`: drawn with ⌘ held in the crop tool, which stays active afterwards.
+fn straighten_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, held: bool) {
     ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-    if resp.double_clicked() {
+    if !held && resp.double_clicked() {
         let _ = app.run("crop.autoStraighten", json!({}));
         app.ui.tool.clear();
         app.gesture = None;
@@ -1259,6 +1269,8 @@ fn straighten_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::R
             }
             let _ = app.run("crop.straighten", json!({"angle": (-deg * 100.0).round() / 100.0}));
         }
-        app.ui.tool.clear();
+        if !held {
+            app.ui.tool.clear();
+        }
     }
 }

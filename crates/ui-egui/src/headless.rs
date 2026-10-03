@@ -875,7 +875,7 @@ mod tests {
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(h.app.session.catalog.photo(id).unwrap().label, Some(lightcraft_catalog::ColorLabel::Green));
         h.request("engine.execute", json!({"command": "dialog.labelNames"}), t);
-        if let Some(crate::state::Dialog::LabelNames { names }) = &mut h.app.ui.dialog {
+        if let Some(crate::state::Dialog::LabelNames { names, .. }) = &mut h.app.ui.dialog {
             names[2] = "Approved".into();
         } else {
             panic!("no dialog");

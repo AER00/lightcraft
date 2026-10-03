@@ -13,7 +13,7 @@ mod export;
 pub mod filters;
 mod keywords;
 mod library;
-mod manage;
+pub mod manage;
 mod masks;
 mod merge;
 pub mod metadata;

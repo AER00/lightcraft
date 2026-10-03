@@ -971,7 +971,7 @@ pub fn prepare_export(
         Work::File {
             path: path.clone(),
             read: session.media.file_bytes.clone(),
-            packet: crate::sidecar::sidecar_packet(p),
+            packet: crate::sidecar::sidecar_packet(p, &session.catalog),
             dng: o.format == ExportFormat::Dng,
             label: p.file_name.clone(),
             size: (p.width as usize, p.height as usize),

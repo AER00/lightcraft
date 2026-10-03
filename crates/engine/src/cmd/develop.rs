@@ -638,6 +638,18 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"changed": n}))
             }
         ),
+        cmd!(
+            "develop.autoSync",
+            "Auto Sync",
+            ["Edit"],
+            Some("Cmd+Alt+Shift+A"),
+            "{on?: bool} (toggles when omitted) — edits to the active photo also change the other selected photos (only the settings that changed; not spot removal / red eye) → {on}",
+            always,
+            |s, p| {
+                s.auto_sync = p.get("on").and_then(Value::as_bool).unwrap_or(!s.auto_sync);
+                Ok(json!({"on": s.auto_sync}))
+            }
+        ),
         // ---- presets
         cmd!("preset.apply", "Apply Preset", [], None, "{id: presetId, amount?: 0..200 (percent), ids?}", has_selection, |s, p| {
             let pid = str_param(p, "id").ok_or_else(|| bad("preset.apply", "missing id"))?;

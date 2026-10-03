@@ -46,11 +46,11 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
-| Z. Keyboard shortcuts (desktop) | 66 | 9 | 5 | 1 | 49/52 (94%) | 15/23 (65%) |
-| Lightroom Classic extras | 12 | 17 | 50 | 9 | — | 11/21 (52%) |
-| **Total** | 325 | 49 | 126 | 37 | 193/198 (97%) | 112/144 (78%) |
+| Z. Keyboard shortcuts (desktop) | 67 | 9 | 4 | 1 | 49/52 (94%) | 16/23 (70%) |
+| Lightroom Classic extras | 14 | 16 | 49 | 9 | — | 13/21 (62%) |
+| **Total** | 328 | 48 | 124 | 37 | 193/198 (97%) | 115/144 (80%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **69.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 86.8% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **70.4%** of 500 in-scope rows — P0 98.7% of 198 · P1 88.5% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -668,7 +668,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-CROP-SWAP | Swap crop orientation — X | P0 | ✅ | `cmd:crop.rotateAspect` | |
 | KEY-CROP-OVERLAYORIENT | Crop overlay orientation — ⇧O | P1 | ✅ | `cmd:view.cropOverlayOrientation` | while cropping: O cycles the overlay, ⇧O its orientation |
 | KEY-CROP-RESET | Reset crop — ⌥⌘R | P0 | ✅ | `cmd:crop.reset` | |
-| KEY-STRAIGHTEN | Straighten while held — ⌘ drag | P1 | ⬜ | | |
+| KEY-STRAIGHTEN | Straighten while held — ⌘ drag | P1 | ✅ | `cmd:crop.straighten`, `crates/ui-egui/src/panels/detail.rs` (`straighten_overlay`) | ⌘-drag in Crop draws a level line; the crop tool stays active |
 | KEY-SLIDER-RESET | Reset slider — double-click | P0 | ✅ | `crates/ui-egui/src/widgets.rs` | |
 | KEY-SLIDER-NUDGE | Nudge slider — ↑/↓ | P1 | ✅ | `crates/ui-egui/src/widgets.rs` (`nudged`), `cmd:develop.adjust` | ↑/↓ over any slider: ≈ 1/200 of its range (exposure 0.05, most sliders 1, temperature 50 K); ⇧ ×5; one undo step each |
 | KEY-SHORTCUTS | Shortcut list — ⌘/ | P1 | ✅ | `cmd:app.shortcuts` | |
@@ -700,7 +700,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-FILTERBAR | Library filter bar | P1 | 🟡 | `cmd:view.filterBar`, `cmd:filter.applyPreset`, `crates/ui-egui/src/panels/filterbar.rs` | rating/flag/label/kind/edited/camera/lens/keyword, clear, save as smart album, filter presets; no lock or multi-select columns |
 | LRC-LIB-STACKS | Stacks (full) | P1 | ✅ | `crates/catalog/src/stacks.rs`, `cmd:stack.group`, `cmd:stack.split`, `cmd:stack.moveUp`, `cmd:stack.moveDown` | group / ungroup / toggle / set top / remove / auto by time / split / move up and down |
 | LRC-LIB-VC | Virtual copies | P1 | ✅ | `cmd:photo.virtualCopy` | ⌘' |
-| LRC-LIB-LABELS | Colour-label sets | P1 | ⬜ | | |
+| LRC-LIB-LABELS | Colour-label sets | P1 | ✅ | `cmd:label.sets`, `cmd:label.applySet`, `cmd:label.saveSet`, `cmd:label.deleteSet`, `cmd:label.setNames`, `crates/engine/src/cmd/manage.rs` | built-in Colors / Review sets + user sets (Photo ▸ Set Color Label, Edit Label Names… dialog); names written to and read from `xmp:Label` |
 | LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | 🟡 | `crates/catalog/src/keywords.rs`, `cmd:keyword.list` | hierarchical `a\|b\|c` keywords (tree, parent filters include children, rename moves children); no keyword sets or painter |
 | LRC-LIB-METADATA | Metadata panel & presets | P1 | ✅ | `cmd:photo.setMeta`, `cmd:metadata.savePreset`, `cmd:metadata.applyPreset`, `cmd:metadata.presets`, `cmd:metadata.deletePreset`, `cmd:dialog.captureTime` | IPTC core, accessibility, place, capture-time edit; metadata presets (Photo → Metadata Preset, Save Metadata Preset… from the active photo; applied on import from Settings); no copyright status field |
 | LRC-LIB-QUICKDEV | Quick develop | P2 | ⬜ | | |
@@ -714,7 +714,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-DEV-SNAPSHOTS | Named snapshots | P1 | ✅ | `cmd:version.create`, `cmd:version.restore` | = versions |
 | LRC-DEV-HISTORY | Full history panel | P1 | ✅ | `cmd:history.list`, `cmd:history.restore`, `cmd:history.clear` | row menu: copy step to before, create version from step, clear history |
 | LRC-DEV-SOFTPROOF | Soft proofing | P2 | ⬜ | | |
-| LRC-DEV-AUTOSYNC | Sync / auto sync / paste previous | P1 | 🟡 | `cmd:develop.sync`, `cmd:develop.pastePrevious` | sync and paste from previous; no auto sync |
+| LRC-DEV-AUTOSYNC | Sync / auto sync / paste previous | P1 | ✅ | `cmd:develop.sync`, `cmd:develop.autoSync`, `cmd:develop.pastePrevious` | Edit ▸ Sync Settings / Auto Sync (⌥⇧⌘A): only the changed settings carry over, one undo step, slider drags sync on release, spots / red eye stay per photo; Edit panel banner |
 | LRC-DEV-MATCHEXP | Match total exposures | P2 | ⬜ | | |
 | LRC-DEV-CALIB | Calibration panel | P1 | ✅ | `ctl:calibration.*` | |
 | LRC-DEV-TAT | Targeted adjustment tools | P1 | ✅ | `cmd:develop.targeted` (`target`: curve / hue / sat / lum) | |

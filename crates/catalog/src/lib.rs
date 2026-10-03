@@ -288,6 +288,11 @@ impl Catalog {
     pub fn custom_label_name(&self, l: ColorLabel) -> Option<&str> {
         self.label_names.get(&l).map(String::as_str)
     }
+    /// The label a name stands for: a custom name first, then a colour's own name (any case).
+    pub fn label_from_name(&self, name: &str) -> Option<ColorLabel> {
+        let name = name.trim();
+        self.label_names.iter().find(|(_, n)| n.trim().eq_ignore_ascii_case(name)).map(|(l, _)| *l).or_else(|| ColorLabel::parse(name))
+    }
 
     // ---- writes
 

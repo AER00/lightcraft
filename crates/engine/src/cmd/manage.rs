@@ -1,4 +1,4 @@
-//! Photo management commands: batch rename, capture time, colour label names.
+//! Photo management commands: batch rename, capture time, colour label names and sets.
 
 use serde_json::{Value, json};
 
@@ -11,6 +11,52 @@ fn rename_args(s: &crate::Session, p: &Value, c: &str) -> Result<(Vec<lightcraft
     let template = str_param(p, "template").ok_or_else(|| bad(c, "missing `template`"))?.to_string();
     let start = p.get("start").and_then(Value::as_u64).unwrap_or(1) as usize;
     Ok((s.targets(p), template, start))
+}
+
+/// A named set of colour-label names (red, yellow, green, blue, purple; empty = the colour's name).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LabelSet {
+    pub name: String,
+    pub names: [String; 5],
+}
+
+/// Our built-in sets.
+pub fn builtin_label_sets() -> Vec<LabelSet> {
+    let set = |name: &str, n: [&str; 5]| LabelSet { name: name.into(), names: n.map(str::to_string) };
+    vec![set("Colors", ["", "", "", "", ""]), set("Review", ["Reject", "Needs Work", "Approved", "Retouch", "Print"])]
+}
+
+fn all_label_sets(s: &crate::Session) -> Vec<LabelSet> {
+    builtin_label_sets().into_iter().chain(s.label_sets.iter().cloned()).collect()
+}
+
+/// The set whose names are the catalog's current ones.
+fn current_label_set(s: &crate::Session) -> Option<String> {
+    let cur: [String; 5] = ColorLabel::ALL.map(|l| s.catalog.custom_label_name(l).unwrap_or("").to_string());
+    all_label_sets(s)
+        .into_iter()
+        .find(|x| x.names.iter().zip(&cur).all(|(a, b)| a.trim() == b.trim() || (a.trim().is_empty() && b.is_empty())))
+        .map(|x| x.name)
+}
+
+/// Every set (built-ins first) and the one in use: `{sets: [{name, names, builtin}], current}`.
+pub fn label_sets_json(s: &crate::Session) -> Value {
+    let builtin = builtin_label_sets().len();
+    let sets: Vec<Value> =
+        all_label_sets(s).iter().enumerate().map(|(i, x)| json!({"name": x.name, "names": x.names, "builtin": i < builtin})).collect();
+    json!({"sets": sets, "current": current_label_set(s)})
+}
+
+fn set_names_ops(s: &crate::Session, names: &[String; 5]) -> Vec<Op> {
+    ColorLabel::ALL
+        .iter()
+        .zip(names)
+        .filter_map(|(l, n)| {
+            let n = n.trim();
+            let name = (!n.is_empty() && !n.eq_ignore_ascii_case(&format!("{l:?}"))).then(|| n.to_string());
+            (s.catalog.custom_label_name(*l) != name.as_deref()).then_some(Op::SetLabelName { label: *l, name })
+        })
+        .collect()
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -112,5 +158,51 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"changed": n}))
             }
         ),
+        cmd!(query "label.sets", "Color Label Sets", [], None, "{} → {sets: [{name, names: [red, yellow, green, blue, purple], builtin}], current: name|null}", always, |s, _| Ok(label_sets_json(s))),
+        cmd!("label.applySet", "Apply Color Label Set", [], None, "{name} — use a set's label names (undoable)", always, |s, p| {
+            let name = str_param(p, "name").ok_or_else(|| bad("label.applySet", "missing `name`"))?;
+            let set = all_label_sets(s)
+                .into_iter()
+                .find(|x| x.name.eq_ignore_ascii_case(name))
+                .ok_or_else(|| bad("label.applySet", format!("no label set `{name}`")))?;
+            let ops = set_names_ops(s, &set.names);
+            let n = ops.len();
+            if n > 0 {
+                s.commit(&format!("Label Set: {}", set.name), Op::Batch { ops })?;
+            }
+            Ok(json!({"changed": n}))
+        }),
+        cmd!(
+            "label.saveSet",
+            "Save Color Label Set",
+            [],
+            None,
+            "{name} — save the current label names as a set (replaces a user set of that name)",
+            always,
+            |s, p| {
+                let name =
+                    str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad("label.saveSet", "missing `name`"))?.to_string();
+                if builtin_label_sets().iter().any(|b| b.name.eq_ignore_ascii_case(&name)) {
+                    return Err(bad("label.saveSet", format!("`{name}` is a built-in set")));
+                }
+                let set = LabelSet { name: name.clone(), names: ColorLabel::ALL.map(|l| s.catalog.custom_label_name(l).unwrap_or("").to_string()) };
+                match s.label_sets.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
+                    Some(x) => *x = set,
+                    None => s.label_sets.push(set),
+                }
+                s.save_prefs()?;
+                Ok(json!({"name": name}))
+            }
+        ),
+        cmd!("label.deleteSet", "Delete Color Label Set", [], None, "{name} — user sets only", always, |s, p| {
+            let name = str_param(p, "name").ok_or_else(|| bad("label.deleteSet", "missing `name`"))?;
+            let before = s.label_sets.len();
+            s.label_sets.retain(|x| !x.name.eq_ignore_ascii_case(name));
+            if s.label_sets.len() == before {
+                return Err(bad("label.deleteSet", format!("no user label set `{name}`")));
+            }
+            s.save_prefs()?;
+            Ok(json!({"deleted": name}))
+        }),
     ]
 }

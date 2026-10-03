@@ -134,8 +134,19 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         ui.label(egui::RichText::new(format!("All {n} selected photos move by the same amount.")).color(t.text_dim));
                     }
                 }
-                Dialog::LabelNames { names } => {
+                Dialog::LabelNames { names, save_as } => {
                     names.resize(5, String::new());
+                    // start from a set
+                    let sets = lightcraft_engine::cmd::manage::label_sets_json(&app.session);
+                    field(ui, "Set", |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for set in sets["sets"].as_array().into_iter().flatten() {
+                            let name = set["name"].as_str().unwrap_or_default();
+                            if crate::widgets::text_button(ui, &format!("labelSet-{name}"), name, false).clicked() {
+                                *names = set["names"].as_array().into_iter().flatten().map(|n| n.as_str().unwrap_or_default().to_string()).collect();
+                            }
+                        }
+                    });
                     for (i, l) in lightcraft_catalog::ColorLabel::ALL.iter().enumerate() {
                         let colour = format!("{l:?}");
                         field(ui, &colour, |ui| {
@@ -145,7 +156,14 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                             crate::widgets::register(ui.ctx(), format!("field:labelName-{}", colour.to_lowercase()), te.rect);
                         });
                     }
-                    ui.label(egui::RichText::new("Names appear in the label menu, the filter bar and the Info panel. Empty = the colour's name.").color(t.text_dim));
+                    field(ui, "Save as set", |ui| {
+                        let te = ui.add(egui::TextEdit::singleline(save_as).hint_text("Optional name").desired_width(f32::INFINITY));
+                        crate::widgets::register(ui.ctx(), "field:labelSetName", te.rect);
+                    });
+                    ui.label(
+                        egui::RichText::new("Names appear in the label menu, the filter bar and the Info panel, and are written to XMP. Empty = the colour's name.")
+                            .color(t.text_dim),
+                    );
                 }
                 Dialog::Rename { template, start } => {
                     let n = app.session.targets(&json!({})).len();
@@ -621,12 +639,16 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
                 _ => json!({"hours": zone}),
             },
         ),
-        Dialog::LabelNames { names } => {
+        Dialog::LabelNames { names, save_as } => {
             let mut m = serde_json::Map::new();
             for (l, n) in lightcraft_catalog::ColorLabel::ALL.iter().zip(names) {
                 m.insert(format!("{l:?}").to_lowercase(), if n.trim().is_empty() { serde_json::Value::Null } else { json!(n.trim()) });
             }
-            app.run("label.setNames", json!({"names": m}))
+            let r = app.run("label.setNames", json!({"names": m}));
+            if r.is_ok() && !save_as.trim().is_empty() {
+                return app.run("label.saveSet", json!({"name": save_as.trim()}));
+            }
+            r
         }
         Dialog::Rename { template, start } => app.run("photo.rename", json!({"template": template, "start": start})),
         Dialog::RenameKeyword { from, to } => app.run("keyword.rename", json!({"from": from, "to": to})),

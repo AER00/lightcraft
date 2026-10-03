@@ -444,7 +444,7 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
             .and_then(|f| std::fs::read_to_string(f).ok())
             .or_else(|| info.xmp.clone().filter(|_| raw));
         if let Some(x) = packet {
-            match crate::sidecar::parse_sidecar(&x, raw) {
+            match crate::sidecar::parse_sidecar(&x, raw).map(|sc| sc.resolve_label(&s.catalog)) {
                 Ok(sc) if sc != crate::sidecar::SidecarData::default() => {
                     crate::sidecar::merge_into(&mut p, &sc, &now);
                     report.sidecars += 1;

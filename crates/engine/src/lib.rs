@@ -70,6 +70,9 @@ pub struct Interaction {
 }
 
 pub struct Session {
+    /// Auto Sync: edits to the active photo also change the other selected photos (the settings
+    /// that changed, nothing else).
+    pub auto_sync: bool,
     pub catalog: Catalog,
     pub source: LibrarySource,
     pub filter: Filter,
@@ -120,6 +123,8 @@ pub struct Session {
     pub metadata_presets: Vec<cmd::metadata::MetadataPreset>,
     /// Saved filter-bar settings (`filter.*`), persisted in prefs.json.
     pub filter_presets: Vec<cmd::filters::FilterPreset>,
+    /// Saved colour-label name sets.
+    pub label_sets: Vec<cmd::manage::LabelSet>,
     /// Before/After: the "before" settings chosen per photo (this session; default: the photo's
     /// import state). See `cmd/before.rs`.
     pub before: std::collections::HashMap<PhotoId, Arc<DevelopSettings>>,
@@ -140,6 +145,7 @@ impl Default for Session {
 impl Session {
     pub fn new() -> Session {
         Session {
+            auto_sync: false,
             catalog: Catalog::new(),
             source: LibrarySource::All,
             filter: Filter::default(),
@@ -171,6 +177,7 @@ impl Session {
             export_presets: Vec::new(),
             metadata_presets: Vec::new(),
             filter_presets: Vec::new(),
+            label_sets: Vec::new(),
             before: Default::default(),
             import_probes: Default::default(),
             import_defaults: import::ImportDefaults::default(),
@@ -320,8 +327,44 @@ impl Session {
         {
             return self.apply_silent(Op::SetDevelop { id, settings, label: label.into(), edited: Some(now) });
         }
-        let op = self.develop_op(id, (*settings).clone(), label).ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?;
+        let mut ops = vec![self.develop_op(id, (*settings).clone(), label).ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?];
+        ops.extend(self.auto_sync_ops(id, &settings, label));
+        let op = if ops.len() == 1 { ops.remove(0) } else { Op::Batch { ops } };
         self.commit(label, op)
+    }
+
+    /// With Auto Sync on, the ops that carry an edit of the active photo `id` (to `new`) over to the
+    /// other selected photos: only the settings that changed; never spot removal or red eye (they
+    /// belong to one photo's pixels), nor history / snapshot restores.
+    fn auto_sync_ops(&self, id: PhotoId, new: &DevelopSettings, label: &str) -> Vec<Op> {
+        if !self.auto_sync
+            || self.active() != Some(id)
+            || self.selection.ids.len() < 2
+            || label.starts_with("History:")
+            || label.starts_with("Restore ")
+        {
+            return Vec::new();
+        }
+        let Some(old) = self.develop_of(id) else { return Vec::new() };
+        let Some(mut delta) = json_delta(&old.to_json(), &new.to_json()) else { return Vec::new() };
+        if let Some(o) = delta.as_object_mut() {
+            for k in ["spots", "red_eye", "version"] {
+                o.remove(k);
+            }
+            if o.is_empty() {
+                return Vec::new();
+            }
+        }
+        self.selection
+            .ids
+            .iter()
+            .filter(|x| **x != id)
+            .filter_map(|x| self.develop_of(*x).map(|d| (*x, d)))
+            .filter_map(|(x, d)| {
+                let synced = lightcraft_develop::apply_partial(&d, &delta, 1.0);
+                (synced != *d).then(|| self.develop_op(x, synced, label)).flatten()
+            })
+            .collect()
     }
 
     /// The op that sets a photo's develop settings and appends a History entry (for batches).
@@ -423,6 +466,19 @@ impl Session {
             return vec![PhotoId(id)];
         }
         if self.selection.ids.is_empty() { self.selection.active.into_iter().collect() } else { self.selection.ids.clone() }
+    }
+}
+
+/// The parts of `new` that differ from `old` (objects recurse; anything else is taken whole).
+pub fn json_delta(old: &Value, new: &Value) -> Option<Value> {
+    match (old, new) {
+        (Value::Object(a), Value::Object(b)) => {
+            let m: serde_json::Map<String, Value> =
+                b.iter().filter_map(|(k, nv)| json_delta(a.get(k).unwrap_or(&Value::Null), nv).map(|d| (k.clone(), d))).collect();
+            (!m.is_empty()).then_some(Value::Object(m))
+        }
+        (a, b) if a == b => None,
+        (_, b) => Some(b.clone()),
     }
 }
 

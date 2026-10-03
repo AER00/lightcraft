@@ -315,3 +315,51 @@ fn import_review_preview_and_options() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&lib);
 }
+
+/// Label sets: built-ins, the one in use, saving (persisted with the library's prefs) and the
+/// names written to / read from XMP.
+#[test]
+fn label_sets_and_xmp_label_names() {
+    use lightcraft_catalog::ColorLabel;
+    let dir = std::env::temp_dir().join(format!("lc-labelsets-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = Session::new();
+    s.open_library(&dir, true).unwrap();
+    let sets = s.execute("label.sets", &json!({})).unwrap();
+    assert_eq!(sets["current"], "Colors");
+    s.execute("label.applySet", &json!({"name": "review"})).unwrap();
+    assert_eq!(s.catalog.label_name(ColorLabel::Green), "Approved");
+    assert_eq!(s.execute("label.sets", &json!({})).unwrap()["current"], "Review");
+    // tweak one name, save as a user set; built-in names are refused
+    s.execute("label.setNames", &json!({"names": {"purple": "Client"}})).unwrap();
+    assert_eq!(s.execute("label.sets", &json!({})).unwrap()["current"], json!(null));
+    assert!(s.execute("label.saveSet", &json!({"name": "Colors"})).is_err());
+    s.execute("label.saveSet", &json!({"name": "Studio"})).unwrap();
+    s.execute("label.applySet", &json!({"name": "Colors"})).unwrap();
+    assert_eq!(s.catalog.custom_label_name(ColorLabel::Green), None);
+    drop(s);
+    let mut s = Session::new();
+    s.open_library(&dir, false).unwrap();
+    s.execute("label.applySet", &json!({"name": "studio"})).unwrap();
+    assert_eq!(s.catalog.label_name(ColorLabel::Purple), "Client");
+    // XMP: the label's name is written, and read back through the names
+    let mut p = lightcraft_catalog::Photo::new(
+        lightcraft_catalog::PhotoId(1),
+        lightcraft_catalog::Source::Demo { scene: 0 },
+        "a.jpg",
+        "JPEG",
+        4,
+        4,
+        "2026-01-01T00:00:00",
+    );
+    p.label = Some(ColorLabel::Green);
+    let x = crate::sidecar::sidecar_packet(&p, &s.catalog);
+    assert!(x.contains("Approved"), "{x}");
+    let sc = crate::sidecar::parse_sidecar(&x, false).unwrap().resolve_label(&s.catalog);
+    assert_eq!(sc.label, Some(Some(ColorLabel::Green)));
+    let plain = crate::sidecar::parse_sidecar(&x.replace("Approved", "Blue"), false).unwrap().resolve_label(&s.catalog);
+    assert_eq!(plain.label, Some(Some(ColorLabel::Blue)), "colour names still work");
+    s.execute("label.deleteSet", &json!({"name": "Studio"})).unwrap();
+    assert!(s.execute("label.deleteSet", &json!({"name": "Review"})).is_err(), "built-ins stay");
+    let _ = std::fs::remove_dir_all(&dir);
+}

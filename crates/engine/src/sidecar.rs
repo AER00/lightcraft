@@ -67,6 +67,8 @@ pub struct SidecarData {
     pub rating: Option<u8>,
     pub flag: Option<Flag>,
     pub label: Option<Option<ColorLabel>>,
+    /// The label's text as written (`xmp:Label`), for [`SidecarData::resolve_label`].
+    pub label_text: Option<String>,
     pub title: Option<String>,
     pub caption: Option<String>,
     pub copyright: Option<String>,
@@ -121,6 +123,7 @@ pub fn parse_sidecar(xmp: &str, raw: bool) -> std::result::Result<SidecarData, S
     }
     if let Some(l) = &m.label {
         out.label = Some(ColorLabel::parse(l.trim()));
+        out.label_text = Some(l.trim().to_string());
     }
     let full = d.lc_settings.as_deref().and_then(|j| serde_json::from_str::<Value>(j).ok()).and_then(|v| DevelopSettings::from_json(&v).ok());
     out.develop = match full {
@@ -183,12 +186,20 @@ pub fn merge_into(p: &mut Photo, sc: &SidecarData, now: &str) -> bool {
     true
 }
 
-fn label_name(l: ColorLabel) -> String {
-    format!("{l:?}")
+impl SidecarData {
+    /// Read the label through the catalog's label names: other editors write the label's name
+    /// (a custom set's "To Do" as well as "Red"); unknown names clear the label.
+    pub fn resolve_label(mut self, cat: &lightcraft_catalog::Catalog) -> Self {
+        if let Some(t) = &self.label_text {
+            self.label = Some(if t.is_empty() { None } else { cat.label_from_name(t) });
+        }
+        self
+    }
 }
 
-/// The sidecar packet for a photo.
-pub fn sidecar_packet(p: &Photo) -> String {
+/// The sidecar packet for a photo; the colour label is written by its name in `cat` (custom
+/// label names included, as other editors do).
+pub fn sidecar_packet(p: &Photo, cat: &lightcraft_catalog::Catalog) -> String {
     let nz = |s: &str| (!s.trim().is_empty()).then(|| s.to_string());
     let meta = lightcraft_meta::Metadata {
         software: Some("LightCraft".into()),
@@ -204,7 +215,7 @@ pub fn sidecar_packet(p: &Photo) -> String {
         artist: nz(&p.meta.creator),
         keywords: p.meta.keywords.clone(),
         rating: Some(p.rating.min(5) as i8),
-        label: p.label.map(label_name),
+        label: p.label.map(|l| cat.label_name(l)),
         capture_time: p.captured.as_deref().and_then(lightcraft_meta::DateTime::parse_iso),
         gps: p.meta.gps.map(|(latitude, longitude)| lightcraft_meta::Gps { latitude, longitude, altitude: None }),
         ..Default::default()
@@ -275,7 +286,7 @@ impl Session {
         }
         let orig = file_path(p).ok_or_else(|| EngineError::Other(format!("{} is not a file on disk", p.file_name)))?;
         let path = sidecar_path(orig, self.xmp.naming);
-        write_atomic(&path, sidecar_packet(p).as_bytes()).map_err(|e| EngineError::Other(format!("{}: {e}", path.display())))?;
+        write_atomic(&path, sidecar_packet(p, &self.catalog).as_bytes()).map_err(|e| EngineError::Other(format!("{}: {e}", path.display())))?;
         Ok(path)
     }
 
@@ -284,7 +295,9 @@ impl Session {
         let p = self.catalog.photo(id).ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?;
         let Some(orig) = file_path(p) else { return Ok(None) };
         let Some((packet, from)) = read_packet(orig, p.kind, self.xmp.naming) else { return Ok(None) };
-        let sc = parse_sidecar(&packet, p.kind == MediaKind::Raw).map_err(|e| EngineError::Other(format!("{}: {e}", from.display())))?;
+        let sc = parse_sidecar(&packet, p.kind == MediaKind::Raw)
+            .map_err(|e| EngineError::Other(format!("{}: {e}", from.display())))?
+            .resolve_label(&self.catalog);
         let mut q = (**p).clone();
         let develop_changed = merge_into(&mut q, &sc, &(self.clock)());
         let mut ops = vec![
@@ -352,7 +365,7 @@ mod tests {
     #[test]
     fn packet_roundtrip_restores_everything() {
         let p = photo();
-        let x = sidecar_packet(&p);
+        let x = sidecar_packet(&p, &lightcraft_catalog::Catalog::new());
         let sc = parse_sidecar(&x, false).unwrap();
         assert_eq!(sc.rating, Some(4));
         assert_eq!(sc.flag, Some(Flag::Pick));

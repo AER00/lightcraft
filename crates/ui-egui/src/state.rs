@@ -321,6 +321,8 @@ pub enum Dialog {
     /// Edit the colour label names (red, yellow, green, blue, purple; empty = the colour's name).
     LabelNames {
         names: Vec<String>,
+        /// Also save the names as a label set of this name (empty = don't).
+        save_as: String,
     },
     /// Batch rename the selected photos with a file-name template.
     Rename {

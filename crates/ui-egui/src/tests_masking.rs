@@ -215,3 +215,21 @@ fn mask_list_rename_hide_and_overlay_colour() {
     let i = all.iter().position(|c| *c == before).unwrap();
     assert_eq!(h.app.ui.mask_overlay_color, all[(i + 1) % all.len()]);
 }
+
+#[test]
+fn command_drag_straightens_in_crop() {
+    let mut h = detail("panel.crop");
+    let tool = h.app.ui.tool.clone();
+    let before = develop(&h).crop.geometry.angle;
+    let r = h.request(
+        "ui.pointer",
+        json!({"events": [{"kind": "down", "x": 0.3, "y": 0.5}, {"kind": "drag", "x": 0.45, "y": 0.51}, {"kind": "drag", "x": 0.6, "y": 0.53}, {"kind": "up", "x": 0.6, "y": 0.53}], "cmd": true}),
+        T,
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    let angle = develop(&h).crop.geometry.angle;
+    assert!(angle != before && (1.0..15.0).contains(&angle.abs()), "a slightly tilted line straightens: {angle}");
+    assert_eq!(h.app.ui.tool, tool, "the crop tool stays active");
+    assert!(h.app.gesture.is_none());
+    h.settle(SETTLE);
+}

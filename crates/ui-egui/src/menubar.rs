@@ -84,6 +84,8 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "dialog.copySettings",
             "develop.paste",
             "dialog.pasteSettings",
+            "develop.sync",
+            "develop.autoSync",
             "---",
             "library.selectAll",
             "library.selectNone",
@@ -221,6 +223,7 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
     let u = &app.ui;
     let panel = |p: RightPanel| Some(u.right == p);
     match id {
+        "develop.autoSync" => Some(app.session.auto_sync),
         "view.photoGrid" => Some(u.view == ViewMode::PhotoGrid),
         "view.squareGrid" => Some(u.view == ViewMode::SquareGrid),
         "view.detail" => Some(u.view == ViewMode::Detail),
@@ -314,6 +317,20 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
             v.push(MenuNode::Separator);
             v.push(item("photo.label", json!({"label": "none"}), "None", None, has, Some(active.as_ref().is_some_and(|p| p.label.is_none()))));
             v.push(MenuNode::Separator);
+            // label sets: each a checkable item; Edit… names them
+            let sets = lightcraft_engine::cmd::manage::label_sets_json(&app.session);
+            let current = sets["current"].as_str().map(str::to_string);
+            for set in sets["sets"].as_array().into_iter().flatten() {
+                let name = set["name"].as_str().unwrap_or_default();
+                v.push(item(
+                    "label.applySet",
+                    json!({"name": name}),
+                    format!("Label Set: {name}"),
+                    None,
+                    true,
+                    Some(current.as_deref() == Some(name)),
+                ));
+            }
             v.push(item("dialog.labelNames", Value::Null, "Edit Label Names…", None, true, None));
             v
         }
