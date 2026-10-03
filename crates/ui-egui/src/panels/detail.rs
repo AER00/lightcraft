@@ -124,6 +124,19 @@ pub(crate) fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], 
     Rect::from_center_size(c, vec2(w, h))
 }
 
+/// Ease the loupe rect toward `target` while a click-zoom animation runs; otherwise follow it exactly.
+fn animated_rect(ctx: &egui::Context, anim: &mut bool, target: Rect) -> Rect {
+    let t = if *anim { 0.22 } else { 0.0 };
+    let id = egui::Id::new("loupe_anim");
+    let v = |k: &str, x: f32| ctx.animate_value_with_time(id.with(k), x, t);
+    let (c, s) = (target.center(), target.size());
+    let r = Rect::from_center_size(pos2(v("cx", c.x), v("cy", c.y)), vec2(v("w", s.x), v("h", s.y)));
+    if *anim && (r.center() - c).abs().max_elem() < 0.5 && (r.size() - s).abs().max_elem() < 0.5 {
+        *anim = false;
+    }
+    r
+}
+
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let full = ui.max_rect();
@@ -177,12 +190,14 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         _ => vec![area],
     };
     let main_area = *areas.last().unwrap_or(&area);
-    let img_rect = fit_rect(main_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
+    let target_rect = fit_rect(main_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
+    let img_rect = animated_rect(ui.ctx(), &mut app.ui.zoom_anim, target_rect);
     app.image_rect = Some(img_rect);
     // request renders: the loupe at display resolution (drafts during drags)
     let interacting = app.session.interaction.is_some();
     let scale = if interacting { 0.6 } else { 1.0 };
-    let want = (img_rect.width().max(img_rect.height()) * ppp * scale).min(max_edge) as usize;
+    // render at the final size: a click-zoom animation only changes how the result is drawn
+    let want = (target_rect.width().max(target_rect.height()) * ppp * scale).min(max_edge) as usize;
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     if let Some(job) = app.session.loupe_job(id, rw.max(8), rh.max(8), !crop_tool) {
         let job = if interacting { job.draft() } else { job };
@@ -580,7 +595,7 @@ fn general_interaction(
         }
         return;
     }
-    // click toggles Fit ↔ 100 % at the clicked point; drag pans when zoomed
+    // click toggles Fit ↔ the click-zoom ratio (2:1/3:1/5:1) at the clicked point; drag pans when zoomed
     let zoomed = img.width() > canvas.width() + 1.0 || img.height() > canvas.height() + 1.0;
     if resp.double_clicked() || (resp.clicked() && !zoomed) {
         if let Some(q) = resp.interact_pointer_pos() {
@@ -588,9 +603,11 @@ fn general_interaction(
             let v = ((q.y - img.top()) / img.height()).clamp(0.0, 1.0);
             app.ui.pan = (u, v);
         }
-        app.ui.zoom = if matches!(app.ui.zoom, Zoom::Fit) { Zoom::Percent(100) } else { Zoom::Fit };
+        app.ui.zoom = if matches!(app.ui.zoom, Zoom::Fit) { Zoom::Percent(app.ui.click_zoom) } else { Zoom::Fit };
+        app.ui.zoom_anim = true;
     } else if resp.clicked() && zoomed {
         app.ui.zoom = Zoom::Fit;
+        app.ui.zoom_anim = true;
     }
     if zoomed {
         // only over the photo: a panel drawn earlier (sliders) must keep its own cursor

@@ -172,6 +172,9 @@ impl Default for AppSettings {
 /// Preview sizes offered in Settings → Performance.
 pub const PREVIEW_EDGES: [u32; 4] = [1600, 2560, 3840, 5120];
 
+/// Click-zoom ratios offered (percent): 1:1, 2:1, 3:1, 4:1, 8:1.
+pub const CLICK_ZOOMS: [u32; 5] = [100, 200, 300, 400, 800];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
@@ -189,6 +192,12 @@ pub struct UiState {
     pub zoom: Zoom,
     /// Pan offset of the loupe when zoomed (image-normalized centre).
     pub pan: (f32, f32),
+    /// Zoom applied by a click on the image (and Z / Space), in percent (100 = 1:1, 200 = 2:1);
+    /// one of [`CLICK_ZOOMS`].
+    pub click_zoom: u32,
+    /// Animate the loupe rect toward its target (set by a click-zoom).
+    #[serde(skip)]
+    pub zoom_anim: bool,
     pub before_after: BeforeAfter,
     pub thumb_size: f32,
     /// Open Edit sections by id.
@@ -470,6 +479,8 @@ impl Default for UiState {
             filmstrip: true,
             zoom: Zoom::Fit,
             pan: (0.5, 0.5),
+            click_zoom: 100,
+            zoom_anim: false,
             before_after: BeforeAfter::Off,
             thumb_size: 220.0,
             open_sections: vec!["light".into()],
