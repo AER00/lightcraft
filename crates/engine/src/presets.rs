@@ -97,7 +97,7 @@ pub fn expand_preset_paths(paths: &[String]) -> Vec<String> {
             }
         } else {
             let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-            if top || ext == LCPRESET_EXT || ext == "xmp" {
+            if top || ext == LCPRESET_EXT || ["xmp", "lrtemplate", "zip"].contains(&ext.as_str()) {
                 out.push(p.to_string_lossy().to_string());
             }
         }

@@ -1,9 +1,10 @@
-//! Preset files: import `.lcpreset` / XMP presets, export `.lcpreset`.
+//! Preset files: import `.lcpreset`, XMP, `.lrtemplate`, DNG-preset and zip bundles; export `.lcpreset`.
 
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd, str_param};
-use crate::presets::{LCPRESET_EXT, expand_preset_paths, parse_preset_file, to_lcpreset};
+use crate::preset_import::{group_from_dir, read_presets};
+use crate::presets::{LCPRESET_EXT, expand_preset_paths, to_lcpreset};
 use crate::{Result, Session};
 
 fn strings(p: &Value, key: &str) -> Option<Vec<String>> {
@@ -12,23 +13,36 @@ fn strings(p: &Value, key: &str) -> Option<Vec<String>> {
 
 fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let paths = strings(p, "paths").filter(|v| !v.is_empty()).ok_or_else(|| bad("preset.import", "no paths"))?;
+    let group = str_param(p, "group").map(str::trim).filter(|g| !g.is_empty()).map(str::to_string);
+    let dry = p.get("dryRun").and_then(Value::as_bool).unwrap_or(false);
     let mut imported = Vec::new();
     let mut failed = Vec::new();
     let mut skipped = 0usize;
-    for f in expand_preset_paths(&paths) {
-        let parsed = std::fs::read(&f).map_err(|e| e.to_string()).and_then(|b| parse_preset_file(&f, &b));
-        match parsed {
-            Ok(list) => {
-                let n = list.len();
-                let ids = s.add_presets(list);
-                skipped += n - ids.len();
-                for id in ids {
-                    if let Some(pr) = s.presets.iter().find(|x| x.id == id) {
-                        imported.push(json!({"id": pr.id, "name": pr.name, "group": pr.group}));
+    for top in &paths {
+        let from_dir = std::path::Path::new(top).is_dir();
+        for f in expand_preset_paths(std::slice::from_ref(top)) {
+            // presets in a folder go to a group named after it (unless the file names its own)
+            // the path from the imported folder (inclusive) to the file's folder
+            let base = std::path::Path::new(top).parent().unwrap_or(std::path::Path::new(""));
+            let rel = std::path::Path::new(&f).parent().and_then(|d| d.strip_prefix(base).ok()).map(|d| d.to_string_lossy().to_string());
+            let dir_group = rel.filter(|_| from_dir).and_then(|d| group_from_dir(&d));
+            let parsed = std::fs::read(&f).map_err(|e| e.to_string()).and_then(|b| read_presets(&f, &b, dir_group));
+            match parsed {
+                Ok(list) => {
+                    for mut it in list {
+                        if let Some(g) = &group {
+                            it.preset.group = g.clone();
+                        }
+                        let (name, grp) = (it.preset.name.clone(), it.preset.group.clone());
+                        let id = if dry { Some(it.preset.id.clone()) } else { s.add_presets(vec![it.preset]).pop() };
+                        match id {
+                            Some(id) => imported.push(json!({"id": id, "name": name, "group": grp, "file": f, "unmapped": it.unmapped})),
+                            None => skipped += 1,
+                        }
                     }
                 }
+                Err(e) => failed.push(json!([f, e])),
             }
-            Err(e) => failed.push(json!([f, e])),
         }
     }
     Ok(json!({"imported": imported, "skipped": skipped, "failed": failed}))
@@ -69,7 +83,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Import Presets",
             [],
             None,
-            "{paths: [.lcpreset / .xmp file or folder]} — groups preserved; XMP presets map crs: fields (docs/xmp-interop.md) → {imported: [{id,name,group}], skipped, failed}",
+            "{paths: [file or folder], group?, dryRun?} — .lcpreset, XMP presets, .lrtemplate, photos carrying edits (DNG/JPEG/TIFF \"DNG presets\") and .zip bundles of these; folders give their name as group; crs: fields mapped per docs/xmp-interop.md → {imported: [{id,name,group,file,unmapped}], skipped, failed}",
             always,
             import
         ),

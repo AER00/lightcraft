@@ -55,7 +55,21 @@ pub fn has_adjustments(props: &Props) -> bool {
     props.keys().any(|k| k.starts_with("crs:") && !NON_ADJUSTMENT.contains(&k.split('/').next().unwrap_or(k)))
 }
 
+thread_local! {
+    /// Keys read by [`to_partial`] while [`to_partial_report`] runs.
+    static READ: std::cell::RefCell<Option<std::collections::BTreeSet<String>>> = const { std::cell::RefCell::new(None) };
+}
+
+fn note(k: &str) {
+    READ.with(|r| {
+        if let Some(s) = r.borrow_mut().as_mut() {
+            s.insert(k.to_string());
+        }
+    });
+}
+
 fn first<'a>(props: &'a Props, k: &str) -> Option<&'a str> {
+    note(k);
     props.get(k).and_then(|v| v.first()).map(|s| s.trim()).filter(|s| !s.is_empty())
 }
 
@@ -95,6 +109,7 @@ pub fn rel_to_kelvin(r: f64) -> f64 {
 
 /// Parse a point curve stored as an `rdf:Seq` of `"x, y"` strings in 0..255.
 fn curve(props: &Props, k: &str) -> Option<Value> {
+    note(k);
     let items = props.get(k)?;
     let mut pts = Vec::new();
     for it in items {
@@ -130,9 +145,30 @@ pub fn to_partial(props: &Props, raw: Option<bool>) -> Value {
     n(o, "Shadows2012", "light.shadows");
     n(o, "Whites2012", "light.whites");
     n(o, "Blacks2012", "light.blacks");
+    // older process versions (most `.lrtemplate` presets): approximate the 2012 sliders from the
+    // earlier ones, relative to their defaults (contrast 25, blacks 5, brightness 50)
+    let has = |o: &Value, path: &str| path.split('.').try_fold(o, |v, k| v.get(k)).is_some();
+    // presets written by newer versions keep the old fields at their defaults: ignore them there
+    let pv2012 = props.keys().any(|k| k.ends_with("2012"));
+    let old = |o: &mut Value, crs: &str, path: &str, f: &dyn Fn(f64) -> f64| {
+        let v = num(props, &format!("crs:{crs}"));
+        if !pv2012
+            && !has(o, path)
+            && let Some(v) = v
+        {
+            put(o, path, json!(f(v).clamp(-100.0, 100.0)));
+        }
+    };
+    old(o, "Exposure", "light.exposure", &|v| v);
+    old(o, "Contrast", "light.contrast", &|v| v - 25.0);
+    old(o, "HighlightRecovery", "light.highlights", &|v| -v);
+    old(o, "FillLight", "light.shadows", &|v| v);
+    old(o, "Shadows", "light.blacks", &|v| -(v - 5.0) * 4.0);
+    old(o, "Brightness", "light.whites", &|v| (v - 50.0) * 0.6);
     // ---- Presence
     n(o, "Texture", "effects.texture");
     n(o, "Clarity2012", "effects.clarity");
+    old(o, "Clarity", "effects.clarity", &|v| v);
     n(o, "Dehaze", "effects.dehaze");
     n(o, "Vibrance", "color.vibrance");
     n(o, "Saturation", "color.saturation");
@@ -191,6 +227,12 @@ pub fn to_partial(props: &Props, raw: Option<bool>) -> Value {
     n(o, "ParametricMidtoneSplit", "curve.split_mid");
     n(o, "ParametricHighlightSplit", "curve.split_highlights");
     n(o, "CurveRefineSaturation", "curve.refine_saturation");
+    if let Some(c) = curve(props, "crs:ToneCurve").filter(|c| c.as_array().is_some_and(|a| !a.is_empty())) {
+        // the older single curve, used when no 2012 curve is present
+        if !props.contains_key("crs:ToneCurvePV2012") {
+            put(o, "curve.master", c);
+        }
+    }
     for (crs, ch) in
         [("ToneCurvePV2012", "master"), ("ToneCurvePV2012Red", "red"), ("ToneCurvePV2012Green", "green"), ("ToneCurvePV2012Blue", "blue")]
     {
@@ -308,6 +350,26 @@ pub fn to_partial(props: &Props, raw: Option<bool>) -> Value {
         None => {}
     }
     out
+}
+
+/// [`to_partial`], plus the adjustments in the packet it could not carry over (field names
+/// without the `crs:` prefix, grouped: `CameraProfile`, `Look`, `MaskGroupBasedCorrections`…).
+pub fn to_partial_report(props: &Props, raw: Option<bool>) -> (Value, Vec<String>) {
+    READ.with(|r| *r.borrow_mut() = Some(Default::default()));
+    let out = to_partial(props, raw);
+    let read = READ.with(|r| r.borrow_mut().take()).unwrap_or_default();
+    // fields that only switch a panel on/off or name things: not adjustments by themselves
+    let quiet = |k: &str| k.starts_with("Enable") || k.starts_with("ToneCurveName") || k == "AutoTone" || k == "AutoGrayscaleMix";
+    let mut unmapped: Vec<String> = props
+        .keys()
+        .filter(|k| k.starts_with("crs:"))
+        .map(|k| k.split('/').next().unwrap_or(k))
+        .filter(|k| !NON_ADJUSTMENT.contains(k) && !read.contains(*k))
+        .map(|k| k.trim_start_matches("crs:").to_string())
+        .filter(|k| !quiet(k))
+        .collect();
+    unmapped.dedup();
+    (out, unmapped)
 }
 
 /// Read an XMP preset (`crs:` fields + `crs:Name` / `crs:Group`) into one of our presets.

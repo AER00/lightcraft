@@ -52,7 +52,7 @@ pub type OpenUrlFn = Box<dyn FnMut(&str) -> Result<(), String>>;
 pub struct Services {
     /// Show an open dialog for photos; returns paths.
     pub pick_files: Option<PickFiles>,
-    /// Open dialog for preset files (`.lcpreset`, `.xmp`).
+    /// Open dialog for preset files (`.lcpreset`, `.xmp`, `.lrtemplate`, `.zip`, `.dng`).
     pub pick_preset_files: Option<PickFiles>,
     /// Save dialog for an exported `.lcpreset` file.
     pub save_preset_file: Option<SaveFile>,
@@ -359,8 +359,13 @@ impl LightcraftApp {
         {
             let dropped: Vec<String> =
                 ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_string_lossy().to_string()).filter(|p| !p.is_empty()).collect());
-            if !dropped.is_empty() {
-                let _ = self.run("library.import", serde_json::json!({"paths": dropped}));
+            // preset files import as presets, everything else as photos
+            let (presets, photos): (Vec<String>, Vec<String>) = dropped.into_iter().partition(|p| is_preset_file(p));
+            if !presets.is_empty() {
+                let _ = self.run("file.importPresets", serde_json::json!({"paths": presets}));
+            }
+            if !photos.is_empty() {
+                let _ = self.run("library.import", serde_json::json!({"paths": photos}));
             }
         }
     }
@@ -513,4 +518,23 @@ pub struct HoverPreview {
 
 pub fn is_bw(d: &lightcraft_develop::DevelopSettings) -> bool {
     d.treatment == lightcraft_develop::Treatment::Bw || d.profile.id == "lc.mono" || d.profile.id.starts_with("lc.bw.")
+}
+
+/// Files dropped on the window that are presets rather than photos.
+pub fn is_preset_file(path: &str) -> bool {
+    let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    ["lcpreset", "lrtemplate", "xmp", "zip"].contains(&ext.as_str())
+}
+
+#[cfg(test)]
+mod drop_tests {
+    #[test]
+    fn dropped_presets_are_told_apart_from_photos() {
+        for p in ["/a/Look.lrtemplate", "/a/b.XMP", "/a/pack.zip", "/a/x.lcpreset"] {
+            assert!(super::is_preset_file(p), "{p}");
+        }
+        for p in ["/a/IMG_1.CR2", "/a/b.dng", "/a/c.jpg", "/a/folder"] {
+            assert!(!super::is_preset_file(p), "{p}");
+        }
+    }
 }

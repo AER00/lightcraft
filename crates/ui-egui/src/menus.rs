@@ -675,11 +675,25 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             if let Ok(v) = &r {
                 let n = v["imported"].as_array().map_or(0, Vec::len);
                 let failed = v["failed"].as_array().map_or(0, Vec::len);
-                let msg = match (n, failed) {
+                let mut msg = match (n, failed) {
                     (0, 0) => "No new presets".to_string(),
                     (n, 0) => format!("Imported {n} preset{}", if n == 1 { "" } else { "s" }),
                     (n, f) => format!("Imported {n} preset{}, {f} file{} not readable", if n == 1 { "" } else { "s" }, if f == 1 { "" } else { "s" }),
                 };
+                // settings with no counterpart here (the other editor's profiles, masks…)
+                let mut skipped: Vec<&str> = v["imported"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|i| i["unmapped"].as_array().into_iter().flatten())
+                    .filter_map(Value::as_str)
+                    .collect();
+                skipped.sort_unstable();
+                skipped.dedup();
+                if !skipped.is_empty() {
+                    let names: Vec<&str> = skipped.iter().take(3).copied().collect();
+                    msg += &format!(" — not carried over: {}{}", names.join(", "), if skipped.len() > 3 { "…" } else { "" });
+                }
                 app.toast(&ctx, msg);
                 if n > 0 {
                     app.ui.presets = true;
