@@ -372,3 +372,49 @@ fn local_folder_tree_expands_and_browses() {
     let _ = std::fs::remove_dir_all(&base);
     h.settle(SETTLE);
 }
+
+#[test]
+fn slideshow_advances_pauses_and_ends() {
+    let mut h = detail("panel.edit");
+    let first = h.app.session.active();
+    exec(&mut h, "view.slideshow", json!({"interval": 0.5}));
+    assert!(h.app.ui.fullscreen && h.app.ui.slideshow.is_some());
+    // simulated time runs with the frames
+    let mut moved = false;
+    for _ in 0..200 {
+        h.step();
+        if h.app.session.active() != first {
+            moved = true;
+            break;
+        }
+    }
+    assert!(moved, "the next photo comes up");
+    // Space pauses: nothing moves
+    let r = h.request("ui.key", json!({"key": "space"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(h.app.ui.slideshow.is_some_and(|s| s.2), "paused");
+    let held = h.app.session.active();
+    for _ in 0..120 {
+        h.step();
+    }
+    assert_eq!(h.app.session.active(), held);
+    // Esc ends it
+    let r = h.request("ui.key", json!({"key": "escape"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(!h.app.ui.fullscreen && h.app.ui.slideshow.is_none());
+    h.settle(SETTLE);
+}
+
+#[test]
+fn geometry_slider_drag_marks_the_grid() {
+    let mut h = detail("panel.crop");
+    let spec = lightcraft_develop::controls::find("geometry.vertical").unwrap();
+    let start = crate::widgets::SliderOut { value: None, drag_started: true, drag_stopped: false, reset: false };
+    crate::panels::edit::apply_slider_out(&mut h.app, spec, start, |_, _| Ok(serde_json::Value::Null));
+    assert_eq!(h.app.ui.dragging_control.as_deref(), Some("geometry.vertical"));
+    h.step();
+    let stop = crate::widgets::SliderOut { value: None, drag_started: false, drag_stopped: true, reset: false };
+    crate::panels::edit::apply_slider_out(&mut h.app, spec, stop, |_, _| Ok(serde_json::Value::Null));
+    assert!(h.app.ui.dragging_control.is_none());
+    h.settle(SETTLE);
+}

@@ -42,7 +42,7 @@ fn row(
         t.font(13.5),
         if selected { t.text } else { t.text_label },
     );
-    if let Some(n) = count {
+    if let Some(n) = count.filter(|_| app.ui.show_counts) {
         ui.painter().text(pos2(r.right() - 18.0, r.center().y), Align2::RIGHT_CENTER, n.to_string(), t.font(12.5), t.text_dim);
     }
     let _ = app;

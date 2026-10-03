@@ -7,6 +7,7 @@
 mod before;
 mod browse;
 mod color;
+pub(crate) mod convert;
 mod develop;
 mod edit;
 mod export;
@@ -120,6 +121,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(keywords::specs());
         v.extend(manage::specs());
         v.extend(previews::specs());
+        v.extend(convert::specs());
         v.extend(merge::specs());
         v.extend(query::specs());
         v.extend(xmp::specs());

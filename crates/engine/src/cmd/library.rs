@@ -636,7 +636,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Photos…",
             ["File"],
             Some("Cmd+Shift+I"),
-            "{paths: [file or folder (recursive)], mode?: add|copy (add = reference the files in place; copy = into the library's Originals/YYYY/YYYY-MM-DD/), destination?: folder for copies, organize?: date|month|flat, rename?: file-name template for copies ({name} {seq:N} {date:%Y%m%d} {camera} {title}), renameStart?: 1, metadataPreset?: name, album?: albumId, albumName?: new album, preset?: presetId, keywords?: [..]} → {imported, duplicates, failed, album?}",
+            "{paths: [file or folder (recursive)], mode?: add|copy (add = reference the files in place; copy = into the library's Originals/YYYY/YYYY-MM-DD/), destination?: folder for copies, organize?: date|month|flat, rename?: file-name template for copies ({name} {seq:N} {date:%Y%m%d} {camera} {title}), renameStart?: 1, metadataPreset?: name, dng?: bool (copy raws as DNG), album?: albumId, albumName?: new album, preset?: presetId, keywords?: [..]} → {imported, duplicates, failed, album?}",
             always,
             |s, p| {
                 let paths = strs(p, "paths");
@@ -681,6 +681,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     rename: str_param(p, "rename").map(str::to_string),
                     rename_start: p.get("renameStart").and_then(Value::as_u64).unwrap_or(1) as usize,
                     metadata_preset,
+                    convert_dng: super::bool_or(p, "dng", false),
                     ..Default::default()
                 };
                 let undo0 = s.undo.len();

@@ -23,12 +23,14 @@ pub fn apply_slider_out(
 ) {
     if out.drag_started && !out.reset {
         let _ = app.run("develop.beginInteraction", json!({"label": spec.label}));
+        app.ui.dragging_control = Some(spec.id.to_string());
     }
     if let Some(v) = out.value {
         let _ = set(app, v);
     }
     if out.drag_stopped || out.reset {
         let _ = app.run("develop.endInteraction", json!({}));
+        app.ui.dragging_control = None;
     }
 }
 

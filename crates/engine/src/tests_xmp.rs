@@ -271,3 +271,60 @@ fn all_metadata_lists_exif_and_xmp() {
     assert!(r["xmp"].as_array().unwrap().iter().any(|x| x["name"] == "dc:title" && x["value"] == "A title"), "the sidecar's fields: {r}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Convert to DNG: a corpus raw (skipped without the corpus) becomes a DNG next to it with the
+/// photo relinked and its edits kept; undo goes back to the original; non-raws are skipped.
+#[test]
+fn convert_raw_to_dng() {
+    let corpus = std::env::var_os("LIGHTCRAFT_CORPUS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+        .join("raw/nef-nikon-d5100-uncompressed.nef");
+    let mut s = Session::new().with_fs();
+    // a non-raw is skipped
+    let dir = temp_dir("todng");
+    let png = dir.join("a.png");
+    write_png(&png, 3);
+    s.execute("library.import", &json!({"paths": [png.to_string_lossy()]})).unwrap();
+    let r = s.execute("photo.convertToDng", &json!({})).unwrap();
+    assert_eq!((r["converted"].as_array().unwrap().len(), r["skipped"].as_array().unwrap().len()), (0, 1));
+    if !corpus.exists() {
+        eprintln!("skip: {} absent", corpus.display());
+        return;
+    }
+    let nef = dir.join("shot.nef");
+    std::fs::copy(&corpus, &nef).unwrap();
+    s.execute("library.import", &json!({"paths": [nef.to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.6})).unwrap();
+    let r = s.execute("photo.convertToDng", &json!({})).unwrap();
+    assert_eq!(r["converted"].as_array().unwrap().len(), 1, "{r}");
+    let p = s.catalog.photo(id).unwrap().clone();
+    assert_eq!((p.file_name.as_str(), p.format.as_str()), ("shot.dng", "DNG"));
+    assert!(dir.join("shot.dng").exists() && nef.exists(), "the original is kept");
+    assert_eq!(p.develop.light.exposure, 0.6, "edits kept");
+    let bytes = std::fs::read(dir.join("shot.dng")).unwrap();
+    assert_eq!(lightcraft_raw::probe(&bytes), Some(lightcraft_raw::RawFormat::Dng));
+    assert!(s.render_now(id, 64, 64).is_ok(), "the DNG renders");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.photo(id).unwrap().file_name, "shot.nef");
+    // Copy as DNG at import: only the DNG lands in the destination
+    let card = dir.join("card");
+    std::fs::create_dir_all(&card).unwrap();
+    std::fs::copy(&corpus, card.join("DSC_1.NEF")).unwrap();
+    let dest = dir.join("dest");
+    let mut s = Session::new().with_fs();
+    let r = s
+        .execute(
+            "library.import",
+            &json!({"paths": [card.to_string_lossy()], "mode": "copy", "destination": dest.to_string_lossy(), "organize": "flat", "dng": true}),
+        )
+        .unwrap();
+    assert_eq!(r["imported"].as_array().unwrap().len(), 1, "{r}");
+    let names: Vec<String> = std::fs::read_dir(&dest).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    assert_eq!(names, ["DSC_1.dng"]);
+    assert!(card.join("DSC_1.NEF").exists(), "the card is untouched");
+    let id2 = lightcraft_catalog::PhotoId(r["imported"][0].as_u64().unwrap());
+    assert_eq!(s.catalog.photo(id2).unwrap().format, "DNG");
+    let _ = std::fs::remove_dir_all(&dir);
+}

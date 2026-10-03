@@ -108,6 +108,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "view.survey",
             "---",
             "view.leftPanel",
+            "view.photoCounts",
             "view.filmstrip",
             "view.histogram",
             "view.navigator",
@@ -226,6 +227,7 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
     let panel = |p: RightPanel| Some(u.right == p);
     match id {
         "develop.autoSync" => Some(app.session.auto_sync),
+        "view.photoCounts" => Some(u.show_counts),
         "view.photoGrid" => Some(u.view == ViewMode::PhotoGrid),
         "view.squareGrid" => Some(u.view == ViewMode::SquareGrid),
         "view.detail" => Some(u.view == ViewMode::Detail),

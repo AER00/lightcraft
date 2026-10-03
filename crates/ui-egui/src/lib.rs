@@ -193,6 +193,30 @@ impl LightcraftApp {
     }
 
     /// Show a transient toast at the bottom of the canvas (like the reference app's HUD).
+    /// Advance a running slideshow (wrapping around at the end).
+    fn slideshow_tick(&mut self, ctx: &egui::Context) {
+        let Some((interval, due, paused)) = self.ui.slideshow else { return };
+        if !self.ui.fullscreen {
+            self.ui.slideshow = None;
+            return;
+        }
+        if paused {
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        if now >= due {
+            let vis = self.session.visible_cloned();
+            if let Some(cur) = self.session.active()
+                && !vis.is_empty()
+            {
+                let i = vis.iter().position(|x| *x == cur).map_or(0, |i| (i + 1) % vis.len());
+                let _ = self.run("library.select", serde_json::json!({"ids": [vis[i].0]}));
+            }
+            self.ui.slideshow = Some((interval, now + interval, false));
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64((due - now).clamp(0.05, interval)));
+    }
+
     /// Announce the start and end of a Build Previews run.
     fn preview_build_status(&mut self, ctx: &egui::Context) {
         use std::sync::atomic::Ordering;
@@ -374,6 +398,7 @@ impl LightcraftApp {
         merge::poll(self, ctx);
         import::tick(self, ctx);
         self.preview_build_status(ctx);
+        self.slideshow_tick(ctx);
         self.session.persist_if_dirty();
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);

@@ -208,6 +208,11 @@ pub struct UiState {
     pub crop_overlay_orient: u8,
     pub crop_overlay: CropOverlay,
     pub show_filenames: bool,
+    /// Photo counts next to sources and albums in the left panel.
+    pub show_counts: bool,
+    /// The develop control whose slider is being dragged (geometry sliders show a grid).
+    #[serde(skip)]
+    pub dragging_control: Option<String>,
     pub search: String,
     /// Focus the search field on the next frame (Edit → Find…).
     #[serde(skip)]
@@ -255,6 +260,10 @@ pub struct UiState {
     pub auto_advance: bool,
     /// Full-screen preview (F): the photo alone on black, no chrome.
     pub fullscreen: bool,
+    /// A running slideshow (full screen): seconds per photo, when the next one is due (egui
+    /// time), paused.
+    #[serde(skip)]
+    pub slideshow: Option<(f64, f64, bool)>,
     /// Info overlay on the loupe.
     pub info_overlay: InfoOverlay,
     /// Navigator mini map in the loupe while zoomed in.
@@ -353,6 +362,10 @@ pub enum Dialog {
     NewSmartAlbum {
         name: String,
     },
+    /// Help ▸ System Info: (label, value) rows.
+    SystemInfo {
+        rows: Vec<(String, String)>,
+    },
     /// Every metadata field of a photo's file (`photo.allMetadata`), filtered by `search`.
     AllMetadata {
         title: String,
@@ -434,6 +447,8 @@ impl Default for UiState {
             crop_overlay: CropOverlay::Thirds,
             crop_overlay_orient: 0,
             show_filenames: true,
+            show_counts: true,
+            dragging_control: None,
             search: String::new(),
             focus_search: false,
             renaming_mask: None,
@@ -459,6 +474,7 @@ impl Default for UiState {
             spots_threshold: 50.0,
             auto_advance: false,
             fullscreen: false,
+            slideshow: None,
             info_overlay: InfoOverlay::Off,
             navigator: true,
             settings: AppSettings::default(),

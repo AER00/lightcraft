@@ -27,7 +27,7 @@ pub fn missing(s: &Session) -> Vec<(PhotoId, String)> {
 
 fn relink_op(id: PhotoId, path: &str) -> Op {
     let file_name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
-    Op::Relink { id, file_name, source: Source::File { path: path.to_string() } }
+    Op::Relink { id, file_name, source: Source::File { path: path.to_string() }, format: None }
 }
 
 fn relink(s: &mut Session, p: &Value) -> Result<Value> {

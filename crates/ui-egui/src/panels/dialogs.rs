@@ -31,6 +31,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::MergeKeywords { .. } => "Merge Keywords",
         Dialog::NewSmartAlbum { .. } => "Create Smart Album",
         Dialog::AllMetadata { .. } => "All Metadata",
+        Dialog::SystemInfo { .. } => "System Info",
         Dialog::SmartRules { id: None, .. } => "New Smart Album",
         Dialog::SmartRules { .. } => "Edit Smart Album",
         Dialog::AutoStack { .. } => "Auto-Stack by Capture Time",
@@ -74,6 +75,19 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ui.label(
                         egui::RichText::new(format!("Creates {} stacks from {} of {scope}", preview["stacks"], preview["photos"])).color(t.text_dim),
                     );
+                }
+                Dialog::SystemInfo { rows } => {
+                    egui::Grid::new("sysinfo").num_columns(2).spacing([16.0, 4.0]).striped(true).show(ui, |ui| {
+                        for (k, v) in rows.iter() {
+                            ui.label(egui::RichText::new(k).color(t.text_dim));
+                            ui.add(egui::Label::new(egui::RichText::new(v).color(t.text_label)).wrap());
+                            ui.end_row();
+                        }
+                    });
+                    if ui.button("Copy to Clipboard").clicked() {
+                        let text: String = rows.iter().map(|(k, v)| format!("{k}: {v}\n")).collect();
+                        ui.ctx().copy_text(text);
+                    }
                 }
                 Dialog::AllMetadata { title, rows, search } => {
                     ui.label(egui::RichText::new(title.as_str()).color(t.text_label));
@@ -725,7 +739,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         Dialog::RenameKeyword { from, to } => app.run("keyword.rename", json!({"from": from, "to": to})),
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),
-        Dialog::AllMetadata { .. } => Ok(serde_json::Value::Null),
+        Dialog::AllMetadata { .. } | Dialog::SystemInfo { .. } => Ok(serde_json::Value::Null),
         Dialog::SmartRules { id, name, rules } => {
             let name = if name.trim().is_empty() { "Smart Album".to_string() } else { name.trim().to_string() };
             match id {

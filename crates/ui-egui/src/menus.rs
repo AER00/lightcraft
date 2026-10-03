@@ -81,6 +81,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.newAlbum", "New Album…", Some("Cmd+N"), "File"),
     ("dialog.newFolder", "New Folder…", Some("Cmd+Shift+N"), "File"),
     ("dialog.smartAlbum", "New Smart Album…", None, "File"),
+    ("view.photoCounts", "Show Photo Counts", None, "View"),
+    ("view.slideshow", "Slideshow", Some("Cmd+Alt+Enter"), "View"),
     ("dialog.allMetadata", "All Metadata…", None, "Photo"),
     ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
@@ -107,6 +109,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.settings", "Settings…", Some("Cmd+,"), "Edit"),
     ("app.openLibrary", "Open Library…", None, "File"),
     ("app.about", "About LightCraft", None, "Help"),
+    ("app.systemInfo", "System Info…", None, "Help"),
     ("app.help", "LightCraft Help", Some("F1"), "Help"),
     ("app.discord", "Join the ArtCraft Discord…", None, "Help"),
     ("app.website", "LightCraft Website", None, "Help"),
@@ -189,6 +192,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.view = ViewMode::SquareGrid;
             Ok(Value::Null)
         }
+        "view.photoCounts" => {
+            app.ui.show_counts = p.get("show").and_then(Value::as_bool).unwrap_or(!app.ui.show_counts);
+            Ok(json!({"show": app.ui.show_counts}))
+        }
         "view.gridToggle" => {
             app.ui.view = if app.ui.view == ViewMode::PhotoGrid { ViewMode::SquareGrid } else { ViewMode::PhotoGrid };
             Ok(Value::Null)
@@ -214,6 +221,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 app.ui.dialog = None;
             } else if app.ui.fullscreen {
                 app.ui.fullscreen = false;
+                app.ui.slideshow = None;
             } else if !app.ui.tool.is_empty() {
                 app.ui.tool.clear();
             } else if matches!(app.ui.view, ViewMode::Compare | ViewMode::Survey) {
@@ -223,8 +231,32 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             Ok(Value::Null)
         }
+        "view.slideshow" => {
+            // {interval?: seconds (4)}: the photos in view, full screen, one after another
+            let interval = p.get("interval").and_then(Value::as_f64).unwrap_or(4.0).clamp(0.5, 120.0);
+            if app.session.active().is_none() {
+                let first = app.session.visible_cloned().first().copied();
+                match first {
+                    Some(f) => {
+                        let _ = app.run("library.select", json!({"ids": [f.0]}));
+                    }
+                    None => return Some(Err("no photos to show".into())),
+                }
+            }
+            let now = ctx.input(|i| i.time);
+            app.ui.slideshow = Some((interval, now + interval, false));
+            app.ui.fullscreen = true;
+            app.ui.zoom = Zoom::Fit;
+            app.ui.tool.clear();
+            let _ = app.session.end_interaction();
+            app.toast(&ctx, "Slideshow · Space pauses · Esc ends");
+            Ok(json!({"interval": interval}))
+        }
         "view.fullScreenPreview" => {
             app.ui.fullscreen = !app.ui.fullscreen;
+            if !app.ui.fullscreen {
+                app.ui.slideshow = None;
+            }
             if app.ui.fullscreen {
                 app.ui.zoom = Zoom::Fit;
                 app.ui.tool.clear();
@@ -636,6 +668,32 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "app.about" => {
             app.ui.dialog = Some(Dialog::About);
             Ok(Value::Null)
+        }
+        "app.systemInfo" => {
+            let info = app.session.execute("library.info", &json!({})).unwrap_or_default();
+            let gpu = (lightcraft_engine::gpu::ready() && lightcraft_engine::gpu::available()).then(lightcraft_engine::gpu::adapter_name).flatten();
+            let mb = |b: u64| format!("{:.0} MB", b as f64 / (1u64 << 20) as f64);
+            let mut rows = vec![
+                ("Version".to_string(), env!("CARGO_PKG_VERSION").to_string()),
+                ("System".to_string(), format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH)),
+                ("CPU threads".to_string(), std::thread::available_parallelism().map(|n| n.get().to_string()).unwrap_or_else(|_| "?".into())),
+                ("GPU".to_string(), gpu.unwrap_or_else(|| "none (CPU rendering)".into())),
+                ("GPU rendering".to_string(), if app.ui.settings.gpu { "on".into() } else { "off".into() }),
+                ("Memory budget".to_string(), mb(lightcraft_engine::memory::default_budget() as u64)),
+                ("Preview size".to_string(), format!("{} px", app.ui.settings.preview_edge)),
+                ("Photos".to_string(), info["photos"].to_string()),
+                ("Albums".to_string(), info["albums"].to_string()),
+            ];
+            if let Some(dir) = info["dir"].as_str().or(info["path"].as_str()) {
+                rows.push(("Library".into(), dir.to_string()));
+            }
+            rows.push(("Frame time".into(), format!("{:.1} ms ({:.0} fps)", app.perf.frame_ms, app.perf.fps)));
+            rows.push(("Last loupe render".into(), format!("{:.0} ms", app.renderer.last_main_ms)));
+            let r = json!(rows.iter().map(|(k, v)| json!({"label": k, "value": v})).collect::<Vec<_>>());
+            if p.get("open").and_then(Value::as_bool).unwrap_or(true) {
+                app.ui.dialog = Some(Dialog::SystemInfo { rows });
+            }
+            Ok(r)
         }
         "app.shortcuts" => {
             app.ui.dialog = Some(Dialog::Shortcuts);

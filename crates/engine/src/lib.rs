@@ -219,6 +219,9 @@ impl Session {
         self.depth -= 1;
         if self.depth == 0 && was_active.is_some() && self.active() != was_active {
             self.previous_active = was_active;
+            if let Some(left) = was_active {
+                self.auto_version(left);
+            }
         }
         if r.is_ok() && spec.journal && self.depth == 0 {
             self.journal.push((id.to_string(), params.clone()));
@@ -254,6 +257,30 @@ impl Session {
         }
         self.redo.clear();
         Ok(())
+    }
+
+    /// Leaving photo `id` after editing it: keep its settings as an automatic version (when they
+    /// differ from its latest version; at most [`AUTO_VERSIONS`] auto versions, oldest dropped).
+    /// Saved with the library but not an undo step.
+    pub fn auto_version(&mut self, id: PhotoId) {
+        let Some(p) = self.catalog.photo(id) else { return };
+        if !p.is_edited() || p.versions.last().is_some_and(|v| *v.settings == *p.develop) || self.interaction.is_some() {
+            return;
+        }
+        let mut versions = p.versions.clone();
+        let created = (self.clock)();
+        let name = lightcraft_catalog::dates::display_time(&created);
+        versions.push(lightcraft_catalog::Version { name, created, settings: p.develop.clone(), auto: true });
+        let autos = versions.iter().filter(|v| v.auto).count();
+        if autos > AUTO_VERSIONS
+            && let Some(i) = versions.iter().position(|v| v.auto)
+        {
+            versions.remove(i);
+        }
+        let op = Op::SetVersions { id, versions };
+        if self.catalog.apply(op.clone()).is_ok() {
+            self.pending_log.push(op);
+        }
     }
 
     /// Fold the last `n` undo steps into one (commands that commit step by step because each op
@@ -484,6 +511,9 @@ impl Session {
         if self.selection.ids.is_empty() { self.selection.active.into_iter().collect() } else { self.selection.ids.clone() }
     }
 }
+
+/// Automatic versions kept per photo.
+pub const AUTO_VERSIONS: usize = 20;
 
 /// The parts of `new` that differ from `old` (objects recurse; anything else is taken whole).
 pub fn json_delta(old: &Value, new: &Value) -> Option<Value> {

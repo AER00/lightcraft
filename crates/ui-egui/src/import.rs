@@ -40,6 +40,8 @@ pub struct ImportDialog {
     pub rename: String,
     /// Metadata preset name ("" = none).
     pub metadata_preset: String,
+    /// Copy: raws are copied as DNG.
+    pub dng: bool,
 }
 
 impl ImportDialog {
@@ -124,6 +126,9 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
         if !d.rename.trim().is_empty() {
             params["rename"] = json!(d.rename.trim());
             params["renameStart"] = json!(1);
+        }
+        if d.dng {
+            params["dng"] = json!(true);
         }
     }
     let total = queue.len();
@@ -275,6 +280,10 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
                     }
                 }
             });
+        });
+        field(ui, "Raw files", |ui| {
+            let r = ui.checkbox(&mut d.dng, "Copy as DNG");
+            register(ui.ctx(), "check:importDng", r.rect);
         });
         field(ui, "Rename", |ui| {
             let r = ui.add(egui::TextEdit::singleline(&mut d.rename).hint_text("keep names — or e.g. {date}_{seq:3}").desired_width(f32::INFINITY));

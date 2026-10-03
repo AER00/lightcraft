@@ -162,6 +162,9 @@ pub enum Op {
         id: PhotoId,
         file_name: String,
         source: Source,
+        /// The file's format when it changes too (Convert to DNG).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format: Option<String>,
     },
     /// The name shown for a colour label (`None` = its colour's name).
     SetLabelName {
@@ -487,10 +490,11 @@ impl Catalog {
                 let p = self.photo_mut(id)?;
                 Op::SetCaptured { id, captured: std::mem::replace(&mut p.captured, captured) }
             }
-            Op::Relink { id, file_name, source } => {
+            Op::Relink { id, file_name, source, format } => {
                 let p = self.photo_mut(id)?;
                 let old_name = std::mem::replace(&mut p.file_name, file_name);
-                Op::Relink { id, file_name: old_name, source: std::mem::replace(&mut p.source, source) }
+                let old_format = format.map(|f| std::mem::replace(&mut p.format, f));
+                Op::Relink { id, file_name: old_name, source: std::mem::replace(&mut p.source, source), format: old_format }
             }
             Op::SetFile { id, file_name, source } => {
                 if file_name.trim().is_empty() {

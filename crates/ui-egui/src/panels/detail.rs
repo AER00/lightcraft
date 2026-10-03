@@ -306,6 +306,20 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let map = CanvasMap::new(&frame, img_rect);
     let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
     info_overlay(app, &p, canvas, &photo);
+    // a fine grid while a transform (geometry) slider is dragged, to judge verticals
+    if app.ui.dragging_control.as_deref().is_some_and(|c| c.starts_with("geometry.")) {
+        let n = 12;
+        let stroke = Stroke::new(1.0, Color32::from_white_alpha(70));
+        for i in 1..n {
+            let fx = img_rect.left() + img_rect.width() * i as f32 / n as f32;
+            p.line_segment([pos2(fx, img_rect.top()), pos2(fx, img_rect.bottom())], stroke);
+        }
+        let rows = ((n as f32) * img_rect.height() / img_rect.width()).round().max(2.0) as usize;
+        for i in 1..rows {
+            let fy = img_rect.top() + img_rect.height() * i as f32 / rows as f32;
+            p.line_segment([pos2(img_rect.left(), fy), pos2(img_rect.right(), fy)], stroke);
+        }
+    }
     match right {
         RightPanel::Crop => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
         RightPanel::Masking => mask_overlay(app, ui, &resp, &map, &d),

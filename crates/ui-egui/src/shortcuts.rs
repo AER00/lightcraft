@@ -140,6 +140,15 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
     };
     for (id, params) in aliased {
+        // Space pauses / resumes a slideshow
+        if id == "view.zoomToggle"
+            && let Some((interval, _, paused)) = app.ui.slideshow
+        {
+            let now = ctx.input(|i| i.time);
+            app.ui.slideshow = Some((interval, now + interval, !paused));
+            app.toast(ctx, if paused { "Slideshow resumed" } else { "Slideshow paused" });
+            continue;
+        }
         // flag/rate aliases (Shift+X…) go through the culling path: active photo in Compare/Survey,
         // `advance` moves to the next candidate there
         if matches!(id, "photo.flag" | "photo.rate" | "photo.label") {

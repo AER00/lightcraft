@@ -62,6 +62,8 @@ pub struct ImportOptions {
     pub rename_start: usize,
     /// A metadata preset (by name) applied to every imported photo.
     pub metadata_preset: Option<String>,
+    /// Copy: raws are copied as DNG (Copy as DNG).
+    pub convert_dng: bool,
 }
 
 /// How copies are filed in the destination.
@@ -488,6 +490,19 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         let id = s.catalog.alloc_photo_id();
         if let Some(h) = &info.content_hash {
             by_hash.insert(h.clone(), id);
+        }
+        // Copy as DNG: the copied raw becomes a DNG (the copy is ours to replace)
+        let mut stored = stored;
+        let mut info = info;
+        if opts.convert_dng && mode == ImportMode::Copy && stored != path && info.kind == MediaKind::Raw && !info.format.eq_ignore_ascii_case("DNG") {
+            match crate::cmd::convert::write_dng_for(s, &stored, String::new()) {
+                Ok(dng) => {
+                    let _ = std::fs::remove_file(&stored);
+                    stored = dng;
+                    info.format = "DNG".into();
+                }
+                Err(e) => log::warn!("import {path}: copy as DNG: {e}"),
+            }
         }
         // a copy is catalogued under its new name
         let name = Path::new(&stored).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());

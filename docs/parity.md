@@ -21,20 +21,20 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 <!-- parity:summary -->
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
-| A. Import (IMP) | 7 | 2 | 4 | 1 | 3/4 (75%) | 3/4 (75%) |
-| B. Library management (LIB) | 19 | 0 | 6 | 2 | 9/9 (100%) | 9/9 (100%) |
-| C. Views & navigation (VIEW) | 14 | 0 | 3 | 0 | 9/9 (100%) | 4/4 (100%) |
-| D. Search & filter (FILT) | 9 | 1 | 3 | 0 | 4/4 (100%) | 4/4 (100%) |
+| A. Import (IMP) | 8 | 2 | 3 | 1 | 3/4 (75%) | 3/4 (75%) |
+| B. Library management (LIB) | 21 | 0 | 4 | 2 | 9/9 (100%) | 9/9 (100%) |
+| C. Views & navigation (VIEW) | 15 | 0 | 2 | 0 | 9/9 (100%) | 4/4 (100%) |
+| D. Search & filter (FILT) | 10 | 0 | 3 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
-| F. Edit panel — global adjustments (EDIT) | 41 | 1 | 6 | 1 | 28/28 (100%) | 13/14 (93%) |
+| F. Edit panel — global adjustments (EDIT) | 42 | 1 | 5 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 6 | 1 | 3 | 2 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
 | K. Masking (MASK) | 13 | 3 | 7 | 0 | 8/8 (100%) | 5/5 (100%) |
 | L. Presets (PRE) | 5 | 1 | 1 | 1 | 2/2 (100%) | 2/2 (100%) |
-| M. Versions & history (VER) | 4 | 0 | 1 | 0 | 1/1 (100%) | 3/3 (100%) |
-| N. Copy / paste / sync (SYNC) | 4 | 1 | 0 | 0 | 3/3 (100%) | 1/1 (100%) |
+| M. Versions & history (VER) | 5 | 0 | 0 | 0 | 1/1 (100%) | 3/3 (100%) |
+| N. Copy / paste / sync (SYNC) | 5 | 0 | 0 | 0 | 3/3 (100%) | 1/1 (100%) |
 | O. Merge (MERGE) | 4 | 0 | 0 | 0 | — | — |
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
@@ -45,12 +45,12 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
-| Y. Menus | 73 | 4 | 8 | 8 | 46/47 (98%) | 22/23 (96%) |
+| Y. Menus | 76 | 2 | 7 | 8 | 46/47 (98%) | 22/23 (96%) |
 | Z. Keyboard shortcuts (desktop) | 73 | 3 | 4 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 19 | 11 | 49 | 9 | — | 18/21 (86%) |
-| **Total** | 345 | 31 | 124 | 37 | 193/198 (97%) | 132/144 (92%) |
+| Lightroom Classic extras | 20 | 11 | 48 | 9 | — | 18/21 (86%) |
+| **Total** | 357 | 27 | 116 | 37 | 193/198 (97%) | 132/144 (92%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **72.1%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **74.1%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 24.7% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -111,7 +111,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-IMP-SIDECAR-SPLIT | Separate XMP sidecar variants | P2 | ⬜ | `cmd:library.xmpPreferences` | sidecar naming option exists (stem/full), no split sidecars |
 | LR-IMP-FORMATS | Supported formats | P0 | 🟡 | `crates/codecs/src/lib.rs`, `crates/raw/src/lib.rs` | JPEG, PNG, TIFF, WebP, JXL, PSD, GIF, BMP; DNG (incl. lossy / Smart Preview DNG), CR2, ARW, NEF, RAF, RW2, PEF, ORF. Missing: CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only), HEIC/AVIF decode |
 | LR-IMP-CULL-AT-IMPORT | Culling analysis at import | P2 | ⬜ | | |
-| LR-IMP-DNG-CONVERT | Convert to DNG on import [Classic] | P2 | ⬜ | `crates/raw/src/dngwrite.rs` | DNG writer exists, not wired to import |
+| LR-IMP-DNG-CONVERT | Convert to DNG on import [Classic] | P2 | ✅ | `cmd:library.import` (`dng`), `crates/ui-egui/src/import.rs` | copy imports: Raw files ▸ Copy as DNG (lossless; the card is untouched) |
 
 ## B. Library management (LIB)
 
@@ -125,7 +125,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-SMARTALBUM | Smart albums | P1 | ✅ | `cmd:album.createSmart`, `cmd:album.setRules`, `crates/catalog/src/query.rs`, `crates/ui-egui/src/panels/filterbar.rs` | saved filters (rating/flag/label/kind/edited/keyword/camera/lens/date range/text/album), live; match-all only (no any/none rule groups, no rule editor dialog — rules come from the filter bar or `album.setRules`) |
 | LR-LIB-SHARED-ALBUM | Shared albums | P2 | ⬜ | | needs a sharing service |
 | LR-LIB-OFFLINE | Keep album offline | P2 | 🚫 | | not applicable: local-first library |
-| LR-LIB-TARGET | Target album | P2 | ⬜ | | |
+| LR-LIB-TARGET | Target album | P2 | ✅ | `cmd:album.setTarget`, `cmd:album.toggleTarget` | see LRC-LIB-COLLECTIONS |
 | LR-LIB-RATING | Star ratings | P0 | ✅ | `cmd:photo.rate` (`advance`), `crates/ui-egui/src/shortcuts.rs` | |
 | LR-LIB-FLAG | Pick / reject flags | P0 | ✅ | `cmd:photo.pick`, `cmd:photo.reject`, `cmd:photo.unflag`, `cmd:photo.flag` | pick key is P (see Shortcuts); no flag cycle |
 | LR-LIB-LABEL | Colour labels | P1 | ✅ | `cmd:photo.label`, `cmd:label.setNames`, `cmd:label.names`, `cmd:dialog.labelNames`, keys 6–9 in `crates/ui-egui/src/shortcuts.rs` | Photo menu and grid context menu (coloured, named), Info-panel swatches, label dot in grid cells; editable label names (undoable, journaled); no purple key (as in Lightroom), no custom extra labels |
@@ -142,7 +142,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-COVER | Album cover | P2 | ✅ | `cmd:album.setCover` | |
 | LR-LIB-CULL | Assisted culling | P2 | ⬜ | | |
 | LR-LIB-ACTIVITY | Comments & likes | OOS | 🚫 | | |
-| LR-LIB-QUICKCOLL | Quick collection [Classic] | P2 | ⬜ | | |
+| LR-LIB-QUICKCOLL | Quick collection [Classic] | P2 | ✅ | `cmd:album.toggleTarget`, `cmd:album.clearQuick` | B in the grids |
 | LR-LIB-VIRTUALCOPY | Virtual copies [Classic] | P1 | ✅ | `cmd:photo.virtualCopy`, `crates/engine/src/cmd/organize.rs` | “Copy N” badge, stacked with the original, same albums, no XMP writes; no “Set Copy as Master” |
 
 ## C. Views & navigation (VIEW)
@@ -161,7 +161,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-VIEW-COMPARE | Compare two photos | P1 | ✅ | `cmd:view.compare`, `cmd:compare.swap`, `cmd:compare.makeSelect`, `crates/ui-egui/src/panels/compare.rs` | select / candidate, synced zoom + pan, arrows move the candidate; no zoom-link toggle |
 | LR-VIEW-SURVEY | Survey view [Classic] | P2 | ✅ | `cmd:view.survey`, `crates/ui-egui/src/panels/compare.rs` | selection tiled (≤ 48), keys act on the active photo, hover × removes |
 | LR-VIEW-INFOOVERLAY | Info overlay on the photo | P1 | ✅ | `cmd:view.infoOverlay` | off / file + date + size / exposure + camera; ⌘I cycles (I in full screen; elsewhere I stays the Info panel) |
-| LR-VIEW-SLIDESHOW | Slideshow | P2 | ⬜ | | |
+| LR-VIEW-SLIDESHOW | Slideshow | P2 | ✅ | `cmd:view.slideshow` | View ▸ Slideshow (⌥⌘↩): the photos in view full screen, every 4 s (`interval`), wrapping; Space pauses, ←/→ step, Esc ends |
 | LR-VIEW-SECONDWINDOW | Second display window [Classic] | P2 | ⬜ | | |
 | LR-VIEW-CLIPPING | Clipping indicators | P0 | ✅ | `cmd:view.clipping` | |
 | LR-VIEW-HISTOGRAM | Histogram | P0 | ✅ | `cmd:view.histogram`, `crates/ui-egui/src/panels/edit.rs` | no drag-to-adjust on the histogram |
@@ -179,7 +179,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-FILT-TYPE | Type / edited filter | P1 | ✅ | `cmd:library.filter` (`kind`, `merged`, `edited`), `crates/ui-egui/src/panels/filterbar.rs`, `crates/catalog/src/query.rs` (`merged_kind`) | photos / raw / videos / HDR / panoramas / HDR panoramas (merge results by name), edited / unedited; no depth kind |
 | LR-FILT-KEYWORD | Keyword filter | P1 | ✅ | `cmd:library.filter` (`keyword`), `crates/ui-egui/src/panels/filterbar.rs` | keyword picker |
 | LR-FILT-CAMERA | Camera / lens filter | P1 | ✅ | `cmd:library.filter` (`camera`, `lens`), `crates/ui-egui/src/panels/filterbar.rs` | camera and lens pickers |
-| LR-FILT-LOCATION | Location filter | P2 | 🟡 | `cmd:library.filter` (`text`) | free-text match on the location field only |
+| LR-FILT-LOCATION | Location filter | P2 | ✅ | `cmd:library.filter` (`text`, `ruleSet` field `location`) | free text, or a rule on location / city / state / country (smart albums, `library.filter`) |
 | LR-FILT-PEOPLE | People filter | P2 | ⬜ | | |
 | LR-FILT-CULL | Culling-score filters | P2 | ⬜ | | |
 | LR-FILT-SORT | Sort | P0 | ✅ | `cmd:library.sort`, `crates/ui-egui/src/panels/bottombar.rs` | no colour-label or custom (manual) order |
@@ -243,7 +243,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-GEOM-UPRIGHT | Upright | P1 | ✅ | `cmd:geometry.upright`, `cmd:geometry.guides` | |
 | LR-EDIT-GEOM-MANUAL | Manual transform | P1 | ✅ | `ctl:geometry.*` | |
 | LR-EDIT-GEOM-CONSTRAIN | Constrain crop | P1 | ✅ | `crates/ui-egui/src/panels/right.rs` (checkbox → `cmd:develop.merge`) | |
-| LR-EDIT-GEOM-GRID | Grid while transforming | P2 | ⬜ | | |
+| LR-EDIT-GEOM-GRID | Grid while transforming | P2 | ✅ | `crates/ui-egui/src/panels/detail.rs` | a fine grid over the photo while a geometry slider is dragged |
 | LR-EDIT-LENSBLUR | Lens blur | P2 | ⬜ | | settings field reserved, not rendered |
 | LR-EDIT-CALIB | Calibration [Classic] | P1 | ✅ | `ctl:calibration.*` | shadows tint, red/green/blue primary hue and saturation; read/written in XMP |
 | LR-EDIT-SECTION-TOGGLE | Section on/off | P1 | ✅ | `cmd:develop.sectionEnabled` | |
@@ -351,7 +351,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 |---|---|---|---|---|---|
 | LR-VER-CREATE | Create version | P1 | ✅ | `cmd:version.create` | |
 | LR-VER-PANEL | Versions panel | P1 | ✅ | `cmd:panel.versions`, `cmd:version.create`, `cmd:version.restore`, `cmd:version.delete`, `cmd:version.rename`, `cmd:version.update`, `crates/ui-egui/src/panels/right.rs` (`versions`) | Named / Auto tabs, a thumbnail of each version's look, name and date, current marker; resting on a version previews it in the loupe; click restores, double-click renames; row menu (update, rename, set as before, delete). No automatic versions are created yet (LR-VER-AUTO) |
-| LR-VER-AUTO | Automatic versions | P2 | ⬜ | | `auto` flag reserved in the model |
+| LR-VER-AUTO | Automatic versions | P2 | ✅ | `crates/engine/src/lib.rs` (`auto_version`) | leaving an edited photo keeps its settings as an Auto version (when they differ from the latest version; 20 kept; not an undo step); Versions panel ▸ Auto |
 | LR-VER-HISTORY | Edit history | P1 | ✅ | `cmd:panel.activity`, `cmd:history.list`, `cmd:history.restore` | |
 | LR-VER-UNDO | Undo / redo | P0 | ✅ | `cmd:edit.undo`, `cmd:edit.redo` | |
 
@@ -363,7 +363,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-SYNC-CHOOSE | Choose settings to copy | P0 | ✅ | `cmd:dialog.copySettings` | groups are coarser than per-slider |
 | LR-SYNC-PASTE | Paste to selection | P0 | ✅ | `cmd:develop.paste` | no separate "paste selected" (choose at copy time instead) |
 | LR-SYNC-SYNCBTN | Sync active → selected | P1 | ✅ | `cmd:develop.sync` | |
-| LR-SYNC-PREVIOUS | Paste from previous / auto sync [Classic] | P2 | 🟡 | `cmd:develop.pastePrevious` | ⌥⌘V pastes the previously active photo's settings (copy groups); no auto sync |
+| LR-SYNC-PREVIOUS | Paste from previous / auto sync [Classic] | P2 | ✅ | `cmd:develop.pastePrevious`, `cmd:develop.autoSync` | ⌥⌘V pastes the previously active photo's settings (copy groups); Auto Sync (⌥⇧⌘A) |
 
 ## O. Merge (MERGE)
 
@@ -550,7 +550,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-VIEW-INCLUDESUBFOLDERS | Include subfolders | P1 | ✅ | `cmd:library.browse` (`subfolders`) | toggle in the folder header; imports of folders are recursive |
 | MENU-VIEW-SORT | Sort submenu | P0 | ✅ | `cmd:library.sort` | no colour-label key |
 | MENU-VIEW-STACKS | Expand/collapse stacks | P1 | ✅ | `cmd:stack.expandAll`, `cmd:stack.collapseAll` | |
-| MENU-VIEW-PHOTOCOUNT | Show photo counts | P2 | 🟡 | `crates/ui-egui/src/panels/left.rs` | counts always shown; no toggle |
+| MENU-VIEW-PHOTOCOUNT | Show photo counts | P2 | ✅ | `cmd:view.photoCounts` | View ▸ Show Photo Counts toggles the left panel's counts |
 | MENU-VIEW-HDR | HDR display options | P2 | ⬜ | | |
 | MENU-PHOTO-ADDTOALBUM | Add to album | P0 | ✅ | `cmd:album.addPhotos` | |
 | MENU-PHOTO-REMOVEFROMALBUM | Remove from album | P0 | ✅ | `cmd:album.removePhotos` | |
@@ -574,13 +574,13 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-PHOTO-MOVETOCLOUD | Move/copy to cloud | OOS | 🚫 | | |
 | MENU-WINDOW-MINIMIZE | Minimize / zoom | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | the system's Minimize (⌘M) and Zoom items at the top of Window |
 | MENU-WINDOW-PANELS | Panel switches | P0 | ✅ | `cmd:panel.edit`, `cmd:panel.crop`, `cmd:panel.remove`, `cmd:panel.masking`, `cmd:panel.presets`, `cmd:panel.versions` | |
-| MENU-WINDOW-BRINGFRONT | Bring all to front | P2 | 🟡 | | platform window defaults (unverified) |
+| MENU-WINDOW-BRINGFRONT | Bring all to front | P2 | ✅ | `apps/lightcraft/src/native_menu.rs` | the system's item at the end of Window |
 | MENU-HELP-HELP | Help | P2 | ✅ | `cmd:app.help` | opens the documentation |
 | MENU-HELP-TUTORIALS | Tutorials | OOS | 🚫 | | |
 | MENU-HELP-WHATSNEW | What's new | P2 | ⬜ | | |
 | MENU-HELP-SHORTCUTS | Keyboard shortcuts | P1 | ✅ | `cmd:app.shortcuts` | |
 | MENU-HELP-FEEDBACK | Send feedback | P2 | ⬜ | | |
-| MENU-HELP-SYSINFO | System info | P2 | ⬜ | `cmd:library.info` | library info only |
+| MENU-HELP-SYSINFO | System info | P2 | ✅ | `cmd:app.systemInfo`, `cmd:library.info` | Help ▸ System Info…: version, OS, CPU threads, GPU, memory budget, preview size, library, timings; Copy to Clipboard; JSON for agents (`open: false`) |
 | MENU-CTX-GRID | Photo context menu | P0 | ✅ | `crates/ui-egui/src/panels/grid.rs` (`context_menu`) | rate, flag, label, add to / remove from album, rename, virtual copy, version, stack, copy / paste / paste selected, reset, merge, rotate, show in Finder, export / export with preset, set as album cover (in an album), delete |
 | MENU-CTX-DETAIL | Loupe context menu | P1 | ✅ | `crates/ui-egui/src/panels/detail.rs` | Zoom submenu (fit, 100%, in, out), then the photo menu |
 | MENU-CTX-ALBUM | Album / folder row menu | P0 | ✅ | `crates/ui-egui/src/panels/left.rs` (`folder_menu`), `cmd:album.move`, `cmd:dialog.export` | add selected, export album (dialog / preset), move to a folder or the top level, rename, delete; smart albums: update rules |
@@ -708,7 +708,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-COMMENTS | Comments panel | P2 | ⬜ | | |
 | LRC-LIB-VISUALSEARCH | Find similar photos | P2 | ⬜ | | |
 | LRC-LIB-MISSING | Missing files & relink | P1 | ✅ | `cmd:library.missing`, `cmd:photo.relink`, `cmd:library.findMissing`, `cmd:file.findMissing`, `cmd:photo.locate` | File → Find Missing Photos… (same name and size anywhere in a folder, one undo step), photo menu → Locate Missing File…; unreadable files show "!" in the grid and a reason in the loupe; undo never moves files. No missing-photos collection |
-| LRC-LIB-CONVERT | Convert to DNG | P2 | ⬜ | `crates/raw/src/dngwrite.rs` | writer exists, not exposed |
+| LRC-LIB-CONVERT | Convert to DNG | P2 | ✅ | `cmd:photo.convertToDng`, `crates/engine/src/cmd/convert.rs` | Photo ▸ Convert to DNG: lossless DNG next to the raw with the settings embedded, photo (and its virtual copies) relinked; originals kept; undoable |
 | LRC-LIB-PREVIEWS | Build / discard previews | P1 | ✅ | `cmd:library.buildPreviews`, `cmd:library.previewProgress`, `cmd:library.cancelPreviews`, `cmd:library.clearPreviews`, `crates/engine/src/cmd/previews.rs`, `crates/preview/src/lib.rs` | File ▸ Previews: build standard-sized (Settings → Performance size) or 1:1 previews of the selected / visible photos in the background (progress toasts, stop), discard the cache; disk thumbnail + view cache; no smart previews (offline proxies) |
 | LRC-LIB-SLIDESHOW-IMPROMPTU | Impromptu slideshow | P2 | ⬜ | | |
 | LRC-DEV-SNAPSHOTS | Named snapshots | P1 | ✅ | `cmd:version.create`, `cmd:version.restore` | = versions |

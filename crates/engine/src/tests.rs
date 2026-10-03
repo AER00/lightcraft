@@ -558,3 +558,31 @@ fn color_range_sampling_selects_the_clicked_colour() {
     assert_eq!(s.execute("mask.sampleColor", &json!({"x": 0.5, "y": 0.5})).unwrap()["samples"].as_array().unwrap().len(), 1);
     assert!(s.execute("mask.sampleColor", &json!({"x": 1.5, "y": 0.5})).is_err());
 }
+
+#[test]
+fn leaving_an_edited_photo_keeps_an_auto_version() {
+    use lightcraft_catalog::PhotoId;
+    let mut s = demo();
+    let ids: Vec<u64> = s.catalog.photos().take(2).map(|p| p.id.0).collect();
+    s.execute("library.select", &json!({"ids": [ids[0]]})).unwrap();
+    let before = s.catalog.photo(PhotoId(ids[0])).unwrap().versions.len();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.4})).unwrap();
+    let undo = s.undo.len();
+    s.execute("library.select", &json!({"ids": [ids[1]]})).unwrap();
+    let v = s.catalog.photo(PhotoId(ids[0])).unwrap().versions.clone();
+    assert_eq!(v.len(), before + 1);
+    assert!(v.last().unwrap().auto && v.last().unwrap().settings.light.exposure == 0.4);
+    assert_eq!(s.undo.len(), undo, "not an undo step");
+    // back and away again without changes: nothing new
+    s.execute("library.select", &json!({"ids": [ids[0]]})).unwrap();
+    s.execute("library.select", &json!({"ids": [ids[1]]})).unwrap();
+    assert_eq!(s.catalog.photo(PhotoId(ids[0])).unwrap().versions.len(), before + 1);
+    // at most AUTO_VERSIONS
+    for i in 0..(crate::AUTO_VERSIONS + 5) {
+        s.execute("library.select", &json!({"ids": [ids[0]]})).unwrap();
+        s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.01 * i as f64 + 0.5})).unwrap();
+        s.execute("library.select", &json!({"ids": [ids[1]]})).unwrap();
+    }
+    let autos = s.catalog.photo(PhotoId(ids[0])).unwrap().versions.iter().filter(|v| v.auto).count();
+    assert_eq!(autos, crate::AUTO_VERSIONS);
+}
