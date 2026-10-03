@@ -126,6 +126,8 @@ pub struct Session {
     pub filter_presets: Vec<cmd::filters::FilterPreset>,
     /// Saved colour-label name sets.
     pub label_sets: Vec<cmd::manage::LabelSet>,
+    /// Look-alike signatures by content key (Find Similar).
+    pub signatures: std::collections::HashMap<String, [f32; 64]>,
     /// Imported `.cube` LUT profiles.
     pub lut_profiles: Vec<cmd::lut_profiles::LutProfile>,
     /// The target album B adds to (`None` = the Quick Collection).
@@ -193,6 +195,7 @@ impl Session {
             metadata_presets: Vec::new(),
             filter_presets: Vec::new(),
             label_sets: Vec::new(),
+            signatures: Default::default(),
             lut_profiles: Vec::new(),
             target_album: None,
             auto_import_seen: Default::default(),

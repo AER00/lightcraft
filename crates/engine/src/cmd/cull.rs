@@ -83,14 +83,59 @@ fn analyze(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"photos": out, "groups": best.len(), "rejected": rejected, "picked": picked, "failed": failed}))
 }
 
+/// Find Similar: photos that look like `id` (signatures from thumbnail-level sources, cached by
+/// content), most similar first; the view is filtered to them.
+fn find_similar(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "library.findSimilar";
+    let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or(s.active()).ok_or_else(|| super::bad(C, "no photo"))?;
+    let min = p.get("similarity").and_then(Value::as_f64).unwrap_or(0.8) as f32;
+    let all: Vec<PhotoId> = s.catalog.photos().filter(|q| q.in_library()).map(|q| q.id).collect();
+    let sig = |s: &mut Session, id: PhotoId| -> Option<[f32; 64]> {
+        let key = s.catalog.photo(id).map(|p| crate::media::content_key(p))?;
+        if let Some(v) = s.signatures.get(&key) {
+            return Some(*v);
+        }
+        let src = s.source_now(id, crate::media::SourceLevel::Thumb).ok()?;
+        let v = lightcraft_pipeline::cull::signature(&src);
+        s.signatures.insert(key, v);
+        Some(v)
+    };
+    let me = sig(s, id).ok_or_else(|| super::bad(C, "can't read the photo"))?;
+    let mut hits: Vec<(PhotoId, f32)> = Vec::new();
+    for q in all {
+        if let Some(v) = sig(s, q) {
+            let sim = lightcraft_pipeline::cull::similarity(&me, &v);
+            if sim >= min {
+                hits.push((q, sim));
+            }
+        }
+    }
+    hits.sort_by(|a, b| b.1.total_cmp(&a.1));
+    if p.get("filter").and_then(Value::as_bool).unwrap_or(true) {
+        s.filter.only = hits.iter().map(|h| h.0).collect();
+    }
+    Ok(json!({"photos": hits.iter().map(|(i, v)| json!({"id": i.0, "similarity": (v * 1000.0).round() / 1000.0})).collect::<Vec<_>>()}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
-    vec![cmd!(
-        "photo.analyze",
-        "Assisted Culling",
-        [],
-        None,
-        "{ids?, rejectBelow?: sharpness 0..100, pickBest?: bool} — score the selected photos (else all in view) for focus (0..100) and clipping, group look-alike shots taken within 10 s and mark the sharpest of each; optionally reject blurry photos and pick each group's best; one undo step → {photos: [{id, sharpness, clipped, group, best}], groups, rejected, picked}",
-        always,
-        analyze
-    )]
+    vec![
+        cmd!(
+            "library.findSimilar",
+            "Find Similar Photos",
+            ["Photo"],
+            None,
+            "{id?, similarity?: 0..1 (0.8), filter?: bool (true)} — photos that look like the active one (composition and tones), most similar first; filters the view to them (Clear Filters to go back) → {photos: [{id, similarity}]}",
+            always,
+            find_similar
+        ),
+        cmd!(
+            "photo.analyze",
+            "Assisted Culling",
+            [],
+            None,
+            "{ids?, rejectBelow?: sharpness 0..100, pickBest?: bool} — score the selected photos (else all in view) for focus (0..100) and clipping, group look-alike shots taken within 10 s and mark the sharpest of each; optionally reject blurry photos and pick each group's best; one undo step → {photos: [{id, sharpness, clipped, group, best}], groups, rejected, picked}",
+            always,
+            analyze
+        ),
+    ]
 }

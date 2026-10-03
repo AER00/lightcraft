@@ -102,6 +102,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         });
     });
     let n = app.session.selection.ids.len();
+    if n > 1 && matches!(app.ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid) {
+        quick_develop(app, ui, n);
+    }
     if app.session.auto_sync && n > 1 {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 0, bottom: 10 }).show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -896,4 +899,38 @@ fn paint_wheel(p: &egui::Painter, c: Pos2, rad: f32) {
     }
     p.add(mesh);
     p.circle_stroke(c, rad, Stroke::new(1.0, Color32::from_gray(40)));
+}
+
+/// Quick Develop (grid with several photos selected): relative steps applied to every selected
+/// photo from its own value.
+fn quick_develop(app: &mut LightcraftApp, ui: &mut egui::Ui, n: usize) {
+    let t = Tokens::get(ui.ctx());
+    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 0, bottom: 10 }).show(ui, |ui| {
+        ui.label(egui::RichText::new(format!("Quick Develop · {n} photos")).color(t.text_label).size(12.5));
+        ui.add_space(4.0);
+        let rows: [(&str, &str, f64, f64); 9] = [
+            ("Exposure", "light.exposure", 1.0 / 3.0, 1.0),
+            ("Contrast", "light.contrast", 5.0, 20.0),
+            ("Highlights", "light.highlights", 5.0, 20.0),
+            ("Shadows", "light.shadows", 5.0, 20.0),
+            ("Whites", "light.whites", 5.0, 20.0),
+            ("Blacks", "light.blacks", 5.0, 20.0),
+            ("Clarity", "effects.clarity", 5.0, 20.0),
+            ("Vibrance", "color.vibrance", 5.0, 20.0),
+            ("Temp", "wb.temp", 100.0, 500.0),
+        ];
+        egui::Grid::new("quick-develop").num_columns(5).spacing([4.0, 3.0]).show(ui, |ui| {
+            for (label, ctl, small, big) in rows {
+                ui.label(egui::RichText::new(label).size(11.5).color(t.text_dim));
+                for (txt, d) in [("◀◀", -big), ("◀", -small), ("▶", small), ("▶▶", big)] {
+                    let r = ui.add(egui::Button::new(egui::RichText::new(txt).size(10.0)).min_size(egui::vec2(28.0, 18.0)));
+                    crate::widgets::register(ui.ctx(), format!("button:quick-{ctl}-{txt}"), r.rect);
+                    if r.on_hover_text(format!("{label} {d:+} on every selected photo")).clicked() {
+                        let _ = app.run("develop.quickAdjust", json!({"control": ctl, "delta": d}));
+                    }
+                }
+                ui.end_row();
+            }
+        });
+    });
 }

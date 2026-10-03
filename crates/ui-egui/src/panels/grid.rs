@@ -592,6 +592,16 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if ui.button("Open in Detail").clicked() {
         let _ = app.run("view.detail", json!({}));
     }
+    if ui.button("Find Similar Photos").clicked() {
+        match app.run("library.findSimilar", json!({"id": id.0})) {
+            Ok(r) => {
+                let n = r["photos"].as_array().map_or(0, Vec::len);
+                app.ui.view = crate::state::ViewMode::PhotoGrid;
+                app.toast(ui.ctx(), format!("{n} similar photo{} · View ▸ Clear Filters to see all", if n == 1 { "" } else { "s" }));
+            }
+            Err(e) => app.toast(ui.ctx(), e),
+        }
+    }
     if ui.button("Set as Reference Photo").clicked() {
         let _ = app.run("photo.setReference", json!({"id": id.0}));
     }

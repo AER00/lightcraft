@@ -586,3 +586,56 @@ fn leaving_an_edited_photo_keeps_an_auto_version() {
     let autos = s.catalog.photo(PhotoId(ids[0])).unwrap().versions.iter().filter(|v| v.auto).count();
     assert_eq!(autos, crate::AUTO_VERSIONS);
 }
+
+#[test]
+fn match_total_exposures() {
+    use lightcraft_catalog::PhotoId;
+    let mut s = demo();
+    let ids: Vec<u64> = s.catalog.photos().take(3).map(|p| p.id.0).collect();
+    // reference 1/100 f/4 ISO 100, slider +0.5; other 1/50 f/4 ISO 100 (one stop more light)
+    for (i, (sh, ap, iso)) in [("1/100", 4.0f32, 100u32), ("1/50", 4.0, 100), ("", 4.0, 100)].iter().enumerate() {
+        let mut m = s.catalog.photo(PhotoId(ids[i])).unwrap().meta.clone();
+        m.shutter = sh.to_string();
+        m.aperture = Some(*ap);
+        m.iso = Some(*iso);
+        s.commit("t", lightcraft_catalog::Op::SetMeta { id: PhotoId(ids[i]), meta: Box::new(m) }).unwrap();
+    }
+    s.execute("library.select", &json!({"ids": ids})).unwrap();
+    s.selection.active = Some(PhotoId(ids[0]));
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5, "ids": [ids[0]]})).unwrap();
+    let r = s.execute("develop.matchExposure", &json!({})).unwrap();
+    assert_eq!((r["changed"].as_u64(), r["skipped"].clone()), (Some(1), json!([ids[2]])));
+    let e = s.develop_of(PhotoId(ids[1])).unwrap().light.exposure;
+    assert!((e - (-0.5)).abs() < 1e-9, "one stop more light → one stop less exposure: {e}");
+}
+
+#[test]
+fn find_similar_filters_to_look_alikes() {
+    let mut s = demo();
+    let id = s.catalog.photos().next().unwrap().id;
+    let r = s.execute("library.findSimilar", &json!({"id": id.0, "similarity": 0.5})).unwrap();
+    let hits: Vec<u64> = r["photos"].as_array().unwrap().iter().map(|h| h["id"].as_u64().unwrap()).collect();
+    assert_eq!(hits[0], id.0, "the photo itself is the closest");
+    assert!(hits.len() < s.catalog.len(), "not everything looks alike");
+    let vis = s.visible_cloned();
+    assert!(!vis.is_empty() && vis.iter().all(|v| hits.contains(&v.0)), "the view shows only them");
+    s.execute("library.clearFilter", &json!({})).unwrap();
+    assert!(s.visible_cloned().len() > vis.len());
+}
+
+#[test]
+fn quick_develop_adds_to_each_photo() {
+    use lightcraft_catalog::PhotoId;
+    let mut s = demo();
+    let ids: Vec<u64> = s.catalog.photos().take(2).map(|p| p.id.0).collect();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5, "ids": [ids[0]]})).unwrap();
+    s.execute("library.select", &json!({"ids": ids})).unwrap();
+    let before: Vec<f64> = ids.iter().map(|i| s.develop_of(PhotoId(*i)).unwrap().light.exposure).collect();
+    s.execute("develop.quickAdjust", &json!({"control": "light.exposure", "delta": 1.0 / 3.0})).unwrap();
+    for (i, id) in ids.iter().enumerate() {
+        let e = s.develop_of(PhotoId(*id)).unwrap().light.exposure;
+        assert!((e - before[i] - 1.0 / 3.0).abs() < 0.02, "{e} vs {}", before[i]);
+    }
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.develop_of(PhotoId(ids[0])).unwrap().light.exposure, before[0], "one undo step");
+}

@@ -639,6 +639,80 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            "develop.quickAdjust",
+            "Quick Develop",
+            [],
+            None,
+            "{control: develop control id, delta, ids?} — add `delta` to the control on every target photo (each from its own value; Quick Develop) in one undo step → {changed}",
+            has_selection,
+            |s, p| {
+                let c = "develop.quickAdjust";
+                let ctl = str_param(p, "control").ok_or_else(|| bad(c, "missing control"))?.to_string();
+                let spec = controls::find(&ctl).ok_or_else(|| bad(c, format!("unknown control `{ctl}`")))?;
+                let delta = f64_req(p, "delta", c)?;
+                let label = format!("Quick Develop: {}", spec.label);
+                let ops: Vec<Op> = s
+                    .targets(p)
+                    .into_iter()
+                    .filter_map(|id| s.develop_of(id).map(|d| (id, d)))
+                    .filter_map(|(id, d)| {
+                        let mut nd = (*d).clone();
+                        let v = controls::get(&nd, &ctl).unwrap_or(spec.default);
+                        controls::set(&mut nd, &ctl, v + delta);
+                        if ctl == "wb.temp" || ctl == "wb.tint" {
+                            nd.wb.mode = WbMode::Custom;
+                        }
+                        s.develop_op(id, nd, &label)
+                    })
+                    .collect();
+                let n = ops.len();
+                if n > 0 {
+                    s.commit(&label, Op::Batch { ops })?;
+                }
+                Ok(json!({"changed": n}))
+            }
+        ),
+        cmd!(
+            "develop.matchExposure",
+            "Match Total Exposures",
+            ["Photo"],
+            None,
+            "{ids?} — set each selected photo's Exposure so its total exposure (shutter × ISO ÷ aperture², plus the slider) equals the active photo's; photos without exposure data are skipped → {changed, skipped}",
+            has_selection,
+            |s, p| {
+                let c = "develop.matchExposure";
+                let reference = active(s, c)?;
+                // log2 of the light the photo gathered (shutter s × ISO / f-number²)
+                let gathered = |s: &Session, id: PhotoId| -> Option<f64> {
+                    let m = &s.catalog.photo(id)?.meta;
+                    let t = match m.shutter.split_once('/') {
+                        Some((a, b)) => a.trim().parse::<f64>().ok()? / b.trim().parse::<f64>().ok()?,
+                        None => m.shutter.trim().trim_end_matches('s').trim().parse::<f64>().ok()?,
+                    };
+                    let (n, iso) = (m.aperture? as f64, m.iso? as f64);
+                    (t > 0.0 && n > 0.0 && iso > 0.0).then(|| (t * iso / (n * n)).log2())
+                };
+                let r_ev = gathered(s, reference).ok_or_else(|| bad(c, "the active photo has no shutter / aperture / ISO"))?;
+                let r_slider = s.develop_of(reference).map(|d| d.light.exposure).unwrap_or(0.0);
+                let ids: Vec<PhotoId> = s.targets(p).into_iter().filter(|x| *x != reference).collect();
+                let (mut ops, mut skipped) = (Vec::new(), Vec::new());
+                for id in ids {
+                    let (Some(ev), Some(d)) = (gathered(s, id), s.develop_of(id)) else {
+                        skipped.push(id.0);
+                        continue;
+                    };
+                    let mut nd = (*d).clone();
+                    nd.light.exposure = (r_slider + r_ev - ev).clamp(-5.0, 5.0);
+                    ops.extend(s.develop_op(id, nd, "Match Total Exposures"));
+                }
+                let n = ops.len();
+                if n > 0 {
+                    s.commit("Match Total Exposures", Op::Batch { ops })?;
+                }
+                Ok(json!({"changed": n, "skipped": skipped}))
+            }
+        ),
+        cmd!(
             "develop.autoSync",
             "Auto Sync",
             ["Edit"],

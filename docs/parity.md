@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 14 | 1 | 2 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 80 | 1 | 4 | 8 | 46/47 (98%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 25 | 8 | 46 | 9 | — | 20/21 (95%) |
-| **Total** | 378 | 25 | 97 | 37 | 193/198 (97%) | 136/144 (94%) |
+| Lightroom Classic extras | 29 | 8 | 42 | 9 | — | 20/21 (95%) |
+| **Total** | 382 | 25 | 93 | 37 | 193/198 (97%) | 136/144 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **78.1%** of 500 in-scope rows — P0 98.7% of 198 · P1 96.2% of 144 · P2 35.8% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **78.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 96.2% of 144 · P2 38.3% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -703,19 +703,19 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-LABELS | Colour-label sets | P1 | ✅ | `cmd:label.sets`, `cmd:label.applySet`, `cmd:label.saveSet`, `cmd:label.deleteSet`, `cmd:label.setNames`, `crates/engine/src/cmd/manage.rs` | built-in Colors / Review sets + user sets (Photo ▸ Set Color Label, Edit Label Names… dialog); names written to and read from `xmp:Label` |
 | LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | ✅ | `crates/catalog/src/keywords.rs`, `cmd:keyword.list`, `cmd:keyword.sets`, `cmd:keyword.toggleFromSet`, `cmd:keyword.saveSet`, `cmd:tool.keywordPainter` | hierarchical `a\|b\|c` keywords (tree, parent filters include children, rename moves children); keyword sets + Recent Keywords (⌥1–⌥9); keyword painter (Keywords panel ▸ Paint: click photos in the grid to toggle a keyword, Esc stops) |
 | LRC-LIB-METADATA | Metadata panel & presets | P1 | ✅ | `cmd:photo.setMeta`, `cmd:metadata.savePreset`, `cmd:metadata.applyPreset`, `cmd:metadata.presets`, `cmd:metadata.deletePreset`, `cmd:dialog.captureTime` | IPTC core, accessibility, place, capture-time edit; metadata presets (Photo → Metadata Preset, Save Metadata Preset… from the active photo; applied on import from Settings); no copyright status field |
-| LRC-LIB-QUICKDEV | Quick develop | P2 | ⬜ | | |
+| LRC-LIB-QUICKDEV | Quick develop | P2 | ✅ | `cmd:develop.quickAdjust`, `crates/ui-egui/src/panels/edit.rs` (`quick_develop`) | grid with several photos selected: Edit panel ▸ Quick Develop steps (exposure ⅓ / 1 stop, contrast, highlights, shadows, whites, blacks, clarity, vibrance, temperature) added to each photo's own value, one undo step |
 | LRC-LIB-PEOPLE | People view | P2 | ⬜ | | |
 | LRC-LIB-COMMENTS | Comments panel | P2 | ⬜ | | |
-| LRC-LIB-VISUALSEARCH | Find similar photos | P2 | ⬜ | | |
+| LRC-LIB-VISUALSEARCH | Find similar photos | P2 | ✅ | `cmd:library.findSimilar`, `crates/pipeline/src/cull.rs` (`signature`) | photo menu / Photo ▸ Find Similar Photos: look-alike photos (composition and tones), most similar first, as a filter (`only`) |
 | LRC-LIB-MISSING | Missing files & relink | P1 | ✅ | `cmd:library.missing`, `cmd:photo.relink`, `cmd:library.findMissing`, `cmd:file.findMissing`, `cmd:photo.locate` | File → Find Missing Photos… (same name and size anywhere in a folder, one undo step), photo menu → Locate Missing File…; unreadable files show "!" in the grid and a reason in the loupe; undo never moves files. No missing-photos collection |
 | LRC-LIB-CONVERT | Convert to DNG | P2 | ✅ | `cmd:photo.convertToDng`, `crates/engine/src/cmd/convert.rs` | Photo ▸ Convert to DNG: lossless DNG next to the raw with the settings embedded, photo (and its virtual copies) relinked; originals kept; undoable |
 | LRC-LIB-PREVIEWS | Build / discard previews | P1 | ✅ | `cmd:library.buildPreviews`, `cmd:library.previewProgress`, `cmd:library.cancelPreviews`, `cmd:library.clearPreviews`, `crates/engine/src/cmd/previews.rs`, `crates/preview/src/lib.rs` | File ▸ Previews: build standard-sized (Settings → Performance size) or 1:1 previews of the selected / visible photos in the background (progress toasts, stop), discard the cache; disk thumbnail + view cache; no smart previews (offline proxies) |
-| LRC-LIB-SLIDESHOW-IMPROMPTU | Impromptu slideshow | P2 | ⬜ | | |
+| LRC-LIB-SLIDESHOW-IMPROMPTU | Impromptu slideshow | P2 | ✅ | `cmd:view.slideshow` | see LR-VIEW-SLIDESHOW |
 | LRC-DEV-SNAPSHOTS | Named snapshots | P1 | ✅ | `cmd:version.create`, `cmd:version.restore` | = versions |
 | LRC-DEV-HISTORY | Full history panel | P1 | ✅ | `cmd:history.list`, `cmd:history.restore`, `cmd:history.clear` | row menu: copy step to before, create version from step, clear history |
 | LRC-DEV-SOFTPROOF | Soft proofing | P2 | ⬜ | | |
 | LRC-DEV-AUTOSYNC | Sync / auto sync / paste previous | P1 | ✅ | `cmd:develop.sync`, `cmd:develop.autoSync`, `cmd:develop.pastePrevious` | Edit ▸ Sync Settings / Auto Sync (⌥⇧⌘A): only the changed settings carry over, one undo step, slider drags sync on release, spots / red eye stay per photo; Edit panel banner |
-| LRC-DEV-MATCHEXP | Match total exposures | P2 | ⬜ | | |
+| LRC-DEV-MATCHEXP | Match total exposures | P2 | ✅ | `cmd:develop.matchExposure` | Photo ▸ Match Total Exposures: the selected photos' Exposure set so shutter × ISO ÷ aperture² plus the slider matches the active photo's |
 | LRC-DEV-CALIB | Calibration panel | P1 | ✅ | `ctl:calibration.*` | |
 | LRC-DEV-TAT | Targeted adjustment tools | P1 | ✅ | `cmd:develop.targeted` (`target`: curve / hue / sat / lum) | |
 | LRC-DEV-DEFAULTS | Per-camera raw defaults | P1 | ✅ | `cmd:library.preferences` (`camera`, `import.perCamera`), `crates/ui-egui/src/panels/settings.rs` | Settings → Import: raw default and per-camera presets |

@@ -24,6 +24,9 @@ pub struct Filter {
     pub rating_op: RatingOp,
     pub flag: Option<Flag>,
     pub label: Option<ColorLabel>,
+    /// Only these photos (Find Similar results…); empty = no constraint.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub only: Vec<PhotoId>,
     /// Any of these labels (the filter bar's multi-select); empty = no constraint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<ColorLabel>,
@@ -208,6 +211,9 @@ impl Filter {
             return false;
         }
         if !self.labels.is_empty() && !p.label.is_some_and(|l| self.labels.contains(&l)) {
+            return false;
+        }
+        if !self.only.is_empty() && !self.only.contains(&p.id) {
             return false;
         }
         if let Some(want) = &self.merged {
