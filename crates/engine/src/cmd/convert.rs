@@ -183,8 +183,63 @@ fn reload(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"reloaded": reloaded.iter().map(|i| i.0).collect::<Vec<_>>()}))
 }
 
+/// Duplicate: copy the file next to itself (`<name>-copy`, never overwriting) and add it with the
+/// same settings, metadata, rating, flag, label and albums. → {ids}
+fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "photo.duplicate";
+    let mut made = Vec::new();
+    for id in s.targets(p) {
+        let Some(ph) = s.catalog.photo(id).map(|p| (**p).clone()) else { continue };
+        let Source::File { path } = &ph.source else { return Err(bad(C, "a generated demo photo has no file to duplicate")) };
+        let src = Path::new(path);
+        let stem = src.file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "photo".into());
+        let ext = src.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+        let dir = src.parent().unwrap_or(Path::new(""));
+        let mut dst = dir.join(format!("{stem}-copy{ext}"));
+        let mut n = 2;
+        while dst.exists() {
+            dst = dir.join(format!("{stem}-copy-{n}{ext}"));
+            n += 1;
+        }
+        std::fs::copy(src, &dst).map_err(|e| bad(C, format!("{path}: {e}")))?;
+        let new = s.catalog.alloc_photo_id();
+        let mut q = ph.clone();
+        q.id = new;
+        q.source = Source::File { path: dst.to_string_lossy().to_string() };
+        q.file_name = dst.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
+        // the same bytes, but its own photo: no duplicate-content clash, no shared history
+        q.content_hash = q.content_hash.map(|h| format!("{h}:dup{}", new.0));
+        q.copy_of = None;
+        q.copy_name = None;
+        q.history.clear();
+        q.versions.retain(|v| !v.auto);
+        let mut ops = vec![Op::AddPhoto { photo: Box::new(q) }];
+        for a in s.catalog.albums().filter(|a| !a.is_smart() && !a.folder && a.photos.contains(&id)) {
+            let mut photos = a.photos.clone();
+            photos.push(new);
+            ops.push(Op::SetAlbumPhotos { id: a.id, photos });
+        }
+        s.commit("Duplicate", Op::Batch { ops })?;
+        made.push(new);
+    }
+    s.merge_undo(made.len(), "Duplicate");
+    if let Some(last) = made.last() {
+        s.selection = crate::Selection { ids: made.clone(), active: Some(*last) };
+    }
+    Ok(json!({"ids": made.iter().map(|i| i.0).collect::<Vec<_>>()}))
+}
+
 pub fn edit_specs() -> Vec<CommandSpec> {
     vec![
+        cmd!(
+            "photo.duplicate",
+            "Duplicate",
+            ["Photo"],
+            None,
+            "{ids?} — copy each photo's file next to it (`-copy`) and add it with the same settings, metadata and albums (a real file, unlike a virtual copy) → {ids}",
+            has_selection,
+            duplicate
+        ),
         cmd!(
             "photo.reload",
             "Reload from Disk",

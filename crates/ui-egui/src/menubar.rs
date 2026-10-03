@@ -296,6 +296,23 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 item("library.buildPreviews", json!({"size": "full"}), format!("Build 1:1 Previews ({scope})"), None, !running, None),
                 item("library.cancelPreviews", Value::Null, "Stop Building Previews", None, running, None),
                 MenuNode::Separator,
+                item(
+                    "library.smartPreviews",
+                    Value::Null,
+                    format!("Build Smart Previews ({scope})"),
+                    None,
+                    app.session.media.smart_dir.is_some(),
+                    None,
+                ),
+                item(
+                    "library.smartPreviews",
+                    json!({"discard": true}),
+                    format!("Discard Smart Previews ({scope})"),
+                    None,
+                    app.session.media.smart_dir.is_some(),
+                    None,
+                ),
+                MenuNode::Separator,
                 item("library.clearPreviews", Value::Null, "Discard Preview Cache", None, true, None),
             ]
         }

@@ -468,6 +468,20 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             format!("{:.5}° {}, {:.5}° {}", la.abs(), if la >= 0.0 { "N" } else { "S" }, lo.abs(), if lo >= 0.0 { "E" } else { "W" })
         });
         ui.label(egui::RichText::new(gps.unwrap_or_else(|| "—".into())).color(t.text_label));
+        // offline originals / smart previews
+        if let lightcraft_catalog::Source::File { path } = &p.source {
+            let online = std::path::Path::new(path).exists();
+            let smart = lightcraft_engine::cmd::previews::has_smart_preview(&app.session, p.id);
+            if !online || smart {
+                let text = match (online, smart) {
+                    (false, true) => "Original offline · editing the smart preview",
+                    (false, false) => "Original offline · no smart preview",
+                    _ => "Smart preview available",
+                };
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(text).color(if online { t.text_dim } else { t.accent }));
+            }
+        }
         ui.add_space(10.0);
         if text_button(ui, "allMetadata", "All Metadata…", false).on_hover_text("Every EXIF, GPS and XMP field in the file").clicked() {
             let _ = app.run("dialog.allMetadata", json!({}));

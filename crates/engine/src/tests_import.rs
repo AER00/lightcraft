@@ -287,3 +287,36 @@ fn auto_import_watched_folder() {
     assert_eq!(s.execute("library.autoImportScan", &json!({})).unwrap()["folder"], json!(null));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Smart previews: with the original offline the photo still renders (and edits apply) from
+/// its proxy; without the proxy it can't be opened.
+#[test]
+fn smart_previews_stand_in_for_offline_originals() {
+    let src = temp_dir("smartsrc");
+    let lib = temp_dir("smartlib");
+    write_png(&src.join("a.png"), 7);
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    s.execute("library.import", &json!({"paths": [src.join("a.png").to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    let r = s.execute("library.smartPreviews", &json!({})).unwrap();
+    assert_eq!(r["built"], 1, "{r}");
+    assert_eq!(s.execute("photo.smartPreview", &json!({})).unwrap(), json!({"smartPreview": true, "originalOnline": true}));
+    let online = s.render_now(id, 48, 32).unwrap().image;
+    // the drive goes away
+    std::fs::rename(&src, src.with_extension("offline")).unwrap();
+    s.media.forget(id);
+    assert_eq!(s.execute("photo.smartPreview", &json!({})).unwrap()["originalOnline"], false);
+    let offline = s.render_now(id, 48, 32).expect("renders from the smart preview").image;
+    let diff: f64 = online.data.iter().zip(&offline.data).map(|(a, b)| (a[0] as f64 - b[0] as f64).abs()).sum::<f64>() / online.data.len() as f64;
+    assert!(diff < 6.0, "the proxy looks like the original: {diff}");
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 1.0})).unwrap();
+    s.media.forget(id);
+    assert_ne!(s.render_now(id, 48, 32).unwrap().image.data, offline.data, "edits apply offline");
+    // without the proxy it can't be opened
+    s.execute("library.smartPreviews", &json!({"discard": true})).unwrap();
+    s.media.forget(id);
+    assert!(s.render_now(id, 48, 32).is_err());
+    let _ = std::fs::remove_dir_all(src.with_extension("offline"));
+    let _ = std::fs::remove_dir_all(&lib);
+}

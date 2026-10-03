@@ -22,7 +22,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
 | A. Import (IMP) | 9 | 2 | 2 | 1 | 3/4 (75%) | 3/4 (75%) |
-| B. Library management (LIB) | 21 | 0 | 4 | 2 | 9/9 (100%) | 9/9 (100%) |
+| B. Library management (LIB) | 22 | 0 | 3 | 2 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 15 | 0 | 2 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 10 | 0 | 3 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
@@ -43,14 +43,14 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
-| W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
+| W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 77 | 2 | 6 | 8 | 46/47 (98%) | 22/23 (96%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 22 | 10 | 47 | 9 | — | 18/21 (86%) |
-| **Total** | 364 | 25 | 111 | 37 | 193/198 (97%) | 132/144 (92%) |
+| **Total** | 366 | 24 | 110 | 37 | 193/198 (97%) | 132/144 (92%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **75.3%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 28.5% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **75.6%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 29.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -135,7 +135,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-VERSIONS | Versions | P1 | ✅ | `cmd:version.create` | see section M |
 | LR-LIB-DELETE | Delete / Recently Deleted | P0 | ✅ | `cmd:photo.delete`, `cmd:photo.restore`, `cmd:photo.deletePermanently` | no confirmation dialog, no auto-purge after N days, no "Empty" |
 | LR-LIB-REMOVE-ALBUM | Remove from album | P0 | ✅ | `cmd:album.removePhotos` | |
-| LR-LIB-DUPLICATE | Duplicate a photo | P2 | ⬜ | | |
+| LR-LIB-DUPLICATE | Duplicate a photo | P2 | ✅ | `cmd:photo.duplicate` | Photo ▸ Duplicate: a real `-copy` file with the same settings, metadata and albums (virtual copies share the file) |
 | LR-LIB-RENAME | Batch rename | P1 | ✅ | `cmd:photo.rename`, `cmd:photo.renamePreview`, `cmd:dialog.rename`, `crates/engine/src/rename.rs` | template tokens {name} {seq:N} {date:%Y%m%d} {camera} {title}; preview; renames files on disk with their XMP sidecars, never overwriting (-1, -2… suffixes), rolls back on failure; undo/redo move the files; virtual copies follow |
 | LR-LIB-CAPTURETIME | Edit capture time | P1 | ✅ | `cmd:photo.setCaptureTime`, `cmd:dialog.captureTime`, `crates/catalog/src/dates.rs` | set (the other selected photos shift by the same amount, or `each`), shift by days/hours/minutes, time-zone shift; one undo step, journaled; Info panel button; no “revert to original capture time” |
 | LR-LIB-SHOWFINDER | Reveal original in file manager | P0 | ✅ | `cmd:app.showInFinder` | ⌘R (see MENU-FILE-SHOWFINDER) |
@@ -462,7 +462,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
 | LR-CLOUD-SYNC | Cloud sync | OOS | 🚫 | | |
-| LR-CLOUD-SMARTPREVIEW | Editable proxies | P2 | 🟡 | `crates/engine/src/media.rs` | preview-size proxies drive the loupe; editing needs the original |
+| LR-CLOUD-SMARTPREVIEW | Editable proxies | P2 | ✅ | `cmd:library.smartPreviews`, `cmd:photo.smartPreview`, `crates/engine/src/smart.rs` | File ▸ Previews ▸ Build / Discard Smart Previews: ~1 MB proxies in the library; with the original offline the photo renders, edits and exports (at proxy size) from its proxy; Info shows the status |
 | LR-AI-UPDATE-INDICATOR | AI-settings update indicator | P2 | ⬜ | | |
 | LR-AI-CREDITS | Generative credits | OOS | 🚫 | | |
 

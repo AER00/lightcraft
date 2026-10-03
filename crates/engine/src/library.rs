@@ -153,6 +153,7 @@ impl Session {
     /// this session's catalog.
     pub fn open_library_in(&mut self, stores: LibraryStores, seed_demo: bool) -> Result<&LoadReport> {
         let LibraryStores { dir, catalog, mut files, on_disk } = stores;
+        self.media.smart_dir = on_disk.then(|| crate::smart::dir(&dir));
         let (mut journal, catalog, report) = Journal::open(catalog)?;
         self.catalog = catalog;
         self.undo.clear();

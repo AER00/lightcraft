@@ -375,3 +375,27 @@ fn reload_picks_up_changed_files() {
     assert_ne!(s.render_now(id, 32, 32).unwrap().image.data, before, "renders the new pixels");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn duplicate_copies_the_file_and_the_edits() {
+    let dir = temp_dir("dup");
+    let f = dir.join("pic.png");
+    write_png(&f, 5);
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [f.to_string_lossy()]})).unwrap();
+    let orig = s.active().unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.8})).unwrap();
+    s.execute("photo.rate", &json!({"rating": 4})).unwrap();
+    let alb = s.execute("album.create", &json!({"name": "Keep", "addSelected": true})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("photo.duplicate", &json!({})).unwrap();
+    let dup = lightcraft_catalog::PhotoId(r["ids"][0].as_u64().unwrap());
+    let d = s.catalog.photo(dup).unwrap().clone();
+    assert_eq!(d.file_name, "pic-copy.png");
+    assert!(dir.join("pic-copy.png").exists());
+    assert_eq!((d.develop.light.exposure, d.rating), (0.8, 4));
+    assert_eq!(s.catalog.album_count(lightcraft_catalog::AlbumId(alb)), 2);
+    assert_ne!(dup, orig);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(s.catalog.photo(dup).is_none(), "one undo step");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -74,8 +74,19 @@ pub type PreviewLoader = Arc<dyn Fn(&str, usize) -> Option<Rgba8> + Send + Sync>
 #[derive(Clone)]
 pub enum SourceRef {
     Loaded(Arc<Rgb32f>),
-    Demo { scene: Box<lightcraft_scenes::Scene>, max_edge: usize },
-    File { path: String, max_edge: usize, loader: Option<FileLoader> },
+    Demo {
+        scene: Box<lightcraft_scenes::Scene>,
+        max_edge: usize,
+    },
+    File {
+        path: String,
+        max_edge: usize,
+        loader: Option<FileLoader>,
+    },
+    /// A smart preview standing in for a missing original.
+    Smart {
+        path: std::path::PathBuf,
+    },
 }
 
 impl SourceRef {
@@ -87,6 +98,10 @@ impl SourceRef {
                 Some(l) => l(path, *max_edge).map(|(img, _)| Arc::new(img)),
                 None => Err(format!("no decoder available for {path}")),
             },
+            #[cfg(not(target_arch = "wasm32"))]
+            SourceRef::Smart { path } => crate::smart::load(path),
+            #[cfg(target_arch = "wasm32")]
+            SourceRef::Smart { .. } => Err("smart previews are not available here".into()),
         }
     }
 }
@@ -108,6 +123,8 @@ pub struct MediaCache {
     pub preview_loader: Option<PreviewLoader>,
     /// Reads a photo file's bytes (Photo Merge); `None` = the local file system.
     pub file_bytes: Option<crate::merge::ByteReader>,
+    /// The library's smart previews folder (originals offline: render from the proxy).
+    pub smart_dir: Option<std::path::PathBuf>,
     scenes: Vec<lightcraft_scenes::Scene>,
     /// Rendered thumbnails (memory, plus disk once a library is attached).
     pub rendered: Arc<PreviewCache>,
@@ -126,6 +143,7 @@ impl Default for MediaCache {
             file_probe: None,
             preview_loader: None,
             file_bytes: None,
+            smart_dir: None,
             scenes: Vec::new(),
             rendered: Arc::new(PreviewCache::memory(rendered_budget(budget))),
         }
@@ -266,6 +284,16 @@ impl MediaCache {
             (Source::Demo { .. }, SourceLevel::Full) => p.width.max(p.height).max(1) as usize,
             _ => usize::MAX,
         });
+        // the original is offline: its smart preview, when there is one
+        #[cfg(not(target_arch = "wasm32"))]
+        if let (Source::File { path }, Some(dir)) = (&p.source, &self.smart_dir)
+            && !std::path::Path::new(path).exists()
+        {
+            let sp = dir.join(crate::smart::file_name(p));
+            if sp.exists() {
+                return SourceRef::Smart { path: sp };
+            }
+        }
         self.origin_ref(&p.source, max_edge)
     }
 

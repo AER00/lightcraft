@@ -56,6 +56,7 @@ impl WireJob {
         let max_edge = match &job.source {
             SourceRef::Demo { max_edge, .. } | SourceRef::File { max_edge, .. } => *max_edge,
             SourceRef::Loaded(img) => img.width.max(img.height),
+            SourceRef::Smart { .. } => 2560,
         };
         WireJob {
             level: job.level,

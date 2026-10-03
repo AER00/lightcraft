@@ -26,6 +26,7 @@ pub mod preset_import;
 pub mod presets;
 pub mod rename;
 pub mod sidecar;
+pub mod smart;
 mod view;
 
 use std::sync::Arc;
