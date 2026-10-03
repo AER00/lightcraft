@@ -894,7 +894,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 },
             };
             let r = crate::import::open(app, vec![path]);
-            if let Some(t) = &mut app.scan {
+            // only the scan just started (an error means another scan is running)
+            if r.is_ok()
+                && let Some(t) = &mut app.scan
+            {
                 t.copy = true;
             }
             r

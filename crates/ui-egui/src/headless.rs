@@ -829,6 +829,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Cancel closes the scan at once and opens no review; Add from Device while a scan runs is
+    /// refused and leaves the running scan's options alone.
+    #[test]
+    fn folder_scan_cancel_and_busy() {
+        let mut h = demo([1200.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let dir = std::env::temp_dir().join(format!("lc-scancancel-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = lightcraft_raster::Rgba8::from_fn(8, 8, |x, y| [(x * 9) as u8, (y * 12) as u8, 80, 255]);
+        let png = lightcraft_engine::export::encode_image(
+            &img,
+            &lightcraft_engine::export::ExportOptions { format: lightcraft_engine::export::ExportFormat::Png, ..Default::default() },
+        )
+        .unwrap();
+        std::fs::write(dir.join("a.png"), &png).unwrap();
+        // a scan that can't finish until the test lets it: the probe waits on a flag
+        let gate = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let g = gate.clone();
+        h.app.session.media.file_probe = Some(std::sync::Arc::new(move |_: &str| {
+            while !g.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ok(lightcraft_engine::media::ProbeInfo { format: "PNG".into(), ..Default::default() })
+        }));
+        let r = h.request("engine.execute", json!({"command": "file.addFolder", "params": {"path": dir.to_string_lossy()}}), t);
+        assert_eq!(r["result"]["scanning"], true, "{r}");
+        let r = h.request("engine.execute", json!({"command": "file.addFromDevice", "params": {"path": dir.to_string_lossy()}}), t);
+        assert_ne!(r["ok"], true, "a second scan is refused: {r}");
+        assert!(!h.app.scan.as_ref().unwrap().copy, "the running scan keeps its options");
+        let r = h.request("ui.inspect", json!({}), t);
+        assert!(r["result"]["scan"].is_object(), "{r}");
+        let r = h.request("ui.clickWidget", json!({"id": "button:scanCancel"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(h.app.scan.is_none(), "Cancel closes the scan at once");
+        gate.store(true, std::sync::atomic::Ordering::Relaxed);
+        h.settle(SETTLE);
+        assert!(h.app.ui.dialog.is_none(), "a cancelled scan opens no review");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// ⇧⌘V opens Paste Selected Settings (prefilled with the copied groups); unchecking a group
     /// leaves it alone. ⌘F puts typing into the search field.
     #[test]

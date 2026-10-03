@@ -150,11 +150,22 @@ pub fn scan_progress(app: &mut LightcraftApp, ctx: &egui::Context) {
         |ui| {
             ui.label(egui::RichText::new(text).color(t.text));
             ui.add(egui::ProgressBar::new(done as f32 / total.max(1) as f32).desired_width(320.0));
-            cancel = ui.button("Cancel").clicked();
+            let r = ui.button("Cancel");
+            register(ui.ctx(), "button:scanCancel", r.rect);
+            cancel = r.clicked();
         },
     );
     if cancel {
+        // the worker stops at its next file; don't wait for it (a NAS read can take a while)
         task.progress.cancel.store(true, Ordering::Relaxed);
+        app.scan = None;
+    }
+}
+
+impl ScanTask {
+    /// `{done, total}` for `ui.inspect` (total is 0 while the folders are still being listed).
+    pub fn status(&self) -> Value {
+        json!({"done": self.progress.done.load(Ordering::Relaxed), "total": self.progress.total.load(Ordering::Relaxed)})
     }
 }
 
