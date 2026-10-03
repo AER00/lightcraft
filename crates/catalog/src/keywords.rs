@@ -51,38 +51,60 @@ pub struct KeywordNode {
 impl Catalog {
     /// The keyword tree: every keyword level with photo counts, sorted by name (case-insensitive).
     pub fn keyword_tree(&self) -> Vec<KeywordNode> {
-        fn insert(nodes: &mut Vec<KeywordNode>, parts: &[&str], prefix: &str, photo: u64, seen: &mut std::collections::HashSet<(String, u64)>) {
-            let Some((first, rest)) = parts.split_first() else { return };
-            let path = if prefix.is_empty() { first.to_string() } else { format!("{prefix}|{first}") };
-            let i = match nodes.iter().position(|n| n.name.eq_ignore_ascii_case(first)) {
-                Some(i) => i,
-                None => {
-                    nodes.push(KeywordNode { name: first.to_string(), path: path.clone(), count: 0, children: Vec::new() });
-                    nodes.len() - 1
-                }
-            };
-            if seen.insert((path.to_lowercase(), photo)) {
-                nodes[i].count += 1;
-            }
-            let p = nodes[i].path.clone();
-            insert(&mut nodes[i].children, rest, &p, photo, seen);
+        use std::collections::{HashMap, HashSet};
+        // every keyword level (`travel`, `travel|italy`…) by its lower-case path: the name and
+        // path as first written, and the photos counted (once per photo, even when two of its
+        // keywords share a parent)
+        struct Level {
+            name: String,
+            path: String,
+            count: usize,
+            parent: Option<String>,
         }
-        fn sort(nodes: &mut [KeywordNode]) {
-            nodes.sort_by_key(|n| n.name.to_lowercase());
-            for n in nodes {
-                sort(&mut n.children);
-            }
-        }
-        let mut roots = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut levels: HashMap<String, Level> = HashMap::new();
+        let mut this_photo: HashSet<String> = HashSet::new();
         for p in self.photos().filter(|p| p.in_library()) {
+            this_photo.clear();
             for k in &p.meta.keywords {
-                let parts: Vec<&str> = k.split(SEP).map(str::trim).filter(|s| !s.is_empty()).collect();
-                insert(&mut roots, &parts, "", p.id.0, &mut seen);
+                let mut path = String::new();
+                let mut lower = String::new();
+                let mut parent: Option<String> = None;
+                for part in k.split(SEP).map(str::trim).filter(|s| !s.is_empty()) {
+                    if !path.is_empty() {
+                        path.push(SEP);
+                        lower.push(SEP);
+                    }
+                    path.push_str(part);
+                    lower.push_str(&part.to_lowercase());
+                    let l = levels.entry(lower.clone()).or_insert_with(|| Level {
+                        name: part.to_string(),
+                        path: path.clone(),
+                        count: 0,
+                        parent: parent.clone(),
+                    });
+                    if this_photo.insert(lower.clone()) {
+                        l.count += 1;
+                    }
+                    parent = Some(lower.clone());
+                }
             }
         }
-        sort(&mut roots);
-        roots
+        let mut kids: HashMap<Option<String>, Vec<String>> = HashMap::new();
+        for (lower, l) in &levels {
+            kids.entry(l.parent.clone()).or_default().push(lower.clone());
+        }
+        fn build(at: Option<String>, levels: &HashMap<String, Level>, kids: &mut HashMap<Option<String>, Vec<String>>) -> Vec<KeywordNode> {
+            let Some(mut list) = kids.remove(&at) else { return Vec::new() };
+            list.sort_by_key(|l| levels[l].name.to_lowercase());
+            list.into_iter()
+                .map(|l| {
+                    let lv = &levels[&l];
+                    let children = build(Some(l.clone()), levels, kids);
+                    KeywordNode { name: lv.name.clone(), path: lv.path.clone(), count: lv.count, children }
+                })
+                .collect()
+        }
+        build(None, &levels, &mut kids)
     }
 
     /// `SetMeta` ops for every photo whose keywords `f` changes.

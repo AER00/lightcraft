@@ -82,7 +82,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         } else {
             app.session.sort.key
         };
-        app.session.catalog.date_runs(&ids, key, by)
+        (*app.caches.date_runs(&app.session.catalog, &ids, key, by)).clone()
     };
     let spans: Vec<(usize, usize)> = runs.iter().map(|r| (r.start, r.count)).collect();
     let lay = layout(&aspects, &spans, avail_w, target, square);

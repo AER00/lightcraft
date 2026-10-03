@@ -80,6 +80,9 @@ pub struct Perf {
 }
 
 pub struct LightcraftApp {
+    /// Per-catalog-revision caches of library-wide results the panels show every frame
+    /// (expensive on big libraries).
+    pub caches: Caches,
     pub session: Session,
     pub ui: UiState,
     pub services: Services,
@@ -147,6 +150,7 @@ impl LightcraftApp {
             services,
             renderer: render::Renderer::default(),
             perf: Perf::default(),
+            caches: Caches::default(),
             integrated_titlebar: false,
             native_menu: false,
             native_shortcuts: Default::default(),
@@ -617,6 +621,63 @@ mod drop_tests {
         }
         for p in ["/a/IMG_1.CR2", "/a/b.dng", "/a/c.jpg", "/a/folder"] {
             assert!(!super::is_preset_file(p), "{p}");
+        }
+    }
+}
+
+/// Results recomputed only when the catalog (or their inputs) change.
+#[derive(Default)]
+pub struct Caches {
+    keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
+    date_runs: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateRun>>)>,
+    suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
+}
+
+fn key_of(parts: impl std::hash::Hash) -> u64 {
+    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+    BuildHasherDefault::<DefaultHasher>::default().hash_one(parts)
+}
+
+impl Caches {
+    /// The library's keyword tree.
+    pub fn keyword_tree(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>> {
+        match &self.keyword_tree {
+            Some((r, t)) if *r == cat.revision => t.clone(),
+            _ => {
+                let t = std::sync::Arc::new(cat.keyword_tree());
+                self.keyword_tree = Some((cat.revision, t.clone()));
+                t
+            }
+        }
+    }
+    /// Date headers for `ids` in the grid.
+    pub fn date_runs(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+        ids: &[lightcraft_catalog::PhotoId],
+        key: lightcraft_catalog::SortKey,
+        by: lightcraft_catalog::GroupBy,
+    ) -> std::sync::Arc<Vec<lightcraft_catalog::DateRun>> {
+        let k = key_of((cat.revision, ids, format!("{key:?}{by:?}")));
+        match &self.date_runs {
+            Some((h, r)) if *h == k => r.clone(),
+            _ => {
+                let r = std::sync::Arc::new(cat.date_runs(ids, key, by));
+                self.date_runs = Some((k, r.clone()));
+                r
+            }
+        }
+    }
+    /// Keyword suggestions for a photo with `current` keywords and the typed `prefix`.
+    pub fn suggestions(&mut self, cat: &lightcraft_catalog::Catalog, current: &[String], prefix: &str, n: usize) -> std::sync::Arc<Vec<String>> {
+        let k = key_of((cat.revision, current, prefix, n));
+        match &self.suggestions {
+            Some((h, v)) if *h == k => v.clone(),
+            _ => {
+                let v = std::sync::Arc::new(cat.keyword_suggestions(current, prefix, n));
+                self.suggestions = Some((k, v.clone()));
+                v
+            }
         }
     }
 }

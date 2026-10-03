@@ -237,3 +237,85 @@ fn quick_collection_and_target_album() {
     s.execute("album.clearQuick", &serde_json::json!({})).unwrap();
     assert_eq!(s.catalog.album_count(quick), 0);
 }
+
+/// Scaling check (ignored: `cargo test --release -p lightcraft-engine -- --ignored scale --nocapture`):
+/// the per-frame / per-click library queries on a 100k-photo catalog.
+#[test]
+#[ignore]
+fn scale_100k_library_queries() {
+    use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+    use std::time::Instant;
+    let mut s = crate::Session::new();
+    let n = 100_000u64;
+    let mut ops = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        let mut p = Photo::new(
+            PhotoId(i + 1),
+            Source::Demo { scene: (i % 20) as u32 },
+            &format!("IMG_{i:06}.jpg"),
+            "JPEG",
+            6000,
+            4000,
+            "2026-01-01T00:00:00",
+        );
+        p.captured = Some(format!("20{:02}-{:02}-{:02}T{:02}:00:00", 10 + i % 16, 1 + i % 12, 1 + i % 28, i % 24));
+        p.rating = (i % 6) as u8;
+        p.meta.keywords = vec![format!("kw{}", i % 500), "travel|italy".into()];
+        p.meta.camera = format!("Model {}", i % 30);
+        ops.push(Op::AddPhoto { photo: Box::new(p) });
+    }
+    let t = Instant::now();
+    s.commit("Add", Op::Batch { ops }).unwrap();
+    eprintln!("add 100k: {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
+    let time = |what: &str, f: &mut dyn FnMut()| {
+        let t = Instant::now();
+        f();
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        eprintln!("{what}: {ms:.1} ms");
+        ms
+    };
+    let mut worst: Vec<(String, f64)> = Vec::new();
+    let mut m = |w: &str, f: &mut dyn FnMut()| worst.push((w.to_string(), time(w, f)));
+    m("visible (all)", &mut || {
+        let _ = s.visible_cloned();
+    });
+    m("visible (cached)", &mut || {
+        let _ = s.visible_cloned();
+    });
+    m("filter rating ≥ 4", &mut || {
+        s.execute("library.filter", &serde_json::json!({"rating": 4})).unwrap();
+        let _ = s.visible_cloned();
+    });
+    m("filter ruleSet keyword + date", &mut || {
+        s.execute("library.filter", &serde_json::json!({"rating": 0, "ruleSet": {"rules": [{"field": "keywords", "op": "contains", "value": "kw42"}, {"field": "captureDate", "op": "is", "value": "2015"}]}})).unwrap();
+        let _ = s.visible_cloned();
+    });
+    s.execute("library.filter", &serde_json::json!({"ruleSet": null})).unwrap();
+    m("date groups", &mut || {
+        let _ = s.execute("library.groups", &serde_json::json!({})).unwrap();
+    });
+    m("keyword tree", &mut || {
+        let _ = s.execute("keyword.list", &serde_json::json!({})).unwrap();
+    });
+    m("keyword suggestions", &mut || {
+        let _ = s.catalog.keyword_suggestions(&["kw1".to_string()], "kw", 12);
+    });
+    let alb = s.execute("album.createSmart", &serde_json::json!({"name": "S", "rules": {"rating": 5}})).unwrap()["id"].as_u64().unwrap();
+    m("smart album count", &mut || {
+        let _ = s.catalog.album_count(lightcraft_catalog::AlbumId(alb));
+    });
+    m("albums.list", &mut || {
+        let _ = s.execute("albums.list", &serde_json::json!({})).unwrap();
+    });
+    m("select all", &mut || {
+        s.execute("library.selectAll", &serde_json::json!({})).unwrap();
+    });
+    m("rate 100k selected", &mut || {
+        s.execute("photo.rate", &serde_json::json!({"rating": 3})).unwrap();
+    });
+    m("undo", &mut || {
+        s.execute("edit.undo", &serde_json::json!({})).unwrap();
+    });
+    worst.sort_by(|a, b| b.1.total_cmp(&a.1));
+    eprintln!("slowest: {:?}", &worst[..3]);
+}

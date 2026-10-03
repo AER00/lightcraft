@@ -449,7 +449,7 @@ fn is_within(app: &LightcraftApp, id: lightcraft_catalog::AlbumId, ancestor: lig
 /// context menu renames, merges or deletes the keyword across the library.
 fn keywords_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
-    let tree = app.session.catalog.keyword_tree();
+    let tree = app.caches.keyword_tree(&app.session.catalog);
     if tree.is_empty() {
         return;
     }

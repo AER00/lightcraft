@@ -632,7 +632,7 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         // photo's keywords, else the most used ones
         let typed = ui.data(|d| d.get_temp::<String>(kid).unwrap_or_default());
         let last = typed.rsplit(',').next().unwrap_or("").trim().to_string();
-        let suggestions = app.session.catalog.keyword_suggestions(&p.meta.keywords, &last, 12);
+        let suggestions = (*app.caches.suggestions(&app.session.catalog, &p.meta.keywords, &last, 12)).clone();
         if !suggestions.is_empty() {
             ui.label(egui::RichText::new("Suggestions").color(t.text_dim));
             ui.horizontal_wrapped(|ui| {
