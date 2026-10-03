@@ -26,53 +26,56 @@ projects (DrawCraft reached its first four milestones in ≈ 4½ h) and are revi
 | M15 | Classic modules | Map, Book, Slideshow, Print, Web; smart collections, stacks, virtual copies, publish services, tethering | 25–40 | 🚧 (smart albums, stacks, virtual copies, compare/survey ✅; Map/Book/Slideshow/Print/Web ⬜) |
 | M16 | 1.0 polish | preferences, shortcut editor, accessibility, localization, packaging (dmg/msi/AppImage/web), hardening | 10–20 | 🚧 (settings, keyboard shortcuts sheet, packaging basics ✅; accessibility, localisation ⬜) |
 
-## Parity estimate (2026-10-02)
+## Parity estimate (2026-10-02, evening update)
 
 **By feature count** — from `docs/parity.md` (one row per Lightroom feature, menu item and shortcut; `cargo xtask
 parity` prints this line on every run, so it stays current):
 
-| Scope | Weighted completion | Rows |
-|---|---:|---:|
-| P0 (core) | **98.5%** | 198 |
-| P1 (important parity) | **79.9%** | 144 |
-| P2 (later / AI / niche, incl. Classic modules) | **11.7%** | 158 |
-| **All in-scope rows** | **65.7%** | 500 |
+| Scope | Weighted completion | Rows | Morning |
+|---|---:|---:|---:|
+| P0 (core) | **98.7%** | 198 | 98.5% |
+| P1 (important parity) | **94.4%** | 144 | 79.9% |
+| P2 (later / AI / niche, incl. Classic modules) | **29.4%** | 158 | 11.7% |
+| **All in-scope rows** | **75.6%** | 500 | 65.7% |
 
 ✅ counts 1, 🟡 ½, ⬜ 0; out-of-scope rows (cloud sharing, Adobe accounts…) are left out.
 
 **By remaining effort** — rows are not equal: a shortcut and the whole Book module are one row each, and what is
 left is the heavy part (AI, video, Classic output modules, undocumented raw codecs). Remaining work in **Opus agent-hours**
 (one agent working continuously; calibrated on this project — a single lead agent closed ≈ 45 tracker rows of
-UI/feature work in ≈ 5 h on 2026-10-01, and four to six parallel agents built M0–M13 in ≈ 25 active hours):
+UI/feature work in ≈ 5 h on 2026-10-01, and ≈ 60 more (preset import incl. `.lrtemplate` / DNG / zip and masks, smart-album
+rule editor, auto sync, keyword and label sets, import options and DNG conversion, smart previews, external-editor round
+trip, slideshow, auto import…) in ≈ 12 h on 2026-10-02; four to six parallel agents built M0–M13 in ≈ 25 active hours):
 
 | Work package | Tracker rows | Agent-hours | Risk |
 |---|---|---:|---|
-| Remaining P0/P1 UI and library features (version hover previews, filter presets, quick develop, missing-file relink, metadata presets, keyword sets…) | ≈ 30 | 20–35 | low |
-| Raw codecs: CR3 (CRX), compressed NEF / ORF / RAF, RW2 v4, HEIC/AVIF decode | LR-IMP-FORMATS | 40–80 | **high** — clean-room black-box analysis, no permissive specs |
+| Remaining P0/P1 UI and library features (folder rename/move, keyword painter, people view…) | ≈ 8 | 5–10 | low |
+| Raw codecs: CR3 (CRX), compressed NEF / ORF / RAF, RW2 v4, HEIC/AVIF decode, JPEG XL DNG | LR-IMP-FORMATS | 40–80 | **high** — clean-room black-box analysis, no permissive specs |
 | Lens-profile database of our own (calibration targets, fitting, data) | LR-EDIT-OPTICS-PROFILE | 15–30 | data collection |
 | Video: playback, trim, edits, export (pure-Rust decode, ideally shared with FilmCraft) | R. Video | 20–40 | medium |
 | AI: subject / sky / background / people / object masks, object-aware remove, AI denoise, super resolution, lens blur, people & faces, natural-language search, culling | ≈ 30 | 80–150 | **high** — permissively licensed weights, pure-Rust inference, maybe training |
 | HDR editing, display, visualisation and export | Q. HDR, LR-EXP-HDR | 15–25 | medium |
-| Classic modules: Map, Book, Slideshow, Print, publish services, tethering, soft proofing | ≈ 50 | 60–100 | medium (large, well-understood) |
-| Smaller P2 items: watched folders, Enhance dialog, external-editor round trip, export to Photos, help / what's new, accessibility, localisation | ≈ 25 | 20–35 | low |
+| Classic modules: Map, Book, Slideshow module, Print, publish services, tethering, soft proofing | ≈ 50 | 60–100 | medium (large, well-understood) |
+| Smaller P2 items: Enhance dialog, export to Photos, help / what's new, accessibility, localisation, sidecar variants | ≈ 15 | 12–25 | low |
 | Look tuning, performance budgets (colour NR at half resolution on CPU + GPU, 100k-photo library), packaging, hardening | — | 25–45 | medium |
-| **Total remaining** | | **≈ 295–540** | |
+| **Total remaining** | | **≈ 270–505** | |
 
-Spent so far ≈ 90–130 agent-hours, so **by effort the project is ≈ 20–30% of the way to complete Lightroom + Classic
-parity**, and ≈ 40–55% of the way for cloud-Lightroom parity without AI and the Classic modules (remaining ≈ 135–235 h).
+Spent so far ≈ 105–145 agent-hours, so **by effort the project is ≈ 20–35% of the way to complete Lightroom + Classic
+parity**, and ≈ 45–60% of the way for cloud-Lightroom parity without AI and the Classic modules (remaining ≈ 130–255 h,
+most of it the raw codecs, lens data, video and HDR).
 
-**Wall clock:** ≈ 300–540 h for one agent working alone; with 4–6 parallel agents (≈ 70% parallel efficiency, merges and
-CI under load cost the rest) **≈ 75–130 h of continuous work**. The AI package and the raw codecs carry most of the
+**Wall clock:** ≈ 270–505 h for one agent working alone; with 4–6 parallel agents (≈ 70% parallel efficiency, merges and
+CI under load cost the rest) **≈ 65–125 h of continuous work**. The AI package and the raw codecs carry most of the
 uncertainty: they can finish faster if suitable permissive models / documentation turn up, or stall on licensing.
 
 ## Totals
 
-Remaining from 2026-10-02 (see *Parity estimate* above for the breakdown):
+Remaining from 2026-10-02 evening (see *Parity estimate* above for the breakdown):
 
 | Target | Remaining agent-hours | Wall clock, 4–6 parallel agents |
 |---|---:|---:|
-| Cloud-Lightroom parity without AI or Classic modules | ≈ 135–235 h | ≈ 35–60 h |
-| Full parity incl. AI, video and the Classic modules | ≈ 295–540 h | ≈ 75–130 h |
+| Cloud-Lightroom parity without AI or Classic modules | ≈ 130–255 h | ≈ 35–65 h |
+| Full parity incl. AI, video and the Classic modules | ≈ 270–505 h | ≈ 65–125 h |
 
 The milestone estimates in the table above were made before work started and are kept for calibration (M0–M13 took
 ≈ 25 active hours with parallel agents against an estimate of ≈ 110–170 h for those milestones).
@@ -91,7 +94,7 @@ The milestone estimates in the table above were made before work started and are
 ## Raw format coverage and known gaps
 
 Decoded (CC0 corpus from raw.pixls.us, `cargo xtask corpus --download`, `crates/raw/tests/corpus.rs`): DNG (uncompressed,
-LJ92, Deflate, float, linear), CR2, ARW (uncompressed, ARW2, LJ92), NEF/NRW uncompressed, RAF uncompressed (Bayer and
+LJ92, lossy JPEG / Smart Previews, Deflate, float, linear), CR2, ARW (uncompressed, ARW2, LJ92), NEF/NRW uncompressed, RAF uncompressed (Bayer and
 X-Trans), RW2 packed 12/14-bit, PEF (uncompressed and Huffman), ORF uncompressed (16-bit and 12-bit packed). Every
 supported container also yields its embedded JPEG preview (CR3 too), and the engine shows that preview for raw variants
 it can't decode yet.
