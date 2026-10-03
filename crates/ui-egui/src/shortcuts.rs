@@ -20,6 +20,16 @@ pub const ALIASES: &[(&str, &str, &str)] = &[
     // Shift+[ / Shift+] arrive as { / } on most layouts
     ("Shift+{", "brush.featherLess", "{}"),
     ("Shift+}", "brush.featherMore", "{}"),
+    // keyword set: ⌥1–⌥9 toggle the current set's keywords on the selection
+    ("Alt+1", "keyword.toggleFromSet", r#"{"index": 1}"#),
+    ("Alt+2", "keyword.toggleFromSet", r#"{"index": 2}"#),
+    ("Alt+3", "keyword.toggleFromSet", r#"{"index": 3}"#),
+    ("Alt+4", "keyword.toggleFromSet", r#"{"index": 4}"#),
+    ("Alt+5", "keyword.toggleFromSet", r#"{"index": 5}"#),
+    ("Alt+6", "keyword.toggleFromSet", r#"{"index": 6}"#),
+    ("Alt+7", "keyword.toggleFromSet", r#"{"index": 7}"#),
+    ("Alt+8", "keyword.toggleFromSet", r#"{"index": 8}"#),
+    ("Alt+9", "keyword.toggleFromSet", r#"{"index": 9}"#),
 ];
 
 pub fn parse(s: &str) -> Option<(Modifiers, Key)> {

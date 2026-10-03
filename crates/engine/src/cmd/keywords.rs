@@ -1,4 +1,5 @@
-//! Library-wide keyword commands: list (tree with counts), suggestions, rename, delete, merge.
+//! Library-wide keyword commands: list (tree with counts), suggestions, rename, delete, merge;
+//! keyword sets (nine keywords a keystroke away: ⌥1–⌥9) and Recent Keywords.
 
 use lightcraft_catalog::keywords::{clean, is_under};
 use serde_json::{Value, json};
@@ -30,8 +31,139 @@ fn commit_keywords(s: &mut Session, label: &str, op: lightcraft_catalog::Op, fol
     Ok(json!({"changed": n}))
 }
 
+/// A named set of up to nine keywords.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct KeywordSet {
+    pub name: String,
+    pub keywords: Vec<String>,
+}
+
+/// The set name meaning "the nine most recently added keywords".
+pub const RECENT: &str = "Recent Keywords";
+
+/// Remember `added` as the most recent keywords (newest first, nine kept).
+pub fn note_recent(s: &mut Session, added: &[String]) {
+    for k in added.iter().rev() {
+        let k = clean(k);
+        if k.is_empty() {
+            continue;
+        }
+        s.recent_keywords.retain(|x| !x.eq_ignore_ascii_case(&k));
+        s.recent_keywords.insert(0, k);
+    }
+    s.recent_keywords.truncate(9);
+    let _ = s.save_prefs();
+}
+
+/// The nine keywords ⌥1–⌥9 apply: the current set's, or the recent ones.
+pub fn current_keywords(s: &Session) -> Vec<String> {
+    let set = s.keyword_set.as_deref().and_then(|n| s.keyword_sets.iter().find(|x| x.name.eq_ignore_ascii_case(n)));
+    let mut v = set.map_or_else(|| s.recent_keywords.clone(), |x| x.keywords.clone());
+    v.truncate(9);
+    v
+}
+
+/// `{sets: [{name, keywords}], current, keywords}` (Recent Keywords first).
+pub fn keyword_sets_json(s: &Session) -> Value {
+    let mut sets = vec![json!({"name": RECENT, "keywords": s.recent_keywords})];
+    sets.extend(s.keyword_sets.iter().map(|x| json!({"name": x.name, "keywords": x.keywords})));
+    json!({"sets": sets, "current": s.keyword_set.clone().unwrap_or_else(|| RECENT.into()), "keywords": current_keywords(s)})
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        cmd!(query "keyword.sets", "Keyword Sets", [], None, "{} → {sets: [{name, keywords}], current, keywords: the nine ⌥1–⌥9 apply}", always, |s, _| Ok(keyword_sets_json(s))),
+        cmd!("keyword.useSet", "Use Keyword Set", [], None, "{name} (\"Recent Keywords\" = the recently added ones)", always, |s, p| {
+            let name = str_param(p, "name").map(str::trim).unwrap_or(RECENT);
+            s.keyword_set = if name.eq_ignore_ascii_case(RECENT) || name.is_empty() {
+                None
+            } else {
+                Some(
+                    s.keyword_sets
+                        .iter()
+                        .find(|x| x.name.eq_ignore_ascii_case(name))
+                        .ok_or_else(|| bad("keyword.useSet", format!("no keyword set `{name}`")))?
+                        .name
+                        .clone(),
+                )
+            };
+            s.save_prefs()?;
+            Ok(keyword_sets_json(s))
+        }),
+        cmd!(
+            "keyword.saveSet",
+            "Save Keyword Set",
+            [],
+            None,
+            "{name, keywords?: [up to 9] (default: the current nine)} — replaces a set of that name and makes it current",
+            always,
+            |s, p| {
+                let name = str_param(p, "name")
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case(RECENT))
+                    .ok_or_else(|| bad("keyword.saveSet", "missing or reserved `name`"))?
+                    .to_string();
+                let mut keywords: Vec<String> = if p.get("keywords").is_some() {
+                    strs(p, "keywords").iter().map(|k| clean(k)).filter(|k| !k.is_empty()).collect()
+                } else {
+                    current_keywords(s)
+                };
+                keywords.truncate(9);
+                let set = KeywordSet { name: name.clone(), keywords };
+                match s.keyword_sets.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
+                    Some(x) => *x = set,
+                    None => s.keyword_sets.push(set),
+                }
+                s.keyword_set = Some(name);
+                s.save_prefs()?;
+                Ok(keyword_sets_json(s))
+            }
+        ),
+        cmd!("keyword.deleteSet", "Delete Keyword Set", [], None, "{name}", always, |s, p| {
+            let name = str_param(p, "name").ok_or_else(|| bad("keyword.deleteSet", "missing `name`"))?;
+            let before = s.keyword_sets.len();
+            s.keyword_sets.retain(|x| !x.name.eq_ignore_ascii_case(name));
+            if s.keyword_sets.len() == before {
+                return Err(bad("keyword.deleteSet", format!("no keyword set `{name}`")));
+            }
+            if s.keyword_set.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(name)) {
+                s.keyword_set = None;
+            }
+            s.save_prefs()?;
+            Ok(keyword_sets_json(s))
+        }),
+        cmd!(
+            "keyword.toggleFromSet",
+            "Toggle Keyword from Set",
+            [],
+            None,
+            "{index: 1..9, ids?} — the set's keyword N: added to the target photos, or removed when they all have it",
+            super::has_selection,
+            |s, p| {
+                let i = p
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .filter(|i| (1..=9).contains(i))
+                    .ok_or_else(|| bad("keyword.toggleFromSet", "`index` must be 1..9"))?;
+                let Some(k) = current_keywords(s).get(i as usize - 1).cloned() else {
+                    return Ok(json!({"changed": 0}));
+                };
+                let ids = s.targets(p);
+                let all = !ids.is_empty()
+                    && ids.iter().all(|id| s.catalog.photo(*id).is_some_and(|ph| ph.meta.keywords.iter().any(|x| x.eq_ignore_ascii_case(&k))));
+                let ids: Vec<u64> = ids.iter().map(|i| i.0).collect();
+                let key = if all { "removeKeywords" } else { "addKeywords" };
+                // applying from Recent Keywords mustn't reshuffle the numbers under the keys
+                let recent = s.recent_keywords.clone();
+                let mut r = s.execute("photo.setMeta", &json!({"ids": ids, key: [k.clone()]}))?;
+                if s.keyword_set.is_none() {
+                    s.recent_keywords = recent;
+                }
+                r["keyword"] = json!(k);
+                r["added"] = json!(!all);
+                Ok(r)
+            }
+        ),
         cmd!(query "keyword.list", "Keywords", [], None, "{} → [{name, path, count, children}] keyword tree (`a|b|c` keywords are hierarchical)", always, |s, _| {
             Ok(serde_json::to_value(s.catalog.keyword_tree()).unwrap_or_default())
         }),

@@ -114,6 +114,10 @@ struct PrefsFile {
     filter_presets: Vec<crate::cmd::filters::FilterPreset>,
     /// Colour-label name sets.
     label_sets: Vec<crate::cmd::manage::LabelSet>,
+    /// Keyword sets, the one in use, recent keywords.
+    keyword_sets: Vec<crate::cmd::keywords::KeywordSet>,
+    keyword_set: Option<String>,
+    recent_keywords: Vec<String>,
     /// Develop defaults for imported photos.
     import: crate::import::ImportDefaults,
     /// Thumbnail disk cache budget (MB, 0 = default).
@@ -183,6 +187,9 @@ impl Session {
         self.metadata_presets = prefs.metadata_presets;
         self.filter_presets = prefs.filter_presets;
         self.label_sets = prefs.label_sets;
+        self.keyword_sets = prefs.keyword_sets;
+        self.keyword_set = prefs.keyword_set;
+        self.recent_keywords = prefs.recent_keywords;
         self.import_defaults = prefs.import;
         self.cache_mb = prefs.cache_mb;
         // view state
@@ -298,6 +305,9 @@ impl Session {
             metadata_presets: self.metadata_presets.clone(),
             filter_presets: self.filter_presets.clone(),
             label_sets: self.label_sets.clone(),
+            keyword_sets: self.keyword_sets.clone(),
+            keyword_set: self.keyword_set.clone(),
+            recent_keywords: self.recent_keywords.clone(),
             import: self.import_defaults.clone(),
             cache_mb: self.cache_mb,
         })

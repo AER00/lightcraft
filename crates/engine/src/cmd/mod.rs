@@ -11,7 +11,7 @@ mod develop;
 mod edit;
 mod export;
 pub mod filters;
-mod keywords;
+pub mod keywords;
 mod library;
 pub mod manage;
 mod masks;

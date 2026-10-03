@@ -583,6 +583,8 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
         });
         ui.add_space(10.0);
+        keyword_set(app, ui, &p.meta.keywords);
+        ui.add_space(10.0);
         // suggestions: completions of the typed text, else keywords used together with this
         // photo's keywords, else the most used ones
         let typed = ui.data(|d| d.get_temp::<String>(kid).unwrap_or_default());
@@ -603,6 +605,64 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     }
                 }
             });
+        }
+    });
+}
+
+/// The keyword set: pick a set, then nine buttons (⌥1–⌥9) that toggle its keywords on the
+/// selected photos; "Save as Set…" keeps the current nine under a name.
+fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui, have: &[String]) {
+    let t = Tokens::get(ui.ctx());
+    let sets = lightcraft_engine::cmd::keywords::keyword_sets_json(&app.session);
+    let current = sets["current"].as_str().unwrap_or_default().to_string();
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Keyword Set").color(t.text_dim));
+        egui::ComboBox::from_id_salt("kw-set").selected_text(&current).show_ui(ui, |ui| {
+            for set in sets["sets"].as_array().into_iter().flatten() {
+                let name = set["name"].as_str().unwrap_or_default();
+                if ui.selectable_label(name == current, name).clicked() {
+                    let _ = app.run("keyword.useSet", json!({"name": name}));
+                }
+            }
+            ui.separator();
+            if ui.button("Save Current Keywords as Set…").clicked() {
+                app.ui.dialog = Some(crate::state::Dialog::TextPrompt {
+                    title: "Save Keyword Set".into(),
+                    hint: "Set name".into(),
+                    value: String::new(),
+                    command: "keyword.saveSet".into(),
+                    params: json!({}),
+                    key: "name".into(),
+                });
+            }
+            if current != lightcraft_engine::cmd::keywords::RECENT && ui.button(format!("Delete “{current}”")).clicked() {
+                let _ = app.run("keyword.deleteSet", json!({"name": current}));
+            }
+        });
+    });
+    let kws: Vec<String> = sets["keywords"].as_array().into_iter().flatten().filter_map(|k| k.as_str().map(str::to_string)).collect();
+    if kws.is_empty() {
+        ui.label(egui::RichText::new("Keywords you add appear here; ⌥1–⌥9 apply them.").color(t.text_dim));
+        return;
+    }
+    let bw = ((ui.available_width() - 8.0) / 3.0).floor().max(40.0);
+    egui::Grid::new("kw-set-grid").num_columns(3).spacing([4.0, 4.0]).show(ui, |ui| {
+        for (i, k) in kws.iter().enumerate() {
+            let on = have.iter().any(|x| x.eq_ignore_ascii_case(k));
+            let short = k.rsplit('|').next().unwrap_or(k);
+            let r = ui
+                .add_sized(
+                    [bw, 22.0],
+                    egui::Button::new(egui::RichText::new(short).size(11.5).color(if on { t.text } else { t.text_label })).selected(on).truncate(),
+                )
+                .on_hover_text(format!("{} — ⌥{}", k.replace('|', " › "), i + 1));
+            register(ui.ctx(), format!("kwSet:{}", i + 1), r.rect);
+            if r.clicked() {
+                let _ = app.run("keyword.toggleFromSet", json!({"index": i + 1}));
+            }
+            if i % 3 == 2 {
+                ui.end_row();
+            }
         }
     });
 }

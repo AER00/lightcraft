@@ -233,3 +233,24 @@ fn command_drag_straightens_in_crop() {
     assert!(h.app.gesture.is_none());
     h.settle(SETTLE);
 }
+
+#[test]
+fn option_digit_toggles_keyword_from_set() {
+    let mut h = detail("panel.keywords");
+    exec(&mut h, "photo.setMeta", json!({"addKeywords": ["alpha"]}));
+    exec(&mut h, "photo.setMeta", json!({"removeKeywords": ["alpha"]}));
+    let has = |h: &Headless| develop_photo_keywords(h).iter().any(|k| k == "alpha");
+    assert!(!has(&h));
+    let r = h.request("ui.key", json!({"key": "1", "alt": true}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(has(&h), "⌥1 adds the first recent keyword");
+    let r = h.request("ui.clickWidget", json!({"id": "kwSet:1"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(!has(&h), "its button removes it again");
+    h.settle(SETTLE);
+}
+
+fn develop_photo_keywords(h: &Headless) -> Vec<String> {
+    let id = h.app.session.active().expect("active photo");
+    h.app.session.catalog.photo(id).unwrap().meta.keywords.clone()
+}

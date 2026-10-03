@@ -125,6 +125,11 @@ pub struct Session {
     pub filter_presets: Vec<cmd::filters::FilterPreset>,
     /// Saved colour-label name sets.
     pub label_sets: Vec<cmd::manage::LabelSet>,
+    /// Keyword sets (⌥1–⌥9 apply the current set's keywords), the one in use (`None` = Recent
+    /// Keywords) and the recently added keywords, newest first.
+    pub keyword_sets: Vec<cmd::keywords::KeywordSet>,
+    pub keyword_set: Option<String>,
+    pub recent_keywords: Vec<String>,
     /// Before/After: the "before" settings chosen per photo (this session; default: the photo's
     /// import state). See `cmd/before.rs`.
     pub before: std::collections::HashMap<PhotoId, Arc<DevelopSettings>>,
@@ -178,6 +183,9 @@ impl Session {
             metadata_presets: Vec::new(),
             filter_presets: Vec::new(),
             label_sets: Vec::new(),
+            keyword_sets: Vec::new(),
+            keyword_set: None,
+            recent_keywords: Vec::new(),
             before: Default::default(),
             import_probes: Default::default(),
             import_defaults: import::ImportDefaults::default(),

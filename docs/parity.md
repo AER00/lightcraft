@@ -46,11 +46,11 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
-| Z. Keyboard shortcuts (desktop) | 67 | 9 | 4 | 1 | 49/52 (94%) | 16/23 (70%) |
+| Z. Keyboard shortcuts (desktop) | 68 | 8 | 4 | 1 | 49/52 (94%) | 17/23 (74%) |
 | Lightroom Classic extras | 15 | 15 | 49 | 9 | — | 14/21 (67%) |
-| **Total** | 329 | 47 | 124 | 37 | 193/198 (97%) | 116/144 (81%) |
+| **Total** | 330 | 46 | 124 | 37 | 193/198 (97%) | 117/144 (81%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **70.5%** of 500 in-scope rows — P0 98.7% of 198 · P1 88.9% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **70.6%** of 500 in-scope rows — P0 98.7% of 198 · P1 89.2% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -639,7 +639,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-DELETE | Delete photo — ⌫ | P0 | ✅ | `cmd:photo.delete` | |
 | KEY-ADDPHOTOS | Add photos — ⇧⌘I | P0 | ✅ | `cmd:file.addPhotos` | |
 | KEY-VERSIONS | Versions panel — ⇧V | P1 | ✅ | `cmd:panel.versions` | |
-| KEY-SECTIONS | Expand/collapse edit sections — ⌘1…⌘6 | P1 | 🟡 | `cmd:section.light`, `cmd:section.color`, `cmd:section.effects`, `cmd:section.detail`, `cmd:section.optics` | bound to ⌘⌥1–5 |
+| KEY-SECTIONS | Expand/collapse edit sections — ⌘1…⌘6 | P1 | ✅ | `cmd:section.light`, `cmd:section.color`, `cmd:section.effects`, `cmd:section.detail`, `cmd:section.optics` | ⌘1–⌘5 (Light, Color, Effects, Detail, Optics) as observed; our Edit panel has no Lens Blur / Geometry section for ⌘6 / ⌘7; Zoom 100% moved to ⌥⌘0 |
 | KEY-PRESETS | Presets panel — ⇧P | P0 | ✅ | `cmd:panel.presets` | |
 | KEY-HISTOGRAM | Histogram — ⌘0 | P0 | 🟡 | `cmd:view.histogram` | bound to ⌘⇧H; ⌘0 = zoom to fit |
 | KEY-BRUSHSIZE | Brush size — `[` / `]` | P0 | ✅ | `cmd:brush.smaller`, `cmd:brush.larger` | Masking brush and Remove tool (and its selected spot) |
@@ -701,7 +701,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-STACKS | Stacks (full) | P1 | ✅ | `crates/catalog/src/stacks.rs`, `cmd:stack.group`, `cmd:stack.split`, `cmd:stack.moveUp`, `cmd:stack.moveDown` | group / ungroup / toggle / set top / remove / auto by time / split / move up and down |
 | LRC-LIB-VC | Virtual copies | P1 | ✅ | `cmd:photo.virtualCopy` | ⌘' |
 | LRC-LIB-LABELS | Colour-label sets | P1 | ✅ | `cmd:label.sets`, `cmd:label.applySet`, `cmd:label.saveSet`, `cmd:label.deleteSet`, `cmd:label.setNames`, `crates/engine/src/cmd/manage.rs` | built-in Colors / Review sets + user sets (Photo ▸ Set Color Label, Edit Label Names… dialog); names written to and read from `xmp:Label` |
-| LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | 🟡 | `crates/catalog/src/keywords.rs`, `cmd:keyword.list` | hierarchical `a\|b\|c` keywords (tree, parent filters include children, rename moves children); no keyword sets or painter |
+| LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | 🟡 | `crates/catalog/src/keywords.rs`, `cmd:keyword.list`, `cmd:keyword.sets`, `cmd:keyword.toggleFromSet`, `cmd:keyword.saveSet` | hierarchical `a\|b\|c` keywords (tree, parent filters include children, rename moves children); keyword sets + Recent Keywords in the Keywords panel, ⌥1–⌥9 toggle; no keyword painter |
 | LRC-LIB-METADATA | Metadata panel & presets | P1 | ✅ | `cmd:photo.setMeta`, `cmd:metadata.savePreset`, `cmd:metadata.applyPreset`, `cmd:metadata.presets`, `cmd:metadata.deletePreset`, `cmd:dialog.captureTime` | IPTC core, accessibility, place, capture-time edit; metadata presets (Photo → Metadata Preset, Save Metadata Preset… from the active photo; applied on import from Settings); no copyright status field |
 | LRC-LIB-QUICKDEV | Quick develop | P2 | ⬜ | | |
 | LRC-LIB-PEOPLE | People view | P2 | ⬜ | | |

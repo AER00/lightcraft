@@ -411,6 +411,11 @@ pub fn specs() -> Vec<CommandSpec> {
                 }
                 let n = ops.len();
                 s.commit("Edit Info", Op::Batch { ops })?;
+                // keywords just added become the Recent Keywords set
+                let added: Vec<String> = strs("addKeywords").unwrap_or_default().into_iter().chain(strs("keywords").unwrap_or_default()).collect();
+                if n > 0 && !added.is_empty() {
+                    crate::cmd::keywords::note_recent(s, &added);
+                }
                 Ok(json!({"changed": n}))
             }
         ),
