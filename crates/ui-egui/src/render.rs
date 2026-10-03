@@ -45,6 +45,8 @@ pub enum Slot {
     Hover,
     /// An import candidate's thumbnail in the import review dialog (by index).
     Import(u32),
+    /// The second window's view of the active photo.
+    Second,
 }
 
 pub struct Tex {

@@ -446,3 +446,19 @@ fn edit_in_external_editor_opens_the_copy() {
     let _ = std::fs::remove_dir_all(&dir);
     h.settle(SETTLE);
 }
+
+#[test]
+fn second_window_shows_the_active_photo() {
+    let mut h = detail("panel.edit");
+    exec(&mut h, "view.photoGrid", json!({}));
+    exec(&mut h, "view.secondWindow", json!({"show": true}));
+    h.settle(SETTLE);
+    // headless has no native windows: it's embedded, and renders the photo for its own slot
+    let tex = h.app.renderer.textures.get(&crate::render::Slot::Second).map(|t| t.photo);
+    assert_eq!(tex, h.app.session.active(), "the second window has its own render of the active photo");
+    let r = h.request("ui.clickWidget", json!({"id": "view:secondWindow"}), T);
+    assert_eq!(r["ok"], true, "on screen: {r}");
+    exec(&mut h, "view.secondWindow", json!({}));
+    assert!(!h.app.ui.second_window);
+    h.settle(SETTLE);
+}

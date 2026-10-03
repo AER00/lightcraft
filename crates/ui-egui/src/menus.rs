@@ -83,6 +83,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.smartAlbum", "New Smart Album…", None, "File"),
     ("view.photoCounts", "Show Photo Counts", None, "View"),
     ("view.slideshow", "Slideshow", Some("Cmd+Alt+Enter"), "View"),
+    ("view.secondWindow", "Second Window", Some("Cmd+F11"), "Window"),
     ("dialog.allMetadata", "All Metadata…", None, "Photo"),
     ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
@@ -192,6 +193,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "view.squareGrid" => {
             app.ui.view = ViewMode::SquareGrid;
             Ok(Value::Null)
+        }
+        "view.secondWindow" => {
+            app.ui.second_window = p.get("show").and_then(Value::as_bool).unwrap_or(!app.ui.second_window);
+            Ok(json!({"show": app.ui.second_window}))
         }
         "view.photoCounts" => {
             app.ui.show_counts = p.get("show").and_then(Value::as_bool).unwrap_or(!app.ui.show_counts);

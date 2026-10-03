@@ -272,6 +272,8 @@ pub struct UiState {
     pub auto_advance: bool,
     /// Full-screen preview (F): the photo alone on black, no chrome.
     pub fullscreen: bool,
+    /// Window ▸ Second Window.
+    pub second_window: bool,
     /// A running slideshow (full screen): seconds per photo, when the next one is due (egui
     /// time), paused.
     #[serde(skip)]
@@ -490,6 +492,7 @@ impl Default for UiState {
             auto_advance: false,
             fullscreen: false,
             slideshow: None,
+            second_window: false,
             info_overlay: InfoOverlay::Off,
             navigator: true,
             settings: AppSettings::default(),

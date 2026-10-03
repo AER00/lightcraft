@@ -523,6 +523,7 @@ impl LightcraftApp {
         if self.ui.fullscreen {
             // full-screen preview: the photo alone on black
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(egui::Color32::BLACK)).show(ui, |ui| panels::detail::show(self, ui));
+            panels::second::show(self, &ctx);
             panels::dialogs::show(self, &ctx);
             panels::toast(self, &ctx);
             self.widgets = widgets::take_registry(&ctx);
@@ -552,6 +553,7 @@ impl LightcraftApp {
             state::ViewMode::Compare => panels::compare::show_compare(self, ui),
             state::ViewMode::Survey => panels::compare::show_survey(self, ui),
         });
+        panels::second::show(self, &ctx);
         panels::dialogs::show(self, &ctx);
         import::progress(self, &ctx);
         export_task::poll(self, &ctx);
