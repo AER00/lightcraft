@@ -1089,6 +1089,25 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// A click on the image zooms to the chosen click-zoom ratio, animating the loupe, and a second click returns to Fit.
+    #[test]
+    fn click_zoom_ratio_animates() {
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "none"}), t);
+        h.settle(SETTLE);
+        h.app.ui.click_zoom = 300;
+        let fit = h.app.image_rect.unwrap();
+        h.request("ui.clickWidget", json!({"id": "canvas:image", "fx": 0.5, "fy": 0.5}), t);
+        assert_eq!(h.app.ui.zoom, crate::state::Zoom::Percent(300));
+        assert!(h.app.ui.zoom_anim, "animation started");
+        h.settle(SETTLE);
+        assert!(!h.app.ui.zoom_anim, "animation finished");
+        assert!(h.app.image_rect.unwrap().width() > fit.width());
+        h.request("ui.clickWidget", json!({"id": "canvas:image", "fx": 0.5, "fy": 0.5}), t);
+        assert_eq!(h.app.ui.zoom, crate::state::Zoom::Fit);
+    }
+
     /// The Navigator appears when zoomed in; clicking it pans to that point.
     #[test]
     fn navigator_pans_the_zoomed_loupe() {

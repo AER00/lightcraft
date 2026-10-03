@@ -189,6 +189,11 @@ pub struct UiState {
     pub zoom: Zoom,
     /// Pan offset of the loupe when zoomed (image-normalized centre).
     pub pan: (f32, f32),
+    /// Zoom applied by a click on the image, in percent (200 = 2:1).
+    pub click_zoom: u32,
+    /// Animate the loupe rect toward its target (set by a click-zoom).
+    #[serde(skip)]
+    pub zoom_anim: bool,
     pub before_after: BeforeAfter,
     pub thumb_size: f32,
     /// Open Edit sections by id.
@@ -470,6 +475,8 @@ impl Default for UiState {
             filmstrip: true,
             zoom: Zoom::Fit,
             pan: (0.5, 0.5),
+            click_zoom: 200,
+            zoom_anim: false,
             before_after: BeforeAfter::Off,
             thumb_size: 220.0,
             open_sections: vec!["light".into()],

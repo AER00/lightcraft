@@ -163,6 +163,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                         }
                     }
                 });
+                child.add_space(6.0);
+                let cz =
+                    crate::widgets::dropdown(&mut child, "clickZoom", &format!("Click {}:1", app.ui.click_zoom / 100), t.font(13.0), t.text_label);
+                egui::Popup::menu(&cz).show(|ui| {
+                    for n in [2u32, 3, 5] {
+                        if ui.selectable_label(app.ui.click_zoom == n * 100, format!("{n}:1")).clicked() {
+                            app.ui.click_zoom = n * 100;
+                        }
+                    }
+                });
             } else {
                 // thumbnail size slider
                 let (r, resp) = child.allocate_exact_size(vec2(110.0, 20.0), Sense::click_and_drag());
