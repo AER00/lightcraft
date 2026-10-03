@@ -254,7 +254,11 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
             let sel = app.session.source == LibrarySource::Album(a.id);
             let icon = if a.is_smart() { Icon::SmartAlbum } else { Icon::Album };
             let n = app.session.catalog.album_count(a.id);
-            let mut resp = row(app, ui, &format!("album:{}", a.id.0), icon, &a.name, Some(n), sel, indent);
+            // the album B adds to is marked "+"
+            let target =
+                app.session.target_album.filter(|t| app.session.catalog.album(*t).is_some()).or_else(|| app.session.catalog.quick_collection());
+            let label = if target == Some(a.id) { format!("{} +", a.name) } else { a.name.clone() };
+            let mut resp = row(app, ui, &format!("album:{}", a.id.0), icon, &label, Some(n), sel, indent);
             if !a.is_smart() {
                 drop_target(app, ui, &resp, a);
             }
@@ -293,6 +297,18 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
     resp.context_menu(|ui| {
         if !a.folder && !a.is_smart() && ui.button("Add Selected Photos").clicked() {
             let _ = app.run("album.addPhotos", json!({"id": a.id.0}));
+        }
+        if !a.folder && !a.is_smart() {
+            let is_target = app.session.target_album == Some(a.id) || (app.session.target_album.is_none() && a.quick);
+            if !is_target && ui.button("Set as Target Album (B adds to it)").clicked() {
+                let _ = app.run("album.setTarget", json!({"id": if a.quick { serde_json::Value::Null } else { json!(a.id.0) }}));
+            }
+            if is_target && !a.quick && ui.button("Stop Using as Target Album").clicked() {
+                let _ = app.run("album.setTarget", json!({"id": null}));
+            }
+        }
+        if a.quick && ui.button("Clear Quick Collection").clicked() {
+            let _ = app.run("album.clearQuick", json!({}));
         }
         if a.is_smart() && ui.button("Edit Smart Album…").clicked() {
             // older smart albums keep their filter fields; the editor works on the rule set

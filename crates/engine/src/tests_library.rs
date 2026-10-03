@@ -209,3 +209,31 @@ fn filter_any_of_several_labels() {
     s.execute("library.filter", &serde_json::json!({"labels": []})).unwrap();
     assert!(s.visible_cloned().len() > want);
 }
+
+/// Quick Collection / target album: B toggles the selection in it (created on first use);
+/// another album can be the target; clear empties it; all undoable.
+#[test]
+fn quick_collection_and_target_album() {
+    let mut s = crate::Session::with_demo();
+    let ids: Vec<u64> = s.catalog.photos().take(3).map(|p| p.id.0).collect();
+    assert!(s.catalog.quick_collection().is_none());
+    s.execute("library.select", &serde_json::json!({"ids": [ids[0], ids[1]]})).unwrap();
+    let r = s.execute("album.toggleTarget", &serde_json::json!({})).unwrap();
+    assert_eq!((r["added"].as_bool(), r["count"].as_u64(), r["name"].as_str()), (Some(true), Some(2), Some("Quick Collection")));
+    let quick = s.catalog.quick_collection().expect("created");
+    // again: both are in it, so they come out
+    assert_eq!(s.execute("album.toggleTarget", &serde_json::json!({})).unwrap()["count"], 0);
+    s.execute("edit.undo", &serde_json::json!({})).unwrap();
+    assert_eq!(s.catalog.album_count(quick), 2);
+    // a regular album as the target
+    let alb = s.execute("album.create", &serde_json::json!({"name": "Picks"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.setTarget", &serde_json::json!({"id": alb})).unwrap();
+    s.execute("album.toggleTarget", &serde_json::json!({"ids": [ids[2]]})).unwrap();
+    assert_eq!(s.catalog.album_count(lightcraft_catalog::AlbumId(alb)), 1);
+    assert_eq!(s.catalog.album_count(quick), 2, "the Quick Collection is untouched");
+    let smart = s.execute("album.createSmart", &serde_json::json!({"name": "S", "rules": {"rating": 3}})).unwrap()["id"].as_u64().unwrap();
+    assert!(s.execute("album.setTarget", &serde_json::json!({"id": smart})).is_err());
+    s.execute("album.setTarget", &serde_json::json!({"id": null})).unwrap();
+    s.execute("album.clearQuick", &serde_json::json!({})).unwrap();
+    assert_eq!(s.catalog.album_count(quick), 0);
+}

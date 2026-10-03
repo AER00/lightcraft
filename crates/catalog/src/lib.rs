@@ -235,6 +235,11 @@ impl Catalog {
     pub fn albums(&self) -> impl Iterator<Item = &Album> {
         self.albums.values()
     }
+    /// The Quick Collection, once something was added to it.
+    pub fn quick_collection(&self) -> Option<AlbumId> {
+        self.albums.values().find(|a| a.quick).map(|a| a.id)
+    }
+
     /// Albums (regular and smart) that contain the photo.
     pub fn albums_of(&self, id: PhotoId) -> Vec<AlbumId> {
         let Some(p) = self.photos.get(&id) else { return Vec::new() };

@@ -57,11 +57,15 @@ fn albums_and_folders() {
     let mut c = Catalog::new();
     let a = photo(&mut c, "a.jpg", "2026-04-01");
     let f = c.alloc_album_id();
-    c.apply(Op::AddAlbum { album: Album { id: f, name: "Trips".into(), parent: None, folder: true, photos: vec![], cover: None, smart: None } })
-        .unwrap();
+    c.apply(Op::AddAlbum {
+        album: Album { id: f, name: "Trips".into(), parent: None, folder: true, photos: vec![], cover: None, smart: None, quick: false },
+    })
+    .unwrap();
     let al = c.alloc_album_id();
-    c.apply(Op::AddAlbum { album: Album { id: al, name: "Alps".into(), parent: Some(f), folder: false, photos: vec![a], cover: None, smart: None } })
-        .unwrap();
+    c.apply(Op::AddAlbum {
+        album: Album { id: al, name: "Alps".into(), parent: Some(f), folder: false, photos: vec![a], cover: None, smart: None, quick: false },
+    })
+    .unwrap();
     assert_eq!(c.albums_of(a), vec![al]);
     assert!(c.apply(Op::RemoveAlbum { id: f }).is_err(), "non-empty folder");
     assert!(c.apply(Op::SetAlbumPhotos { id: f, photos: vec![a] }).is_err(), "folders hold no photos");

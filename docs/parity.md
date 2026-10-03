@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 73 | 4 | 8 | 8 | 46/47 (98%) | 22/23 (96%) |
 | Z. Keyboard shortcuts (desktop) | 73 | 3 | 4 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 18 | 12 | 49 | 9 | — | 17/21 (81%) |
-| **Total** | 344 | 32 | 124 | 37 | 193/198 (97%) | 131/144 (91%) |
+| Lightroom Classic extras | 19 | 11 | 49 | 9 | — | 18/21 (86%) |
+| **Total** | 345 | 31 | 124 | 37 | 193/198 (97%) | 132/144 (92%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **72.0%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.1% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **72.1%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -694,7 +694,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-REFVIEW | Reference view | P2 | ⬜ | | |
 | LRC-LIB-CATALOG-PANEL | Catalog sets | P1 | ✅ | `cmd:library.source` (`missing`) | all, recently added, picks, recently deleted, missing photos (when any) |
 | LRC-LIB-FOLDERS | Disk folder tree | P1 | 🟡 | `cmd:library.browse`, `crates/ui-egui/src/panels/left.rs` (`local_section`) | standard places + the browsed folder + Browse Folder…, breadcrumb navigation upwards; no expandable folder tree, no folder rename/move |
-| LRC-LIB-COLLECTIONS | Collections & sets | P1 | 🟡 | `cmd:album.create` | albums + folders; no smart / quick / target collections |
+| LRC-LIB-COLLECTIONS | Collections & sets | P1 | ✅ | `cmd:album.create`, `cmd:album.createSmart`, `cmd:album.toggleTarget`, `cmd:album.setTarget`, `cmd:album.clearQuick` | albums + folders (sets), smart albums (rule editor), Quick Collection and target album (B in the grids adds / removes the selection; album menu ▸ Set as Target Album; the target is marked +) |
 | LRC-LIB-SMARTCOLL | Smart-collection rules | P1 | ✅ | `cmd:album.createSmart`, `cmd:album.setRules`, `cmd:album.ruleFields`, `cmd:dialog.smartAlbum`, `crates/catalog/src/rules.rs`, `crates/ui-egui/src/panels/rules_editor.rs` | rule editor: match all / any / none, nested groups (⌥+ or + Group), 26 fields (rating, flag, label, type, edits, keywords, any text, filename, format, title, caption, camera, lens, location, creator, copyright, capture / import / edit date, ISO, aperture, focal length, megapixels, GPS, virtual copy, album) with text / number / date / in-the-last operators; live match count; also usable as a library filter (`ruleSet`) |
 | LRC-LIB-PUBLISH | Publish services | P2 | ⬜ | | |
 | LRC-LIB-FILTERBAR | Library filter bar | P1 | ✅ | `cmd:view.filterBar`, `cmd:filter.applyPreset`, `cmd:library.filter` (`labels`, `ruleSet`), `crates/ui-egui/src/panels/filterbar.rs` | rating/flag/label (several labels at once = any of them)/kind/edited/camera/lens/keyword, clear, save as smart album, filter presets; the filter stays as you change albums (always locked, as in the desktop app); arbitrary conditions via the smart-album rule editor |

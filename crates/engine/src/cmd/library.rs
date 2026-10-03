@@ -432,7 +432,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let cover = photos.first().copied();
             s.commit(
                 if folder { "New Folder" } else { "New Album" },
-                Op::AddAlbum { album: Album { id, name, parent, folder, photos, cover, smart: None } },
+                Op::AddAlbum { album: Album { id, name, parent, folder, photos, cover, smart: None, quick: false } },
             )?;
             Ok(json!({"id": id.0}))
         }),
@@ -538,6 +538,63 @@ pub fn specs() -> Vec<CommandSpec> {
             let cover = al.cover.or(photos.first().copied());
             s.commit("Add to Album", Op::Batch { ops: vec![Op::SetAlbumPhotos { id, photos }, Op::SetAlbumCover { id, cover }] })?;
             Ok(json!({"added": added}))
+        }),
+        cmd!(
+            "album.toggleTarget",
+            "Add to Target Album",
+            [],
+            None,
+            "{ids?} — B: adds the photos to the target album (the Quick Collection unless one is set), or removes them when they're all in it → {album, added}",
+            has_selection,
+            |s, p| {
+                let targets = ids_param(p).unwrap_or_else(|| s.targets(&Value::Null));
+                let target = s.target_album.filter(|a| s.catalog.album(*a).is_some_and(|al| !al.is_smart() && !al.folder));
+                let id = match target.or_else(|| s.catalog.quick_collection()) {
+                    Some(id) => id,
+                    None => {
+                        let id = s.catalog.alloc_album_id();
+                        let album = Album { quick: true, ..Album::new(id, "Quick Collection") };
+                        s.commit("New Quick Collection", Op::AddAlbum { album })?;
+                        id
+                    }
+                };
+                let al = s.catalog.album(id).ok_or_else(|| bad("album.toggleTarget", "no target album"))?;
+                let all_in = !targets.is_empty() && targets.iter().all(|t| al.photos.contains(t));
+                let photos: Vec<PhotoId> = if all_in {
+                    al.photos.iter().copied().filter(|x| !targets.contains(x)).collect()
+                } else {
+                    al.photos.iter().copied().chain(targets.iter().copied().filter(|t| !al.photos.contains(t))).collect()
+                };
+                let name = al.name.clone();
+                let cover = al.cover.filter(|c| photos.contains(c)).or(photos.first().copied());
+                s.commit(
+                    if all_in { "Remove from Target Album" } else { "Add to Target Album" },
+                    Op::Batch { ops: vec![Op::SetAlbumPhotos { id, photos }, Op::SetAlbumCover { id, cover }] },
+                )?;
+                Ok(json!({"album": id.0, "name": name, "added": !all_in, "count": s.catalog.album_count(id)}))
+            }
+        ),
+        cmd!("album.setTarget", "Set as Target Album", [], None, "{id: albumId | null} (null = the Quick Collection)", always, |s, p| {
+            s.target_album = match p.get("id").and_then(Value::as_u64) {
+                Some(a) => {
+                    let id = AlbumId(a);
+                    let al = s.catalog.album(id).ok_or_else(|| bad("album.setTarget", "no such album"))?;
+                    if al.is_smart() || al.folder {
+                        return Err(bad("album.setTarget", "smart albums and folders can't hold photos"));
+                    }
+                    Some(id)
+                }
+                None => None,
+            };
+            Ok(json!({"target": s.target_album.map(|a| a.0)}))
+        }),
+        cmd!("album.clearQuick", "Clear Quick Collection", [], None, "{}", always, |s, _| {
+            let Some(id) = s.catalog.quick_collection() else { return ok() };
+            s.commit(
+                "Clear Quick Collection",
+                Op::Batch { ops: vec![Op::SetAlbumPhotos { id, photos: vec![] }, Op::SetAlbumCover { id, cover: None }] },
+            )?;
+            ok()
         }),
         cmd!("album.removePhotos", "Remove from Album", [], None, "{id: albumId, ids?}", has_selection, |s, p| {
             let id = album_param(p, "id", "album.removePhotos")?;

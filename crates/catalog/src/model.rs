@@ -283,12 +283,15 @@ pub struct Album {
     /// live; `photos` stays empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smart: Option<Box<crate::Filter>>,
+    /// The Quick Collection: a regular album that B adds to (one per library).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quick: bool,
 }
 
 impl Album {
     /// A regular (manual) album.
     pub fn new(id: AlbumId, name: impl Into<String>) -> Album {
-        Album { id, name: name.into(), parent: None, folder: false, photos: Vec::new(), cover: None, smart: None }
+        Album { id, name: name.into(), parent: None, folder: false, photos: Vec::new(), cover: None, smart: None, quick: false }
     }
     pub fn is_smart(&self) -> bool {
         self.smart.is_some()

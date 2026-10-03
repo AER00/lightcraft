@@ -201,6 +201,16 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                     continue;
                 }
             }
+            // B: the brush while editing; in the grids, add to the target album (Quick Collection)
+            if f == "tool.brush" && matches!(app.ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid) {
+                if let Ok(r) = app.run("album.toggleTarget", json!({})) {
+                    let n = app.session.targets(&json!({})).len();
+                    let what = if n == 1 { "photo".to_string() } else { format!("{n} photos") };
+                    let name = r["name"].as_str().unwrap_or("Quick Collection").to_string();
+                    app.toast(ctx, if r["added"] == true { format!("Added {what} to {name}") } else { format!("Removed {what} from {name}") });
+                }
+                continue;
+            }
             // X is both reject (library) and swap crop aspect (crop tool)
             if f == "photo.reject" && app.ui.right == crate::state::RightPanel::Crop {
                 let _ = app.run("crop.rotateAspect", json!({}));

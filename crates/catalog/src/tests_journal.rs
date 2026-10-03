@@ -50,7 +50,16 @@ fn op_for(c: &mut Catalog, kind: u8, a: u8, b: u8) -> Op {
         5 => {
             let id = c.alloc_album_id();
             Op::AddAlbum {
-                album: Album { id, name: format!("A{b}"), parent: None, folder: b.is_multiple_of(4), photos: vec![], cover: None, smart: None },
+                album: Album {
+                    id,
+                    name: format!("A{b}"),
+                    parent: None,
+                    folder: b.is_multiple_of(4),
+                    photos: vec![],
+                    cover: None,
+                    smart: None,
+                    quick: false,
+                },
             }
         }
         6 => Op::SetAlbumPhotos { id: aid, photos: photos.iter().copied().filter(|p| (p.0 + b as u64).is_multiple_of(3)).collect() },

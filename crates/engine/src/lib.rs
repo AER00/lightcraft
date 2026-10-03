@@ -125,6 +125,8 @@ pub struct Session {
     pub filter_presets: Vec<cmd::filters::FilterPreset>,
     /// Saved colour-label name sets.
     pub label_sets: Vec<cmd::manage::LabelSet>,
+    /// The target album B adds to (`None` = the Quick Collection).
+    pub target_album: Option<lightcraft_catalog::AlbumId>,
     /// Keyword sets (⌥1–⌥9 apply the current set's keywords), the one in use (`None` = Recent
     /// Keywords) and the recently added keywords, newest first.
     pub keyword_sets: Vec<cmd::keywords::KeywordSet>,
@@ -185,6 +187,7 @@ impl Session {
             metadata_presets: Vec::new(),
             filter_presets: Vec::new(),
             label_sets: Vec::new(),
+            target_album: None,
             keyword_sets: Vec::new(),
             keyword_set: None,
             recent_keywords: Vec::new(),
