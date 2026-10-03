@@ -211,3 +211,48 @@ fn recently_added_covers_recent_imports_newest_first() {
     assert_eq!(names, ["new.png", "mid.png"], "the last 30 days, newest import first");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Copy imports: a destination folder, flat / by-month folders, renamed copies (numbered in
+/// import order), and a metadata preset on every photo.
+#[test]
+fn copy_with_destination_organize_rename_and_metadata_preset() {
+    let src = temp_dir("orgsrc");
+    let dest = temp_dir("orgdest");
+    write_png(&src.join("a.png"), 1);
+    write_png(&src.join("b.png"), 2);
+    let mut s = Session::new().with_fs();
+    s.execute("metadata.savePreset", &json!({"name": "Studio", "fields": {"copyright": "© Studio", "creator": "Sam"}})).unwrap();
+    assert!(s.execute("library.import", &json!({"paths": [src.to_string_lossy()], "metadataPreset": "Nope"})).is_err());
+    assert!(s.execute("library.import", &json!({"paths": [src.to_string_lossy()], "mode": "copy", "organize": "weekly"})).is_err());
+    let r = s
+        .execute(
+            "library.import",
+            &json!({"paths": [src.to_string_lossy()], "mode": "copy", "destination": dest.to_string_lossy(), "organize": "flat",
+                    "rename": "Shoot-{seq:3}", "renameStart": 7, "metadataPreset": "Studio"}),
+        )
+        .unwrap();
+    assert_eq!(ids(&r, "imported"), 2, "{r}");
+    let mut names: Vec<String> = s.catalog.photos().map(|p| p.file_name.clone()).collect();
+    names.sort();
+    assert_eq!(names, ["Shoot-007.png", "Shoot-008.png"], "catalogued under the new names");
+    assert!(dest.join("Shoot-007.png").exists() && dest.join("Shoot-008.png").exists(), "flat: straight into the destination");
+    assert!(s.catalog.photos().all(|p| p.meta.copyright == "© Studio" && p.meta.creator == "Sam"));
+    // by month, no library needed when a destination is given
+    let dest2 = temp_dir("orgdest2");
+    write_png(&src.join("c.png"), 3);
+    let r = s
+        .execute(
+            "library.import",
+            &json!({"paths": [src.join("c.png").to_string_lossy()], "mode": "copy", "destination": dest2.to_string_lossy(), "organize": "month"}),
+        )
+        .unwrap();
+    assert_eq!(ids(&r, "imported"), 1, "{r}");
+    let p = s.catalog.photos().find(|p| p.file_name == "c.png").unwrap();
+    let lightcraft_catalog::Source::File { path } = &p.source else { panic!() };
+    let rel = Path::new(path).strip_prefix(&dest2).unwrap();
+    assert_eq!(rel.components().count(), 3, "YYYY/YYYY-MM/c.png: {rel:?}");
+    assert_eq!(rel.parent().unwrap().file_name().unwrap().len(), 7);
+    for d in [&src, &dest, &dest2] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}

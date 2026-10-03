@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
 | Z. Keyboard shortcuts (desktop) | 67 | 9 | 4 | 1 | 49/52 (94%) | 16/23 (70%) |
-| Lightroom Classic extras | 14 | 16 | 49 | 9 | — | 13/21 (62%) |
-| **Total** | 328 | 48 | 124 | 37 | 193/198 (97%) | 115/144 (80%) |
+| Lightroom Classic extras | 15 | 15 | 49 | 9 | — | 14/21 (67%) |
+| **Total** | 329 | 47 | 124 | 37 | 193/198 (97%) | 116/144 (81%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **70.4%** of 500 in-scope rows — P0 98.7% of 198 · P1 88.5% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **70.5%** of 500 in-scope rows — P0 98.7% of 198 · P1 88.9% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -685,7 +685,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LRC-LIB-IMPORT | Full import dialog | P1 | 🟡 | `cmd:library.import` (`mode: copy`) | copy/add + duplicate skip; no file renaming, apply-during-import, destination organising, import presets |
+| LRC-LIB-IMPORT | Full import dialog | P1 | ✅ | `cmd:library.import` (`mode`, `destination`, `organize`, `rename`, `metadataPreset`, `preset`, `keywords`, `album`), `crates/ui-egui/src/import.rs` | review grid with duplicates skipped; add in place or copy (library Originals or any folder; by day / by month / one folder; rename template with live example, numbered across the import); develop preset, metadata preset, keywords, album on import |
 | LRC-LIB-AUTOIMPORT | Watched-folder import | P2 | ⬜ | | |
 | LRC-LIB-TETHER | Tethered capture | P2 | ⬜ | | |
 | LRC-LIB-VIEWS | Grid / loupe / compare / survey / people | P1 | 🟡 | `cmd:view.photoGrid`, `cmd:view.squareGrid`, `cmd:view.detail`, `cmd:view.compare`, `cmd:view.survey` | grid, square grid, loupe, compare, survey; no people view; grid cell styles: filenames only |

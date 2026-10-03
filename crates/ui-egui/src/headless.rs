@@ -943,6 +943,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Import dialog, copy mode: a chosen destination, one folder, renamed copies numbered across
+    /// the import's batches.
+    #[test]
+    fn import_copy_renames_into_destination() {
+        let base = std::env::temp_dir().join(format!("lc-ui-import-copy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (src, dest) = (base.join("card"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        for i in 0..10u8 {
+            let img = lightcraft_raster::Rgba8 { width: 8, height: 8, data: vec![[i * 20, 3, 9, 255]; 64] };
+            let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+            std::fs::write(src.join(format!("IMG_{i:02}.png")), png).unwrap();
+        }
+        let dest_s = dest.to_string_lossy().to_string();
+        let services = crate::Services { png: None, pick_folder: Some(Box::new(move || Some(dest_s.clone()))), ..Default::default() };
+        let mut app = LightcraftApp::new(lightcraft_engine::Session::with_demo().with_fs(), services);
+        app.ui.view = crate::state::ViewMode::PhotoGrid;
+        let mut h = Headless::new(app, [1300.0, 900.0], 1.0);
+        let t = Duration::from_secs(10);
+        let r = h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [src.to_string_lossy()]}}), t);
+        assert_eq!(r["result"]["candidates"], 10, "{r}");
+        h.settle(SETTLE);
+        for id in ["button:importCopy", "button:importDest"] {
+            let r = h.request("ui.clickWidget", json!({"id": id}), t);
+            assert_eq!(r["ok"], true, "{id}: {r}");
+        }
+        if let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog {
+            assert!(opts.copy);
+            assert_eq!(opts.destination, dest.to_string_lossy(), "Choose… sets the folder");
+            opts.organize = "flat".into();
+            opts.rename = "Trip-{seq:2}".into();
+        } else {
+            panic!("no import dialog");
+        }
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert!(h.app.import.is_none(), "finished");
+        let mut names: Vec<String> = std::fs::read_dir(&dest).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        names.sort();
+        let want: Vec<String> = (1..=10).map(|i| format!("Trip-{i:02}.png")).collect();
+        assert_eq!(names, want, "numbered across batches of {}", crate::import::BATCH);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// Settings (⌘,): tabs switch, app settings change the UI state, library settings go through
     /// the engine; the delete confirmation guards ⌫.
     #[test]

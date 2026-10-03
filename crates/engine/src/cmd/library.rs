@@ -553,7 +553,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Photos…",
             ["File"],
             Some("Cmd+Shift+I"),
-            "{paths: [file or folder (recursive)], mode?: add|copy (add = reference the files in place; copy = into the library's Originals/YYYY/YYYY-MM-DD/), album?: albumId, albumName?: new album, preset?: presetId, keywords?: [..]} → {imported, duplicates, failed, album?}",
+            "{paths: [file or folder (recursive)], mode?: add|copy (add = reference the files in place; copy = into the library's Originals/YYYY/YYYY-MM-DD/), destination?: folder for copies, organize?: date|month|flat, rename?: file-name template for copies ({name} {seq:N} {date:%Y%m%d} {camera} {title}), renameStart?: 1, metadataPreset?: name, album?: albumId, albumName?: new album, preset?: presetId, keywords?: [..]} → {imported, duplicates, failed, album?}",
             always,
             |s, p| {
                 let paths = strs(p, "paths");
@@ -577,7 +577,29 @@ pub fn specs() -> Vec<CommandSpec> {
                 {
                     return Err(bad("library.import", "album must be a regular album"));
                 }
-                let opts = crate::import::ImportOptions { mode, preset, keywords: strs(p, "keywords"), ..Default::default() };
+                let organize = match str_param(p, "organize") {
+                    Some(o) => {
+                        crate::import::Organize::parse(o).ok_or_else(|| bad("library.import", format!("unknown organize `{o}` (date|month|flat)")))?
+                    }
+                    None => Default::default(),
+                };
+                let metadata_preset = str_param(p, "metadataPreset").map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
+                if let Some(n) = &metadata_preset
+                    && !s.metadata_presets.iter().any(|m| m.name.eq_ignore_ascii_case(n))
+                {
+                    return Err(bad("library.import", format!("unknown metadata preset `{n}`")));
+                }
+                let opts = crate::import::ImportOptions {
+                    mode,
+                    preset,
+                    keywords: strs(p, "keywords"),
+                    destination: str_param(p, "destination").map(str::to_string),
+                    organize,
+                    rename: str_param(p, "rename").map(str::to_string),
+                    rename_start: p.get("renameStart").and_then(Value::as_u64).unwrap_or(1) as usize,
+                    metadata_preset,
+                    ..Default::default()
+                };
                 let undo0 = s.undo.len();
                 let mut report = serde_json::to_value(crate::import::import_with(s, &paths, &opts)?).unwrap_or_default();
                 let imported: Vec<u64> = report["imported"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();

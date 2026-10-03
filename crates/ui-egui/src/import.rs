@@ -15,7 +15,7 @@ use crate::theme::Tokens;
 use crate::widgets::register;
 
 /// Files per batch (one batch per frame, so the progress window updates).
-const BATCH: usize = 8;
+pub(crate) const BATCH: usize = 8;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -32,6 +32,14 @@ pub struct ImportDialog {
     pub preset: String,
     /// Comma-separated keywords.
     pub keywords: String,
+    /// Copy: destination folder ("" = the library's Originals/).
+    pub destination: String,
+    /// Copy: `date` (YYYY/YYYY-MM-DD), `month` or `flat`.
+    pub organize: String,
+    /// Copy: file-name template for the copies ("" = keep the names).
+    pub rename: String,
+    /// Metadata preset name ("" = none).
+    pub metadata_preset: String,
 }
 
 impl ImportDialog {
@@ -103,6 +111,21 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
     if !d.preset.is_empty() {
         params["preset"] = json!(d.preset);
     }
+    if !d.metadata_preset.is_empty() {
+        params["metadataPreset"] = json!(d.metadata_preset);
+    }
+    if d.copy {
+        if !d.destination.trim().is_empty() {
+            params["destination"] = json!(d.destination.trim());
+        }
+        if !d.organize.is_empty() {
+            params["organize"] = json!(d.organize);
+        }
+        if !d.rename.trim().is_empty() {
+            params["rename"] = json!(d.rename.trim());
+            params["renameStart"] = json!(1);
+        }
+    }
     let total = queue.len();
     app.import = Some(ImportTask { queue, total, params, undo0, ..Default::default() });
     app.renderer.forget_imports();
@@ -116,6 +139,10 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
     let batch: Vec<String> = task.queue.drain(..n).collect();
     let mut p = task.params.clone();
     p["paths"] = json!(batch);
+    // renamed copies keep counting across batches
+    if p.get("rename").is_some() {
+        p["renameStart"] = json!(1 + task.imported);
+    }
     let r = app.session.execute("library.import", &p);
     let task = app.import.as_mut().expect("import task");
     task.done += n;
@@ -216,12 +243,60 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
         if crate::widgets::text_button(ui, "importAdd", "Add in place", !d.copy).on_hover_text("Reference the files where they are").clicked() {
             d.copy = false;
         }
-        let can_copy = app.session.library.as_ref().is_some_and(|l| l.on_disk);
-        let r = ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importCopy", "Copy into library", d.copy)).inner;
-        if r.on_hover_text("Copy into the library's Originals/YYYY/YYYY-MM-DD/ folders").clicked() {
+        let can_copy = app.session.library.as_ref().is_some_and(|l| l.on_disk) || app.services.pick_folder.is_some();
+        let r = ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importCopy", "Copy", d.copy)).inner;
+        if r.on_hover_text("Copy the files (into the library's Originals/, or a folder you choose)").clicked() {
             d.copy = true;
         }
     });
+    if d.copy {
+        field(ui, "Copy to", |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let shown = if d.destination.trim().is_empty() { "Library Originals".to_string() } else { d.destination.clone() };
+            ui.label(egui::RichText::new(shown).color(Tokens::get(ui.ctx()).text_label));
+            if app.services.pick_folder.is_some()
+                && crate::widgets::text_button(ui, "importDest", "Choose…", false).clicked()
+                && let Some(f) = app.services.pick_folder.as_mut().and_then(|f| f())
+            {
+                d.destination = f;
+            }
+            if !d.destination.is_empty() && crate::widgets::text_button(ui, "importDestReset", "Library", false).clicked() {
+                d.destination.clear();
+            }
+        });
+        field(ui, "Folders", |ui| {
+            let opts = [("date", "By day (YYYY/YYYY-MM-DD)"), ("month", "By month (YYYY/YYYY-MM)"), ("flat", "Into one folder")];
+            let key = if d.organize.is_empty() { "date".to_string() } else { d.organize.clone() };
+            let cur = opts.iter().find(|o| o.0 == key).map_or(opts[0].1, |o| o.1);
+            egui::ComboBox::from_id_salt("import-organize").selected_text(cur).show_ui(ui, |ui| {
+                for (k, label) in opts {
+                    if ui.selectable_label(key == k, label).clicked() {
+                        d.organize = k.to_string();
+                    }
+                }
+            });
+        });
+        field(ui, "Rename", |ui| {
+            let r = ui.add(egui::TextEdit::singleline(&mut d.rename).hint_text("keep names — or e.g. {date}_{seq:3}").desired_width(f32::INFINITY));
+            register(ui.ctx(), "field:importRename", r.rect);
+        });
+        if !d.rename.trim().is_empty()
+            && let Some(c) = d.candidates.iter().zip(&d.checked).find(|(c, on)| **on && c.duplicate.is_none()).map(|(c, _)| c)
+        {
+            let mut q = lightcraft_catalog::Photo::new(
+                lightcraft_catalog::PhotoId(0),
+                lightcraft_catalog::Source::Demo { scene: 0 },
+                &c.name,
+                &c.format,
+                0,
+                0,
+                "",
+            );
+            q.captured = c.captured.clone();
+            let example = lightcraft_engine::rename::expand(d.rename.trim(), &q, 1);
+            ui.label(egui::RichText::new(format!("{} → {example}", c.name)).color(Tokens::get(ui.ctx()).text_dim));
+        }
+    }
     let albums: Vec<(u64, String)> = {
         let mut v: Vec<(u64, String)> =
             app.session.catalog.albums().filter(|a| !a.folder && !a.is_smart()).map(|a| (a.id.0, a.name.clone())).collect();
@@ -270,6 +345,21 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             }
         });
     });
+    if !app.session.metadata_presets.is_empty() {
+        field(ui, "Metadata", |ui| {
+            let cur = if d.metadata_preset.is_empty() { "None".to_string() } else { d.metadata_preset.clone() };
+            egui::ComboBox::from_id_salt("import-metadata").selected_text(cur).show_ui(ui, |ui| {
+                if ui.selectable_label(d.metadata_preset.is_empty(), "None").clicked() {
+                    d.metadata_preset.clear();
+                }
+                for m in &app.session.metadata_presets {
+                    if ui.selectable_label(d.metadata_preset == m.name, &m.name).clicked() {
+                        d.metadata_preset = m.name.clone();
+                    }
+                }
+            });
+        });
+    }
     field(ui, "Keywords", |ui| {
         let r = ui.add(egui::TextEdit::singleline(&mut d.keywords).hint_text("comma, separated").desired_width(f32::INFINITY));
         register(ui.ctx(), "field:importKeywords", r.rect);
