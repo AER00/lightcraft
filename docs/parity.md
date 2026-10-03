@@ -45,12 +45,12 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
-| Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
-| Z. Keyboard shortcuts (desktop) | 69 | 7 | 4 | 1 | 49/52 (94%) | 18/23 (78%) |
+| Y. Menus | 73 | 4 | 8 | 8 | 46/47 (98%) | 22/23 (96%) |
+| Z. Keyboard shortcuts (desktop) | 73 | 3 | 4 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 18 | 12 | 49 | 9 | — | 17/21 (81%) |
-| **Total** | 336 | 40 | 124 | 37 | 193/198 (97%) | 123/144 (85%) |
+| **Total** | 343 | 33 | 124 | 37 | 193/198 (97%) | 130/144 (90%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **71.2%** of 500 in-scope rows — P0 98.7% of 198 · P1 91.3% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **71.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 93.8% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -502,7 +502,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-APP-UPDATES | Check for updates | P2 | ⬜ | | |
 | MENU-APP-SYNC | Sync status / pause | OOS | 🚫 | | |
 | MENU-APP-SIGNOUT | Sign out | OOS | 🚫 | | |
-| MENU-APP-HIDE | Hide / hide others / show all | P1 | 🟡 | | platform window defaults (unverified) |
+| MENU-APP-HIDE | Hide / hide others / show all | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | the system's own items in the app menu (⌘H, ⌥⌘H) |
 | MENU-APP-QUIT | Quit | P0 | ✅ | `cmd:app.quit`, `apps/lightcraft/src/native_menu.rs` | macOS: app menu (native); elsewhere: File → Quit LightCraft |
 | MENU-FILE-ADDPHOTOS | Add Photos… | P0 | ✅ | `cmd:file.addPhotos` | |
 | MENU-FILE-ADDFOLDER | Add Folder… | P0 | ✅ | `cmd:file.addFolder`, `cmd:library.importPreview` | folder picker (desktop) → the import review, subfolders included; `path` param for agents |
@@ -518,7 +518,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-FILE-PHOTOSHOP | Edit in external editor | P2 | ⬜ | | |
 | MENU-FILE-SHOWFINDER | Show in Finder | P0 | ✅ | `cmd:app.showInFinder` | ⌘R; Explorer on Windows, the folder on Linux; disabled for demo scenes and on the web |
 | MENU-FILE-OFFLINE | Store album locally | P2 | 🚫 | | not applicable: local-first |
-| MENU-FILE-CLOSE | Close Window | P1 | 🟡 | | platform window defaults (unverified) |
+| MENU-FILE-CLOSE | Close Window | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | the system's Close Window item at the end of File (⌘W) |
 | MENU-EDIT-UNDO | Undo | P0 | ✅ | `cmd:edit.undo` | label does not name the step |
 | MENU-EDIT-REDO | Redo | P0 | ✅ | `cmd:edit.redo` | |
 | MENU-EDIT-COPYPASTE | Copy / paste (edit settings) | P0 | ✅ | `cmd:develop.copy`, `cmd:develop.paste` | |
@@ -572,7 +572,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-PHOTO-COVER | Set as album cover | P2 | ✅ | `cmd:album.setCover` | |
 | MENU-PHOTO-DELETE | Delete N photos… | P0 | ✅ | `cmd:photo.delete` | no confirmation; static label |
 | MENU-PHOTO-MOVETOCLOUD | Move/copy to cloud | OOS | 🚫 | | |
-| MENU-WINDOW-MINIMIZE | Minimize / zoom | P1 | 🟡 | | platform window defaults (unverified) |
+| MENU-WINDOW-MINIMIZE | Minimize / zoom | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | the system's Minimize (⌘M) and Zoom items at the top of Window |
 | MENU-WINDOW-PANELS | Panel switches | P0 | ✅ | `cmd:panel.edit`, `cmd:panel.crop`, `cmd:panel.remove`, `cmd:panel.masking`, `cmd:panel.presets`, `cmd:panel.versions` | |
 | MENU-WINDOW-BRINGFRONT | Bring all to front | P2 | 🟡 | | platform window defaults (unverified) |
 | MENU-HELP-HELP | Help | P2 | ✅ | `cmd:app.help` | opens the documentation |
@@ -606,7 +606,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-KEYWORDS | Keywords — K | P0 | ✅ | `cmd:panel.keywords` | |
 | KEY-CLIPBOARD | Copy / paste edit settings — ⌘C / ⌘V | P0 | ✅ | `cmd:develop.copy`, `cmd:develop.paste` | ⌘X has nothing to cut outside text fields |
 | KEY-UNDOREDO | Undo / redo — ⌘Z / ⇧⌘Z | P0 | ✅ | `cmd:edit.undo`, `cmd:edit.redo` | |
-| KEY-MINIMIZE | Minimize — ⌘M | P1 | 🟡 | | platform default (unverified) |
+| KEY-MINIMIZE | Minimize — ⌘M | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | native Window ▸ Minimize |
 | KEY-AUTO | Auto — ⇧A | P0 | ✅ | `cmd:develop.auto` | |
 | KEY-PHOTOSHOP | External editor — ⇧⌘E | P2 | ⬜ | | key used by our export dialog |
 | KEY-ROTATE | Rotate — ⌘[ / ⌘] | P0 | ✅ | `cmd:photo.rotateLeft`, `cmd:photo.rotateRight` | |
@@ -626,16 +626,16 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-FILMSTRIP | Filmstrip — / | P0 | ✅ | `cmd:view.filmstrip` | |
 | KEY-SHOWORIGINAL | Show original — \ | P0 | ✅ | `cmd:view.showOriginal` | |
 | KEY-TOGGLEZOOM | Toggle zoom — Space | P0 | ✅ | `cmd:view.zoomToggle` | Space is a secondary binding (primary Z) |
-| KEY-MASKCOLOR | Cycle mask colour — ⇧O | P1 | 🟡 | `cmd:view.maskOverlayColor` | View → Cycle Mask Overlay Color; ⇧O cycles the overlay mode while masking (crop overlays elsewhere) |
+| KEY-MASKCOLOR | Cycle mask colour — ⇧O | P1 | ✅ | `cmd:view.maskOverlayColor`, `crates/ui-egui/src/shortcuts.rs` | ⇧O while masking cycles the overlay colour (while cropping: the guides' orientation); the overlay mode is in View ▸ Cycle Mask Overlay Mode |
 | KEY-EXPORTPREV | Export with previous — ⌘E | P0 | ✅ | `cmd:app.exportPrevious` | ⌘E (alias) and ⌥⇧⌘E (Classic) |
 | KEY-EXPORTDIALOG | Export dialog — ⇧E | P0 | ✅ | `cmd:dialog.export` | secondary binding (primary ⌘⇧E) |
 | KEY-ENTERFULLSCREEN | Window full screen — ⇧⌘F | P1 | ✅ | `cmd:view.enterFullScreen` | |
 | KEY-STACK | Group / ungroup stack — ⌘G / ⇧⌘G | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup` | also S expand/collapse, ⇧S top of stack |
 | KEY-GUIDEDUPRIGHT | Guided Upright — ⇧G | P1 | ✅ | `cmd:tool.guidedUpright`, `cmd:geometry.upright` | opens Crop & Geometry with Guided Upright on and the guide tool active; G toggles Photo Grid ↔ Square Grid (`cmd:view.gridToggle`) as observed |
-| KEY-HIDE | Hide / hide others — ⌘H / ⌥⌘H | P1 | 🟡 | | platform default (unverified) |
+| KEY-HIDE | Hide / hide others — ⌘H / ⌥⌘H | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | native app-menu items |
 | KEY-QUIT | Quit — ⌘Q | P0 | ✅ | `cmd:app.quit` | ⌘Q (Ctrl+Q off macOS) |
 | KEY-CREATEVERSION | Create version — ⇧M | P1 | ✅ | `cmd:version.create` | secondary binding (primary ⌘⇧S) |
-| KEY-CLOSEWINDOW | Close window — ⌘W | P1 | 🟡 | | platform default (unverified) |
+| KEY-CLOSEWINDOW | Close window — ⌘W | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | native File ▸ Close Window |
 | KEY-DELETE | Delete photo — ⌫ | P0 | ✅ | `cmd:photo.delete` | |
 | KEY-ADDPHOTOS | Add photos — ⇧⌘I | P0 | ✅ | `cmd:file.addPhotos` | |
 | KEY-VERSIONS | Versions panel — ⇧V | P1 | ✅ | `cmd:panel.versions` | |

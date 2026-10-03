@@ -243,6 +243,10 @@ impl NativeMenu {
                 .collect();
             let nodes = tidy_separators(nodes);
             self.append_nodes(&sub, &nodes);
+            if title == "File" {
+                // ⌘W, the system's own item
+                let _ = sub.append_items(&[&PredefinedMenuItem::separator(), &PredefinedMenuItem::close_window(None)]);
+            }
             if title == "Window" {
                 let _ = sub.append_items(&[&PredefinedMenuItem::separator(), &PredefinedMenuItem::bring_all_to_front(None)]);
                 sub.set_as_windows_menu_for_nsapp();

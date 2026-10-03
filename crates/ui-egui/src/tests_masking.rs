@@ -51,14 +51,16 @@ fn mask_overlay_keys_and_pins() {
     let d = develop(&h);
     let o = crate::panels::detail::view_overlay(&h.app, &d);
     assert_eq!(o, Overlay::Mask { id: 2, view: MaskView::Color, color: [230, 30, 40], opacity: 50 });
-    // O toggles it, Shift+O cycles the mode (and leaves the crop overlay alone)
+    // O toggles it, Shift+O cycles the colour (and leaves the crop overlay alone)
     h.request("ui.key", json!({"key": "o"}), T);
     assert!(!h.app.ui.mask_overlay);
     assert_eq!(crate::panels::detail::view_overlay(&h.app, &d), Overlay::None);
     h.request("ui.key", json!({"key": "o"}), T);
     let crop = h.app.ui.crop_overlay;
+    let colour = h.app.ui.mask_overlay_color;
     h.request("ui.key", json!({"key": "o", "shift": true}), T);
-    assert_eq!(h.app.ui.mask_overlay_mode, "colorOnBw");
+    assert_ne!(h.app.ui.mask_overlay_color, colour, "the next overlay colour");
+    assert_eq!(h.app.ui.mask_overlay_mode, "color", "the mode stays");
     assert_eq!(h.app.ui.crop_overlay, crop);
     exec(&mut h, "view.maskOverlayMode", json!({"mode": "whiteOnBlack"}));
     exec(&mut h, "view.maskOverlayColor", json!({"color": "#2870f0", "opacity": 80}));

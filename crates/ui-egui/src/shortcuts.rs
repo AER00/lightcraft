@@ -214,9 +214,9 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let _ = app.run("spot.refreshSource", json!({}));
                 continue;
             }
-            // Shift+O cycles the mask overlay mode while masking (the crop overlay elsewhere)
+            // Shift+O cycles the mask overlay colour while masking (the crop overlay elsewhere)
             if f == "view.cropOverlay" && app.ui.right == crate::state::RightPanel::Masking {
-                let _ = app.run("view.maskOverlayMode", json!({}));
+                let _ = app.run("view.maskOverlayColor", json!({}));
                 continue;
             }
             // while cropping: O cycles the guides, Shift+O their orientation, A locks the aspect
