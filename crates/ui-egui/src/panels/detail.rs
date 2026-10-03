@@ -677,6 +677,15 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
             None => egui::CursorIcon::Alias,
         });
     }
+    // double-click inside the crop box applies the crop (same as Return / Done)
+    if resp.double_clicked()
+        && let Some(q) = resp.interact_pointer_pos()
+        && inside(q)
+        && !handles.iter().any(|h| h.distance(q) < 12.0)
+    {
+        let _ = app.run("tool.done", json!({}));
+        return;
+    }
     if resp.drag_started()
         && let Some(q) = resp.interact_pointer_pos()
     {
