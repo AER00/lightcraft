@@ -802,11 +802,18 @@ pub struct Mask {
     pub invert: bool,
     pub components: Vec<MaskComponent>,
     pub adjust: LocalAdjustments,
+    /// Refine Edges 0..100: the mask's edges snap to the photo's (guided filter).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub refine: f64,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 impl Default for Mask {
     fn default() -> Self {
-        Self { id: 0, name: "Mask 1".into(), visible: true, invert: false, components: Vec::new(), adjust: LocalAdjustments::default() }
+        Self { id: 0, name: "Mask 1".into(), visible: true, invert: false, components: Vec::new(), adjust: LocalAdjustments::default(), refine: 0.0 }
     }
 }
 

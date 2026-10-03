@@ -209,6 +209,23 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            "mask.refine",
+            "Refine Mask Edges",
+            [],
+            None,
+            "{id?, value: 0..100} — the mask's edges snap to the photo's (guided filter; rendered on the CPU)",
+            has_active,
+            |s, p| {
+                let v = f64_or(p, "value", 0.0).clamp(0.0, 100.0);
+                let mid = mask_id(p, s.active_mask, "mask.refine")?;
+                masks_edit(s, "mask.refine", "Refine Edges", |masks, _| {
+                    let i = find(masks, mid, "mask.refine")?;
+                    masks[i].refine = v;
+                    Ok(())
+                })
+            }
+        ),
+        cmd!(
             "mask.adjust",
             "Set Mask Adjustments",
             [],

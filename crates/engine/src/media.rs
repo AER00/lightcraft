@@ -431,6 +431,7 @@ pub fn develop(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &
     // LUT profiles have no GPU stage: they render on the CPU
     if gpu
         && !lightcraft_pipeline::lut::is_lut_profile(&s.profile.id)
+        && !s.masks.iter().any(|m| m.visible && m.refine > 0.0)
         && let Some(r) = lightcraft_gpu::render(src, info, s, req, stages)
     {
         return r;
