@@ -20,7 +20,7 @@ pub use datetime::DateTime;
 pub use exif::{from_tiff, read_exif, strip_exif_header, try_read_exif, write_exif};
 pub use iptc::parse_iptc;
 pub use lightcraft_geom::Orientation;
-pub use xmp::{CRS_NS, LC_NS, XmpData, XmpError, parse_xmp, write_xmp, write_xmp_lc};
+pub use xmp::{CRS_NS, LC_NS, XmpData, XmpError, XmpValue, parse_xmp, write_xmp, write_xmp_lc};
 
 use serde::{Deserialize, Serialize};
 

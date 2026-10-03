@@ -125,7 +125,9 @@ pub fn parse_sidecar(xmp: &str, raw: bool) -> std::result::Result<SidecarData, S
     let full = d.lc_settings.as_deref().and_then(|j| serde_json::from_str::<Value>(j).ok()).and_then(|v| DevelopSettings::from_json(&v).ok());
     out.develop = match full {
         Some(s) => Some(DevelopPatch::Full(Box::new(s))),
-        None if crate::crs::has_adjustments(&d.properties) => Some(DevelopPatch::Partial(crate::crs::to_partial(&d.properties, Some(raw)))),
+        None if crate::crs::has_adjustments(&d.properties) => {
+            Some(DevelopPatch::Partial(crate::crs::to_partial_report(&d.properties, Some(&d.values), Some(raw), crate::crs_masks::DEFAULT_ASPECT).0))
+        }
         None => None,
     };
     Ok(out)
@@ -164,7 +166,13 @@ pub fn merge_into(p: &mut Photo, sc: &SidecarData, now: &str) -> bool {
     }
     let develop = match &sc.develop {
         Some(DevelopPatch::Full(s)) => (**s).clone(),
-        Some(DevelopPatch::Partial(v)) => lightcraft_develop::apply_partial(&p.develop, v, 1.0),
+        Some(DevelopPatch::Partial(v)) => {
+            let mut v = v.clone();
+            if p.width > 0 && p.height > 0 {
+                crate::crs_masks::refit_radials(&mut v, crate::crs_masks::DEFAULT_ASPECT, p.width as f64 / p.height as f64);
+            }
+            lightcraft_develop::apply_partial(&p.develop, &v, 1.0)
+        }
         None => return false,
     };
     if develop == *p.develop {

@@ -340,15 +340,20 @@ fn delocalize(s: &str) -> String {
     }
 }
 
-/// The develop settings of an `.lrtemplate` as `crs:` properties, plus its title.
-pub fn lrtemplate_props(text: &str) -> Result<(Option<String>, Props), String> {
+/// The develop settings of an `.lrtemplate` as `crs:` properties (flat, and structured for local
+/// corrections), plus its title.
+pub fn lrtemplate_props(text: &str) -> Result<(Option<String>, Props, crate::crs_masks::Values), String> {
     let root = parse_lua(text)?;
     let title = root.get("title").or_else(|| root.get("internalName")).and_then(Lua::str).map(delocalize).filter(|t| !t.trim().is_empty());
     let settings = root.get("value").and_then(|v| v.get("settings")).ok_or("no develop settings in this template")?;
     let Lua::Table(_, fields) = settings else { return Err("no develop settings in this template".into()) };
     let mut props = Props::new();
+    let mut values = crate::crs_masks::Values::new();
     for (k, v) in fields {
         let key = format!("crs:{k}");
+        if crate::crs_masks::CONTAINERS.contains(&key.as_str()) {
+            values.insert(key.clone(), crate::crs_masks::from_lua(v));
+        }
         let vals: Vec<String> = match v {
             Lua::Num(n) => vec![format!("{n}")],
             Lua::Bool(b) => vec![if *b { "True" } else { "False" }.to_string()],
@@ -368,7 +373,7 @@ pub fn lrtemplate_props(text: &str) -> Result<(Option<String>, Props), String> {
         };
         props.insert(key, vals);
     }
-    Ok((title, props))
+    Ok((title, props, values))
 }
 
 // ------------------------------------------------------------------------------- XMP in files
@@ -429,8 +434,8 @@ pub fn group_from_dir(dir: &str) -> Option<String> {
     dir.split(['/', '\\']).rev().find(|p| !p.is_empty() && !generic(p)).map(str::to_string)
 }
 
-fn build(props: &Props, name: String, group: Option<String>, from_photo: bool) -> Option<Imported> {
-    let (mut settings, unmapped) = crate::crs::to_partial_report(props, None);
+fn build(props: &Props, values: &crate::crs_masks::Values, name: String, group: Option<String>, from_photo: bool) -> Option<Imported> {
+    let (mut settings, unmapped) = crate::crs::to_partial_report(props, Some(values), None, crate::crs_masks::DEFAULT_ASPECT);
     if from_photo && let Some(o) = settings.as_object_mut() {
         // a photo's own framing and absolute white balance don't belong in a look
         o.remove("crop");
@@ -483,8 +488,8 @@ pub fn read_presets(name: &str, bytes: &[u8], group: Option<String>) -> Result<V
         }
         "lrtemplate" => {
             let text = String::from_utf8_lossy(bytes);
-            let (title, props) = lrtemplate_props(text.trim_start_matches('\u{feff}'))?;
-            build(&props, title.unwrap_or(stem), group, false)
+            let (title, props, values) = lrtemplate_props(text.trim_start_matches('\u{feff}'))?;
+            build(&props, &values, title.unwrap_or(stem), group, false)
                 .map(|i| vec![i])
                 .ok_or_else(|| "no develop settings we can use in this template".into())
         }
@@ -493,13 +498,13 @@ pub fn read_presets(name: &str, bytes: &[u8], group: Option<String>) -> Result<V
             let d = lightcraft_meta::parse_xmp(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string())?;
             let props = &d.properties;
             let name = props.get("crs:Name").and_then(|v| v.first()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or(stem);
-            build(props, name, group, false).map(|i| vec![i]).ok_or_else(|| "no develop settings in this XMP file".into())
+            build(props, &d.values, name, group, false).map(|i| vec![i]).ok_or_else(|| "no develop settings in this XMP file".into())
         }
         // a photo carrying its edits (mobile "DNG presets", edited JPEG / TIFF)
         "dng" | "jpg" | "jpeg" | "tif" | "tiff" => {
             let xmp = embedded_xmp(bytes).ok_or("this photo carries no edits (no XMP)")?;
             let d = lightcraft_meta::parse_xmp(&xmp).map_err(|e| e.to_string())?;
-            build(&d.properties, stem, group, true).map(|i| vec![i]).ok_or_else(|| "this photo carries no edits we can use".into())
+            build(&d.properties, &d.values, stem, group, true).map(|i| vec![i]).ok_or_else(|| "this photo carries no edits we can use".into())
         }
         _ => crate::presets::parse_preset_file(name, bytes).map(|v| {
             v.into_iter()

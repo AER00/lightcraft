@@ -354,10 +354,25 @@ pub fn to_partial(props: &Props, raw: Option<bool>) -> Value {
 
 /// [`to_partial`], plus the adjustments in the packet it could not carry over (field names
 /// without the `crs:` prefix, grouped: `CameraProfile`, `Look`, `MaskGroupBasedCorrections`…).
-pub fn to_partial_report(props: &Props, raw: Option<bool>) -> (Value, Vec<String>) {
+///
+/// With `values` (the packet's structured properties), local corrections become masks too
+/// ([`crate::crs_masks`]; radial masks fitted to `aspect` = width / height); components that
+/// can't be carried over are reported as `Mask: <kind>`.
+pub fn to_partial_report(props: &Props, values: Option<&crate::crs_masks::Values>, raw: Option<bool>, aspect: f64) -> (Value, Vec<String>) {
     READ.with(|r| *r.borrow_mut() = Some(Default::default()));
-    let out = to_partial(props, raw);
-    let read = READ.with(|r| r.borrow_mut().take()).unwrap_or_default();
+    let mut out = to_partial(props, raw);
+    let mut read = READ.with(|r| r.borrow_mut().take()).unwrap_or_default();
+    let mut mask_skips = Vec::new();
+    if let Some(values) = values {
+        let (masks, skipped) = crate::crs_masks::masks(values, aspect);
+        if !masks.is_empty() {
+            put(&mut out, "masks", Value::Array(masks));
+        }
+        if values.keys().any(|k| crate::crs_masks::CONTAINERS.contains(&k.as_str())) {
+            read.extend(crate::crs_masks::CONTAINERS.iter().map(|c| c.to_string()));
+            mask_skips = skipped.into_iter().map(|k| format!("Mask: {k}")).collect();
+        }
+    }
     // fields that only switch a panel on/off or name things: not adjustments by themselves
     let quiet = |k: &str| k.starts_with("Enable") || k.starts_with("ToneCurveName") || k == "AutoTone" || k == "AutoGrayscaleMix";
     let mut unmapped: Vec<String> = props
@@ -369,6 +384,7 @@ pub fn to_partial_report(props: &Props, raw: Option<bool>) -> (Value, Vec<String
         .filter(|k| !quiet(k))
         .collect();
     unmapped.dedup();
+    unmapped.extend(mask_skips);
     (out, unmapped)
 }
 

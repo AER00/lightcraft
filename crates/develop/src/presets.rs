@@ -208,8 +208,29 @@ impl Preset {
     pub fn from_settings(id: &str, name: &str, group: &str, s: &DevelopSettings, groups: &[SettingsGroup]) -> Preset {
         Preset { id: id.into(), name: name.into(), group: group.into(), settings: extract_groups(s, groups), favorite: false, builtin: false }
     }
+    /// Apply at `amount` (1.0 = 100 %). Masks in the preset are added to the photo's own (ones it
+    /// already has are skipped), their effect scaled by the amount.
     pub fn apply(&self, s: &DevelopSettings, amount: f64) -> DevelopSettings {
-        apply_partial(s, &self.settings, amount)
+        let Some(masks) = self.settings.get("masks").and_then(Value::as_array).filter(|m| !m.is_empty()) else {
+            return apply_partial(s, &self.settings, amount);
+        };
+        let mut rest = self.settings.clone();
+        if let Some(o) = rest.as_object_mut() {
+            o.remove("masks");
+        }
+        let mut out = apply_partial(s, &rest, amount);
+        let mut next = out.masks.iter().map(|m| m.id).max().unwrap_or(0);
+        for m in masks {
+            let Ok(mut m) = serde_json::from_value::<crate::Mask>(m.clone()) else { continue };
+            if out.masks.iter().any(|q| q.name == m.name && q.components == m.components) {
+                continue;
+            }
+            next += 1;
+            m.id = next;
+            m.adjust.amount = (m.adjust.amount * amount).clamp(0.0, 200.0);
+            out.masks.push(m);
+        }
+        out
     }
 }
 

@@ -83,6 +83,29 @@ Values pass through our control specs, so anything outside our slider ranges get
 **Not mapped:** camera profiles and looks (`CameraProfile`, `Look`; we have our own profile set), local adjustments
 (masks, gradients, brushes), spot removal, red eye, lens blur, process-version 2010 field names, and AI features.
 
+## Local corrections (masks)
+
+Masks stored as `crs:` structures are read from sidecars, DNG-embedded XMP, XMP presets and `.lrtemplate` files
+(`crates/engine/src/crs_masks.rs`). Four containers hold them: `MaskGroupBasedCorrections` (current) and the older
+`GradientBasedCorrections`, `CircularGradientBasedCorrections` and `PaintBasedCorrections`. Each correction becomes one
+mask: `CorrectionName` → name, `CorrectionAmount` → Amount, inactive corrections are skipped.
+
+| Field | Ours | Notes |
+|---|---|---|
+| `LocalExposure2012` | `adjust.exposure` | stored as a fraction, ×4 EV |
+| `LocalContrast2012`, `LocalHighlights2012`, `LocalShadows2012`, `LocalWhites2012`, `LocalBlacks2012`, `LocalClarity2012`, `LocalTexture`, `LocalDehaze`, `LocalTemperature`, `LocalTint`, `LocalSaturation`, `LocalHue`, `LocalSharpness`, `LocalLuminanceNoise`, `LocalMoire`, `LocalDefringe`, `LocalToningSaturation` | the matching `adjust.*` | stored −1..1, ×100 |
+| `LocalToningHue` | `adjust.color_hue` | degrees |
+| `Mask/Gradient` (`FullX/Y`, `ZeroX/Y`) | linear gradient | full effect at the Full point |
+| `Mask/CircularGradient` (`Top/Left/Bottom/Right`, `Angle`, `Feather`, `Flipped`) | radial gradient | box fractions → long-edge radii (presets assume 3:2; sidecars use the photo's shape); `Flipped` → invert |
+| `Mask/Paint` (`Dabs` "d x y", `Radius`, `Flow`, `CenterWeight`, `MaskValue`) | brush | one brush component per correction; `MaskValue` ≤ 0 erases |
+| `Mask/Image` `MaskSubType` 1 / 2 | Subject / Sky | other AI selections are reported, not guessed |
+| `Mask/RangeMask` `Type` 2 / 3 (`LumRange`, `DepthRange`) | luminance / depth range | lightness converted to our range scale; colour ranges are reported |
+| `MaskBlendMode` 0 / 1 / 2, `MaskInverted` | add / subtract / intersect, invert | |
+
+Applying a preset adds its masks to the photo's own (masks the photo already has are not added twice), and the Amount
+slider scales them. A sidecar's masks replace the photo's, because a sidecar holds the whole edit. Components we can't
+carry over are listed in `preset.import`'s `unmapped` as `Mask: <kind>`.
+
 ## Preset files
 
 | | |

@@ -12,6 +12,7 @@
 
 pub mod cmd;
 pub mod crs;
+pub mod crs_masks;
 pub mod demo;
 pub mod devices;
 pub mod export;

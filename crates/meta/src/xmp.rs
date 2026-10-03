@@ -65,6 +65,67 @@ pub struct XmpData {
     /// Every property found, keyed `prefix:name` (struct fields as `prefix:name/prefix:field`); arrays keep
     /// item order, language alternatives put `x-default` first.
     pub properties: BTreeMap<String, Vec<String>>,
+    /// Every top-level property with its full structure (arrays of structs such as local
+    /// corrections, which [`XmpData::properties`] flattens).
+    pub values: BTreeMap<String, XmpValue>,
+}
+
+/// A structured XMP value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum XmpValue {
+    Text(String),
+    Array(Vec<XmpValue>),
+    Struct(BTreeMap<String, XmpValue>),
+}
+
+impl XmpValue {
+    /// A struct field (`prefix:name`).
+    pub fn field(&self, k: &str) -> Option<&XmpValue> {
+        match self {
+            XmpValue::Struct(m) => m.get(k),
+            _ => None,
+        }
+    }
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            XmpValue::Text(s) => Some(s.trim()),
+            XmpValue::Array(a) => a.first().and_then(XmpValue::text),
+            XmpValue::Struct(_) => None,
+        }
+    }
+    /// Array items (a lone value is a one-item array).
+    pub fn items(&self) -> &[XmpValue] {
+        match self {
+            XmpValue::Array(a) => a,
+            other => std::slice::from_ref(other),
+        }
+    }
+}
+
+fn node_struct(n: &Node) -> XmpValue {
+    let mut m = BTreeMap::new();
+    for (k, v) in &n.attrs {
+        if !is_rdf_meta_attr(k) {
+            m.insert(k.clone(), XmpValue::Text(v.clone()));
+        }
+    }
+    for c in &n.children {
+        m.insert(c.name.clone(), node_value(c));
+    }
+    XmpValue::Struct(m)
+}
+
+fn node_value(n: &Node) -> XmpValue {
+    if let Some(arr) = n.children.iter().find(|c| matches!(c.name.as_str(), "rdf:Seq" | "rdf:Bag" | "rdf:Alt")) {
+        return XmpValue::Array(arr.children.iter().filter(|li| li.name == "rdf:li").map(node_value).collect());
+    }
+    if let Some(d) = n.children.iter().find(|c| c.name == "rdf:Description") {
+        return node_struct(d);
+    }
+    if !n.children.is_empty() || n.attrs.iter().any(|(k, _)| !is_rdf_meta_attr(k)) {
+        return node_struct(n);
+    }
+    XmpValue::Text(n.attr("rdf:resource").map(str::to_string).unwrap_or_else(|| n.text.trim().to_string()))
 }
 
 #[derive(Debug, Default)]
@@ -322,8 +383,12 @@ pub fn parse_xmp(s: &str) -> Result<XmpData, XmpError> {
     let mut descs = Vec::new();
     find_descriptions(&tree, &mut descs);
     let mut props = BTreeMap::new();
+    let mut values = BTreeMap::new();
     for d in descs {
         collect_description(d, "", &mut props);
+        if let XmpValue::Struct(m) = node_struct(d) {
+            values.extend(m);
+        }
     }
     let first = |k: &str| props.get(k).and_then(|v| v.first()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let num = |k: &str| first(k).and_then(|s| parse_number(&s));
@@ -394,7 +459,7 @@ pub fn parse_xmp(s: &str) -> Result<XmpData, XmpError> {
         m.gps = Some(Gps { latitude: lat, longitude: lon, altitude });
     }
     let lc_settings = props.get("lc:settings").and_then(|v| v.first()).cloned();
-    Ok(XmpData { metadata: m, lc_settings, properties: props })
+    Ok(XmpData { metadata: m, lc_settings, properties: props, values })
 }
 
 fn frac(v: f64) -> String {
