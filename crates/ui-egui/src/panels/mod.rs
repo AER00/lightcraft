@@ -13,6 +13,7 @@ pub mod masking;
 pub mod presets;
 pub mod profiles;
 pub mod right;
+pub mod rules_editor;
 pub mod settings;
 pub mod strip;
 pub mod topbar;

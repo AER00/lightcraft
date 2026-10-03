@@ -12,6 +12,7 @@ pub mod journal;
 pub mod keywords;
 pub mod model;
 pub mod query;
+pub mod rules;
 pub mod stacks;
 pub mod store;
 
@@ -24,6 +25,7 @@ pub use keywords::KeywordNode;
 use lightcraft_develop::DevelopSettings;
 pub use model::*;
 pub use query::{DateGroup, Filter, RatingOp, Sort, SortKey};
+pub use rules::{Match, Rule, RuleSet};
 use serde::{Deserialize, Serialize};
 pub use store::{FsStore, MemStore, Store};
 

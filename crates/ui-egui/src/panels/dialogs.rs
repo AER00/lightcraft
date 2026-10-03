@@ -30,6 +30,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::RenameKeyword { .. } => "Rename Keyword",
         Dialog::MergeKeywords { .. } => "Merge Keywords",
         Dialog::NewSmartAlbum { .. } => "Create Smart Album",
+        Dialog::SmartRules { id: None, .. } => "New Smart Album",
+        Dialog::SmartRules { .. } => "Edit Smart Album",
         Dialog::AutoStack { .. } => "Auto-Stack by Capture Time",
         Dialog::CreatePreset { .. } => "Create Preset",
         Dialog::CopySettings { .. } => "Choose Edit Settings to Copy",
@@ -48,7 +50,11 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         .resizable(false)
         .frame(frame)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .default_width(if matches!(dlg, Dialog::Import { .. }) { 760.0 } else { 380.0 })
+        .default_width(match dlg {
+            Dialog::Import { .. } => 760.0,
+            Dialog::SmartRules { .. } => 680.0,
+            _ => 380.0,
+        })
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             match &mut dlg {
@@ -65,6 +71,25 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     let scope = if app.session.selection.ids.len() > 1 { "the selected photos" } else { "the photos in view" };
                     ui.label(
                         egui::RichText::new(format!("Creates {} stacks from {} of {scope}", preview["stacks"], preview["photos"])).color(t.text_dim),
+                    );
+                }
+                Dialog::SmartRules { name, rules, .. } => {
+                    let r = ui.add(egui::TextEdit::singleline(name).hint_text("Name").desired_width(f32::INFINITY));
+                    crate::widgets::register(ui.ctx(), "field:smartName", r.rect);
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
+                        crate::panels::rules_editor::edit(ui, rules, "rules", 0);
+                    });
+                    let problems = rules.problems();
+                    let f = lightcraft_catalog::Filter { rule_set: Some(rules.clone()), ..Default::default() };
+                    let n = if problems.is_empty() { app.session.catalog.query(&f, &Default::default()).len() } else { 0 };
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(match problems.first() {
+                            Some(p) => p.clone(),
+                            None => format!("{n} photo{} match · updates automatically as photos change", if n == 1 { "" } else { "s" }),
+                        })
+                        .color(t.text_dim),
                     );
                 }
                 Dialog::NewSmartAlbum { name } => {
@@ -654,6 +679,18 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         Dialog::RenameKeyword { from, to } => app.run("keyword.rename", json!({"from": from, "to": to})),
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),
+        Dialog::SmartRules { id, name, rules } => {
+            let name = if name.trim().is_empty() { "Smart Album".to_string() } else { name.trim().to_string() };
+            match id {
+                Some(id) => {
+                    if app.session.catalog.album(lightcraft_catalog::AlbumId(*id)).is_some_and(|a| a.name != name) {
+                        app.run("album.rename", json!({"id": id, "name": name}))?;
+                    }
+                    app.run("album.setRules", json!({"id": id, "replace": true, "rules": {"ruleSet": rules}}))
+                }
+                None => app.run("album.createSmart", json!({"name": name, "rules": {"ruleSet": rules}})),
+            }
+        }
         Dialog::NewSmartAlbum { name } => app.run("album.createSmart", json!({"name": if name.trim().is_empty() { "Smart Album" } else { name }})),
         Dialog::CreatePreset { name, group, groups } => app.run(
             "preset.create",

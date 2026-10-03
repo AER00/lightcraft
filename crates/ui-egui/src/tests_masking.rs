@@ -254,3 +254,29 @@ fn develop_photo_keywords(h: &Headless) -> Vec<String> {
     let id = h.app.session.active().expect("active photo");
     h.app.session.catalog.photo(id).unwrap().meta.keywords.clone()
 }
+
+#[test]
+fn smart_album_rule_editor_creates_and_edits() {
+    let mut h = detail("panel.edit");
+    exec(&mut h, "dialog.smartAlbum", json!({"name": "Keepers"}));
+    // the editor starts with Rating ≥ 3; "+" adds a second rule
+    let r = h.request("ui.clickWidget", json!({"id": "button:ruleAdd-rules-0"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let Some(crate::state::Dialog::SmartRules { rules, .. }) = &mut h.app.ui.dialog else { panic!("no rule editor") };
+    assert_eq!(rules.rules.len(), 2);
+    rules.rules[1] = serde_json::from_value(json!({"field": "flag", "op": "isNot", "value": "reject"})).unwrap();
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let a = h.app.session.catalog.albums().find(|a| a.name == "Keepers").expect("album").clone();
+    let n = h.app.session.catalog.photos().filter(|p| !p.deleted && p.rating >= 3 && p.flag != lightcraft_catalog::Flag::Reject).count();
+    assert_eq!(h.app.session.catalog.album_count(a.id), n);
+    // edit: back to one rule
+    exec(&mut h, "dialog.smartAlbum", json!({"id": a.id.0}));
+    let r = h.request("ui.clickWidget", json!({"id": "button:ruleRemove-rules-1"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let n3 = h.app.session.catalog.photos().filter(|p| !p.deleted && p.rating >= 3).count();
+    assert_eq!(h.app.session.catalog.album_count(a.id), n3);
+    h.settle(SETTLE);
+}

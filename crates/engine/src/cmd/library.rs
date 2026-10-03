@@ -441,7 +441,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Smart Album…",
             [],
             None,
-            "{name, rules?: partial Filter (rating, ratingOp, flag, label, kind, edited, keyword, camera, lens, dateFrom, dateTo, date, text, album), parent?: folderId} — without `rules`, saves the current view (source + filter)",
+            "{name, rules?: partial Filter (rating, ratingOp, flag, label, kind, edited, keyword, camera, lens, dateFrom, dateTo, date, text, album, ruleSet: {match: all|any|none, rules: [{field, op, value} | {group: ruleSet}]} — see album.ruleFields), parent?: folderId} — without `rules`, saves the current view (source + filter)",
             always,
             |s, p| {
                 let name = str_param(p, "name").unwrap_or("Smart Album").trim().to_string();
@@ -459,6 +459,27 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"id": id.0, "count": s.catalog.album_count(id)}))
             }
         ),
+        cmd!(query "album.ruleFields", "Smart Album Rule Fields", [], None, "{} → [{field, label, kind, ops: [{op, label}], choices?}] for ruleSet rules", always, |_, _| {
+            use lightcraft_catalog::rules::{FIELDS, Kind, ops_for};
+            Ok(json!(FIELDS
+                .iter()
+                .map(|(id, label, kind)| {
+                    let k = match kind {
+                        Kind::Text => "text",
+                        Kind::Keywords => "keywords",
+                        Kind::Number => "number",
+                        Kind::Date => "date",
+                        Kind::Choice(_) => "choice",
+                        Kind::Bool => "bool",
+                    };
+                    let mut v = json!({"field": id, "label": label, "kind": k, "ops": ops_for(*kind).iter().map(|(o, l)| json!({"op": o, "label": l})).collect::<Vec<_>>()});
+                    if let Kind::Choice(c) = kind {
+                        v["choices"] = json!(c);
+                    }
+                    v
+                })
+                .collect::<Vec<_>>()))
+        }),
         cmd!(
             "album.setRules",
             "Edit Smart Album",
@@ -689,7 +710,11 @@ pub fn specs() -> Vec<CommandSpec> {
 fn merge_rules(base: &lightcraft_catalog::Filter, patch: &Value, c: &str) -> Result<lightcraft_catalog::Filter> {
     let mut v = serde_json::to_value(base).unwrap_or_default();
     lightcraft_develop::presets::deep_merge(&mut v, patch);
-    serde_json::from_value(v).map_err(|e| bad(c, e.to_string()))
+    let f: lightcraft_catalog::Filter = serde_json::from_value(v).map_err(|e| bad(c, e.to_string()))?;
+    if let Some(problem) = f.rule_set.as_ref().and_then(|r| r.problems().into_iter().next()) {
+        return Err(bad(c, problem));
+    }
+    Ok(f)
 }
 
 /// The current view (source + filter) as smart-album rules. Viewing a smart album starts from

@@ -95,6 +95,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     if ui.button("Create Album…").clicked() {
                         app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: false });
                     }
+                    if ui.button("Create Smart Album…").clicked() {
+                        app.ui.dialog = Some(crate::state::Dialog::SmartRules {
+                            id: None,
+                            name: String::new(),
+                            rules: lightcraft_catalog::RuleSet { rules: vec![crate::panels::rules_editor::new_rule()], ..Default::default() },
+                        });
+                    }
                     if ui.button("Create Smart Album from Filter…").clicked() {
                         app.ui.dialog = Some(crate::state::Dialog::NewSmartAlbum { name: String::new() });
                     }
@@ -286,6 +293,11 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
     resp.context_menu(|ui| {
         if !a.folder && !a.is_smart() && ui.button("Add Selected Photos").clicked() {
             let _ = app.run("album.addPhotos", json!({"id": a.id.0}));
+        }
+        if a.is_smart() && ui.button("Edit Smart Album…").clicked() {
+            // older smart albums keep their filter fields; the editor works on the rule set
+            let rules = a.smart.as_ref().and_then(|f| f.rule_set.clone()).unwrap_or_default();
+            app.ui.dialog = Some(crate::state::Dialog::SmartRules { id: Some(a.id.0), name: a.name.clone(), rules });
         }
         if a.is_smart() && ui.button("Update Rules from Current Filter").clicked() {
             let _ = app.run("album.setRules", json!({"id": a.id.0, "fromView": true}));

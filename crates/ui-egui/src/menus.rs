@@ -77,6 +77,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("brush.featherMore", "Increase Brush Feather", Some("Shift+]"), "Window>Tools"),
     ("dialog.newAlbum", "New Album…", Some("Cmd+N"), "File"),
     ("dialog.newFolder", "New Folder…", Some("Cmd+Shift+N"), "File"),
+    ("dialog.smartAlbum", "New Smart Album…", None, "File"),
     ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
     ("dialog.autoStack", "Auto-Stack by Capture Time…", None, "Photo>Stack"),
@@ -519,6 +520,26 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "dialog.autoStack" => {
             app.ui.dialog = Some(Dialog::AutoStack { gap: p.get("gap").and_then(Value::as_f64).unwrap_or(60.0) as f32 });
+            Ok(Value::Null)
+        }
+        "dialog.smartAlbum" => {
+            // {id?}: edit that smart album's rules; without: a new one starting at Rating ≥ 3
+            let album = p
+                .get("id")
+                .and_then(Value::as_u64)
+                .and_then(|id| app.session.catalog.album(lightcraft_catalog::AlbumId(id)).filter(|a| a.is_smart()).cloned());
+            app.ui.dialog = Some(match album {
+                Some(a) => Dialog::SmartRules {
+                    id: Some(a.id.0),
+                    name: a.name.clone(),
+                    rules: a.smart.as_ref().and_then(|f| f.rule_set.clone()).unwrap_or_default(),
+                },
+                None => Dialog::SmartRules {
+                    id: None,
+                    name: p.get("name").and_then(Value::as_str).unwrap_or("").into(),
+                    rules: lightcraft_catalog::RuleSet { rules: vec![crate::panels::rules_editor::new_rule()], ..Default::default() },
+                },
+            });
             Ok(Value::Null)
         }
         "dialog.newSmartAlbum" => {

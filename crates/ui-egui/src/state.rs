@@ -347,6 +347,12 @@ pub enum Dialog {
     NewSmartAlbum {
         name: String,
     },
+    /// Create (`id` None) or edit a smart album's rules.
+    SmartRules {
+        id: Option<u64>,
+        name: String,
+        rules: lightcraft_catalog::RuleSet,
+    },
     /// `groups`: the settings groups the preset includes (`SettingsGroup` ids).
     CreatePreset {
         name: String,

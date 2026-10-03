@@ -60,6 +60,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "---",
             "dialog.newAlbum",
             "dialog.newFolder",
+            "dialog.smartAlbum",
             "dialog.newSmartAlbum",
             "---",
             "file.importPresets",

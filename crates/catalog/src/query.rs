@@ -49,6 +49,9 @@ pub struct Filter {
     /// A folder on disk: its files only (browsed ones too); `subfolders` includes everything below.
     pub folder: Option<String>,
     pub subfolders: bool,
+    /// Smart-album rules (all / any / none, nested groups; see [`crate::rules`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule_set: Option<crate::RuleSet>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +159,9 @@ impl Filter {
         if !self.text.trim().is_empty() {
             v.push(format!("“{}”", self.text.trim()));
         }
+        if let Some(rs) = self.rule_set.as_ref().filter(|r| !r.rules.is_empty()) {
+            v.push(rs.describe());
+        }
         if v.is_empty() { "all photos".into() } else { v.join(", ") }
     }
 
@@ -188,6 +194,11 @@ impl Filter {
             return false;
         }
         if self.edited.is_some_and(|e| e != p.is_edited()) {
+            return false;
+        }
+        if let Some(rs) = &self.rule_set
+            && !rs.matches(p, cat)
+        {
             return false;
         }
         if let Some(want) = &self.merged {

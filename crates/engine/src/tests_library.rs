@@ -152,3 +152,40 @@ fn profile_favorites_and_recent_survive_reopen() {
     assert!(list.as_array().unwrap().iter().any(|p| p["id"] == "lc.bw.sepia" && p["favorite"] == true));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Smart albums with a rule set: all / any / none, nested groups, validation, live updates.
+#[test]
+fn smart_album_rule_sets() {
+    let mut s = crate::Session::with_demo();
+    s.clock = Box::new(|| "2026-10-02T12:00:00".to_string());
+    let fields = s.execute("album.ruleFields", &serde_json::json!({})).unwrap();
+    assert!(fields.as_array().unwrap().iter().any(|f| f["field"] == "keywords" && f["ops"].as_array().unwrap().len() > 3));
+    let bad = s.execute(
+        "album.createSmart",
+        &serde_json::json!({"name": "Bad", "rules": {"ruleSet": {"rules": [{"field": "rating", "op": "contains", "value": 1}]}}}),
+    );
+    assert!(bad.is_err(), "operators are checked");
+    let r = s
+        .execute(
+            "album.createSmart",
+            &serde_json::json!({"name": "Good ones", "rules": {"ruleSet": {"match": "all", "rules": [
+                {"field": "rating", "op": "gte", "value": 4},
+                {"group": {"match": "none", "rules": [{"field": "flag", "op": "is", "value": "reject"}]}}
+            ]}}}),
+        )
+        .unwrap();
+    let id = lightcraft_catalog::AlbumId(r["id"].as_u64().unwrap());
+    let want = s.catalog.photos().filter(|p| !p.deleted && p.rating >= 4 && p.flag != lightcraft_catalog::Flag::Reject).count();
+    assert!(want > 0);
+    assert_eq!(s.catalog.album_count(id), want);
+    // live: a new 5-star photo joins
+    let other = s.catalog.photos().find(|p| p.rating < 4 && !p.deleted).unwrap().id;
+    s.execute("photo.rate", &serde_json::json!({"ids": [other.0], "rating": 5})).unwrap();
+    assert_eq!(s.catalog.album_count(id), want + 1);
+    // the same rules work as a library filter (agents: library.filter {ruleSet})
+    s.execute("library.filter", &serde_json::json!({"ruleSet": {"rules": [{"field": "rating", "op": "is", "value": 5}]}})).unwrap();
+    assert!(s.visible_cloned().iter().all(|id| s.catalog.photo(*id).unwrap().rating == 5));
+    let list = s.execute("albums.list", &serde_json::json!({})).unwrap();
+    let a = list.as_array().unwrap().iter().find(|a| a["name"] == "Good ones").unwrap().clone();
+    assert!(a.to_string().contains("rating is ≥ 4"), "{a}");
+}

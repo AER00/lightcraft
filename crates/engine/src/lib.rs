@@ -420,6 +420,8 @@ impl Session {
     pub fn visible(&mut self) -> &[PhotoId] {
         let key = (self.catalog.revision, format!("{:?}|{:?}|{:?}|{:?}", self.source, self.filter, self.sort, self.browse));
         if self.visible_key.as_ref() != Some(&key) {
+            // "in the last N days" rules count back from the session's clock
+            lightcraft_catalog::rules::set_now(Some((self.clock)()));
             let mut f = self.source.to_filter(&self.filter, &self.catalog);
             if self.source == LibrarySource::Folder {
                 // no folder chosen: nothing (an empty path matches nothing)

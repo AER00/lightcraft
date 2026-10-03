@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
 | Z. Keyboard shortcuts (desktop) | 68 | 8 | 4 | 1 | 49/52 (94%) | 17/23 (74%) |
-| Lightroom Classic extras | 15 | 15 | 49 | 9 | — | 14/21 (67%) |
-| **Total** | 330 | 46 | 124 | 37 | 193/198 (97%) | 117/144 (81%) |
+| Lightroom Classic extras | 16 | 14 | 49 | 9 | — | 15/21 (71%) |
+| **Total** | 331 | 45 | 124 | 37 | 193/198 (97%) | 118/144 (82%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **70.6%** of 500 in-scope rows — P0 98.7% of 198 · P1 89.2% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **70.7%** of 500 in-scope rows — P0 98.7% of 198 · P1 89.6% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -695,7 +695,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-CATALOG-PANEL | Catalog sets | P1 | ✅ | `cmd:library.source` (`missing`) | all, recently added, picks, recently deleted, missing photos (when any) |
 | LRC-LIB-FOLDERS | Disk folder tree | P1 | 🟡 | `cmd:library.browse`, `crates/ui-egui/src/panels/left.rs` (`local_section`) | standard places + the browsed folder + Browse Folder…, breadcrumb navigation upwards; no expandable folder tree, no folder rename/move |
 | LRC-LIB-COLLECTIONS | Collections & sets | P1 | 🟡 | `cmd:album.create` | albums + folders; no smart / quick / target collections |
-| LRC-LIB-SMARTCOLL | Smart-collection rules | P1 | 🟡 | `cmd:album.createSmart`, `crates/catalog/src/query.rs` | the filter fields + date range; no rule editor, any/none groups or operators beyond ≥/=/≤ |
+| LRC-LIB-SMARTCOLL | Smart-collection rules | P1 | ✅ | `cmd:album.createSmart`, `cmd:album.setRules`, `cmd:album.ruleFields`, `cmd:dialog.smartAlbum`, `crates/catalog/src/rules.rs`, `crates/ui-egui/src/panels/rules_editor.rs` | rule editor: match all / any / none, nested groups (⌥+ or + Group), 26 fields (rating, flag, label, type, edits, keywords, any text, filename, format, title, caption, camera, lens, location, creator, copyright, capture / import / edit date, ISO, aperture, focal length, megapixels, GPS, virtual copy, album) with text / number / date / in-the-last operators; live match count; also usable as a library filter (`ruleSet`) |
 | LRC-LIB-PUBLISH | Publish services | P2 | ⬜ | | |
 | LRC-LIB-FILTERBAR | Library filter bar | P1 | 🟡 | `cmd:view.filterBar`, `cmd:filter.applyPreset`, `crates/ui-egui/src/panels/filterbar.rs` | rating/flag/label/kind/edited/camera/lens/keyword, clear, save as smart album, filter presets; no lock or multi-select columns |
 | LRC-LIB-STACKS | Stacks (full) | P1 | ✅ | `crates/catalog/src/stacks.rs`, `cmd:stack.group`, `cmd:stack.split`, `cmd:stack.moveUp`, `cmd:stack.moveDown` | group / ungroup / toggle / set top / remove / auto by time / split / move up and down |
