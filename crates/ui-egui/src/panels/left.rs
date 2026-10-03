@@ -185,13 +185,9 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let name = std::path::Path::new(&b.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| b.path.clone());
         places.push((name, b.path.clone()));
     }
+    let current = browsing.as_ref().map(|b| b.path.clone());
     for (name, path) in places {
-        let sel = browsing.as_ref().is_some_and(|b| b.path == path);
-        if row(app, ui, &format!("local:{path}"), Icon::Folder, &name, None, sel, 0.0).on_hover_text(&path).clicked()
-            && let Err(e) = app.run("library.browse", json!({"path": path}))
-        {
-            app.toast(ui.ctx(), e);
-        }
+        folder_tree(app, ui, &name, &path, 0.0, current.as_deref());
     }
     if app.services.pick_folder.is_some() && row(app, ui, "local:browse", Icon::Plus, "Browse Folder…", None, false, 0.0).clicked() {
         let picked = app.services.pick_folder.as_mut().and_then(|f| f());
@@ -202,6 +198,66 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     ui.add_space(10.0);
+}
+
+/// The subfolders of `path` (not hidden ones), sorted; listed at most every 2 s per folder.
+fn subfolders(ui: &egui::Ui, path: &str) -> Vec<(String, String)> {
+    let id = egui::Id::new(("subfolders", path.to_string()));
+    let now = ui.input(|i| i.time);
+    if let Some((t, v)) = ui.data(|d| d.get_temp::<(f64, Vec<(String, String)>)>(id))
+        && now - t < 2.0
+    {
+        return v;
+    }
+    let mut v: Vec<(String, String)> = std::fs::read_dir(path)
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    (!name.starts_with('.')).then(|| (name, e.path().to_string_lossy().to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort_by_key(|(n, _)| n.to_lowercase());
+    ui.data_mut(|d| d.insert_temp(id, (now, v.clone())));
+    v
+}
+
+/// A folder on disk with a disclosure triangle: click browses it, the triangle lists its
+/// subfolders (expanded on the way to the folder being browsed).
+fn folder_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str, path: &str, indent: f32, current: Option<&str>) {
+    let t = Tokens::get(ui.ctx());
+    let open_id = egui::Id::new(("folder-open", path.to_string()));
+    let on_the_way = current.is_some_and(|c| c != path && std::path::Path::new(c).starts_with(path));
+    let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(on_the_way);
+    let sel = current == Some(path);
+    let resp = row(app, ui, &format!("local:{path}"), Icon::Folder, name, None, sel, indent + 12.0).on_hover_text(path);
+    let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
+    let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
+    let tr = ui.interact(tri, egui::Id::new(("folder-tri", path.to_string())), Sense::click());
+    register(ui.ctx(), format!("folderToggle:{path}"), tri);
+    let col = if tr.hovered() { t.text } else { t.text_dim };
+    let pts = if open {
+        vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
+    } else {
+        vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+    if tr.clicked() {
+        open = !open;
+        ui.data_mut(|d| d.insert_temp(open_id, open));
+    } else if resp.clicked()
+        && let Err(e) = app.run("library.browse", json!({"path": path}))
+    {
+        app.toast(ui.ctx(), e);
+    }
+    if open && indent < 12.0 * 8.0 {
+        for (n, p) in subfolders(ui, path) {
+            folder_tree(app, ui, &n, &p, indent + 12.0, current);
+        }
+    }
 }
 
 /// One By Date row (`key`: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`); returns whether it is open.
