@@ -27,6 +27,7 @@ pub mod colorops;
 pub mod finish;
 pub mod geometry;
 pub mod local;
+pub mod lut;
 pub mod masks;
 pub mod optics;
 pub mod output;

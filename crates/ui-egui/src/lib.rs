@@ -609,7 +609,7 @@ pub fn is_bw(d: &lightcraft_develop::DevelopSettings) -> bool {
 /// Files dropped on the window that are presets rather than photos.
 pub fn is_preset_file(path: &str) -> bool {
     let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    ["lcpreset", "lrtemplate", "xmp", "zip"].contains(&ext.as_str())
+    ["lcpreset", "lrtemplate", "xmp", "zip", "cube"].contains(&ext.as_str())
 }
 
 #[cfg(test)]

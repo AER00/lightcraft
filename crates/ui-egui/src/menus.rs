@@ -108,7 +108,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("photo.locate", "Locate Missing File…", None, ""),
     ("dialog.saveMetadataPreset", "Save Metadata Preset…", None, ""),
     ("app.quit", "Quit LightCraft", Some("Cmd+Q"), "File"),
-    ("file.importPresets", "Import Presets…", None, "File"),
+    ("file.importPresets", "Import Profiles & Presets…", None, "File"),
     ("file.exportPresets", "Export Presets…", None, "File"),
     ("app.settings", "Settings…", Some("Cmd+,"), "Edit"),
     ("app.openLibrary", "Open Library…", None, "File"),
@@ -847,7 +847,32 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             if paths.is_empty() {
                 return Some(Ok(Value::Null));
             }
-            let r = app.session.execute("preset.import", &json!({"paths": paths})).map_err(|e| e.to_string());
+            // .cube LUTs (and those inside zips / folders) become profiles
+            let lut_paths: Vec<&String> = paths
+                .iter()
+                .filter(|p| {
+                    let l = p.to_ascii_lowercase();
+                    l.ends_with(".cube") || l.ends_with(".zip") || std::path::Path::new(p.as_str()).is_dir()
+                })
+                .collect();
+            let profiles = if lut_paths.is_empty() {
+                0
+            } else {
+                app.session
+                    .execute("profile.import", &json!({"paths": lut_paths}))
+                    .ok()
+                    .and_then(|v| v["imported"].as_array().map(Vec::len))
+                    .unwrap_or(0)
+            };
+            let preset_paths: Vec<&String> = paths.iter().filter(|p| !p.to_ascii_lowercase().ends_with(".cube")).collect();
+            let r = if preset_paths.is_empty() {
+                Ok(json!({"imported": [], "failed": [], "skipped": 0}))
+            } else {
+                app.session.execute("preset.import", &json!({"paths": preset_paths})).map_err(|e| e.to_string())
+            };
+            if profiles > 0 {
+                app.toast(&ctx, format!("Imported {profiles} profile{} (Profile browser ▸ their groups)", if profiles == 1 { "" } else { "s" }));
+            }
             if let Ok(v) = &r {
                 let n = v["imported"].as_array().map_or(0, Vec::len);
                 let failed = v["failed"].as_array().map_or(0, Vec::len);

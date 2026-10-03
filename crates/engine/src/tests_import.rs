@@ -320,3 +320,60 @@ fn smart_previews_stand_in_for_offline_originals() {
     let _ = std::fs::remove_dir_all(src.with_extension("offline"));
     let _ = std::fs::remove_dir_all(&lib);
 }
+
+/// LUT profiles: a .cube imports as a creative profile (into the library), renders differently
+/// (Amount 0 = no change), is listed in the profile browser and comes back with the library.
+#[test]
+fn cube_luts_become_profiles() {
+    let src = temp_dir("cubesrc");
+    let lib = temp_dir("cubelib");
+    // a warm look: red up, blue down
+    let n = 9;
+    let mut cube = String::from("TITLE \"Warm Test\"\nLUT_3D_SIZE 9\n");
+    for b in 0..n {
+        for g in 0..n {
+            for r in 0..n {
+                let f = |v: usize| v as f32 / (n - 1) as f32;
+                cube.push_str(&format!("{} {} {}\n", (f(r) * 1.15).min(1.0), f(g), f(b) * 0.8));
+            }
+        }
+    }
+    std::fs::create_dir_all(src.join("Film Looks")).unwrap();
+    std::fs::write(src.join("Film Looks/warm.cube"), &cube).unwrap();
+    std::fs::write(src.join("Film Looks/broken.cube"), "LUT_3D_SIZE 4\n0 0 0\n").unwrap();
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, true).unwrap();
+    let r = s.execute("profile.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!((r["imported"].as_array().unwrap().len(), r["failed"].as_array().unwrap().len()), (1, 1), "{r}");
+    let id = r["imported"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!((r["imported"][0]["name"].as_str(), r["imported"][0]["group"].as_str()), (Some("Warm Test"), Some("Film Looks")));
+    let menu = s.profile_menu();
+    assert!(menu["groups"].as_array().unwrap().iter().any(|g| g["name"] == "Film Looks"), "{menu}");
+    let photo = s.catalog.photos().next().unwrap().id;
+    s.execute("library.select", &json!({"ids": [photo.0]})).unwrap();
+    let base = s.render_now(photo, 48, 32).unwrap().image;
+    s.execute("develop.profile", &json!({"id": id, "amount": 100})).unwrap();
+    let warm = s.render_now(photo, 48, 32).unwrap().image;
+    let mean = |img: &lightcraft_raster::Rgba8, k: usize| img.data.iter().map(|p| p[k] as f64).sum::<f64>() / img.data.len() as f64;
+    assert!(
+        mean(&warm, 0) > mean(&base, 0) && mean(&warm, 2) < mean(&base, 2),
+        "warmer: R {} → {}, B {} → {}",
+        mean(&base, 0),
+        mean(&warm, 0),
+        mean(&base, 2),
+        mean(&warm, 2)
+    );
+    s.execute("develop.profile", &json!({"id": id, "amount": 0})).unwrap();
+    assert_eq!(s.render_now(photo, 48, 32).unwrap().image.data, base.data, "Amount 0 = the photo as it was");
+    // the library keeps it
+    drop(s);
+    lightcraft_pipeline::lut::unregister(&id);
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    assert!(s.lut_profiles.iter().any(|p| p.id == id));
+    assert!(lightcraft_pipeline::lut::get(&id).is_some(), "registered again on open");
+    s.execute("profile.deleteImported", &json!({"id": id})).unwrap();
+    assert!(lightcraft_pipeline::lut::get(&id).is_none());
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&lib);
+}

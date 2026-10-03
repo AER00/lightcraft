@@ -116,3 +116,12 @@ carry over are listed in `preset.import`'s `unmapped` as `Mask: <kind>`.
 | XMP presets | Read with the `crs:` table above, with `crs:Name` as the name (falling back to the file name) and `crs:Group` as the group (falling back to "Imported Presets"). Only the fields the preset sets are included, so applying it leaves everything else alone and the Amount slider scales it like any other preset. We only read XMP presets; we don't write them. |
 
 LightCraft ships no third-party presets. Its built-in presets are its own values (`crates/engine/src/presets.rs`).
+
+## Profiles: 3D LUTs (`.cube`)
+
+`profile.import {paths}` (File ▸ Import Profiles & Presets…, drag & drop) reads `.cube` 3D LUTs — single files, folders
+or `.zip` bundles — as creative profiles: they appear in the profile browser under their folder's (or zip's) name and
+take the Amount slider (0–200 %) like the built-in looks. The LUT is applied to the finished, display-encoded colour
+(trilinear; `DOMAIN_MIN` / `DOMAIN_MAX` honoured; 1D LUTs are not supported); photos with a LUT profile render on the
+CPU. A library on disk keeps a copy of each file in its `Profiles/` folder. Adobe's own profile formats (`.dcp`, XMP
+camera/creative profiles with embedded tables) are deliberately not read.

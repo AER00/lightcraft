@@ -150,6 +150,8 @@ pub fn mask_terms(j: &LocalAdjustments) -> [f32; MASK_TERMS] {
 /// Everything the per-pixel stage computes once per render: the CPU loop below and the GPU kernel
 /// (`lightcraft-gpu`) both read their parameters from here, so the two cannot drift apart.
 pub struct FinishParams {
+    /// A LUT profile and its amount (0..2), applied to the display-encoded colour.
+    pub lut: Option<(std::sync::Arc<crate::lut::Lut3d>, f32)>,
     pub tone: ToneMap,
     pub ops: ColorOps,
     /// Calibration: primaries matrix (row-major, linear Rec.2020) and shadows tint (−1..1).
@@ -222,6 +224,7 @@ impl FinishParams {
             } else {
                 ToneMap::display(s.light.contrast, s.light.whites, s.light.blacks)
             },
+            lut: crate::lut::get(&s.profile.id).map(|l| (l, (s.profile.amount / 100.0).clamp(0.0, 2.0) as f32)),
             ops: ColorOps::new(s),
             curves: curve_luts(&s.curve),
             refine_sat: (s.curve.refine_saturation / 100.0).clamp(0.0, 1.0) as f32,
@@ -298,6 +301,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
     store: impl Fn([f32; 3]) -> T + Sync + Send,
 ) -> Vec<T> {
     let (w, h) = (p.img.width, p.img.height);
+    let p_lut = fp.lut.clone();
     let FinishParams {
         tone,
         ops,
@@ -542,6 +546,13 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 let k = amt * g * (0.35 + 2.6 * lum * (1.0 - lum));
                 e = e.map(|v| v + k);
             }
+            let e = match &p_lut {
+                Some((l, k)) => {
+                    let m = l.apply(e.map(|v| v.clamp(0.0, 1.0)));
+                    [e[0] + (m[0] - e[0]) * k, e[1] + (m[1] - e[1]) * k, e[2] + (m[2] - e[2]) * k]
+                }
+                None => e,
+            };
             *px = store(e);
         }
     });

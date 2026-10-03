@@ -21,13 +21,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 <!-- parity:summary -->
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
-| A. Import (IMP) | 9 | 2 | 2 | 1 | 3/4 (75%) | 3/4 (75%) |
+| A. Import (IMP) | 10 | 1 | 2 | 1 | 3/4 (75%) | 4/4 (100%) |
 | B. Library management (LIB) | 22 | 0 | 3 | 2 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 16 | 0 | 1 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 10 | 0 | 3 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
 | F. Edit panel — global adjustments (EDIT) | 42 | 1 | 5 | 1 | 28/28 (100%) | 13/14 (93%) |
-| G. Profiles (PROF) | 6 | 0 | 4 | 0 | 3/3 (100%) | 2/3 (67%) |
+| G. Profiles (PROF) | 6 | 1 | 3 | 0 | 3/3 (100%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 6 | 1 | 3 | 2 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
@@ -45,12 +45,12 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 14 | 1 | 2 | 1 | 8/8 (100%) | 5/5 (100%) |
-| Y. Menus | 79 | 2 | 4 | 8 | 46/47 (98%) | 22/23 (96%) |
+| Y. Menus | 80 | 1 | 4 | 8 | 46/47 (98%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 23 | 9 | 47 | 9 | — | 19/21 (90%) |
-| **Total** | 371 | 25 | 104 | 37 | 193/198 (97%) | 133/144 (92%) |
+| **Total** | 373 | 24 | 103 | 37 | 193/198 (97%) | 135/144 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **76.7%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.8% of 144 · P2 32.6% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **77.0%** of 500 in-scope rows — P0 98.7% of 198 · P1 95.8% of 144 · P2 32.6% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -106,7 +106,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-IMP-PRESET | Preset on import | P2 | ✅ | `cmd:library.import` (`preset`) | chosen in the import review; one History entry |
 | LR-IMP-RAWDEFAULT | Raw defaults | P1 | ✅ | `cmd:library.preferences`, `crates/engine/src/import.rs`, `crates/ui-egui/src/panels/settings.rs` | LightCraft default / a preset / per camera (make + model); non-raw default too; the preset look counts as unedited and Reset returns to it |
 | LR-IMP-MIGRATE | Migrate other catalogs | OOS | 🚫 | | |
-| LR-IMP-PROFILES | Import profiles & presets | P1 | 🟡 | `cmd:file.importPresets`, `cmd:preset.import`, `crates/engine/src/preset_import.rs` | presets: .lcpreset, XMP, classic .lrtemplate, photos carrying edits ("DNG presets"), .zip bundles, folders (folder → group), drag & drop; masks (gradients, radial, brush, subject/sky, luminance/depth range) carried over; unmapped settings reported; no profile import (Adobe profile formats deliberately unsupported) |
+| LR-IMP-PROFILES | Import profiles & presets | P1 | ✅ | `cmd:file.importPresets`, `cmd:preset.import`, `cmd:profile.import`, `crates/engine/src/preset_import.rs` | presets: .lcpreset, XMP, classic .lrtemplate, photos carrying edits ("DNG presets"), .zip bundles, folders (folder → group), drag & drop; masks carried over; unmapped settings reported; profiles: .cube 3D LUTs; Adobe profile formats deliberately unsupported |
 | LR-IMP-LOCAL | Work on files in place | P0 | ✅ | `cmd:library.browse`, `cmd:photo.addToLibrary`, `cmd:library.import` (mode add), `crates/engine/src/cmd/browse.rs`, `crates/ui-egui/src/panels/left.rs` (`local_section`), `crates/ui-egui/src/panels/grid.rs` (`folder_header`) | Local: browse Pictures / Desktop / Downloads / Home or any folder without adding it (breadcrumb, Include subfolders, Add N to My Photos); browsed photos stay out of All Photos, albums and counts; edits go to XMP sidecars; importing promotes them |
 | LR-IMP-SIDECAR-SPLIT | Separate XMP sidecar variants | P2 | ⬜ | `cmd:library.xmpPreferences` | sidecar naming option exists (stem/full), no split sidecars |
 | LR-IMP-FORMATS | Supported formats | P0 | 🟡 | `crates/codecs/src/lib.rs`, `crates/raw/src/lib.rs` | JPEG, PNG, TIFF, WebP, JXL, PSD, GIF, BMP; DNG (incl. lossy / Smart Preview DNG), CR2, ARW, NEF, RAF, RW2, PEF, ORF. Missing: CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only), HEIC/AVIF decode |
@@ -263,7 +263,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-PROF-LEGACY | Legacy profiles | P2 | ⬜ | | |
 | LR-PROF-NONRAW | Profiles for non-raw files | P0 | ✅ | `cmd:develop.profile` | same looks apply to JPEG/TIFF |
 | LR-PROF-AMOUNT | Profile amount | P1 | ✅ | `ctl:profile.amount` | |
-| LR-PROF-IMPORT | Import profiles | P1 | ⬜ | | |
+| LR-PROF-IMPORT | Import profiles | P1 | 🟡 | `cmd:profile.import`, `cmd:profile.deleteImported`, `crates/pipeline/src/lut.rs`, `crates/engine/src/cmd/lut_profiles.rs` | `.cube` 3D LUTs (files, folders, zips) become creative profiles with Amount, grouped in the profile browser, kept with the library; rendered on the CPU; Adobe profile formats deliberately unsupported |
 
 ## H. Crop & rotate (CROP)
 
@@ -510,7 +510,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-FILE-NEWALBUM | New Album… | P0 | ✅ | `cmd:dialog.newAlbum` | |
 | MENU-FILE-NEWFOLDER | New Folder… | P0 | ✅ | `cmd:dialog.newFolder` | ⇧⌘N |
 | MENU-FILE-NEWSMART | New Smart Album… | P1 | ✅ | `cmd:dialog.newSmartAlbum` | saves the current view (source + filter) |
-| MENU-FILE-IMPORTPROFILES | Import Profiles & Presets… | P1 | 🟡 | `cmd:file.importPresets` | presets in every common format (see LR-IMP-PROFILES); profiles not |
+| MENU-FILE-IMPORTPROFILES | Import Profiles & Presets… | P1 | ✅ | `cmd:file.importPresets` | presets in every common format and .cube LUT profiles (see LR-IMP-PROFILES) |
 | MENU-FILE-EXPORT | Export… | P0 | ✅ | `cmd:dialog.export` | |
 | MENU-FILE-EXPORTPREV | Export with Previous | P0 | ✅ | `cmd:app.exportPrevious` | ⌥⇧⌘E |
 | MENU-FILE-EXPORTPRESETS | Export preset submenu | P0 | ✅ | `cmd:app.export` (`preset`), `crates/ui-egui/src/menubar.rs` (Export with Preset) | built-ins, then user presets, then Custom… (the dialog); exports to the last folder |
