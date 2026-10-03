@@ -256,6 +256,33 @@ fn folder_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str, path: &st
     {
         app.toast(ui.ctx(), e);
     }
+    resp.context_menu(|ui| {
+        if ui.button("Rename Folder…").clicked() {
+            app.ui.dialog = Some(crate::state::Dialog::TextPrompt {
+                title: format!("Rename “{name}”"),
+                hint: "Folder name (renamed on disk; its photos follow)".into(),
+                value: name.to_string(),
+                command: "folder.rename".into(),
+                params: json!({"path": path}),
+                key: "name".into(),
+            });
+        }
+        if app.services.pick_folder.is_some() && ui.button("Move Folder To…").clicked() {
+            let into = app.services.pick_folder.as_mut().and_then(|f| f());
+            if let Some(into) = into {
+                match app.run("folder.move", json!({"path": path, "into": into})) {
+                    Ok(r) => app.toast(ui.ctx(), format!("Moved; {} photo(s) relinked", r["relinked"])),
+                    Err(e) => app.toast(ui.ctx(), e),
+                }
+            }
+        }
+        if app.services.reveal.is_some()
+            && ui.button("Show in Finder").clicked()
+            && let Some(f) = app.services.reveal.as_mut()
+        {
+            let _ = f(path);
+        }
+    });
     if open && indent < 12.0 * 8.0 {
         for (n, p) in subfolders(ui, path) {
             folder_tree(app, ui, &n, &p, indent + 12.0, current);

@@ -377,3 +377,35 @@ fn cube_luts_become_profiles() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&lib);
 }
+
+/// Folder rename / move on disk: files and sidecars go along, the photos are relinked and
+/// still render; clashes and moving into itself are refused.
+#[test]
+fn folders_rename_and_move_with_their_photos() {
+    let root = temp_dir("folders");
+    let a = root.join("Trip");
+    write_png(&a.join("one.png"), 3);
+    std::fs::write(a.join("one.xmp"), "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>").unwrap();
+    std::fs::create_dir_all(root.join("Taken")).unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [a.to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    assert!(s.execute("folder.rename", &json!({"path": a.to_string_lossy(), "name": "Taken"})).is_err(), "name taken");
+    assert!(s.execute("folder.rename", &json!({"path": a.to_string_lossy(), "name": "a/b"})).is_err());
+    let r = s.execute("folder.rename", &json!({"path": a.to_string_lossy(), "name": "Italy 2026"})).unwrap();
+    assert_eq!(r["relinked"], 1);
+    let b = root.join("Italy 2026");
+    assert!(b.join("one.png").exists() && b.join("one.xmp").exists() && !a.exists());
+    let path = |s: &Session| match &s.catalog.photo(id).unwrap().source {
+        lightcraft_catalog::Source::File { path } => path.clone(),
+        _ => panic!(),
+    };
+    assert_eq!(path(&s), b.join("one.png").to_string_lossy());
+    s.media.forget(id);
+    assert!(s.render_now(id, 16, 16).is_ok());
+    assert!(s.execute("folder.move", &json!({"path": b.to_string_lossy(), "into": b.join("deeper").to_string_lossy()})).is_err(), "not into itself");
+    let r = s.execute("folder.move", &json!({"path": b.to_string_lossy(), "into": root.join("Archive").to_string_lossy()})).unwrap();
+    assert_eq!(r["relinked"], 1);
+    assert_eq!(path(&s), root.join("Archive/Italy 2026/one.png").to_string_lossy());
+    let _ = std::fs::remove_dir_all(&root);
+}
