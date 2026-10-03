@@ -634,6 +634,8 @@ pub struct Caches {
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
     filter_values: Option<(u64, std::sync::Arc<FilterValues>)>,
+    /// The grid's layout (by photos, shapes, width, thumbnail size, grouping).
+    pub grid_layout: Option<(u64, std::sync::Arc<panels::grid::GridLayout>)>,
 }
 
 /// The left panel's counts.
@@ -652,7 +654,7 @@ pub struct FilterValues {
     pub keywords: Vec<String>,
 }
 
-fn key_of(parts: impl std::hash::Hash) -> u64 {
+pub(crate) fn key_of(parts: impl std::hash::Hash) -> u64 {
     use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
     BuildHasherDefault::<DefaultHasher>::default().hash_one(parts)
 }

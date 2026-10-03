@@ -462,3 +462,43 @@ fn second_window_shows_the_active_photo() {
     assert!(!h.app.ui.second_window);
     h.settle(SETTLE);
 }
+
+/// Frame time of the photo grid on a 100k-photo library (ignored:
+/// `cargo test --release -p lightcraft-ui-egui -- --ignored grid_frame_100k --nocapture`).
+#[test]
+#[ignore]
+fn grid_frame_100k() {
+    use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+    let mut session = lightcraft_engine::Session::new();
+    let ops = (0..100_000u64)
+        .map(|i| {
+            let mut p = Photo::new(
+                PhotoId(i + 1),
+                Source::Demo { scene: (i % 20) as u32 },
+                &format!("IMG_{i:06}.jpg"),
+                "JPEG",
+                6000,
+                4000 - (i % 3) as u32 * 1000,
+                "2026-01-01T00:00:00",
+            );
+            p.captured = Some(format!("20{:02}-{:02}-{:02}T10:00:00", 10 + i % 16, 1 + i % 12, 1 + i % 28));
+            p.meta.keywords = vec![format!("kw{}", i % 300)];
+            Op::AddPhoto { photo: Box::new(p) }
+        })
+        .collect();
+    session.commit("Add", Op::Batch { ops }).unwrap();
+    let app = LightcraftApp::new(session, Services { png: None, ..Default::default() });
+    let mut h = Headless::new(app, [1600.0, 1000.0], 1.0);
+    h.app.ui.view = crate::state::ViewMode::PhotoGrid;
+    h.app.ui.left_panel = true;
+    for _ in 0..5 {
+        h.step();
+    }
+    let t = std::time::Instant::now();
+    let n = 30;
+    for _ in 0..n {
+        h.step();
+    }
+    let ms = t.elapsed().as_secs_f64() * 1e3 / n as f64;
+    eprintln!("grid frame at 100k photos: {ms:.1} ms (UI thread, renders excluded)");
+}
