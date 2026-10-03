@@ -191,6 +191,27 @@ impl ColorOps {
             return rgb;
         }
         let lab = oklab_from_2020(rgb);
+        // only chroma changes (vibrance / saturation, maybe grading): scale a, b directly — the same
+        // result as the OkLCh round trip without its sin / cos (and atan2 unless vibrance needs the hue)
+        if !self.mixer && self.points.is_empty() && self.bw.is_none() && local_hue == 0.0 {
+            let mut lab = lab;
+            let c0 = (lab[1] * lab[1] + lab[2] * lab[2]).sqrt();
+            let mut c = c0;
+            if self.vibrance != 0.0 {
+                let low = 1.0 - (c / 0.22).clamp(0.0, 1.0);
+                let skin = if self.vibrance > 0.0 { 1.0 - 0.6 * (-(wrap(lab[2].atan2(lab[1]) - self.skin) / 0.35).powi(2)).exp() } else { 1.0 };
+                c *= (1.0 + self.vibrance * low * low * skin * 1.2).max(0.0);
+            }
+            if self.saturation != 0.0 || local_sat != 0.0 {
+                c *= (1.0 + self.saturation + local_sat).max(0.0);
+            }
+            if c0 > 0.0 {
+                let k = c / c0;
+                lab[1] *= k;
+                lab[2] *= k;
+            }
+            return self.grade(lab);
+        }
         let [mut l, mut c, mut h] = lab_to_lch(lab);
         if self.mixer {
             let w = band_weights(h);
@@ -223,7 +244,12 @@ impl ColorOps {
             l = (l + mix * (c / 0.2).min(1.0) * 0.25).max(0.0);
             c = 0.0;
         }
-        let mut lab = lch_to_lab([l, c, h]);
+        self.grade(lch_to_lab([l, c, h]))
+    }
+
+    /// Colour grading on OkLab, then back to linear Rec.2020.
+    #[inline]
+    fn grade(&self, mut lab: [f32; 3]) -> [f32; 3] {
         if let Some((wheels, blending, balance)) = &self.grading {
             let m = 0.5 - balance * 0.25;
             let width = 0.15 + blending * 0.5;
