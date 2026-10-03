@@ -411,6 +411,34 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     Rendered { image, histogram, deep: None }
 }
 
+/// The colour a colour-range mask would sample at normalized image point `p` (OkLab of the
+/// exposed scene colours, as [`MaskShape::ColorRange`](lightcraft_develop::MaskShape) compares
+/// them), averaged over 3 × 3 pixels of a render fitting `req`. `None` outside the image.
+pub fn color_range_sample(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, p: lightcraft_geom::Point) -> Option<[f64; 3]> {
+    let plan = plan(src, info, s, req);
+    let mut img = plan.frame.sample(src, plan.w, plan.h);
+    lin_cpu(&mut img, info, &plan);
+    let o = plan.frame.norm_to_out(plan.w, plan.h).apply(p);
+    let (cx, cy) = (o.x.floor() as i64, o.y.floor() as i64);
+    if cx < 0 || cy < 0 || cx >= plan.w as i64 || cy >= plan.h as i64 {
+        return None;
+    }
+    let gain = (s.light.exposure as f32).exp2();
+    let mut acc = [0f64; 3];
+    let mut n = 0.0;
+    for y in (cy - 1).max(0)..=(cy + 1).min(plan.h as i64 - 1) {
+        for x in (cx - 1).max(0)..=(cx + 1).min(plan.w as i64 - 1) {
+            let c = img.data[y as usize * plan.w + x as usize].map(|v| v * gain);
+            let lab = lightcraft_color::perceptual::oklab_from_2020(masks::tonemap_for_select(c));
+            for k in 0..3 {
+                acc[k] += lab[k] as f64;
+            }
+            n += 1.0;
+        }
+    }
+    Some(acc.map(|v| v / n))
+}
+
 /// The alpha plane a mask overlay shows: the one the render evaluated, or (for a hidden mask) a
 /// fresh evaluation.
 fn overlay_alpha(o: Overlay, plan: &Plan<'_>, prep: &Prepared) -> Option<Plane> {

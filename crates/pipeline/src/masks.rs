@@ -175,7 +175,7 @@ fn smooth_plane(p: &mut Plane, sigma: f32) {
 }
 
 /// A rough display mapping for colour picking (so samples taken on screen match).
-fn tonemap_for_select(c: [f32; 3]) -> [f32; 3] {
+pub(crate) fn tonemap_for_select(c: [f32; 3]) -> [f32; 3] {
     c.map(|v| v / (1.0 + v))
 }
 

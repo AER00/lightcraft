@@ -519,3 +519,42 @@ fn build_previews_fills_the_cache() {
     }
     assert!(s.execute("library.buildPreviews", &json!({"size": "huge"})).is_err());
 }
+
+/// Colour range: a click samples the colour under it, so the mask selects that colour (white
+/// in the mask view) and not a different one; ⇧ adds samples, up to five.
+#[test]
+fn color_range_sampling_selects_the_clicked_colour() {
+    use lightcraft_pipeline::{MaskView, Overlay};
+    let mut s = demo();
+    // a flower: magenta petals at the centre, green around them
+    let id = s.catalog.photos().find(|p| p.meta.keywords.iter().any(|k| k == "flower")).unwrap().id;
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    s.execute("mask.add", &json!({"kind": "colorRange"})).unwrap();
+    let mask = |s: &mut Session| {
+        let m = s.develop_of(id).unwrap().masks[0].clone();
+        let job = s.render_job(id, 200, 200, false, true).unwrap().with_overlay(Overlay::Mask {
+            id: m.id as u16,
+            view: MaskView::WhiteOnBlack,
+            color: [255, 0, 0],
+            opacity: 100,
+        });
+        job.run().rendered.unwrap().image
+    };
+    let at =
+        |img: &lightcraft_raster::Rgba8, x: f64, y: f64| img.data[(y * img.height as f64) as usize * img.width + (x * img.width as f64) as usize][0];
+    let r = s.execute("mask.sampleColor", &json!({"x": 0.5, "y": 0.5})).unwrap();
+    assert_eq!(r["samples"].as_array().unwrap().len(), 1);
+    let img = mask(&mut s);
+    let (centre, corner) = (at(&img, 0.5, 0.5), at(&img, 0.03, 0.03));
+    assert!(centre > 200 && corner < centre / 2, "the sampled colour is selected: centre {centre}, corner {corner}");
+    // ⇧-click adds, at most five
+    for _ in 0..6 {
+        s.execute("mask.sampleColor", &json!({"x": 0.03, "y": 0.03, "add": true})).unwrap();
+    }
+    let n = s.execute("mask.sampleColor", &json!({"x": 0.5, "y": 0.52, "add": true})).unwrap()["samples"].as_array().unwrap().len();
+    assert_eq!(n, 5);
+    assert!(at(&mask(&mut s), 0.03, 0.03) > 200, "the added colour is selected too");
+    // a plain click starts over
+    assert_eq!(s.execute("mask.sampleColor", &json!({"x": 0.5, "y": 0.5})).unwrap()["samples"].as_array().unwrap().len(), 1);
+    assert!(s.execute("mask.sampleColor", &json!({"x": 1.5, "y": 0.5})).is_err());
+}

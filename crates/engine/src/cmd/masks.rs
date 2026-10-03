@@ -168,6 +168,47 @@ pub fn specs() -> Vec<CommandSpec> {
             })
         }),
         cmd!(
+            "mask.sampleColor",
+            "Sample Mask Color",
+            [],
+            None,
+            "{x, y: normalized image point, add?: bool (⇧: add to the samples, max 5), id?, component?} — the colour range of the selected mask (its first colour-range component) samples the colour there → {samples}",
+            has_active,
+            |s, p| {
+                let c = "mask.sampleColor";
+                let (x, y) = (super::f64_req(p, "x", c)?, super::f64_req(p, "y", c)?);
+                let add = p.get("add").and_then(Value::as_bool).unwrap_or(false);
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let src = s.source_now(id, crate::media::SourceLevel::Thumb).map_err(|e| bad(c, e))?;
+                let info = s.catalog.photo(id).map(|p| crate::media::source_info(p)).unwrap_or_default();
+                let d = s.develop_of(id).unwrap_or_default();
+                let req = lightcraft_pipeline::RenderRequest::fit(384, 384);
+                let lab = lightcraft_pipeline::color_range_sample(&src, &info, &d, &req, lightcraft_geom::Point::new(x, y))
+                    .ok_or_else(|| bad(c, "the point is outside the photo"))?;
+                let mid = mask_id(p, s.active_mask, c)?;
+                let comp = p.get("component").and_then(Value::as_u64).map(|v| v as usize);
+                let mut out = Vec::new();
+                masks_edit(s, c, "Color Range", |masks, _| {
+                    let i = find(masks, mid, c)?;
+                    let k = comp
+                        .or_else(|| masks[i].components.iter().position(|x| matches!(x.shape, MaskShape::ColorRange { .. })))
+                        .ok_or_else(|| bad(c, "the mask has no colour range"))?;
+                    let Some(MaskShape::ColorRange { samples, .. }) = masks[i].components.get_mut(k).map(|x| &mut x.shape) else {
+                        return Err(bad(c, "not a colour range component"));
+                    };
+                    if !add {
+                        samples.clear();
+                    }
+                    if samples.len() < 5 {
+                        samples.push(lab);
+                    }
+                    out = samples.clone();
+                    Ok(())
+                })?;
+                Ok(json!({"samples": out}))
+            }
+        ),
+        cmd!(
             "mask.adjust",
             "Set Mask Adjustments",
             [],

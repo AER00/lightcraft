@@ -84,6 +84,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 ui.painter().text(pos2(r.center().x, r.bottom() - 9.0), Align2::CENTER_CENTER, *label, t.font(10.5), t.text_dim);
                 if resp.clicked() {
                     match *kind {
+                        "colorRange" => {
+                            // an empty colour range; clicking the photo samples it
+                            let _ = app.run("mask.add", json!({"kind": "colorRange"}));
+                            app.ui.tool = "colorRange".into();
+                            app.toast(ui.ctx(), "Click the photo to pick a colour · ⇧-click adds more");
+                        }
                         "brush" | "linear" | "radial" => {
                             app.ui.tool = kind.to_string();
                             if *kind != "brush" {
@@ -416,6 +422,20 @@ fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: usize, shape
             }
         }
         MaskShape::ColorRange { samples, refine } => {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("{} sample{}", samples.len(), if samples.len() == 1 { "" } else { "s" }))
+                        .color(t.text_dim)
+                        .size(11.5),
+                );
+                let picking = app.ui.tool == "colorRange";
+                if text_button(ui, &format!("colorPick{comp}"), "Pick", picking)
+                    .on_hover_text("Click the photo to pick a colour; ⇧-click adds more (up to 5)")
+                    .clicked()
+                {
+                    app.ui.tool = if picking { String::new() } else { "colorRange".into() };
+                }
+            });
             let spec = ControlSpec {
                 id: "refine",
                 label: "Refine",

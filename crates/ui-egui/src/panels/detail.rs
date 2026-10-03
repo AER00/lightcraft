@@ -533,6 +533,20 @@ fn general_interaction(
         targeted_drag(app, ui, resp, map, &target);
         return;
     }
+    if app.ui.tool == "colorRange" {
+        // click: sample the colour for the selected mask's colour range; ⇧-click adds (up to 5)
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        if resp.clicked()
+            && let Some(q) = resp.interact_pointer_pos()
+        {
+            let n = map.norm(q);
+            let add = ui.input(|i| i.modifiers.shift);
+            if let Err(e) = app.run("mask.sampleColor", json!({"x": n.x, "y": n.y, "add": add})) {
+                app.toast(ui.ctx(), e);
+            }
+        }
+        return;
+    }
     if app.ui.tool == "pointColor" {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         if resp.clicked()

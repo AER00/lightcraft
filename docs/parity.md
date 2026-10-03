@@ -31,7 +31,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 6 | 1 | 3 | 2 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
-| K. Masking (MASK) | 12 | 4 | 7 | 0 | 8/8 (100%) | 4/5 (80%) |
+| K. Masking (MASK) | 13 | 3 | 7 | 0 | 8/8 (100%) | 5/5 (100%) |
 | L. Presets (PRE) | 5 | 1 | 1 | 1 | 2/2 (100%) | 2/2 (100%) |
 | M. Versions & history (VER) | 4 | 0 | 1 | 0 | 1/1 (100%) | 3/3 (100%) |
 | N. Copy / paste / sync (SYNC) | 4 | 1 | 0 | 0 | 3/3 (100%) | 1/1 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
 | Z. Keyboard shortcuts (desktop) | 69 | 7 | 4 | 1 | 49/52 (94%) | 18/23 (78%) |
 | Lightroom Classic extras | 18 | 12 | 49 | 9 | — | 17/21 (81%) |
-| **Total** | 335 | 41 | 124 | 37 | 193/198 (97%) | 122/144 (85%) |
+| **Total** | 336 | 40 | 124 | 37 | 193/198 (97%) | 123/144 (85%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **71.1%** of 500 in-scope rows — P0 98.7% of 198 · P1 91.0% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **71.2%** of 500 in-scope rows — P0 98.7% of 198 · P1 91.3% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -318,7 +318,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-MASK-BRUSH | Brush mask | P0 | ✅ | `cmd:tool.brush`, `cmd:mask.brushStroke` (`autoMask`), `crates/pipeline/src/masks.rs` | size/feather/flow/density/erase; Auto Mask: dabs weighted by similarity to the colour under the dab centre, refined by a guided filter on luminance (CPU + GPU); no A/B brushes, no pressure |
 | LR-MASK-LINEAR | Linear gradient | P0 | ✅ | `cmd:tool.linear`, `cmd:mask.update` | |
 | LR-MASK-RADIAL | Radial gradient | P0 | ✅ | `cmd:tool.radial`, `cmd:mask.update` | |
-| LR-MASK-COLORRANGE | Colour range | P1 | 🟡 | `cmd:mask.add` (`colorRange`), `cmd:mask.update` | renders; Refine slider in the Masking panel; sampling UX (click / drag on the photo) unverified |
+| LR-MASK-COLORRANGE | Colour range | P1 | ✅ | `cmd:mask.add` (`colorRange`), `cmd:mask.sampleColor`, `cmd:mask.update`, `crates/pipeline/src/lib.rs` (`color_range_sample`) | Color tile → click the photo to sample (⇧-click adds, up to 5; samples taken in the space the mask compares in), Pick button, Refine slider |
 | LR-MASK-LUMRANGE | Luminance range | P1 | ✅ | `cmd:mask.add` (`luminanceRange`), `cmd:mask.update`, `crates/ui-egui/src/panels/masking.rs` (`range_controls`) | range bar with two handles (one undo step per drag), Smoothness, Show Luminance Map (B&W photo with the range tinted) |
 | LR-MASK-DEPTHRANGE | Depth range | P2 | ⬜ | | shape exists, needs depth data |
 | LR-MASK-COMBINE | Add / subtract / intersect | P0 | ✅ | `cmd:mask.addComponent` | |
