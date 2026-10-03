@@ -559,6 +559,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         use lightcraft_engine::export::TiffCompression as Z;
                         choices(ui, "Compression", "exportTiffCompression", &[(Z::None, "None"), (Z::Lzw, "LZW"), (Z::Deflate, "ZIP")], &mut opts.tiff_compression);
                     }
+                    if opts.format == F::Dng {
+                        use lightcraft_engine::export::DngCompression as Z;
+                        choices(ui, "Compression", "exportDngCompression", &[(Z::Lossless, "Lossless"), (Z::Deflate, "ZIP"), (Z::Uncompressed, "None")], &mut opts.dng_compression);
+                    }
                     field(ui, "File name", |ui| {
                         ui.add(egui::TextEdit::singleline(&mut opts.naming).hint_text("{name}-{seq}  ·  {date}").desired_width(f32::INFINITY))
                     });

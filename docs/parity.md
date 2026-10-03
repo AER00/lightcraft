@@ -39,7 +39,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 15 | 0 | 3 | 0 | 7/7 (100%) | 7/7 (100%) |
+| S. Export (EXP) | 15 | 1 | 2 | 0 | 7/7 (100%) | 7/7 (100%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 79 | 2 | 4 | 8 | 46/47 (98%) | 22/23 (96%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 22 | 10 | 47 | 9 | — | 18/21 (86%) |
-| **Total** | 370 | 25 | 105 | 37 | 193/198 (97%) | 132/144 (92%) |
+| **Total** | 370 | 26 | 104 | 37 | 193/198 (97%) | 132/144 (92%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **76.5%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 32.3% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **76.6%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 32.6% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -420,7 +420,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EXP-NAMING | File naming | P1 | ✅ | `cmd:app.export` (`naming`: `{name}`, `{seq}`, `{date}`; `startNumber`) | free-form template rather than a list of named schemes |
 | LR-EXP-LOCATION | Destination folder | P0 | ✅ | `cmd:app.export` (`dir`, `subfolder`, `conflict`: unique / overwrite / skip), `crates/ui-egui/src/panels/dialogs.rs` (Choose… folder picker) | folder picker on the desktop; existing files get `-2`, `-3`… by default |
 | LR-EXP-PREVIOUS | Export with previous settings | P0 | ✅ | `cmd:app.exportPrevious`, `cmd:dialog.export` | last options persist in prefs.json; dialog prefilled; no named export presets yet |
-| LR-EXP-DNGOPT | DNG options | P2 | ⬜ | | |
+| LR-EXP-DNGOPT | DNG options | P2 | 🟡 | `cmd:app.export` (`dngCompression`), `crates/engine/src/export.rs` | compression: lossless JPEG (default), ZIP or none; no embedded JPEG preview size, no lossy DNG output |
 | LR-EXP-ORIGINAL | Original + XMP | P1 | ✅ | `cmd:app.export` (`format: original`) | file copied byte for byte, sidecar named after the output |
 | LR-EXP-PHOTOS | Export to the system photo library | P2 | ⬜ | | |
 | LR-EXP-PSD | Round trip to an external editor | P2 | ✅ | `cmd:photo.editExternal`, `cmd:photo.editInExternal`, `crates/engine/src/cmd/convert.rs` | a 16-bit TIFF `-Edit` copy with the edits (Adobe RGB / ProPhoto / P3 / sRGB) next to the original, added stacked on top of it and opened in the editor set in Settings ▸ General (or the system default) |

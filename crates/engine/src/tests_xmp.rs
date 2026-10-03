@@ -415,3 +415,33 @@ fn gps_typed_in_is_saved_to_xmp() {
     s.execute("photo.setMeta", &json!({"gps": null})).unwrap();
     assert!(s.catalog.photo(id).unwrap().meta.gps.is_none());
 }
+
+/// DNG export compression: lossless, zip and none all decode; none is the biggest.
+#[test]
+fn dng_export_compression_choices() {
+    let corpus = std::env::var_os("LIGHTCRAFT_CORPUS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+        .join("raw/nef-nikon-d5100-uncompressed.nef");
+    if !corpus.exists() {
+        eprintln!("skip: {} absent", corpus.display());
+        return;
+    }
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [corpus.to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    let mut sizes = Vec::new();
+    for c in ["lossless", "deflate", "uncompressed"] {
+        let o = crate::export::ExportOptions::from_json(&json!({"format": "dng", "dngCompression": c}));
+        let mut out = Vec::new();
+        let mut write = |_: &str, b: &[u8]| {
+            out = b.to_vec();
+            Ok(())
+        };
+        crate::export::export_batch(&mut s, &[id], &o, &crate::export::Destination { dir: "x".into(), exact: None }, &mut write, &|_| false).unwrap();
+        let raw = lightcraft_raw::decode(&out).unwrap_or_else(|e| panic!("{c}: {e}"));
+        assert!(raw.width > 1000, "{c}");
+        sizes.push((c, out.len()));
+    }
+    assert!(sizes[2].1 > sizes[0].1 && sizes[2].1 > sizes[1].1, "uncompressed is the biggest: {sizes:?}");
+}

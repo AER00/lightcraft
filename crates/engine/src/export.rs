@@ -445,6 +445,8 @@ pub struct ExportOptions {
     pub conflict: Conflict,
     /// TIFF compression.
     pub tiff_compression: TiffCompression,
+    /// DNG export: how the raw data is stored.
+    pub dng_compression: DngCompression,
     pub metadata: MetadataPolicy,
     /// Strip GPS / location even when the policy would include it.
     pub remove_location: bool,
@@ -472,6 +474,7 @@ impl Default for ExportOptions {
             subfolder: String::new(),
             conflict: Conflict::Unique,
             tiff_compression: TiffCompression::Deflate,
+            dng_compression: DngCompression::Lossless,
             metadata: MetadataPolicy::All,
             remove_location: false,
             watermark: None,
@@ -513,6 +516,7 @@ impl ExportOptions {
                 Some("zip" | "deflate") => TiffCompression::Deflate,
                 _ => d.tiff_compression,
             },
+            dng_compression: enm(p, "dngCompression").unwrap_or(d.dng_compression),
             metadata: enm(p, "metadata").unwrap_or(d.metadata),
             remove_location: p.get("removeLocation").and_then(Value::as_bool).unwrap_or(d.remove_location),
             watermark: match p.get("watermark") {
@@ -944,7 +948,7 @@ enum Work {
         path: String,
         read: Option<crate::merge::ByteReader>,
         packet: String,
-        dng: bool,
+        dng: Option<DngCompression>,
         label: String,
         size: (usize, usize),
     },
@@ -972,7 +976,7 @@ pub fn prepare_export(
             path: path.clone(),
             read: session.media.file_bytes.clone(),
             packet: crate::sidecar::sidecar_packet(p, &session.catalog),
-            dng: o.format == ExportFormat::Dng,
+            dng: (o.format == ExportFormat::Dng).then_some(o.dng_compression),
             label: p.file_name.clone(),
             size: (p.width as usize, p.height as usize),
         }
@@ -995,20 +999,37 @@ impl PreparedExport {
                     Some(r) => r(&path)?,
                     None => std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
                 };
-                if !dng {
+                let Some(dng) = dng else {
                     return Ok(Exported { file_name, bytes, width: size.0, height: size.1, sidecars: vec![("xmp", packet.into_bytes())] });
-                }
+                };
                 if lightcraft_raw::probe(&bytes).is_none() {
                     return Err(format!("{label}: DNG export needs a raw photo"));
                 }
                 let raw = lightcraft_raw::decode(&bytes).map_err(|e| format!("{label}: {e}"))?;
                 drop(bytes);
-                let dng = lightcraft_raw::write_dng(&raw, &lightcraft_raw::DngWriteOptions { xmp: Some(packet), ..Default::default() })
+                let compression = match dng {
+                    DngCompression::Lossless => lightcraft_raw::DngCompression::Lj92 { tile: 256 },
+                    DngCompression::Deflate => lightcraft_raw::DngCompression::Deflate { tile: 256, half: false },
+                    DngCompression::Uncompressed => lightcraft_raw::DngCompression::Uncompressed,
+                };
+                let dng = lightcraft_raw::write_dng(&raw, &lightcraft_raw::DngWriteOptions { xmp: Some(packet), compression, ..Default::default() })
                     .map_err(|e| e.to_string())?;
                 Ok(Exported { file_name, bytes: dng, width: raw.width, height: raw.height, sidecars: Vec::new() })
             }
         }
     }
+}
+
+/// How an exported DNG stores its raw data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DngCompression {
+    /// Lossless JPEG (the usual DNG compression).
+    #[default]
+    Lossless,
+    /// Deflate (zip) tiles with prediction.
+    Deflate,
+    Uncompressed,
 }
 
 /// The destination of a batch: a folder (with `ExportOptions::subfolder` and the conflict policy
