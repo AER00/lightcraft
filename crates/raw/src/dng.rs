@@ -57,9 +57,6 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     if !(1..=4).contains(&cpp) {
         return Err(RawError::Unsupported(format!("{cpp} samples per pixel")));
     }
-    if info.compression == t::compression::LOSSY_JPEG {
-        return Err(RawError::Unsupported("lossy (DCT) JPEG DNG".into()));
-    }
     if info.compression == t::compression::JPEG_XL {
         return Err(RawError::Unsupported("JPEG XL DNG".into()));
     }

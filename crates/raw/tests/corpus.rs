@@ -24,7 +24,6 @@ const KNOWN_UNSUPPORTED: &[&str] = &[
     "nef-nikon-d5100-lossless", // Nikon Huffman NEF
     "nef-nikon-d7000-lossy",    // "
     "sraw",                     // Canon sRAW / mRAW
-    "-lossy.dng",               // lossy (DCT) DNG
 ];
 
 #[test]

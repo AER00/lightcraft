@@ -10,7 +10,7 @@
 //! - [`color`] implements the DNG colour model (dual-illuminant interpolation, forward matrices, white balance)
 //!   and produces camera → linear Rec.2020 D65 matrices.
 //!
-//! Formats: DNG (uncompressed, lossless JPEG, Deflate incl. floating point, tiled/stripped, CFA and LinearRaw),
+//! Formats: DNG (uncompressed, lossless JPEG, lossy JPEG (Smart Previews), Deflate incl. floating point, tiled/stripped, CFA and LinearRaw),
 //! Canon CR2, Nikon NEF/NRW (uncompressed), Sony ARW (uncompressed, ARW2, lossless), Fujifilm RAF (uncompressed Bayer
 //! and X-Trans), Panasonic RW2 (packed 12/14-bit), Pentax PEF (uncompressed, Huffman), Olympus ORF (uncompressed).
 //! [`embedded_preview`] covers all of them plus CR3. Variants we can't decode yet (Nikon Huffman NEF, Panasonic

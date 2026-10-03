@@ -453,7 +453,8 @@ fn rejects_unsupported_and_broken() {
     let mut raw = base_ifd(w, h, 8, 1, true);
     raw.set(t::COMPRESSION, Value::Short(vec![compression::LOSSY_JPEG]));
     raw.set_image(ImageData::Strips { rows_per_strip: 8, strips: vec![vec![0; 10]] });
-    assert!(matches!(decode(&dng(raw, ByteOrder::Little)), Err(lightcraft_raw::RawError::Unsupported(_))));
+    // lossy JPEG DNGs decode now; a strip that isn't a JPEG is reported as corrupt
+    assert!(matches!(decode(&dng(raw, ByteOrder::Little)), Err(lightcraft_raw::RawError::Corrupt(_))));
     let mut raw = base_ifd(w, h, 16, 1, true);
     raw.set(t::CFA_PATTERN_EP, Value::Byte(vec![0, 1, 3, 1]));
     raw.set(t::COMPRESSION, Value::Short(vec![1]));

@@ -2294,6 +2294,7 @@ dependencies = [
 name = "lightcraft-raw"
 version = "0.1.0"
 dependencies = [
+ "jpeg-encoder",
  "lightcraft-color",
  "lightcraft-geom",
  "lightcraft-meta",
@@ -2304,6 +2305,8 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror 2.0.21",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]

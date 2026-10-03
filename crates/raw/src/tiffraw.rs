@@ -150,6 +150,19 @@ fn decode_chunk(data: &[u8], info: &ImageInfo, c: &Chunk, order: ByteOrder, pack
             v.resize(n, 0);
             Ok(ChunkPx::U16(v))
         }
+        comp::LOSSY_JPEG => {
+            // lossy DNG: each chunk is a baseline (DCT) JPEG of 8-bit samples
+            let (px, jw, jh, jc) = lossy_jpeg(src, cpp)?;
+            let mut v = vec![0u16; n];
+            for y in 0..ch.min(jh) {
+                for x in 0..cw.min(jw) {
+                    for k in 0..cpp {
+                        v[(y * cw + x) * cpp + k] = px[(y * jw + x) * jc + k.min(jc - 1)] as u16;
+                    }
+                }
+            }
+            Ok(ChunkPx::U16(v))
+        }
         comp::ADOBE_DEFLATE | comp::DEFLATE => {
             let bytes_per = if float { bits.div_ceil(8) as usize } else { 0 };
             let row_bytes = if float { cw * cpp * bytes_per } else { (cw * cpp * bits as usize).div_ceil(8) };
@@ -158,6 +171,24 @@ fn decode_chunk(data: &[u8], info: &ImageInfo, c: &Chunk, order: ByteOrder, pack
         }
         other => Err(RawError::Unsupported(format!("TIFF compression {other}"))),
     }
+}
+
+/// Decode one baseline JPEG chunk to 8-bit samples: (samples, width, height, channels).
+fn lossy_jpeg(src: &[u8], cpp: usize) -> Result<(Vec<u8>, usize, usize, usize)> {
+    use zune_core::bytestream::ZCursor;
+    use zune_core::colorspace::ColorSpace;
+    use zune_core::options::DecoderOptions;
+    let cs = if cpp == 1 { ColorSpace::Luma } else { ColorSpace::RGB };
+    let opts = DecoderOptions::default().set_max_width(1 << 16).set_max_height(1 << 16).set_strict_mode(false).jpeg_set_out_colorspace(cs);
+    let mut d = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(src), opts);
+    let px = d.decode().map_err(|e| RawError::Corrupt(format!("lossy JPEG tile: {e}")))?;
+    let info = d.info().ok_or_else(|| RawError::Corrupt("lossy JPEG tile without a header".into()))?;
+    let (w, h) = (info.width as usize, info.height as usize);
+    let c = if cpp == 1 { 1 } else { 3 };
+    if w == 0 || h == 0 || px.len() < w * h * c {
+        return Err(RawError::Corrupt("lossy JPEG tile: short output".into()));
+    }
+    Ok((px, w, h, c))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -247,4 +278,50 @@ fn unpack_chunk(
         }
     }
     Ok(ChunkPx::U16(out))
+}
+
+#[cfg(test)]
+mod lossy_tests {
+    use super::*;
+    use lightcraft_tiff::image::Layout;
+
+    /// A lossy-DNG-style image: two 16×8 tiles, each a baseline JPEG, the right one cut short
+    /// by the image edge.
+    #[test]
+    fn lossy_jpeg_tiles_decode() {
+        let (tw, th) = (16usize, 8usize);
+        let tile = |shade: u8| {
+            let px: Vec<u8> = (0..tw * th).flat_map(|i| [shade, (i % tw * 15) as u8, 200]).collect();
+            let mut out = Vec::new();
+            jpeg_encoder::Encoder::new(&mut out, 100).encode(&px, tw as u16, th as u16, jpeg_encoder::ColorType::Rgb).unwrap();
+            out
+        };
+        let (a, b) = (tile(40), tile(220));
+        let mut file = vec![0u8; 8];
+        let oa = file.len() as u64;
+        file.extend_from_slice(&a);
+        let ob = file.len() as u64;
+        file.extend_from_slice(&b);
+        let info = ImageInfo {
+            width: 24,
+            height: 8,
+            bits_per_sample: vec![8, 8, 8],
+            samples_per_pixel: 3,
+            compression: comp::LOSSY_JPEG,
+            photometric: 34892,
+            planar: 1,
+            predictor: 1,
+            sample_format: 1,
+            new_subfile_type: 0,
+            layout: Layout::Tiles { tile_width: tw as u32, tile_height: th as u32 },
+            offsets: vec![oa, ob],
+            byte_counts: vec![a.len() as u64, b.len() as u64],
+        };
+        let RawData::U16(v) = read_image(&file, &info, ByteOrder::Little, Packing::Msb).unwrap() else { panic!("integer samples") };
+        assert_eq!(v.len(), 24 * 8 * 3);
+        let px = |x: usize, y: usize| &v[(y * 24 + x) * 3..(y * 24 + x) * 3 + 3];
+        assert!((px(2, 3)[0] as i32 - 40).abs() <= 3 && (px(2, 3)[2] as i32 - 200).abs() <= 3, "{:?}", px(2, 3));
+        assert!((px(20, 3)[0] as i32 - 220).abs() <= 3, "second tile: {:?}", px(20, 3));
+        assert!((px(10, 5)[1] as i32 - 150).abs() <= 6, "green ramp: {:?}", px(10, 5));
+    }
 }
