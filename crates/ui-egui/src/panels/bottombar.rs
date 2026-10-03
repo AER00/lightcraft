@@ -21,7 +21,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 for (id, icon, mode, tip) in [
                     ("photoGrid", Icon::GridPhoto, ViewMode::PhotoGrid, "Photo Grid (G)"),
-                    ("squareGrid", Icon::GridSquare, ViewMode::SquareGrid, "Square Grid (Shift+G)"),
+                    ("squareGrid", Icon::GridSquare, ViewMode::SquareGrid, "Square Grid (G toggles)"),
                     ("detail", Icon::Single, ViewMode::Detail, "Detail (D)"),
                     ("compare", Icon::Compare, ViewMode::Compare, "Compare (Shift+C)"),
                     ("survey", Icon::Survey, ViewMode::Survey, "Survey (N)"),

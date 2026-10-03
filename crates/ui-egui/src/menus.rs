@@ -11,8 +11,11 @@ use crate::state::{BeforeAfter, Dialog, RightPanel, ViewMode, Zoom};
 pub type UiCommand = (&'static str, &'static str, Option<&'static str>, &'static str);
 
 pub const UI_COMMANDS: &[UiCommand] = &[
-    ("view.photoGrid", "Photo Grid", Some("G"), "View"),
-    ("view.squareGrid", "Square Grid", Some("Shift+G"), "View"),
+    ("view.photoGrid", "Photo Grid", None, "View"),
+    ("view.squareGrid", "Square Grid", None, "View"),
+    // G: Photo Grid ↔ Square Grid (from other views: the photo grid)
+    ("view.gridToggle", "Grid", Some("G"), ""),
+    ("tool.guidedUpright", "Guided Upright", Some("Shift+G"), "Window>Tools"),
     ("view.detail", "Detail", Some("D"), "View"),
     ("view.compare", "Compare", Some("Shift+C"), "View"),
     ("view.survey", "Survey", Some("N"), "View"),
@@ -183,6 +186,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "view.squareGrid" => {
             app.ui.view = ViewMode::SquareGrid;
+            Ok(Value::Null)
+        }
+        "view.gridToggle" => {
+            app.ui.view = if app.ui.view == ViewMode::PhotoGrid { ViewMode::SquareGrid } else { ViewMode::PhotoGrid };
             Ok(Value::Null)
         }
         "view.detail" => {
@@ -490,6 +497,20 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             let tool = &s["tool.".len()..];
             match tool {
                 "none" => app.ui.tool.clear(),
+                "guidedUpright" => {
+                    // Crop & Geometry with Guided Upright on, ready to draw guides
+                    app.ui.right = RightPanel::Crop;
+                    app.ui.view = ViewMode::Detail;
+                    let guided = app
+                        .session
+                        .active()
+                        .and_then(|id| app.session.develop_of(id))
+                        .is_some_and(|d| d.geometry.upright == lightcraft_develop::Upright::Guided);
+                    if !guided && let Err(e) = app.run("geometry.upright", json!({"mode": "guided"})) {
+                        return Some(Err(e));
+                    }
+                    app.ui.tool = "guidedUpright".into();
+                }
                 "brush" => {
                     app.ui.right = RightPanel::Masking;
                     app.ui.view = ViewMode::Detail;

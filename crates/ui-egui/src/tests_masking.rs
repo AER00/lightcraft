@@ -280,3 +280,22 @@ fn smart_album_rule_editor_creates_and_edits() {
     assert_eq!(h.app.session.catalog.album_count(a.id), n3);
     h.settle(SETTLE);
 }
+
+#[test]
+fn g_toggles_grids_and_shift_g_starts_guided_upright() {
+    let mut h = detail("panel.edit");
+    let key = |h: &mut Headless, shift: bool| {
+        let r = h.request("ui.key", json!({"key": "g", "shift": shift}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    };
+    key(&mut h, false);
+    assert_eq!(h.app.ui.view, crate::state::ViewMode::PhotoGrid);
+    key(&mut h, false);
+    assert_eq!(h.app.ui.view, crate::state::ViewMode::SquareGrid);
+    key(&mut h, false);
+    assert_eq!(h.app.ui.view, crate::state::ViewMode::PhotoGrid);
+    key(&mut h, true);
+    assert_eq!((h.app.ui.view, h.app.ui.right, h.app.ui.tool.as_str()), (crate::state::ViewMode::Detail, RightPanel::Crop, "guidedUpright"));
+    assert_eq!(develop(&h).geometry.upright, lightcraft_develop::Upright::Guided);
+    h.settle(SETTLE);
+}

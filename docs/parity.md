@@ -46,11 +46,11 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
 | Y. Menus | 70 | 7 | 8 | 8 | 46/47 (98%) | 19/23 (83%) |
-| Z. Keyboard shortcuts (desktop) | 68 | 8 | 4 | 1 | 49/52 (94%) | 17/23 (74%) |
+| Z. Keyboard shortcuts (desktop) | 69 | 7 | 4 | 1 | 49/52 (94%) | 18/23 (78%) |
 | Lightroom Classic extras | 18 | 12 | 49 | 9 | — | 17/21 (81%) |
-| **Total** | 333 | 43 | 124 | 37 | 193/198 (97%) | 120/144 (83%) |
+| **Total** | 334 | 42 | 124 | 37 | 193/198 (97%) | 121/144 (84%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **70.9%** of 500 in-scope rows — P0 98.7% of 198 · P1 90.3% of 144 · P2 18.4% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **71.0%** of 500 in-scope rows — P0 98.7% of 198 · P1 90.6% of 144 · P2 18.4% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -601,7 +601,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-DETAIL | Detail — D | P0 | ✅ | `cmd:view.detail` | |
 | KEY-EDIT | Edit — E | P0 | ✅ | `cmd:panel.edit` | |
 | KEY-FULLSCREEN | Full-screen preview — F | P1 | ✅ | `cmd:view.fullScreenPreview` | |
-| KEY-GRID | Grid — G | P0 | ✅ | `cmd:view.photoGrid` | |
+| KEY-GRID | Grid — G | P0 | ✅ | `cmd:view.gridToggle`, `cmd:view.photoGrid` | G toggles Photo Grid ↔ Square Grid |
 | KEY-INFO | Info — I | P0 | ✅ | `cmd:panel.info` | |
 | KEY-KEYWORDS | Keywords — K | P0 | ✅ | `cmd:panel.keywords` | |
 | KEY-CLIPBOARD | Copy / paste edit settings — ⌘C / ⌘V | P0 | ✅ | `cmd:develop.copy`, `cmd:develop.paste` | ⌘X has nothing to cut outside text fields |
@@ -631,7 +631,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-EXPORTDIALOG | Export dialog — ⇧E | P0 | ✅ | `cmd:dialog.export` | secondary binding (primary ⌘⇧E) |
 | KEY-ENTERFULLSCREEN | Window full screen — ⇧⌘F | P1 | ✅ | `cmd:view.enterFullScreen` | |
 | KEY-STACK | Group / ungroup stack — ⌘G / ⇧⌘G | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup` | also S expand/collapse, ⇧S top of stack |
-| KEY-GUIDEDUPRIGHT | Guided Upright — ⇧G | P1 | 🟡 | `cmd:geometry.upright` | button in the crop panel; ⇧G = Square Grid |
+| KEY-GUIDEDUPRIGHT | Guided Upright — ⇧G | P1 | ✅ | `cmd:tool.guidedUpright`, `cmd:geometry.upright` | opens Crop & Geometry with Guided Upright on and the guide tool active; G toggles Photo Grid ↔ Square Grid (`cmd:view.gridToggle`) as observed |
 | KEY-HIDE | Hide / hide others — ⌘H / ⌥⌘H | P1 | 🟡 | | platform default (unverified) |
 | KEY-QUIT | Quit — ⌘Q | P0 | ✅ | `cmd:app.quit` | ⌘Q (Ctrl+Q off macOS) |
 | KEY-CREATEVERSION | Create version — ⇧M | P1 | ✅ | `cmd:version.create` | secondary binding (primary ⌘⇧S) |
