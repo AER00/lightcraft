@@ -39,18 +39,18 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 14 | 0 | 4 | 0 | 7/7 (100%) | 7/7 (100%) |
+| S. Export (EXP) | 15 | 0 | 3 | 0 | 7/7 (100%) | 7/7 (100%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 0 | 1 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 13 | 0 | 4 | 1 | 8/8 (100%) | 5/5 (100%) |
-| Y. Menus | 76 | 2 | 7 | 8 | 46/47 (98%) | 22/23 (96%) |
-| Z. Keyboard shortcuts (desktop) | 73 | 3 | 4 | 1 | 49/52 (94%) | 22/23 (96%) |
+| Y. Menus | 77 | 2 | 6 | 8 | 46/47 (98%) | 22/23 (96%) |
+| Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 20 | 11 | 48 | 9 | — | 18/21 (86%) |
-| **Total** | 357 | 27 | 116 | 37 | 193/198 (97%) | 132/144 (92%) |
+| **Total** | 360 | 27 | 113 | 37 | 193/198 (97%) | 132/144 (92%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **74.1%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 24.7% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **74.7%** of 500 in-scope rows — P0 98.7% of 198 · P1 94.4% of 144 · P2 26.6% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -423,7 +423,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EXP-DNGOPT | DNG options | P2 | ⬜ | | |
 | LR-EXP-ORIGINAL | Original + XMP | P1 | ✅ | `cmd:app.export` (`format: original`) | file copied byte for byte, sidecar named after the output |
 | LR-EXP-PHOTOS | Export to the system photo library | P2 | ⬜ | | |
-| LR-EXP-PSD | Round trip to an external editor | P2 | ⬜ | | |
+| LR-EXP-PSD | Round trip to an external editor | P2 | ✅ | `cmd:photo.editExternal`, `cmd:photo.editInExternal`, `crates/engine/src/cmd/convert.rs` | a 16-bit TIFF `-Edit` copy with the edits (Adobe RGB / ProPhoto / P3 / sRGB) next to the original, added stacked on top of it and opened in the editor set in Settings ▸ General (or the system default) |
 
 ## T. Share (SHARE)
 
@@ -515,7 +515,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-FILE-EXPORTPREV | Export with Previous | P0 | ✅ | `cmd:app.exportPrevious` | ⌥⇧⌘E |
 | MENU-FILE-EXPORTPRESETS | Export preset submenu | P0 | ✅ | `cmd:app.export` (`preset`), `crates/ui-egui/src/menubar.rs` (Export with Preset) | built-ins, then user presets, then Custom… (the dialog); exports to the last folder |
 | MENU-FILE-SHARE | Share / get link / invite | OOS | 🚫 | | |
-| MENU-FILE-PHOTOSHOP | Edit in external editor | P2 | ⬜ | | |
+| MENU-FILE-PHOTOSHOP | Edit in external editor | P2 | ✅ | `cmd:photo.editInExternal` | Photo ▸ Edit in External Editor |
 | MENU-FILE-SHOWFINDER | Show in Finder | P0 | ✅ | `cmd:app.showInFinder` | ⌘R; Explorer on Windows, the folder on Linux; disabled for demo scenes and on the web |
 | MENU-FILE-OFFLINE | Store album locally | P2 | 🚫 | | not applicable: local-first |
 | MENU-FILE-CLOSE | Close Window | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | the system's Close Window item at the end of File (⌘W) |
@@ -608,7 +608,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-UNDOREDO | Undo / redo — ⌘Z / ⇧⌘Z | P0 | ✅ | `cmd:edit.undo`, `cmd:edit.redo` | |
 | KEY-MINIMIZE | Minimize — ⌘M | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | native Window ▸ Minimize |
 | KEY-AUTO | Auto — ⇧A | P0 | ✅ | `cmd:develop.auto` | |
-| KEY-PHOTOSHOP | External editor — ⇧⌘E | P2 | ⬜ | | key used by our export dialog |
+| KEY-PHOTOSHOP | External editor — ⇧⌘E | P2 | ✅ | `cmd:photo.editInExternal` | ⇧⌘E as observed; the export dialog is ⇧E |
 | KEY-ROTATE | Rotate — ⌘[ / ⌘] | P0 | ✅ | `cmd:photo.rotateLeft`, `cmd:photo.rotateRight` | |
 | KEY-ZOOM | Zoom in / out — ⌘= / ⌘− | P0 | ✅ | `cmd:view.zoomIn`, `cmd:view.zoomOut` | |
 | KEY-SELECTALL | Select all — ⌘A | P0 | ✅ | `cmd:library.selectAll` | |

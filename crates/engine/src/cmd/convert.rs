@@ -7,7 +7,7 @@ use std::path::Path;
 use lightcraft_catalog::{MediaKind, Op, Source};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, bad, cmd, has_selection};
+use super::{CommandSpec, bad, cmd, has_active, has_selection};
 use crate::{Result, Session};
 
 /// A free `<stem>.dng` (then `<stem>-2.dng`…) next to `path`.
@@ -100,5 +100,62 @@ pub fn specs() -> Vec<CommandSpec> {
         "{ids?} — write each raw photo as a lossless DNG next to it (settings embedded) and relink the photo to it; originals are kept → {converted: [{id, path, original}], skipped}",
         has_selection,
         convert
+    )]
+}
+
+/// Edit in an external editor, the engine half: render the photo with its edits as a 16-bit
+/// TIFF next to the original (`<name>-Edit.tif`, never overwriting), add it to the library and
+/// stack it on top of the original. The host opens the file in the editor.
+fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "photo.editExternal";
+    let id = s.active().ok_or_else(|| bad(C, "no active photo"))?;
+    let ph = s.catalog.photo(id).cloned().ok_or_else(|| bad(C, "no photo"))?;
+    let dir = match &ph.source {
+        Source::File { path } => Path::new(path).parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default(),
+        Source::Demo { .. } => match super::str_param(p, "dir") {
+            Some(d) => d.to_string(),
+            None => return Err(bad(C, "a generated demo photo has no folder: give `dir`")),
+        },
+    };
+    let space = match super::str_param(p, "colorSpace").unwrap_or("adobeRgb") {
+        "srgb" => lightcraft_pipeline::OutputSpace::Srgb,
+        "displayP3" => lightcraft_pipeline::OutputSpace::DisplayP3,
+        "prophoto" | "proPhoto" => lightcraft_pipeline::OutputSpace::ProPhoto,
+        _ => lightcraft_pipeline::OutputSpace::AdobeRgb,
+    };
+    let opts = crate::export::ExportOptions {
+        format: crate::export::ExportFormat::Tiff,
+        bit_depth: Some(16),
+        color_space: space,
+        naming: "{name}-Edit".into(),
+        conflict: crate::export::Conflict::Unique,
+        ..Default::default()
+    };
+    let mut written = Vec::new();
+    let mut write = |path: &str, bytes: &[u8]| -> std::result::Result<(), String> {
+        std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}"))?;
+        written.push(path.to_string());
+        Ok(())
+    };
+    let to = crate::export::Destination { dir, exact: None };
+    crate::export::export_batch(s, &[id], &opts, &to, &mut write, &|path| Path::new(path).exists()).map_err(|e| bad(C, e))?;
+    let out = written.into_iter().find(|w| w.ends_with(".tif")).ok_or_else(|| bad(C, "nothing was written"))?;
+    let r = s.execute("library.import", &json!({"paths": [out]}))?;
+    let new = r["imported"].get(0).and_then(Value::as_u64).ok_or_else(|| bad(C, "the edit copy could not be added"))?;
+    // stack: the edit on top of the original, expanded so both show
+    let _ = s.execute("stack.group", &json!({"ids": [new, id.0], "top": new, "collapsed": false}));
+    s.selection = crate::Selection::single(lightcraft_catalog::PhotoId(new));
+    Ok(json!({"path": out, "id": new, "original": id.0}))
+}
+
+pub fn edit_specs() -> Vec<CommandSpec> {
+    vec![cmd!(
+        "photo.editExternal",
+        "Edit Copy for External Editor",
+        [],
+        None,
+        "{colorSpace?: adobeRgb (default) | proPhoto | displayP3 | srgb, dir?} — render the active photo with its edits as a 16-bit TIFF `<name>-Edit.tif` next to it, add it stacked on the original and select it → {path, id, original} (the app then opens it in the external editor)",
+        has_active,
+        edit_external
     )]
 }

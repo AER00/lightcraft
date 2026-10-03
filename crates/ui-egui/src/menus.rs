@@ -90,7 +90,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.copySettings", "Choose Edit Settings to Copy…", Some("Cmd+Shift+C"), "Edit"),
     ("dialog.pasteSettings", "Paste Selected Settings…", Some("Cmd+Shift+V"), "Edit"),
     ("view.focusSearch", "Find…", Some("Cmd+F"), "Edit"),
-    ("dialog.export", "Export…", Some("Cmd+Shift+E"), "File"),
+    ("dialog.export", "Export…", None, "File"),
+    ("photo.editInExternal", "Edit in External Editor", Some("Cmd+Shift+E"), "Photo"),
     ("dialog.mergeHdr", "HDR…", Some("Ctrl+H"), "Photo>Photo Merge"),
     ("dialog.mergePanorama", "Panorama…", Some("Ctrl+M"), "Photo>Photo Merge"),
     ("dialog.mergeHdrPanorama", "HDR Panorama…", None, "Photo>Photo Merge"),
@@ -668,6 +669,27 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "app.about" => {
             app.ui.dialog = Some(Dialog::About);
             Ok(Value::Null)
+        }
+        "photo.editInExternal" => {
+            // render an edit copy (stacked on the original), then open it in the editor
+            let mut params = p.clone();
+            if !params.is_object() {
+                params = json!({});
+            }
+            let r = match app.session.execute("photo.editExternal", &params) {
+                Ok(r) => r,
+                Err(e) => return Some(Err(e.to_string())),
+            };
+            let path = r["path"].as_str().unwrap_or_default().to_string();
+            let editor = p.get("app").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| app.ui.settings.external_editor.clone());
+            if let Some(f) = app.services.open_with.as_mut()
+                && let Err(e) = f(&path, &editor)
+            {
+                app.toast(&ctx, format!("Couldn't open the editor: {e}"));
+            }
+            let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            app.toast(&ctx, format!("{name} opened for editing; it is stacked with the original"));
+            Ok(r)
         }
         "app.systemInfo" => {
             let info = app.session.execute("library.info", &json!({})).unwrap_or_default();

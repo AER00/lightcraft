@@ -46,6 +46,8 @@ pub type PickFolder = Box<dyn FnMut() -> Option<String>>;
 pub type RevealFn = Box<dyn FnMut(&str) -> Result<(), String>>;
 /// Open a URL in the user's browser.
 pub type OpenUrlFn = Box<dyn FnMut(&str) -> Result<(), String>>;
+/// Open a file in an application (`app` = "" for the system's default one).
+pub type OpenWithFn = Box<dyn FnMut(&str, &str) -> Result<(), String>>;
 
 /// Platform services injected by the host app (desktop or web).
 #[derive(Default)]
@@ -67,6 +69,8 @@ pub struct Services {
     pub pick_folder: Option<PickFolder>,
     /// Open a web link in the browser (Help menu, About, Discord button).
     pub open_url: Option<OpenUrlFn>,
+    /// Open a file in an external editor (Edit in External Editor; desktop only).
+    pub open_with: Option<OpenWithFn>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

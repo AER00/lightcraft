@@ -138,6 +138,8 @@ pub struct AppSettings {
     pub gpu: bool,
     /// Largest long edge (pixels) the loupe renders at.
     pub preview_edge: u32,
+    /// Edit in External Editor: the application ("" = the system's default for TIFF files).
+    pub external_editor: String,
     /// Memory the caches may hold together, in MB (0 = automatic; `app.memoryBudget`).
     pub memory_mb: u32,
     /// Filmstrip: file names above the thumbnails.
@@ -156,6 +158,7 @@ impl Default for AppSettings {
             confirm_delete: false,
             gpu: true,
             preview_edge: 2560,
+            external_editor: String::new(),
             memory_mb: 0,
             film_names: true,
             film_badges: true,

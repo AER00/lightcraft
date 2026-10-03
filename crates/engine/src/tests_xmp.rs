@@ -328,3 +328,29 @@ fn convert_raw_to_dng() {
     assert_eq!(s.catalog.photo(id2).unwrap().format, "DNG");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Edit in External Editor (engine half): a 16-bit TIFF `-Edit` copy with the edits, next to
+/// the original, added and stacked on top of it; a second one doesn't overwrite the first.
+#[test]
+fn external_edit_copy_is_stacked() {
+    let dir = temp_dir("extedit");
+    let src = dir.join("beach.png");
+    write_png(&src, 9);
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let orig = s.active().unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 1.0})).unwrap();
+    let r = s.execute("photo.editExternal", &json!({})).unwrap();
+    let path = r["path"].as_str().unwrap().to_string();
+    assert!(path.ends_with("beach-Edit.tif"), "{path}");
+    let bytes = std::fs::read(&path).unwrap();
+    let d = lightcraft_codecs::decode(&bytes, Default::default()).unwrap();
+    assert_eq!(d.bit_depth, 16);
+    let new = lightcraft_catalog::PhotoId(r["id"].as_u64().unwrap());
+    assert_eq!(s.active(), Some(new));
+    let st = s.catalog.stack_of(new).expect("stacked");
+    assert_eq!((st.top(), st.photos.contains(&orig)), (new, true));
+    let r2 = s.execute("photo.editExternal", &json!({"colorSpace": "proPhoto"})).unwrap();
+    assert!(r2["path"].as_str().unwrap().ends_with("beach-Edit-Edit.tif") || r2["path"].as_str().unwrap().contains("-2"), "{r2}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

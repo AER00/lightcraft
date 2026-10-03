@@ -121,6 +121,16 @@ fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     heading(ui, t, "Culling");
     check(ui, "settings.autoAdvance", &mut app.ui.auto_advance, "Auto Advance: move to the next photo after rating or flagging");
     check(ui, "settings.confirmDelete", &mut app.ui.settings.confirm_delete, "Confirm before moving photos to Recently Deleted");
+    heading(ui, t, "External Editor");
+    row(ui, t, "Application", |ui| {
+        let r = ui.add(egui::TextEdit::singleline(&mut app.ui.settings.external_editor).hint_text("System default").desired_width(220.0));
+        register(ui.ctx(), "field:externalEditor", r.rect);
+    });
+    hint(
+        ui,
+        t,
+        "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere).",
+    );
 }
 
 // -------------------------------------------------------------------------------------- Import

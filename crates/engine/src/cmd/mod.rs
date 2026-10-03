@@ -122,6 +122,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(manage::specs());
         v.extend(previews::specs());
         v.extend(convert::specs());
+        v.extend(convert::edit_specs());
         v.extend(merge::specs());
         v.extend(query::specs());
         v.extend(xmp::specs());
