@@ -58,6 +58,16 @@ fn kind_label(s: &MaskShape) -> (&'static str, Icon) {
     }
 }
 
+const TILE: f32 = 52.0;
+const TILE_GAP: f32 = 6.0;
+
+/// Columns and tile width of the Create New Mask grid in `width`: four tiles of up to 52 pt (at
+/// least 48, so the labels fit), else three (narrowed if even those don't fit).
+fn tile_layout(width: f32) -> (usize, f32) {
+    let tile = |n: f32| ((width - (n - 1.0) * TILE_GAP) / n).floor().min(TILE);
+    if tile(4.0) >= 48.0 { (4, tile(4.0)) } else { (3, tile(3.0).max(24.0)) }
+}
+
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let t = Tokens::get(ui.ctx());
     let d = app.session.develop_of(id).unwrap_or_default();
@@ -75,9 +85,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ("luminanceRange", "Luminance", Icon::Sliders),
             ("colorRange", "Color", Icon::Picker),
         ];
-        egui::Grid::new("mask-tiles").spacing(vec2(6.0, 6.0)).show(ui, |ui| {
+        // four 52 pt tiles a row when they fit, else as many as fit (at least three, shrunk)
+        let (cols, tile) = tile_layout(ui.available_width());
+        egui::Grid::new("mask-tiles").spacing(vec2(TILE_GAP, TILE_GAP)).show(ui, |ui| {
             for (i, (kind, label, icon)) in tiles.iter().enumerate() {
-                let (r, resp) = ui.allocate_exact_size(vec2(52.0, 52.0), Sense::click());
+                let (r, resp) = ui.allocate_exact_size(vec2(tile, 52.0), Sense::click());
                 register(ui.ctx(), format!("maskNew:{kind}"), r);
                 ui.painter().rect_filled(r, 4.0, if resp.hovered() { t.hover } else { t.inset });
                 paint(ui.painter(), Rect::from_center_size(r.center() - vec2(0.0, 7.0), vec2(20.0, 20.0)), *icon, t.text_label);
@@ -101,7 +113,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                         }
                     }
                 }
-                if i % 4 == 3 {
+                if i % cols == cols - 1 {
                     ui.end_row();
                 }
             }
@@ -228,7 +240,14 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     }
                     return;
                 }
-                let resp = ui.add(egui::Label::new(format!("{op}{label}{}", if c.invert { " (inverted)" } else { "" })).sense(Sense::click()));
+                // a long name is cut short (with …) before the options button, not past the panel
+                let text = format!("{op}{label}{}", if c.invert { " (inverted)" } else { "" });
+                let room = (ui.available_width() - 30.0).max(0.0);
+                let resp = ui.scope(|ui| {
+                    ui.set_max_width(room);
+                    ui.add(egui::Label::new(text).truncate().sense(Sense::click()))
+                });
+                let resp = resp.inner;
                 register(ui.ctx(), format!("component:{i}"), resp.rect);
                 if resp.double_clicked() {
                     app.ui.renaming_component = Some((m.id, i, label.clone()));
@@ -243,7 +262,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             range_controls(app, ui, i, &c.shape);
         }
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
+        // wraps: the five actions are wider than a narrow panel
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
             let add = text_button(ui, "maskAddComp", "Add", false);
             egui::Popup::menu(&add).show(|ui| component_menu(app, ui, "add"));
             let sub = text_button(ui, "maskSubComp", "Subtract", false);

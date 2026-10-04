@@ -79,6 +79,61 @@ fn side_panels_resize_by_their_inner_edge_and_remember_it() {
     assert_eq!(u.sanitized().right_width, RIGHT_WIDTH.max);
 }
 
+/// Every widget drawn over the right panel lies within it (issue #47: selecting a mask added a
+/// row wider than the panel, which pushed the panel's contents left, clipping them).
+fn assert_inside_right_panel(h: &Headless, what: &str) {
+    let panel = widget(h, "panel:right_panel");
+    let mut n = 0;
+    for (id, r) in &h.app.widgets {
+        // widgets of the photo area (pins, filmstrip cells clipped at its edge) and of the tool
+        // strip are outside on purpose
+        if ["panel:", "film:", "maskPin"].iter().any(|p| id.starts_with(p))
+            || r.bottom() <= panel.top()
+            || r.right() <= panel.left() + 1.5
+            || r.left() >= panel.right() - 1.5
+        {
+            continue;
+        }
+        n += 1;
+        assert!(r.left() >= panel.left() - 0.5 && r.right() <= panel.right() + 0.5, "{what}: {id} {r:?} sticks out of the panel {panel:?}");
+    }
+    assert!(n > 10, "{what}: only {n} widgets in the panel");
+}
+
+#[test]
+fn masking_contents_fit_the_right_panel_at_any_width() {
+    let mut h = demo([1400.0, 900.0], json!({"view": "detail", "right": "masking"}));
+    for (kind, op) in [("subject", None), ("linear", None), ("luminanceRange", Some("subtract")), ("radial", Some("intersect"))] {
+        let (command, params) = match op {
+            None => ("mask.add", json!({"kind": kind})),
+            Some(op) => ("mask.addComponent", json!({"kind": kind, "op": op})),
+        };
+        let r = h.request("engine.execute", json!({"command": command, "params": params}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    }
+    let r = h.request(
+        "engine.execute",
+        json!({"command": "mask.component", "params": {"component": 0, "action": "rename", "name": "A rather long component name for this mask"}}),
+        T,
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    for width in [RIGHT_WIDTH.min, RIGHT_WIDTH.default, 330.0, RIGHT_WIDTH.max] {
+        for (selected, tool) in [(false, ""), (true, ""), (true, "brush")] {
+            let mask = if selected { json!(2) } else { serde_json::Value::Null };
+            h.request("engine.execute", json!({"command": "mask.select", "params": {"id": mask}}), T);
+            h.request("ui.set", json!({"rightWidth": width, "tool": tool}), T);
+            h.step();
+            h.step();
+            let what = format!("width {width}, mask selected {selected}, tool {tool:?}");
+            assert_eq!(widget(&h, "panel:right_panel").width(), width, "{what}");
+            if selected {
+                assert!(h.app.widgets.iter().any(|(id, _)| id == "button:maskInvert"), "{what}: no mask actions");
+            }
+            assert_inside_right_panel(&h, &what);
+        }
+    }
+}
+
 #[test]
 fn a_narrow_window_shrinks_the_panels_without_forgetting_their_width() {
     let mut h = demo([1400.0, 900.0], json!({"view": "detail", "right": "edit", "leftPanel": true, "rightWidth": 480.0, "leftWidth": 400.0}));

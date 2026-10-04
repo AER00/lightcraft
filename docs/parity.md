@@ -309,7 +309,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-MASK-PANEL | Masks panel | P0 | ✅ | `cmd:panel.masking`, `cmd:mask.add`, `cmd:mask.select`, `cmd:mask.rename`, `cmd:mask.duplicate` (`invert`), `cmd:mask.move`, `cmd:mask.visible`, `cmd:mask.delete`, `crates/ui-egui/src/panels/masking.rs` | list with per-mask show/hide eye, double-click rename, right-click menu (duplicate, duplicate and invert, invert, hide, move up/down, rename, delete); no drag-to-reorder |
+| LR-MASK-PANEL | Masks panel | P0 | ✅ | `cmd:panel.masking`, `cmd:mask.add`, `cmd:mask.select`, `cmd:mask.rename`, `cmd:mask.duplicate` (`invert`), `cmd:mask.move`, `cmd:mask.visible`, `cmd:mask.delete`, `crates/ui-egui/src/panels/masking.rs` | list with per-mask show/hide eye, double-click rename, right-click menu (duplicate, duplicate and invert, invert, hide, move up/down, rename, delete); fits any panel width (create tiles go to three columns, mask actions wrap, long component names are cut short); no drag-to-reorder |
 | LR-MASK-SUBJECT | Select subject | P2 | 🟡 | `cmd:mask.add` (`subject`), `crates/pipeline/src/masks.rs` | saliency heuristic, no segmentation model |
 | LR-MASK-SKY | Select sky | P2 | 🟡 | `cmd:mask.add` (`sky`) | heuristic |
 | LR-MASK-BACKGROUND | Select background | P2 | 🟡 | `cmd:mask.add` (`background`) | inverse of the subject heuristic |
