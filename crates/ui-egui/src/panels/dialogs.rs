@@ -528,15 +528,15 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         }
                         if graphic {
                             field(ui, "Graphic", |ui| {
-                                let can_pick = app.services.pick_files.is_some();
-                                let w = ui.available_width() - if can_pick { 76.0 } else { 0.0 };
-                                ui.add(egui::TextEdit::singleline(&mut wm.image).hint_text("logo.png").desired_width(w));
-                                if can_pick
-                                    && crate::widgets::text_button(ui, "exportWmChoose", "Choose…", false).clicked()
-                                    && let Some(f) = app.services.pick_files.as_mut().and_then(|pick| pick().into_iter().next())
-                                {
-                                    wm.image = f;
-                                }
+                                trailing_button_row(ui, |ui| {
+                                    if app.services.pick_files.is_some()
+                                        && crate::widgets::text_button(ui, "exportWmChoose", "Choose…", false).clicked()
+                                        && let Some(f) = app.services.pick_files.as_mut().and_then(|pick| pick().into_iter().next())
+                                    {
+                                        wm.image = f;
+                                    }
+                                    ui.add(egui::TextEdit::singleline(&mut wm.image).hint_text("logo.png").desired_width(ui.available_width()));
+                                });
                             });
                             let mut width = wm.image_width as f64 * 100.0;
                             if num(ui, &WM_IMAGE_WIDTH, &mut width) {
@@ -586,16 +586,16 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         }
                     }
                     field(ui, "Folder", |ui| {
-                        let can_pick = app.services.pick_folder.is_some();
-                        let w = ui.available_width() - if can_pick { 76.0 } else { 0.0 };
-                        ui.add(egui::TextEdit::singleline(dir).desired_width(w));
-                        if can_pick
-                            && crate::widgets::text_button(ui, "exportChooseFolder", "Choose…", false).clicked()
-                            && let Some(pick) = app.services.pick_folder.as_mut()
-                            && let Some(d) = pick()
-                        {
-                            *dir = d;
-                        }
+                        trailing_button_row(ui, |ui| {
+                            if app.services.pick_folder.is_some()
+                                && crate::widgets::text_button(ui, "exportChooseFolder", "Choose…", false).clicked()
+                                && let Some(pick) = app.services.pick_folder.as_mut()
+                                && let Some(d) = pick()
+                            {
+                                *dir = d;
+                            }
+                            ui.add(egui::TextEdit::singleline(dir).desired_width(ui.available_width()));
+                        });
                     });
                     field(ui, "Subfolder", |ui| {
                         ui.add(egui::TextEdit::singleline(&mut opts.subfolder).hint_text("none").desired_width(f32::INFINITY))
@@ -610,19 +610,20 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     );
                     ui.add_space(4.0);
                     field(ui, "Save preset", |ui| {
-                        let w = ui.available_width() - 60.0;
-                        ui.add(egui::TextEdit::singleline(preset_name).hint_text("Preset name").desired_width(w));
-                        let named = !preset_name.trim().is_empty();
-                        if crate::widgets::text_button(ui, "exportSavePreset", "Save", false).clicked() && named {
-                            let params = export_dialog_params(opts, *full_size, resize, *limit_kb);
-                            match app.run("export.savePreset", json!({"name": preset_name.trim(), "params": params})) {
-                                Ok(_) => {
-                                    app.toast(ui.ctx(), format!("Saved export preset “{}”", preset_name.trim()));
-                                    preset_name.clear();
+                        trailing_button_row(ui, |ui| {
+                            let named = !preset_name.trim().is_empty();
+                            if crate::widgets::text_button(ui, "exportSavePreset", "Save", false).clicked() && named {
+                                let params = export_dialog_params(opts, *full_size, resize, *limit_kb);
+                                match app.run("export.savePreset", json!({"name": preset_name.trim(), "params": params})) {
+                                    Ok(_) => {
+                                        app.toast(ui.ctx(), format!("Saved export preset “{}”", preset_name.trim()));
+                                        preset_name.clear();
+                                    }
+                                    Err(e) => app.toast(ui.ctx(), e),
                                 }
-                                Err(e) => app.toast(ui.ctx(), e),
                             }
-                        }
+                            ui.add(egui::TextEdit::singleline(preset_name).hint_text("Preset name").desired_width(ui.available_width()));
+                        });
                     });
                 }
                 Dialog::Merge { opts } => crate::merge::body(app, ui, opts),
@@ -722,6 +723,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         });
     if let Some(w) = shown {
         ctx.move_to_top(w.response.layer_id);
+        crate::widgets::register(ctx, "dialog:window", w.response.rect);
     }
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         close = true;
@@ -981,6 +983,14 @@ fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R
         add(ui)
     })
     .inner
+}
+
+/// The rest of a [`field`] row, laid out right to left: `add` places its trailing button(s) first,
+/// then a text field taking exactly the width that's left. (Subtracting a guessed button width
+/// instead made the auto-sized dialog grow every frame when the real button was wider, #8.)
+fn trailing_button_row(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    let h = ui.spacing().interact_size.y.max(24.0);
+    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), h), egui::Layout::right_to_left(egui::Align::Center), add);
 }
 
 /// A labelled row of mutually exclusive choice buttons (ids `button:{id}-{index}`).

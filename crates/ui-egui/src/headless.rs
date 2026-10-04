@@ -554,6 +554,41 @@ mod tests {
     /// The Export dialog hands its batch to a worker thread: the UI keeps drawing frames, shows
     /// progress, and reports the result when the files are written.
     #[test]
+    fn export_dialog_keeps_its_width() {
+        // A dialog row sized as "available width − a guessed button width" made the auto-sized
+        // window grow a little every frame when the real button was wider (issue #8, Linux).
+        let mut h = demo([1400.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.app.services.pick_folder = Some(Box::new(|| None));
+        h.app.services.pick_files = Some(Box::new(Vec::new));
+        h.request("engine.execute", json!({"command": "dialog.export", "params": {}}), t);
+        // the widest variant: watermark graphic and every optional row
+        if let Some(crate::state::Dialog::Export { opts, .. }) = &mut h.app.ui.dialog {
+            let mut wm = lightcraft_engine::export::Watermark { image: "logo.png".into(), ..Default::default() };
+            wm.text.clear();
+            opts.watermark = Some(wm);
+        }
+        let width = |h: &mut Headless| {
+            let r = h.request("ui.widgets", json!({}), t);
+            r["result"]
+                .as_array()
+                .and_then(|a| a.iter().find(|w| w["id"] == "dialog:window"))
+                .map(|w| w["rect"][2].as_f64().unwrap())
+                .expect("dialog on screen")
+        };
+        for _ in 0..5 {
+            h.step();
+        }
+        let w0 = width(&mut h);
+        for _ in 0..60 {
+            h.step();
+        }
+        let w1 = width(&mut h);
+        assert!((w1 - w0).abs() < 0.5, "the export dialog grew from {w0} to {w1}");
+        assert!(w1 < 700.0, "{w1}");
+    }
+
+    #[test]
     fn export_dialog_runs_in_the_background() {
         let mut h = demo([1200.0, 900.0]);
         let t = Duration::from_secs(10);
