@@ -24,6 +24,8 @@ pub mod widgets;
 
 #[cfg(test)]
 mod tests_masking;
+#[cfg(test)]
+mod tests_scroll;
 
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -114,6 +116,10 @@ pub struct LightcraftApp {
     /// Rect of the photo canvas and the displayed image (screen points) from the last frame.
     pub canvas_rect: Option<egui::Rect>,
     pub image_rect: Option<egui::Rect>,
+    /// Scroll offsets (points) of the photo grid (vertical) and the filmstrip (horizontal) as
+    /// drawn last (`ui.inspect` → `scroll`).
+    pub grid_scroll: Option<f32>,
+    pub film_scroll: Option<f32>,
     /// Widget registry from the last frame (automation ids → rects).
     pub widgets: Vec<(String, egui::Rect)>,
     /// In-progress on-canvas gesture (brush stroke points, gradient drag…).
@@ -169,6 +175,8 @@ impl LightcraftApp {
             last_time: 0.0,
             canvas_rect: None,
             image_rect: None,
+            grid_scroll: None,
+            film_scroll: None,
             widgets: vec![],
             gesture: None,
             loupe_shown: None,

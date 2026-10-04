@@ -73,6 +73,7 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "pixelsPerPoint": ctx.pixels_per_point(),
         "canvasRect": app.canvas_rect.map(rect_json),
         "imageRect": app.image_rect.map(rect_json),
+        "scroll": {"grid": app.grid_scroll, "filmstrip": app.film_scroll},
         "active": app.session.active().map(|p| p.0),
         "selection": app.session.selection.ids.iter().map(|p| p.0).collect::<Vec<_>>(),
         "activeMask": app.session.active_mask,
