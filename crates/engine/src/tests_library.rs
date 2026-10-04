@@ -52,6 +52,57 @@ fn edits_survive_restart_without_close() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Compaction at the threshold runs on a worker thread (issue #37): commands go on (and stay
+/// durable) meanwhile, the frame loop's `persist_if_dirty` finishes it, and a crash at any time
+/// keeps every command.
+#[test]
+fn threshold_compaction_runs_in_the_background() {
+    let dir = temp_dir("bg-compact");
+    let mut s = open(&dir, true);
+    s.library.as_mut().unwrap().journal_mut().policy = lightcraft_catalog::SnapshotPolicy { max_records: 8, max_bytes: u64::MAX };
+    let ids: Vec<_> = s.catalog.photos().map(|p| p.id).collect();
+    let mut background = 0;
+    for k in 0..60usize {
+        s.selection = crate::Selection::single(ids[k % ids.len()]);
+        s.execute("photo.rate", &json!({"rating": k % 6})).unwrap();
+        if s.execute("library.info", &json!({})).unwrap()["persistence"]["snapshotRunning"].as_bool().unwrap() {
+            background += 1;
+        }
+        if k == 30 {
+            // a crash while a compaction may be in flight
+            let expect = s.catalog.to_snapshot();
+            let copy = temp_dir("bg-compact-crash");
+            std::fs::create_dir_all(&copy).unwrap();
+            for f in ["catalog.snap", "catalog.log"] {
+                if dir.join(f).exists() {
+                    std::fs::copy(dir.join(f), copy.join(f)).unwrap();
+                }
+            }
+            let s2 = open(&copy, true);
+            assert_eq!(s2.catalog.to_snapshot(), expect);
+            let _ = std::fs::remove_dir_all(&copy);
+        }
+    }
+    assert!(background > 0, "compactions ran in the background");
+    for _ in 0..10_000 {
+        s.persist_if_dirty();
+        if !s.library.as_ref().unwrap().journal().snapshot_running() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let info = s.execute("library.info", &json!({})).unwrap();
+    let p = &info["persistence"];
+    assert!(p["snapshots"].as_u64() >= Some(2) && p["lastSnapshot"]["background"] == true, "{p}");
+    // the log holds exactly the records after the snapshot
+    assert_eq!(info["logRecords"].as_u64().unwrap(), info["seq"].as_u64().unwrap() - info["snapshotSeq"].as_u64().unwrap(), "{info}");
+    let expect = s.catalog.to_snapshot();
+    drop(s); // no close: like a crash
+    let s2 = open(&dir, true);
+    assert_eq!(s2.catalog.to_snapshot(), expect);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn close_writes_snapshot_and_view_state() {
     let dir = temp_dir("close");

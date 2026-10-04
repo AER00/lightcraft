@@ -14,6 +14,19 @@
 //!   the log) are skipped;
 //! - a bad record **followed by good ones** is real damage: replay stops there, the log is kept
 //!   as `catalog.log.damaged-<seq>`, and a fresh snapshot is written so the library stays usable.
+//!
+//! **Background compaction** ([`Journal::snapshot_in_background`], when the store offers a
+//! [`Store::background_writer`]): a worker thread writes the snapshot of a copy of the catalog at
+//! op `N` while appends go on (durably, as always) to the same log. Once the snapshot is durable,
+//! [`Journal::poll`] atomically replaces the log with the records appended since the snapshot
+//! started (`seq > N`, kept in memory). Every crash point is covered by the rules above:
+//! - before the rename of `catalog.snap`: the old snapshot + the whole log (nothing was removed);
+//! - between the rename and the log rewrite: the new snapshot + the whole log, whose records
+//!   `<= N` are skipped as stale;
+//! - after the log rewrite: the new snapshot + exactly the records `> N`.
+//!
+//! At most one snapshot is in flight; a synchronous [`Journal::snapshot`] and dropping the journal
+//! first wait for it, so an older snapshot can never replace a newer one.
 
 use crate::store::Store;
 use crate::{Catalog, CatalogError, Op, Result};
@@ -72,6 +85,13 @@ pub struct PersistStats {
     pub last_snapshot: SnapshotTiming,
     /// Total time of the slowest snapshot.
     pub max_snapshot_ms: f64,
+    /// Longest time a snapshot blocked the caller (for background snapshots: copying the catalog
+    /// and starting the worker, plus rewriting the log when it is done).
+    pub max_blocking_ms: f64,
+    /// A background snapshot is being written.
+    pub snapshot_running: bool,
+    /// Background snapshots that failed (the log was kept whole; retried later).
+    pub failed_snapshots: u64,
 }
 
 /// One snapshot (compaction), by stage.
@@ -82,9 +102,15 @@ pub struct SnapshotTiming {
     pub serialize_ms: f64,
     /// Flushing, `sync_all` and the atomic rename of `catalog.snap`.
     pub write_sync_ms: f64,
-    /// Resetting `catalog.log` (an atomic rewrite to empty, fsynced).
+    /// Resetting `catalog.log` (an atomic rewrite to empty, or to the records appended while a
+    /// background snapshot ran; fsynced).
     pub reset_ms: f64,
+    /// Start to finish (for a background snapshot: until [`Journal::poll`] saw it done).
     pub total_ms: f64,
+    /// How long the caller was blocked (equal to `total_ms` unless `background`).
+    pub blocking_ms: f64,
+    /// Written by a worker thread.
+    pub background: bool,
     /// Size of `catalog.snap`.
     pub bytes: u64,
     /// Log records the snapshot compacted.
@@ -110,6 +136,25 @@ pub struct Journal {
     log_bytes: u64,
     pub policy: SnapshotPolicy,
     stats: PersistStats,
+    /// The background snapshot in flight.
+    pending: Option<Pending>,
+    /// After a failed background snapshot: don't retry before the log has this many records.
+    retry_at_records: u64,
+}
+
+/// A background snapshot in flight.
+struct Pending {
+    /// The snapshot holds the state after this op.
+    seq: u64,
+    /// Log bytes / records appended since it started (all `> seq`): the log once it's done.
+    tail: Vec<u8>,
+    tail_records: u64,
+    /// Log records it compacts.
+    records: u64,
+    started: web_time::Instant,
+    /// Time the caller spent starting it.
+    start_ms: f64,
+    worker: std::thread::JoinHandle<std::io::Result<SnapshotTiming>>,
 }
 
 fn io(e: std::io::Error) -> CatalogError {
@@ -195,6 +240,8 @@ impl Journal {
             log_bytes: 0,
             policy: SnapshotPolicy::default(),
             stats: PersistStats::default(),
+            pending: None,
+            retry_at_records: 0,
         };
         let log = log.unwrap_or_default();
 
@@ -277,6 +324,10 @@ impl Journal {
             buf.push('\n');
         }
         self.store.append(LOG, buf.as_bytes()).map_err(io)?;
+        if let Some(p) = self.pending.as_mut() {
+            p.tail.extend_from_slice(buf.as_bytes());
+            p.tail_records += ops.len() as u64;
+        }
         self.seq = seq;
         self.log_records += ops.len() as u64;
         self.log_bytes += buf.len() as u64;
@@ -292,6 +343,10 @@ impl Journal {
 
     /// Write a snapshot of `catalog` (which must reflect every appended op) and reset the log.
     pub fn snapshot(&mut self, catalog: &Catalog) -> Result<()> {
+        // never two snapshot writers; the one in flight is older, so it must land first
+        if let Err(e) = self.wait() {
+            log::warn!("catalog: background snapshot failed ({e}); writing one now");
+        }
         let t0 = web_time::Instant::now();
         let mut timing = write_snapshot(self.store.as_mut(), self.seq, catalog).map_err(io)?;
         let t2 = web_time::Instant::now();
@@ -299,11 +354,103 @@ impl Journal {
         self.store.write_atomic(LOG, b"").map_err(io)?;
         timing.reset_ms = ms_since(t2);
         timing.total_ms = ms_since(t0);
+        timing.blocking_ms = timing.total_ms;
         timing.records = self.log_records;
         self.record_snapshot(timing);
         self.snapshot_seq = self.seq;
         self.log_records = 0;
         self.log_bytes = 0;
+        self.retry_at_records = 0;
+        Ok(())
+    }
+
+    /// Compact like [`Journal::snapshot`], but write the snapshot on a worker thread from a copy
+    /// of `catalog` (cheap: photos are shared) when the store supports it (else synchronously).
+    /// `catalog` must reflect every appended op. Appends go on meanwhile; [`Journal::poll`]
+    /// finishes the compaction. No-op while a snapshot is already in flight.
+    pub fn snapshot_in_background(&mut self, catalog: &Catalog) -> Result<()> {
+        if self.pending.is_some() {
+            return Ok(());
+        }
+        let t0 = web_time::Instant::now();
+        let Some(mut writer) = self.store.background_writer() else { return self.snapshot(catalog) };
+        let copy = catalog.clone();
+        let seq = self.seq;
+        let spawned = std::thread::Builder::new().name("catalog-snapshot".into()).spawn(move || write_snapshot(writer.as_mut(), seq, &copy));
+        let worker = match spawned {
+            Ok(w) => w,
+            Err(e) => {
+                log::warn!("catalog: can't start a snapshot thread ({e}); writing it now");
+                return self.snapshot(catalog);
+            }
+        };
+        self.pending =
+            Some(Pending { seq, tail: Vec::new(), tail_records: 0, records: self.log_records, started: t0, start_ms: ms_since(t0), worker });
+        Ok(())
+    }
+
+    /// Finish a background snapshot if its worker is done (cheap otherwise). Returns whether one
+    /// finished. An error means the snapshot failed: nothing was lost (the log is whole), and
+    /// compaction is retried once the log has grown by another [`SnapshotPolicy::max_records`].
+    pub fn poll(&mut self) -> Result<bool> {
+        if !self.pending.as_ref().is_some_and(|p| p.worker.is_finished()) {
+            return Ok(false);
+        }
+        self.finish().map(|()| true)
+    }
+
+    /// Wait for the background snapshot in flight, if any, and finish it.
+    pub fn wait(&mut self) -> Result<()> {
+        if self.pending.is_none() {
+            return Ok(());
+        }
+        self.finish()
+    }
+
+    /// A background snapshot is in flight (until [`Journal::poll`] or [`Journal::wait`] finish it).
+    pub fn snapshot_running(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// The background worker is done (its result not yet applied by [`Journal::poll`]).
+    pub fn snapshot_written(&self) -> bool {
+        self.pending.as_ref().is_some_and(|p| p.worker.is_finished())
+    }
+
+    /// Join the worker; on success replace the log with the records appended meanwhile.
+    fn finish(&mut self) -> Result<()> {
+        let Some(p) = self.pending.take() else { return Ok(()) };
+        let t0 = web_time::Instant::now();
+        let written = p.worker.join().unwrap_or_else(|_| Err(std::io::Error::other("snapshot thread panicked")));
+        let mut timing = match written {
+            Ok(t) => t,
+            Err(e) => {
+                // the log still holds every record: nothing lost, retry later
+                self.stats.failed_snapshots += 1;
+                self.retry_at_records = self.log_records + self.policy.max_records;
+                log::error!("catalog: background snapshot failed: {e}");
+                return Err(io(e));
+            }
+        };
+        // `catalog.snap` (op `p.seq`) is durable; the log's records `<= p.seq` are now stale.
+        // Keep exactly the ones appended since (a crash before this rewrite skips the stale ones).
+        let t1 = web_time::Instant::now();
+        self.snapshot_seq = p.seq;
+        if let Err(e) = self.store.write_atomic(LOG, &p.tail) {
+            // the log stays whole (stale records are skipped on load); compact again later
+            self.retry_at_records = self.log_records + self.policy.max_records;
+            log::error!("catalog: can't trim the log after a snapshot: {e}");
+            return Err(io(e));
+        }
+        timing.reset_ms = ms_since(t1);
+        timing.total_ms = ms_since(p.started);
+        timing.blocking_ms = p.start_ms + ms_since(t0);
+        timing.background = true;
+        timing.records = p.records;
+        self.record_snapshot(timing);
+        self.log_records = p.tail_records;
+        self.log_bytes = p.tail.len() as u64;
+        self.retry_at_records = 0;
         Ok(())
     }
 
@@ -311,22 +458,32 @@ impl Journal {
         self.stats.snapshots += 1;
         self.stats.last_snapshot = t;
         self.stats.max_snapshot_ms = self.stats.max_snapshot_ms.max(t.total_ms);
+        self.stats.max_blocking_ms = self.stats.max_blocking_ms.max(t.blocking_ms);
         if profiling() {
             eprintln!(
-                "catalog: snapshot of {} records, {} B: serialize {:.1} ms, write+sync {:.1} ms, log reset {:.1} ms, total {:.1} ms",
-                t.records, t.bytes, t.serialize_ms, t.write_sync_ms, t.reset_ms, t.total_ms
+                "catalog: {}snapshot of {} records, {} B: serialize {:.1} ms, write+sync {:.1} ms, log reset {:.1} ms, total {:.1} ms, blocking {:.1} ms",
+                if t.background { "background " } else { "" },
+                t.records,
+                t.bytes,
+                t.serialize_ms,
+                t.write_sync_ms,
+                t.reset_ms,
+                t.total_ms,
+                t.blocking_ms
             );
         }
     }
 
     /// Where persistence time went so far.
     pub fn stats(&self) -> PersistStats {
-        self.stats
+        PersistStats { snapshot_running: self.pending.is_some(), ..self.stats }
     }
 
     /// The log is long enough to be worth compacting.
     pub fn wants_snapshot(&self) -> bool {
-        self.log_records >= self.policy.max_records || self.log_bytes >= self.policy.max_bytes
+        self.pending.is_none()
+            && self.log_records >= self.retry_at_records
+            && (self.log_records >= self.policy.max_records || self.log_bytes >= self.policy.max_bytes)
     }
 
     pub fn seq(&self) -> u64 {
@@ -343,5 +500,18 @@ impl Journal {
     }
     pub fn describe(&self) -> String {
         self.store.describe()
+    }
+}
+
+impl Drop for Journal {
+    /// Wait for a background snapshot (never leave a writer behind that could replace a newer
+    /// snapshot of a journal reopened on the same files). The log is left whole: the snapshot's
+    /// records in it are skipped as stale on the next load.
+    fn drop(&mut self) {
+        if let Some(p) = self.pending.take()
+            && let Ok(Err(e)) = p.worker.join()
+        {
+            log::error!("catalog: background snapshot failed: {e}");
+        }
     }
 }

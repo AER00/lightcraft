@@ -622,4 +622,6 @@ impl Catalog {
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_background;
+#[cfg(test)]
 mod tests_journal;

@@ -34,6 +34,12 @@ pub trait Store: Send {
     fn truncate(&mut self, name: &str, len: u64) -> io::Result<()>;
     /// Human-readable location (diagnostics).
     fn describe(&self) -> String;
+    /// Another handle on the same files that a worker thread can write `catalog.snap` through
+    /// while this one keeps appending to the log (background compaction). `None` (the default):
+    /// snapshots are written synchronously.
+    fn background_writer(&self) -> Option<Box<dyn Store>> {
+        None
+    }
 }
 
 /// Files in a directory.
@@ -142,6 +148,11 @@ impl Store for FsStore {
     fn describe(&self) -> String {
         self.dir.display().to_string()
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn background_writer(&self) -> Option<Box<dyn Store>> {
+        Some(Box::new(FsStore { dir: self.dir.clone(), appender: None }))
+    }
 }
 
 /// Counts the bytes written through it.
@@ -165,6 +176,8 @@ impl<W: io::Write> io::Write for Counter<W> {
 #[derive(Clone, Default)]
 pub struct MemStore {
     pub files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    /// Offer a [`Store::background_writer`] (off by default: snapshots stay synchronous).
+    pub background: bool,
 }
 
 impl MemStore {
@@ -199,5 +212,8 @@ impl Store for MemStore {
     }
     fn describe(&self) -> String {
         "memory".into()
+    }
+    fn background_writer(&self) -> Option<Box<dyn Store>> {
+        self.background.then(|| Box::new(self.clone()) as Box<dyn Store>)
     }
 }

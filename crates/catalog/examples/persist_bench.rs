@@ -1,5 +1,6 @@
 //! Catalog persistence costs on large synthetic catalogs (issue #37): log append, compaction
-//! (snapshot serialise / write+fsync / log reset), load, and a catalog clone.
+//! (snapshot serialise / write+fsync / log reset), synchronous and on the background worker, load,
+//! and a catalog clone.
 //!
 //! ```text
 //! cargo run --release -p lightcraft-catalog --example persist_bench -- <dir> [photos…]
@@ -118,6 +119,39 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             totals.push(s.total_ms);
         }
         println!("  compaction total: {}", stats(totals));
+
+        // the same at the threshold, written by the worker while single-op appends go on
+        let mut blocking = Vec::new();
+        for _ in 0..3 {
+            while !j.wants_snapshot() {
+                let op = Op::SetRating { id: ids.first().copied().unwrap_or(PhotoId(1)), rating: (j.seq() % 6) as u8 };
+                cat.apply(op.clone())?;
+                j.append(&[op])?;
+            }
+            let t = Instant::now();
+            j.snapshot_in_background(&cat)?;
+            let start_ms = ms(t);
+            let mut during = Vec::new();
+            while !j.snapshot_written() {
+                let op = Op::SetRating { id: ids.get(1).copied().unwrap_or(PhotoId(1)), rating: (j.seq() % 6) as u8 };
+                cat.apply(op.clone())?;
+                j.append(&[op])?;
+                during.push(j.stats().last_append_ms);
+            }
+            let t = Instant::now();
+            j.poll()?;
+            let finish_ms = ms(t);
+            let s = j.stats().last_snapshot;
+            println!(
+                "  background compaction ({} records): start {start_ms:.1} ms + finish {finish_ms:.1} ms blocking; worker {:.1} ms; {} appends during it: {}",
+                s.records,
+                s.total_ms,
+                during.len(),
+                stats(during)
+            );
+            blocking.push(s.blocking_ms);
+        }
+        println!("  background compaction blocking: {}", stats(blocking));
 
         drop(j);
         if std::env::var_os("PERSIST_BENCH_NO_LOAD").is_some() {
