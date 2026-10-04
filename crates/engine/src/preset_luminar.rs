@@ -65,7 +65,12 @@ impl Plist {
 struct Parser<'a> {
     s: &'a str,
     i: usize,
+    /// Nesting of the element being read (bounded: a hostile file must not overflow the stack).
+    depth: usize,
 }
+
+/// Deepest `<dict>` / `<array>` nesting read (real looks nest a handful of levels).
+const MAX_DEPTH: usize = 64;
 
 fn unescape(t: &str) -> String {
     let mut out = String::with_capacity(t.len());
@@ -165,6 +170,15 @@ impl Parser<'_> {
         Ok(unescape(&r[..end]))
     }
     fn value(&mut self) -> Result<Plist, String> {
+        if self.depth >= MAX_DEPTH {
+            return self.err("nested too deeply");
+        }
+        self.depth += 1;
+        let v = self.value_inner();
+        self.depth -= 1;
+        v
+    }
+    fn value_inner(&mut self) -> Result<Plist, String> {
         let (name, closing, selfc) = self.tag()?;
         if closing {
             return self.err(&format!("unexpected </{name}>"));
@@ -224,7 +238,7 @@ pub fn parse_plist(bytes: &[u8]) -> Result<Plist, String> {
         return Err("binary property lists are not supported".into());
     }
     let text = String::from_utf8_lossy(bytes);
-    let mut p = Parser { s: text.trim_start_matches('\u{feff}'), i: 0 };
+    let mut p = Parser { s: text.trim_start_matches('\u{feff}'), i: 0, depth: 0 };
     p.value()
 }
 
@@ -544,6 +558,14 @@ mod tests {
         assert_eq!(p.get("s").and_then(Plist::str), Some(""));
         assert!(parse_plist(b"<plist><dict><key>a</key>").is_err());
         assert!(parse_plist(b"bplist00\x01\x02").is_err());
+    }
+
+    #[test]
+    fn hostile_nesting_is_an_error_not_a_crash() {
+        let deep = format!("<plist>{}{}</plist>", "<array>".repeat(200_000), "</array>".repeat(200_000));
+        assert!(parse_plist(deep.as_bytes()).unwrap_err().contains("nested too deeply"));
+        let ok = format!("<plist>{}<true/>{}</plist>", "<array>".repeat(20), "</array>".repeat(20));
+        assert!(parse_plist(ok.as_bytes()).is_ok());
     }
 
     #[test]
