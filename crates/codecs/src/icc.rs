@@ -236,7 +236,7 @@ pub(crate) fn cms_to_linear_rec2020(icc: &[u8], samples: &[f32], channels: usize
         for (s, d) in src_chunks.zip(dst_chunks) {
             t.transform(s, d).ok()?;
         }
-        Some(out.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect())
+        Some(out.as_chunks::<3>().0.iter().map(|c| [c[0], c[1], c[2]]).collect())
     };
     std::panic::catch_unwind(run).ok().flatten()
 }
