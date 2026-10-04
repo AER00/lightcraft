@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub use dates::{DateRun, GroupBy};
-pub use journal::{Journal, LoadReport, SnapshotPolicy};
+pub use journal::{Journal, LoadReport, PersistStats, SnapshotPolicy, SnapshotTiming};
 pub use keywords::KeywordNode;
 use lightcraft_develop::DevelopSettings;
 pub use model::*;
@@ -621,5 +621,7 @@ impl Catalog {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_background;
 #[cfg(test)]
 mod tests_journal;

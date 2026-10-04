@@ -88,7 +88,15 @@ pub struct Services {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Perf {
+    /// Layout of the last frame ([`LightcraftApp::ui`], including commands run from widgets).
     pub frame_ms: f64,
+    /// Per-frame logic before layout ([`LightcraftApp::logic`]: control channel, shortcuts,
+    /// render polling, pending catalog persistence).
+    pub logic_ms: f64,
+    /// The whole update of the last frame: logic + layout.
+    pub update_ms: f64,
+    /// The slowest whole update since start.
+    pub max_update_ms: f64,
     pub fps: f64,
 }
 
@@ -406,6 +414,12 @@ impl LightcraftApp {
 
     /// Per-frame logic before layout (control channel, renders, shortcuts, drops).
     pub fn logic(&mut self, ctx: &egui::Context) {
+        let t0 = now_ms();
+        self.logic_inner(ctx);
+        self.perf.logic_ms = now_ms() - t0;
+    }
+
+    fn logic_inner(&mut self, ctx: &egui::Context) {
         if !self.styled {
             theme::install_fonts(ctx);
             theme::apply(ctx);
@@ -537,6 +551,13 @@ impl LightcraftApp {
         raw.events.extend(self.synthetic.drain(..n));
     }
 
+    /// Frame timings once layout is done (`t0`: when layout started).
+    fn end_frame(&mut self, t0: f64) {
+        self.perf.frame_ms = now_ms() - t0;
+        self.perf.update_ms = self.perf.logic_ms + self.perf.frame_ms;
+        self.perf.max_update_ms = self.perf.max_update_ms.max(self.perf.update_ms);
+    }
+
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
@@ -557,7 +578,7 @@ impl LightcraftApp {
             panels::dialogs::show(self, &ctx);
             panels::toast(self, &ctx);
             self.widgets = widgets::take_registry(&ctx);
-            self.perf.frame_ms = now_ms() - t0;
+            self.end_frame(t0);
             return;
         }
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
@@ -596,7 +617,7 @@ impl LightcraftApp {
         panels::grid::drag_feedback(self, &ctx);
         panels::toast(self, &ctx);
         self.widgets = widgets::take_registry(&ctx);
-        self.perf.frame_ms = now_ms() - t0;
+        self.end_frame(t0);
     }
 }
 

@@ -866,6 +866,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 "logRecords": j.log_records(),
                 "logBytes": j.log_bytes(),
                 "lastError": lib.last_error,
+                "persistence": j.stats(),
                 "cache": cache,
                 "load": {
                     "created": lib.report.created,
