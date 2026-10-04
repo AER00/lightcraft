@@ -228,8 +228,8 @@ impl Session {
             self.media.attach_disk_cache(&dir.join("thumbs"), self.cache_bytes());
         }
         let view_written = self.view_json();
-        self.library = Some(Library { dir, on_disk, journal, files, report, last_error: None, presets_written, view_written });
-        Ok(&self.library.as_ref().expect("just set").report)
+        let library = self.library.insert(Library { dir, on_disk, journal, files, report, last_error: None, presets_written, view_written });
+        Ok(&library.report)
     }
 
     /// Write pending ops to the log (fsynced), compact when due, and save changed presets.
