@@ -7,7 +7,8 @@
 //!
 //! `<dir>` is a scratch directory (wiped per size). Default sizes: 1000 10000 85000. 90 % of the
 //! photos are Local browse records, the rest library photos with a few edits and history steps.
-//! Peak memory: run under `/usr/bin/time -l` (macOS) / `-v` (Linux) with one size.
+//! Peak memory: run under `/usr/bin/time -l` (macOS) / `-v` (Linux) with one size;
+//! `PERSIST_BENCH_NO_LOAD=1` skips the final load, so the peak is building + compacting.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -21,7 +22,15 @@ fn ms(t: Instant) -> f64 {
 
 fn photo(c: &mut Catalog, i: u64) -> Photo {
     let id = c.alloc_photo_id();
-    let mut p = Photo::new(id, Source::File { path: format!("/Users/someone/Pictures/2026/09/{:05}/IMG_{i:05}.CR3", i / 500) }, &format!("IMG_{i:05}.CR3"), "CR3", 6000, 4000, "2026-09-30T12:00:00");
+    let mut p = Photo::new(
+        id,
+        Source::File { path: format!("/Users/someone/Pictures/2026/09/{:05}/IMG_{i:05}.CR3", i / 500) },
+        &format!("IMG_{i:05}.CR3"),
+        "CR3",
+        6000,
+        4000,
+        "2026-09-30T12:00:00",
+    );
     p.kind = MediaKind::Raw;
     p.file_size = 25_000_000 + i;
     p.captured = Some(format!("2026-09-{:02}T10:{:02}:{:02}", 1 + i % 28, i % 60, (i / 60) % 60));
@@ -111,6 +120,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         println!("  compaction total: {}", stats(totals));
 
         drop(j);
+        if std::env::var_os("PERSIST_BENCH_NO_LOAD").is_some() {
+            // peak memory of building + compacting only
+            continue;
+        }
         let t = Instant::now();
         let (_, loaded, _) = Journal::open(Box::new(FsStore::open(&dir)?))?;
         println!("  open (load snapshot + replay): {:.1} ms", ms(t));

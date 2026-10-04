@@ -78,9 +78,9 @@ pub struct PersistStats {
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotTiming {
-    /// Serialising the catalog to JSON.
+    /// Serialising the catalog to JSON, streamed into the temp file (buffered writes included).
     pub serialize_ms: f64,
-    /// Writing, flushing, `sync_all` and the atomic rename of `catalog.snap`.
+    /// Flushing, `sync_all` and the atomic rename of `catalog.snap`.
     pub write_sync_ms: f64,
     /// Resetting `catalog.log` (an atomic rewrite to empty, fsynced).
     pub reset_ms: f64,
@@ -137,6 +137,29 @@ pub fn decode_record(line: &str) -> Option<(u64, Op)> {
     serde_json::from_str(body).ok().map(|op| (seq, op))
 }
 
+/// Write `catalog.snap` for the state after op `seq`, streaming the JSON into the store (no
+/// whole-file string). The bytes are exactly
+/// `{"format":"lightcraft-catalog","version":1,"seq":N,"catalog":<serde_json of the catalog>}\n`,
+/// as before streaming. Fills in the serialise / write+sync times and the size.
+fn write_snapshot(store: &mut dyn Store, seq: u64, catalog: &Catalog) -> std::io::Result<SnapshotTiming> {
+    let t0 = web_time::Instant::now();
+    let mut serialize_ms = 0.0;
+    let bytes = store.write_atomic_with(SNAPSHOT, &mut |w| {
+        use std::io::Write;
+        let t = web_time::Instant::now();
+        // serde_json emits many tiny writes: buffer them in a concrete writer (inlined), so only
+        // 1 MiB chunks go through the store's `dyn Write`
+        let mut b = std::io::BufWriter::with_capacity(1 << 20, w);
+        write!(b, "{{\"format\":\"{FORMAT}\",\"version\":{VERSION},\"seq\":{seq},\"catalog\":")?;
+        serde_json::to_writer(&mut b, catalog).map_err(std::io::Error::other)?;
+        b.write_all(b"}\n")?;
+        b.flush()?;
+        serialize_ms = ms_since(t);
+        Ok(())
+    })?;
+    Ok(SnapshotTiming { serialize_ms, write_sync_ms: (ms_since(t0) - serialize_ms).max(0.0), bytes, ..Default::default() })
+}
+
 #[derive(serde::Deserialize)]
 struct SnapFile {
     format: String,
@@ -164,7 +187,15 @@ impl Journal {
             None => (Catalog::new(), 0),
         };
         report.snapshot_seq = snapshot_seq;
-        let mut j = Journal { store, seq: snapshot_seq, snapshot_seq, log_records: 0, log_bytes: 0, policy: SnapshotPolicy::default(), stats: PersistStats::default() };
+        let mut j = Journal {
+            store,
+            seq: snapshot_seq,
+            snapshot_seq,
+            log_records: 0,
+            log_bytes: 0,
+            policy: SnapshotPolicy::default(),
+            stats: PersistStats::default(),
+        };
         let log = log.unwrap_or_default();
 
         // Scan records; `good_end` is the byte offset just past the last good record.
@@ -262,18 +293,13 @@ impl Journal {
     /// Write a snapshot of `catalog` (which must reflect every appended op) and reset the log.
     pub fn snapshot(&mut self, catalog: &Catalog) -> Result<()> {
         let t0 = web_time::Instant::now();
-        let body = serde_json::to_string(catalog).map_err(|e| CatalogError::Invalid(e.to_string()))?;
-        let file = format!("{{\"format\":\"{FORMAT}\",\"version\":{VERSION},\"seq\":{},\"catalog\":{body}}}\n", self.seq);
-        let serialize_ms = ms_since(t0);
-        let t1 = web_time::Instant::now();
-        self.store.write_atomic(SNAPSHOT, file.as_bytes()).map_err(io)?;
-        let write_sync_ms = ms_since(t1);
+        let mut timing = write_snapshot(self.store.as_mut(), self.seq, catalog).map_err(io)?;
         let t2 = web_time::Instant::now();
         // A crash here leaves old records in the log; they are skipped by seq on load.
         self.store.write_atomic(LOG, b"").map_err(io)?;
-        let reset_ms = ms_since(t2);
-        let timing =
-            SnapshotTiming { serialize_ms, write_sync_ms, reset_ms, total_ms: ms_since(t0), bytes: file.len() as u64, records: self.log_records };
+        timing.reset_ms = ms_since(t2);
+        timing.total_ms = ms_since(t0);
+        timing.records = self.log_records;
         self.record_snapshot(timing);
         self.snapshot_seq = self.seq;
         self.log_records = 0;
