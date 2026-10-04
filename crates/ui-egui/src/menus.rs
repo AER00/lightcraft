@@ -53,6 +53,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.back", "Back to Grid", Some("Escape"), ""),
     ("tool.done", "Done", Some("Enter"), ""),
     ("view.filterBar", "Filter Bar", Some("Shift+F"), "View"),
+    ("local.addRoot", "Add Folder to Local", None, ""),
     ("local.hide", "Remove from Local", None, ""),
     ("local.restoreHidden", "Show Hidden Local Locations", None, ""),
     ("view.fullScreenPreview", "Full Screen Preview", Some("F"), "View"),
@@ -109,9 +110,9 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("merge.hdrLast", "HDR with Last Settings", Some("Ctrl+Shift+H"), "Photo>Photo Merge"),
     ("merge.panoramaLast", "Panorama with Last Settings", Some("Ctrl+Shift+M"), "Photo>Photo Merge"),
     ("merge.hdrPanoramaLast", "HDR Panorama with Last Settings", None, "Photo>Photo Merge"),
-    ("file.addPhotos", "Add Photos…", Some("Cmd+Shift+I"), "File"),
-    ("file.addFolder", "Add Folder…", None, "File"),
-    ("file.addFromDevice", "Add from Device", None, ""),
+    ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
+    ("file.addFolder", "Import from Folder…", None, "File"),
+    ("file.addFromDevice", "Import from Device", None, ""),
     ("file.findMissing", "Find Missing Photos…", None, "File"),
     ("photo.locate", "Locate Missing File…", None, ""),
     ("dialog.saveMetadataPreset", "Save Metadata Preset…", None, ""),
@@ -555,9 +556,24 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.crop_overlay_orient = (app.ui.crop_overlay_orient + 1) % 4;
             Ok(json!({"orientation": app.ui.crop_overlay_orient}))
         }
+        "local.addRoot" => {
+            // a folder kept in Local's sidebar (saved with the UI state); nothing on disk changes
+            let Some(path) = p.get("path").and_then(Value::as_str) else { return Some(Err("local.addRoot needs a path".into())) };
+            let abs = std::path::absolute(path).map(|a| a.to_string_lossy().trim_end_matches(['/', '\\']).to_string()).unwrap_or(path.into());
+            let abs = if abs.is_empty() { path.to_string() } else { abs };
+            if !std::path::Path::new(&abs).is_dir() {
+                return Some(Err(format!("{path}: not a folder")));
+            }
+            use crate::panels::left::same_folder;
+            if !app.ui.local_roots.iter().any(|r| same_folder(r, &abs)) {
+                app.ui.local_roots.push(abs.clone());
+            }
+            app.ui.hidden_locations.retain(|h| !same_folder(h, &abs));
+            Ok(json!({"roots": app.ui.local_roots}))
+        }
         "local.hide" => match p.get("path").and_then(Value::as_str) {
             Some(path) => {
-                if !app.ui.hidden_locations.iter().any(|h| h == path) {
+                if !app.ui.hidden_locations.iter().any(|h| crate::panels::left::same_folder(h, path)) {
                     app.ui.hidden_locations.push(path.to_string());
                 }
                 Ok(json!({"hidden": app.ui.hidden_locations}))
@@ -567,7 +583,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "local.restoreHidden" => {
             // one path, or (no path) every hidden location
             match p.get("path").and_then(Value::as_str) {
-                Some(path) => app.ui.hidden_locations.retain(|h| h != path),
+                Some(path) => app.ui.hidden_locations.retain(|h| !crate::panels::left::same_folder(h, path)),
                 None => app.ui.hidden_locations.clear(),
             }
             Ok(json!({"hidden": app.ui.hidden_locations}))
@@ -915,7 +931,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             // a camera / card: review its DCIM folder, copying into the library by default
             let path = match p.get("path").and_then(Value::as_str) {
                 Some(x) => x.to_string(),
-                None => match lightcraft_engine::devices::devices().into_iter().next() {
+                None => match lightcraft_engine::devices::devices_now().into_iter().next() {
                     Some(d) => d.path,
                     None => return Some(Err("no camera or memory card found".into())),
                 },

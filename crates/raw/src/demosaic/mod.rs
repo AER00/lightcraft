@@ -70,7 +70,7 @@ pub fn demosaic(n: &Normalized, method: Method) -> Rgb32f {
         return Rgb32f::new(w, h);
     }
     match (&n.cfa, n.cpp) {
-        (_, 3) => Rgb32f { width: w, height: h, data: n.data.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect() },
+        (_, 3) => Rgb32f { width: w, height: h, data: n.data.as_chunks::<3>().0.iter().map(|c| [c[0], c[1], c[2]]).collect() },
         (_, cpp) if cpp != 1 => Rgb32f { width: w, height: h, data: n.data.chunks_exact(cpp).map(|c| [c[0], c[1], c[2]]).collect() },
         (None, _) => Rgb32f { width: w, height: h, data: n.data.iter().map(|&v| [v; 3]).collect() },
         (Some(cfa), _) => {

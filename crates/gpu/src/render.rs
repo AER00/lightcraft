@@ -402,17 +402,19 @@ fn sample(cx: &mut Cx<'_>, src: &Arc<Rgb32f>, src_buf: Arc<Buf>, plan: &Plan<'_>
         Some(d) => (Arc::new(resize(cx, &oriented, (sp.ow, sp.oh), d, 3, Filter::Mitchell)), d),
         None => (oriented, (sp.ow, sp.oh)),
     };
-    match &sp.mode {
-        SampleMode::Copy => base,
-        SampleMode::Affine(xf) => {
-            let out = cx.gpu.buffer(w * h * 3);
-            let mut p = vec![bw as u32, bh as u32, w as u32, h as u32];
-            p.extend(affine_bits(xf));
-            cx.run("sample_affine", &p, &[Some(&base), Some(&out)], groups2(w, h, [16, 16]));
-            Arc::new(out)
-        }
-        SampleMode::Warp(o2t) => {
-            let wp = fr.warp.as_ref().expect("warp mode has a warp");
+    let mut affine = |xf: &lightcraft_geom::Affine| {
+        let out = cx.gpu.buffer(w * h * 3);
+        let mut p = vec![bw as u32, bh as u32, w as u32, h as u32];
+        p.extend(affine_bits(xf));
+        cx.run("sample_affine", &p, &[Some(&base), Some(&out)], groups2(w, h, [16, 16]));
+        Arc::new(out)
+    };
+    match (&sp.mode, fr.warp.as_ref()) {
+        (SampleMode::Copy, _) => base,
+        (SampleMode::Affine(xf), _) => affine(xf),
+        // `sample_plan` plans a warp only when there is one; without it the same mapping is affine
+        (SampleMode::Warp(o2t), None) => affine(&(lightcraft_geom::Affine::scale(sp.sx, sp.sy) * *o2t)),
+        (SampleMode::Warp(o2t), Some(wp)) => {
             let out = cx.gpu.buffer(w * h * 3);
             let p = warp_params(wp, (bw, bh), (w, h), o2t, sp.sx, sp.sy);
             cx.run("sample_warp", &p, &[Some(&base), Some(&out)], groups2(w, h, [16, 16]));

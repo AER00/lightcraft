@@ -220,17 +220,19 @@ pub(crate) fn decode(o: ByteOrder, typ: FieldType, b: &[u8]) -> Value {
             Value::Ascii(String::from_utf8_lossy(&b[..end]).into_owned())
         }
         FieldType::SByte => Value::SByte(b.iter().map(|&x| x as i8).collect()),
-        FieldType::Short => Value::Short(b.chunks_exact(2).map(|c| o.u16(arr(c))).collect()),
-        FieldType::SShort => Value::SShort(b.chunks_exact(2).map(|c| o.u16(arr(c)) as i16).collect()),
-        FieldType::Long => Value::Long(b.chunks_exact(4).map(|c| o.u32(arr(c))).collect()),
-        FieldType::Ifd => Value::Ifd(b.chunks_exact(4).map(|c| o.u32(arr(c))).collect()),
-        FieldType::SLong => Value::SLong(b.chunks_exact(4).map(|c| o.u32(arr(c)) as i32).collect()),
-        FieldType::Float => Value::Float(b.chunks_exact(4).map(|c| f32::from_bits(o.u32(arr(c)))).collect()),
-        FieldType::Rational => Value::Rational(b.chunks_exact(8).map(|c| (o.u32(arr(&c[..4])), o.u32(arr(&c[4..])))).collect()),
-        FieldType::SRational => Value::SRational(b.chunks_exact(8).map(|c| (o.u32(arr(&c[..4])) as i32, o.u32(arr(&c[4..])) as i32)).collect()),
-        FieldType::Double => Value::Double(b.chunks_exact(8).map(|c| f64::from_bits(o.u64(arr(c)))).collect()),
-        FieldType::Long8 => Value::Long8(b.chunks_exact(8).map(|c| o.u64(arr(c))).collect()),
-        FieldType::Ifd8 => Value::Ifd8(b.chunks_exact(8).map(|c| o.u64(arr(c))).collect()),
-        FieldType::SLong8 => Value::SLong8(b.chunks_exact(8).map(|c| o.u64(arr(c)) as i64).collect()),
+        FieldType::Short => Value::Short(b.as_chunks::<2>().0.iter().map(|c| o.u16(arr(c))).collect()),
+        FieldType::SShort => Value::SShort(b.as_chunks::<2>().0.iter().map(|c| o.u16(arr(c)) as i16).collect()),
+        FieldType::Long => Value::Long(b.as_chunks::<4>().0.iter().map(|c| o.u32(arr(c))).collect()),
+        FieldType::Ifd => Value::Ifd(b.as_chunks::<4>().0.iter().map(|c| o.u32(arr(c))).collect()),
+        FieldType::SLong => Value::SLong(b.as_chunks::<4>().0.iter().map(|c| o.u32(arr(c)) as i32).collect()),
+        FieldType::Float => Value::Float(b.as_chunks::<4>().0.iter().map(|c| f32::from_bits(o.u32(arr(c)))).collect()),
+        FieldType::Rational => Value::Rational(b.as_chunks::<8>().0.iter().map(|c| (o.u32(arr(&c[..4])), o.u32(arr(&c[4..])))).collect()),
+        FieldType::SRational => {
+            Value::SRational(b.as_chunks::<8>().0.iter().map(|c| (o.u32(arr(&c[..4])) as i32, o.u32(arr(&c[4..])) as i32)).collect())
+        }
+        FieldType::Double => Value::Double(b.as_chunks::<8>().0.iter().map(|c| f64::from_bits(o.u64(arr(c)))).collect()),
+        FieldType::Long8 => Value::Long8(b.as_chunks::<8>().0.iter().map(|c| o.u64(arr(c))).collect()),
+        FieldType::Ifd8 => Value::Ifd8(b.as_chunks::<8>().0.iter().map(|c| o.u64(arr(c))).collect()),
+        FieldType::SLong8 => Value::SLong8(b.as_chunks::<8>().0.iter().map(|c| o.u64(arr(c)) as i64).collect()),
     }
 }

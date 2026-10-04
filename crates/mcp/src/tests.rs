@@ -72,6 +72,26 @@ fn tools_list_has_helpers_and_every_command() {
     assert!(r["result"]["tools"].as_array().unwrap().iter().all(|t| !t["name"].as_str().unwrap().starts_with("cmd_")));
 }
 
+/// The `import` helper passes the copy options through: a folder template files the copy.
+#[test]
+fn import_tool_copies_with_a_folder_template() {
+    let base = std::env::temp_dir().join(format!("lc-mcp-import-tpl-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (src, dest) = (base.join("card"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    let img = lightcraft_raster::Rgba8 { width: 8, height: 8, data: vec![[20, 3, 9, 255]; 64] };
+    let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+    std::fs::write(src.join("a.png"), png).unwrap();
+    let mut b = Headless::demo();
+    b.session.clock = Box::new(|| "2026-01-14T05:58:48".to_string());
+    let args =
+        json!({"paths": [src.to_string_lossy()], "mode": "copy", "destination": dest.to_string_lossy(), "organize": "{date:%Y}/{date:%Y%m%d}"});
+    let r = call_tool(&mut b, "import", &args);
+    assert!(!r.is_error, "{r:?}");
+    assert!(dest.join("2026").join("20260114").join("a.png").is_file());
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn command_tools_run_commands() {
     let mut b = Headless::demo();

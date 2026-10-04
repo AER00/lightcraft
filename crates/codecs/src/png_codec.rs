@@ -37,7 +37,7 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     };
     buf.truncate(out.buffer_size());
     let (samples, depth) = match out.bit_depth {
-        png::BitDepth::Sixteen => (Buf::U16(buf.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect()), 16),
+        png::BitDepth::Sixteen => (Buf::U16(buf.as_chunks::<2>().0.iter().map(|c| u16::from_be_bytes([c[0], c[1]])).collect()), 16),
         _ => (Buf::U8(buf), info.bit_depth as u8),
     };
     let raw = Raw { width: out.width as usize, height: out.height as usize, model, alpha, premultiplied: false, buf: samples, bit_depth: depth };

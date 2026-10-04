@@ -9,6 +9,7 @@
 //!
 //! The pipeline's working space is **linear Rec.2020, D65** ([`WORKING`]).
 #![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod cct;
 pub mod perceptual;
@@ -125,14 +126,17 @@ pub const WORKING: RgbSpace = REC2020;
 
 impl RgbSpace {
     /// Matrix taking linear RGB in this space to XYZ (white Y = 1) relative to its own white.
+    /// Degenerate (collinear) primaries, which readers reject before building a space from a
+    /// file, leave the primaries unscaled instead of panicking.
     pub fn to_xyz(&self) -> Mat3 {
         let p = [self.r.to_xyz(), self.g.to_xyz(), self.b.to_xyz()];
         let m = Mat3([[p[0][0], p[1][0], p[2][0]], [p[0][1], p[1][1], p[2][1]], [p[0][2], p[1][2], p[2][2]]]);
-        let s = m.inverse().expect("primaries are independent").apply(self.white.to_xyz());
+        let s = m.inverse().map_or([1.0; 3], |inv| inv.apply(self.white.to_xyz()));
         m.mul(&Mat3::diag(s[0], s[1], s[2]))
     }
+    /// Inverse of [`to_xyz`](Self::to_xyz); the identity for degenerate primaries.
     pub fn from_xyz(&self) -> Mat3 {
-        self.to_xyz().inverse().expect("invertible")
+        self.to_xyz().inverse().unwrap_or(Mat3::IDENTITY)
     }
     /// Luminance weights (the Y row of `to_xyz`).
     pub fn luma(&self) -> [f64; 3] {
@@ -154,7 +158,8 @@ pub fn bradford(src: Xy, dst: Xy) -> Mat3 {
     }
     let s = BRADFORD.apply(src.to_xyz());
     let d = BRADFORD.apply(dst.to_xyz());
-    let inv = BRADFORD.inverse().expect("invertible");
+    // a constant, invertible matrix: the fallback (no adaptation) can't happen
+    let Some(inv) = BRADFORD.inverse() else { return Mat3::IDENTITY };
     inv.mul(&Mat3::diag(d[0] / s[0], d[1] / s[1], d[2] / s[2])).mul(&BRADFORD)
 }
 

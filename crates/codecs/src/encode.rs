@@ -91,7 +91,7 @@ pub fn encode_jpeg(img: &EncodeImage, quality: u8, subsampling: ChromaSubsamplin
     let n = img.width as usize * img.height as usize;
     let (data, ct): (std::borrow::Cow<[u8]>, jpeg_encoder::ColorType) = match img.channels {
         1 => (data[..n].into(), jpeg_encoder::ColorType::Luma),
-        2 => (data.chunks_exact(2).take(n).map(|c| c[0]).collect::<Vec<_>>().into(), jpeg_encoder::ColorType::Luma),
+        2 => (data.as_chunks::<2>().0.iter().take(n).map(|c| c[0]).collect::<Vec<_>>().into(), jpeg_encoder::ColorType::Luma),
         3 => (data[..n * 3].into(), jpeg_encoder::ColorType::Rgb),
         _ => (data[..n * 4].into(), jpeg_encoder::ColorType::Rgba),
     };
@@ -254,7 +254,7 @@ pub fn encode_tiff(img: &EncodeImage, compression: TiffCompression, meta: &Encod
         }};
     }
     fn expand_ga<T: Copy>(s: &[T], n: usize) -> Vec<T> {
-        s.chunks_exact(2).take(n).flat_map(|c| [c[0], c[0], c[0], c[1]]).collect()
+        s.as_chunks::<2>().0.iter().take(n).flat_map(|c| [c[0], c[0], c[0], c[1]]).collect()
     }
     match img.samples {
         Samples::U8(s) => match ch {

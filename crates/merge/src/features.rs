@@ -54,7 +54,7 @@ impl Features {
 pub fn detect(img: &Plane, max: usize) -> Features {
     let mut levels = vec![img.clone()];
     while levels.len() < 4 {
-        let l = levels.last().expect("non-empty");
+        let Some(l) = levels.last() else { break };
         if l.width.min(l.height) < 96 {
             break;
         }

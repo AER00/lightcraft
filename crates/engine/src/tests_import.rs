@@ -257,6 +257,37 @@ fn copy_with_destination_organize_rename_and_metadata_preset() {
     }
 }
 
+/// Copy with a custom folder template: `{date:%Y}/{date:%Y%m%d}` files a photo under
+/// `2026/20260114/` (an undated file by the import time); templates that would leave the
+/// destination are refused.
+#[test]
+fn copy_with_a_folder_template() {
+    let src = temp_dir("tplsrc");
+    let dest = temp_dir("tpldest");
+    write_png(&src.join("a.png"), 1);
+    let mut s = Session::new().with_fs();
+    s.clock = Box::new(|| "2026-01-14T05:58:48".to_string());
+    for bad in ["../{date}", "/tmp/{date}", "{date:%Y}/../x", "C:/x"] {
+        let r = s.execute(
+            "library.import",
+            &json!({"paths": [src.to_string_lossy()], "mode": "copy", "destination": dest.to_string_lossy(), "organize": bad}),
+        );
+        assert!(r.is_err(), "{bad} should be refused");
+    }
+    assert_eq!(s.catalog.len(), 0);
+    let r = s
+        .execute(
+            "library.import",
+            &json!({"paths": [src.to_string_lossy()], "mode": "copy", "destination": dest.to_string_lossy(), "organize": "{date:%Y}/{date:%Y%m%d}"}),
+        )
+        .unwrap();
+    assert_eq!(ids(&r, "imported"), 1, "{r}");
+    assert!(dest.join("2026").join("20260114").join("a.png").is_file());
+    for d in [&src, &dest] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}
+
 /// Auto import: files in the watched folder are added once their size held between two scans,
 /// into the named album; non-photos are tried once; the selection stays put.
 #[test]
@@ -584,4 +615,32 @@ fn smart_previews_folder_is_chosen_per_library() {
     let r = again.execute("library.smartPreviewsLocation", &json!({"reset": true})).unwrap();
     assert_eq!(r["custom"], false, "{r}");
     assert_eq!(r["path"], lib.join("Smart Previews").to_string_lossy().as_ref());
+}
+
+/// Missing Photos covers library photos only: a small library next to many Local browse
+/// records (and a deleted photo) checks — and lists, and counts — the library files alone.
+#[test]
+fn missing_photos_skip_local_browse_records() {
+    use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+    let gone = std::env::temp_dir().join(format!("lc-missing-scope-{}", std::process::id()));
+    let mut s = Session::new();
+    let mut ops = Vec::new();
+    for i in 0..205u64 {
+        let path = gone.join(format!("IMG_{i:04}.jpg")).to_string_lossy().to_string();
+        let mut p = Photo::new(PhotoId(i + 1), Source::File { path }, &format!("IMG_{i:04}.jpg"), "JPEG", 60, 40, "2026-01-01T00:00:00");
+        p.local = i >= 5; // 5 library photos, 200 seen while browsing
+        p.deleted = i == 4;
+        ops.push(Op::AddPhoto { photo: Box::new(p) });
+    }
+    s.commit("Add", Op::Batch { ops }).unwrap();
+    let mut checked = 0;
+    let lost = crate::cmd::missing::missing_with(&s.catalog, |_| {
+        checked += 1;
+        false
+    });
+    assert_eq!((checked, lost.len()), (4, 4), "only the non-deleted library files are checked");
+    assert_eq!(crate::cmd::missing::candidates(&s.catalog).len(), 4, "the sidebar count checks the same files");
+    assert_eq!(s.execute("library.missing", &json!({})).unwrap().as_array().map(Vec::len), Some(4));
+    s.execute("library.source", &json!({"kind": "missing"})).unwrap();
+    assert_eq!(s.visible_cloned().len(), 4, "the view lists what the count counts");
 }

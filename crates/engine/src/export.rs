@@ -553,10 +553,9 @@ impl ExportOptions {
                     r(ResizeMode::ShortEdge, v)
                 } else if let Some(v) = f("megapixels") {
                     r(ResizeMode::Megapixels, v)
-                } else if let Some(v) = f("percent") {
-                    r(ResizeMode::Percent, v)
                 } else {
-                    return None;
+                    let v = f("percent")?;
+                    r(ResizeMode::Percent, v)
                 }
             }
         })
@@ -659,7 +658,7 @@ pub fn output_sharpen_deep(img: &mut DeepImage, target: SharpenFor, amount: Shar
     let (w, h) = (img.width, img.height);
     match &mut img.samples {
         DeepSamples::U16(v) => {
-            let src: Vec<[f32; 3]> = v.chunks_exact(3).map(|c| [c[0] as f32, c[1] as f32, c[2] as f32]).collect();
+            let src: Vec<[f32; 3]> = v.as_chunks::<3>().0.iter().map(|c| [c[0] as f32, c[1] as f32, c[2] as f32]).collect();
             if let Some(out) = unsharp(w, h, &src, target, amount) {
                 for (d, s) in v.iter_mut().zip(out.as_flattened()) {
                     *d = s.round().clamp(0.0, 65535.0) as u16;
@@ -667,7 +666,7 @@ pub fn output_sharpen_deep(img: &mut DeepImage, target: SharpenFor, amount: Shar
             }
         }
         DeepSamples::F32(v) => {
-            let src: Vec<[f32; 3]> = v.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+            let src: Vec<[f32; 3]> = v.as_chunks::<3>().0.iter().map(|c| [c[0], c[1], c[2]]).collect();
             if let Some(out) = unsharp(w, h, &src, target, amount) {
                 for (d, s) in v.iter_mut().zip(out.as_flattened()) {
                     *d = s.max(0.0);

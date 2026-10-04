@@ -174,6 +174,11 @@ impl Filter {
         if v.is_empty() { "all photos".into() } else { v.join(", ") }
     }
 
+    /// Whether matches depend on the clock (only "in the last…" rules do).
+    pub fn depends_on_now(&self) -> bool {
+        self.rule_set.as_ref().is_some_and(crate::RuleSet::depends_on_now)
+    }
+
     pub fn matches(&self, p: &Photo, cat: &Catalog) -> bool {
         if p.deleted != self.deleted {
             return false;
@@ -344,6 +349,52 @@ pub fn in_folder(path: &str, dir: &str, deep: bool) -> bool {
     let Some(rest) = path.strip_prefix(dir) else { return false };
     let Some(rest) = rest.strip_prefix(['/', '\\']) else { return false };
     !rest.is_empty() && (deep || !rest.contains(['/', '\\']))
+}
+
+/// A folder path's identity, for telling whether two spellings name the same folder: `/` and
+/// `\\` are both separators, repeated separators, `.` and a trailing separator are dropped,
+/// `..` is resolved lexically, a Windows verbatim prefix (`\\?\`) is removed and the drive
+/// letter lower-cased; on Windows (case-insensitive file names) the whole path is lower-cased.
+/// No file-system access: the paths compared should already be absolute.
+pub fn folder_key(path: &str) -> String {
+    let mut s = path.replace('\\', "/");
+    if let Some(rest) = s.strip_prefix("//?/").or_else(|| s.strip_prefix("//./")) {
+        s = match rest.strip_prefix("UNC/") {
+            Some(unc) => format!("//{unc}"),
+            None => rest.to_string(),
+        };
+    }
+    // the part `..` can't climb above: `//server/share`, `c:` or `/`
+    let (prefix, rest) = if let Some(unc) = s.strip_prefix("//").filter(|u| !u.is_empty() && !u.starts_with('/')) {
+        let mut it = unc.splitn(3, '/');
+        let (server, share, rest) = (it.next().unwrap_or(""), it.next().unwrap_or(""), it.next().unwrap_or(""));
+        (format!("//{server}/{share}"), rest.to_string())
+    } else if s.len() >= 2 && s.as_bytes()[1] == b':' && s.as_bytes()[0].is_ascii_alphabetic() {
+        (s[..2].to_ascii_lowercase(), s[2..].to_string())
+    } else {
+        (String::new(), s.clone())
+    };
+    let absolute = rest.starts_with('/') || !prefix.is_empty();
+    let mut parts: Vec<&str> = Vec::new();
+    for c in rest.split('/') {
+        match c {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|p| *p != "..") => {
+                parts.pop();
+            }
+            ".." if absolute => {}
+            c => parts.push(c),
+        }
+    }
+    let key = if absolute { format!("{prefix}/{}", parts.join("/")) } else { parts.join("/") };
+    if cfg!(windows) { key.to_lowercase() } else { key }
+}
+
+/// Whether `path` is folder `root` or lies somewhere inside it, however either is spelled
+/// (see [`folder_key`]).
+pub fn folder_within(path: &str, root: &str) -> bool {
+    let (p, r) = (folder_key(path), folder_key(root));
+    p == r || (p.starts_with(&r) && (r.ends_with('/') || p[r.len()..].starts_with('/')))
 }
 
 /// The kind of Photo Merge result a file is, from the name merges give it (`IMG_1-HDR.dng`,

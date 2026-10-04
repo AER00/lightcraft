@@ -173,6 +173,6 @@ pub fn decode_jpeg(bytes: &[u8]) -> Option<Rgba8> {
     if px.len() < w * h * 3 {
         return None;
     }
-    let data = px.chunks_exact(3).take(w * h).map(|c| [c[0], c[1], c[2], 255]).collect();
+    let data = px.as_chunks::<3>().0.iter().take(w * h).map(|c| [c[0], c[1], c[2], 255]).collect();
     Some(Rgba8 { width: w, height: h, data })
 }

@@ -511,7 +511,7 @@ pub fn apply_list3(list: &[Opcode], img: &mut Rgb32f) {
             other => {
                 let mut flat: Vec<f32> = img.data.iter().flat_map(|p| *p).collect();
                 apply_list(std::slice::from_ref(other), &mut flat, w, h, 3, None, 1.0);
-                for (d, c) in img.data.iter_mut().zip(flat.chunks_exact(3)) {
+                for (d, c) in img.data.iter_mut().zip(flat.as_chunks::<3>().0) {
                     *d = [c[0], c[1], c[2]];
                 }
             }

@@ -359,7 +359,11 @@ pub fn decode(d: &[u8], max_samples: usize) -> Result<Frame, RawError> {
     if (entropy.len() as u64 + 64) * 8 < total as u64 {
         return Err(err("entropy data too short for frame"));
     }
-    let tables: Vec<&Huffman> = h.table_for.iter().map(|&t| h.tables[t].as_ref().expect("checked")).collect();
+    let tables: Vec<&Huffman> = h
+        .table_for
+        .iter()
+        .map(|&t| h.tables.get(t).and_then(Option::as_ref).ok_or_else(|| err("scan uses an undefined Huffman table")))
+        .collect::<Result<_, RawError>>()?;
     let mut out = vec![0u16; total];
     let mut br = BitReader::new(entropy);
     let init = 1i32 << (h.precision - h.pt - 1);

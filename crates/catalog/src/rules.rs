@@ -346,6 +346,15 @@ impl RuleSet {
         }
     }
 
+    /// Whether matches depend on the clock ("in the last…" rules, nested groups included): the
+    /// same photos can enter or leave the set without any catalog change.
+    pub fn depends_on_now(&self) -> bool {
+        self.rules.iter().any(|r| match r {
+            Rule::Group { group } => group.depends_on_now(),
+            Rule::Field { op, .. } => op == "inLast" || op == "notInLast",
+        })
+    }
+
     /// Unknown fields or operators (for command validation), as readable messages.
     pub fn problems(&self) -> Vec<String> {
         let mut out = Vec::new();

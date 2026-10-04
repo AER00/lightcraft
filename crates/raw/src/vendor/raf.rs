@@ -91,14 +91,14 @@ fn raw_ifd(raw: &[u8]) -> Result<Ifd> {
 fn cfa(h: &Header) -> Cfa {
     match record(h, XTRANS_LAYOUT) {
         Some(l) if l.len() == 36 && l.iter().all(|&c| c <= 2) => Cfa { width: 6, height: 6, pattern: l.iter().rev().copied().collect() },
-        _ => Cfa::bayer("RGGB").expect("static"),
+        _ => Cfa::bayer_static("RGGB"),
     }
 }
 
 /// Unpack one row of `bits`-bit samples in Fujifilm's packing.
 pub(crate) fn unpack_row(src: &[u8], bits: u32, out: &mut [u16]) {
     match bits {
-        16 => out.iter_mut().zip(src.chunks_exact(2)).for_each(|(o, c)| *o = u16::from_le_bytes([c[0], c[1]])),
+        16 => out.iter_mut().zip(src.as_chunks::<2>().0).for_each(|(o, c)| *o = u16::from_le_bytes([c[0], c[1]])),
         12 => unpack_lsb(src, 12, out),
         _ => {
             let swapped: Vec<u8> = src

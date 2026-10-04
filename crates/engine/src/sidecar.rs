@@ -5,7 +5,9 @@
 //! creator, keywords, capture time and GPS in the standard namespaces, plus our complete develop
 //! settings (`lc:settings`, JSON), the pick/reject flag (`lc:flag`) and location (`lc:location`).
 //!
-//! **Read** (on import, and `photo.readMetadataFromFile`): the sidecar wins for metadata; develop
+//! **Read** (on import, and `photo.readMetadataFromFile`): the sidecar wins for metadata, except
+//! the capture time: a time embedded in the file wins, and the sidecar's (`exif:DateTimeOriginal`,
+//! else `photoshop:DateCreated`, else `xmp:CreateDate`) fills in only when the file has none; develop
 //! settings are restored from `lc:settings` when present, else mapped from interoperable `crs:`
 //! fields ([`crate::crs`]). For raw/DNG files without a sidecar the file's embedded XMP is used.
 
@@ -84,6 +86,9 @@ pub struct SidecarData {
     pub alt_text: Option<String>,
     pub extended_description: Option<String>,
     pub keywords: Option<Vec<String>>,
+    /// Capture time (ISO 8601) from `exif:DateTimeOriginal`, `photoshop:DateCreated` or
+    /// `xmp:CreateDate` (first found). Used only when the file itself has no capture time.
+    pub captured: Option<String>,
     pub develop: Option<DevelopPatch>,
 }
 
@@ -115,6 +120,7 @@ pub fn parse_sidecar(xmp: &str, raw: bool) -> std::result::Result<SidecarData, S
         alt_text: m.alt_text.clone(),
         extended_description: m.extended_description.clone(),
         keywords: (!m.keywords.is_empty()).then(|| m.keywords.clone()),
+        captured: m.capture_time.map(|d| d.to_iso()),
         ..Default::default()
     };
     if let Some(r) = m.rating {
@@ -143,8 +149,12 @@ pub fn parse_sidecar(xmp: &str, raw: bool) -> std::result::Result<SidecarData, S
     Ok(out)
 }
 
-/// Apply sidecar data to a photo record (the sidecar wins). Returns true if develop changed.
+/// Apply sidecar data to a photo record (the sidecar wins, except that a capture time embedded in
+/// the file is kept). Returns true if develop changed.
 pub fn merge_into(p: &mut Photo, sc: &SidecarData, now: &str) -> bool {
+    if p.captured.is_none() {
+        p.captured = sc.captured.clone();
+    }
     if let Some(r) = sc.rating {
         p.rating = r;
     }
@@ -321,6 +331,9 @@ impl Session {
             Op::SetLabel { id, label: q.label },
             Op::SetMeta { id, meta: Box::new(q.meta.clone()) },
         ];
+        if q.captured != p.captured {
+            ops.push(Op::SetCaptured { id, captured: q.captured.clone() });
+        }
         if develop_changed {
             ops.extend(self.develop_op(id, (*q.develop).clone(), "Read Metadata from File"));
         }

@@ -17,6 +17,30 @@ branches can still break each other (e.g. a new struct field vs. a new construct
 `git log main..HEAD` + `git status` for unmerged commits or uncommitted work before starting anything new. Commit small
 and often so a crash loses minutes, not hours.
 
+## Never crash (outranks feature work)
+People trust LightCraft with their photo libraries and edits; a crash loses their work. A malformed raw/JPEG/XMP, a bad
+command, control or MCP argument, a corrupt catalog or settings file, or a full disk must produce an error the user (or
+agent) can act on, never a panic. Don't ship a feature by adding a panic path, and fix a crash before building on top
+of it. Full standard: `../craftrules/standards/never-crash.md`
+([storytold/craftrules](https://github.com/storytold/craftrules/blob/main/standards/never-crash.md)).
+- **Non-test code never panics:** no `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!`, `unimplemented!`, and
+  no `unsafe`. Return the crate's error type through `Result` and `?`; use `ok_or(..)?`, `let … else`, `if let`, or a
+  fallback (`unwrap_or…`) only where it can't silently corrupt a document. An unfinished feature returns an
+  "unsupported" error or is disabled. Sole exception: a provably infallible literal, as `#[allow(clippy::expect_used)]`
+  + `.expect("why it can't fail")`.
+- **Input-derived numbers are hostile:** `get()` instead of `[i]`/`[a..b]` for offsets from files, users, agents or
+  arithmetic on them; checked/saturating math for lengths, offsets and counts; no division by zero, NaN/inf or negative
+  casts to `usize`; cap allocations sized by input; slice strings only at char boundaries.
+- **Bound recursion** (depth limits or seen-sets: IFD chains, nested metadata, collections). **Don't cascade:**
+  `lock().unwrap_or_else(PoisonError::into_inner)` or an error; worker-thread joins are `Result`s.
+- **Last-resort guard:** a panic hook plus `catch_unwind` around command dispatch and import/export turns an escaped
+  panic into an error dialog and keeps the document. It's a safety net, not a licence; keep `panic = "unwind"` on native.
+- **Prove it:** every crash fix lands with a small synthetic regression test that panicked before the fix.
+- Enforced by clippy: root `clippy.toml` allows unwrap/expect/panic/indexing in tests only, and every production crate
+  root (`lib.rs`, each binary's `main.rs`) carries `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic,
+  clippy::unimplemented, clippy::todo, clippy::unreachable)]`. Not `[workspace.lints]`: those would also hit
+  integration tests, examples and benches. New crates start with the attribute.
+
 ## Non-negotiables
 - **Clean-room.** Never read/disassemble anything inside Adobe app bundles (names/listings only). Never copy Adobe icons, presets, profiles (DCP), lens profiles (LCP), camera matrices, fonts. Observation of the installed Lightroom is read-only (it syncs the user's personal library: never import/edit/rate/delete there). Never copy GPL/LGPL/AGPL code (darktable, RawTherapee, ART, LibRaw, rawspeed, rawloader, rawler, lensfun, dcraw-derived GPL code…).
 - **Pure Rust** in the product. No C/C++ dependencies.

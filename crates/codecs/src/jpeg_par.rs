@@ -274,7 +274,7 @@ pub fn encode(
     {
         let rows: Vec<(usize, Vec<&mut [f32]>)> = {
             let mut its: Vec<_> = full.iter_mut().map(|p| p.chunks_mut(width)).collect();
-            (0..height).map(|y| (y, its.iter_mut().map(|it| it.next().unwrap()).collect())).collect()
+            (0..height).map_while(|y| Some((y, its.iter_mut().map(|it| it.next()).collect::<Option<_>>()?))).collect()
         };
         let conv = |(y, mut out): (usize, Vec<&mut [f32]>)| {
             let src = &data[y * width * channels..(y + 1) * width * channels];
