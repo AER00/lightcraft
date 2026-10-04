@@ -124,12 +124,16 @@ fn spawn(app: &LightcraftApp, options: &MergeDialog, ids: &[PhotoId], preview: b
     let (tx, rx) = channel();
     let (j, p, c) = (job.clone(), progress.clone(), cancel.clone());
     let work = move || {
-        let r = j.run(&|f, stage| {
-            if let Ok(mut g) = p.lock() {
-                *g = (f, stage.to_string());
-            }
-            !c.load(Ordering::Relaxed)
-        });
+        let run = || {
+            j.run(&|f, stage| {
+                if let Ok(mut g) = p.lock() {
+                    *g = (f, stage.to_string());
+                }
+                !c.load(Ordering::Relaxed)
+            })
+        };
+        // a panicking merge reports an error instead of leaving "Merging…" up forever
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).unwrap_or_else(|_| Err("the merge failed unexpectedly".into()));
         let _ = tx.send(r);
     };
     #[cfg(not(target_arch = "wasm32"))]
@@ -220,7 +224,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
     if let Some(t) = &app.merge.preview_task {
         match t.rx.try_recv() {
             Ok(Ok(out)) => {
-                let t = app.merge.preview_task.take().expect("task");
+                let Some(t) = app.merge.preview_task.take() else { return };
                 if let Some(img) = out.preview {
                     let color = Arc::new(egui::ColorImage::from_rgba_unmultiplied([img.width, img.height], &img.as_bytes()));
                     let tex = ctx.load_texture("merge-preview", color.clone(), egui::TextureOptions::LINEAR);
@@ -229,7 +233,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
                 }
             }
             Ok(Err(e)) => {
-                let t = app.merge.preview_task.take().expect("task");
+                let Some(t) = app.merge.preview_task.take() else { return };
                 if e != "cancelled" {
                     app.merge.error = Some(e);
                     app.merge.failed_options = Some(t.options);
@@ -242,7 +246,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
     if let Some(t) = &app.merge.final_task {
         match t.rx.try_recv() {
             Ok(r) => {
-                let t = app.merge.final_task.take().expect("task");
+                let Some(t) = app.merge.final_task.take() else { return };
                 let what = if t.options.command == "merge.panorama" {
                     "Panorama"
                 } else if t.options.command == "merge.hdrPanorama" {

@@ -214,7 +214,7 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
             return;
         }
     };
-    let task = app.scan.take().expect("scan task");
+    let Some(task) = app.scan.take() else { return };
     if task.progress.cancel.load(Ordering::Relaxed) {
         return;
     }
@@ -333,7 +333,7 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
         p["renameStart"] = json!(1 + task.imported);
     }
     let r = app.session.execute("library.import", &p);
-    let task = app.import.as_mut().expect("import task");
+    let Some(task) = app.import.as_mut() else { return };
     task.done += n;
     match r {
         Ok(v) => {
@@ -354,7 +354,7 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
     if !task.queue.is_empty() {
         return;
     }
-    let task = app.import.take().expect("import task");
+    let Some(task) = app.import.take() else { return };
     let steps = app.session.undo.len().saturating_sub(task.undo0);
     let label = format!("Add {} Photo{}", task.imported, if task.imported == 1 { "" } else { "s" });
     app.session.merge_undo(steps, &label);
