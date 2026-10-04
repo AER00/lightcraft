@@ -173,6 +173,7 @@ impl Headless {
     pub fn busy(&self) -> bool {
         self.app.renderer.in_flight() > 0
             || self.app.merge.busy()
+            || self.app.scan.is_some()
             || self.app.import.is_some()
             || self.app.export.is_some()
             || !self.app.synthetic.is_empty()
