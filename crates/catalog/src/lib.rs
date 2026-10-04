@@ -6,6 +6,7 @@
 //! - **undo/redo**: the engine keeps inverse ops;
 //! - **determinism**: replaying the log reproduces the state exactly (property-tested).
 #![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod dates;
 pub mod journal;
