@@ -182,11 +182,13 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     let browsing = app.session.browse.clone().filter(|_| app.session.source == LibrarySource::Folder);
-    if let Some(b) = &browsing
-        && !places.iter().any(|(_, p)| *p == b.path)
-    {
-        let name = std::path::Path::new(&b.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| b.path.clone());
-        places.push((name, b.path.clone()));
+    // picked folders stay listed; the folder being browsed is listed even when it wasn't picked
+    let roots = app.ui.local_roots.iter().cloned().chain(browsing.iter().map(|b| b.path.clone()));
+    for path in roots {
+        if !places.iter().any(|(_, p)| *p == path) {
+            let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
+            places.push((name, path));
+        }
     }
     let current = browsing.as_ref().map(|b| b.path.clone());
     for (name, path) in places {
@@ -194,10 +196,16 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     if app.services.pick_folder.is_some() && row(app, ui, "local:browse", Icon::Plus, "Browse Folder…", None, false, 0.0).clicked() {
         let picked = app.services.pick_folder.as_mut().and_then(|f| f());
-        if let Some(path) = picked
-            && let Err(e) = app.run("library.browse", json!({"path": path}))
-        {
-            app.toast(ui.ctx(), e);
+        if let Some(path) = picked {
+            match app.run("library.browse", json!({"path": path})) {
+                Ok(r) => {
+                    let dir = r["path"].as_str().unwrap_or(&path).to_string();
+                    if !app.ui.local_roots.contains(&dir) {
+                        app.ui.local_roots.push(dir);
+                    }
+                }
+                Err(e) => app.toast(ui.ctx(), e),
+            }
         }
     }
     ui.add_space(10.0);

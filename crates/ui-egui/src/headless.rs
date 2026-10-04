@@ -767,7 +767,12 @@ mod tests {
         }
         let library_before = h.app.session.catalog.photos().filter(|p| !p.local).count();
         let r = h.request("engine.execute", json!({"command": "library.browse", "params": {"path": dir.to_string_lossy()}}), t);
-        assert_eq!(r["result"]["photos"], 1, "{r}");
+        // the folder is read in the background: the view switches at once, the photos follow
+        assert_eq!(r["result"]["scanning"], true, "{r}");
+        assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::Folder);
+        h.settle(SETTLE);
+        assert!(h.app.scan.is_none() && h.app.import.is_none());
+        assert_eq!(h.app.session.visible_cloned().len(), 1);
         assert!(h.settle(SETTLE), "a thumbnail that can't load must not keep the renderer busy");
         // this test session has no file hooks: the thumbnail fails once, is remembered, and isn't retried
         let id = h.app.session.visible_cloned()[0];
