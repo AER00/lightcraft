@@ -735,7 +735,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Photos…",
             ["File"],
             Some("Cmd+Shift+I"),
-            "{paths: [file or folder (recursive)], mode?: add|copy (add = reference the files in place; copy = into the library's Originals/YYYY/YYYY-MM-DD/), destination?: folder for copies, organize?: date|month|flat, rename?: file-name template for copies ({name} {seq:N} {date:%Y%m%d} {camera} {title}), renameStart?: 1, metadataPreset?: name, dng?: bool (copy raws as DNG), local?: bool (browsing: the photos stay out of the library, like library.browse), album?: albumId, albumName?: new album, preset?: presetId, keywords?: [..]} → {imported, duplicates, failed, album?}",
+            "{paths: [file or folder (recursive)], mode?: add|copy (add = reference the files in place; copy = into the library's Originals/YYYY/YYYY-MM-DD/), destination?: folder for copies, organize?: date|month|flat, rename?: file-name template for copies, original extension added (tokens: {name} {num} {seq} {seq:N} {date} {date:%Y%m%d} {folder} {camera} {lens} {iso} {rating} {title} {creator} {ext}; photo.renameTokens explains each; blank = keep names), renameStart?: 1, metadataPreset?: name, dng?: bool (copy raws as DNG), local?: bool (browsing: the photos stay out of the library, like library.browse), album?: albumId, albumName?: new album, preset?: presetId, keywords?: [..]} → {imported, duplicates, failed, album?}",
             always,
             |s, p| {
                 let paths = strs(p, "paths");

@@ -82,6 +82,113 @@ fn format_date(iso: &str, fmt: &str) -> String {
     out
 }
 
+/// One template token, for help texts and tag pickers. [`TOKENS`] is the single list every UI and
+/// command description shows; a test checks that [`expand_tokens`] knows each of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct TokenHelp {
+    /// The token as typed, e.g. `{seq:3}`.
+    pub tag: &'static str,
+    /// Other spellings with the same meaning.
+    pub aliases: &'static [&'static str],
+    pub meaning: &'static str,
+}
+
+/// Every template token, in the order the help shows them.
+pub const TOKENS: &[TokenHelp] = &[
+    TokenHelp { tag: "{name}", aliases: &["{filename}"], meaning: "Original file name without its extension" },
+    TokenHelp { tag: "{num}", aliases: &[], meaning: "The number at the end of the original name (IMG_0042 → 0042)" },
+    TokenHelp { tag: "{seq}", aliases: &["{n}"], meaning: "Sequence number, counting from the start number" },
+    TokenHelp { tag: "{seq:3}", aliases: &["{n:3}"], meaning: "Sequence number zero-padded to N digits (1–9)" },
+    TokenHelp { tag: "{date}", aliases: &[], meaning: "Capture date as YYYYMMDD" },
+    TokenHelp { tag: "{date:%Y%m%d_%H%M%S}", aliases: &[], meaning: "Capture date and time in your own format (directives below)" },
+    TokenHelp { tag: "{folder}", aliases: &[], meaning: "Name of the folder the original is in" },
+    TokenHelp { tag: "{camera}", aliases: &[], meaning: "Camera make and model" },
+    TokenHelp { tag: "{lens}", aliases: &[], meaning: "Lens" },
+    TokenHelp { tag: "{iso}", aliases: &[], meaning: "ISO speed" },
+    TokenHelp { tag: "{rating}", aliases: &[], meaning: "Star rating (0–5)" },
+    TokenHelp { tag: "{title}", aliases: &[], meaning: "Title metadata" },
+    TokenHelp { tag: "{creator}", aliases: &[], meaning: "Creator metadata" },
+    TokenHelp { tag: "{ext}", aliases: &[], meaning: "Original extension without the dot" },
+];
+
+/// The `%` directives of `{date:…}`.
+pub const DATE_DIRECTIVES: &[(&str, &str)] = &[
+    ("%Y", "year, 4 digits"),
+    ("%y", "year, 2 digits"),
+    ("%m", "month 01–12"),
+    ("%d", "day 01–31"),
+    ("%H", "hour 00–23"),
+    ("%M", "minute"),
+    ("%S", "second"),
+    ("%%", "a literal %"),
+];
+
+/// How templates behave, one sentence each (shown under the token list).
+pub const TEMPLATE_NOTES: &[&str] = &[
+    "The original extension is always added; {ext} only puts it inside the name as well.",
+    "A blank template keeps the original names.",
+    "{date} is the capture time; a photo without one uses the time it was imported.",
+    "Missing metadata ({camera}, {title}…) leaves an empty gap; a name that comes out empty keeps the original name.",
+    "Unknown tags stay as typed — check the preview for a {typo}.",
+    "Characters not allowed in file names (/ \\ : * ? \" < > |) become -; an existing name gets -1, -2….",
+];
+
+/// The tokens as one line (`{name} {num} {seq} …`), for compact hints.
+pub fn token_summary() -> String {
+    TOKENS.iter().map(|t| t.tag).collect::<Vec<_>>().join(" ")
+}
+
+/// A fixed photo the help's examples are computed from (`IMG_0042.CR3`, 14 Jan 2026 05:58:48).
+pub fn sample_photo() -> Photo {
+    let mut p =
+        Photo::new(PhotoId(0), Source::File { path: "/Card/DCIM/IMG_0042.CR3".into() }, "IMG_0042.CR3", "CR3", 6000, 4000, "2026-01-20T10:00:00");
+    p.captured = Some("2026-01-14T05:58:48".into());
+    p.rating = 4;
+    p.meta.camera = "Canon EOS R5".into();
+    p.meta.lens = "RF24-70mm F2.8".into();
+    p.meta.iso = Some(400);
+    p.meta.title = "Harbour".into();
+    p.meta.creator = "Ann Lee".into();
+    p
+}
+
+/// The token as expanded for [`sample_photo`] (sequence number 1), for the help's example column.
+pub fn token_example(tag: &str) -> String {
+    expand_tokens(tag, &sample_photo(), 1, 1)
+}
+
+/// The `{…}` tags in `template` that aren't tokens (they stay as typed), for a warning.
+pub fn unknown_tokens(template: &str) -> Vec<String> {
+    let p = sample_photo();
+    let mut out = Vec::new();
+    let mut rest = template;
+    while let Some(i) = rest.find('{') {
+        let Some(j) = rest[i..].find('}') else { break };
+        let tag = &rest[i..i + j + 1];
+        if expand_tokens(tag, &p, 1, 1) == tag && !out.iter().any(|t| t == tag) {
+            out.push(tag.to_string());
+        }
+        rest = &rest[i + j + 1..];
+    }
+    out
+}
+
+/// Every token with its meaning and example, the date directives and the notes, as JSON (the
+/// `photo.renameTokens` command).
+pub fn token_help_json() -> serde_json::Value {
+    let tokens: Vec<serde_json::Value> = TOKENS
+        .iter()
+        .map(|t| serde_json::json!({"tag": t.tag, "aliases": t.aliases, "meaning": t.meaning, "example": token_example(t.tag)}))
+        .collect();
+    let directives: Vec<serde_json::Value> = DATE_DIRECTIVES.iter().map(|(d, m)| serde_json::json!({"directive": d, "meaning": m})).collect();
+    serde_json::json!({
+        "tokens": tokens,
+        "dateDirectives": directives,
+        "notes": TEMPLATE_NOTES,
+        "sample": "IMG_0042.CR3, captured 2026-01-14 05:58:48",
+    })
+}
+
 /// Expand `template` for `p` (sequence number `seq`) into a file name with `p`'s extension.
 pub fn expand(template: &str, p: &Photo, seq: usize) -> String {
     let (stem, ext) = split_ext(&p.file_name);
@@ -357,6 +464,41 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The help lists exactly what `expand_tokens` understands: every listed tag (and alias) is
+    /// replaced, never left literal, and the help's examples match the documented behaviour.
+    #[test]
+    fn token_help_matches_the_implementation() {
+        let p = sample_photo();
+        for t in TOKENS {
+            for tag in std::iter::once(&t.tag).chain(t.aliases) {
+                let v = expand_tokens(tag, &p, 1, 1);
+                assert!(!v.contains('{'), "{tag} is not a known token (expanded to {v:?})");
+                assert!(!v.is_empty(), "{tag}: the sample photo should give an example");
+            }
+        }
+        assert_eq!(token_example("{seq:3}"), "001");
+        assert_eq!(token_example("{date}"), "20260114");
+        assert_eq!(token_example("{date:%Y%m%d_%H%M%S}"), "20260114_055848");
+        assert_eq!(token_example("{ext}"), "CR3");
+        assert_eq!(expand("{date:%Y%m%d_%H%M%S}_{seq:3}", &p, 1), "20260114_055848_001.CR3");
+        for (d, _) in DATE_DIRECTIVES {
+            let v = format_date("2026-01-14T05:58:48", d);
+            assert!(!v.contains('%') || *d == "%%", "{d} is not a known directive");
+        }
+        assert_eq!(unknown_tokens("{date}_{camra}-{seq:2}{x}{camra}"), vec!["{camra}".to_string(), "{x}".to_string()]);
+        assert!(unknown_tokens("{name}{ext}{date:%Y}").is_empty());
+        let json = token_help_json();
+        assert_eq!(json["tokens"].as_array().unwrap().len(), TOKENS.len());
+        assert_eq!(json["tokens"][0]["example"], "IMG_0042");
+        // the command descriptions that list the tokens list all of them
+        for id in ["photo.rename", "photo.renamePreview", "library.import"] {
+            let spec = crate::cmd::command_specs().iter().find(|c| c.id == id).unwrap();
+            for t in TOKENS.iter().filter(|t| !t.tag.contains(':')) {
+                assert!(spec.params.contains(t.tag), "{id} does not mention {}", t.tag);
+            }
+        }
+    }
 
     #[test]
     fn templates() {

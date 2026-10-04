@@ -1211,6 +1211,52 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// Import review, Copy: Tags beside the Rename field lists the template tags; clicking one
+    /// inserts it at the text cursor (not appended, not replacing the template).
+    #[test]
+    fn import_rename_tags_insert_at_the_cursor() {
+        let dir = std::env::temp_dir().join(format!("lc-ui-import-tags-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = lightcraft_raster::Rgba8 { width: 8, height: 8, data: vec![[90, 3, 9, 255]; 64] };
+        let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+        std::fs::write(dir.join("IMG_0007.png"), png).unwrap();
+        let lib = dir.join("lib");
+        let mut session = lightcraft_engine::Session::with_demo().with_fs();
+        session.open_library(&lib, false).unwrap();
+        let mut app = LightcraftApp::new(session, crate::Services { png: None, ..Default::default() });
+        app.ui.view = crate::state::ViewMode::PhotoGrid;
+        let mut h = Headless::new(app, [1300.0, 1000.0], 1.0);
+        let t = Duration::from_secs(10);
+        let r =
+            h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [dir.join("IMG_0007.png").to_string_lossy()]}}), t);
+        assert_eq!(r["result"]["scanning"], true, "{r}");
+        h.settle(SETTLE);
+        let r = h.request("ui.clickWidget", json!({"id": "button:importCopy"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        if let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog {
+            opts.rename = "Trip-_x".into();
+        }
+        // the cursor sits after "Trip-"
+        let id = egui::Id::new("import-rename");
+        let mut st = egui::text_edit::TextEditState::default();
+        st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(5))));
+        st.store(&h.view.ctx, id);
+        let r = h.request("ui.clickWidget", json!({"id": "button:importRenameTags"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let seq3 = lightcraft_engine::rename::TOKENS.iter().position(|x| x.tag == "{seq:3}").unwrap();
+        let r = h.request("ui.clickWidget", json!({"id": format!("button:importRenameTag-{seq3}")}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import dialog") };
+        assert_eq!(opts.rename, "Trip-{seq:3}_x", "inserted at the cursor");
+        // a second tag goes after the first (the cursor moved past it)
+        let r = h.request("ui.clickWidget", json!({"id": "button:importRenameTag-0"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import dialog") };
+        assert_eq!(opts.rename, "Trip-{seq:3}{name}_x");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Settings (⌘,): tabs switch, app settings change the UI state, library settings go through
     /// the engine; the delete confirmation guards ⌫.
     #[test]
