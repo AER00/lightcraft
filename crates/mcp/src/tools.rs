@@ -154,7 +154,7 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
         tool(
             "crop",
             "Crop / straighten",
-            "Set the crop of the active photo: `rect` [x0,y0,x1,y1] in normalized coordinates (0..1, origin top-left) of the straightened frame, `angle` in degrees. `reset: true` clears it.",
+            "Set the crop of the active photo: `rect` [x0,y0,x1,y1] in normalized coordinates (0..1, origin top-left) of the straightened frame, `angle` in degrees. `reset: true` clears it. Give at least one of them.",
             json!({"id": photo_id, "rect": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4}, "angle": {"type": "number"}, "reset": {"type": "boolean"}}),
             &[],
         ),
@@ -515,6 +515,9 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
             }
             None => ToolResult::error("missing `preset`"),
         },
+        "crop" if args.get("rect").is_none() && args.get("angle").is_none() && args.get("reset").and_then(Value::as_bool) != Some(true) => {
+            ToolResult::error("give `rect`, `angle` or `reset: true`")
+        }
         "crop" => ToolResult::from(activate(b, args).and_then(|_| {
             if args.get("reset").and_then(Value::as_bool) == Some(true) {
                 exec(b, "crop.reset", json!({}))
