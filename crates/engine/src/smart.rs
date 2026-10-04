@@ -70,6 +70,82 @@ pub fn dir(library: &Path) -> PathBuf {
     library.join("Smart Previews")
 }
 
+/// Check that smart previews can be written to `dir`: it must be (or, when its parent exists,
+/// become) a directory that accepts a new file. Never creates missing parents, so an unplugged
+/// drive's mount point is not silently recreated on the system drive.
+pub fn check_writable(dir: &Path) -> Result<(), String> {
+    if !dir.is_dir() {
+        let parent_ok = dir.parent().is_some_and(|p| p.is_dir());
+        if !parent_ok {
+            return Err(format!("{} is not available — reconnect the drive or choose another folder", dir.display()));
+        }
+        std::fs::create_dir(dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
+    }
+    let probe = dir.join(format!(".lightcraft-write-test-{}", std::process::id()));
+    std::fs::write(&probe, b"x").map_err(|e| format!("{} is not writable (is the drive full or read-only?): {e}", dir.display()))?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
+/// The number of smart previews in `dir` and their total size in bytes.
+pub fn stats(dir: &Path) -> (usize, u64) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return (0, 0) };
+    rd.flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "lcsp"))
+        .fold((0, 0), |(n, b), e| (n + 1, b + e.metadata().map_or(0, |m| m.len())))
+}
+
+/// What to do with the smart previews in the old folder when the location changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Existing {
+    /// Move them to the new folder (copy and delete across drives).
+    Move,
+    /// Leave them where they are (they stop being used; build again in the new folder).
+    Leave,
+    /// Delete them.
+    Discard,
+}
+
+impl Existing {
+    pub fn parse(s: &str) -> Option<Existing> {
+        match s {
+            "move" => Some(Existing::Move),
+            "leave" => Some(Existing::Leave),
+            "discard" => Some(Existing::Discard),
+            _ => None,
+        }
+    }
+}
+
+/// Apply `what` to the smart previews in `from` for the new folder `to` → (moved or removed, failed).
+pub fn migrate(from: &Path, to: &Path, what: Existing) -> (usize, Vec<String>) {
+    let (mut done, mut failed) = (0, Vec::new());
+    if what == Existing::Leave {
+        return (done, failed);
+    }
+    let Ok(rd) = std::fs::read_dir(from) else { return (done, failed) };
+    for e in rd.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "lcsp")) {
+        let src = e.path();
+        let r = match what {
+            Existing::Discard => std::fs::remove_file(&src),
+            _ => {
+                let dst = to.join(e.file_name());
+                if dst.exists() {
+                    // named by content: the copy already there is the same preview
+                    std::fs::remove_file(&src)
+                } else {
+                    std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).and_then(|_| std::fs::remove_file(&src)))
+                }
+            }
+        };
+        match r {
+            Ok(()) => done += 1,
+            Err(err) => failed.push(format!("{}: {err}", src.display())),
+        }
+    }
+    (done, failed)
+}
+
 /// Load the proxy at `path`.
 pub fn load(path: &Path) -> Result<Arc<Rgb32f>, String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -79,6 +155,43 @@ pub fn load(path: &Path) -> Result<Arc<Rgb32f>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("lc-smart-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn writable_check_does_not_create_missing_parents() {
+        let base = temp("writable");
+        assert!(check_writable(&base.join("new")).is_ok(), "one missing level is created");
+        assert!(base.join("new").is_dir());
+        let err = check_writable(&base.join("gone/deeper")).unwrap_err();
+        assert!(err.contains("not available"), "{err}");
+        assert!(!base.join("gone").exists(), "no fallback onto the current drive");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn migrate_moves_leaves_or_discards() {
+        let base = temp("migrate");
+        let (a, b) = (base.join("a"), base.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("1.lcsp"), b"one").unwrap();
+        std::fs::write(a.join("note.txt"), b"keep").unwrap();
+        assert_eq!(stats(&a), (1, 3));
+        assert_eq!(migrate(&a, &b, Existing::Leave).0, 0);
+        assert_eq!(stats(&a).0, 1);
+        assert_eq!(migrate(&a, &b, Existing::Move).0, 1);
+        assert_eq!((stats(&a).0, stats(&b).0), (0, 1));
+        assert!(a.join("note.txt").exists(), "only smart previews are touched");
+        assert_eq!(migrate(&b, &a, Existing::Discard).0, 1);
+        assert_eq!(stats(&b).0, 0);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn roundtrip_keeps_the_picture() {

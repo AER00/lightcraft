@@ -155,6 +155,8 @@ pub struct Session {
     pub import_defaults: import::ImportDefaults,
     /// Disk budget of the library's thumbnail cache in MB (0 = default; persisted in prefs.json).
     pub cache_mb: u32,
+    /// Where smart previews are kept when not in the library folder (persisted in prefs.json).
+    pub smart_previews_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for Session {
@@ -212,6 +214,7 @@ impl Session {
             preview_build: None,
             import_defaults: import::ImportDefaults::default(),
             cache_mb: 0,
+            smart_previews_dir: None,
         }
     }
 

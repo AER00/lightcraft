@@ -104,7 +104,12 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = if p.get("ids").is_some() || !s.selection.ids.is_empty() { s.targets(p) } else { s.visible_cloned() };
     let (mut built, mut removed, mut failed) = (0usize, 0usize, Vec::new());
     if !discard {
-        std::fs::create_dir_all(&dir).map_err(|e| bad(C, format!("{}: {e}", dir.display())))?;
+        // a chosen folder on another drive must be there: never recreate it on this one
+        if s.smart_previews_dir.is_some() {
+            crate::smart::check_writable(&dir).map_err(|e| bad(C, e))?;
+        } else {
+            std::fs::create_dir_all(&dir).map_err(|e| bad(C, format!("{}: {e}", dir.display())))?;
+        }
     }
     for id in ids {
         let Some(ph) = s.catalog.photo(id).cloned() else { continue };
@@ -134,6 +139,69 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"built": built, "removed": removed, "failed": failed}))
 }
 
+/// The smart previews folder: where it is, whether it is custom, what it holds, whether it can be
+/// used now (a chosen folder on an unplugged drive is `available: false`).
+#[cfg(not(target_arch = "wasm32"))]
+fn location_json(s: &Session) -> Value {
+    let dir = s.media.smart_dir.clone();
+    let default = s.library.as_ref().filter(|l| l.on_disk).map(|l| crate::smart::dir(&l.dir));
+    let (count, bytes) = dir.as_deref().map_or((0, 0), crate::smart::stats);
+    json!({
+        "path": dir.as_ref().map(|d| d.to_string_lossy()),
+        "default": default.map(|d| d.to_string_lossy().to_string()),
+        "custom": s.smart_previews_dir.is_some(),
+        "available": dir.as_ref().is_some_and(|d| d.is_dir()) || s.smart_previews_dir.is_none(),
+        "count": count,
+        "bytes": bytes,
+    })
+}
+
+/// Show or change where smart previews are kept (per library).
+#[cfg(not(target_arch = "wasm32"))]
+fn smart_location(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "library.smartPreviewsLocation";
+    let current = s.media.smart_dir.clone().ok_or_else(|| bad(C, "smart previews need a library on disk"))?;
+    let reset = p.get("reset").and_then(Value::as_bool).unwrap_or(false);
+    let chosen = str_param(p, "path").filter(|x| !x.trim().is_empty());
+    if !reset && chosen.is_none() {
+        return Ok(location_json(s));
+    }
+    let lib_dir = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone()).ok_or_else(|| bad(C, "smart previews need a library on disk"))?;
+    let default = crate::smart::dir(&lib_dir);
+    let (new_dir, custom) = match chosen {
+        Some(x) if !reset => {
+            let d = std::path::PathBuf::from(x.trim());
+            if !d.is_absolute() {
+                return Err(bad(C, "path must be an absolute folder path"));
+            }
+            (d.clone(), (d != default).then_some(d))
+        }
+        _ => (default, None),
+    };
+    if new_dir == current {
+        return Ok(location_json(s));
+    }
+    // the new place must work before anything moves; there is no fallback to another drive
+    crate::smart::check_writable(&new_dir).map_err(|e| bad(C, e))?;
+    let (held, _) = crate::smart::stats(&current);
+    let existing = match str_param(p, "existing") {
+        Some(x) => Some(crate::smart::Existing::parse(x).ok_or_else(|| bad(C, "existing must be move, leave or discard"))?),
+        None if held == 0 => Some(crate::smart::Existing::Leave),
+        None => None,
+    };
+    let Some(existing) = existing else {
+        return Err(bad(C, format!("{held} smart preview(s) are in {}: pass existing = move, leave or discard", current.display())));
+    };
+    let (moved, failed) = crate::smart::migrate(&current, &new_dir, existing);
+    s.smart_previews_dir = custom;
+    s.media.smart_dir = Some(new_dir);
+    s.save_prefs()?;
+    let mut r = location_json(s);
+    r["handled"] = json!(moved);
+    r["failed"] = json!(failed);
+    Ok(r)
+}
+
 /// Whether photo `id` has a smart preview.
 pub fn has_smart_preview(s: &Session, id: lightcraft_catalog::PhotoId) -> bool {
     match (&s.media.smart_dir, s.catalog.photo(id)) {
@@ -153,6 +221,16 @@ pub fn specs() -> Vec<CommandSpec> {
             "{ids?, discard?: bool} — build (or discard) the smart previews of the selected photos (else all in view): compact proxies in the library that keep photos editable and exportable (at proxy size) while their originals are offline → {built, removed, failed}",
             always,
             smart
+        ),
+        #[cfg(not(target_arch = "wasm32"))]
+        cmd!(
+            "library.smartPreviewsLocation",
+            "Smart Previews Location",
+            [],
+            None,
+            "{path?: absolute folder, reset?: bool, existing?: move|leave|discard} — without path/reset: where this library keeps its smart previews → {path, default, custom, available, count, bytes}. With path (or reset = back to `Smart Previews` in the library): use that folder instead (must exist or have an existing parent, and accept writes; never falls back to another drive). Smart previews already in the old folder need `existing`: move them, leave them (build again), or discard them → also {handled, failed}",
+            always,
+            smart_location
         ),
         cmd!(query "photo.smartPreview", "Smart Preview Status", [], None, "{id?} → {smartPreview: bool, originalOnline: bool}", always, |s, p| {
             let id = s.targets(p).first().copied().ok_or_else(|| bad("photo.smartPreview", "no photo"))?;
