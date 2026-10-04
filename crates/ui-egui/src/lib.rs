@@ -26,6 +26,8 @@ pub mod widgets;
 #[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
+mod tests_grid;
+#[cfg(test)]
 mod tests_masking;
 #[cfg(test)]
 mod tests_panels;
@@ -659,7 +661,6 @@ mod drop_tests {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
-    date_runs: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateRun>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
@@ -667,8 +668,10 @@ pub struct Caches {
     album_counts: Option<(u64, std::sync::Arc<std::collections::HashMap<lightcraft_catalog::AlbumId, usize>>)>,
     /// How often the album counts were recomputed (tests check that unchanged frames don't).
     pub album_count_scans: usize,
-    /// The grid's layout (by photos, shapes, width, thumbnail size, grouping).
-    pub grid_layout: Option<(u64, std::sync::Arc<panels::grid::GridLayout>)>,
+    /// The grid's date runs, layout and indexes (by the visible list's generation).
+    pub grid: panels::grid::GridCache,
+    /// What the grid did on its frames (benchmarks and tests check unchanged frames stay cheap).
+    pub grid_stats: panels::grid::GridStats,
 }
 
 /// The left panel's counts.
@@ -755,24 +758,6 @@ impl Caches {
                 });
                 self.filter_values = Some((cat.revision, v.clone()));
                 v
-            }
-        }
-    }
-    /// Date headers for `ids` in the grid.
-    pub fn date_runs(
-        &mut self,
-        cat: &lightcraft_catalog::Catalog,
-        ids: &[lightcraft_catalog::PhotoId],
-        key: lightcraft_catalog::SortKey,
-        by: lightcraft_catalog::GroupBy,
-    ) -> std::sync::Arc<Vec<lightcraft_catalog::DateRun>> {
-        let k = key_of((cat.revision, ids, format!("{key:?}{by:?}")));
-        match &self.date_runs {
-            Some((h, r)) if *h == k => r.clone(),
-            _ => {
-                let r = std::sync::Arc::new(cat.date_runs(ids, key, by));
-                self.date_runs = Some((k, r.clone()));
-                r
             }
         }
     }
