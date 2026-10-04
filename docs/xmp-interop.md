@@ -29,7 +29,10 @@ What we write (standard namespaces, so other tools can read the metadata):
 `lc:` is `http://ns.lightcraft.app/lc/1.0/`.
 
 Reading merges into the catalog with the **sidecar winning** for every field it states; fields it doesn't state are
-kept. `xmp:Rating="-1"` (the XMP convention for rejected) sets the reject flag. Develop settings come from
+kept. The one exception is the **capture time**: a time embedded in the file (EXIF/IPTC) always wins; when the file
+has none, the sidecar's `exif:DateTimeOriginal`, else `photoshop:DateCreated`, else `xmp:CreateDate` (ISO 8601) is
+used — on import (it then also files a copied photo in its date folder) and by `photo.readMetadataFromFile` (undoable).
+`xmp:Rating="-1"` (the XMP convention for rejected) sets the reject flag. Develop settings come from
 `lc:settings` when present (exact); otherwise from the `crs:` fields below (approximate).
 
 ## Reading `crs:` develop fields

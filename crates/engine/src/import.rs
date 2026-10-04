@@ -8,8 +8,9 @@
 //! 4. Skip **duplicates by content** (same bytes already in the library, or twice in this batch).
 //! 5. *Add* in place (the photo points at the original file) or *copy* into the library's
 //!    `Originals/YYYY/YYYY-MM-DD/` folder (names made unique) and point at the copy.
-//! 6. Read each photo's XMP sidecar (or a raw/DNG file's embedded XMP): the sidecar wins for
-//!    metadata and develop settings are restored (see [`crate::sidecar`]).
+//! 6. Apply each photo's XMP sidecar (or a raw/DNG file's embedded XMP): the sidecar wins for
+//!    metadata and develop settings are restored (see [`crate::sidecar`]). Its capture time fills
+//!    in when the file has none (read before step 5, so it also files and names the copy).
 //! 7. Optionally apply a preset and add keywords (the import dialog's options).
 //! 8. Commit all new photos as one undoable op.
 //!
@@ -66,8 +67,9 @@ pub struct ImportOptions {
     pub convert_dng: bool,
 }
 
-/// How copies are filed in the destination.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// How copies are filed in the destination. The date is the capture time, else the time of the
+/// import.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Organize {
     /// `YYYY/YYYY-MM-DD/` by capture date.
     #[default]
@@ -76,15 +78,34 @@ pub enum Organize {
     ByMonth,
     /// All in the destination itself.
     Flat,
+    /// A folder template, e.g. `{date:%Y}/{date:%Y%m%d}` → `2026/20260114/`: the template's own
+    /// `/` make the levels, each expanded with the file-name tokens ([`crate::rename::expand_folder`];
+    /// never outside the destination).
+    Template(String),
 }
 
 impl Organize {
+    /// `date` | `month` | `flat`, or a folder template (anything with a `{`, `/` or `\`).
     pub fn parse(s: &str) -> Option<Organize> {
         match s {
             "date" | "day" | "byDay" => Some(Organize::ByDay),
             "month" | "byMonth" => Some(Organize::ByMonth),
             "flat" | "none" | "intoOneFolder" => Some(Organize::Flat),
+            t if t.contains(['{', '/', '\\']) => Some(Organize::Template(t.trim().to_string())),
             _ => None,
+        }
+    }
+
+    /// The folders (inside the destination) a copy of `p` goes to.
+    pub fn folders(&self, p: &Photo) -> Vec<String> {
+        let date = p.date();
+        let day = date.get(..10).filter(|d| d.len() == 10).unwrap_or("undated");
+        let year = day.get(..4).unwrap_or("undated");
+        match self {
+            Organize::ByDay => vec![year.into(), day.into()],
+            Organize::ByMonth => vec![year.into(), day.get(..7).unwrap_or("undated").into()],
+            Organize::Flat => Vec::new(),
+            Organize::Template(t) => crate::rename::expand_folder(t, p, 1),
         }
     }
 }
@@ -322,16 +343,10 @@ fn probe_all(probe: Option<&crate::media::FileProbe>, paths: &[String], progress
         .collect()
 }
 
-/// Copy `src` into `root` (filed per `organize` by `date`) as `name` (default: its own name),
-/// made unique with -1, -2…; returns the new path.
-fn copy_into(root: &Path, src: &str, date: &str, organize: Organize, name: Option<&str>) -> Result<String, String> {
-    let day = date.get(..10).filter(|d| d.len() == 10).unwrap_or("undated");
-    let year = day.get(..4).unwrap_or("undated");
-    let dir = match organize {
-        Organize::ByDay => root.join(year).join(day),
-        Organize::ByMonth => root.join(year).join(day.get(..7).unwrap_or("undated")),
-        Organize::Flat => root.to_path_buf(),
-    };
+/// Copy `src` into `root`/`folders` as `name` (default: its own name), made unique with -1, -2…;
+/// returns the new path.
+fn copy_into(root: &Path, src: &str, folders: &[String], name: Option<&str>) -> Result<String, String> {
+    let dir = folders.iter().fold(root.to_path_buf(), |d, f| d.join(f));
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let name = name
         .map(str::to_string)
@@ -553,21 +568,38 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
             report.duplicates.push(Duplicate { path, existing: Some(id.0), reason: "content" });
             continue;
         }
+        // the XMP sidecar (or a raw's embedded XMP), read before copying: its capture time files
+        // and names the copy when the file itself has none
+        let raw = info.kind == MediaKind::Raw;
+        let packet = crate::sidecar::find_sidecar(&path, s.xmp.naming)
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .or_else(|| info.xmp.clone().filter(|_| raw));
+        let sidecar = packet.and_then(|x| match crate::sidecar::parse_sidecar(&x, raw).map(|sc| sc.resolve_label(&s.catalog)) {
+            Ok(sc) => (sc != crate::sidecar::SidecarData::default()).then_some(sc),
+            Err(e) => {
+                log::warn!("import {path}: XMP: {e}");
+                None
+            }
+        });
+        let mut info = info;
+        if info.captured.is_none() {
+            info.captured = sidecar.as_ref().and_then(|sc| sc.captured.clone());
+        }
         let stored = match (mode, &copy_root) {
             (ImportMode::Copy, Some(root))
                 if !Path::new(&path).starts_with(root) && !lib_dir.as_ref().is_some_and(|l| Path::new(&path).starts_with(l)) =>
             {
+                // the templates see the photo as it will be catalogued (undated: the import time)
+                let own = Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let mut q = Photo::new(PhotoId(0), Source::File { path: path.clone() }, &own, &info.format, 0, 0, &now);
+                q.captured = info.captured.clone();
+                q.meta = info.meta.clone();
                 let name = opts.rename.as_deref().filter(|t| !t.trim().is_empty()).map(|t| {
-                    // the template sees the photo as it will be catalogued
-                    let own = Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    let mut q = Photo::new(PhotoId(0), Source::File { path: path.clone() }, &own, &info.format, 0, 0, &now);
-                    q.captured = info.captured.clone();
-                    q.meta = info.meta.clone();
                     let n = crate::rename::expand(t, &q, seq);
                     seq += 1;
                     n
                 });
-                match copy_into(root, &path, info.captured.as_deref().unwrap_or(&now), opts.organize, name.as_deref()) {
+                match copy_into(root, &path, &opts.organize.folders(&q), name.as_deref()) {
                     Ok(p) => p,
                     Err(e) => {
                         report.failed.push((path, e));
@@ -583,7 +615,6 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         }
         // Copy as DNG: the copied raw becomes a DNG (the copy is ours to replace)
         let mut stored = stored;
-        let mut info = info;
         if opts.convert_dng && mode == ImportMode::Copy && stored != path && info.kind == MediaKind::Raw && !info.format.eq_ignore_ascii_case("DNG") {
             match crate::cmd::convert::write_dng_for(s, &stored, String::new()) {
                 Ok(dng) => {
@@ -606,19 +637,9 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         p.embedded_lens = info.embedded_lens;
         p.preview_only = info.preview_only.clone();
         apply_import_defaults(s, &mut p);
-        let raw = p.kind == lightcraft_catalog::MediaKind::Raw;
-        let packet = crate::sidecar::find_sidecar(&path, s.xmp.naming)
-            .and_then(|f| std::fs::read_to_string(f).ok())
-            .or_else(|| info.xmp.clone().filter(|_| raw));
-        if let Some(x) = packet {
-            match crate::sidecar::parse_sidecar(&x, raw).map(|sc| sc.resolve_label(&s.catalog)) {
-                Ok(sc) if sc != crate::sidecar::SidecarData::default() => {
-                    crate::sidecar::merge_into(&mut p, &sc, &now);
-                    report.sidecars += 1;
-                }
-                Ok(_) => {}
-                Err(e) => log::warn!("import {path}: XMP: {e}"),
-            }
+        if let Some(sc) = &sidecar {
+            crate::sidecar::merge_into(&mut p, sc, &now);
+            report.sidecars += 1;
         }
         if let Some(mp) = opts.metadata_preset.as_ref().and_then(|n| s.metadata_presets.iter().find(|m| m.name.eq_ignore_ascii_case(n))) {
             crate::cmd::metadata::apply_to(&mut p.meta, &mp.fields);

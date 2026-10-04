@@ -98,7 +98,7 @@ fn cfa(h: &Header) -> Cfa {
 /// Unpack one row of `bits`-bit samples in Fujifilm's packing.
 pub(crate) fn unpack_row(src: &[u8], bits: u32, out: &mut [u16]) {
     match bits {
-        16 => out.iter_mut().zip(src.chunks_exact(2)).for_each(|(o, c)| *o = u16::from_le_bytes([c[0], c[1]])),
+        16 => out.iter_mut().zip(src.as_chunks::<2>().0).for_each(|(o, c)| *o = u16::from_le_bytes([c[0], c[1]])),
         12 => unpack_lsb(src, 12, out),
         _ => {
             let swapped: Vec<u8> = src

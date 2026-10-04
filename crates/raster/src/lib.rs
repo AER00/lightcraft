@@ -243,7 +243,7 @@ impl Rgba8 {
         if bytes.len() != width * height * 4 {
             return None;
         }
-        Some(Self { width, height, data: bytes.chunks_exact(4).map(|c| [c[0], c[1], c[2], c[3]]).collect() })
+        Some(Self { width, height, data: bytes.as_chunks::<4>().0.iter().map(|c| [c[0], c[1], c[2], c[3]]).collect() })
     }
     /// Linear Rec.709/sRGB primaries float image from 8-bit sRGB.
     pub fn to_linear(&self) -> Rgb32f {

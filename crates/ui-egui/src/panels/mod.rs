@@ -25,6 +25,38 @@ use egui::{Align2, Rect, pos2, vec2};
 use crate::LightcraftApp;
 use crate::theme::Tokens;
 
+/// Show a side panel the user resizes by dragging its inner edge. `width` (in [`crate::UiState`],
+/// so it survives navigation and restarts) is the source of truth: egui's own remembered size is
+/// dropped every frame, and a drag of the edge returns the new width to store. The panel never
+/// takes more than `available − reserve − MIN_PHOTO_WIDTH` (its minimum permitting), so the photo
+/// stays usable; a narrower window shrinks it without forgetting the chosen width.
+pub fn resizable_side(
+    ui: &mut egui::Ui,
+    left: bool,
+    id: &str,
+    frame: egui::Frame,
+    width: f32,
+    limits: crate::state::PanelWidth,
+    reserve: f32,
+    add: impl FnOnce(&mut egui::Ui),
+) -> Option<f32> {
+    let pid = egui::Id::new(id);
+    ui.ctx().data_mut(|d| d.remove::<egui::containers::panel::PanelState>(pid));
+    let avail = ui.available_rect_before_wrap();
+    let max = (avail.width() - reserve - crate::state::MIN_PHOTO_WIDTH).clamp(limits.min, limits.max);
+    let panel = if left { egui::Panel::left(pid) } else { egui::Panel::right(pid) };
+    let r = panel.frame(frame).resizable(true).size_range(limits.min..=max).default_size(limits.clamp(width).min(max)).show(ui, add);
+    crate::widgets::register(ui.ctx(), format!("panel:{id}"), r.response.rect);
+    // egui names the edge's drag widget `<panel id>.with("__resize")`; the width is measured from
+    // the panel's fixed edge to the pointer (contents wider than the panel don't count)
+    if !ui.ctx().is_being_dragged(pid.with("__resize")) {
+        return None;
+    }
+    let x = ui.ctx().pointer_interact_pos()?.x;
+    let w = if left { x - avail.left() } else { avail.right() - x };
+    Some(w.round().clamp(limits.min, max))
+}
+
 /// The HUD toast at the bottom centre of the canvas.
 pub fn toast(app: &mut LightcraftApp, ctx: &egui::Context) {
     let now = ctx.input(|i| i.time);
