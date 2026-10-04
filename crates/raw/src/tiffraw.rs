@@ -60,6 +60,13 @@ pub(crate) fn read_image_in(mode: crate::Mode, data: &[u8], info: &ImageInfo, or
         crate::Mode::Full => read_image(data, info, order, packing),
         crate::Mode::Header => {
             check_image(data, info)?;
+            // a lossless-JPEG layout the decoder rejects (subsampled components, e.g. Sony's
+            // lossless M/S sizes) must fail here too, as the full decode will
+            if info.compression == 7
+                && let Some(src) = info.chunks(data.len() as u64).first().and_then(|c| chunk_bytes(data, c))
+            {
+                ljpeg::frame_info(src)?;
+            }
             Ok(if info.sample_format == 3 { RawData::F32(Vec::new()) } else { RawData::U16(Vec::new()) })
         }
     }
