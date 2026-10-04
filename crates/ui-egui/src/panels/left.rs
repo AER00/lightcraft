@@ -146,9 +146,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         });
 }
 
-/// How many library photos have no file. Checking stats every file, which on a network share
-/// takes seconds, so it runs on a worker thread: the count shown is the last finished one,
-/// refreshed at most every 5 s (or when the catalog changed).
+/// How many library photos have no file (Local browse records are not checked; see
+/// `cmd::missing::checked_path`). Checking stats every file, which on a network share takes
+/// seconds, so it runs on a worker thread: the count shown is the last finished one, refreshed
+/// at most every 5 s, and at once (after the running check) when the catalog changed.
 fn missing_count(app: &mut LightcraftApp, ui: &mut egui::Ui) -> usize {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
     #[derive(Clone, Default)]
@@ -164,16 +165,8 @@ fn missing_count(app: &mut LightcraftApp, ui: &mut egui::Ui) -> usize {
     let mut job: Job = ui.data(|d| d.get_temp(id)).unwrap_or(Job { rev: u64::MAX, at: f64::MIN, ..Default::default() });
     let fresh = now - job.at < 5.0 && job.rev == rev;
     if !fresh && !job.running.load(Relaxed) {
-        let paths: Vec<String> = app
-            .session
-            .catalog
-            .photos()
-            .filter(|p| !p.deleted)
-            .filter_map(|p| match &p.source {
-                lightcraft_catalog::Source::File { path } => Some(path.clone()),
-                _ => None,
-            })
-            .collect();
+        // the same scope as the Missing Photos view: library photos only, never Local browse records
+        let paths = lightcraft_engine::cmd::missing::candidates(&app.session.catalog);
         job.running.store(true, Relaxed);
         job.at = now;
         job.rev = rev;

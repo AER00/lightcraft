@@ -507,8 +507,9 @@ impl Session {
                 });
             }
             if self.source == LibrarySource::Missing {
-                let missing: std::collections::HashSet<PhotoId> = cmd::missing::missing(self).into_iter().map(|m| m.0).collect();
-                self.visible.retain(|id| missing.contains(id));
+                // only the photos the query kept (library photos, not Local browse records) are checked
+                let cat = &self.catalog;
+                self.visible.retain(|id| cmd::missing::is_missing(cat, *id));
             }
             if self.source != LibrarySource::RecentlyDeleted {
                 self.visible = self.catalog.arrange_stacks(&self.visible);
