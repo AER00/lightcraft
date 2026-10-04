@@ -230,6 +230,8 @@ pub struct UiState {
     pub grid_info: String,
     /// Photo counts next to sources and albums in the left panel.
     pub show_counts: bool,
+    /// Local sidebar locations hidden with “Remove from Local” (folders on disk are untouched).
+    pub hidden_locations: Vec<String>,
     /// Copies opened in an external editor this session (reloaded when the window is focused
     /// again), and whether the window had focus last frame.
     #[serde(skip)]
@@ -502,6 +504,7 @@ impl Default for UiState {
             show_filenames: true,
             grid_info: "filename".into(),
             show_counts: true,
+            hidden_locations: Vec::new(),
             dragging_control: None,
             external_edits: Vec::new(),
             was_focused: true,

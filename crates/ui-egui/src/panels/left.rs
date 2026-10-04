@@ -222,12 +222,16 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     let current = browsing.as_ref().map(|b| b.path.clone());
+    // hidden locations stay reachable: breadcrumbs, Browse Folder…, and the row below
+    places.retain(|(_, p)| !app.ui.hidden_locations.contains(p));
     for (name, path) in places {
         folder_tree(app, ui, &name, &path, 0.0, current.as_deref());
     }
     if app.services.pick_folder.is_some() && row(app, ui, "local:browse", Icon::Plus, "Browse Folder…", None, false, 0.0).clicked() {
         let picked = app.services.pick_folder.as_mut().and_then(|f| f());
         if let Some(path) = picked {
+            // choosing a folder again puts it back in the list
+            let _ = app.run("local.restoreHidden", json!({"path": path}));
             match app.run("library.browse", json!({"path": path})) {
                 Ok(r) => {
                     let dir = r["path"].as_str().unwrap_or(&path).to_string();
@@ -237,6 +241,16 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
                 Err(e) => app.toast(ui.ctx(), e),
             }
+        }
+    }
+    let hidden = app.ui.hidden_locations.len();
+    if hidden > 0 {
+        let label = format!("Show {hidden} hidden location{}", if hidden == 1 { "" } else { "s" });
+        if row(app, ui, "local:restoreHidden", Icon::Folder, &label, None, false, 0.0)
+            .on_hover_text("Put the locations you removed from Local back (no files change)")
+            .clicked()
+        {
+            let _ = app.run("local.restoreHidden", json!({}));
         }
     }
     ui.add_space(10.0);
@@ -296,6 +310,12 @@ fn folder_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str, path: &st
         app.toast(ui.ctx(), e);
     }
     resp.context_menu(|ui| {
+        if indent == 0.0
+            && ui.button("Remove from Local").on_hover_text("Hides this shortcut only; the folder and its photos stay as they are").clicked()
+        {
+            let _ = app.run("local.hide", json!({"path": path}));
+            ui.close();
+        }
         if ui.button("Rename Folder…").clicked() {
             app.ui.dialog = Some(crate::state::Dialog::TextPrompt {
                 title: format!("Rename “{name}”"),

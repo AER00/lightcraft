@@ -794,6 +794,39 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Local: Remove from Local hides a sidebar location (nothing on disk changes) and the
+    /// "Show hidden locations" row puts it back.
+    #[test]
+    fn local_location_can_be_hidden_and_restored() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let dir = std::env::temp_dir().join(format!("lc-ui-hide-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.to_string_lossy().to_string();
+        let ids = |h: &mut Headless| -> Vec<String> {
+            let w = h.request("ui.widgets", json!({"filter": "source:local:"}), t);
+            w["result"].as_array().unwrap().iter().filter_map(|x| x["id"].as_str().map(String::from)).collect()
+        };
+        h.request("ui.set", json!({"leftPanel": true}), t);
+        h.request("engine.execute", json!({"command": "library.browse", "params": {"path": path}}), t);
+        h.settle(SETTLE);
+        assert!(ids(&mut h).contains(&format!("source:local:{path}")));
+        assert!(!ids(&mut h).iter().any(|i| i == "source:local:restoreHidden"));
+        let r = h.request("engine.execute", json!({"command": "local.hide", "params": {"path": path}}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        let after = ids(&mut h);
+        assert!(!after.contains(&format!("source:local:{path}")), "{after:?}");
+        assert!(after.iter().any(|i| i == "source:local:restoreHidden"), "{after:?}");
+        assert!(dir.is_dir(), "the folder itself is untouched");
+        assert_eq!(h.request("ui.clickWidget", json!({"id": "source:local:restoreHidden"}), t)["ok"], true);
+        h.settle(SETTLE);
+        assert!(h.app.ui.hidden_locations.is_empty());
+        assert!(ids(&mut h).contains(&format!("source:local:{path}")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Versions panel: resting on a version previews it in the loupe without changing the photo;
     /// a click restores it.
     #[test]
