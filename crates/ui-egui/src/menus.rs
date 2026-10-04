@@ -53,6 +53,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.back", "Back to Grid", Some("Escape"), ""),
     ("tool.done", "Done", Some("Enter"), ""),
     ("view.filterBar", "Filter Bar", Some("Shift+F"), "View"),
+    ("local.hide", "Remove from Local", None, ""),
+    ("local.restoreHidden", "Show Hidden Local Locations", None, ""),
     ("view.fullScreenPreview", "Full Screen Preview", Some("F"), "View"),
     ("view.enterFullScreen", "Enter Full Screen", Some("Cmd+Shift+F"), "View"),
     ("view.infoOverlay", "Cycle Info Overlay", Some("Cmd+I"), "View"),
@@ -552,6 +554,23 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "view.cropOverlayOrientation" => {
             app.ui.crop_overlay_orient = (app.ui.crop_overlay_orient + 1) % 4;
             Ok(json!({"orientation": app.ui.crop_overlay_orient}))
+        }
+        "local.hide" => match p.get("path").and_then(Value::as_str) {
+            Some(path) => {
+                if !app.ui.hidden_locations.iter().any(|h| h == path) {
+                    app.ui.hidden_locations.push(path.to_string());
+                }
+                Ok(json!({"hidden": app.ui.hidden_locations}))
+            }
+            None => Err("local.hide needs a path".into()),
+        },
+        "local.restoreHidden" => {
+            // one path, or (no path) every hidden location
+            match p.get("path").and_then(Value::as_str) {
+                Some(path) => app.ui.hidden_locations.retain(|h| h != path),
+                None => app.ui.hidden_locations.clear(),
+            }
+            Ok(json!({"hidden": app.ui.hidden_locations}))
         }
         "view.filterBar" => {
             app.ui.filter_bar = !app.ui.filter_bar;
