@@ -103,6 +103,18 @@ fn set_develop_values_and_settings() {
 }
 
 #[test]
+fn crop_needs_a_rect_angle_or_reset() {
+    let mut b = Headless::demo();
+    let first = b.session.visible_cloned()[0];
+    // A guessed parameter must not succeed silently.
+    let r = call_tool(&mut b, "crop", &json!({"id": first.0, "aspect": "1:1"}));
+    assert!(r.is_error, "{r:?}");
+    assert!(call_tool(&mut b, "crop", &json!({"id": first.0, "reset": false})).is_error);
+    assert!(!call_tool(&mut b, "crop", &json!({"id": first.0, "rect": [0.1, 0.0, 0.9, 1.0]})).is_error);
+    assert!(!call_tool(&mut b, "crop", &json!({"id": first.0, "reset": true})).is_error);
+}
+
+#[test]
 fn ui_tools_need_the_app() {
     let mut b = Headless::demo();
     let r = call_tool(&mut b, "screenshot", &json!({}));

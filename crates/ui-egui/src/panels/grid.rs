@@ -32,7 +32,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
     ui.painter().rect_filled(hr, 0.0, t.canvas);
     let sel_n = app.session.selection.ids.len();
-    let cnt = if sel_n > 1 { format!("{sel_n} of {} photos", ids.len()) } else { format!("{} photos", ids.len()) };
+    let chips = lightcraft_engine::filter_chips(&app.session.filter, &app.session.catalog);
+    let total = app.session.source_total();
+    let counted = super::chips::count_text(ids.len(), total, !chips.is_empty());
+    let cnt = if sel_n > 1 { format!("{sel_n} selected · {counted}") } else { counted };
     match app.session.browse.clone().filter(|_| app.session.source == lightcraft_engine::LibrarySource::Folder) {
         Some(b) => folder_header(app, ui, hr, &b, &ids, &cnt),
         None => {
@@ -41,15 +44,27 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
         }
     }
+    super::chips::show(app, ui, &chips);
     if app.ui.filter_bar {
         super::filterbar::show(app, ui);
     }
     app.canvas_rect = Some(ui.max_rect());
     if ids.is_empty() {
-        if app.session.source == lightcraft_engine::LibrarySource::Folder {
-            super::empty_message(ui, ui.max_rect(), "No photos in this folder", "Turn on Include subfolders, or pick another folder under Local");
+        if !chips.is_empty() {
+            let body = match total {
+                Some(n) if n > 0 => format!("{n} photos in {} are hidden by the filters above", app.session.source.label(&app.session.catalog)),
+                _ => "Remove a filter above, or choose Clear all".to_string(),
+            };
+            super::empty_message(ui, ui.max_rect(), "No photos match the active filters", &body);
         } else if app.session.filter != Default::default() {
-            super::empty_message(ui, ui.max_rect(), "No matching photos", "Change the filter, or clear it (View → Clear Filters)");
+            super::empty_message(
+                ui,
+                ui.max_rect(),
+                "No matching photos",
+                "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)",
+            );
+        } else if app.session.source == lightcraft_engine::LibrarySource::Folder {
+            super::empty_message(ui, ui.max_rect(), "No photos in this folder", "Turn on Include subfolders, or pick another folder under Local");
         } else {
             super::empty_message(ui, ui.max_rect(), "No photos", "Add photos with File → Add Photos (Cmd+Shift+I), or drop them here");
         }

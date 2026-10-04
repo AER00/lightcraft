@@ -173,6 +173,7 @@ impl Headless {
     pub fn busy(&self) -> bool {
         self.app.renderer.in_flight() > 0
             || self.app.merge.busy()
+            || self.app.scan.is_some()
             || self.app.import.is_some()
             || self.app.export.is_some()
             || !self.app.synthetic.is_empty()
@@ -767,7 +768,12 @@ mod tests {
         }
         let library_before = h.app.session.catalog.photos().filter(|p| !p.local).count();
         let r = h.request("engine.execute", json!({"command": "library.browse", "params": {"path": dir.to_string_lossy()}}), t);
-        assert_eq!(r["result"]["photos"], 1, "{r}");
+        // the folder is read in the background: the view switches at once, the photos follow
+        assert_eq!(r["result"]["scanning"], true, "{r}");
+        assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::Folder);
+        h.settle(SETTLE);
+        assert!(h.app.scan.is_none() && h.app.import.is_none());
+        assert_eq!(h.app.session.visible_cloned().len(), 1);
         assert!(h.settle(SETTLE), "a thumbnail that can't load must not keep the renderer busy");
         // this test session has no file hooks: the thumbnail fails once, is remembered, and isn't retried
         let id = h.app.session.visible_cloned()[0];
@@ -922,6 +928,39 @@ mod tests {
 
     /// The folder scan runs in the background: the request returns at once and the review opens
     /// when the scan finishes (a folder on a network share must not freeze the window).
+    /// Clicking the folder being read again keeps the running read (and its progress).
+    #[test]
+    fn browsing_the_same_folder_again_does_not_restart() {
+        let mut h = demo([1200.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let dir = std::env::temp_dir().join(format!("lc-browse-again-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = lightcraft_raster::Rgba8::from_fn(8, 8, |x, y| [(x * 9) as u8, (y * 12) as u8, 80, 255]);
+        let o = lightcraft_engine::export::ExportOptions { format: lightcraft_engine::export::ExportFormat::Png, ..Default::default() };
+        std::fs::write(dir.join("a.png"), lightcraft_engine::export::encode_image(&img, &o).unwrap()).unwrap();
+        let gate = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (g, n) = (gate.clone(), started.clone());
+        h.app.session.media.file_probe = Some(std::sync::Arc::new(move |_: &str| {
+            n.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            while !g.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ok(lightcraft_engine::media::ProbeInfo { format: "PNG".into(), ..Default::default() })
+        }));
+        let browse =
+            |h: &mut Headless| h.request("engine.execute", json!({"command": "library.browse", "params": {"path": dir.to_string_lossy()}}), t);
+        assert_eq!(browse(&mut h)["result"]["scanning"], true);
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(browse(&mut h)["result"]["scanning"], true);
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(started.load(std::sync::atomic::Ordering::Relaxed), 1, "the second click must not start another read");
+        gate.store(true, std::sync::atomic::Ordering::Relaxed);
+        h.settle(SETTLE);
+        assert_eq!(h.app.session.visible_cloned().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn add_folder_scans_in_the_background() {
         let mut h = demo([1200.0, 900.0]);

@@ -94,6 +94,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     t.icon
                 },
             );
+            // badge: how many filters are on, even with the filter bar closed
+            let active = lightcraft_engine::filter_chips(&app.session.filter, &app.session.catalog).len();
+            if active > 0 {
+                let c = fr.right_top() + vec2(-3.0, 8.0);
+                ui.painter().circle_filled(c, 7.0, t.accent);
+                ui.painter().text(c, Align2::CENTER_CENTER, active.to_string(), t.semibold(9.5), t.canvas);
+            }
+            let fresp = fresp.on_hover_text(if active > 0 {
+                format!("Filter bar — {active} active filter{}", if active == 1 { "" } else { "s" })
+            } else {
+                "Filter bar".into()
+            });
             if fresp.clicked() {
                 let _ = app.run("view.filterBar", json!({}));
             }

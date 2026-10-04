@@ -289,6 +289,8 @@ pub struct UiState {
     pub spots_threshold: f32,
     /// The library filter bar above the grid.
     pub filter_bar: bool,
+    /// Folders picked with Local → Browse Folder…, kept in the sidebar after browsing elsewhere.
+    pub local_roots: Vec<String>,
     /// Culling: after a rating, flag or colour-label key, move to the next photo.
     pub auto_advance: bool,
     /// Full-screen preview (F): the photo alone on black, no chrome.
@@ -541,6 +543,7 @@ impl Default for UiState {
             settings: AppSettings::default(),
             window_fullscreen: None,
             filter_bar: false,
+            local_roots: Vec::new(),
             compare: None,
             reference: None,
             toast: None,

@@ -37,7 +37,7 @@ use lightcraft_catalog::{Catalog, Filter, Op, PhotoId, Sort};
 use lightcraft_develop::DevelopSettings;
 pub use media::{RenderJob, SourceLevel};
 use serde_json::Value;
-pub use view::{Browse, LibrarySource, Selection};
+pub use view::{Browse, FilterChip, LibrarySource, Selection, filter_chips};
 pub use {lightcraft_catalog as catalog, lightcraft_develop as develop, lightcraft_gpu as gpu, lightcraft_pipeline as pipeline};
 
 #[derive(Debug, thiserror::Error)]
@@ -83,6 +83,8 @@ pub struct Session {
     /// The grid order for the current source/filter/sort (cached by catalog revision).
     visible: Vec<PhotoId>,
     visible_key: Option<(u64, String)>,
+    /// Photos in the current source with no filter on (cached like `visible`).
+    total: Option<((u64, String), usize)>,
     pub undo: Vec<UndoEntry>,
     pub redo: Vec<UndoEntry>,
     pub interaction: Option<Interaction>,
@@ -155,6 +157,8 @@ pub struct Session {
     pub import_defaults: import::ImportDefaults,
     /// Disk budget of the library's thumbnail cache in MB (0 = default; persisted in prefs.json).
     pub cache_mb: u32,
+    /// Where smart previews are kept when not in the library folder (persisted in prefs.json).
+    pub smart_previews_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for Session {
@@ -174,6 +178,7 @@ impl Session {
             selection: Selection::default(),
             visible: Vec::new(),
             visible_key: None,
+            total: None,
             undo: Vec::new(),
             redo: Vec::new(),
             interaction: None,
@@ -212,6 +217,7 @@ impl Session {
             preview_build: None,
             import_defaults: import::ImportDefaults::default(),
             cache_mb: 0,
+            smart_previews_dir: None,
         }
     }
 
@@ -510,6 +516,26 @@ impl Session {
             self.visible_key = Some(key);
         }
         &self.visible
+    }
+
+    /// Photos in the current source (folder, album, …) before the filter bar and search narrow
+    /// them; `None` where that is not a separate number (Missing Photos).
+    pub fn source_total(&mut self) -> Option<usize> {
+        if self.source == LibrarySource::Missing {
+            return None;
+        }
+        let key = (self.catalog.revision, format!("{:?}|{:?}", self.source, self.browse));
+        if self.total.as_ref().map(|t| &t.0) != Some(&key) {
+            let mut f = self.source.to_filter(&Filter::default(), &self.catalog);
+            if self.source == LibrarySource::Folder {
+                let b = self.browse.clone().unwrap_or_default();
+                f.folder = Some(b.path);
+                f.subfolders = b.subfolders;
+            }
+            let n = self.catalog.query(&f, &self.sort).len();
+            self.total = Some((key, n));
+        }
+        self.total.as_ref().map(|t| t.1)
     }
 
     pub fn visible_cloned(&mut self) -> Vec<PhotoId> {

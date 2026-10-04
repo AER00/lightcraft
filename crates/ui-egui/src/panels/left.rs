@@ -146,20 +146,51 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         });
 }
 
-/// How many library photos have no file (cached in egui memory, refreshed every 5 s).
+/// How many library photos have no file. Checking stats every file, which on a network share
+/// takes seconds, so it runs on a worker thread: the count shown is the last finished one,
+/// refreshed at most every 5 s (or when the catalog changed).
 fn missing_count(app: &mut LightcraftApp, ui: &mut egui::Ui) -> usize {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
+    #[derive(Clone, Default)]
+    struct Job {
+        n: std::sync::Arc<AtomicUsize>,
+        running: std::sync::Arc<AtomicBool>,
+        at: f64,
+        rev: u64,
+    }
     let id = egui::Id::new("missing-count");
     let now = ui.input(|i| i.time);
     let rev = app.session.catalog.revision;
-    if let Some((n, at, r)) = ui.data(|d| d.get_temp::<(usize, f64, u64)>(id))
-        && now - at < 5.0
-        && r == rev
-    {
-        return n;
+    let mut job: Job = ui.data(|d| d.get_temp(id)).unwrap_or(Job { rev: u64::MAX, at: f64::MIN, ..Default::default() });
+    let fresh = now - job.at < 5.0 && job.rev == rev;
+    if !fresh && !job.running.load(Relaxed) {
+        let paths: Vec<String> = app
+            .session
+            .catalog
+            .photos()
+            .filter(|p| !p.deleted)
+            .filter_map(|p| match &p.source {
+                lightcraft_catalog::Source::File { path } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        job.running.store(true, Relaxed);
+        job.at = now;
+        job.rev = rev;
+        let (n, running, ctx) = (job.n.clone(), job.running.clone(), ui.ctx().clone());
+        let work = move || {
+            let missing = if cfg!(target_arch = "wasm32") { 0 } else { paths.iter().filter(|p| !std::path::Path::new(p).exists()).count() };
+            n.store(missing, Relaxed);
+            running.store(false, Relaxed);
+            ctx.request_repaint();
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(work);
+        #[cfg(target_arch = "wasm32")]
+        work();
+        ui.data_mut(|d| d.insert_temp(id, job.clone()));
     }
-    let n = lightcraft_engine::cmd::missing::missing(&app.session).len();
-    ui.data_mut(|d| d.insert_temp(id, (n, now, rev)));
-    n
+    job.n.load(Relaxed)
 }
 
 /// Folders on this computer to browse without adding (Lightroom's Local): Pictures, Desktop,
@@ -182,11 +213,13 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     let browsing = app.session.browse.clone().filter(|_| app.session.source == LibrarySource::Folder);
-    if let Some(b) = &browsing
-        && !places.iter().any(|(_, p)| *p == b.path)
-    {
-        let name = std::path::Path::new(&b.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| b.path.clone());
-        places.push((name, b.path.clone()));
+    // picked folders stay listed; the folder being browsed is listed even when it wasn't picked
+    let roots = app.ui.local_roots.iter().cloned().chain(browsing.iter().map(|b| b.path.clone()));
+    for path in roots {
+        if !places.iter().any(|(_, p)| *p == path) {
+            let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
+            places.push((name, path));
+        }
     }
     let current = browsing.as_ref().map(|b| b.path.clone());
     // hidden locations stay reachable: breadcrumbs, Browse Folder…, and the row below
@@ -199,8 +232,14 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         if let Some(path) = picked {
             // choosing a folder again puts it back in the list
             let _ = app.run("local.restoreHidden", json!({"path": path}));
-            if let Err(e) = app.run("library.browse", json!({"path": path})) {
-                app.toast(ui.ctx(), e);
+            match app.run("library.browse", json!({"path": path})) {
+                Ok(r) => {
+                    let dir = r["path"].as_str().unwrap_or(&path).to_string();
+                    if !app.ui.local_roots.contains(&dir) {
+                        app.ui.local_roots.push(dir);
+                    }
+                }
+                Err(e) => app.toast(ui.ctx(), e),
             }
         }
     }

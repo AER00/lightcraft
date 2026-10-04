@@ -126,6 +126,8 @@ struct PrefsFile {
     import: crate::import::ImportDefaults,
     /// Thumbnail disk cache budget (MB, 0 = default).
     cache_mb: u32,
+    /// Folder for smart previews (default: `Smart Previews` in the library).
+    smart_previews_dir: Option<String>,
 }
 
 fn presets_json(s: &Session) -> String {
@@ -200,6 +202,10 @@ impl Session {
         self.recent_keywords = prefs.recent_keywords;
         self.import_defaults = prefs.import;
         self.cache_mb = prefs.cache_mb;
+        self.smart_previews_dir = prefs.smart_previews_dir.filter(|_| on_disk).map(PathBuf::from);
+        if let Some(d) = &self.smart_previews_dir {
+            self.media.smart_dir = Some(d.clone());
+        }
         // view state
         if let Some(v) = read_json::<ViewFile>(files.as_mut(), "view.json") {
             self.source = v.source;
@@ -320,6 +326,7 @@ impl Session {
             recent_keywords: self.recent_keywords.clone(),
             import: self.import_defaults.clone(),
             cache_mb: self.cache_mb,
+            smart_previews_dir: self.smart_previews_dir.as_ref().map(|d| d.to_string_lossy().to_string()),
         })
         .unwrap_or_default();
         let Some(lib) = self.library.as_mut() else { return Ok(()) };

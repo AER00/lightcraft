@@ -521,3 +521,67 @@ fn dust_spots_are_found_and_healed() {
     assert!(s.develop_of(id).unwrap().spots.is_empty(), "one undo step");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Smart previews can live outside the library: the folder is saved per library, used for
+/// building, status and offline rendering, changing it needs an explicit choice for the
+/// previews already built, and an unavailable folder is an error (never a silent fallback).
+#[test]
+fn smart_previews_folder_is_chosen_per_library() {
+    let src = temp_dir("smartloc-src");
+    let lib = temp_dir("smartloc-lib");
+    let away = temp_dir("smartloc-away");
+    write_png(&src.join("a.png"), 7);
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    s.execute("library.import", &json!({"paths": [src.join("a.png").to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    let loc = s.execute("library.smartPreviewsLocation", &json!({})).unwrap();
+    assert_eq!(loc["custom"], false);
+    assert_eq!(loc["path"], lib.join("Smart Previews").to_string_lossy().as_ref());
+    s.execute("library.smartPreviews", &json!({})).unwrap();
+    assert_eq!(crate::smart::stats(&lib.join("Smart Previews")).0, 1);
+
+    // relative paths and missing drives are refused, and nothing is created on this drive
+    assert!(s.execute("library.smartPreviewsLocation", &json!({"path": "rel/dir"})).is_err());
+    let gone = away.join("unplugged/previews");
+    let err = s.execute("library.smartPreviewsLocation", &json!({"path": gone.to_string_lossy()})).unwrap_err().to_string();
+    assert!(err.contains("not available"), "{err}");
+    assert!(!away.join("unplugged").exists());
+    // the previews already built need an explicit choice
+    let to = away.join("proxies");
+    let err = s.execute("library.smartPreviewsLocation", &json!({"path": to.to_string_lossy()})).unwrap_err().to_string();
+    assert!(err.contains("existing"), "{err}");
+    assert_eq!(s.execute("library.smartPreviewsLocation", &json!({})).unwrap()["custom"], false);
+
+    let r = s.execute("library.smartPreviewsLocation", &json!({"path": to.to_string_lossy(), "existing": "move"})).unwrap();
+    assert_eq!((r["custom"].clone(), r["handled"].clone(), r["count"].clone()), (json!(true), json!(1), json!(1)), "{r}");
+    assert_eq!(crate::smart::stats(&lib.join("Smart Previews")).0, 0);
+    assert_eq!(s.execute("photo.smartPreview", &json!({})).unwrap()["smartPreview"], true);
+
+    // the setting is saved with the library
+    let mut again = Session::new().with_fs();
+    again.open_library(&lib, false).unwrap();
+    assert_eq!(again.execute("library.smartPreviewsLocation", &json!({})).unwrap()["path"], to.to_string_lossy().as_ref());
+
+    // offline original: the render comes from the proxy in the chosen folder
+    std::fs::rename(&src, src.with_extension("offline")).unwrap();
+    again.media.forget(id);
+    again.render_now(id, 48, 32).expect("renders from the smart preview in the chosen folder");
+
+    // the chosen drive goes away: building says so and creates nothing on this drive
+    let drive = away.join("drive");
+    std::fs::create_dir_all(&drive).unwrap();
+    let on_drive = drive.join("proxies");
+    again.execute("library.smartPreviewsLocation", &json!({"path": on_drive.to_string_lossy(), "existing": "leave"})).unwrap();
+    std::fs::remove_dir_all(&drive).unwrap();
+    let loc = again.execute("library.smartPreviewsLocation", &json!({})).unwrap();
+    assert_eq!(loc["available"], false, "{loc}");
+    let err = again.execute("library.smartPreviews", &json!({"ids": [id.0]})).unwrap_err().to_string();
+    assert!(err.contains("not available"), "{err}");
+    assert!(!drive.exists());
+
+    // back to the library's own folder, discarding the proxies left in the first chosen folder
+    let r = again.execute("library.smartPreviewsLocation", &json!({"reset": true})).unwrap();
+    assert_eq!(r["custom"], false, "{r}");
+    assert_eq!(r["path"], lib.join("Smart Previews").to_string_lossy().as_ref());
+}

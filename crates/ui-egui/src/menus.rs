@@ -861,6 +861,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.dialog = Some(Dialog::Shortcuts);
             Ok(Value::Null)
         }
+        "library.browse" if !cfg!(target_arch = "wasm32") => {
+            // listed and read in the background (see `import::browse`)
+            let path = p.get("path").and_then(Value::as_str)?;
+            crate::import::browse(app, path, p.get("subfolders").and_then(Value::as_bool))
+        }
         "file.addPhotos" => {
             let paths = match p.get("paths").and_then(Value::as_array) {
                 Some(a) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),

@@ -305,7 +305,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     });
                     field(ui, "Start at", |ui| ui.add(egui::DragValue::new(start).range(0..=999_999)));
                     ui.label(
-                        egui::RichText::new("Tokens: {name} {seq} {seq:3} {date} {date:%Y-%m-%d} {camera} {title}. Files are renamed on disk (with their XMP sidecars); existing names get -1, -2…")
+                        egui::RichText::new("Tokens: {name} {num} {seq} {seq:3} {date} {date:%Y-%m-%d} {folder} {camera} {lens} {iso} {rating} {title} {creator}. Files are renamed on disk (with their XMP sidecars); existing names get -1, -2…")
                             .color(t.text_dim),
                     );
                     let preview = app.session.execute("photo.renamePreview", &json!({"template": template, "start": start})).unwrap_or_default();
@@ -577,9 +577,9 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         choices(ui, "Compression", "exportDngCompression", &[(Z::Lossless, "Lossless"), (Z::Deflate, "ZIP"), (Z::Uncompressed, "None")], &mut opts.dng_compression);
                     }
                     field(ui, "File name", |ui| {
-                        ui.add(egui::TextEdit::singleline(&mut opts.naming).hint_text("{name}-{seq}  ·  {date}").desired_width(f32::INFINITY))
+                        ui.add(egui::TextEdit::singleline(&mut opts.naming).hint_text("{name}-{seq}  ·  {date}  ·  {title}  ·  {folder}").desired_width(f32::INFINITY))
                     });
-                    if opts.naming.contains("{seq}") {
+                    if opts.naming.contains("{seq") {
                         let mut v = opts.start_number as f64;
                         if num(ui, &START_NUMBER, &mut v) {
                             opts.start_number = v as u32;
