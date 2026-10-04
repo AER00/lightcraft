@@ -18,6 +18,7 @@
 //! (public specifications, tag-name documentation, black-box analysis of CC0 samples) and gaps. Non-DNG files carry no
 //! colour matrix: [`color`] falls back to a documented neutral model. The decoders never panic on malformed input.
 #![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod binned;
 pub mod color;
@@ -265,6 +266,11 @@ impl Cfa {
             })
             .collect::<Option<_>>()?;
         (p.len() == 4).then_some(Cfa { width: 2, height: 2, pattern: p })
+    }
+    /// A 2×2 Bayer layout named in code (`"RGGB"`, `"BGGR"`, `"GRBG"`, `"GBRG"`). Only for literal
+    /// names (tested below); anything else falls back to RGGB instead of failing.
+    pub(crate) fn bayer_static(s: &'static str) -> Cfa {
+        Cfa::bayer(s).unwrap_or(Cfa { width: 2, height: 2, pattern: vec![0, 1, 1, 2] })
     }
     /// The Fujifilm X-Trans 6×6 layout (as commonly documented), anchored at (0, 0).
     pub fn xtrans() -> Cfa {
@@ -575,6 +581,9 @@ mod tests {
         assert_eq!(c.shifted(1, 0).name(), "GRBG");
         assert_eq!(c.shifted(1, 1).name(), "BGGR");
         assert!(Cfa::bayer("RGGX").is_none());
+        for name in ["RGGB", "BGGR", "GRBG", "GBRG"] {
+            assert_eq!(Cfa::bayer_static(name).name(), name);
+        }
         let x = Cfa::xtrans();
         assert!(!x.is_bayer());
         let greens = x.pattern.iter().filter(|&&p| p == 1).count();

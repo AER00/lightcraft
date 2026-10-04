@@ -74,11 +74,11 @@ pub(crate) fn unpack(stream: &[u8], bits: u32, out: &mut [u16]) -> Result<()> {
         let first_block = ci * 1024;
         for (bi, px) in o.chunks_mut(per).enumerate() {
             let at = (first_block + bi) * 16;
-            let Some(b) = stream.get(at..at + 16) else {
+            let Some(b) = stream.get(at..at + 16).and_then(|b| <[u8; 16]>::try_from(b).ok()) else {
                 px.fill(0);
                 continue;
             };
-            let word = u128::from_le_bytes(b.try_into().expect("16 bytes"));
+            let word = u128::from_le_bytes(b);
             for (i, p) in px.iter_mut().enumerate() {
                 *p = ((word >> (start + i as u32 * bits)) & mask) as u16;
             }
@@ -94,7 +94,7 @@ fn cfa(code: u16) -> Cfa {
         4 => "BGGR",
         _ => "RGGB",
     };
-    Cfa::bayer(s).expect("static")
+    Cfa::bayer_static(s)
 }
 
 pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
