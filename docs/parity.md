@@ -504,7 +504,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-APP-SYNC | Sync status / pause | OOS | 🚫 | | |
 | MENU-APP-SIGNOUT | Sign out | OOS | 🚫 | | |
 | MENU-APP-HIDE | Hide / hide others / show all | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | the system's own items in the app menu (⌘H, ⌥⌘H) |
-| MENU-APP-QUIT | Quit | P0 | ✅ | `cmd:app.quit`, `apps/lightcraft/src/native_menu.rs` | macOS: app menu (native); elsewhere: File → Quit LightCraft |
+| MENU-APP-QUIT | Quit | P0 | ✅ | `cmd:app.quit`, `apps/lightcraft/src/native_menu.rs` | macOS: app menu (native); elsewhere: File → Quit LightCraft, always the last item in its own group (after commands the File layout does not list) |
 | MENU-FILE-ADDPHOTOS | Add Photos… | P0 | ✅ | `cmd:file.addPhotos` | |
 | MENU-FILE-ADDFOLDER | Add Folder… | P0 | ✅ | `cmd:file.addFolder`, `cmd:library.importPreview` | folder picker (desktop) → the import review, subfolders included; `path` param for agents |
 | MENU-FILE-MIGRATE | Migrate photos | OOS | 🚫 | | |

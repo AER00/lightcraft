@@ -47,7 +47,8 @@ impl MenuNode {
 pub const MENUS: &[&str] = &["File", "Edit", "View", "Photo", "Window", "Help"];
 
 /// Order and grouping per menu: command ids, `---` separators and `@Submenu` placeholders.
-/// Entries with a menu path that aren't listed are appended at the end of their menu.
+/// Entries with a menu path that aren't listed are appended at the end of their menu, before any
+/// [`LAST`] item.
 const LAYOUT: &[(&str, &[&str])] = &[
     (
         "File",
@@ -218,6 +219,10 @@ const LAYOUT: &[(&str, &[&str])] = &[
         ],
     ),
 ];
+
+/// Items that always end their menu in their own separator group, after the entries appended
+/// because the layout doesn't list them (Quit is the last item of the in-window File menu).
+const LAST: &[&str] = &["app.quit"];
 
 /// Registry entries that are reached another way (parameterized commands are expanded into
 /// submenus below; others duplicate a dialog command).
@@ -535,6 +540,7 @@ pub fn menu_bar(app: &LightcraftApp) -> Vec<(String, Vec<MenuNode>)> {
     for title in MENUS {
         let layout = LAYOUT.iter().find(|(t, _)| t == title).map(|(_, l)| *l).unwrap_or(&[]);
         let mut items = Vec::new();
+        let mut last = Vec::new();
         let sub = |name: &str, used: &mut [bool]| -> Vec<MenuNode> {
             let mut children = expanded(app, name).unwrap_or_default();
             let mut dialogs = Vec::new();
@@ -559,7 +565,7 @@ pub fn menu_bar(app: &LightcraftApp) -> Vec<(String, Vec<MenuNode>)> {
                 items.push(MenuNode::Submenu { label: name.to_string(), children });
             } else if let Some(i) = entries.iter().position(|e| e.id == *slot && e.menu.first().map(String::as_str) == Some(title)) {
                 used[i] = true;
-                items.push(node(app, &entries[i]));
+                if LAST.contains(slot) { last.push(node(app, &entries[i])) } else { items.push(node(app, &entries[i])) }
             }
         }
         // everything else that names this menu
@@ -579,6 +585,10 @@ pub fn menu_bar(app: &LightcraftApp) -> Vec<(String, Vec<MenuNode>)> {
         for name in extra_subs {
             let children = sub(&name, &mut used);
             items.push(MenuNode::Submenu { label: name, children });
+        }
+        if !last.is_empty() {
+            items.push(MenuNode::Separator);
+            items.extend(last);
         }
         bar.push((title.to_string(), tidy(items)));
     }
@@ -771,6 +781,28 @@ mod tests {
         assert!(matches!(&rated[..], [MenuNode::Item { params, .. }] if params["rating"] == 3));
         let Some(MenuNode::Item { checked, .. }) = find(&all, "view.filmstrip") else { panic!() };
         assert_eq!(*checked, Some(app.ui.filmstrip));
+    }
+
+    #[test]
+    fn quit_ends_the_file_menu_after_unlisted_entries() {
+        let app = app();
+        // the File menu has registry entries the layout doesn't list (appended as fallbacks)
+        let listed = LAYOUT.iter().find(|(t, _)| *t == "File").unwrap().1;
+        let unlisted: Vec<String> = crate::menus::menu_entries(&app)
+            .into_iter()
+            .filter(|e| e.menu.first().map(String::as_str) == Some("File") && !listed.contains(&e.id.as_str()) && !HIDDEN.contains(&e.id.as_str()))
+            .map(|e| e.id)
+            .collect();
+        assert!(!unlisted.is_empty(), "no fallback File entries to order");
+        let bar = menu_bar(&app);
+        let file = &bar.iter().find(|(t, _)| t == "File").unwrap().1;
+        // Quit is the last item, alone in its separator group
+        assert!(matches!(file.last(), Some(MenuNode::Item { id, .. }) if id == "app.quit"), "{file:?}");
+        assert_eq!(file.get(file.len() - 2), Some(&MenuNode::Separator));
+        // every fallback entry is still reachable, before Quit
+        for id in &unlisted {
+            assert!(find(&file[..file.len() - 1], id).is_some(), "{id} missing before Quit");
+        }
     }
 
     #[test]
