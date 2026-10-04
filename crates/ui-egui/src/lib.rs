@@ -27,6 +27,8 @@ mod tests_curve;
 #[cfg(test)]
 mod tests_masking;
 #[cfg(test)]
+mod tests_panels;
+#[cfg(test)]
 mod tests_scroll;
 
 use std::sync::mpsc::{Receiver, Sender};

@@ -13,33 +13,36 @@ use crate::widgets::{divider, register, slider, text_button};
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
-    egui::Panel::right("right_panel")
-        .exact_size(t.panel_w)
-        .resizable(false)
-        .frame(egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider)))
-        .show(ui, |ui| {
-            let Some(id) = app.session.active() else {
-                let r = ui.max_rect();
-                super::empty_message(ui, r, "No photo selected", "Select a photo to edit");
-                return;
-            };
-            egui::ScrollArea::vertical().id_salt("right-scroll").auto_shrink([false, false]).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                match app.ui.right {
-                    RightPanel::Edit => super::edit::show(app, ui, id),
-                    RightPanel::Profiles => super::profiles::show(app, ui, id),
-                    RightPanel::Crop => crop(app, ui, id),
-                    RightPanel::Remove => remove(app, ui, id),
-                    RightPanel::Masking => super::masking::show(app, ui, id),
-                    RightPanel::RedEye => red_eye(app, ui, id),
-                    RightPanel::Info => info(app, ui, id),
-                    RightPanel::Keywords => keywords(app, ui, id),
-                    RightPanel::Versions => versions(app, ui, id),
-                    RightPanel::Activity => activity(app, ui, id),
-                    RightPanel::None => {}
-                }
-            });
+    let frame = egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider));
+    // the presets column and the left sidebar are laid out after this panel: leave them their room
+    let reserve = if app.ui.presets { t.panel_w } else { 0.0 } + if app.ui.left_panel { crate::state::LEFT_WIDTH.min } else { 0.0 };
+    let width = app.ui.right_width;
+    let resized = super::resizable_side(ui, false, "right_panel", frame, width, crate::state::RIGHT_WIDTH, reserve, |ui| {
+        let Some(id) = app.session.active() else {
+            let r = ui.max_rect();
+            super::empty_message(ui, r, "No photo selected", "Select a photo to edit");
+            return;
+        };
+        egui::ScrollArea::vertical().id_salt("right-scroll").auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            match app.ui.right {
+                RightPanel::Edit => super::edit::show(app, ui, id),
+                RightPanel::Profiles => super::profiles::show(app, ui, id),
+                RightPanel::Crop => crop(app, ui, id),
+                RightPanel::Remove => remove(app, ui, id),
+                RightPanel::Masking => super::masking::show(app, ui, id),
+                RightPanel::RedEye => red_eye(app, ui, id),
+                RightPanel::Info => info(app, ui, id),
+                RightPanel::Keywords => keywords(app, ui, id),
+                RightPanel::Versions => versions(app, ui, id),
+                RightPanel::Activity => activity(app, ui, id),
+                RightPanel::None => {}
+            }
         });
+    });
+    if let Some(w) = resized {
+        app.ui.right_width = w;
+    }
 }
 
 pub fn header(ui: &mut egui::Ui, title: &str) {

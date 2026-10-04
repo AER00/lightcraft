@@ -175,6 +175,28 @@ pub const PREVIEW_EDGES: [u32; 4] = [1600, 2560, 3840, 5120];
 /// Click-zoom ratios offered (percent): 1:1, 2:1, 3:1, 4:1, 8:1.
 pub const CLICK_ZOOMS: [u32; 5] = [100, 200, 300, 400, 800];
 
+/// Width limits of a side panel the user resizes (points).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PanelWidth {
+    pub min: f32,
+    pub default: f32,
+    pub max: f32,
+}
+
+impl PanelWidth {
+    /// `w` within the limits (the default when it isn't a number).
+    pub fn clamp(&self, w: f32) -> f32 {
+        if w.is_finite() { w.clamp(self.min, self.max) } else { self.default }
+    }
+}
+
+/// The left sidebar (sources, albums, folders).
+pub const LEFT_WIDTH: PanelWidth = PanelWidth { min: 200.0, default: 268.0, max: 480.0 };
+/// The right panel (Edit, Masking, Info, …).
+pub const RIGHT_WIDTH: PanelWidth = PanelWidth { min: 250.0, default: 270.0, max: 520.0 };
+/// The photo area the side panels always leave free (as far as their minimum widths allow).
+pub const MIN_PHOTO_WIDTH: f32 = 360.0;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
@@ -184,6 +206,10 @@ pub struct UiState {
     pub view: ViewMode,
     pub left_panel: bool,
     pub right: RightPanel,
+    /// Widths of the left sidebar and of the right panel in points (dragging their inner edge
+    /// resizes them; within [`LEFT_WIDTH`] / [`RIGHT_WIDTH`]).
+    pub left_width: f32,
+    pub right_width: f32,
     /// Presets column open (opens to the left of the Edit panel).
     pub presets: bool,
     /// Presets column: show a live thumbnail of the photo with each preset.
@@ -477,6 +503,8 @@ impl Default for UiState {
             luminance_map_restore: None,
             view: ViewMode::Detail,
             left_panel: false,
+            left_width: LEFT_WIDTH.default,
+            right_width: RIGHT_WIDTH.default,
             right: RightPanel::Edit,
             presets: false,
             preset_thumbs: false,
@@ -580,6 +608,8 @@ impl UiState {
     /// Clamp values restored from disk.
     pub fn sanitized(mut self) -> Self {
         self.thumb_size = self.thumb_size.clamp(90.0, 480.0);
+        self.left_width = LEFT_WIDTH.clamp(self.left_width);
+        self.right_width = RIGHT_WIDTH.clamp(self.right_width);
         self.brush_size = self.brush_size.clamp(0.002, 0.5);
         self.dialog = None;
         self.fullscreen = false;
