@@ -8,8 +8,9 @@
 //! 4. Skip **duplicates by content** (same bytes already in the library, or twice in this batch).
 //! 5. *Add* in place (the photo points at the original file) or *copy* into the library's
 //!    `Originals/YYYY/YYYY-MM-DD/` folder (names made unique) and point at the copy.
-//! 6. Read each photo's XMP sidecar (or a raw/DNG file's embedded XMP): the sidecar wins for
-//!    metadata and develop settings are restored (see [`crate::sidecar`]).
+//! 6. Apply each photo's XMP sidecar (or a raw/DNG file's embedded XMP): the sidecar wins for
+//!    metadata and develop settings are restored (see [`crate::sidecar`]). Its capture time fills
+//!    in when the file has none (read before step 5, so it also files and names the copy).
 //! 7. Optionally apply a preset and add keywords (the import dialog's options).
 //! 8. Commit all new photos as one undoable op.
 //!
@@ -553,6 +554,23 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
             report.duplicates.push(Duplicate { path, existing: Some(id.0), reason: "content" });
             continue;
         }
+        // the XMP sidecar (or a raw's embedded XMP), read before copying: its capture time files
+        // and names the copy when the file itself has none
+        let raw = info.kind == MediaKind::Raw;
+        let packet = crate::sidecar::find_sidecar(&path, s.xmp.naming)
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .or_else(|| info.xmp.clone().filter(|_| raw));
+        let sidecar = packet.and_then(|x| match crate::sidecar::parse_sidecar(&x, raw).map(|sc| sc.resolve_label(&s.catalog)) {
+            Ok(sc) => (sc != crate::sidecar::SidecarData::default()).then_some(sc),
+            Err(e) => {
+                log::warn!("import {path}: XMP: {e}");
+                None
+            }
+        });
+        let mut info = info;
+        if info.captured.is_none() {
+            info.captured = sidecar.as_ref().and_then(|sc| sc.captured.clone());
+        }
         let stored = match (mode, &copy_root) {
             (ImportMode::Copy, Some(root))
                 if !Path::new(&path).starts_with(root) && !lib_dir.as_ref().is_some_and(|l| Path::new(&path).starts_with(l)) =>
@@ -583,7 +601,6 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         }
         // Copy as DNG: the copied raw becomes a DNG (the copy is ours to replace)
         let mut stored = stored;
-        let mut info = info;
         if opts.convert_dng && mode == ImportMode::Copy && stored != path && info.kind == MediaKind::Raw && !info.format.eq_ignore_ascii_case("DNG") {
             match crate::cmd::convert::write_dng_for(s, &stored, String::new()) {
                 Ok(dng) => {
@@ -606,19 +623,9 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         p.embedded_lens = info.embedded_lens;
         p.preview_only = info.preview_only.clone();
         apply_import_defaults(s, &mut p);
-        let raw = p.kind == lightcraft_catalog::MediaKind::Raw;
-        let packet = crate::sidecar::find_sidecar(&path, s.xmp.naming)
-            .and_then(|f| std::fs::read_to_string(f).ok())
-            .or_else(|| info.xmp.clone().filter(|_| raw));
-        if let Some(x) = packet {
-            match crate::sidecar::parse_sidecar(&x, raw).map(|sc| sc.resolve_label(&s.catalog)) {
-                Ok(sc) if sc != crate::sidecar::SidecarData::default() => {
-                    crate::sidecar::merge_into(&mut p, &sc, &now);
-                    report.sidecars += 1;
-                }
-                Ok(_) => {}
-                Err(e) => log::warn!("import {path}: XMP: {e}"),
-            }
+        if let Some(sc) = &sidecar {
+            crate::sidecar::merge_into(&mut p, sc, &now);
+            report.sidecars += 1;
         }
         if let Some(mp) = opts.metadata_preset.as_ref().and_then(|n| s.metadata_presets.iter().find(|m| m.name.eq_ignore_ascii_case(n))) {
             crate::cmd::metadata::apply_to(&mut p.meta, &mp.fields);

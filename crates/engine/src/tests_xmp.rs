@@ -445,3 +445,55 @@ fn dng_export_compression_choices() {
     }
     assert!(sizes[2].1 > sizes[0].1 && sizes[2].1 > sizes[1].1, "uncompressed is the biggest: {sizes:?}");
 }
+
+fn write_jpeg(path: &Path, capture: Option<&str>) {
+    let (w, h) = (32usize, 24usize);
+    let data: Vec<[u8; 4]> = (0..w * h).map(|i| [(i % w * 7) as u8, (i / w * 9) as u8, 90, 255]).collect();
+    let img = lightcraft_raster::Rgba8 { width: w, height: h, data };
+    let exif = capture.map(|c| {
+        lightcraft_meta::write_exif(&lightcraft_meta::Metadata { capture_time: lightcraft_meta::DateTime::parse_iso(c), ..Default::default() })
+    });
+    let meta = lightcraft_codecs::EncodeMeta { exif: exif.as_deref(), ..Default::default() };
+    let bytes = lightcraft_codecs::encode_jpeg(&lightcraft_codecs::EncodeImage::rgba8(&img), 90, Default::default(), &meta).unwrap();
+    std::fs::write(path, bytes).unwrap();
+}
+
+const DATED_SIDECAR: &str = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about=""
+      xmlns:exif="http://ns.adobe.com/exif/1.0/"
+      exif:DateTimeOriginal="2026-01-14T05:58:48" />
+  </rdf:RDF>
+</x:xmpmeta>"#;
+
+#[test]
+fn sidecar_capture_time_fills_in_when_the_file_has_none() {
+    let src = temp_dir("sidecar-date");
+    write_jpeg(&src.join("sample.jpg"), None);
+    std::fs::write(src.join("sample.jpg.xmp"), DATED_SIDECAR).unwrap();
+    // the embedded capture time wins over the sidecar's
+    write_jpeg(&src.join("dated.jpg"), Some("2020-05-06T07:08:09"));
+    std::fs::write(src.join("dated.jpg.xmp"), DATED_SIDECAR).unwrap();
+    let lib = temp_dir("sidecar-date-lib");
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    // copy: the sidecar's date also files the copy
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()], "mode": "copy"})).unwrap();
+    assert_eq!(r["sidecars"], 2, "{r}");
+    let by_name = |s: &Session, n: &str| s.catalog.photos().find(|p| p.file_name == n).unwrap().clone();
+    let sample = by_name(&s, "sample.jpg");
+    assert_eq!(sample.captured.as_deref(), Some("2026-01-14T05:58:48"));
+    let lightcraft_catalog::Source::File { path } = &sample.source else { panic!("not a file") };
+    assert!(Path::new(path).starts_with(lib.join("Originals").join("2026").join("2026-01-14")), "{path}");
+    assert_eq!(by_name(&s, "dated.jpg").captured.as_deref(), Some("2020-05-06T07:08:09"));
+
+    // Read Metadata from File fills in a missing capture time too
+    let id = sample.id;
+    s.catalog.apply(lightcraft_catalog::Op::SetCaptured { id, captured: None }).unwrap();
+    std::fs::copy(src.join("sample.jpg.xmp"), format!("{path}.xmp")).unwrap();
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    s.execute("photo.readMetadataFromFile", &json!({})).unwrap();
+    assert_eq!(s.catalog.photo(id).unwrap().captured.as_deref(), Some("2026-01-14T05:58:48"));
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&lib);
+}
