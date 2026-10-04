@@ -75,7 +75,9 @@ fn rel_to_k(r: f64) -> f64 {
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let t = Tokens::get(ui.ctx());
     let d = app.session.develop_of(id).unwrap_or_default();
-    let raw = app.session.catalog.photo(id).is_some_and(|p| p.kind == lightcraft_catalog::MediaKind::Raw);
+    // a raw shown from its embedded JPEG (preview only) gets the rendered-file white balance scale
+    let raw = app.session.catalog.photo(id).is_some_and(|p| p.develops_raw());
+    let preview_only = app.session.catalog.photo(id).and_then(|p| p.preview_only.clone());
 
     if app.ui.histogram {
         histogram(app, ui, id);
@@ -104,6 +106,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             });
         });
     });
+    if let Some(why) = &preview_only {
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 0, bottom: 12 }).show(ui, |ui| {
+            crate::widgets::preview_only_notice(ui, "edit", why);
+        });
+    }
     let n = app.session.selection.ids.len();
     if n > 1 && matches!(app.ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid) {
         quick_develop(app, ui, n);

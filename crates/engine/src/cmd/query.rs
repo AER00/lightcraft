@@ -26,6 +26,8 @@ pub fn photo_summary(p: &Photo) -> Value {
         "deleted": p.deleted,
         "copyOf": p.copy_of.map(|c| c.0),
         "copyName": p.copy_name,
+        // an undecodable raw variant, shown and edited from its embedded JPEG: why
+        "previewOnly": p.preview_only,
     })
 }
 

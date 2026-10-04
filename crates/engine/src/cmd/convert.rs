@@ -148,6 +148,24 @@ fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"path": out, "id": new, "original": id.0}))
 }
 
+/// The op that brings a photo up to date with what its file is now (`info`, a fresh probe), or
+/// `None` when nothing changed. Covers a raw that became decodable (or stopped being: a different
+/// file relinked), i.e. a change of [`lightcraft_catalog::Photo::preview_only`].
+pub(crate) fn content_op(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog::Photo, info: crate::media::ProbeInfo) -> Option<Op> {
+    let same = info.content_hash == ph.content_hash
+        && info.file_size == ph.file_size
+        && (info.width, info.height) == (ph.width, ph.height)
+        && info.preview_only == ph.preview_only;
+    (!same).then_some(Op::SetContent {
+        id,
+        width: info.width,
+        height: info.height,
+        file_size: info.file_size,
+        content_hash: info.content_hash,
+        preview_only: info.preview_only,
+    })
+}
+
 /// Re-read photos whose files changed on disk (an external editor saved them): new size,
 /// dimensions and content hash, cached sources dropped. → {reloaded: [ids]}
 fn reload(s: &mut Session, p: &Value) -> Result<Value> {
@@ -164,12 +182,11 @@ fn reload(s: &mut Session, p: &Value) -> Result<Value> {
     let mut reloaded = Vec::new();
     for ((id, _), info) in paths.into_iter().zip(probed) {
         let (Ok(info), Some(ph)) = (info, s.catalog.photo(id)) else { continue };
-        if info.content_hash == ph.content_hash && info.file_size == ph.file_size && (info.width, info.height) == (ph.width, ph.height) {
-            continue;
-        }
-        ops.push(Op::SetContent { id, width: info.width, height: info.height, file_size: info.file_size, content_hash: info.content_hash });
+        let Some(op) = content_op(id, ph, info.clone()) else { continue };
+        ops.push(op);
         // virtual copies share the file
         for c in s.catalog.photos().filter(|c| c.copy_of == Some(id)) {
+            ops.extend(content_op(c.id, c, info.clone()));
             reloaded.push(c.id);
         }
         reloaded.push(id);
@@ -245,7 +262,7 @@ pub fn edit_specs() -> Vec<CommandSpec> {
             "Reload from Disk",
             [],
             None,
-            "{ids?} — re-read photos whose files changed on disk (e.g. saved by an external editor) → {reloaded}",
+            "{ids?} — re-read photos whose files changed on disk (e.g. saved by an external editor), or raws shown from their embedded preview that can be decoded now → {reloaded}",
             has_selection,
             reload
         ),

@@ -523,11 +523,9 @@ pub fn source_info(p: &Photo) -> SourceInfo {
     if matches!(p.source, Source::Demo { .. }) {
         return SourceInfo { raw: true, as_shot_temp: 6500.0, as_shot_tint: 0.0, lens: None };
     }
-    if p.kind == MediaKind::Raw {
-        SourceInfo { raw: true, as_shot_temp: 5500.0, as_shot_tint: 0.0, lens: p.embedded_lens }
-    } else {
-        SourceInfo::default()
-    }
+    // A raw shown from its embedded preview is a rendered (display-referred) JPEG: relative white
+    // balance and the display tone curve, like any other rendered file.
+    if p.develops_raw() { SourceInfo { raw: true, as_shot_temp: 5500.0, as_shot_tint: 0.0, lens: p.embedded_lens } } else { SourceInfo::default() }
 }
 
 impl crate::Session {
@@ -751,6 +749,9 @@ pub struct ProbeInfo {
     pub embedded_lens: Option<lightcraft_develop::EmbeddedLens>,
     /// The file's embedded XMP packet (raw/DNG files), for develop settings stored inside the file.
     pub xmp: Option<String>,
+    /// A raw variant that can't be decoded yet: why. The file is described (and will be shown and
+    /// edited) from its embedded preview; see [`lightcraft_catalog::Photo::preview_only`].
+    pub preview_only: Option<String>,
 }
 
 pub type FileProbe = Arc<dyn Fn(&str) -> Result<ProbeInfo, String> + Send + Sync>;

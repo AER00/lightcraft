@@ -350,6 +350,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     // drawn and hit-tested above the loupe and its tools: clicks on it pan
     navigator(app, ui, canvas, img_rect, id);
+    if let Some(why) = photo.preview_only.as_deref().filter(|_| !fullscreen) {
+        preview_only_pill(ui, canvas, why);
+    }
     resp.context_menu(|ui| {
         ui.menu_button("Zoom", |ui| {
             for (label, cmd) in [("Fit", "view.zoomFit"), ("100%", "view.zoom100"), ("Zoom In", "view.zoomIn"), ("Zoom Out", "view.zoomOut")] {
@@ -409,6 +412,22 @@ fn info_overlay(app: &LightcraftApp, p: &egui::Painter, canvas: Rect, photo: &li
         y += g.size().y + 3.0;
     }
     register(p.ctx(), "canvas:infoOverlay", Rect::from_min_max(canvas.min, pos2(canvas.left() + 320.0, y)));
+}
+
+/// A raw shown from its embedded JPEG (issue #10): a pill at the canvas' top centre saying so;
+/// hovering it explains (registered as `notice:previewOnly:loupe`).
+fn preview_only_pill(ui: &mut egui::Ui, canvas: Rect, reason: &str) {
+    let t = Tokens::get(ui.ctx());
+    let p = ui.painter_at(canvas);
+    let text = format!("Preview only — editing the camera's embedded JPEG ({})", crate::widgets::preview_only_variant(reason));
+    let g = p.layout_no_wrap(text, t.font(12.0), Color32::WHITE);
+    let size = vec2(g.size().x + 40.0, 26.0);
+    let r = Rect::from_min_size(pos2(canvas.center().x - size.x / 2.0, canvas.top() + 12.0), size);
+    p.rect_filled(r, 13.0, Color32::from_black_alpha(185));
+    crate::icons::paint(&p, Rect::from_center_size(pos2(r.left() + 16.0, r.center().y), vec2(15.0, 15.0)), crate::icons::Icon::Info, t.caution);
+    p.galley(pos2(r.left() + 29.0, r.center().y - g.size().y / 2.0), g, Color32::WHITE);
+    register(ui.ctx(), "notice:previewOnly:loupe", r);
+    ui.interact(r, egui::Id::new("preview-only-pill"), Sense::hover()).on_hover_text(crate::widgets::preview_only_explanation(reason));
 }
 
 /// `2026-09-30T12:00:00` → `2026-09-30 12:00`.

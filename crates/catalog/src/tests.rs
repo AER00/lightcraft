@@ -231,3 +231,36 @@ fn merge_results_are_recognised() {
     assert_eq!(merged_kind("hdr.jpg"), None);
     assert_eq!(merged_kind("panorama.jpg"), None);
 }
+
+/// Preview-only raws (an undecodable raw variant shown from its embedded JPEG): the reason is
+/// stored with the photo, old catalogs without it still load, and Reload's op sets / clears it
+/// with an exact inverse that survives serialisation (the journal).
+#[test]
+fn preview_only_survives_serde_and_set_content_undo() {
+    let mut c = Catalog::new();
+    let a = c.alloc_photo_id();
+    let mut p = Photo::new(a, Source::File { path: "/x/DSC_0001.NEF".into() }, "DSC_0001.NEF", "NEF", 6000, 4000, "2026-10-01T00:00:00");
+    p.kind = MediaKind::Raw;
+    p.preview_only = Some("Nikon Huffman-compressed NEF".into());
+    assert!(!p.develops_raw());
+    c.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    // the catalog round-trips it
+    let back: Catalog = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+    assert_eq!(back.photo(a).unwrap().preview_only.as_deref(), Some("Nikon Huffman-compressed NEF"));
+    // an older catalog (no field) loads as decodable
+    let mut v = serde_json::to_value(&c).unwrap();
+    let photos = v["photos"].as_object_mut().unwrap();
+    let ph = photos.values_mut().next().unwrap();
+    ph.as_object_mut().unwrap().remove("preview_only").expect("serialised when set");
+    let old: Catalog = serde_json::from_value(v).unwrap();
+    assert_eq!(old.photo(a).unwrap().preview_only, None);
+    assert!(old.photo(a).unwrap().develops_raw());
+    // Reload: the file decodes now → cleared; undo (through the journal's JSON) restores it
+    let op = Op::SetContent { id: a, width: 6016, height: 4000, file_size: 1, content_hash: None, preview_only: None };
+    let inv = c.apply(op).unwrap();
+    assert!(c.photo(a).unwrap().develops_raw());
+    let inv: Op = serde_json::from_str(&serde_json::to_string(&inv).unwrap()).unwrap();
+    c.apply(inv).unwrap();
+    assert_eq!(c.photo(a).unwrap().preview_only.as_deref(), Some("Nikon Huffman-compressed NEF"));
+    assert_eq!(c.photo(a).unwrap().width, 6000);
+}

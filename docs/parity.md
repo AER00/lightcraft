@@ -57,7 +57,8 @@ Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.1%** of 500 in-sco
 
 Ordered by tier, then user value, then (low) effort. Take the first one nobody is working on.
 
-1. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today); HEIC/AVIF decode (no
+1. **LR-IMP-FORMATS** (P0) — CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only today: such photos are marked
+    `preview_only` and the UI says they are edited from the camera's embedded JPEG, issue #10); HEIC/AVIF decode (no
     permissive pure-Rust decoder yet). High value, high effort (clean sources needed).
 2. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
 
@@ -109,7 +110,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-IMP-PROFILES | Import profiles & presets | P1 | ✅ | `cmd:file.importPresets`, `cmd:preset.import`, `cmd:profile.import`, `crates/engine/src/preset_import.rs`, `crates/engine/src/preset_luminar.rs` | presets: .lcpreset, XMP, classic .lrtemplate, photos carrying edits ("DNG presets"), Luminar looks (.lmp, .mplumpack collections; sliders with a counterpart), .zip bundles, folders (folder → group), drag & drop; masks carried over; unmapped settings reported; profiles: .cube 3D LUTs; Adobe profile formats deliberately unsupported |
 | LR-IMP-LOCAL | Work on files in place | P0 | ✅ | `cmd:library.browse`, `cmd:photo.addToLibrary`, `cmd:library.import` (mode add), `crates/engine/src/cmd/browse.rs`, `crates/ui-egui/src/panels/left.rs` (`local_section`), `crates/ui-egui/src/panels/grid.rs` (`folder_header`) | Local: browse Pictures / Desktop / Downloads / Home or any folder without adding it (breadcrumb, Include subfolders, Add N to My Photos); browsed photos stay out of All Photos, albums and counts; edits go to XMP sidecars; importing promotes them |
 | LR-IMP-SIDECAR-SPLIT | Separate XMP sidecar variants | P2 | ⬜ | `cmd:library.xmpPreferences` | sidecar naming option exists (stem/full), no split sidecars |
-| LR-IMP-FORMATS | Supported formats | P0 | 🟡 | `crates/codecs/src/lib.rs`, `crates/raw/src/lib.rs` | JPEG, PNG, TIFF, WebP, JXL, PSD, GIF, BMP; DNG (incl. lossy / Smart Preview DNG), CR2, ARW, NEF, RAF, RW2, PEF, ORF. Missing: CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only), HEIC/AVIF decode |
+| LR-IMP-FORMATS | Supported formats | P0 | 🟡 | `crates/codecs/src/lib.rs`, `crates/raw/src/lib.rs` | JPEG, PNG, TIFF, WebP, JXL, PSD, GIF, BMP; DNG (incl. lossy / Smart Preview DNG), CR2, ARW, NEF, RAF, RW2, PEF, ORF. Missing: CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only: imported with `preview_only` = the decoder's reason, rendered as a rendered JPEG, flagged by a grid badge and loupe/Edit/Info notices, `previewOnly` in `catalog.query`; Reload clears it once the file decodes), HEIC/AVIF decode |
 | LR-IMP-CULL-AT-IMPORT | Culling analysis at import | P2 | 🟡 | `cmd:photo.analyze` | run Assisted Culling on the imported photos (they're selected after an import); not automatic |
 | LR-IMP-DNG-CONVERT | Convert to DNG on import [Classic] | P2 | ✅ | `cmd:library.import` (`dng`), `crates/ui-egui/src/import.rs` | copy imports: Raw files ▸ Copy as DNG (lossless; the card is untouched) |
 
