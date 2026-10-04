@@ -23,6 +23,8 @@ pub mod theme;
 pub mod widgets;
 
 #[cfg(test)]
+mod tests_curve;
+#[cfg(test)]
 mod tests_masking;
 #[cfg(test)]
 mod tests_scroll;

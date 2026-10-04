@@ -677,13 +677,37 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     };
     let line: Vec<Pos2> = (0..=96).map(|i| to_screen(i as f64 / 96.0, curve.eval(i as f64 / 96.0).clamp(0.0, 1.0))).collect();
     p.add(egui::Shape::line(line, Stroke::new(2.0, color)));
-    for q in &pts {
-        p.circle_filled(to_screen(q.x, q.y), 4.0, color);
-    }
-    // interaction: drag the nearest point, click empty space to add, double-click to delete
+    // interaction: drag a point (both axes, between its neighbours), drag empty space to add and
+    // drag a new point, click empty space to add, double-click a point to delete it
     let drag_id = egui::Id::new(("curve-drag", &ch));
-    let mut dragging: Option<usize> = ui.data(|dd| dd.get_temp(drag_id));
+    // the point being dragged (stored as `Option<usize>` so a stale value can be cleared)
+    let mut dragging: Option<usize> = ui.data(|dd| dd.get_temp::<Option<usize>>(drag_id)).flatten();
     let nearest = |q: Pos2| pts.iter().enumerate().map(|(i, p)| (i, to_screen(p.x, p.y).distance(q))).min_by(|a, b| a.1.total_cmp(&b.1));
+    let hovered = resp.hover_pos().and_then(nearest).filter(|(_, dist)| *dist < 10.0).map(|(i, _)| i);
+    if dragging.is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if hovered.is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+    for (i, q) in pts.iter().enumerate() {
+        let c = to_screen(q.x, q.y);
+        if dragging == Some(i) || (dragging.is_none() && hovered == Some(i)) {
+            p.circle_filled(c, 5.5, color);
+            p.circle_stroke(c, 5.5, Stroke::new(1.0, t.canvas));
+        } else {
+            p.circle_filled(c, 4.0, color);
+        }
+    }
+    // input / output readout of the point being dragged (0–255 like the histogram)
+    if let Some(q) = dragging.and_then(|i| pts.get(i)) {
+        p.text(
+            r.left_top() + vec2(6.0, 4.0),
+            egui::Align2::LEFT_TOP,
+            format!("{} / {}", (q.x * 255.0).round(), (q.y * 255.0).round()),
+            t.font(11.0),
+            t.text_dim,
+        );
+    }
     let mut new_pts = None;
     if resp.double_clicked()
         && let Some(q) = resp.interact_pointer_pos()
@@ -696,8 +720,9 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         v.remove(i);
         new_pts = Some(v);
     } else if resp.drag_started()
-        && let Some(q) = resp.interact_pointer_pos()
+        && let Some(q) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos())
     {
+        // pick the point under the press, not where the pointer is once the drag threshold passed
         let _ = app.run("develop.beginInteraction", json!({"label": "Tone Curve"}));
         match nearest(q) {
             Some((i, dist)) if dist < 10.0 => dragging = Some(i),
