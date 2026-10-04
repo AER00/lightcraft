@@ -528,7 +528,12 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         }
     }
 
-    let probed = probe_all(s.media.file_probe.as_ref(), &todo, &ScanProgress::default());
+    // files a preceding scan already probed are not read again (a network share is slow to read)
+    let cached: Vec<Option<ProbeInfo>> = todo.iter().map(|f| s.import_probes.remove(f)).collect();
+    let missing: Vec<String> = todo.iter().zip(&cached).filter(|(_, c)| c.is_none()).map(|(f, _)| f.clone()).collect();
+    let mut fresh = probe_all(s.media.file_probe.as_ref(), &missing, &ScanProgress::default()).into_iter();
+    let probed: Vec<Result<ProbeInfo, String>> =
+        cached.into_iter().map(|c| c.map(Ok).unwrap_or_else(|| fresh.next().unwrap_or_else(|| Err("not probed".into())))).collect();
     crate::memory::release();
     let now = (s.clock)();
     let mut ops = promote;
