@@ -291,7 +291,8 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
 /// Run one batch of the import in progress (called every frame).
 pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
     let Some(task) = app.import.as_mut() else { return };
-    let n = task.queue.len().min(BATCH);
+    // (browsing reads a sidecar per file, slow on a network share: keep each frame short)
+    let n = task.queue.len().min(if task.browse { 2 } else { BATCH });
     let batch: Vec<String> = task.queue.drain(..n).collect();
     let mut p = task.params.clone();
     p["paths"] = json!(batch);
