@@ -9,6 +9,7 @@ mod browse;
 mod color;
 pub(crate) mod convert;
 mod cull;
+pub mod curves;
 mod develop;
 mod edit;
 mod export;
@@ -118,6 +119,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(library::specs());
         v.extend(develop::specs());
         v.extend(color::specs());
+        v.extend(curves::specs());
         v.extend(masks::specs());
         v.extend(organize::specs());
         v.extend(keywords::specs());

@@ -69,6 +69,40 @@ fn dragging_a_point_moves_it_in_both_axes_with_one_undo_step() {
     assert_eq!(h.app.session.undo.len(), undo_before + 1, "one undo step per drag");
 }
 
+fn click_widget(h: &mut Headless, id: &str, count: u64) {
+    let r = h.request("ui.clickWidget", json!({"id": id, "count": count}), T);
+    assert_eq!(r["ok"], true, "{id}: {r}");
+    h.step();
+}
+
+const S_CURVE: [[f64; 2]; 4] = [[0.0, 0.0], [0.25, 0.15], [0.75, 0.85], [1.0, 1.0]];
+
+#[test]
+fn double_clicking_a_channel_resets_only_that_channel() {
+    let mut h = curve_open("master");
+    exec(&mut h, "develop.curve", json!({"channel": "master", "points": S_CURVE}));
+    exec(&mut h, "develop.curve", json!({"channel": "green", "points": S_CURVE}));
+    h.step();
+    click_widget(&mut h, "curveChannel:green", 2);
+    let c = develop(&h).curve;
+    assert!(c.green.is_empty(), "green resets: {:?}", c.green);
+    assert_eq!(c.master.len(), 4, "the other channels stay");
+    assert_eq!(h.app.ui.curve_channel, "green");
+}
+
+#[test]
+fn reset_button_resets_every_curve() {
+    let mut h = curve_open("red");
+    for ch in ["master", "red", "blue"] {
+        exec(&mut h, "develop.curve", json!({"channel": ch, "points": S_CURVE}));
+    }
+    exec(&mut h, "develop.set", json!({"control": "curve.highlights", "value": -40}));
+    h.step();
+    click_widget(&mut h, "button:curveReset", 1);
+    let c = develop(&h).curve;
+    assert_eq!(c, lightcraft_develop::ToneCurve::default());
+}
+
 #[test]
 fn dragging_a_point_past_its_neighbour_is_clamped() {
     let mut h = curve_open("red");

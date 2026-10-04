@@ -598,7 +598,18 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
                 if sel {
                     ui.painter().line_segment([r.left_bottom() + vec2(4.0, 1.0), r.right_bottom() + vec2(-4.0, 1.0)], Stroke::new(2.0, t.text));
                 }
-                if resp.clicked() {
+                let name = match ch {
+                    "parametric" => "Parametric curve",
+                    "master" => "Point curve",
+                    "red" => "Red channel",
+                    "green" => "Green channel",
+                    _ => "Blue channel",
+                };
+                let resp = resp.on_hover_text(format!("{name} — double-click to reset it"));
+                if resp.double_clicked() {
+                    app.ui.curve_channel = ch.into();
+                    let _ = app.run("curve.reset", json!({"channel": ch}));
+                } else if resp.clicked() {
                     app.ui.curve_channel = ch.into();
                 }
             }
@@ -614,6 +625,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     let r = Rect::from_min_size(pos2(outer.left() + 24.0, outer.top() + 6.0), vec2(side, side));
     let resp = ui.interact(r, egui::Id::new(("curve", &ch)), Sense::click_and_drag());
     register(ui.ctx(), "curve", r);
+    resp.context_menu(|ui| curve_reset_menu(app, ui, &ch));
     let p = ui.painter();
     p.rect_filled(r, 2.0, t.canvas);
     for i in 1..4 {
@@ -652,6 +664,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
             })
             .collect();
         p.add(egui::Shape::line(pts, Stroke::new(2.0, Color32::from_gray(220))));
+        curve_footer(app, ui, d);
         for c in ["curve.highlights", "curve.lights", "curve.darks", "curve.shadows"] {
             control(app, ui, d, c, true);
         }
@@ -772,8 +785,50 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         let _ = app.run("develop.endInteraction", json!({}));
     }
     ui.data_mut(|dd| dd.insert_temp(drag_id, dragging));
+    curve_footer(app, ui, d);
     control(app, ui, d, "curve.refineSaturation", true);
     let _ = id;
+}
+
+/// The row under the curve graph: reset every curve.
+fn curve_footer(app: &mut LightcraftApp, ui: &mut egui::Ui, _d: &DevelopSettings) {
+    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 4 }).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let r = text_button(ui, "curveReset", "Reset", false)
+                    .on_hover_text("Reset all curves: point curves (all channels) and parametric (double-click a channel to reset only that one)");
+                if r.clicked() {
+                    let _ = app.run("curve.reset", json!({"channel": "all"}));
+                }
+            });
+        });
+    });
+}
+
+/// Right-click menu of the curve graph.
+fn curve_reset_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, ch: &str) {
+    let label = if ch == "parametric" { "Reset Parametric Curve".to_string() } else { format!("Reset {} Channel", channel_label(ch)) };
+    let r = ui.button(label);
+    register(ui.ctx(), "curveMenu:resetChannel", r.rect);
+    if r.clicked() {
+        let _ = app.run("curve.reset", json!({"channel": ch}));
+        ui.close();
+    }
+    let r = ui.button("Reset All Curves");
+    register(ui.ctx(), "curveMenu:resetAll", r.rect);
+    if r.clicked() {
+        let _ = app.run("curve.reset", json!({"channel": "all"}));
+        ui.close();
+    }
+}
+
+fn channel_label(ch: &str) -> &'static str {
+    match ch {
+        "red" => "Red",
+        "green" => "Green",
+        "blue" => "Blue",
+        _ => "RGB",
+    }
 }
 
 /// Toggle for a targeted-adjustment tool (`tool` = `tat:<target>`).
