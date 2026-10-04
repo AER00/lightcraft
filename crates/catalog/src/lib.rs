@@ -289,7 +289,8 @@ impl Catalog {
     /// Number of photos shown for an album in the sources list (excludes deleted photos).
     pub fn album_count(&self, id: AlbumId) -> usize {
         match self.albums.get(&id) {
-            Some(Album { smart: Some(_), .. }) => self.album_photos(id).len(),
+            // counted in place: no id list is built just for its length
+            Some(Album { smart: Some(_), .. }) => self.photos.values().filter(|p| self.album_contains(id, p)).count(),
             Some(a) => a.photos.iter().filter(|p| self.photos.get(p).is_some_and(|p| !p.deleted)).count(),
             None => 0,
         }
