@@ -782,7 +782,6 @@ pub fn specs() -> Vec<CommandSpec> {
                     metadata_preset,
                     convert_dng: super::bool_or(p, "dng", false),
                     local: super::bool_or(p, "local", false),
-                    ..Default::default()
                 };
                 let undo0 = s.undo.len();
                 let mut report = serde_json::to_value(crate::import::import_with(s, &paths, &opts)?).unwrap_or_default();
