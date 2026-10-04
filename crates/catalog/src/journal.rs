@@ -55,6 +55,52 @@ pub struct LoadReport {
     pub created: bool,
 }
 
+/// Where persistence time goes (reported by `library.info` → `persistence`; printed to stderr
+/// per write under `LIGHTCRAFT_PROFILE`). Times are wall-clock milliseconds on the calling
+/// thread, i.e. how long the caller (the UI thread, for the app) was blocked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistStats {
+    /// [`Journal::append`] calls that wrote something.
+    pub appends: u64,
+    /// Encode + write + `sync_data` of the last / slowest append.
+    pub last_append_ms: f64,
+    pub max_append_ms: f64,
+    /// Snapshots written (compactions, plus the ones on close / repair).
+    pub snapshots: u64,
+    /// The last snapshot, by stage.
+    pub last_snapshot: SnapshotTiming,
+    /// Total time of the slowest snapshot.
+    pub max_snapshot_ms: f64,
+}
+
+/// One snapshot (compaction), by stage.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotTiming {
+    /// Serialising the catalog to JSON.
+    pub serialize_ms: f64,
+    /// Writing, flushing, `sync_all` and the atomic rename of `catalog.snap`.
+    pub write_sync_ms: f64,
+    /// Resetting `catalog.log` (an atomic rewrite to empty, fsynced).
+    pub reset_ms: f64,
+    pub total_ms: f64,
+    /// Size of `catalog.snap`.
+    pub bytes: u64,
+    /// Log records the snapshot compacted.
+    pub records: u64,
+}
+
+/// `LIGHTCRAFT_PROFILE` is set: print persistence timings to stderr.
+fn profiling() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LIGHTCRAFT_PROFILE").is_some())
+}
+
+fn ms_since(t: web_time::Instant) -> f64 {
+    t.elapsed().as_secs_f64() * 1e3
+}
+
 pub struct Journal {
     store: Box<dyn Store>,
     /// `seq` of the last durable op.
@@ -63,6 +109,7 @@ pub struct Journal {
     log_records: u64,
     log_bytes: u64,
     pub policy: SnapshotPolicy,
+    stats: PersistStats,
 }
 
 fn io(e: std::io::Error) -> CatalogError {
@@ -117,7 +164,7 @@ impl Journal {
             None => (Catalog::new(), 0),
         };
         report.snapshot_seq = snapshot_seq;
-        let mut j = Journal { store, seq: snapshot_seq, snapshot_seq, log_records: 0, log_bytes: 0, policy: SnapshotPolicy::default() };
+        let mut j = Journal { store, seq: snapshot_seq, snapshot_seq, log_records: 0, log_bytes: 0, policy: SnapshotPolicy::default(), stats: PersistStats::default() };
         let log = log.unwrap_or_default();
 
         // Scan records; `good_end` is the byte offset just past the last good record.
@@ -190,6 +237,7 @@ impl Journal {
         if ops.is_empty() {
             return Ok(());
         }
+        let t0 = web_time::Instant::now();
         let mut buf = String::new();
         let mut seq = self.seq;
         for op in ops {
@@ -201,20 +249,53 @@ impl Journal {
         self.seq = seq;
         self.log_records += ops.len() as u64;
         self.log_bytes += buf.len() as u64;
+        let ms = ms_since(t0);
+        self.stats.appends += 1;
+        self.stats.last_append_ms = ms;
+        self.stats.max_append_ms = self.stats.max_append_ms.max(ms);
+        if profiling() {
+            eprintln!("catalog: append {} op(s), {} B: {ms:.2} ms", ops.len(), buf.len());
+        }
         Ok(())
     }
 
     /// Write a snapshot of `catalog` (which must reflect every appended op) and reset the log.
     pub fn snapshot(&mut self, catalog: &Catalog) -> Result<()> {
+        let t0 = web_time::Instant::now();
         let body = serde_json::to_string(catalog).map_err(|e| CatalogError::Invalid(e.to_string()))?;
         let file = format!("{{\"format\":\"{FORMAT}\",\"version\":{VERSION},\"seq\":{},\"catalog\":{body}}}\n", self.seq);
+        let serialize_ms = ms_since(t0);
+        let t1 = web_time::Instant::now();
         self.store.write_atomic(SNAPSHOT, file.as_bytes()).map_err(io)?;
+        let write_sync_ms = ms_since(t1);
+        let t2 = web_time::Instant::now();
         // A crash here leaves old records in the log; they are skipped by seq on load.
         self.store.write_atomic(LOG, b"").map_err(io)?;
+        let reset_ms = ms_since(t2);
+        let timing =
+            SnapshotTiming { serialize_ms, write_sync_ms, reset_ms, total_ms: ms_since(t0), bytes: file.len() as u64, records: self.log_records };
+        self.record_snapshot(timing);
         self.snapshot_seq = self.seq;
         self.log_records = 0;
         self.log_bytes = 0;
         Ok(())
+    }
+
+    fn record_snapshot(&mut self, t: SnapshotTiming) {
+        self.stats.snapshots += 1;
+        self.stats.last_snapshot = t;
+        self.stats.max_snapshot_ms = self.stats.max_snapshot_ms.max(t.total_ms);
+        if profiling() {
+            eprintln!(
+                "catalog: snapshot of {} records, {} B: serialize {:.1} ms, write+sync {:.1} ms, log reset {:.1} ms, total {:.1} ms",
+                t.records, t.bytes, t.serialize_ms, t.write_sync_ms, t.reset_ms, t.total_ms
+            );
+        }
+    }
+
+    /// Where persistence time went so far.
+    pub fn stats(&self) -> PersistStats {
+        self.stats
     }
 
     /// The log is long enough to be worth compacting.

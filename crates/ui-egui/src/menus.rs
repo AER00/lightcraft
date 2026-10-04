@@ -867,6 +867,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 rows.push(("Library".into(), dir.to_string()));
             }
             rows.push(("Frame time".into(), format!("{:.1} ms ({:.0} fps)", app.perf.frame_ms, app.perf.fps)));
+            rows.push((
+                "Frame update".into(),
+                format!("{:.1} ms (logic {:.1} ms; slowest {:.0} ms)", app.perf.update_ms, app.perf.logic_ms, app.perf.max_update_ms),
+            ));
             rows.push(("Last loupe render".into(), format!("{:.0} ms", app.renderer.last_main_ms)));
             let r = json!(rows.iter().map(|(k, v)| json!({"label": k, "value": v})).collect::<Vec<_>>());
             if p.get("open").and_then(Value::as_bool).unwrap_or(true) {

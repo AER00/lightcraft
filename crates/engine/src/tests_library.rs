@@ -121,6 +121,12 @@ fn new_library_without_seed_is_empty_and_compacts() {
     let info = s.execute("library.info", &json!({})).unwrap();
     assert_eq!(info["logRecords"], 0);
     assert_eq!(info["snapshotSeq"], info["seq"]);
+    // persistence timings (issue #37): the append and the compaction were measured
+    let p = &info["persistence"];
+    assert!(p["appends"].as_u64() >= Some(1), "{p}");
+    assert!(p["snapshots"].as_u64() >= Some(1), "{p}");
+    assert!(p["lastSnapshot"]["bytes"].as_u64() > Some(0), "{p}");
+    assert!(p["lastSnapshot"]["totalMs"].as_f64() >= p["lastSnapshot"]["serializeMs"].as_f64(), "{p}");
     let s2 = open(&dir, true);
     assert_eq!(s2.catalog.len(), 0, "an existing library is never seeded");
     assert_eq!(s2.catalog.albums().count(), 1);
