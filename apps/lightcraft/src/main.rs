@@ -181,6 +181,24 @@ fn services() -> Services {
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
+        pick_curve_preset_files: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .set_title("Import Point Curve Presets")
+                .add_filter("Point Curve Presets", &["lccurve", "json"])
+                .pick_files()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect()
+        })),
+        save_curve_preset_file: Some(Box::new(|name: &str| {
+            rfd::FileDialog::new()
+                .set_title("Export Point Curve Presets")
+                .add_filter("Point Curve Presets", &["lccurve"])
+                .set_file_name(name)
+                .save_file()
+                .map(|p| p.to_string_lossy().to_string())
+        })),
         write_shared: Some(std::sync::Arc::new(|p: &str, b: &[u8]| {
             if let Some(dir) = std::path::Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {
                 std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;

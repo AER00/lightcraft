@@ -116,6 +116,9 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.quit", "Quit LightCraft", Some("Cmd+Q"), "File"),
     ("file.importPresets", "Import Profiles & Presets…", None, "File"),
     ("file.exportPresets", "Export Presets…", None, "File"),
+    // Edit panel ▸ Curve ▸ Point Curve dropdown
+    ("file.importCurvePresets", "Import Point Curve Presets…", None, ""),
+    ("file.exportCurvePresets", "Export Point Curve Presets…", None, ""),
     ("app.settings", "Settings…", Some("Cmd+,"), "Edit"),
     ("app.openLibrary", "Open Library…", None, "File"),
     ("app.about", "About LightCraft", None, "Help"),
@@ -1005,6 +1008,48 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             return Some(r);
         }
+        "file.importCurvePresets" => {
+            let paths: Vec<String> = match p.get("paths").and_then(Value::as_array) {
+                Some(a) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+                None => match app.services.pick_curve_preset_files.as_mut() {
+                    Some(f) => f(),
+                    None => return Some(Err("no file dialog on this platform".into())),
+                },
+            };
+            if paths.is_empty() {
+                return Some(Ok(Value::Null));
+            }
+            let r = app.session.execute("curve.importPresets", &json!({"paths": paths})).map_err(|e| e.to_string());
+            if let Ok(v) = &r {
+                let n = v["imported"].as_array().map_or(0, Vec::len);
+                let failed = v["failed"].as_array().map_or(0, Vec::len);
+                let mut msg = format!("Imported {n} point curve preset{}", if n == 1 { "" } else { "s" });
+                if failed > 0 {
+                    msg += &format!(", {failed} file{} not readable", if failed == 1 { "" } else { "s" });
+                }
+                app.toast(&ctx, msg);
+            }
+            return Some(r);
+        }
+        "file.exportCurvePresets" => {
+            let path = match p.get("path").and_then(Value::as_str) {
+                Some(x) => Some(x.to_string()),
+                None => match app.services.save_curve_preset_file.as_mut() {
+                    Some(f) => f("Point Curves.lccurve"),
+                    None => return Some(Err("no file dialog on this platform".into())),
+                },
+            };
+            let Some(path) = path else { return Some(Ok(Value::Null)) };
+            let mut params = json!({"path": path});
+            if let Some(n) = p.get("names") {
+                params["names"] = n.clone();
+            }
+            let r = app.session.execute("curve.exportPresets", &params).map_err(|e| e.to_string());
+            if let Ok(v) = &r {
+                app.toast(&ctx, format!("Exported {} point curve preset{}", v["count"], if v["count"] == 1 { "" } else { "s" }));
+            }
+            return Some(r);
+        }
         "app.export" => crate::control::export_active(app, p),
         "app.showInFinder" => show_in_finder(app),
         "app.discord" | "app.website" | "app.github" | "app.artcraft" | "app.help" | "app.feedback" => {
@@ -1037,6 +1082,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
                     .is_some_and(|p| matches!(p.source, lightcraft_engine::catalog::Source::File { .. }))
         }
         "file.exportPresets" => app.session.presets.iter().any(|p| !p.builtin),
+        "file.exportCurvePresets" => !app.session.curve_presets.is_empty(),
         "view.compare" => app.session.catalog.len() > 1,
         "view.fullScreenPreview" | "view.infoOverlay" | "view.navigator" => app.session.active().is_some() || app.ui.fullscreen,
         "app.openLibrary" | "file.addFolder" => app.services.pick_folder.is_some(),

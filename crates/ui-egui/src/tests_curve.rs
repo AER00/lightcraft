@@ -104,6 +104,40 @@ fn reset_button_resets_every_curve() {
 }
 
 #[test]
+fn point_curve_preset_dropdown_applies_and_saves() {
+    let mut h = curve_open("master");
+    click_widget(&mut h, "dropdown:curvePreset", 1);
+    click_widget(&mut h, "curvePreset:Medium Contrast", 1);
+    let c = develop(&h).curve;
+    assert_eq!(c.master.len(), 5, "the preset's S-curve: {:?}", c.master);
+    assert!(c.master[1].y < 0.25 && c.master[3].y > 0.75);
+    // shape it further, then save it from the dropdown (name prompt)
+    exec(&mut h, "develop.curve", json!({"channel": "blue", "points": [[0.0, 0.08], [1.0, 1.0]]}));
+    h.step();
+    click_widget(&mut h, "dropdown:curvePreset", 1);
+    click_widget(&mut h, "curvePresetMenu:save", 1);
+    let mut dlg = h.app.ui.dialog.take().expect("a name prompt opens");
+    match &mut dlg {
+        crate::state::Dialog::TextPrompt { command, value, .. } => {
+            assert_eq!(command, "curve.savePreset");
+            *value = "Cool Shadows".into();
+        }
+        _ => panic!("a name prompt opens"),
+    }
+    let r = crate::panels::dialogs::confirm_dialog(&mut h.app, &dlg);
+    assert!(r.is_ok(), "{r:?}");
+    assert_eq!(h.app.session.curve_presets.len(), 1);
+    // Linear from the dropdown flattens every channel
+    click_widget(&mut h, "dropdown:curvePreset", 1);
+    click_widget(&mut h, "curvePreset:Linear", 1);
+    let c = develop(&h).curve;
+    assert!(c.master.is_empty() && c.blue.is_empty());
+    click_widget(&mut h, "dropdown:curvePreset", 1);
+    click_widget(&mut h, "curvePreset:Cool Shadows", 1);
+    assert_eq!(develop(&h).curve.blue.len(), 2);
+}
+
+#[test]
 fn dragging_a_point_past_its_neighbour_is_clamped() {
     let mut h = curve_open("red");
     exec(&mut h, "develop.curve", json!({"channel": "red", "points": [[0.0, 0.0], [0.3, 0.3], [0.6, 0.6], [1.0, 1.0]]}));

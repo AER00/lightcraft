@@ -790,10 +790,60 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     let _ = id;
 }
 
-/// The row under the curve graph: reset every curve.
-fn curve_footer(app: &mut LightcraftApp, ui: &mut egui::Ui, _d: &DevelopSettings) {
+/// The row under the curve graph: point-curve presets and reset every curve.
+fn curve_footer(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
+    use lightcraft_engine::cmd::curves::{all_presets, matching_preset};
+    let t = Tokens::get(ui.ctx());
     egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 4 }).show(ui, |ui| {
         ui.horizontal(|ui| {
+            ui.label(RichText::new("Point Curve").font(t.font(12.0)).color(t.text_label));
+            let current = matching_preset(&app.session, &d.curve);
+            let r = crate::widgets::dropdown(ui, "curvePreset", current.as_deref().unwrap_or("Custom"), t.font(12.0), t.text);
+            egui::Popup::menu(&r).show(|ui| {
+                ui.set_min_width(180.0);
+                let presets = all_presets(&app.session);
+                let mut user_seen = false;
+                for p in &presets {
+                    if !p.builtin && !user_seen {
+                        user_seen = true;
+                        ui.separator();
+                    }
+                    let r = ui.selectable_label(current.as_deref() == Some(p.name.as_str()), &p.name);
+                    register(ui.ctx(), format!("curvePreset:{}", p.name), r.rect);
+                    if r.clicked() {
+                        let _ = app.run("curve.applyPreset", json!({"name": p.name}));
+                        ui.close();
+                    }
+                    if !p.builtin {
+                        r.context_menu(|ui| {
+                            if ui.button("Delete Preset").clicked() {
+                                let _ = app.run("curve.deletePreset", json!({"name": p.name}));
+                                ui.close();
+                            }
+                        });
+                    }
+                }
+                ui.separator();
+                let shaped = current.as_deref() != Some("Linear");
+                let r = ui.add_enabled(shaped, egui::Button::new("Save Point Curve…"));
+                register(ui.ctx(), "curvePresetMenu:save", r.rect);
+                if r.clicked() {
+                    crate::panels::dialogs::prompt(app, "Save Point Curve Preset", "Preset name", "", "curve.savePreset", json!({}), "name");
+                    ui.close();
+                }
+                if ui.add_enabled(app.services.pick_curve_preset_files.is_some(), egui::Button::new("Import Presets…")).clicked() {
+                    let _ = app.run("file.importCurvePresets", json!({}));
+                    ui.close();
+                }
+                let can_export = app.services.save_curve_preset_file.is_some() && !app.session.curve_presets.is_empty();
+                if ui.add_enabled(can_export, egui::Button::new("Export Presets…")).clicked() {
+                    let _ = app.run("file.exportCurvePresets", json!({}));
+                    ui.close();
+                }
+                if presets.iter().any(|p| !p.builtin) {
+                    ui.label(RichText::new("Right-click a preset to delete it").font(t.font(11.0)).color(t.text_dim));
+                }
+            });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let r = text_button(ui, "curveReset", "Reset", false)
                     .on_hover_text("Reset all curves: point curves (all channels) and parametric (double-click a channel to reset only that one)");

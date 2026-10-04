@@ -154,6 +154,8 @@ fn services(originals: Originals, backend: Option<Backend>, ctx: egui::Context) 
         // Preset files: browser pickers are asynchronous; not wired on the web yet.
         pick_preset_files: None,
         save_preset_file: None,
+        pick_curve_preset_files: None,
+        save_curve_preset_file: None,
         write: Some(Box::new(download)),
         // downloads happen on the main thread: exports run in the foreground on the web
         write_shared: None,

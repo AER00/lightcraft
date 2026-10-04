@@ -62,6 +62,10 @@ pub struct Services {
     pub pick_preset_files: Option<PickFiles>,
     /// Save dialog for an exported `.lcpreset` file.
     pub save_preset_file: Option<SaveFile>,
+    /// Open dialog for point-curve preset files (`.lccurve`).
+    pub pick_curve_preset_files: Option<PickFiles>,
+    /// Save dialog for an exported `.lccurve` file.
+    pub save_curve_preset_file: Option<SaveFile>,
     pub write: Option<WriteFn>,
     /// Thread-safe writer: with it, UI-started exports run in the background (desktop only).
     pub write_shared: Option<SharedWrite>,
