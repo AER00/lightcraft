@@ -74,7 +74,11 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
     {
         ops.extend(crate::cmd::convert::content_op(id, ph, info));
     }
-    s.commit("Relink Photo", if ops.len() == 1 { ops.pop().expect("one op") } else { Op::Batch { ops } })?;
+    let op = match <[Op; 1]>::try_from(ops) {
+        Ok([op]) => op,
+        Err(ops) => Op::Batch { ops },
+    };
+    s.commit("Relink Photo", op)?;
     s.media.forget(id);
     Ok(json!({"id": id.0, "path": abs}))
 }
