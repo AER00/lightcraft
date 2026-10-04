@@ -14,6 +14,9 @@
 - Quick Collection and target album (B in the grid), keyword sets (⌥1–⌥9), colour-label sets.
 - Colour-label filter with several labels at once; expandable folder tree in Local.
 - Import: copy to any folder, by day / by month / one folder, rename on import, metadata preset, Copy as DNG.
+- Import ▸ Move: photos go into the destination (with the same folders and renaming as Copy, e.g.
+  `Photos/2026/20260114/20260114_001.jpg`) together with their XMP sidecars; each original leaves the card only after its
+  copy is verified and in the library. Duplicates and files that fail stay where they were.
 - Watched-folder auto import; Convert to DNG; Duplicate; Build Standard / 1:1 / Smart Previews.
 - Export file names use the Rename Photos tokens ({title}, {seq:2}, {date:%Y-%m-%d}…), plus new {num}, {folder}, {lens}, {iso}, {rating}, {creator}.
 
