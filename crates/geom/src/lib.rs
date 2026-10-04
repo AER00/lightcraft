@@ -3,6 +3,7 @@
 //! Conventions: image coordinates are y-down. *Normalized* coordinates map the full (uncropped,
 //! oriented) image to `0..1` on both axes, so tools and settings are resolution independent.
 #![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod crop;
 mod homography;

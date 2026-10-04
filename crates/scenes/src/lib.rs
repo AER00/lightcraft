@@ -5,6 +5,7 @@
 //! develop pipeline's highlight recovery, tone mapping and colour tools have something real to do.
 //! Every scene is deterministic for its seed. No external assets: zero licensing or privacy risk.
 #![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod noise;
 mod paint;
