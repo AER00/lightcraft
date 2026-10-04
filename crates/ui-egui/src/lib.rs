@@ -658,6 +658,9 @@ pub struct Caches {
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
     filter_values: Option<(u64, std::sync::Arc<FilterValues>)>,
+    album_counts: Option<(u64, std::sync::Arc<std::collections::HashMap<lightcraft_catalog::AlbumId, usize>>)>,
+    /// How often the album counts were recomputed (tests check that unchanged frames don't).
+    pub album_count_scans: usize,
     /// The grid's layout (by photos, shapes, width, thumbnail size, grouping).
     pub grid_layout: Option<(u64, std::sync::Arc<panels::grid::GridLayout>)>,
 }
@@ -778,5 +781,96 @@ impl Caches {
                 v
             }
         }
+    }
+    /// Every album's photo count for the sidebar (a smart album evaluates its rules, which
+    /// scans the catalog). Recomputed when the catalog changes (photos, metadata, album rules
+    /// all bump its revision) and — only while some smart album has an "in the last…" rule —
+    /// when `now` (the session clock, ISO) enters a new minute, so such counts follow the clock
+    /// within a minute without rescanning every frame.
+    pub fn album_counts(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+        now: &str,
+    ) -> std::sync::Arc<std::collections::HashMap<lightcraft_catalog::AlbumId, usize>> {
+        let relative = cat.albums().any(|a| a.smart.as_ref().is_some_and(|f| f.depends_on_now()));
+        let minute = if relative { now.get(..16).unwrap_or(now) } else { "" };
+        let k = key_of((cat.revision, minute));
+        match &self.album_counts {
+            Some((h, v)) if *h == k => v.clone(),
+            _ => {
+                if relative {
+                    // "in the last N days" counts back from the session clock, as in the grid
+                    lightcraft_catalog::rules::set_now(Some(now.to_string()));
+                }
+                let v: std::sync::Arc<std::collections::HashMap<_, _>> =
+                    std::sync::Arc::new(cat.albums().map(|a| (a.id, cat.album_count(a.id))).collect());
+                self.album_count_scans += 1;
+                self.album_counts = Some((k, v.clone()));
+                v
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use lightcraft_catalog::{Album, AlbumId, Catalog, Filter, Op, Photo, PhotoId, RuleSet, Source};
+
+    fn photo(id: u64, captured: &str, rating: u8) -> Op {
+        let mut p = Photo::new(PhotoId(id), Source::Demo { scene: 0 }, &format!("p{id}.jpg"), "JPEG", 60, 40, "2026-01-01T00:00:00");
+        p.captured = Some(captured.into());
+        p.rating = rating;
+        Op::AddPhoto { photo: Box::new(p) }
+    }
+
+    fn smart(id: u64, rules: serde_json::Value) -> Op {
+        let mut a = Album::new(AlbumId(id), format!("smart {id}"));
+        let rules: RuleSet = serde_json::from_value(rules).unwrap();
+        a.smart = Some(Box::new(Filter { rule_set: Some(rules), ..Default::default() }));
+        Op::AddAlbum { album: a }
+    }
+
+    /// Smart-album counts: unchanged frames reuse them; metadata and rule changes and (for
+    /// "in the last…" rules) the clock crossing into a new minute recompute them.
+    #[test]
+    fn smart_album_counts_are_cached_until_something_changes() {
+        let mut cat = Catalog::default();
+        let mut c = super::Caches::default();
+        for (i, d) in ["2026-09-30T11:59:30", "2026-09-29T08:00:00", "2026-01-01T08:00:00"].iter().enumerate() {
+            cat.apply(photo(i as u64 + 1, d, if i == 0 { 5 } else { 1 })).unwrap();
+        }
+        cat.apply(smart(10, serde_json::json!({"rules": [{"field": "rating", "op": "gte", "value": 3}]}))).unwrap();
+        cat.apply(smart(11, serde_json::json!({"rules": [{"field": "captureDate", "op": "inLast", "value": {"n": 1, "unit": "hours"}}]}))).unwrap();
+        let now = "2026-09-30T12:00:00";
+        let n = c.album_counts(&cat, now);
+        assert_eq!((n[&AlbumId(10)], n[&AlbumId(11)]), (1, 1));
+        assert_eq!(c.album_count_scans, 1);
+        for _ in 0..10 {
+            c.album_counts(&cat, "2026-09-30T12:00:40");
+        }
+        assert_eq!(c.album_count_scans, 1, "unchanged frames in the same minute don't rescan");
+        // metadata change
+        cat.apply(Op::SetRating { id: PhotoId(2), rating: 4 }).unwrap();
+        assert_eq!(c.album_counts(&cat, now)[&AlbumId(10)], 2);
+        // rule change
+        let rs: RuleSet = serde_json::from_value(serde_json::json!({"rules": [{"field": "rating", "op": "gte", "value": 5}]})).unwrap();
+        cat.apply(Op::SetAlbumRules { id: AlbumId(10), rules: Box::new(Filter { rule_set: Some(rs), ..Default::default() }) }).unwrap();
+        assert_eq!(c.album_counts(&cat, now)[&AlbumId(10)], 1);
+        // an hour later the 11:59:30 photo has left "in the last hour", with no catalog change
+        assert_eq!(c.album_counts(&cat, "2026-09-30T13:00:10")[&AlbumId(11)], 0);
+        assert_eq!(c.album_count_scans, 4);
+        lightcraft_catalog::rules::set_now(None);
+    }
+
+    /// Without "in the last…" rules the clock never causes a rescan.
+    #[test]
+    fn absolute_rules_ignore_the_clock() {
+        let mut cat = Catalog::default();
+        let mut c = super::Caches::default();
+        cat.apply(photo(1, "2026-09-30T11:59:30", 5)).unwrap();
+        cat.apply(smart(10, serde_json::json!({"rules": [{"field": "rating", "op": "gte", "value": 3}]}))).unwrap();
+        c.album_counts(&cat, "2026-09-30T12:00:00");
+        c.album_counts(&cat, "2027-01-01T00:00:00");
+        assert_eq!(c.album_count_scans, 1);
     }
 }

@@ -174,6 +174,11 @@ impl Filter {
         if v.is_empty() { "all photos".into() } else { v.join(", ") }
     }
 
+    /// Whether matches depend on the clock (only "in the last…" rules do).
+    pub fn depends_on_now(&self) -> bool {
+        self.rule_set.as_ref().is_some_and(crate::RuleSet::depends_on_now)
+    }
+
     pub fn matches(&self, p: &Photo, cat: &Catalog) -> bool {
         if p.deleted != self.deleted {
             return false;
