@@ -61,7 +61,7 @@ fn set_names_ops(s: &crate::Session, names: &[String; 5]) -> Vec<Op> {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(query "photo.renamePreview", "Rename Preview", [], None, "{template: e.g. `{date}_{name}`, `Trip-{seq:3}` (tokens: {name} {seq} {seq:N} {date} {date:%Y%m%d} {camera} {title} {ext}), start?: first sequence number (1), ids?} — renames the files on disk (sidecars too, never overwriting: collisions get -1, -2…); undoable", has_selection, |s, p| {
+        cmd!(query "photo.renamePreview", "Rename Preview", [], None, "{template: e.g. `{date}_{name}`, `Trip-{seq:3}` (tokens: {name} {num} {seq} {seq:N} {date} {date:%Y%m%d} {folder} {camera} {lens} {iso} {rating} {title} {creator} {ext}), start?: first sequence number (1), ids?} — renames the files on disk (sidecars too, never overwriting: collisions get -1, -2…); undoable", has_selection, |s, p| {
             let (ids, template, start) = rename_args(s, p, "photo.renamePreview")?;
             Ok(serde_json::to_value(s.plan_rename(&ids, &template, start)).unwrap_or_default())
         }),
@@ -70,7 +70,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Rename Photos",
             [],
             None,
-            "{template: e.g. `{date}_{name}`, `Trip-{seq:3}` (tokens: {name} {seq} {seq:N} {date} {date:%Y%m%d} {camera} {title} {ext}), start?: first sequence number (1), ids?} — renames the files on disk (sidecars too, never overwriting: collisions get -1, -2…); undoable",
+            "{template: e.g. `{date}_{name}`, `Trip-{seq:3}` (tokens: {name} {num} {seq} {seq:N} {date} {date:%Y%m%d} {folder} {camera} {lens} {iso} {rating} {title} {creator} {ext}), start?: first sequence number (1), ids?} — renames the files on disk (sidecars too, never overwriting: collisions get -1, -2…); undoable",
             has_selection,
             |s, p| {
                 let (ids, template, start) = rename_args(s, p, "photo.rename")?;

@@ -1,10 +1,13 @@
 //! Batch rename: a file-name template applied to the selected photos, renaming the files on
 //! disk (with their XMP sidecars) safely.
 //!
-//! Template tokens: `{name}` (current name without extension), `{seq}` / `{seq:3}` (sequence number,
-//! zero-padded to 3 digits), `{date}` / `{date:%Y%m%d}` (capture date; `%Y %y %m %d %H %M %S`),
-//! `{camera}`, `{title}`, `{ext}` (extension, without the dot). Characters that aren't allowed in
-//! file names become `-`. The original extension is always kept.
+//! Template tokens (shared with import renaming and export file naming): `{name}` (current name
+//! without extension), `{num}` (the number at the end of the name: `IMG_0042` → `0042`), `{seq}` /
+//! `{seq:3}` (sequence number, zero-padded to 3 digits), `{date}` / `{date:%Y%m%d}` (capture date;
+//! `%Y %y %m %d %H %M %S`), `{folder}` (the original's folder name), `{camera}`, `{lens}`, `{iso}`,
+//! `{rating}`, `{title}`, `{creator}`, `{ext}` (extension, without the dot). Unknown tokens stay as
+//! typed. Characters that aren't allowed in file names become `-`. The original extension is always
+//! kept.
 //!
 //! Safety:
 //! - a target that exists on disk, or that another photo in the batch gets, receives a `-1`, `-2`…
@@ -82,6 +85,21 @@ fn format_date(iso: &str, fmt: &str) -> String {
 /// Expand `template` for `p` (sequence number `seq`) into a file name with `p`'s extension.
 pub fn expand(template: &str, p: &Photo, seq: usize) -> String {
     let (stem, ext) = split_ext(&p.file_name);
+    let out = expand_tokens(template, p, seq, 1);
+    let mut stem_out = sanitize(&out);
+    if stem_out.is_empty() {
+        stem_out = sanitize(stem);
+    }
+    if stem_out.is_empty() {
+        stem_out = "photo".into();
+    }
+    if ext.is_empty() { stem_out } else { format!("{stem_out}.{ext}") }
+}
+
+/// The template's tokens replaced for `p` (no extension added, nothing sanitized). A bare `{seq}`
+/// is zero-padded to `seq_width` digits.
+pub fn expand_tokens(template: &str, p: &Photo, seq: usize, seq_width: usize) -> String {
+    let (stem, ext) = split_ext(&p.file_name);
     let mut out = String::new();
     let mut rest = template;
     while let Some(i) = rest.find('{') {
@@ -95,13 +113,27 @@ pub fn expand(template: &str, p: &Photo, seq: usize) -> String {
         let (name, arg) = tok.split_once(':').map(|(a, b)| (a, Some(b))).unwrap_or((tok, None));
         let v = match name.trim().to_ascii_lowercase().as_str() {
             "name" | "filename" => stem.to_string(),
+            "num" => {
+                let digits = stem.chars().rev().take_while(char::is_ascii_digit).count();
+                stem[stem.len() - digits..].to_string()
+            }
             "seq" | "n" => {
-                let w: usize = arg.and_then(|a| a.parse().ok()).unwrap_or(1).min(9);
+                let w: usize = arg.and_then(|a| a.parse().ok()).unwrap_or(seq_width).min(9);
                 format!("{seq:0w$}")
             }
             "date" => format_date(p.date(), arg.unwrap_or("%Y%m%d")),
+            "folder" => match &p.source {
+                Source::File { path } => {
+                    Path::new(path).parent().and_then(Path::file_name).map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
+                }
+                Source::Demo { .. } => String::new(),
+            },
             "camera" => p.meta.camera.clone(),
+            "lens" => p.meta.lens.clone(),
+            "iso" => p.meta.iso.map(|v| v.to_string()).unwrap_or_default(),
+            "rating" => p.rating.to_string(),
             "title" => p.meta.title.clone(),
+            "creator" => p.meta.creator.clone(),
             "ext" => ext.to_string(),
             _ => format!("{{{tok}}}"),
         };
@@ -109,14 +141,7 @@ pub fn expand(template: &str, p: &Photo, seq: usize) -> String {
         rest = &rest[i + j + 1..];
     }
     out.push_str(rest);
-    let mut stem_out = sanitize(&out);
-    if stem_out.is_empty() {
-        stem_out = sanitize(stem);
-    }
-    if stem_out.is_empty() {
-        stem_out = "photo".into();
-    }
-    if ext.is_empty() { stem_out } else { format!("{stem_out}.{ext}") }
+    out
 }
 
 /// Every sidecar that may belong to `path` (both naming conventions, `.xmp` and `.XMP`).
@@ -347,5 +372,23 @@ mod tests {
         assert_eq!(expand("{unknown}-{seq}", &p, 12), "{unknown}-12.CR2");
         assert_eq!(expand("  ", &p, 1), "IMG_0042.CR2", "empty template keeps the name");
         assert_eq!(expand("../{name}", &p, 1), "-IMG_0042.CR2", "no path components");
+    }
+
+    #[test]
+    fn number_folder_and_metadata_tokens() {
+        let path = std::path::Path::new("shoots").join("2026-09 Coast").join("DSC_0815.NEF");
+        let mut p = Photo::new(PhotoId(1), Source::File { path: path.to_string_lossy().into() }, "DSC_0815.NEF", "NEF", 1, 1, "2026-01-01T00:00:00");
+        p.meta.lens = "24-70mm F2.8".into();
+        p.meta.iso = Some(400);
+        p.meta.creator = "A. Person".into();
+        p.rating = 4;
+        assert_eq!(expand("{folder}_{num}", &p, 1), "2026-09 Coast_0815.NEF");
+        assert_eq!(expand("{rating}star-{iso}-{lens}-{creator}", &p, 1), "4star-400-24-70mm F2.8-A. Person.NEF");
+        // no number at the end of the name / no folder: empty
+        p.file_name = "beach.NEF".into();
+        p.source = Source::Demo { scene: 0 };
+        assert_eq!(expand("{folder}{name}{num}", &p, 1), "beach.NEF");
+        // a bare {seq} is padded to the caller's width
+        assert_eq!(expand_tokens("{seq}|{seq:2}", &p, 7, 3), "007|07");
     }
 }

@@ -210,4 +210,23 @@ mod tests {
         assert_eq!(r["files"].as_array().map(Vec::len), Some(1));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// The export file-name template takes the Rename Photos tokens.
+    #[test]
+    fn export_naming_tokens() {
+        let dir = std::env::temp_dir().join(format!("lc-mcp-export-naming-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut h = Headless::demo();
+        let ids: Vec<u64> = h.session.visible_cloned().iter().take(2).map(|p| p.0).collect();
+        for (id, title) in ids.iter().zip(["Harbour", "Hills"]) {
+            h.call("engine.execute", json!({"command": "photo.setMeta", "params": {"ids": [id], "title": title}})).unwrap();
+            h.call("engine.execute", json!({"command": "photo.rate", "params": {"ids": [id], "rating": 4}})).unwrap();
+        }
+        let params = json!({"dir": dir.to_string_lossy(), "ids": ids, "longEdge": 32, "format": "png", "naming": "{title}_{rating}star_{seq:2}", "startNumber": 5});
+        let r = h.call("engine.execute", json!({"command": "app.export", "params": params})).unwrap();
+        let mut names: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        names.sort();
+        assert_eq!(names, ["Harbour_4star_05.png", "Hills_4star_06.png"], "{r}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
