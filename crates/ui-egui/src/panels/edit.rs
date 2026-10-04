@@ -598,7 +598,18 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
                 if sel {
                     ui.painter().line_segment([r.left_bottom() + vec2(4.0, 1.0), r.right_bottom() + vec2(-4.0, 1.0)], Stroke::new(2.0, t.text));
                 }
-                if resp.clicked() {
+                let name = match ch {
+                    "parametric" => "Parametric curve",
+                    "master" => "Point curve",
+                    "red" => "Red channel",
+                    "green" => "Green channel",
+                    _ => "Blue channel",
+                };
+                let resp = resp.on_hover_text(format!("{name} — double-click to reset it"));
+                if resp.double_clicked() {
+                    app.ui.curve_channel = ch.into();
+                    let _ = app.run("curve.reset", json!({"channel": ch}));
+                } else if resp.clicked() {
                     app.ui.curve_channel = ch.into();
                 }
             }
@@ -614,6 +625,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     let r = Rect::from_min_size(pos2(outer.left() + 24.0, outer.top() + 6.0), vec2(side, side));
     let resp = ui.interact(r, egui::Id::new(("curve", &ch)), Sense::click_and_drag());
     register(ui.ctx(), "curve", r);
+    resp.context_menu(|ui| curve_reset_menu(app, ui, &ch));
     let p = ui.painter();
     p.rect_filled(r, 2.0, t.canvas);
     for i in 1..4 {
@@ -652,6 +664,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
             })
             .collect();
         p.add(egui::Shape::line(pts, Stroke::new(2.0, Color32::from_gray(220))));
+        curve_footer(app, ui, d);
         for c in ["curve.highlights", "curve.lights", "curve.darks", "curve.shadows"] {
             control(app, ui, d, c, true);
         }
@@ -677,13 +690,37 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     };
     let line: Vec<Pos2> = (0..=96).map(|i| to_screen(i as f64 / 96.0, curve.eval(i as f64 / 96.0).clamp(0.0, 1.0))).collect();
     p.add(egui::Shape::line(line, Stroke::new(2.0, color)));
-    for q in &pts {
-        p.circle_filled(to_screen(q.x, q.y), 4.0, color);
-    }
-    // interaction: drag the nearest point, click empty space to add, double-click to delete
+    // interaction: drag a point (both axes, between its neighbours), drag empty space to add and
+    // drag a new point, click empty space to add, double-click a point to delete it
     let drag_id = egui::Id::new(("curve-drag", &ch));
-    let mut dragging: Option<usize> = ui.data(|dd| dd.get_temp(drag_id));
+    // the point being dragged (stored as `Option<usize>` so a stale value can be cleared)
+    let mut dragging: Option<usize> = ui.data(|dd| dd.get_temp::<Option<usize>>(drag_id)).flatten();
     let nearest = |q: Pos2| pts.iter().enumerate().map(|(i, p)| (i, to_screen(p.x, p.y).distance(q))).min_by(|a, b| a.1.total_cmp(&b.1));
+    let hovered = resp.hover_pos().and_then(nearest).filter(|(_, dist)| *dist < 10.0).map(|(i, _)| i);
+    if dragging.is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if hovered.is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+    for (i, q) in pts.iter().enumerate() {
+        let c = to_screen(q.x, q.y);
+        if dragging == Some(i) || (dragging.is_none() && hovered == Some(i)) {
+            p.circle_filled(c, 5.5, color);
+            p.circle_stroke(c, 5.5, Stroke::new(1.0, t.canvas));
+        } else {
+            p.circle_filled(c, 4.0, color);
+        }
+    }
+    // input / output readout of the point being dragged (0–255 like the histogram)
+    if let Some(q) = dragging.and_then(|i| pts.get(i)) {
+        p.text(
+            r.left_top() + vec2(6.0, 4.0),
+            egui::Align2::LEFT_TOP,
+            format!("{} / {}", (q.x * 255.0).round(), (q.y * 255.0).round()),
+            t.font(11.0),
+            t.text_dim,
+        );
+    }
     let mut new_pts = None;
     if resp.double_clicked()
         && let Some(q) = resp.interact_pointer_pos()
@@ -696,8 +733,9 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         v.remove(i);
         new_pts = Some(v);
     } else if resp.drag_started()
-        && let Some(q) = resp.interact_pointer_pos()
+        && let Some(q) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos())
     {
+        // pick the point under the press, not where the pointer is once the drag threshold passed
         let _ = app.run("develop.beginInteraction", json!({"label": "Tone Curve"}));
         match nearest(q) {
             Some((i, dist)) if dist < 10.0 => dragging = Some(i),
@@ -747,8 +785,100 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         let _ = app.run("develop.endInteraction", json!({}));
     }
     ui.data_mut(|dd| dd.insert_temp(drag_id, dragging));
+    curve_footer(app, ui, d);
     control(app, ui, d, "curve.refineSaturation", true);
     let _ = id;
+}
+
+/// The row under the curve graph: point-curve presets and reset every curve.
+fn curve_footer(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
+    use lightcraft_engine::cmd::curves::{all_presets, matching_preset};
+    let t = Tokens::get(ui.ctx());
+    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 4 }).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Point Curve").font(t.font(12.0)).color(t.text_label));
+            let current = matching_preset(&app.session, &d.curve);
+            let r = crate::widgets::dropdown(ui, "curvePreset", current.as_deref().unwrap_or("Custom"), t.font(12.0), t.text);
+            egui::Popup::menu(&r).show(|ui| {
+                ui.set_min_width(180.0);
+                let presets = all_presets(&app.session);
+                let mut user_seen = false;
+                for p in &presets {
+                    if !p.builtin && !user_seen {
+                        user_seen = true;
+                        ui.separator();
+                    }
+                    let r = ui.selectable_label(current.as_deref() == Some(p.name.as_str()), &p.name);
+                    register(ui.ctx(), format!("curvePreset:{}", p.name), r.rect);
+                    if r.clicked() {
+                        let _ = app.run("curve.applyPreset", json!({"name": p.name}));
+                        ui.close();
+                    }
+                    if !p.builtin {
+                        r.context_menu(|ui| {
+                            if ui.button("Delete Preset").clicked() {
+                                let _ = app.run("curve.deletePreset", json!({"name": p.name}));
+                                ui.close();
+                            }
+                        });
+                    }
+                }
+                ui.separator();
+                let shaped = current.as_deref() != Some("Linear");
+                let r = ui.add_enabled(shaped, egui::Button::new("Save Point Curve…"));
+                register(ui.ctx(), "curvePresetMenu:save", r.rect);
+                if r.clicked() {
+                    crate::panels::dialogs::prompt(app, "Save Point Curve Preset", "Preset name", "", "curve.savePreset", json!({}), "name");
+                    ui.close();
+                }
+                if ui.add_enabled(app.services.pick_curve_preset_files.is_some(), egui::Button::new("Import Presets…")).clicked() {
+                    let _ = app.run("file.importCurvePresets", json!({}));
+                    ui.close();
+                }
+                let can_export = app.services.save_curve_preset_file.is_some() && !app.session.curve_presets.is_empty();
+                if ui.add_enabled(can_export, egui::Button::new("Export Presets…")).clicked() {
+                    let _ = app.run("file.exportCurvePresets", json!({}));
+                    ui.close();
+                }
+                if presets.iter().any(|p| !p.builtin) {
+                    ui.label(RichText::new("Right-click a preset to delete it").font(t.font(11.0)).color(t.text_dim));
+                }
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let r = text_button(ui, "curveReset", "Reset", false)
+                    .on_hover_text("Reset all curves: point curves (all channels) and parametric (double-click a channel to reset only that one)");
+                if r.clicked() {
+                    let _ = app.run("curve.reset", json!({"channel": "all"}));
+                }
+            });
+        });
+    });
+}
+
+/// Right-click menu of the curve graph.
+fn curve_reset_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, ch: &str) {
+    let label = if ch == "parametric" { "Reset Parametric Curve".to_string() } else { format!("Reset {} Channel", channel_label(ch)) };
+    let r = ui.button(label);
+    register(ui.ctx(), "curveMenu:resetChannel", r.rect);
+    if r.clicked() {
+        let _ = app.run("curve.reset", json!({"channel": ch}));
+        ui.close();
+    }
+    let r = ui.button("Reset All Curves");
+    register(ui.ctx(), "curveMenu:resetAll", r.rect);
+    if r.clicked() {
+        let _ = app.run("curve.reset", json!({"channel": "all"}));
+        ui.close();
+    }
+}
+
+fn channel_label(ch: &str) -> &'static str {
+    match ch {
+        "red" => "Red",
+        "green" => "Green",
+        "blue" => "Blue",
+        _ => "RGB",
+    }
 }
 
 /// Toggle for a targeted-adjustment tool (`tool` = `tat:<target>`).

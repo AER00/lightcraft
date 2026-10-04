@@ -671,3 +671,35 @@ fn mask_components_invert_duplicate_rename_change_mode_and_delete() {
     assert!(active_dev(&s).masks.is_empty());
     assert_eq!(s.active_mask, None);
 }
+
+#[test]
+fn curve_reset_by_channel_and_whole() {
+    let mut s = demo();
+    let s_curve = [[0.0, 0.0], [0.25, 0.15], [0.75, 0.85], [1.0, 1.0]];
+    for ch in ["master", "red", "green", "blue"] {
+        s.execute("develop.curve", &json!({"channel": ch, "points": s_curve})).unwrap();
+    }
+    s.execute("develop.set", &json!({"control": "curve.shadows", "value": 30})).unwrap();
+    s.execute("develop.set", &json!({"control": "curve.refineSaturation", "value": 50})).unwrap();
+    // one channel
+    s.execute("curve.reset", &json!({"channel": "red"})).unwrap();
+    let c = active_dev(&s).curve;
+    assert!(c.red.is_empty() && c.green.len() == 4 && c.master.len() == 4, "only red resets");
+    assert_eq!(c.shadows, 30.0);
+    // parametric only
+    s.execute("curve.reset", &json!({"channel": "parametric"})).unwrap();
+    let c = active_dev(&s).curve;
+    assert_eq!(c.shadows, 0.0);
+    assert_eq!(c.master.len(), 4, "point curves stay");
+    // all point curves, then undo restores them in one step
+    s.execute("curve.reset", &json!({"channel": "point"})).unwrap();
+    let c = active_dev(&s).curve;
+    assert!(c.master.is_empty() && c.green.is_empty() && c.blue.is_empty());
+    assert_eq!(c.refine_saturation, 50.0);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(active_dev(&s).curve.master.len(), 4);
+    // everything (the default)
+    s.execute("curve.reset", &json!({})).unwrap();
+    assert_eq!(active_dev(&s).curve, lightcraft_develop::ToneCurve::default());
+    assert!(s.execute("curve.reset", &json!({"channel": "alpha"})).is_err());
+}

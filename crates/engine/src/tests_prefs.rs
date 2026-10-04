@@ -202,3 +202,62 @@ fn metadata_presets_apply_to_photos_and_imports() {
     assert!(s.import_defaults.metadata_preset.is_none(), "deleting the import preset clears it");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn curve_presets_save_apply_export_import_and_persist() {
+    let lib = temp_dir("curves");
+    let file = lib.join("out").join("looks");
+    {
+        let mut s = Session::new().with_fs();
+        s.open_library(&lib, true).unwrap();
+        let r = s.execute("curve.presets", &json!({})).unwrap();
+        let names: Vec<&str> = r["presets"].as_array().unwrap().iter().filter_map(|p| p["name"].as_str()).collect();
+        assert_eq!(names, ["Linear", "Medium Contrast", "Strong Contrast"]);
+        assert_eq!(r["current"], "Linear", "a fresh photo has linear point curves");
+        // built-in: an S-curve on the master channel, parametric untouched
+        s.execute("develop.set", &json!({"control": "curve.shadows", "value": 20})).unwrap();
+        s.execute("curve.applyPreset", &json!({"name": "strong contrast"})).unwrap();
+        let d = s.develop_of(s.active().unwrap()).unwrap();
+        assert_eq!(d.curve.master.len(), 5);
+        assert!(d.curve.master[1].y < 0.25 && d.curve.master[3].y > 0.75, "an S-curve");
+        assert_eq!(d.curve.shadows, 20.0);
+        assert_eq!(s.execute("curve.presets", &json!({})).unwrap()["current"], "Strong Contrast");
+        // save a custom one (with a red channel)
+        s.execute("develop.curve", &json!({"channel": "red", "points": [[0.0, 0.1], [1.0, 0.9]]})).unwrap();
+        assert!(s.execute("curve.savePreset", &json!({"name": "Linear"})).is_err(), "built-in names are reserved");
+        s.execute("curve.savePreset", &json!({"name": "Faded Red"})).unwrap();
+        assert_eq!(s.execute("curve.presets", &json!({})).unwrap()["current"], "Faded Red");
+        // Linear resets every point channel
+        s.execute("curve.applyPreset", &json!({"name": "Linear"})).unwrap();
+        let d = s.develop_of(s.active().unwrap()).unwrap();
+        assert!(d.curve.master.is_empty() && d.curve.red.is_empty());
+        s.execute("curve.applyPreset", &json!({"name": "Faded Red"})).unwrap();
+        assert_eq!(s.develop_of(s.active().unwrap()).unwrap().curve.red.len(), 2);
+        // export (extension added), delete, re-import
+        let r = s.execute("curve.exportPresets", &json!({"path": file.to_string_lossy()})).unwrap();
+        assert_eq!(r["count"], 1);
+        let path = r["path"].as_str().unwrap().to_string();
+        assert!(path.ends_with(".lccurve"));
+        assert!(s.execute("curve.deletePreset", &json!({"name": "Medium Contrast"})).is_err());
+        s.execute("curve.deletePreset", &json!({"name": "faded red"})).unwrap();
+        assert!(s.curve_presets.is_empty());
+        let r = s.execute("curve.importPresets", &json!({"path": path})).unwrap();
+        assert_eq!(r["imported"], json!(["Faded Red"]));
+        assert_eq!(s.curve_presets.len(), 1);
+        // a file carrying a built-in name doesn't shadow it; junk fails cleanly
+        let other = lib.join("one.lccurve");
+        std::fs::write(&other, r#"{"name": "Linear", "master": [[0, 0.05], [1, 1]]}"#).unwrap();
+        let junk = lib.join("junk.lccurve");
+        std::fs::write(&junk, "not json").unwrap();
+        let r = s.execute("curve.importPresets", &json!({"paths": [other.to_string_lossy(), junk.to_string_lossy()]})).unwrap();
+        assert_eq!(r["imported"], json!(["Linear (imported)"]));
+        assert_eq!(r["failed"].as_array().unwrap().len(), 1);
+        s.close_library().unwrap();
+    }
+    // saved with the library preferences
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    let names: Vec<String> = s.curve_presets.iter().map(|p| p.name.clone()).collect();
+    assert_eq!(names, ["Faded Red", "Linear (imported)"]);
+    let _ = std::fs::remove_dir_all(&lib);
+}
