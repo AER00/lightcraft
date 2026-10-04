@@ -203,27 +203,19 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let (lr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
     ui.painter().text(pos2(lr.left() + 18.0, lr.center().y), Align2::LEFT_CENTER, "Local", t.semibold(13.5), t.text_label);
     let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
-    let mut places: Vec<(String, String)> = Vec::new();
+    let mut builtin: Vec<(String, String)> = Vec::new();
     if !home.is_empty() {
         for (name, sub) in [("Pictures", "Pictures"), ("Desktop", "Desktop"), ("Downloads", "Downloads"), ("Home", "")] {
-            let p = if sub.is_empty() { home.clone() } else { format!("{home}/{sub}") };
+            // joined with the platform's separator, like the paths browsing gives back
+            let p = if sub.is_empty() { home.clone() } else { std::path::Path::new(&home).join(sub).to_string_lossy().to_string() };
             if std::path::Path::new(&p).is_dir() {
-                places.push((name.to_string(), p));
+                builtin.push((name.to_string(), p));
             }
         }
     }
     let browsing = app.session.browse.clone().filter(|_| app.session.source == LibrarySource::Folder);
-    // picked folders stay listed; the folder being browsed is listed even when it wasn't picked
-    let roots = app.ui.local_roots.iter().cloned().chain(browsing.iter().map(|b| b.path.clone()));
-    for path in roots {
-        if !places.iter().any(|(_, p)| *p == path) {
-            let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
-            places.push((name, path));
-        }
-    }
     let current = browsing.as_ref().map(|b| b.path.clone());
-    // hidden locations stay reachable: breadcrumbs, Browse Folder…, and the row below
-    places.retain(|(_, p)| !app.ui.hidden_locations.contains(p));
+    let places = local_places(builtin, &app.ui.local_roots, current.as_deref(), &app.ui.hidden_locations);
     for (name, path) in places {
         folder_tree(app, ui, &name, &path, 0.0, current.as_deref());
     }
@@ -235,7 +227,7 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             match app.run("library.browse", json!({"path": path})) {
                 Ok(r) => {
                     let dir = r["path"].as_str().unwrap_or(&path).to_string();
-                    if !app.ui.local_roots.contains(&dir) {
+                    if !app.ui.local_roots.iter().any(|p| same_folder(p, &dir)) {
                         app.ui.local_roots.push(dir);
                     }
                 }
@@ -254,6 +246,28 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     ui.add_space(10.0);
+}
+
+/// Whether two paths name the same folder, however they are spelled (separators, trailing
+/// slash, `.`/`..`, drive-letter case; see `lightcraft_catalog::query::folder_key`).
+pub(crate) fn same_folder(a: &str, b: &str) -> bool {
+    a == b || lightcraft_catalog::query::folder_key(a) == lightcraft_catalog::query::folder_key(b)
+}
+
+/// Local's top-level folders, in order: the built-in places, the folders picked with Browse
+/// Folder…, then the folder being browsed when it isn't one of those. Each folder is listed
+/// once however its path is spelled (the first spelling wins), and hidden ones are left out —
+/// they stay reachable through breadcrumbs and Browse Folder….
+pub(crate) fn local_places(builtin: Vec<(String, String)>, saved: &[String], browsing: Option<&str>, hidden: &[String]) -> Vec<(String, String)> {
+    let mut places = builtin;
+    for path in saved.iter().map(String::as_str).chain(browsing) {
+        if !places.iter().any(|(_, p)| same_folder(p, path)) {
+            let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
+            places.push((name, path.to_string()));
+        }
+    }
+    places.retain(|(_, p)| !hidden.iter().any(|h| same_folder(h, p)));
+    places
 }
 
 /// The subfolders of `path` (not hidden ones), sorted; listed at most every 2 s per folder.
@@ -286,9 +300,9 @@ fn subfolders(ui: &egui::Ui, path: &str) -> Vec<(String, String)> {
 fn folder_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str, path: &str, indent: f32, current: Option<&str>) {
     let t = Tokens::get(ui.ctx());
     let open_id = egui::Id::new(("folder-open", path.to_string()));
-    let on_the_way = current.is_some_and(|c| c != path && std::path::Path::new(c).starts_with(path));
+    let sel = current.is_some_and(|c| same_folder(c, path));
+    let on_the_way = !sel && current.is_some_and(|c| lightcraft_catalog::query::folder_within(c, path));
     let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(on_the_way);
-    let sel = current == Some(path);
     let resp = row(app, ui, &format!("local:{path}"), Icon::Folder, name, None, sel, indent + 12.0).on_hover_text(path);
     let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
     let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
@@ -595,5 +609,38 @@ fn keyword_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[KeywordNode
         if open && !n.children.is_empty() {
             keyword_rows(app, ui, &n.children, indent + 16.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_places;
+
+    fn names(v: &[(String, String)]) -> Vec<&str> {
+        v.iter().map(|(n, _)| n.as_str()).collect()
+    }
+
+    /// A built-in location browsed (or picked) under another spelling of its path is the same
+    /// row, not a second root — for every built-in, not just named ones.
+    #[test]
+    fn equivalent_paths_are_one_local_location() {
+        for (home, sep) in [("D:\\Example", '\\'), ("D:/Example", '/'), ("/home/example", '/')] {
+            let builtin: Vec<(String, String)> =
+                ["Pictures", "Desktop", "Downloads"].iter().map(|s| (s.to_string(), format!("{home}{sep}{s}"))).collect();
+            for (_, p) in builtin.clone() {
+                // the browsed spelling: other separators, a trailing one, a different drive-letter case
+                let flipped = p.replace(['/', '\\'], if sep == '/' { "\\" } else { "/" });
+                for browsing in [flipped.clone(), format!("{p}{sep}"), p.replacen("D:", "d:", 1)] {
+                    let places = local_places(builtin.clone(), std::slice::from_ref(&browsing), Some(&browsing), &[]);
+                    assert_eq!(names(&places), ["Pictures", "Desktop", "Downloads"], "{p} browsed as {browsing}");
+                }
+                // hiding under one spelling hides the other
+                let places = local_places(builtin.clone(), &[], None, std::slice::from_ref(&flipped));
+                assert_eq!(places.len(), 2, "hidden {flipped}");
+            }
+        }
+        // a different folder is still added
+        let places = local_places(vec![("Pictures".into(), "/home/example/Pictures".into())], &[], Some("/home/example/Pictures2"), &[]);
+        assert_eq!(names(&places), ["Pictures", "Pictures2"]);
     }
 }
