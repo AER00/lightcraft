@@ -108,6 +108,9 @@ pub struct ImportCandidate {
     pub existing: Option<u64>,
     /// Not readable.
     pub error: Option<String>,
+    /// A raw variant that can't be decoded yet (why): it imports as preview only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_only: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -211,7 +214,8 @@ pub fn apply_import_defaults(s: &Session, p: &mut Photo) {
         crate::cmd::metadata::apply_to(&mut p.meta, &mp.fields);
     }
     let base = p.camera_defaults();
-    let raw = p.kind == lightcraft_catalog::MediaKind::Raw;
+    // a raw shown from its embedded JPEG gets the rendered-file default, not the raw one
+    let raw = p.develops_raw();
     let preset = s.import_defaults.preset_for(raw, &p.meta.camera).and_then(|id| s.presets.iter().find(|x| x.id == id));
     match preset {
         Some(pr) => {
@@ -451,6 +455,7 @@ pub fn scan_with(mut input: ScanInput, paths: &[String], progress: &ScanProgress
             Some(Ok(info)) => {
                 (c.format, c.kind, c.width, c.height, c.file_size, c.captured) =
                     (info.format.clone(), info.kind, info.width, info.height, info.file_size, info.captured.clone());
+                c.preview_only = info.preview_only.clone();
                 if let Some(h) = &info.content_hash {
                     match seen_hash.get(h) {
                         Some(existing) => {
@@ -594,6 +599,7 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         p.as_shot_wb = info.as_shot_wb;
         p.content_hash = info.content_hash;
         p.embedded_lens = info.embedded_lens;
+        p.preview_only = info.preview_only.clone();
         apply_import_defaults(s, &mut p);
         let raw = p.kind == lightcraft_catalog::MediaKind::Raw;
         let packet = crate::sidecar::find_sidecar(&path, s.xmp.naming)
@@ -667,6 +673,7 @@ impl Session {
         if let Some(info) = self.import_probes.get(&c.path) {
             p.as_shot_wb = info.as_shot_wb;
             p.embedded_lens = info.embedded_lens;
+            p.preview_only = info.preview_only.clone();
         }
         p.develop = std::sync::Arc::new(p.import_defaults());
         let edge = edge.clamp(64, crate::media::SourceLevel::Thumb.max_edge());

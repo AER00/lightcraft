@@ -432,6 +432,19 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         p.line_segment([c + vec2(s * 0.3, -s * 0.3), c + vec2(s, -s * 0.3)], Stroke::new(1.2, Color32::WHITE));
         p.galley(pos2(br.left() + 22.0, br.center().y - g.size().y / 2.0), g, Color32::WHITE);
     }
+    if let Some(why) = &photo.preview_only {
+        // a raw shown from its embedded JPEG: a small amber "Preview" pill at the image's bottom
+        // left, above the badge bar (always shown: it changes what editing does)
+        let g = p.layout_no_wrap("Preview".into(), t.semibold(9.5), Color32::WHITE);
+        let at = pos2(img_rect.left() + 6.0, img_rect.bottom() - 30.0 - 16.0);
+        let br = Rect::from_min_size(at, vec2(g.size().x + 24.0, 16.0));
+        p.rect_filled(br, 8.0, Color32::from_black_alpha(170));
+        paint(p, Rect::from_center_size(pos2(br.left() + 9.0, br.center().y), vec2(12.0, 12.0)), Icon::Info, t.caution);
+        p.galley(pos2(br.left() + 17.0, br.center().y - g.size().y / 2.0), g, Color32::WHITE);
+        register(ui.ctx(), format!("badge:previewOnly:{}", id.0), br);
+        ui.interact(br, egui::Id::new(("preview-only-badge", id.0)), Sense::hover())
+            .on_hover_text(format!("Preview only — {}", crate::widgets::preview_only_explanation(why)));
+    }
     if photo.flag == Flag::Reject {
         p.rect_filled(img_rect, 0.0, Color32::from_black_alpha(110));
     }

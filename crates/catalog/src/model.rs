@@ -200,6 +200,12 @@ pub struct Photo {
     /// Assisted culling scores (`None` until analysed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub analysis: Option<Analysis>,
+    /// A raw file whose sensor data can't be decoded yet (an unsupported raw variant): why (the
+    /// raw decoder's reason, e.g. "Nikon Huffman-compressed NEF …"). The photo is shown and
+    /// edited from the camera's embedded JPEG preview — a rendered image with the camera's
+    /// picture style baked in — so it is treated as a rendered (non-raw) source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_only: Option<String>,
 }
 
 /// What assisted culling measured on a photo.
@@ -246,7 +252,13 @@ impl Photo {
             copy_name: None,
             import_look: None,
             analysis: None,
+            preview_only: None,
         }
+    }
+    /// A raw file developed from its sensor data: not a rendered image, and not a raw shown from
+    /// its embedded preview ([`Photo::preview_only`]).
+    pub fn develops_raw(&self) -> bool {
+        self.kind == MediaKind::Raw && self.preview_only.is_none()
     }
     /// The develop settings import gave this photo: [`Photo::camera_defaults`], or the user's
     /// default preset applied on top of them ([`Photo::import_look`]).

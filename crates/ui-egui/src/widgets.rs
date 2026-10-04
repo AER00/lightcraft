@@ -23,6 +23,48 @@ pub fn take_registry(ctx: &egui::Context) -> Vec<(String, Rect)> {
     ctx.data_mut(|d| std::mem::take(&mut d.get_temp_mut_or_default::<Registry>(egui::Id::new("lc-registry")).0))
 }
 
+// ------------------------------------------------------------------ preview-only raws
+
+/// The decoder's reason why a raw is shown from its embedded preview, shortened for the UI
+/// ("Nikon Huffman-compressed NEF (no clean-room …)" → "Nikon Huffman-compressed NEF").
+pub fn preview_only_variant(reason: &str) -> &str {
+    reason.split(" (").next().unwrap_or(reason).trim()
+}
+
+/// What a preview-only raw means for the user (see `Photo::preview_only`).
+pub fn preview_only_explanation(reason: &str) -> String {
+    format!(
+        "LightCraft can't decode this raw variant yet ({}). You're editing the camera's embedded JPEG preview, \
+         which already includes the camera's picture style (e.g. Monochrome) and white balance.",
+        preview_only_variant(reason)
+    )
+}
+
+/// A panel notice for a raw shown from its embedded preview (Edit, Info): an amber info icon,
+/// "Preview only" and the explanation. Registered as `notice:previewOnly:{key}`.
+pub fn preview_only_notice(ui: &mut Ui, key: &str, reason: &str) {
+    let t = Tokens::get(ui.ctx());
+    let r = egui::Frame::NONE
+        .fill(t.canvas)
+        .stroke(Stroke::new(1.0, t.caution.gamma_multiply(0.45)))
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin { left: 10, right: 10, top: 8, bottom: 9 })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let (ir, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                paint(ui.painter(), ir, Icon::Info, t.caution);
+                ui.label(egui::RichText::new("Preview only").font(t.semibold(12.5)).color(t.text));
+            });
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new(preview_only_explanation(reason)).size(11.5).color(t.text_label));
+        })
+        .response;
+    let r = r.on_hover_text(format!("Decoder: {reason}"));
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Preview only: editing the camera's embedded JPEG"));
+    register(ui.ctx(), format!("notice:previewOnly:{key}"), r.rect);
+}
+
 // ------------------------------------------------------------------ colour helpers
 
 pub fn hex(s: &str) -> Color32 {

@@ -179,6 +179,10 @@ pub enum Op {
         file_size: u64,
         #[serde(default)]
         content_hash: Option<String>,
+        /// Why the file can only be shown from its embedded preview (see [`Photo::preview_only`]);
+        /// `None` = its raw data decodes (or it isn't a raw).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preview_only: Option<String>,
     },
     /// The name shown for a colour label (`None` = its colour's name).
     SetLabelName {
@@ -514,7 +518,7 @@ impl Catalog {
                 let old_format = format.map(|f| std::mem::replace(&mut p.format, f));
                 Op::Relink { id, file_name: old_name, source: std::mem::replace(&mut p.source, source), format: old_format }
             }
-            Op::SetContent { id, width, height, file_size, content_hash } => {
+            Op::SetContent { id, width, height, file_size, content_hash, preview_only } => {
                 let p = self.photo_mut(id)?;
                 Op::SetContent {
                     id,
@@ -522,6 +526,7 @@ impl Catalog {
                     height: std::mem::replace(&mut p.height, height),
                     file_size: std::mem::replace(&mut p.file_size, file_size),
                     content_hash: std::mem::replace(&mut p.content_hash, content_hash),
+                    preview_only: std::mem::replace(&mut p.preview_only, preview_only),
                 }
             }
             Op::SetFile { id, file_name, source } => {

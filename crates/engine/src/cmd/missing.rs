@@ -42,7 +42,15 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, "only photos from files can be relinked"));
     }
     let abs = abs.to_string_lossy().to_string();
-    s.commit("Relink Photo", relink_op(id, &abs))?;
+    // the file may differ from the one imported (another export, a raw that decodes now or not):
+    // its size, dimensions and preview-only state follow it
+    let mut ops = vec![relink_op(id, &abs)];
+    if s.media.file_probe.is_some()
+        && let (Some(Ok(info)), Some(ph)) = (crate::import::probe_paths(s, std::slice::from_ref(&abs)).pop(), s.catalog.photo(id))
+    {
+        ops.extend(crate::cmd::convert::content_op(id, ph, info));
+    }
+    s.commit("Relink Photo", if ops.len() == 1 { ops.pop().expect("one op") } else { Op::Batch { ops } })?;
     s.media.forget(id);
     Ok(json!({"id": id.0, "path": abs}))
 }

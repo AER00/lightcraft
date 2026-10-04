@@ -656,6 +656,53 @@ mod tests {
         assert!(h.app.ui.dragging_photos.is_none(), "the drag ended");
     }
 
+    /// Issue #10: a raw shown from its embedded JPEG (an undecodable raw variant) says so — a badge
+    /// on its grid thumbnail, a pill on the loupe, a notice in Edit and Info — and other photos
+    /// show none of it.
+    #[test]
+    fn preview_only_raw_shows_badge_and_notices() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let vis = h.app.session.visible_cloned();
+        let (po, other) = (vis[0], vis[1]);
+        let ph = h.app.session.catalog.photo(po).unwrap().clone();
+        h.app
+            .session
+            .catalog
+            .apply(lightcraft_catalog::Op::SetContent {
+                id: po,
+                width: ph.width,
+                height: ph.height,
+                file_size: ph.file_size,
+                content_hash: ph.content_hash.clone(),
+                preview_only: Some("Nikon Huffman-compressed NEF (no clean-room description available)".into()),
+            })
+            .unwrap();
+        h.settle(SETTLE);
+        let ids = |h: &mut Headless, filter: &str| -> Vec<String> {
+            let w = h.request("ui.widgets", json!({"filter": filter}), t);
+            w["result"].as_array().unwrap_or_else(|| panic!("{w}")).iter().filter_map(|x| x["id"].as_str().map(str::to_string)).collect()
+        };
+        let badges = ids(&mut h, "badge:previewOnly:");
+        assert_eq!(badges, vec![format!("badge:previewOnly:{}", po.0)], "only the preview-only photo has the badge");
+        // the loupe and the Edit panel
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [po.0]}}), t);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.app.ui.right = crate::state::RightPanel::Edit;
+        h.settle(SETTLE);
+        let n = ids(&mut h, "notice:previewOnly:");
+        assert!(n.contains(&"notice:previewOnly:loupe".to_string()) && n.contains(&"notice:previewOnly:edit".to_string()), "{n:?}");
+        // Info
+        h.app.ui.right = crate::state::RightPanel::Info;
+        h.settle(SETTLE);
+        assert!(ids(&mut h, "notice:previewOnly:").contains(&"notice:previewOnly:info".to_string()));
+        // a regular photo: no notice
+        h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [other.0]}}), t);
+        h.app.ui.right = crate::state::RightPanel::Edit;
+        h.settle(SETTLE);
+        assert!(ids(&mut h, "notice:previewOnly:").is_empty());
+    }
+
     /// While cropping: O cycles the guides, ⇧O mirrors them, A locks / unlocks the aspect.
     #[test]
     fn crop_keys() {

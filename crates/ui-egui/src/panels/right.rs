@@ -389,6 +389,10 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     padded(ui, |ui| {
         camera_card(ui, &p);
         ui.add_space(6.0);
+        if let Some(why) = &p.preview_only {
+            crate::widgets::preview_only_notice(ui, "info", why);
+            ui.add_space(6.0);
+        }
         if let Some(name) = &p.copy_name {
             let of = p.copy_of.and_then(|m| app.session.catalog.photo(m)).map(|m| m.file_name.clone()).unwrap_or_else(|| "a removed photo".into());
             ui.label(egui::RichText::new(format!("Virtual copy “{name}” of {of}")).color(t.text_label));

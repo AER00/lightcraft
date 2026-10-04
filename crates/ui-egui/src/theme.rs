@@ -39,6 +39,8 @@ pub struct Tokens {
     pub star: Color32,
     pub pick: Color32,
     pub reject: Color32,
+    /// Cautionary notices (e.g. a raw shown from its embedded preview): a muted amber.
+    pub caution: Color32,
     pub mask_overlay: Color32,
     // metrics (points)
     pub top_bar_h: f32,
@@ -80,6 +82,7 @@ impl Default for Tokens {
             star: Color32::from_rgb(0xd8, 0xd8, 0xd8),
             pick: Color32::from_rgb(0xf0, 0xf0, 0xf0),
             reject: Color32::from_rgb(0xe0, 0x4a, 0x4a),
+            caution: Color32::from_rgb(0xe3, 0xa8, 0x3c),
             mask_overlay: Color32::from_rgba_unmultiplied(0xe0, 0x20, 0x30, 110),
             top_bar_h: 42.0,
             bottom_bar_h: 48.0,

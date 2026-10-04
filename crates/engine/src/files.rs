@@ -114,6 +114,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
                     as_shot_wb: None,
                     content_hash,
                     xmp: lightcraft_meta::embedded(bytes).xmp,
+                    preview_only: Some(why),
                     ..Default::default()
                 });
             }
@@ -141,6 +142,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
             as_shot_wb,
             content_hash,
             xmp: lightcraft_meta::embedded(bytes).xmp,
+            preview_only: None,
         });
     }
     let fmt = lightcraft_codecs::sniff(bytes).ok_or("unrecognized file format")?;
@@ -170,6 +172,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         content_hash,
         embedded_lens: None,
         xmp: None,
+        preview_only: None,
     })
 }
 
@@ -394,6 +397,62 @@ mod tests {
         assert!(!src.raw);
         // no preview at all: a clear error, not a panic
         assert!(load_bytes(b"\0\0\0\x18ftypcrx \0\0\0\x01", 24).is_err());
+    }
+
+    /// Issue #10: a raw variant we can't decode imports as "preview only" with the decoder's
+    /// reason, is rendered as the rendered JPEG it is (not as raw), says so to agents, survives a
+    /// library reopen, and Reload / Relink clear it once the file decodes (undoably).
+    #[test]
+    fn unsupported_raw_imports_as_preview_only_and_survives_reopen() {
+        use serde_json::json;
+        let dir = std::env::temp_dir().join(format!("lc-preview-only-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (lib, files) = (dir.join("lib"), dir.join("files"));
+        std::fs::create_dir_all(&files).unwrap();
+        let path = files.join("DSC_0001.cr3");
+        std::fs::write(&path, cr3_with_preview(96, 64)).unwrap();
+        let mut s = crate::Session::new().with_fs();
+        s.open_library(&lib, false).unwrap();
+        // the import review already says so
+        let scan = s.execute("library.importPreview", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+        assert!(scan["candidates"][0]["previewOnly"].as_str().is_some_and(|w| !w.is_empty()), "{scan}");
+        let r = s.execute("library.import", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+        let id = lightcraft_catalog::PhotoId(r["imported"][0].as_u64().unwrap());
+        let p = s.catalog.photo(id).unwrap().clone();
+        let why = p.preview_only.clone().expect("marked preview only");
+        assert!(why.to_uppercase().contains("CR3"), "the decoder's reason: {why}");
+        assert_eq!(p.kind, MediaKind::Raw, "still a raw file (filters, Convert to DNG…)");
+        assert!(!p.develops_raw());
+        // rendered like the JPEG it is: relative white balance, display tone curve, no raw defaults
+        assert_eq!(crate::media::source_info(&p), SourceInfo::default());
+        assert_eq!(*p.develop, lightcraft_develop::DevelopSettings::default());
+        assert!(s.render_job(id, 48, 48, false, true).unwrap().run().rendered.is_ok());
+        // agents see it
+        let q = s.execute("catalog.query", &json!({"filter": {}})).unwrap();
+        assert_eq!(q["photos"][0]["previewOnly"], json!(why), "{q}");
+        let i = s.execute("photo.inspect", &json!({"id": id.0})).unwrap();
+        assert_eq!(i["preview_only"], json!(why), "{i}");
+        // a library reopen keeps it
+        s.persist().unwrap();
+        drop(s);
+        let mut s = crate::Session::new().with_fs();
+        s.open_library(&lib, false).unwrap();
+        assert_eq!(s.catalog.photo(id).unwrap().preview_only.as_deref(), Some(why.as_str()));
+        // the file decodes now (here: replaced by a DNG): Reload clears it, undo brings it back
+        std::fs::write(&path, crate::tests_xmp::synthetic_dng_with(None, lightcraft_meta::Metadata::default())).unwrap();
+        let r = s.execute("photo.reload", &json!({"ids": [id.0]})).unwrap();
+        assert_eq!(r["reloaded"], json!([id.0]), "{r}");
+        assert!(s.catalog.photo(id).unwrap().develops_raw());
+        assert!(crate::media::source_info(s.catalog.photo(id).unwrap()).raw);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.catalog.photo(id).unwrap().preview_only.as_deref(), Some(why.as_str()));
+        // relinking to a file that decodes clears it too
+        let dng = files.join("DSC_0001.dng");
+        std::fs::write(&dng, crate::tests_xmp::synthetic_dng_with(None, lightcraft_meta::Metadata::default())).unwrap();
+        s.execute("photo.relink", &json!({"id": id.0, "path": dng.to_string_lossy()})).unwrap();
+        assert_eq!(s.catalog.photo(id).unwrap().preview_only, None);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
