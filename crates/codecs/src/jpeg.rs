@@ -159,7 +159,7 @@ fn decode_jpeg_decoder(bytes: &[u8], m: &Markers, scale_to: Option<(u32, u32)>) 
     let (model, buf, depth) = match info.pixel_format {
         PixelFormat::L8 => (Model::Gray, Buf::U8(px), 8),
         PixelFormat::L16 => {
-            let v = px.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+            let v = px.as_chunks::<2>().0.iter().map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
             (Model::Gray, Buf::U16(v), 16)
         }
         PixelFormat::RGB24 => (Model::Rgb, Buf::U8(px), 8),
@@ -226,7 +226,7 @@ fn mpf_images(m: &Markers) -> Vec<(usize, usize)> {
     let Some(e) = entries.iter().find(|e| e.tag == 0xB002) else { return vec![] };
     let Some(list) = t.bytes(e) else { return vec![] };
     let mut out = Vec::new();
-    for (i, rec) in list.chunks_exact(16).enumerate().take(16) {
+    for (i, rec) in list.as_chunks::<16>().0.iter().enumerate().take(16) {
         if i == 0 {
             continue;
         }

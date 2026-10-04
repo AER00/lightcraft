@@ -217,12 +217,12 @@ impl DeepImage {
         let trc = self.space.trc();
         match &self.samples {
             DeepSamples::U16(v) => {
-                for (p, c) in out.data.iter_mut().zip(v.chunks_exact(3)) {
+                for (p, c) in out.data.iter_mut().zip(v.as_chunks::<3>().0) {
                     *p = [c[0], c[1], c[2]].map(|x| ((x as u32 * 255 + 32767) / 65535) as u8).into_rgba();
                 }
             }
             DeepSamples::F32(v) => {
-                for (p, c) in out.data.iter_mut().zip(v.chunks_exact(3)) {
+                for (p, c) in out.data.iter_mut().zip(v.as_chunks::<3>().0) {
                     *p = [c[0], c[1], c[2]].map(|x| (trc.encode(x) * 255.0 + 0.5) as u8).into_rgba();
                 }
             }

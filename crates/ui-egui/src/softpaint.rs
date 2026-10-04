@@ -216,7 +216,7 @@ fn paint_band(prepared: &[Prepared<'_>], band: &mut [Color32], y0: usize, w: usi
             continue;
         }
         let clip = [p.clip[0], cy0, p.clip[2], cy1];
-        for tri in p.indices.chunks_exact(3) {
+        for tri in p.indices.as_chunks::<3>().0 {
             let (Some(a), Some(b), Some(c)) = (p.verts.get(tri[0] as usize), p.verts.get(tri[1] as usize), p.verts.get(tri[2] as usize)) else {
                 continue;
             };

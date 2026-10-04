@@ -41,7 +41,7 @@ pub fn unpack_lsb(src: &[u8], bits: u32, out: &mut [u16]) {
 }
 
 pub fn read_u16s(src: &[u8], order: ByteOrder, out: &mut [u16]) {
-    for (o, c) in out.iter_mut().zip(src.chunks_exact(2)) {
+    for (o, c) in out.iter_mut().zip(src.as_chunks::<2>().0) {
         *o = order.u16([c[0], c[1]]);
     }
 }
