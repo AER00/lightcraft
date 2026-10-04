@@ -46,10 +46,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     app.canvas_rect = Some(ui.max_rect());
     if ids.is_empty() {
-        if app.session.source == lightcraft_engine::LibrarySource::Folder {
+        if app.session.filter != Default::default() {
+            super::empty_message(
+                ui,
+                ui.max_rect(),
+                "No matching photos",
+                "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)",
+            );
+        } else if app.session.source == lightcraft_engine::LibrarySource::Folder {
             super::empty_message(ui, ui.max_rect(), "No photos in this folder", "Turn on Include subfolders, or pick another folder under Local");
-        } else if app.session.filter != Default::default() {
-            super::empty_message(ui, ui.max_rect(), "No matching photos", "Change the filter, or clear it (View → Clear Filters)");
         } else {
             super::empty_message(ui, ui.max_rect(), "No photos", "Add photos with File → Add Photos (Cmd+Shift+I), or drop them here");
         }
