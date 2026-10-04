@@ -102,18 +102,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let cells: Vec<Cell> = ids.iter().zip(&lay.cells).map(|(id, r)| Cell { id: *id, rect: *r }).collect();
     let total_h = lay.height + 12.0;
     let active = app.session.selection.active;
-    // keep the active photo in view when it changes by keyboard
-    let scroll_to: Option<Rect> = {
-        let key = egui::Id::new("grid-last-active");
-        let last: Option<PhotoId> = ui.data(|d| d.get_temp(key));
-        ui.data_mut(|d| d.insert_temp(key, active));
-        if last != active { active.and_then(|a| cells.iter().find(|c| c.id == a).map(|c| c.rect)) } else { None }
+    // bring the active photo into view when it changes (keyboard, click, command) or the grid
+    // comes back on screen; otherwise the scroll position is the user's
+    let scroll_to: Option<Rect> = if follow_active(ui.ctx(), egui::Id::new("grid-follow-active"), active) {
+        active.and_then(|a| cells.iter().find(|c| c.id == a).map(|c| c.rect))
+    } else {
+        None
     };
     let stacks = app.session.catalog.stack_index();
     let mut visible_ids = HashSet::new();
     egui::ScrollArea::vertical().id_salt("grid-scroll").auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
         let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), total_h), Sense::hover());
         let origin = area.min;
+        app.grid_scroll = Some(viewport.top());
         if let Some(r) = scroll_to {
             ui.scroll_to_rect(r.translate(origin.to_vec2()), None);
         }
@@ -152,6 +153,21 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     });
     app.renderer.evict_thumbs(&visible_ids, 600);
     let _ = (Color32::BLACK, StrokeKind::Inside, Stroke::NONE);
+}
+
+/// Should a scrolling photo strip (`key`: the grid, the filmstrip) bring the active photo into
+/// view on this pass? Yes when the active photo changed since the strip was last drawn, or when
+/// the strip was not drawn on the previous pass (view switch, panel shown again). Otherwise the
+/// scroll position is the user's: time passing, finished renders, edits to the photo or a released
+/// scroll bar never move it (issue #11).
+pub(crate) fn follow_active(ctx: &egui::Context, key: egui::Id, active: Option<PhotoId>) -> bool {
+    let pass = ctx.cumulative_pass_nr();
+    let last: Option<(Option<PhotoId>, u64)> = ctx.data(|d| d.get_temp(key));
+    ctx.data_mut(|d| d.insert_temp(key, (active, pass)));
+    match last {
+        Some((was, drawn)) => was != active || drawn + 1 < pass,
+        None => true,
+    }
 }
 
 /// Height of a date header row (points).

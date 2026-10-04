@@ -1201,17 +1201,20 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
     let cell_w = 120.0;
     let ppp = ui.ctx().pixels_per_point();
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(vec2(0.0, 4.0))));
-    let scroll_key = egui::Id::new("film-last-active");
-    let last: Option<PhotoId> = child.data(|d| d.get_temp(scroll_key));
-    child.data_mut(|d| d.insert_temp(scroll_key, active));
+    // a vertical mouse wheel scrolls the strip sideways (horizontal trackpad scrolls still work)
+    child.style_mut().always_scroll_the_only_direction = true;
+    // only a new active photo (or the strip appearing) scrolls it; see `grid::follow_active`
+    let follow = super::grid::follow_active(child.ctx(), egui::Id::new("film-follow-active"), active);
     egui::ScrollArea::horizontal().id_salt("filmstrip").auto_shrink([false, false]).show_viewport(&mut child, |ui, vp| {
         let (area, _) = ui.allocate_exact_size(vec2(ids.len() as f32 * cell_w, r.height() - 16.0), Sense::hover());
+        app.film_scroll = Some(vp.left());
         for (i, id) in ids.iter().enumerate() {
             let cr = Rect::from_min_size(pos2(area.left() + i as f32 * cell_w, area.top()), vec2(cell_w, area.height()));
-            if Some(*id) == active && last != active {
+            let local = Rect::from_min_size(pos2(i as f32 * cell_w, 0.0), cr.size());
+            // centred when it is (partly) off screen; a click on a visible thumbnail leaves the strip alone
+            if follow && Some(*id) == active && !(local.left() >= vp.left() && local.right() <= vp.right()) {
                 ui.scroll_to_rect(cr, Some(egui::Align::Center));
             }
-            let local = Rect::from_min_size(pos2(i as f32 * cell_w, 0.0), cr.size());
             if !local.intersects(vp.expand2(vec2(cell_w * 4.0, 0.0))) {
                 continue;
             }
