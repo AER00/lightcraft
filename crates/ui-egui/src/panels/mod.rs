@@ -1,6 +1,7 @@
 //! Window regions and panels.
 
 pub mod bottombar;
+pub mod chips;
 pub mod compare;
 pub mod crop_overlay;
 pub mod detail;

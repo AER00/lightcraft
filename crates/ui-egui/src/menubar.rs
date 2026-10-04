@@ -630,11 +630,14 @@ pub fn shortcut_text(sc: &str, mac: bool) -> String {
     }
 }
 
+/// Horizontal gap between in-window menu titles. The buttons are frameless, and egui gives
+/// frameless buttons no padding, so the gap has to come from the layout's item spacing.
+const TITLE_GAP: f32 = 24.0;
+
 /// Width of the in-window menu bar's titles.
 pub fn bar_width(ui: &egui::Ui) -> f32 {
     let t = crate::theme::Tokens::get(ui.ctx());
-    MENUS.iter().map(|m| ui.painter().layout_no_wrap(m.to_string(), t.font(13.0), t.text).size().x + 16.0).sum::<f32>()
-        + ui.spacing().item_spacing.x * MENUS.len() as f32
+    MENUS.iter().map(|m| ui.painter().layout_no_wrap(m.to_string(), t.font(13.0), t.text).size().x + TITLE_GAP).sum::<f32>()
 }
 
 /// The in-window menu bar (hosts without a native one): one dropdown per menu, or a single
@@ -643,17 +646,21 @@ pub fn show_in_window(app: &mut LightcraftApp, ui: &mut egui::Ui, max_width: f32
     let t = crate::theme::Tokens::get(ui.ctx());
     let bar = menu_bar(app);
     let font = t.font(13.0);
-    let widths: Vec<f32> = bar.iter().map(|(title, _)| ui.painter().layout_no_wrap(title.clone(), font.clone(), t.text).size().x + 16.0).collect();
+    let widths: Vec<f32> =
+        bar.iter().map(|(title, _)| ui.painter().layout_no_wrap(title.clone(), font.clone(), t.text).size().x + TITLE_GAP).collect();
     let total: f32 = widths.iter().sum();
     let mut clicked: Option<(String, Value)> = None;
     let start = ui.cursor().left();
     let mac = ui.ctx().os() == egui::os::OperatingSystem::Mac;
     if total <= max_width {
+        let saved = ui.spacing().item_spacing.x;
+        ui.spacing_mut().item_spacing.x = TITLE_GAP;
         for (title, items) in &bar {
             let r = ui.add(egui::Button::new(egui::RichText::new(title).font(font.clone()).color(t.text_label)).frame(false));
             crate::widgets::register(ui.ctx(), format!("menu:{title}"), r.rect);
             egui::Popup::menu(&r).show(|ui| nodes_ui(ui, items, mac, &mut clicked));
         }
+        ui.spacing_mut().item_spacing.x = saved;
     } else {
         let r = ui.add(egui::Button::new(egui::RichText::new("Menu").font(font.clone()).color(t.text_label)).frame(false));
         crate::widgets::register(ui.ctx(), "menu:all", r.rect);

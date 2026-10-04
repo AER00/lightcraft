@@ -376,6 +376,92 @@ fn performance_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             let _ = app.run("library.clearPreviews", json!({}));
         }
     });
+    #[cfg(not(target_arch = "wasm32"))]
+    smart_previews(app, ui, t);
+}
+
+/// Where this library keeps its smart previews (the offline-editing proxies, which can be large):
+/// the effective folder, what is in it, and choosing another one.
+#[cfg(not(target_arch = "wasm32"))]
+fn smart_previews(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    // listing a big folder every frame would be slow: refresh every 2 s and after a change
+    let cache = egui::Id::new("smart-location");
+    let now = ui.input(|i| i.time);
+    let loc: Value = match ui.data(|d| d.get_temp::<(f64, Value)>(cache)) {
+        Some((at, v)) if now - at < 2.0 => v,
+        _ => {
+            let v = app.run("library.smartPreviewsLocation", json!({})).unwrap_or(Value::Null);
+            ui.data_mut(|d| d.insert_temp(cache, (now, v.clone())));
+            v
+        }
+    };
+    if loc.is_null() {
+        return;
+    }
+    heading(ui, t, "Smart previews");
+    let path = loc["path"].as_str().unwrap_or_default().to_string();
+    let available = loc["available"].as_bool().unwrap_or(true);
+    let custom = loc["custom"].as_bool().unwrap_or(false);
+    row(ui, t, "Folder", |ui| {
+        let text = format!("{path}{}", if custom { "" } else { "  (library default)" });
+        ui.add(egui::Label::new(RichText::new(text.clone()).color(if available { t.text } else { t.reject })).truncate()).on_hover_text(text);
+    });
+    let (count, bytes) = (loc["count"].as_u64().unwrap_or(0), loc["bytes"].as_u64().unwrap_or(0));
+    if available {
+        hint(ui, t, &format!("{count} smart preview{} · {:.1} MB", if count == 1 { "" } else { "s" }, bytes as f64 / 1048576.0));
+    } else {
+        hint(
+            ui,
+            t,
+            "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder.",
+        );
+    }
+    // what happens to the previews already built when the folder changes
+    let mode_id = egui::Id::new("smart-existing");
+    let mut mode: u8 = ui.data(|d| d.get_temp(mode_id)).unwrap_or(0);
+    if count > 0 {
+        row(ui, t, "Existing previews", |ui| {
+            if choices(ui, "settingsSmartExisting", &[(0u8, "Move them"), (1, "Leave them"), (2, "Delete them")], &mut mode) {
+                ui.data_mut(|d| d.insert_temp(mode_id, mode));
+            }
+        });
+    }
+    let existing = ["move", "leave", "discard"][mode.min(2) as usize];
+    let mut result = None;
+    ui.horizontal(|ui| {
+        ui.add_space(LABEL_W);
+        if app.services.pick_folder.is_some() {
+            let r = ui.button("Choose Folder…");
+            register(ui.ctx(), "button:settingsSmartChoose", r.rect);
+            if r.clicked()
+                && let Some(dir) = app.services.pick_folder.as_mut().and_then(|f| f())
+            {
+                result = Some(app.run("library.smartPreviewsLocation", json!({"path": dir, "existing": existing})));
+            }
+        }
+        let r = ui.add_enabled(custom, egui::Button::new("Use Library Folder"));
+        register(ui.ctx(), "button:settingsSmartReset", r.rect);
+        if r.clicked() {
+            result = Some(app.run("library.smartPreviewsLocation", json!({"reset": true, "existing": existing})));
+        }
+    });
+    if let Some(r) = result {
+        ui.data_mut(|d| d.remove::<(f64, Value)>(cache));
+        match r {
+            Ok(v) => {
+                let failed = v["failed"].as_array().map_or(0, Vec::len);
+                let msg = match (existing, v["handled"].as_u64().unwrap_or(0)) {
+                    (_, 0) => "Smart previews folder changed".to_string(),
+                    ("move", n) => format!("Smart previews folder changed; moved {n}"),
+                    ("discard", n) => format!("Smart previews folder changed; deleted {n}"),
+                    _ => "Smart previews folder changed".to_string(),
+                };
+                app.toast(ui.ctx(), if failed > 0 { format!("{msg} ({failed} failed)") } else { msg });
+            }
+            Err(e) => app.toast(ui.ctx(), e),
+        }
+    }
+    hint(ui, t, "Keep it on a drive with room: smart previews are about 1 MB per photo. The thumbnail cache stays in the library.");
 }
 
 // ---------------------------------------------------------------------------------- Interface

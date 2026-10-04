@@ -17,6 +17,7 @@ covers a whole directory), or if a licence file referenced in the Licence column
 | `docs/images/*-earthrise.jpg`, `docs/images/grid-pd.jpg` | "Earthrise" (AS08-14-2383) | NASA / Bill Anders, Apollo 8 (1968) | https://commons.wikimedia.org/wiki/File:NASA-Apollo8-Dec24-Earthrise.jpg | Public domain (NASA) | 2026-09-30 | developed in LightCraft; shown inside app screenshots |
 | `docs/images/*-blue-marble.jpg`, `docs/images/grid-pd.jpg` | "The Blue Marble" (AS17-148-22727) | NASA, Apollo 17 crew (1972) | https://commons.wikimedia.org/wiki/File:The_Earth_seen_from_Apollo_17.jpg | Public domain (NASA) | 2026-09-30 | developed in LightCraft; shown inside app screenshots |
 | `docs/images/*.jpg` (UI) | LightCraft application screenshots | LightCraft contributors | original work (captured with `docs/showcase/`) | MIT OR Apache-2.0 | 2026-09-30 | n/a |
+| `docs/brand/` (artcraft-logo and artcraft-mark, SVG and PNG) | ArtCraft wordmark and mark | ArtCraft Team | original work (https://getartcraft.com/) | ArtCraft trademark, see `docs/brand/LICENSE-brand.txt` (not open source) | 2026-10-01 | none |
 
 Notes
 - Fonts authored or published by Adobe (Source Sans/Serif/Code, Source Han, …) are not used, even though some are
