@@ -264,3 +264,36 @@ fn preview_only_survives_serde_and_set_content_undo() {
     assert_eq!(c.photo(a).unwrap().preview_only.as_deref(), Some("Nikon Huffman-compressed NEF"));
     assert_eq!(c.photo(a).unwrap().width, 6000);
 }
+
+/// Equivalent spellings of one folder (separators, trailing or doubled separators, `.`/`..`,
+/// drive-letter case, verbatim and UNC prefixes) share an identity; different folders don't.
+#[test]
+fn folder_identity_ignores_spelling() {
+    use crate::query::{folder_key, folder_within};
+    let same = |a: &str, b: &str| assert_eq!(folder_key(a), folder_key(b), "{a} vs {b}");
+    let differ = |a: &str, b: &str| assert_ne!(folder_key(a), folder_key(b), "{a} vs {b}");
+    for (a, b) in [
+        ("D:/Example/Photos", "D:\\Example\\Photos"),
+        ("D:/Example/Photos", "d:\\Example\\Photos\\"),
+        ("D:\\Example/Photos", "D:/Example//Photos/."),
+        ("D:/Example/Photos", "D:/Example/Other/../Photos"),
+        ("D:/Example/Photos", "\\\\?\\D:\\Example\\Photos"),
+        ("\\\\server\\share\\Photos", "//server/share/Photos/"),
+        ("\\\\?\\UNC\\server\\share\\Photos", "//server/share/Photos"),
+        ("/home/me/Photos", "/home/me/Photos/"),
+        ("/home/me/Photos", "/home//me/./Photos"),
+        ("/", "//"),
+        ("C:\\", "c:/"),
+    ] {
+        same(a, b);
+    }
+    differ("D:/Example/Photos", "D:/Example/Photos2");
+    differ("D:/Example/Photos", "E:/Example/Photos");
+    differ("/home/me/Photos", "/home/me");
+    assert_eq!(folder_key("/a/../../b"), "/b", "`..` stops at the root");
+    assert!(folder_within("D:\\Example\\Photos\\2026", "D:/Example/Photos/"));
+    assert!(folder_within("D:/Example/Photos", "d:\\Example\\Photos"));
+    assert!(!folder_within("D:/Example/Photos2", "D:/Example/Photos"));
+    assert!(folder_within("/a/b", "/"));
+    assert!(folder_within("C:\\x", "c:\\"));
+}
