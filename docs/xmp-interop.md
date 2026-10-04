@@ -117,6 +117,30 @@ carry over are listed in `preset.import`'s `unmapped` as `Mask: <kind>`.
 
 LightCraft ships no third-party presets. Its built-in presets are its own values (`crates/engine/src/presets.rs`).
 
+## Luminar looks (`.lmp`, `.mplumpack`)
+
+`preset.import` (and drag & drop, File ▸ Import Profiles & Presets…) also reads Luminar looks: an `.lmp` file is an
+XML property list of adjustment layers (each with effects and named sliders, mostly on a −100..100 scale); newer looks
+may be a bundle folder `Name.lmp/Contents/preset.lmp`. An `.mplumpack` collection is a zip of `.lmp` files whose
+`PresetsInfo.plist` names the group (`GroupName`); the pack's file name is the fallback. Looks get their own name
+(`Name`) or their file / bundle name. The sliders with a clear counterpart are carried over; everything else (AI tools,
+Orton, glow, LUT layers, colour balance…) is listed in `unmapped` as `Tool.Slider` (e.g. `OrtonFilter.Amount`).
+Disabled layers are ignored, layer opacity scales the sliders (and fades curves toward a straight line), and layers
+with a blend mode other than Normal or with a mask are reported, not applied. Binary property lists are not read.
+
+| Luminar tool.slider | Ours |
+|---|---|
+| Develop / Light / Exposure `Exposure` (±100) | `light.exposure` (±4 EV — the scale is our reading, not documented) |
+| `Contrast`, `Highlights`, `Shadows`, `Whites`, `Blacks` | `light.*` (same scale) |
+| `Temperature`, `Tint` (relative) | white balance shift as `crs:IncrementalTemperature` / `IncrementalTint`; values above 1000 as Kelvin |
+| `Saturation`, `Vibrance` | `color.saturation`, `color.vibrance` |
+| Clarity `Clarity`, Structure / AI Structure `Amount` | `effects.clarity` (summed) |
+| Dehaze `Amount` | `effects.dehaze` |
+| HSL (`MIPLChannelsEffect`) `h`/`s`/`l` + Red…Magenta | `mixer.<band>.hue / sat / lum` |
+| Curves `RGB` / `Red` / `Green` / `Blue` (x, y points in 0..1) | `curve.master / red / green / blue` |
+| Vignette `Amount`, `Vignette Size` | `vignette.amount`, `vignette.midpoint` |
+| Grain `Amount` | `grain.amount` |
+
 ## Profiles: 3D LUTs (`.cube`)
 
 `profile.import {paths}` (File ▸ Import Profiles & Presets…, drag & drop) reads `.cube` 3D LUTs — single files, folders

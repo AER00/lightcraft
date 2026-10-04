@@ -23,6 +23,7 @@ pub mod media;
 pub mod memory;
 pub mod merge;
 pub mod preset_import;
+pub mod preset_luminar;
 pub mod presets;
 pub mod rename;
 pub mod sidecar;
