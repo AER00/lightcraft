@@ -434,8 +434,11 @@ pub struct ExportOptions {
     pub limit_kb: Option<u32>,
     pub sharpen: SharpenFor,
     pub sharpen_amount: SharpenAmount,
-    /// File name template: `{name}` (original stem), `{seq}` (zero-padded to 3, counting from
-    /// `start_number`), `{date}` (capture date, YYYYMMDD); the extension is appended.
+    /// File name template with the batch-rename tokens ([`crate::rename::expand_tokens`]): `{name}`
+    /// (original stem), `{seq}` (zero-padded to 3, counting from `start_number`; `{seq:N}` for N
+    /// digits), `{date}` (capture date, YYYYMMDD; `{date:%Y-%m-%d}`…), `{num}`, `{folder}`,
+    /// `{camera}`, `{lens}`, `{iso}`, `{rating}`, `{title}`, `{creator}`, `{ext}`; the output
+    /// extension is appended.
     pub naming: String,
     /// First `{seq}` value.
     pub start_number: u32,
@@ -618,36 +621,23 @@ impl ExportOptions {
         if self.format == ExportFormat::Avif { OutputSpace::Srgb } else { self.color_space }
     }
 
-    /// Output file name for photo `stem` at 1-based position `seq` in a batch.
-    pub fn file_name(&self, stem: &str, seq: usize) -> String {
-        self.file_name_dated(stem, seq, None)
-    }
-
-    /// [`ExportOptions::file_name`] with the capture time (ISO 8601) for `{date}`.
-    pub fn file_name_dated(&self, stem: &str, seq: usize, captured: Option<&str>) -> String {
+    /// Output file name for photo `p` at 1-based position `seq` in a batch (the original's
+    /// extension is kept for [`ExportFormat::Original`]).
+    pub fn file_name_for(&self, p: &lightcraft_catalog::Photo, seq: usize) -> String {
         let base = if self.naming.trim().is_empty() { "{name}" } else { self.naming.as_str() };
         let n = seq + self.start_number.max(1) as usize - 1;
-        let date: String = captured.map(|c| c.chars().take(10).filter(char::is_ascii_digit).collect()).unwrap_or_default();
-        let name = base.replace("{name}", stem).replace("{seq}", &format!("{n:03}")).replace("{date}", &date);
-        let name: String = name.chars().map(|c| if matches!(c, '/' | '\\' | ':' | '\0') { '_' } else { c }).collect();
-        format!("{name}.{}", self.format.extension())
-    }
-
-    /// Output file name for photo file `file_name` (the original's extension is kept for
-    /// [`ExportFormat::Original`]).
-    pub fn file_name_for(&self, file_name: &str, seq: usize) -> String {
-        self.file_name_for_dated(file_name, seq, None)
-    }
-
-    /// [`ExportOptions::file_name_for`] with the capture time for `{date}`.
-    pub fn file_name_for_dated(&self, file_name: &str, seq: usize, captured: Option<&str>) -> String {
-        let (stem, ext) = file_name.rsplit_once('.').unwrap_or((file_name, ""));
-        let name = self.file_name_dated(stem, seq, captured);
+        let name = crate::rename::expand_tokens(base, p, n, 3);
+        let mut name: String = name.chars().map(|c| if matches!(c, '/' | '\\' | ':' | '\0') { '_' } else { c }).collect();
+        let (stem, ext) = p.file_name.rsplit_once('.').unwrap_or((&p.file_name, ""));
+        if name.trim().is_empty() {
+            // every token came out empty (no title, no capture time…): keep the original name
+            name = stem.to_string();
+        }
         if self.format == ExportFormat::Original {
             let base = name.trim_end_matches('.');
             if ext.is_empty() { base.to_string() } else { format!("{base}.{ext}") }
         } else {
-            name
+            format!("{name}.{}", self.format.extension())
         }
     }
 }
@@ -962,7 +952,7 @@ pub fn prepare_export(
     seq: usize,
 ) -> Result<PreparedExport, String> {
     let p = session.catalog.photo(id).ok_or("no such photo")?;
-    let file_name = o.file_name_for_dated(&p.file_name, seq, p.captured.as_deref());
+    let file_name = o.file_name_for(p, seq);
     let work = if o.format.is_rendered() {
         let (w, h) = output_size(p, o);
         let meta = export_metadata(p, o);
@@ -1249,12 +1239,35 @@ mod tests {
         assert_eq!(o.format, ExportFormat::Jpeg);
         assert_eq!(o.quality, 100);
         assert_eq!(o.resize, Some(Resize { dont_enlarge: true, height: 0, ..Resize::long_edge(2048) }));
-        assert_eq!(o.file_name("IMG/1", 7), "IMG_1-007.jpg");
+        assert_eq!(o.file_name_for(&named("IMG/1.png"), 7), "IMG_1-007.jpg");
         assert_eq!(o.ppi, 240);
         let orig = ExportOptions { format: ExportFormat::Original, naming: "{name}-{seq}".into(), ..Default::default() };
-        assert_eq!(orig.file_name_for("DSC_1.NEF", 2), "DSC_1-002.NEF");
-        assert_eq!(orig.file_name_for("noext", 1), "noext-001");
-        assert_eq!(ExportOptions { format: ExportFormat::Dng, ..Default::default() }.file_name_for("a.cr2", 1), "a.dng");
+        assert_eq!(orig.file_name_for(&named("DSC_1.NEF"), 2), "DSC_1-002.NEF");
+        assert_eq!(orig.file_name_for(&named("noext"), 1), "noext-001");
+        assert_eq!(ExportOptions { format: ExportFormat::Dng, ..Default::default() }.file_name_for(&named("a.cr2"), 1), "a.dng");
+    }
+
+    fn named(file_name: &str) -> lightcraft_catalog::Photo {
+        use lightcraft_catalog::{Photo, PhotoId, Source};
+        Photo::new(PhotoId(1), Source::Demo { scene: 0 }, file_name, "", 1, 1, "2026-01-01T00:00:00")
+    }
+
+    /// Export naming takes the same tokens as Rename Photos and import renaming.
+    #[test]
+    fn naming_uses_the_rename_tokens() {
+        let mut p = named("DSC_0815.NEF");
+        p.captured = Some("2026-09-30T14:05:09".into());
+        p.meta.camera = "Model X/2".into();
+        p.meta.title = "Harbour".into();
+        p.rating = 5;
+        let o = |naming: &str| ExportOptions { naming: naming.into(), start_number: 9, ..Default::default() };
+        assert_eq!(o("{date:%Y-%m-%d}_{title}_{seq:2}").file_name_for(&p, 1), "2026-09-30_Harbour_09.jpg");
+        assert_eq!(o("{camera}-{num}-{rating}").file_name_for(&p, 1), "Model X_2-0815-5.jpg", "path separators become _");
+        assert_eq!(o("{name}-{seq}").file_name_for(&p, 3), "DSC_0815-011.jpg", "a bare {{seq}} keeps its 3 digits");
+        assert_eq!(o("{ext}_{name}").file_name_for(&p, 1), "NEF_DSC_0815.jpg");
+        // nothing left after expanding: the original name
+        p.meta.title.clear();
+        assert_eq!(o("{title}").file_name_for(&p, 1), "DSC_0815.jpg");
     }
 
     #[test]
@@ -1282,7 +1295,9 @@ mod tests {
         let full = ExportOptions::default();
         assert_eq!(ExportOptions::from_json(&full.to_json()), full);
         assert!(ExportOptions::has_size_param(&full.to_json()), "full size is explicit");
-        assert_eq!(o.file_name_dated("IMG", 2, Some("2026-09-30T10:00:00")), "20260930-IMG-043.tif");
+        let mut p = named("IMG.png");
+        p.captured = Some("2026-09-30T10:00:00".into());
+        assert_eq!(o.file_name_for(&p, 2), "20260930-IMG-043.tif");
     }
 
     #[test]
