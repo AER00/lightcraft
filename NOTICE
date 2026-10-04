@@ -1,12 +1,16 @@
 LightCraft
-Copyright the LightCraft contributors. Licensed under MIT OR Apache-2.0.
+Copyright (c) 2026 ArtCraft Team and the LightCraft contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
 
-This product bundles third-party material under the following licences:
+The ArtCraft name, wordmark and logos in docs/brand/ are trademarks of the ArtCraft Team. They are
+not open source and are not covered by the license above; their terms are in
+docs/brand/LICENSE-brand.txt.
 
-- Source Sans 3 (assets/fonts/SourceSans3-*) — SIL Open Font License 1.1. See assets/fonts/OFL-SourceSans3.txt.
-- Inter (assets/fonts/Inter-*.ttf) — SIL Open Font License 1.1. See assets/fonts/OFL-Inter.txt.
+Third-party material
 
-Every bundled asset (fonts, icons, images) and its licence is listed in assets/ATTRIBUTION.md.
+This product bundles third-party material under its own licenses, listed below. The per-file
+list (author, source, license) is in assets/ATTRIBUTION.md.
 
-Algorithms are implemented from public specifications and papers (see crate READMEs). Rust dependencies
-(egui, eframe, image, rayon, serde, …) are permissively licensed (MIT/Apache-2.0/BSD/ISC/Zlib) and fetched through crates.io.
+Inter (assets/fonts/Inter-*.ttf) — SIL Open Font License 1.1. See assets/fonts/OFL-Inter.txt.
+Showcase photographs by Ansel Adams, Dorothea Lange and NASA (docs/images/) — public domain. See assets/ATTRIBUTION.md.
