@@ -126,12 +126,18 @@ pub fn browse(app: &mut LightcraftApp, path: &str, subfolders: Option<bool>) -> 
     if app.scan.as_ref().is_some_and(|t| !t.browse) || app.import.as_ref().is_some_and(|t| !t.browse) {
         return Err("an import is running".into());
     }
+    let dir_s = dir.to_string_lossy().trim_end_matches(['/', '\\']).to_string();
+    let subfolders = subfolders.unwrap_or_else(|| app.session.browse.as_ref().is_some_and(|b| b.subfolders));
+    let running = app.scan.as_ref().is_some_and(|t| t.browse) || app.import.as_ref().is_some_and(|t| t.browse);
+    if running && app.session.browse.as_ref().is_some_and(|b| b.path == dir_s && b.subfolders == subfolders) {
+        // already reading this folder: clicking it again must not restart the progress
+        app.session.source = lightcraft_engine::LibrarySource::Folder;
+        return Ok(json!({"path": dir_s, "subfolders": subfolders, "scanning": true}));
+    }
     if let Some(t) = app.scan.take() {
         t.progress.cancel.store(true, Ordering::Relaxed);
     }
     app.import = None;
-    let dir_s = dir.to_string_lossy().trim_end_matches(['/', '\\']).to_string();
-    let subfolders = subfolders.unwrap_or_else(|| app.session.browse.as_ref().is_some_and(|b| b.subfolders));
     app.session.browse = Some(lightcraft_engine::Browse { path: dir_s.clone(), subfolders });
     app.session.source = lightcraft_engine::LibrarySource::Folder;
     let (input, _) = ScanInput::new(&mut app.session, std::slice::from_ref(&dir_s));
