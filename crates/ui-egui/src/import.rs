@@ -1,5 +1,5 @@
-//! The import review dialog (File → Add Photos…): the files found under the chosen files and
-//! folders as a grid of thumbnails with checkboxes (duplicates marked and unchecked), the
+//! The import review dialog (File → Import Photos… / Import from Folder… / Import from Device):
+//! the source it scanned (a scanned folder is *not* added to Local), the files found under it as a grid of thumbnails with checkboxes (duplicates marked and unchecked), the
 //! destination (add in place / copy into the library's dated `Originals/` folders), an album
 //! (existing or new), a preset and keywords to apply. Importing runs in small batches, one per
 //! frame, with a progress window; the whole import is one undo step.
@@ -21,6 +21,8 @@ pub(crate) const BATCH: usize = 8;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ImportDialog {
+    /// The files / folders that were scanned (shown as the source).
+    pub sources: Vec<String>,
     pub candidates: Vec<ImportCandidate>,
     pub checked: Vec<bool>,
     /// Copy into the library (else add in place).
@@ -92,6 +94,8 @@ pub struct ScanTask {
     pub copy: bool,
     /// Browsing a folder (Local): the photos are read in place instead of opening the review.
     browse: bool,
+    /// What is being scanned (the review's source).
+    sources: Vec<String>,
 }
 
 /// Scan `paths` in the background, then open the review dialog (see [`poll_scan`]).
@@ -99,6 +103,7 @@ pub fn open(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String
     if app.scan.is_some() {
         return Err("a scan is already running".into());
     }
+    let sources = paths.clone();
     let (input, paths) = ScanInput::new(&mut app.session, &paths);
     let progress = std::sync::Arc::new(ScanProgress::default());
     let (tx, rx) = std::sync::mpsc::channel();
@@ -110,7 +115,7 @@ pub fn open(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String
     std::thread::spawn(job);
     #[cfg(target_arch = "wasm32")]
     job();
-    app.scan = Some(ScanTask { progress, rx, copy: false, browse: false });
+    app.scan = Some(ScanTask { progress, rx, copy: false, browse: false, sources });
     Ok(json!({"scanning": true}))
 }
 
@@ -171,7 +176,7 @@ pub fn browse(app: &mut LightcraftApp, path: &str, subfolders: Option<bool>) -> 
     std::thread::spawn(job);
     #[cfg(target_arch = "wasm32")]
     job();
-    app.scan = Some(ScanTask { progress, rx, copy: false, browse: true });
+    app.scan = Some(ScanTask { progress, rx, copy: false, browse: true, sources: Vec::new() });
     app.renderer.forget_imports();
     Ok(json!({"path": dir_s, "subfolders": subfolders, "scanning": true}))
 }
@@ -212,6 +217,7 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
     app.renderer.forget_imports();
     let mut d = ImportDialog::new(out.candidates);
     d.copy = task.copy;
+    d.sources = task.sources;
     app.ui.dialog = Some(crate::state::Dialog::Import { opts: Box::new(d) });
 }
 
@@ -341,7 +347,7 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
     if let Some(f) = task.first {
         let _ = app.run("library.select", json!({"ids": [f]}));
     }
-    let mut msg = format!("Added {} photo{}", task.imported, if task.imported == 1 { "" } else { "s" });
+    let mut msg = format!("Imported {} photo{}", task.imported, if task.imported == 1 { "" } else { "s" });
     if task.duplicates > 0 {
         msg.push_str(&format!(" · {} duplicate{} skipped", task.duplicates, if task.duplicates == 1 { "" } else { "s" }));
     }
@@ -407,7 +413,18 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
     });
     ui.add_space(4.0);
     // options
-    field(ui, "Destination", |ui| {
+    if !d.sources.is_empty() {
+        field(ui, "Source", |ui| {
+            let r = ui.label(egui::RichText::new(source_summary(&d.sources)).color(t.text_label)).on_hover_text(d.sources.join("\n"));
+            register(ui.ctx(), "label:importSource", r.rect);
+        });
+        ui.label(
+            egui::RichText::new("Importing scans the source for photos; it doesn't add the folder to Local (use Local → Browse Folder… to work in a folder without importing).")
+                .color(t.text_dim)
+                .small(),
+        );
+    }
+    field(ui, "Transfer", |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         if crate::widgets::text_button(ui, "importAdd", "Add in place", !d.copy).on_hover_text("Reference the files where they are").clicked() {
             d.copy = false;
@@ -418,6 +435,15 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             d.copy = true;
         }
     });
+    ui.label(
+        egui::RichText::new(if d.copy {
+            "Copy: the files are copied to the folder below and the library uses the copies; the originals are left as they are."
+        } else {
+            "Add in place: the library references the files where they are; nothing is copied or moved."
+        })
+        .color(t.text_dim)
+        .small(),
+    );
     if d.copy {
         field(ui, "Copy to", |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -599,6 +625,23 @@ fn candidate_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDial
     let resp = resp.on_hover_text(tip);
     if resp.clicked() && ok {
         d.checked[i] = !d.checked[i];
+    }
+}
+
+/// The import source in a few words: a folder's name, a file's name, or "N files and folders".
+pub fn source_summary(sources: &[String]) -> String {
+    let name = |p: &str| std::path::Path::new(p).file_name().map_or_else(|| p.to_string(), |n| n.to_string_lossy().to_string());
+    match sources {
+        [one] if std::path::Path::new(one).is_dir() => format!("Folder “{}” (and its subfolders)", name(one)),
+        [one] => name(one),
+        many => {
+            let folders = many.iter().filter(|p| std::path::Path::new(p.as_str()).is_dir()).count();
+            match folders {
+                0 => format!("{} files", many.len()),
+                f if f == many.len() => format!("{f} folders (and their subfolders)"),
+                f => format!("{} files and {f} folder{}", many.len() - f, if f == 1 { "" } else { "s" }),
+            }
+        }
     }
 }
 

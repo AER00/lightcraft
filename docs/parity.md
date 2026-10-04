@@ -99,10 +99,10 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-IMP-ADD-DIALOG | Add photos/folders | P0 | ✅ | `cmd:file.addPhotos`, `cmd:library.importPreview`, `cmd:library.import` (`mode`, `album`, `albumName`, `preset`, `keywords`), `crates/ui-egui/src/import.rs` | review dialog: candidate grid with thumbnails and checkboxes (duplicates by path/content marked and unchecked), destination, album (existing/new), preset, keywords; the folder scan runs on a background thread with a progress window and Cancel (a NAS folder no longer freezes the window); batched import with a progress window; one undo step. Drag-and-drop still imports directly |
+| LR-IMP-ADD-DIALOG | Add photos/folders | P0 | ✅ | `cmd:file.addPhotos`, `cmd:library.importPreview`, `cmd:library.import` (`mode`, `album`, `albumName`, `preset`, `keywords`), `crates/ui-egui/src/import.rs` | review dialog (Import Photos): the scanned source (a scanned folder is not added to Local), candidate grid with thumbnails and checkboxes (duplicates by path/content marked and unchecked), transfer mode (add in place / copy, each explained), album (existing/new), preset, keywords; the folder scan runs on a background thread with a progress window and Cancel (a NAS folder no longer freezes the window); batched import with a progress window; one undo step. Drag-and-drop still imports directly |
 | LR-IMP-DRAGDROP | Drop files/folders to import | P0 | ✅ | `crates/ui-egui/src/lib.rs` (dropped files → `cmd:library.import`) | dropping onto a specific album not supported |
 | LR-IMP-DUPES | Skip duplicates by content | P1 | ✅ | `crates/engine/src/import.rs`, `crates/engine/src/tests_import.rs` | |
-| LR-IMP-DEVICE | Import from camera/card | P1 | ✅ | `cmd:library.devices`, `cmd:file.addFromDevice`, `crates/engine/src/devices.rs` | mounted volumes with a DCIM folder (macOS /Volumes, Linux /media and /run/media, Windows drive letters); File → Add from Device → the import review, copying into the library by default; no PTP/MTP (cameras that don't mount as a disk) |
+| LR-IMP-DEVICE | Import from camera/card | P1 | ✅ | `cmd:library.devices`, `cmd:file.addFromDevice`, `crates/engine/src/devices.rs` | mounted volumes with a DCIM folder (macOS /Volumes, Linux /media and /run/media, Windows drive letters); File → Import from Device → the import review, copying into the library by default; no PTP/MTP (cameras that don't mount as a disk) |
 | LR-IMP-AUTO | Watched-folder auto import | P2 | ✅ | `cmd:library.autoImport`, `cmd:library.autoImportScan`, `crates/ui-egui/src/panels/settings.rs` | Settings ▸ Import ▸ Auto Import: a watched folder whose new photos are added (in place or copied) once complete, into an optional album; scanned every 3 s |
 | LR-IMP-PRESET | Preset on import | P2 | ✅ | `cmd:library.import` (`preset`) | chosen in the import review; one History entry |
 | LR-IMP-RAWDEFAULT | Raw defaults | P1 | ✅ | `cmd:library.preferences`, `crates/engine/src/import.rs`, `crates/ui-egui/src/panels/settings.rs` | LightCraft default / a preset / per camera (make + model); non-raw default too; the preset look counts as unedited and Reset returns to it |
@@ -505,8 +505,8 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-APP-SIGNOUT | Sign out | OOS | 🚫 | | |
 | MENU-APP-HIDE | Hide / hide others / show all | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | the system's own items in the app menu (⌘H, ⌥⌘H) |
 | MENU-APP-QUIT | Quit | P0 | ✅ | `cmd:app.quit`, `apps/lightcraft/src/native_menu.rs` | macOS: app menu (native); elsewhere: File → Quit LightCraft |
-| MENU-FILE-ADDPHOTOS | Add Photos… | P0 | ✅ | `cmd:file.addPhotos` | |
-| MENU-FILE-ADDFOLDER | Add Folder… | P0 | ✅ | `cmd:file.addFolder`, `cmd:library.importPreview` | folder picker (desktop) → the import review, subfolders included; `path` param for agents |
+| MENU-FILE-ADDPHOTOS | Import Photos… (was Add Photos…) | P0 | ✅ | `cmd:file.addPhotos`, `crates/ui-egui/src/menus.rs` | first item of File, ⇧⌘I; file picker → the import review |
+| MENU-FILE-ADDFOLDER | Import from Folder… (was Add Folder…) | P0 | ✅ | `cmd:file.addFolder`, `cmd:library.importPreview` | folder picker (desktop) → the import review, subfolders included; `path` param for agents. Worded as importing: it doesn't save a Local location (that is Local → Browse Folder…) |
 | MENU-FILE-MIGRATE | Migrate photos | OOS | 🚫 | | |
 | MENU-FILE-NEWALBUM | New Album… | P0 | ✅ | `cmd:dialog.newAlbum` | |
 | MENU-FILE-NEWFOLDER | New Folder… | P0 | ✅ | `cmd:dialog.newFolder` | ⇧⌘N |
@@ -638,7 +638,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-CREATEVERSION | Create version — ⇧M | P1 | ✅ | `cmd:version.create` | secondary binding (primary ⌘⇧S) |
 | KEY-CLOSEWINDOW | Close window — ⌘W | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | native File ▸ Close Window |
 | KEY-DELETE | Delete photo — ⌫ | P0 | ✅ | `cmd:photo.delete` | |
-| KEY-ADDPHOTOS | Add photos — ⇧⌘I | P0 | ✅ | `cmd:file.addPhotos` | |
+| KEY-ADDPHOTOS | Import photos — ⇧⌘I | P0 | ✅ | `cmd:file.addPhotos` | |
 | KEY-VERSIONS | Versions panel — ⇧V | P1 | ✅ | `cmd:panel.versions` | |
 | KEY-SECTIONS | Expand/collapse edit sections — ⌘1…⌘6 | P1 | ✅ | `cmd:section.light`, `cmd:section.color`, `cmd:section.effects`, `cmd:section.detail`, `cmd:section.optics` | ⌘1–⌘5 (Light, Color, Effects, Detail, Optics) as observed; our Edit panel has no Lens Blur / Geometry section for ⌘6 / ⌘7; Zoom 100% moved to ⌥⌘0 |
 | KEY-PRESETS | Presets panel — ⇧P | P0 | ✅ | `cmd:panel.presets` | |

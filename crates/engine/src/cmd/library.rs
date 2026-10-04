@@ -732,7 +732,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "library.import",
-            "Add Photos…",
+            "Import Photos",
             ["File"],
             Some("Cmd+Shift+I"),
             "{paths: [file or folder (recursive)], mode?: add|copy (add = reference the files in place; copy = into the library's Originals/YYYY/YYYY-MM-DD/), destination?: folder for copies, organize?: date|month|flat, rename?: file-name template for copies ({name} {seq:N} {date:%Y%m%d} {camera} {title}), renameStart?: 1, metadataPreset?: name, dng?: bool (copy raws as DNG), local?: bool (browsing: the photos stay out of the library, like library.browse), album?: albumId, albumName?: new album, preset?: presetId, keywords?: [..]} → {imported, duplicates, failed, album?}",

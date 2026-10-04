@@ -894,7 +894,7 @@ mod tests {
         assert!(h.quit_requested());
     }
 
-    /// File → Add Folder… opens the import review for a folder (searched recursively).
+    /// File → Import from Folder… opens the import review for a folder (searched recursively).
     #[test]
     fn add_folder_opens_the_import_review() {
         let mut h = demo([1200.0, 900.0]);
@@ -916,6 +916,13 @@ mod tests {
         let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review: {:?}", h.app.ui.dialog) };
         assert_eq!(opts.candidates.len(), 2, "both files, the subfolder's too");
         assert!(!opts.copy, "a folder is added in place by default");
+        // the review names its source; scanning doesn't save a Local location
+        assert_eq!(opts.sources, vec![dir.to_string_lossy().to_string()]);
+        let name = dir.file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!(crate::import::source_summary(&opts.sources), format!("Folder “{name}” (and its subfolders)"));
+        let r = h.request("ui.widgets", json!({}), t);
+        assert!(r.to_string().contains("label:importSource"), "source shown");
+        assert!(h.app.ui.local_roots.is_empty(), "no Local shortcut saved");
         // a camera / card folder: copied into the library by default
         h.app.ui.dialog = None;
         let r = h.request("engine.execute", json!({"command": "file.addFromDevice", "params": {"path": sub.to_string_lossy()}}), t);
@@ -1109,7 +1116,7 @@ mod tests {
         h.settle(SETTLE);
     }
 
-    /// File → Add Photos… opens the import review: candidates with thumbnails, the duplicate is
+    /// File → Import Photos… opens the import review: candidates with thumbnails, the duplicate is
     /// unchecked; unchecking a cell and confirming imports the rest in batches, into a new album
     /// with keywords, as one undo step.
     #[test]
