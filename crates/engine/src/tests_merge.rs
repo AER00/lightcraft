@@ -21,7 +21,7 @@ fn import(s: &mut Session, paths: Vec<String>) -> Vec<u64> {
 fn hdr_merge_command_creates_and_imports_a_dng() {
     let dir = temp_dir("hdr");
     let mut paths = Vec::new();
-    for (i, b) in lightcraft_merge::synth::bracket_dngs(480, 320, &[-2.0, 0.0, 2.0]).into_iter().enumerate() {
+    for (i, b) in lightcraft_merge::synth::bracket_dngs(480, 320, &[-2.0, 0.0, 2.0]).unwrap().into_iter().enumerate() {
         let p = dir.join(format!("IMG_{i}.dng"));
         std::fs::write(&p, b).unwrap();
         paths.push(p.to_string_lossy().to_string());
@@ -71,7 +71,7 @@ fn hdr_merge_command_creates_and_imports_a_dng() {
 fn panorama_command_with_auto_crop() {
     let dir = temp_dir("pano");
     let mut paths = Vec::new();
-    for (i, v) in lightcraft_merge::synth::pano_views(480, 360, 420.0, &[-25.0, 0.0, 25.0]).into_iter().enumerate() {
+    for (i, v) in lightcraft_merge::synth::pano_views(480, 360, 420.0, &[-25.0, 0.0, 25.0]).unwrap().into_iter().enumerate() {
         let img = v.to_srgb8();
         let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
         let p = dir.join(format!("P_{i}.png"));

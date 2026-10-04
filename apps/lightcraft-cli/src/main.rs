@@ -10,6 +10,7 @@
 //! lightcraft-cli commands [--json]
 //! lightcraft-cli controls [--json]
 //! ```
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod alloc_release;
 
@@ -283,14 +284,18 @@ fn synth_merge(args: &[String]) -> Result<(), String> {
     let mut written = Vec::new();
     match kind {
         "hdr" => {
-            for (k, b) in lightcraft_merge::synth::bracket_dngs(1800, 1200, &[-2.0, 0.0, 2.0]).into_iter().enumerate() {
+            for (k, b) in lightcraft_merge::synth::bracket_dngs(1800, 1200, &[-2.0, 0.0, 2.0]).map_err(|e| e.to_string())?.into_iter().enumerate() {
                 let p = Path::new(&dir).join(format!("bracket-{k}.dng"));
                 std::fs::write(&p, b).map_err(|e| e.to_string())?;
                 written.push(p);
             }
         }
         "panorama" | "pano" => {
-            for (k, v) in lightcraft_merge::synth::pano_views(1200, 900, 1000.0, &[-50.0, -25.0, 0.0, 25.0, 50.0]).into_iter().enumerate() {
+            for (k, v) in lightcraft_merge::synth::pano_views(1200, 900, 1000.0, &[-50.0, -25.0, 0.0, 25.0, 50.0])
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .enumerate()
+            {
                 let p = Path::new(&dir).join(format!("view-{k}.png"));
                 let img = v.to_srgb8();
                 let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default())

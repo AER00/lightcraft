@@ -11,6 +11,7 @@
 //! The browser build has no GPU path yet (WebGPU device creation is asynchronous): everything here
 //! compiles to the CPU fallback on wasm32.
 #![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

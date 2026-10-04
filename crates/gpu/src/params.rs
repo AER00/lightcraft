@@ -86,15 +86,17 @@ pub fn finish_fields() -> Vec<(&'static str, usize)> {
         .collect()
 }
 
-fn index(name: &str) -> usize {
+/// Offset of field `name`; `None` (and a debug assertion) for a name not in [`FIELDS`].
+fn index(name: &str) -> Option<usize> {
     let mut i = 0;
     for (n, len) in FIELDS {
         if *n == name {
-            return i;
+            return Some(i);
         }
         i += len;
     }
-    panic!("unknown finish field {name}")
+    debug_assert!(false, "unknown finish field {name}");
+    None
 }
 
 /// A parameter block being filled by name.
@@ -105,20 +107,20 @@ impl Block {
         Block(vec![0; FIELDS.iter().map(|f| f.1).sum()])
     }
     fn f(&mut self, name: &str, v: f32) {
-        let i = index(name);
-        self.0[i] = v.to_bits();
+        self.u(name, v.to_bits());
     }
     fn u(&mut self, name: &str, v: u32) {
-        let i = index(name);
-        self.0[i] = v;
+        if let Some(slot) = index(name).and_then(|i| self.0.get_mut(i)) {
+            *slot = v;
+        }
     }
     fn b(&mut self, name: &str, v: bool) {
         self.u(name, v as u32);
     }
     fn fs(&mut self, name: &str, v: &[f32]) {
-        let i = index(name);
-        for (k, x) in v.iter().enumerate() {
-            self.0[i + k] = x.to_bits();
+        let Some(i) = index(name) else { return };
+        for (slot, x) in self.0.iter_mut().skip(i).zip(v) {
+            *slot = x.to_bits();
         }
     }
 }

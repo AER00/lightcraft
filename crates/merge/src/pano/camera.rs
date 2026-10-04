@@ -191,7 +191,7 @@ pub fn initial_cameras(ids: &[usize], sizes: &[(usize, usize)], pairs: &[PairMat
             let s = d.signum() * d.abs().cbrt();
             let rel = rel.map(|r| r.map(|v| v / s));
             let rel = linalg::orthonormalize(&rel);
-            let rk = cams[known].expect("known").r;
+            let Some(rk) = cams[known].map(|c| c.r) else { continue };
             cams[new] = Some(Camera { f: f0, r: linalg::mul3(&rel, &rk), cx: c(new).0, cy: c(new).1 });
             grew = true;
         }
@@ -277,7 +277,9 @@ pub fn bundle_adjust(cams: &[Option<Camera>], pairs: &[PairMatch], anchor: usize
     let cost = |cs: &[Option<Camera>]| -> (f64, f64) {
         let (mut c, mut sq) = (0.0, 0.0);
         for o in &obs {
-            let r = residual(cs[o.i].as_ref().expect("cam"), cs[o.j].as_ref().expect("cam"), o.a, o.b);
+            // every observation joins two posed cameras (see `obs` above)
+            let (Some(ci), Some(cj)) = (cs[o.i].as_ref(), cs[o.j].as_ref()) else { continue };
+            let r = residual(ci, cj, o.a, o.b);
             for v in r {
                 let a = v.abs();
                 sq += v * v;
@@ -298,11 +300,12 @@ pub fn bundle_adjust(cams: &[Option<Camera>], pairs: &[PairMatch], anchor: usize
             .fold(
                 || (vec![0.0f64; np * np], vec![0.0f64; np]),
                 |(mut jtj, mut jtr), o| {
-                    let (ci, cj) = (cur[o.i].as_ref().expect("cam"), cur[o.j].as_ref().expect("cam"));
+                    let (Some(ci), Some(cj)) = (cur[o.i].as_ref(), cur[o.j].as_ref()) else { return (jtj, jtr) };
                     let r = residual(ci, cj, o.a, o.b);
                     let mut cols: Vec<(usize, [f64; 4])> = Vec::with_capacity(8);
                     for (cam, which) in [(o.i, 0), (o.j, 1)] {
-                        let base = 4 * idx[cam].expect("idx");
+                        let Some(i) = idx[cam] else { continue };
+                        let base = 4 * i;
                         for k in 0..4 {
                             if k < 3 && cam == anchor {
                                 continue;

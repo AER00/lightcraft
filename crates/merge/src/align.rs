@@ -97,7 +97,8 @@ pub fn align_pair(ref_feat: &Features, feat: &Features, scale: f64, full_w: usiz
         }
     }
     let Some(most) = fits.iter().map(|(_, f)| f.inliers.len()).max() else { return Alignment::identity() };
-    let (name, f) = fits.into_iter().find(|(_, f)| f.inliers.len() as f64 >= most as f64 * 0.97).expect("the best fit qualifies");
+    // the fit with `most` inliers always qualifies
+    let Some((name, f)) = fits.into_iter().find(|(_, f)| f.inliers.len() as f64 >= most as f64 * 0.97) else { return Alignment::identity() };
     Alignment { h: scale_homography(&f.h, scale), model: name, inliers: f.inliers.len(), rms: f.rms / scale }
 }
 
