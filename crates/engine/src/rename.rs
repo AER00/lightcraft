@@ -157,6 +157,41 @@ pub fn token_example(tag: &str) -> String {
     expand_tokens(tag, &sample_photo(), 1, 1)
 }
 
+/// Why a folder template (`{date:%Y}/{date:%Y%m%d}`) can't be used, if it can't: it must be
+/// relative (no leading `/` or `\`, drive letter or `~`) and have no `.` / `..` levels.
+pub fn folder_template_error(template: &str) -> Option<String> {
+    let t = template.trim();
+    if t.is_empty() {
+        return Some("the folder template is empty".into());
+    }
+    let b = t.as_bytes();
+    if t.starts_with(['/', '\\', '~']) || (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':') {
+        return Some("the folder template must be relative to the destination (no leading /, \\, ~ or drive)".into());
+    }
+    if t.split(['/', '\\']).any(|s| matches!(s.trim(), "." | "..")) {
+        return Some("the folder template may not contain . or .. folders".into());
+    }
+    None
+}
+
+/// The folders (relative to the destination) a folder template gives `p`: the template's own `/`
+/// (or `\`) separate levels; each level's tokens are expanded and the result made a safe folder
+/// name — a value can never add a level or climb out (`/`, `\`, `:`… become `-`, leading and
+/// trailing dots are dropped). A level that comes out empty (missing metadata) is `unknown`; empty
+/// levels in the template (`a//b`) are skipped. `{date}` is the capture time, else [`Photo::date`]'s
+/// fallback (the import time). Check [`folder_template_error`] first; levels it rejects are skipped.
+pub fn expand_folder(template: &str, p: &Photo, seq: usize) -> Vec<String> {
+    template
+        .split(['/', '\\'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !matches!(*s, "." | ".."))
+        .map(|s| {
+            let v = sanitize(&expand_tokens(s, p, seq, 1));
+            if v.is_empty() { "unknown".to_string() } else { v }
+        })
+        .collect()
+}
+
 /// The `{…}` tags in `template` that aren't tokens (they stay as typed), for a warning.
 pub fn unknown_tokens(template: &str) -> Vec<String> {
     let p = sample_photo();
@@ -464,6 +499,31 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_templates_stay_inside_the_destination() {
+        let mut p = sample_photo();
+        assert_eq!(expand_folder("{date:%Y}/{date:%Y%m%d}", &p, 1), vec!["2026", "20260114"]);
+        assert_eq!(expand_folder("{date:%Y}\\{date:%Y-%m}", &p, 1), vec!["2026", "2026-01"], "backslash separates too");
+        // metadata can't add levels or climb out
+        p.meta.camera = "../../etc/x".into();
+        p.meta.title = "..".into();
+        assert_eq!(expand_folder("{camera}/{title}/{date:%Y}", &p, 1), vec!["-..-etc-x", "unknown", "2026"]);
+        p.meta.camera = "C:\\Windows".into();
+        assert_eq!(expand_folder("{camera}", &p, 1), vec!["C--Windows"]);
+        // missing metadata → `unknown`; missing capture time → the import time
+        p.meta.camera.clear();
+        p.captured = None;
+        assert_eq!(expand_folder("{camera}//{date:%Y%m%d}", &p, 1), vec!["unknown", "20260120"]);
+        for bad in ["", "  ", "/abs/{date}", "\\\\server\\x", "C:/x", "c:x", "~/x", "../{date}", "{date}/../x", "a/./b", "{date:%Y}/.."] {
+            assert!(folder_template_error(bad).is_some(), "{bad:?} should be rejected");
+        }
+        for ok in ["{date:%Y}/{date:%Y%m%d}", "Trips/{camera}", "{date}", "a//b"] {
+            assert_eq!(folder_template_error(ok), None, "{ok:?}");
+        }
+        // even unchecked, rejected levels are skipped rather than followed
+        assert_eq!(expand_folder("/../{date:%Y}/./x", &p, 1), vec!["2026", "x"]);
+    }
 
     /// The help lists exactly what `expand_tokens` understands: every listed tag (and alias) is
     /// replaced, never left literal, and the help's examples match the documented behaviour.

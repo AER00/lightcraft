@@ -268,7 +268,14 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
             }
         }
         "ui.dialog.confirm" => match app.ui.dialog.take() {
-            Some(d) => wrap(crate::panels::dialogs::confirm_dialog(app, &d)),
+            Some(d) => {
+                let r = crate::panels::dialogs::confirm_dialog(app, &d);
+                // the import review stays open on an error, as with its button
+                if r.is_err() && matches!(d, crate::state::Dialog::Import { .. }) {
+                    app.ui.dialog = Some(d);
+                }
+                wrap(r)
+            }
             None => err("no dialog open"),
         },
         "ui.dialog.cancel" => {

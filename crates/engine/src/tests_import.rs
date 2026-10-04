@@ -257,6 +257,37 @@ fn copy_with_destination_organize_rename_and_metadata_preset() {
     }
 }
 
+/// Copy with a custom folder template: `{date:%Y}/{date:%Y%m%d}` files a photo under
+/// `2026/20260114/` (an undated file by the import time); templates that would leave the
+/// destination are refused.
+#[test]
+fn copy_with_a_folder_template() {
+    let src = temp_dir("tplsrc");
+    let dest = temp_dir("tpldest");
+    write_png(&src.join("a.png"), 1);
+    let mut s = Session::new().with_fs();
+    s.clock = Box::new(|| "2026-01-14T05:58:48".to_string());
+    for bad in ["../{date}", "/tmp/{date}", "{date:%Y}/../x", "C:/x"] {
+        let r = s.execute(
+            "library.import",
+            &json!({"paths": [src.to_string_lossy()], "mode": "copy", "destination": dest.to_string_lossy(), "organize": bad}),
+        );
+        assert!(r.is_err(), "{bad} should be refused");
+    }
+    assert_eq!(s.catalog.len(), 0);
+    let r = s
+        .execute(
+            "library.import",
+            &json!({"paths": [src.to_string_lossy()], "mode": "copy", "destination": dest.to_string_lossy(), "organize": "{date:%Y}/{date:%Y%m%d}"}),
+        )
+        .unwrap();
+    assert_eq!(ids(&r, "imported"), 1, "{r}");
+    assert!(dest.join("2026").join("20260114").join("a.png").is_file());
+    for d in [&src, &dest] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}
+
 /// Auto import: files in the watched folder are added once their size held between two scans,
 /// into the named album; non-photos are tried once; the selection stays put.
 #[test]

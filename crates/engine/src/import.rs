@@ -66,8 +66,9 @@ pub struct ImportOptions {
     pub convert_dng: bool,
 }
 
-/// How copies are filed in the destination.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// How copies are filed in the destination. The date is the capture time, else the time of the
+/// import.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Organize {
     /// `YYYY/YYYY-MM-DD/` by capture date.
     #[default]
@@ -76,15 +77,34 @@ pub enum Organize {
     ByMonth,
     /// All in the destination itself.
     Flat,
+    /// A folder template, e.g. `{date:%Y}/{date:%Y%m%d}` → `2026/20260114/`: the template's own
+    /// `/` make the levels, each expanded with the file-name tokens ([`crate::rename::expand_folder`];
+    /// never outside the destination).
+    Template(String),
 }
 
 impl Organize {
+    /// `date` | `month` | `flat`, or a folder template (anything with a `{`, `/` or `\`).
     pub fn parse(s: &str) -> Option<Organize> {
         match s {
             "date" | "day" | "byDay" => Some(Organize::ByDay),
             "month" | "byMonth" => Some(Organize::ByMonth),
             "flat" | "none" | "intoOneFolder" => Some(Organize::Flat),
+            t if t.contains(['{', '/', '\\']) => Some(Organize::Template(t.trim().to_string())),
             _ => None,
+        }
+    }
+
+    /// The folders (inside the destination) a copy of `p` goes to.
+    pub fn folders(&self, p: &Photo) -> Vec<String> {
+        let date = p.date();
+        let day = date.get(..10).filter(|d| d.len() == 10).unwrap_or("undated");
+        let year = day.get(..4).unwrap_or("undated");
+        match self {
+            Organize::ByDay => vec![year.into(), day.into()],
+            Organize::ByMonth => vec![year.into(), day.get(..7).unwrap_or("undated").into()],
+            Organize::Flat => Vec::new(),
+            Organize::Template(t) => crate::rename::expand_folder(t, p, 1),
         }
     }
 }
@@ -322,16 +342,10 @@ fn probe_all(probe: Option<&crate::media::FileProbe>, paths: &[String], progress
         .collect()
 }
 
-/// Copy `src` into `root` (filed per `organize` by `date`) as `name` (default: its own name),
-/// made unique with -1, -2…; returns the new path.
-fn copy_into(root: &Path, src: &str, date: &str, organize: Organize, name: Option<&str>) -> Result<String, String> {
-    let day = date.get(..10).filter(|d| d.len() == 10).unwrap_or("undated");
-    let year = day.get(..4).unwrap_or("undated");
-    let dir = match organize {
-        Organize::ByDay => root.join(year).join(day),
-        Organize::ByMonth => root.join(year).join(day.get(..7).unwrap_or("undated")),
-        Organize::Flat => root.to_path_buf(),
-    };
+/// Copy `src` into `root`/`folders` as `name` (default: its own name), made unique with -1, -2…;
+/// returns the new path.
+fn copy_into(root: &Path, src: &str, folders: &[String], name: Option<&str>) -> Result<String, String> {
+    let dir = folders.iter().fold(root.to_path_buf(), |d, f| d.join(f));
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let name = name
         .map(str::to_string)
@@ -557,17 +571,17 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
             (ImportMode::Copy, Some(root))
                 if !Path::new(&path).starts_with(root) && !lib_dir.as_ref().is_some_and(|l| Path::new(&path).starts_with(l)) =>
             {
+                // the templates see the photo as it will be catalogued (undated: the import time)
+                let own = Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let mut q = Photo::new(PhotoId(0), Source::File { path: path.clone() }, &own, &info.format, 0, 0, &now);
+                q.captured = info.captured.clone();
+                q.meta = info.meta.clone();
                 let name = opts.rename.as_deref().filter(|t| !t.trim().is_empty()).map(|t| {
-                    // the template sees the photo as it will be catalogued
-                    let own = Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    let mut q = Photo::new(PhotoId(0), Source::File { path: path.clone() }, &own, &info.format, 0, 0, &now);
-                    q.captured = info.captured.clone();
-                    q.meta = info.meta.clone();
                     let n = crate::rename::expand(t, &q, seq);
                     seq += 1;
                     n
                 });
-                match copy_into(root, &path, info.captured.as_deref().unwrap_or(&now), opts.organize, name.as_deref()) {
+                match copy_into(root, &path, &opts.organize.folders(&q), name.as_deref()) {
                     Ok(p) => p,
                     Err(e) => {
                         report.failed.push((path, e));

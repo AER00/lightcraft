@@ -1211,6 +1211,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// Import review, Copy, Folders → Custom template…: the default `{date:%Y}/{date:%Y%m%d}`
+    /// files copies under `2026/20260114/`, the example line shows the full destination, and a
+    /// template that would climb out of the destination is refused.
+    #[test]
+    fn import_copy_into_a_custom_folder_template() {
+        let base = std::env::temp_dir().join(format!("lc-ui-import-tpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (src, dest) = (base.join("card"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let img = lightcraft_raster::Rgba8 { width: 8, height: 8, data: vec![[40, 3, 9, 255]; 64] };
+        let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+        std::fs::write(src.join("IMG_01.png"), png).unwrap();
+        let dest_s = dest.to_string_lossy().to_string();
+        let services = crate::Services { png: None, pick_folder: Some(Box::new(move || Some(dest_s.clone()))), ..Default::default() };
+        let mut session = lightcraft_engine::Session::with_demo().with_fs();
+        // undated files are filed by the import time
+        session.clock = Box::new(|| "2026-01-14T05:58:48".to_string());
+        let mut app = LightcraftApp::new(session, services);
+        app.ui.view = crate::state::ViewMode::PhotoGrid;
+        let mut h = Headless::new(app, [1300.0, 1000.0], 1.0);
+        let t = Duration::from_secs(10);
+        let r = h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [src.to_string_lossy()]}}), t);
+        assert_eq!(r["result"]["scanning"], true, "{r}");
+        h.settle(SETTLE);
+        for id in ["button:importCopy", "button:importDest"] {
+            let r = h.request("ui.clickWidget", json!({"id": id}), t);
+            assert_eq!(r["ok"], true, "{id}: {r}");
+        }
+        if let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog {
+            opts.organize = "custom".into();
+            opts.folder_template = "../{date:%Y}".into();
+        }
+        h.step();
+        // refused: the dialog stays open, nothing is imported
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_ne!(r["ok"], true, "{r}");
+        assert!(h.app.import.is_none());
+        let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog else { panic!("dialog closed") };
+        opts.folder_template = crate::import::DEFAULT_FOLDER_TEMPLATE.into();
+        let opts = opts.clone();
+        let sep = std::path::MAIN_SEPARATOR;
+        let example = crate::import::example_destination(&h.app, &opts).expect("example");
+        assert_eq!(example, format!("{}{sep}2026{sep}20260114{sep}IMG_01.png", dest.to_string_lossy()));
+        h.step();
+        let r = h.request("ui.widgets", json!({}), t);
+        assert!(r.to_string().contains("label:importExample"), "example shown");
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert!(dest.join("2026").join("20260114").join("IMG_01.png").is_file());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// Import review, Copy: Tags beside the Rename field lists the template tags; clicking one
     /// inserts it at the text cursor (not appended, not replacing the template).
     #[test]
