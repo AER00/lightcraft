@@ -827,6 +827,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Local: a kept folder stays a root while its subfolders (and other locations) are
+    /// browsed — the subfolder is highlighted inside its tree, its siblings stay listed — and
+    /// the kept folders survive a save/load of the UI state (a restart).
+    #[test]
+    fn kept_local_root_stays_while_browsing_below_and_elsewhere() {
+        let mut h = demo([1300.0, 1400.0]);
+        let t = Duration::from_secs(10);
+        let base = std::env::temp_dir().join(format!("lc-ui-roots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for d in ["Photos/2026/20260101", "Photos/2026/20260114", "Other"] {
+            std::fs::create_dir_all(base.join(d)).unwrap();
+        }
+        let s = |p: std::path::PathBuf| p.to_string_lossy().to_string();
+        let (photos, day1, day2, other) =
+            (s(base.join("Photos")), s(base.join("Photos/2026/20260101")), s(base.join("Photos/2026/20260114")), s(base.join("Other")));
+        let exec = |h: &mut Headless, c: &str, p: Value| h.request("engine.execute", json!({"command": c, "params": p}), t);
+        let rects = |h: &mut Headless| -> std::collections::HashMap<String, f64> {
+            let w = h.request("ui.widgets", json!({"filter": "lc-ui-roots-"}), t);
+            w["result"].as_array().unwrap().iter().map(|x| (x["id"].as_str().unwrap().to_string(), x["rect"][0].as_f64().unwrap_or(0.0))).collect()
+        };
+        h.request("ui.set", json!({"leftPanel": true}), t);
+        assert_eq!(exec(&mut h, "local.addRoot", json!({"path": photos}))["ok"], true);
+        assert_eq!(exec(&mut h, "local.addRoot", json!({"path": format!("{photos}/")}))["result"]["roots"].as_array().map(Vec::len), Some(1));
+        exec(&mut h, "library.browse", json!({"path": day1}));
+        h.settle(SETTLE);
+        h.step();
+        let r = rects(&mut h);
+        assert!(r.contains_key(&format!("source:local:{photos}")), "the kept root stays: {r:?}");
+        assert!(r.contains_key(&format!("source:local:{day2}")), "the sibling stays reachable: {r:?}");
+        let (root_x, child_x) = (r[&format!("folderToggle:{photos}")], r[&format!("folderToggle:{day1}")]);
+        assert!(child_x > root_x, "the browsed folder is inside the root's tree, not a root of its own ({child_x} vs {root_x})");
+        assert_eq!(h.request("ui.clickWidget", json!({"id": format!("source:local:{day2}")}), t)["ok"], true);
+        h.settle(SETTLE);
+        assert_eq!(h.app.session.browse.as_ref().map(|b| b.path.clone()), Some(day2.clone()), "the sibling is browsed");
+        // another location: the kept root stays listed
+        exec(&mut h, "library.browse", json!({"path": other}));
+        h.settle(SETTLE);
+        h.step();
+        let r = rects(&mut h);
+        assert!(r.contains_key(&format!("source:local:{photos}")) && r.contains_key(&format!("source:local:{other}")), "{r:?}");
+        // restart: the kept roots come back with the saved UI state
+        let saved = serde_json::to_string(&h.app.ui).unwrap();
+        let back: crate::state::UiState = serde_json::from_str(&saved).unwrap();
+        assert_eq!(back.local_roots, vec![photos.clone()]);
+        let _ = std::fs::remove_dir_all(&base);
+        h.settle(SETTLE);
+    }
+
     /// Versions panel: resting on a version previews it in the loupe without changing the photo;
     /// a click restores it.
     #[test]
