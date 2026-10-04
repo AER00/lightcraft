@@ -6,6 +6,7 @@
 //! - Blur ([`blur`]): separable Gaussian via repeated box filters (O(1) per pixel in the radius).
 //! - [`Histogram`] of display-encoded RGB + luminance.
 #![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod blur;
 pub mod histogram;

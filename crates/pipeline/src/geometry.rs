@@ -211,19 +211,22 @@ impl Frame {
             Some((nw, nh)) => std::borrow::Cow::Owned(resize(o, nw, nh, Filter::Mitchell)),
             None => std::borrow::Cow::Borrowed(o),
         };
-        match plan.mode {
-            SampleMode::Copy => base.into_owned(),
-            SampleMode::Warp(o2t) => sample_warped(&base, plan.sx, plan.sy, self.warp.as_ref().expect("warp"), o2t, w, h),
-            SampleMode::Affine(xf) => {
-                let mut out = Rgb32f::new(w, h);
-                par_rows(&mut out.data, w, |y, row| {
-                    for (x, px) in row.iter_mut().enumerate() {
-                        let p = xf.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
-                        *px = base.sample_bilinear(p.x as f32, p.y as f32);
-                    }
-                });
-                out
-            }
+        let affine = |xf: Affine| {
+            let mut out = Rgb32f::new(w, h);
+            par_rows(&mut out.data, w, |y, row| {
+                for (x, px) in row.iter_mut().enumerate() {
+                    let p = xf.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
+                    *px = base.sample_bilinear(p.x as f32, p.y as f32);
+                }
+            });
+            out
+        };
+        match (plan.mode, self.warp.as_ref()) {
+            (SampleMode::Copy, _) => base.into_owned(),
+            (SampleMode::Warp(o2t), Some(warp)) => sample_warped(&base, plan.sx, plan.sy, warp, o2t, w, h),
+            // `sample_plan` plans a warp only when there is one; without it the same mapping is affine
+            (SampleMode::Warp(o2t), None) => affine(Affine::scale(plan.sx, plan.sy) * o2t),
+            (SampleMode::Affine(xf), _) => affine(xf),
         }
     }
 
