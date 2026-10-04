@@ -404,6 +404,9 @@ impl LightcraftApp {
         if !self.styled {
             theme::install_fonts(ctx);
             theme::apply(ctx);
+            // File → Add from Device lists cards scanned in the background: show hot-plugs
+            let repaint = ctx.clone();
+            lightcraft_engine::devices::on_change(move || repaint.request_repaint());
             self.styled = true;
         } else {
             self.fonts_ready = true;

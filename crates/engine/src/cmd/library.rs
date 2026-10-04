@@ -250,7 +250,7 @@ pub fn specs() -> Vec<CommandSpec> {
             Ok(json!({"selected": s.selection.ids.len()}))
         }),
         cmd!(query "library.devices", "Cameras and Cards", [], None, "{} → [{name, path (its DCIM folder), root}] — mounted volumes with a DCIM folder", always, |_, _| {
-            Ok(serde_json::to_value(crate::devices::devices()).unwrap_or_default())
+            Ok(serde_json::to_value(crate::devices::devices_now()).unwrap_or_default())
         }),
         cmd!(query "photo.copyMetadata", "Copy Metadata", ["Photo"], None, "{} — title, caption, copyright, creator, location and keywords of the active photo", has_active, |s, _| {
             let id = s.active().ok_or_else(|| bad("photo.copyMetadata", "no active photo"))?;
