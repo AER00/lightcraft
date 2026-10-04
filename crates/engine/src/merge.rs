@@ -309,14 +309,10 @@ fn output_path(first: &str, suffix: &str) -> String {
     let p = std::path::Path::new(first);
     let dir = p.parent().map(|d| d.to_path_buf()).unwrap_or_default();
     let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Merge".into());
-    for k in 1.. {
-        let name = if k == 1 { format!("{stem}-{suffix}.dng") } else { format!("{stem}-{suffix}-{k}.dng") };
-        let cand = dir.join(name);
-        if !cand.exists() {
-            return cand.to_string_lossy().to_string();
-        }
-    }
-    unreachable!()
+    let cand = |k: u64| dir.join(if k == 1 { format!("{stem}-{suffix}.dng") } else { format!("{stem}-{suffix}-{k}.dng") });
+    // (`u64::MAX` taken names can't exist; the last candidate is the fallback)
+    let free = (1..u64::MAX).map(cand).find(|c| !c.exists()).unwrap_or_else(|| cand(u64::MAX));
+    free.to_string_lossy().to_string()
 }
 
 /// Parse `merge.*` command parameters into a kind and finishing options.

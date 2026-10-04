@@ -60,7 +60,8 @@ pub(crate) fn decode_row(row: &[u8], out: &mut [u16]) {
     while x0 + 32 <= w && x0 + 32 <= row.len() {
         for half in 0..2 {
             let off = x0 + half * 16;
-            let block = u128::from_le_bytes(row[off..off + 16].try_into().expect("16 bytes"));
+            let Some(bytes) = row.get(off..off + 16).and_then(|b| <[u8; 16]>::try_from(b).ok()) else { return };
+            let block = u128::from_le_bytes(bytes);
             let max = (block & 0x7ff) as u16;
             let min = ((block >> 11) & 0x7ff) as u16;
             let imax = ((block >> 22) & 0xf) as usize;
@@ -217,7 +218,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
 
     let cfa = match (raw.u64s(t::CFA_REPEAT_PATTERN_DIM).as_deref(), raw.bytes(t::CFA_PATTERN_EP)) {
         (Some([2, 2]), Some(p)) if p.len() == 4 && p.iter().all(|&c| c <= 2) => Cfa { width: 2, height: 2, pattern: p.to_vec() },
-        _ => Cfa::bayer("RGGB").expect("static"),
+        _ => Cfa::bayer_static("RGGB"),
     };
     let default_black = if out_bits >= 14 { 512.0 } else { 128.0 };
     let black = match raw.f64s(BLACK_LEVEL).as_deref() {

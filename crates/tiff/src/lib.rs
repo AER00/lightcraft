@@ -17,6 +17,7 @@
 //! Sources: TIFF 6.0 specification (Adobe, 1992), TIFF Technical Note / supplements, the BigTIFF
 //! design notes (AWare Systems), Adobe DNG specification 1.7 (tag numbers), CIPA DC-008 (Exif 2.32).
 #![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod image;
 pub mod makernote;

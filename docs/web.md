@@ -90,7 +90,7 @@ same-origin or send CORP/CORS headers (the bundle has no third-party resources).
   (`navigator.storage.persist()`); without it the browser may evict the data under storage
   pressure. URL options: `?store=idb` forces IndexedDB, `?store=memory` keeps nothing, `?reset`
   deletes the stored library first.
-- **Importing photos with no filesystem.** *File ▸ Add Photos…* (<kbd>⌘⇧I</kbd>) opens the
+- **Importing photos with no filesystem.** *File ▸ Import Photos…* (<kbd>⌘⇧I</kbd>) opens the
   browser's file picker. You can also drop files anywhere on the page. The bytes are written to
   storage, then imported and decoded by the same engine code as the desktop app
   (`lightcraft_engine::files::{probe_bytes, load_bytes}`): JPEG/PNG/TIFF/WebP and the supported

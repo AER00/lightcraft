@@ -1,6 +1,8 @@
-//! The import review dialog (File → Add Photos…): the files found under the chosen files and
-//! folders as a grid of thumbnails with checkboxes (duplicates marked and unchecked), the
-//! destination (add in place / copy into the library's dated `Originals/` folders), an album
+//! The import review dialog (File → Import Photos… / Import from Folder… / Import from Device):
+//! the source it scanned (a scanned folder is *not* added to Local), the files found under it as
+//! a grid of thumbnails with checkboxes (duplicates marked and unchecked), the destination (add in
+//! place / copy into the library's `Originals/` or a chosen folder, filed by day, by month, into
+//! one folder or by a custom folder template, optionally renamed), an album
 //! (existing or new), a preset and keywords to apply. Importing runs in small batches, one per
 //! frame, with a progress window; the whole import is one undo step.
 
@@ -21,6 +23,8 @@ pub(crate) const BATCH: usize = 8;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ImportDialog {
+    /// The files / folders that were scanned (shown as the source).
+    pub sources: Vec<String>,
     pub candidates: Vec<ImportCandidate>,
     pub checked: Vec<bool>,
     /// Copy into the library (else add in place).
@@ -35,8 +39,10 @@ pub struct ImportDialog {
     pub keywords: String,
     /// Copy: destination folder ("" = the library's Originals/).
     pub destination: String,
-    /// Copy: `date` (YYYY/YYYY-MM-DD), `month` or `flat`.
+    /// Copy: `date` (YYYY/YYYY-MM-DD), `month`, `flat` or `custom` ([`ImportDialog::folder_template`]).
     pub organize: String,
+    /// Copy, `custom`: the folder template, e.g. `{date:%Y}/{date:%Y%m%d}`.
+    pub folder_template: String,
     /// Copy: file-name template for the copies ("" = keep the names).
     pub rename: String,
     /// Metadata preset name ("" = none).
@@ -60,6 +66,22 @@ impl ImportDialog {
             .filter(|(c, on)| **on && c.duplicate.is_none() && c.error.is_none())
             .map(|(c, _)| c.path.clone())
             .collect()
+    }
+    /// The `organize` param of `library.import` (`None` = the default, by day); an unusable
+    /// custom folder template is an error.
+    pub fn organize_param(&self) -> Result<Option<String>, String> {
+        match self.organize.as_str() {
+            "" => Ok(None),
+            "custom" => {
+                let t = self.folder_template.trim();
+                if let Some(e) = lightcraft_engine::rename::folder_template_error(t) {
+                    return Err(e);
+                }
+                // a plain folder name ("Imports") is a one-level template too
+                Ok(Some(if t.contains(['{', '/', '\\']) { t.to_string() } else { format!("{t}/") }))
+            }
+            o => Ok(Some(o.to_string())),
+        }
     }
     fn keywords(&self) -> Vec<String> {
         self.keywords.split(',').map(str::trim).filter(|k| !k.is_empty()).map(str::to_string).collect()
@@ -92,6 +114,8 @@ pub struct ScanTask {
     pub copy: bool,
     /// Browsing a folder (Local): the photos are read in place instead of opening the review.
     browse: bool,
+    /// What is being scanned (the review's source).
+    sources: Vec<String>,
 }
 
 /// Scan `paths` in the background, then open the review dialog (see [`poll_scan`]).
@@ -99,6 +123,7 @@ pub fn open(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String
     if app.scan.is_some() {
         return Err("a scan is already running".into());
     }
+    let sources = paths.clone();
     let (input, paths) = ScanInput::new(&mut app.session, &paths);
     let progress = std::sync::Arc::new(ScanProgress::default());
     let (tx, rx) = std::sync::mpsc::channel();
@@ -110,7 +135,7 @@ pub fn open(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String
     std::thread::spawn(job);
     #[cfg(target_arch = "wasm32")]
     job();
-    app.scan = Some(ScanTask { progress, rx, copy: false, browse: false });
+    app.scan = Some(ScanTask { progress, rx, copy: false, browse: false, sources });
     Ok(json!({"scanning": true}))
 }
 
@@ -171,7 +196,7 @@ pub fn browse(app: &mut LightcraftApp, path: &str, subfolders: Option<bool>) -> 
     std::thread::spawn(job);
     #[cfg(target_arch = "wasm32")]
     job();
-    app.scan = Some(ScanTask { progress, rx, copy: false, browse: true });
+    app.scan = Some(ScanTask { progress, rx, copy: false, browse: true, sources: Vec::new() });
     app.renderer.forget_imports();
     Ok(json!({"path": dir_s, "subfolders": subfolders, "scanning": true}))
 }
@@ -189,7 +214,7 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
             return;
         }
     };
-    let task = app.scan.take().expect("scan task");
+    let Some(task) = app.scan.take() else { return };
     if task.progress.cancel.load(Ordering::Relaxed) {
         return;
     }
@@ -212,6 +237,7 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
     app.renderer.forget_imports();
     let mut d = ImportDialog::new(out.candidates);
     d.copy = task.copy;
+    d.sources = task.sources;
     app.ui.dialog = Some(crate::state::Dialog::Import { opts: Box::new(d) });
 }
 
@@ -277,8 +303,8 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
         if !d.destination.trim().is_empty() {
             params["destination"] = json!(d.destination.trim());
         }
-        if !d.organize.is_empty() {
-            params["organize"] = json!(d.organize);
+        if let Some(o) = d.organize_param()? {
+            params["organize"] = json!(o);
         }
         if !d.rename.trim().is_empty() {
             params["rename"] = json!(d.rename.trim());
@@ -307,7 +333,7 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
         p["renameStart"] = json!(1 + task.imported);
     }
     let r = app.session.execute("library.import", &p);
-    let task = app.import.as_mut().expect("import task");
+    let Some(task) = app.import.as_mut() else { return };
     task.done += n;
     match r {
         Ok(v) => {
@@ -328,7 +354,7 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
     if !task.queue.is_empty() {
         return;
     }
-    let task = app.import.take().expect("import task");
+    let Some(task) = app.import.take() else { return };
     let steps = app.session.undo.len().saturating_sub(task.undo0);
     let label = format!("Add {} Photo{}", task.imported, if task.imported == 1 { "" } else { "s" });
     app.session.merge_undo(steps, &label);
@@ -341,7 +367,7 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
     if let Some(f) = task.first {
         let _ = app.run("library.select", json!({"ids": [f]}));
     }
-    let mut msg = format!("Added {} photo{}", task.imported, if task.imported == 1 { "" } else { "s" });
+    let mut msg = format!("Imported {} photo{}", task.imported, if task.imported == 1 { "" } else { "s" });
     if task.duplicates > 0 {
         msg.push_str(&format!(" · {} duplicate{} skipped", task.duplicates, if task.duplicates == 1 { "" } else { "s" }));
     }
@@ -407,7 +433,18 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
     });
     ui.add_space(4.0);
     // options
-    field(ui, "Destination", |ui| {
+    if !d.sources.is_empty() {
+        field(ui, "Source", |ui| {
+            let r = ui.label(egui::RichText::new(source_summary(&d.sources)).color(t.text_label)).on_hover_text(d.sources.join("\n"));
+            register(ui.ctx(), "label:importSource", r.rect);
+        });
+        ui.label(
+            egui::RichText::new("Importing scans the source for photos; it doesn't add the folder to Local (use Local → Browse Folder… to work in a folder without importing).")
+                .color(t.text_dim)
+                .small(),
+        );
+    }
+    field(ui, "Transfer", |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         if crate::widgets::text_button(ui, "importAdd", "Add in place", !d.copy).on_hover_text("Reference the files where they are").clicked() {
             d.copy = false;
@@ -418,6 +455,15 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             d.copy = true;
         }
     });
+    ui.label(
+        egui::RichText::new(if d.copy {
+            "Copy: the files are copied to the folder below and the library uses the copies; the originals are left as they are."
+        } else {
+            "Add in place: the library references the files where they are; nothing is copied or moved."
+        })
+        .color(t.text_dim)
+        .small(),
+    );
     if d.copy {
         field(ui, "Copy to", |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -434,40 +480,76 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             }
         });
         field(ui, "Folders", |ui| {
-            let opts = [("date", "By day (YYYY/YYYY-MM-DD)"), ("month", "By month (YYYY/YYYY-MM)"), ("flat", "Into one folder")];
+            let opts = [
+                ("date", "By day (YYYY/YYYY-MM-DD)"),
+                ("month", "By month (YYYY/YYYY-MM)"),
+                ("flat", "Into one folder"),
+                ("custom", "Custom template…"),
+            ];
             let key = if d.organize.is_empty() { "date".to_string() } else { d.organize.clone() };
             let cur = opts.iter().find(|o| o.0 == key).map_or(opts[0].1, |o| o.1);
-            egui::ComboBox::from_id_salt("import-organize").selected_text(cur).show_ui(ui, |ui| {
+            let combo = egui::ComboBox::from_id_salt("import-organize").selected_text(cur).show_ui(ui, |ui| {
                 for (k, label) in opts {
-                    if ui.selectable_label(key == k, label).clicked() {
+                    let r = ui.selectable_label(key == k, label);
+                    register(ui.ctx(), format!("button:importOrganize-{k}"), r.rect);
+                    if r.clicked() {
                         d.organize = k.to_string();
+                        if k == "custom" && d.folder_template.trim().is_empty() {
+                            d.folder_template = DEFAULT_FOLDER_TEMPLATE.into();
+                        }
                     }
                 }
             });
+            register(ui.ctx(), "combo:importOrganize", combo.response.rect);
         });
+        if d.organize == "custom" {
+            let folders_id = egui::Id::new("import-folder-template");
+            let tags_open = field(ui, "Template", |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let w = (ui.available_width() - 50.0).max(80.0);
+                let r = ui.add(egui::TextEdit::singleline(&mut d.folder_template).id(folders_id).hint_text(DEFAULT_FOLDER_TEMPLATE).desired_width(w));
+                register(ui.ctx(), "field:importFolderTemplate", r.rect);
+                tag_toggle(ui, "importFolders")
+            });
+            if tags_open {
+                tag_help(ui, "importFolders", &mut d.folder_template, folders_id);
+            }
+            let t = Tokens::get(ui.ctx());
+            match lightcraft_engine::rename::folder_template_error(&d.folder_template) {
+                Some(e) => {
+                    ui.label(egui::RichText::new(e).color(t.caution));
+                }
+                None => unknown_tags_warning(ui, &d.folder_template),
+            }
+            ui.label(
+                egui::RichText::new("Each / starts a folder level; tags are filled in per photo (a level with missing metadata is \"unknown\").")
+                    .color(t.text_dim)
+                    .small(),
+            );
+        }
         field(ui, "Raw files", |ui| {
             let r = ui.checkbox(&mut d.dng, "Copy as DNG");
             register(ui.ctx(), "check:importDng", r.rect);
         });
-        field(ui, "Rename", |ui| {
-            let r = ui.add(egui::TextEdit::singleline(&mut d.rename).hint_text("keep names — or e.g. {date}_{seq:3}").desired_width(f32::INFINITY));
+        let rename_id = egui::Id::new("import-rename");
+        let tags_open = field(ui, "Rename", |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let w = (ui.available_width() - 50.0).max(80.0);
+            let r = ui.add(egui::TextEdit::singleline(&mut d.rename).id(rename_id).hint_text("keep names — or e.g. {date}_{seq:3}").desired_width(w));
             register(ui.ctx(), "field:importRename", r.rect);
+            tag_toggle(ui, "importRename")
         });
-        if !d.rename.trim().is_empty()
-            && let Some(c) = d.candidates.iter().zip(&d.checked).find(|(c, on)| **on && c.duplicate.is_none()).map(|(c, _)| c)
-        {
-            let mut q = lightcraft_catalog::Photo::new(
-                lightcraft_catalog::PhotoId(0),
-                lightcraft_catalog::Source::Demo { scene: 0 },
-                &c.name,
-                &c.format,
-                0,
-                0,
-                "",
+        if tags_open {
+            tag_help(ui, "importRename", &mut d.rename, rename_id);
+        }
+        unknown_tags_warning(ui, &d.rename);
+        if let Some(example) = example_destination(app, d) {
+            let t = Tokens::get(ui.ctx());
+            let r = ui.label(egui::RichText::new(format!("Example: {example}")).color(t.text_dim));
+            register(ui.ctx(), "label:importExample", r.rect);
+            ui.label(
+                egui::RichText::new("Folders and {date} use the capture time; a photo without one uses today's date.").color(t.text_dim).small(),
             );
-            q.captured = c.captured.clone();
-            let example = lightcraft_engine::rename::expand(d.rename.trim(), &q, 1);
-            ui.label(egui::RichText::new(format!("{} → {example}", c.name)).color(Tokens::get(ui.ctx()).text_dim));
         }
     }
     let albums: Vec<(u64, String)> = {
@@ -599,6 +681,141 @@ fn candidate_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDial
     let resp = resp.on_hover_text(tip);
     if resp.clicked() && ok {
         d.checked[i] = !d.checked[i];
+    }
+}
+
+/// The "Tags" toggle beside a template field (`button:<key>Tags`); returns whether the tag help
+/// ([`tag_help`]) is open.
+pub(crate) fn tag_toggle(ui: &mut egui::Ui, key: &str) -> bool {
+    let id = egui::Id::new((key, "tags-open"));
+    let mut open = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+    let r = crate::widgets::text_button(ui, &format!("{key}Tags"), "Tags", open).on_hover_text("Show the template tags; click one to insert it");
+    if r.clicked() {
+        open = !open;
+        ui.ctx().data_mut(|d| d.insert_temp(id, open));
+    }
+    open
+}
+
+/// "Unknown tag {x} stays as typed" under a template field, when it has one.
+pub(crate) fn unknown_tags_warning(ui: &mut egui::Ui, template: &str) {
+    let unknown = lightcraft_engine::rename::unknown_tokens(template);
+    if !unknown.is_empty() {
+        let s = if unknown.len() == 1 { "" } else { "s" };
+        let text = format!("Unknown tag{s} {} stay{} as typed (see Tags)", unknown.join(" "), if unknown.len() == 1 { "s" } else { "" });
+        ui.label(egui::RichText::new(text).color(Tokens::get(ui.ctx()).caution));
+    }
+}
+
+/// Insert `tag` into `text` at the text cursor of the field `edit_id` (replacing its selection);
+/// appended when the field never had a cursor. The cursor ends up after the tag.
+pub(crate) fn insert_at_cursor(ctx: &egui::Context, edit_id: egui::Id, text: &mut String, tag: &str) {
+    use egui::text::{CCursor, CCursorRange};
+    let mut state = egui::text_edit::TextEditState::load(ctx, edit_id).unwrap_or_default();
+    let n = text.chars().count();
+    let (a, b) = state.cursor.char_range().map_or((n, n), |r| {
+        let (x, y) = (r.primary.index.0.min(n), r.secondary.index.0.min(n));
+        (x.min(y), x.max(y))
+    });
+    let byte = |c: usize| text.char_indices().nth(c).map_or(text.len(), |(i, _)| i);
+    let (ba, bb) = (byte(a), byte(b));
+    text.replace_range(ba..bb, tag);
+    state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(a + tag.chars().count()))));
+    state.store(ctx, edit_id);
+    ctx.memory_mut(|m| m.request_focus(edit_id));
+}
+
+/// The template tag help: every tag (from the engine's one list, `rename::TOKENS`) with its
+/// meaning and an example, the `{date:…}` directives and how templates behave. Clicking a tag
+/// (`button:<key>Tag-<i>`) inserts it at the cursor of the field `edit_id`.
+pub(crate) fn tag_help(ui: &mut egui::Ui, key: &str, text: &mut String, edit_id: egui::Id) {
+    use lightcraft_engine::rename::{DATE_DIRECTIVES, TEMPLATE_NOTES, TOKENS, token_example};
+    let t = Tokens::get(ui.ctx());
+    egui::Frame::new().fill(t.inset).corner_radius(4.0).inner_margin(6.0).show(ui, |ui| {
+        ui.label(
+            egui::RichText::new("Click a tag to insert it. Examples are for IMG_0042.CR3 taken 14 Jan 2026, 05:58:48.").color(t.text_dim).small(),
+        );
+        egui::ScrollArea::vertical().id_salt((key, "tags")).max_height(170.0).show(ui, |ui| {
+            egui::Grid::new((key, "tag-grid")).num_columns(3).spacing([10.0, 2.0]).show(ui, |ui| {
+                for (i, tok) in TOKENS.iter().enumerate() {
+                    let r = ui.add(egui::Button::new(egui::RichText::new(tok.tag).monospace().color(t.text)).small()).on_hover_text(
+                        if tok.aliases.is_empty() {
+                            "Insert at the cursor".to_string()
+                        } else {
+                            format!("Insert at the cursor (also written {})", tok.aliases.join(", "))
+                        },
+                    );
+                    register(ui.ctx(), format!("button:{key}Tag-{i}"), r.rect);
+                    if r.clicked() {
+                        insert_at_cursor(ui.ctx(), edit_id, text, tok.tag);
+                    }
+                    ui.label(egui::RichText::new(tok.meaning).color(t.text_label));
+                    ui.label(egui::RichText::new(token_example(tok.tag)).monospace().color(t.text_dim));
+                    ui.end_row();
+                }
+            });
+            let directives: Vec<String> = DATE_DIRECTIVES.iter().map(|(d, m)| format!("{d} {m}")).collect();
+            ui.label(egui::RichText::new(format!("{{date:…}} directives: {}", directives.join(" · "))).color(t.text_dim).small());
+            for n in TEMPLATE_NOTES {
+                ui.label(egui::RichText::new(format!("• {n}")).color(t.text_dim).small());
+            }
+        });
+    });
+}
+
+/// The folder template the Custom choice starts with (`2026/20260114/`).
+pub const DEFAULT_FOLDER_TEMPLATE: &str = "{date:%Y}/{date:%Y%m%d}";
+
+/// Where the first selected photo would be copied to (destination, folders, name), for the
+/// dialog's example line; `None` without a photo or with an unusable folder template.
+pub fn example_destination(app: &LightcraftApp, d: &ImportDialog) -> Option<String> {
+    let c = d.candidates.iter().zip(&d.checked).find(|(c, on)| **on && c.duplicate.is_none() && c.error.is_none()).map(|(c, _)| c)?;
+    let organize = match d.organize_param().ok()? {
+        Some(o) => lightcraft_engine::import::Organize::parse(&o)?,
+        None => Default::default(),
+    };
+    let mut q = lightcraft_catalog::Photo::new(
+        lightcraft_catalog::PhotoId(0),
+        lightcraft_catalog::Source::File { path: c.path.clone() },
+        &c.name,
+        &c.format,
+        0,
+        0,
+        // a photo without a capture time is dated by the import (now)
+        &(app.session.clock)(),
+    );
+    q.captured = c.captured.clone();
+    // the probe's metadata, so {camera}, {title}… preview as they will import
+    if let Some(info) = app.session.import_probes.get(&c.path) {
+        q.meta = info.meta.clone();
+    }
+    let name = if d.rename.trim().is_empty() { c.name.clone() } else { lightcraft_engine::rename::expand(d.rename.trim(), &q, 1) };
+    let root = if d.destination.trim().is_empty() {
+        app.session.library.as_ref().map_or_else(|| "Originals".to_string(), |l| l.dir.join("Originals").to_string_lossy().to_string())
+    } else {
+        d.destination.trim().trim_end_matches(['/', '\\']).to_string()
+    };
+    let sep = std::path::MAIN_SEPARATOR_STR;
+    let mut parts = vec![root];
+    parts.extend(organize.folders(&q));
+    parts.push(name);
+    Some(parts.join(sep))
+}
+
+/// The import source in a few words: a folder's name, a file's name, or "N files and folders".
+pub fn source_summary(sources: &[String]) -> String {
+    let name = |p: &str| std::path::Path::new(p).file_name().map_or_else(|| p.to_string(), |n| n.to_string_lossy().to_string());
+    match sources {
+        [one] if std::path::Path::new(one).is_dir() => format!("Folder “{}” (and its subfolders)", name(one)),
+        [one] => name(one),
+        many => {
+            let folders = many.iter().filter(|p| std::path::Path::new(p.as_str()).is_dir()).count();
+            match folders {
+                0 => format!("{} files", many.len()),
+                f if f == many.len() => format!("{f} folders (and their subfolders)"),
+                f => format!("{} files and {f} folder{}", many.len() - f, if f == 1 { "" } else { "s" }),
+            }
+        }
     }
 }
 

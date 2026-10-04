@@ -128,13 +128,15 @@ pub fn display_time(iso: &str) -> String {
 
 /// Header text for a group key.
 pub fn group_label(key: &str) -> String {
-    let month = |k: &str| k.get(5..7).and_then(|m| m.parse::<usize>().ok()).filter(|m| (1..=12).contains(m)).map(|m| MONTHS[m - 1]);
+    let month = |k: &str| k.get(5..7).and_then(|m| m.parse::<usize>().ok()).and_then(|m| MONTHS.get(m.wrapping_sub(1)));
+    // `get` rather than `[..]`: a non-ASCII key must not split a character
+    let year = key.get(..4).unwrap_or(key);
     match key.len() {
-        10 => match (weekday(key), month(key), key[8..10].parse::<u32>().ok()) {
-            (Some(w), Some(m), Some(d)) => format!("{w}, {d} {m} {}", &key[..4]),
+        10 => match (weekday(key), month(key), key.get(8..10).and_then(|d| d.parse::<u32>().ok())) {
+            (Some(w), Some(m), Some(d)) => format!("{w}, {d} {m} {year}"),
             _ => key.to_string(),
         },
-        7 => month(key).map(|m| format!("{m} {}", &key[..4])).unwrap_or_else(|| key.to_string()),
+        7 => month(key).map(|m| format!("{m} {year}")).unwrap_or_else(|| key.to_string()),
         4 => key.to_string(),
         _ => "Unknown Date".into(),
     }
@@ -196,6 +198,9 @@ mod tests {
         assert_eq!(group_label("2026-02"), "February 2026");
         assert_eq!(group_label("2026"), "2026");
         assert_eq!(group_label(""), "Unknown Date");
+        // non-ASCII keys of a date's length used to be sliced mid-character
+        assert_eq!(group_label("2024-01é0"), "2024-01é0");
+        assert_eq!(group_label("202é01"), "January 202é01");
         assert_eq!(shift_iso("2026-12-31T23:30:00", 3600).as_deref(), Some("2027-01-01T00:30:00"));
         assert_eq!(shift_iso("2026-03-01T00:00:00.25+02:00", -1).as_deref(), Some("2026-02-28T23:59:59.25+02:00"));
         assert_eq!(shift_iso("nope", 5), None);

@@ -13,33 +13,36 @@ use crate::widgets::{divider, register, slider, text_button};
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
-    egui::Panel::right("right_panel")
-        .exact_size(t.panel_w)
-        .resizable(false)
-        .frame(egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider)))
-        .show(ui, |ui| {
-            let Some(id) = app.session.active() else {
-                let r = ui.max_rect();
-                super::empty_message(ui, r, "No photo selected", "Select a photo to edit");
-                return;
-            };
-            egui::ScrollArea::vertical().id_salt("right-scroll").auto_shrink([false, false]).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                match app.ui.right {
-                    RightPanel::Edit => super::edit::show(app, ui, id),
-                    RightPanel::Profiles => super::profiles::show(app, ui, id),
-                    RightPanel::Crop => crop(app, ui, id),
-                    RightPanel::Remove => remove(app, ui, id),
-                    RightPanel::Masking => super::masking::show(app, ui, id),
-                    RightPanel::RedEye => red_eye(app, ui, id),
-                    RightPanel::Info => info(app, ui, id),
-                    RightPanel::Keywords => keywords(app, ui, id),
-                    RightPanel::Versions => versions(app, ui, id),
-                    RightPanel::Activity => activity(app, ui, id),
-                    RightPanel::None => {}
-                }
-            });
+    let frame = egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider));
+    // the presets column and the left sidebar are laid out after this panel: leave them their room
+    let reserve = if app.ui.presets { t.panel_w } else { 0.0 } + if app.ui.left_panel { crate::state::LEFT_WIDTH.min } else { 0.0 };
+    let width = app.ui.right_width;
+    let resized = super::resizable_side(ui, false, "right_panel", frame, width, crate::state::RIGHT_WIDTH, reserve, |ui| {
+        let Some(id) = app.session.active() else {
+            let r = ui.max_rect();
+            super::empty_message(ui, r, "No photo selected", "Select a photo to edit");
+            return;
+        };
+        egui::ScrollArea::vertical().id_salt("right-scroll").auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            match app.ui.right {
+                RightPanel::Edit => super::edit::show(app, ui, id),
+                RightPanel::Profiles => super::profiles::show(app, ui, id),
+                RightPanel::Crop => crop(app, ui, id),
+                RightPanel::Remove => remove(app, ui, id),
+                RightPanel::Masking => super::masking::show(app, ui, id),
+                RightPanel::RedEye => red_eye(app, ui, id),
+                RightPanel::Info => info(app, ui, id),
+                RightPanel::Keywords => keywords(app, ui, id),
+                RightPanel::Versions => versions(app, ui, id),
+                RightPanel::Activity => activity(app, ui, id),
+                RightPanel::None => {}
+            }
         });
+    });
+    if let Some(w) = resized {
+        app.ui.right_width = w;
+    }
 }
 
 pub fn header(ui: &mut egui::Ui, title: &str) {
@@ -432,6 +435,13 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ("Alt Text", "altText", &m.alt_text, 2),
             ("Extended Description", "extendedDescription", &m.extended_description, 3),
             ("Copyright", "copyright", &m.copyright, 1),
+        ] {
+            meta_field(app, ui, label, key, value, lines);
+        }
+        copyright_status(app, ui, m.copyright_status);
+        for (label, key, value, lines) in [
+            ("Rights Usage Terms", "usageTerms", &m.usage_terms, 2),
+            ("Copyright Info URL", "copyrightUrl", &m.copyright_url, 1),
             ("Creator", "creator", &m.creator, 1),
         ] {
             meta_field(app, ui, label, key, value, lines);
@@ -596,6 +606,21 @@ fn human_size(bytes: u64) -> String {
 
 /// A labelled metadata text field: the typed text lives in egui memory while focused and is
 /// saved (photo.setMeta `key`) when the field loses focus.
+/// Copyright Status: Unknown / Copyrighted / Public Domain (`xmpRights:Marked`).
+fn copyright_status(app: &mut LightcraftApp, ui: &mut egui::Ui, current: lightcraft_catalog::CopyrightStatus) {
+    let t = Tokens::get(ui.ctx());
+    ui.label(egui::RichText::new("Copyright Status").size(11.5).color(t.text_dim));
+    let r = egui::ComboBox::from_id_salt("info-copyright-status").selected_text(current.label()).show_ui(ui, |ui| {
+        for st in lightcraft_catalog::CopyrightStatus::ALL {
+            if ui.selectable_label(st == current, st.label()).clicked() && st != current {
+                let _ = app.run("photo.setMeta", json!({"copyrightStatus": st.id()}));
+            }
+        }
+    });
+    register(ui.ctx(), "field:copyrightStatus", r.response.rect);
+    ui.add_space(6.0);
+}
+
 fn meta_field(app: &mut LightcraftApp, ui: &mut egui::Ui, label: &str, key: &str, value: &str, lines: usize) {
     let t = Tokens::get(ui.ctx());
     ui.label(egui::RichText::new(label).size(11.5).color(t.text_dim));

@@ -185,9 +185,8 @@ pub fn write_dng(raw: &RawImage, opts: &DngWriteOptions) -> Result<Vec<u8>> {
         }
     }
 
-    match &raw.data {
-        RawData::F32(v) if matches!(opts.compression, DngCompression::Deflate { .. }) => {
-            let DngCompression::Deflate { tile, half } = opts.compression else { unreachable!() };
+    match (&raw.data, opts.compression) {
+        (RawData::F32(v), DngCompression::Deflate { tile, half }) => {
             let tile = (tile.max(16) & !15) as usize;
             let bp = if half { 2 } else { 4 };
             ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![(bp * 8) as u16; cpp]));
@@ -222,7 +221,7 @@ pub fn write_dng(raw: &RawImage, opts: &DngWriteOptions) -> Result<Vec<u8>> {
                 .collect();
             ifd.set_image(ImageData::Tiles { tile_width: tile as u32, tile_height: tile as u32, tiles });
         }
-        RawData::F32(v) => {
+        (RawData::F32(v), _) => {
             ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![32; cpp]));
             ifd.set(t::SAMPLE_FORMAT, Value::Short(vec![3; cpp]));
             ifd.set(t::COMPRESSION, Value::Short(vec![compression::NONE]));
@@ -234,7 +233,7 @@ pub fn write_dng(raw: &RawImage, opts: &DngWriteOptions) -> Result<Vec<u8>> {
             }
             ifd.set_image(ImageData::Strips { rows_per_strip: h as u32, strips: vec![bytes] });
         }
-        RawData::U16(v) => {
+        (RawData::U16(v), _) => {
             let maxv = v.iter().copied().max().unwrap_or(0);
             let bits = (16 - maxv.leading_zeros()).max(raw.bits.min(16)).max(2) as u8;
             ifd.set(

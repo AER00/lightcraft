@@ -17,6 +17,7 @@
 //! window (issue #7). Their `--help` / `--version` output and diagnostics then have no console to
 //! go to; use `lightcraft-cli` (a console program) from a terminal, or a debug build.
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod alloc_release;
 mod control_server;
@@ -271,6 +272,7 @@ OPTIONS:
 ";
 
 fn main() -> eframe::Result {
+    lightcraft_engine::guard::install_hook(std::env::temp_dir().join("lightcraft-panics.log"));
     alloc_release::install();
     let mut control_port: Option<u16> = std::env::var("LIGHTCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
     let mut files = Vec::new();

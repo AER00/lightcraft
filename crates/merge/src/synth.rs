@@ -8,9 +8,13 @@ use lightcraft_raster::Rgb32f;
 use crate::frame::FrameColor;
 use crate::linalg::{self, M3};
 use crate::output::{DngSamples, write_linear_dng};
+use crate::{MergeError, Result};
 
-fn scene(kind: lightcraft_scenes::Kind) -> lightcraft_scenes::Scene {
-    lightcraft_scenes::demo_library().into_iter().find(|s| s.kind == kind).expect("scene kind in the demo library")
+fn scene(kind: lightcraft_scenes::Kind) -> Result<lightcraft_scenes::Scene> {
+    lightcraft_scenes::demo_library()
+        .into_iter()
+        .find(|s| s.kind == kind)
+        .ok_or_else(|| MergeError::Mismatch(format!("no {kind:?} scene in the demo library")))
 }
 
 fn srgb_color() -> FrameColor {
@@ -19,12 +23,12 @@ fn srgb_color() -> FrameColor {
 
 /// Exposure brackets (`evs`, e.g. `[-2, 0, 2]`) of a sunset scene as 16-bit linear DNGs, each
 /// shifted by a few pixels (handheld) with EXIF exposure times; `w × h` pixels.
-pub fn bracket_dngs(w: usize, h: usize, evs: &[f64]) -> Vec<Vec<u8>> {
+pub fn bracket_dngs(w: usize, h: usize, evs: &[f64]) -> Result<Vec<Vec<u8>>> {
     let m = 12usize;
-    let truth = scene(lightcraft_scenes::Kind::OceanSunset).render(w + 2 * m, h + 2 * m);
+    let truth = scene(lightcraft_scenes::Kind::OceanSunset)?.render(w + 2 * m, h + 2 * m);
     let mut l: Vec<f32> = truth.data.iter().map(|p| p[1]).collect();
     l.sort_by(|a, b| a.total_cmp(b));
-    let s = 0.18 / l[l.len() / 2].max(1e-6);
+    let s = 0.18 / l.get(l.len() / 2).copied().unwrap_or(0.0).max(1e-6);
     let to_srgb = lightcraft_color::REC2020.to_space(&lightcraft_color::SRGB).to_f32();
     evs.iter()
         .enumerate()
@@ -44,20 +48,21 @@ pub fn bracket_dngs(w: usize, h: usize, evs: &[f64]) -> Vec<Vec<u8>> {
                 iso: Some(100),
                 ..Default::default()
             };
-            write_linear_dng(&img, &srgb_color(), Orientation::Normal, &meta, 0.0, DngSamples::U16).expect("encode")
+            write_linear_dng(&img, &srgb_color(), Orientation::Normal, &meta, 0.0, DngSamples::U16)
         })
         .collect()
 }
 
 /// `yaws.len()` overlapping views (degrees of yaw, small pitch/roll wobble) of a canyon scene used
 /// as a 200° × 70° spherical environment, `w × h` pixels with focal length `f`, as linear sRGB.
-pub fn pano_views(w: usize, h: usize, f: f64, yaws: &[f64]) -> Vec<Rgb32f> {
-    let env = scene(lightcraft_scenes::Kind::Canyon).render(2400, 840);
+pub fn pano_views(w: usize, h: usize, f: f64, yaws: &[f64]) -> Result<Vec<Rgb32f>> {
+    let env = scene(lightcraft_scenes::Kind::Canyon)?.render(2400, 840);
     let mut l: Vec<f32> = env.data.iter().map(|p| p[1]).collect();
     l.sort_by(|a, b| a.total_cmp(b));
-    let s = 0.25 / l[l.len() / 2].max(1e-6);
+    let s = 0.25 / l.get(l.len() / 2).copied().unwrap_or(0.0).max(1e-6);
     let (theta, phi) = (200.0f64, 70.0f64);
-    yaws.iter()
+    Ok(yaws
+        .iter()
         .enumerate()
         .map(|(i, yaw)| {
             let wob = (i as f64 * 1.3).sin();
@@ -77,5 +82,5 @@ pub fn pano_views(w: usize, h: usize, f: f64, yaws: &[f64]) -> Vec<Rgb32f> {
                 env.sample_bilinear(px as f32, py as f32).map(|v| (v * s).min(1.0))
             })
         })
-        .collect()
+        .collect())
 }

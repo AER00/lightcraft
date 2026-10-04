@@ -347,6 +347,9 @@ Humans and agents follow the same rules, so read [AGENTS.md](AGENTS.md) first. T
   an entry in [assets/ATTRIBUTION.md](assets/ATTRIBUTION.md) added in the same commit.
 - **Pure Rust**, enforced crate layering, everything is a command, and `cargo xtask ci` green before every commit
   (one task id per commit).
+- **Never crash.** Non-test code returns errors instead of panicking: no `unwrap()`, `expect()`, `panic!` or
+  `unsafe`, checked indexing on anything derived from input, and a regression test with every crash fix. Details in
+  [AGENTS.md](AGENTS.md#never-crash-outranks-feature-work).
 
 Questions, ideas or a bug you'd like to talk through first? Bring them to [Discord](https://discord.gg/artcraft).
 

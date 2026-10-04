@@ -735,7 +735,7 @@ mod tests {
         let t = Duration::from_secs(10);
         h.request("ui.set", json!({"view": "detail", "right": "info"}), t);
         h.settle(SETTLE);
-        for (key, text) in [("altText", "A lake at dawn"), ("city", "Zermatt")] {
+        for (key, text) in [("altText", "A lake at dawn"), ("usageTerms", "Editorial use only"), ("city", "Zermatt")] {
             let r = h.request("ui.clickWidget", json!({"id": format!("field:{key}")}), t);
             assert_eq!(r["ok"], true, "{r}");
             h.request("ui.key", json!({"key": "A", "cmd": true}), t);
@@ -748,6 +748,10 @@ mod tests {
         }
         let m = &h.app.session.catalog.photo(h.app.session.active().unwrap()).unwrap().meta;
         assert_eq!((m.alt_text.as_str(), m.city.as_str()), ("A lake at dawn", "Zermatt"));
+        assert_eq!(m.usage_terms, "Editorial use only");
+        // the copyright status picker is on the panel too
+        let w = h.request("ui.widgets", json!({"filter": "copyrightStatus"}), t);
+        assert!(w["result"].to_string().contains("field:copyrightStatus"), "{w}");
     }
 
     /// Local: a folder's photos show without joining the library; the breadcrumb, Include
@@ -827,6 +831,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Local: a kept folder stays a root while its subfolders (and other locations) are
+    /// browsed — the subfolder is highlighted inside its tree, its siblings stay listed — and
+    /// the kept folders survive a save/load of the UI state (a restart).
+    #[test]
+    fn kept_local_root_stays_while_browsing_below_and_elsewhere() {
+        let mut h = demo([1300.0, 1400.0]);
+        let t = Duration::from_secs(10);
+        let base = std::env::temp_dir().join(format!("lc-ui-roots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for d in ["Photos/2026/20260101", "Photos/2026/20260114", "Other"] {
+            std::fs::create_dir_all(base.join(d)).unwrap();
+        }
+        let s = |p: std::path::PathBuf| p.to_string_lossy().to_string();
+        let (photos, day1, day2, other) =
+            (s(base.join("Photos")), s(base.join("Photos/2026/20260101")), s(base.join("Photos/2026/20260114")), s(base.join("Other")));
+        let exec = |h: &mut Headless, c: &str, p: Value| h.request("engine.execute", json!({"command": c, "params": p}), t);
+        let rects = |h: &mut Headless| -> std::collections::HashMap<String, f64> {
+            let w = h.request("ui.widgets", json!({"filter": "lc-ui-roots-"}), t);
+            w["result"].as_array().unwrap().iter().map(|x| (x["id"].as_str().unwrap().to_string(), x["rect"][0].as_f64().unwrap_or(0.0))).collect()
+        };
+        h.request("ui.set", json!({"leftPanel": true}), t);
+        assert_eq!(exec(&mut h, "local.addRoot", json!({"path": photos}))["ok"], true);
+        assert_eq!(exec(&mut h, "local.addRoot", json!({"path": format!("{photos}/")}))["result"]["roots"].as_array().map(Vec::len), Some(1));
+        exec(&mut h, "library.browse", json!({"path": day1}));
+        h.settle(SETTLE);
+        h.step();
+        let r = rects(&mut h);
+        assert!(r.contains_key(&format!("source:local:{photos}")), "the kept root stays: {r:?}");
+        assert!(r.contains_key(&format!("source:local:{day2}")), "the sibling stays reachable: {r:?}");
+        let (root_x, child_x) = (r[&format!("folderToggle:{photos}")], r[&format!("folderToggle:{day1}")]);
+        assert!(child_x > root_x, "the browsed folder is inside the root's tree, not a root of its own ({child_x} vs {root_x})");
+        assert_eq!(h.request("ui.clickWidget", json!({"id": format!("source:local:{day2}")}), t)["ok"], true);
+        h.settle(SETTLE);
+        assert_eq!(h.app.session.browse.as_ref().map(|b| b.path.clone()), Some(day2.clone()), "the sibling is browsed");
+        // another location: the kept root stays listed
+        exec(&mut h, "library.browse", json!({"path": other}));
+        h.settle(SETTLE);
+        h.step();
+        let r = rects(&mut h);
+        assert!(r.contains_key(&format!("source:local:{photos}")) && r.contains_key(&format!("source:local:{other}")), "{r:?}");
+        // restart: the kept roots come back with the saved UI state
+        let saved = serde_json::to_string(&h.app.ui).unwrap();
+        let back: crate::state::UiState = serde_json::from_str(&saved).unwrap();
+        assert_eq!(back.local_roots, vec![photos.clone()]);
+        let _ = std::fs::remove_dir_all(&base);
+        h.settle(SETTLE);
+    }
+
     /// Versions panel: resting on a version previews it in the loupe without changing the photo;
     /// a click restores it.
     #[test]
@@ -894,7 +946,7 @@ mod tests {
         assert!(h.quit_requested());
     }
 
-    /// File → Add Folder… opens the import review for a folder (searched recursively).
+    /// File → Import from Folder… opens the import review for a folder (searched recursively).
     #[test]
     fn add_folder_opens_the_import_review() {
         let mut h = demo([1200.0, 900.0]);
@@ -916,6 +968,13 @@ mod tests {
         let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review: {:?}", h.app.ui.dialog) };
         assert_eq!(opts.candidates.len(), 2, "both files, the subfolder's too");
         assert!(!opts.copy, "a folder is added in place by default");
+        // the review names its source; scanning doesn't save a Local location
+        assert_eq!(opts.sources, vec![dir.to_string_lossy().to_string()]);
+        let name = dir.file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!(crate::import::source_summary(&opts.sources), format!("Folder “{name}” (and its subfolders)"));
+        let r = h.request("ui.widgets", json!({}), t);
+        assert!(r.to_string().contains("label:importSource"), "source shown");
+        assert!(h.app.ui.local_roots.is_empty(), "no Local shortcut saved");
         // a camera / card folder: copied into the library by default
         h.app.ui.dialog = None;
         let r = h.request("engine.execute", json!({"command": "file.addFromDevice", "params": {"path": sub.to_string_lossy()}}), t);
@@ -1109,7 +1168,7 @@ mod tests {
         h.settle(SETTLE);
     }
 
-    /// File → Add Photos… opens the import review: candidates with thumbnails, the duplicate is
+    /// File → Import Photos… opens the import review: candidates with thumbnails, the duplicate is
     /// unchecked; unchecking a cell and confirming imports the rest in batches, into a new album
     /// with keywords, as one undo step.
     #[test]
@@ -1209,6 +1268,105 @@ mod tests {
         let want: Vec<String> = (1..=10).map(|i| format!("Trip-{i:02}.png")).collect();
         assert_eq!(names, want, "numbered across batches of {}", crate::import::BATCH);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Import review, Copy, Folders → Custom template…: the default `{date:%Y}/{date:%Y%m%d}`
+    /// files copies under `2026/20260114/`, the example line shows the full destination, and a
+    /// template that would climb out of the destination is refused.
+    #[test]
+    fn import_copy_into_a_custom_folder_template() {
+        let base = std::env::temp_dir().join(format!("lc-ui-import-tpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (src, dest) = (base.join("card"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let img = lightcraft_raster::Rgba8 { width: 8, height: 8, data: vec![[40, 3, 9, 255]; 64] };
+        let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+        std::fs::write(src.join("IMG_01.png"), png).unwrap();
+        let dest_s = dest.to_string_lossy().to_string();
+        let services = crate::Services { png: None, pick_folder: Some(Box::new(move || Some(dest_s.clone()))), ..Default::default() };
+        let mut session = lightcraft_engine::Session::with_demo().with_fs();
+        // undated files are filed by the import time
+        session.clock = Box::new(|| "2026-01-14T05:58:48".to_string());
+        let mut app = LightcraftApp::new(session, services);
+        app.ui.view = crate::state::ViewMode::PhotoGrid;
+        let mut h = Headless::new(app, [1300.0, 1000.0], 1.0);
+        let t = Duration::from_secs(10);
+        let r = h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [src.to_string_lossy()]}}), t);
+        assert_eq!(r["result"]["scanning"], true, "{r}");
+        h.settle(SETTLE);
+        for id in ["button:importCopy", "button:importDest"] {
+            let r = h.request("ui.clickWidget", json!({"id": id}), t);
+            assert_eq!(r["ok"], true, "{id}: {r}");
+        }
+        if let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog {
+            opts.organize = "custom".into();
+            opts.folder_template = "../{date:%Y}".into();
+        }
+        h.step();
+        // refused: the dialog stays open, nothing is imported
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_ne!(r["ok"], true, "{r}");
+        assert!(h.app.import.is_none());
+        let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog else { panic!("dialog closed") };
+        opts.folder_template = crate::import::DEFAULT_FOLDER_TEMPLATE.into();
+        let opts = opts.clone();
+        let sep = std::path::MAIN_SEPARATOR;
+        let example = crate::import::example_destination(&h.app, &opts).expect("example");
+        assert_eq!(example, format!("{}{sep}2026{sep}20260114{sep}IMG_01.png", dest.to_string_lossy()));
+        h.step();
+        let r = h.request("ui.widgets", json!({}), t);
+        assert!(r.to_string().contains("label:importExample"), "example shown");
+        let r = h.request("ui.dialog.confirm", json!({}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert!(dest.join("2026").join("20260114").join("IMG_01.png").is_file());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Import review, Copy: Tags beside the Rename field lists the template tags; clicking one
+    /// inserts it at the text cursor (not appended, not replacing the template).
+    #[test]
+    fn import_rename_tags_insert_at_the_cursor() {
+        let dir = std::env::temp_dir().join(format!("lc-ui-import-tags-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = lightcraft_raster::Rgba8 { width: 8, height: 8, data: vec![[90, 3, 9, 255]; 64] };
+        let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+        std::fs::write(dir.join("IMG_0007.png"), png).unwrap();
+        let lib = dir.join("lib");
+        let mut session = lightcraft_engine::Session::with_demo().with_fs();
+        session.open_library(&lib, false).unwrap();
+        let mut app = LightcraftApp::new(session, crate::Services { png: None, ..Default::default() });
+        app.ui.view = crate::state::ViewMode::PhotoGrid;
+        let mut h = Headless::new(app, [1300.0, 1000.0], 1.0);
+        let t = Duration::from_secs(10);
+        let r =
+            h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [dir.join("IMG_0007.png").to_string_lossy()]}}), t);
+        assert_eq!(r["result"]["scanning"], true, "{r}");
+        h.settle(SETTLE);
+        let r = h.request("ui.clickWidget", json!({"id": "button:importCopy"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        if let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog {
+            opts.rename = "Trip-_x".into();
+        }
+        // the cursor sits after "Trip-"
+        let id = egui::Id::new("import-rename");
+        let mut st = egui::text_edit::TextEditState::default();
+        st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(5))));
+        st.store(&h.view.ctx, id);
+        let r = h.request("ui.clickWidget", json!({"id": "button:importRenameTags"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let seq3 = lightcraft_engine::rename::TOKENS.iter().position(|x| x.tag == "{seq:3}").unwrap();
+        let r = h.request("ui.clickWidget", json!({"id": format!("button:importRenameTag-{seq3}")}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import dialog") };
+        assert_eq!(opts.rename, "Trip-{seq:3}_x", "inserted at the cursor");
+        // a second tag goes after the first (the cursor moved past it)
+        let r = h.request("ui.clickWidget", json!({"id": "button:importRenameTag-0"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import dialog") };
+        assert_eq!(opts.rename, "Trip-{seq:3}{name}_x");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Settings (⌘,): tabs switch, app settings change the UI state, library settings go through

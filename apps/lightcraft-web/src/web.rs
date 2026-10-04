@@ -29,17 +29,18 @@ const LIBRARY_DIR: &str = "library";
 /// How often view state, UI prefs and the thumbnail index are saved (ms).
 const SAVE_EVERY_MS: f64 = 1000.0;
 
-fn window() -> web_sys::Window {
-    web_sys::window().expect("no window")
+/// The page's window (`None` only outside a browser page, e.g. in a worker).
+fn window() -> Option<web_sys::Window> {
+    web_sys::window()
 }
 
 /// Milliseconds since navigation start.
 fn perf_now() -> f64 {
-    window().performance().map(|p| p.now()).unwrap_or(0.0)
+    window().and_then(|w| w.performance()).map(|p| p.now()).unwrap_or(0.0)
 }
 
 fn set_status(text: &str) {
-    if let Some(el) = window().document().and_then(|d| d.get_element_by_id("lightcraft_status")) {
+    if let Some(el) = window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id("lightcraft_status")) {
         el.set_text_content(Some(text));
     }
 }
@@ -59,7 +60,7 @@ struct Options {
 
 impl Options {
     fn from_url() -> Options {
-        let q = window().location().search().unwrap_or_default();
+        let q = window().and_then(|w| w.location().search().ok()).unwrap_or_default();
         let params: Vec<(String, String)> = q
             .trim_start_matches('?')
             .split('&')
@@ -102,7 +103,7 @@ async fn read_file(originals: Originals, backend: Option<Backend>, file: web_sys
 
 /// Show the browser's open dialog; picked files are imported asynchronously.
 fn open_picker(originals: Originals, backend: Option<Backend>, ctx: egui::Context) {
-    let Some(doc) = window().document() else { return };
+    let Some(doc) = window().and_then(|w| w.document()) else { return };
     let Ok(input) = doc.create_element("input").map(|e| e.unchecked_into::<web_sys::HtmlInputElement>()) else { return };
     input.set_type("file");
     input.set_multiple(true);
@@ -131,7 +132,7 @@ fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
     opts.set_type(crate::store::mime_for(name));
     let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&arr, &opts).map_err(e)?;
     let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(e)?;
-    let doc = window().document().ok_or("no document")?;
+    let doc = window().and_then(|w| w.document()).ok_or("no document")?;
     let a: web_sys::HtmlAnchorElement = doc.create_element("a").map_err(e)?.unchecked_into();
     a.set_href(&url);
     a.set_download(name);
@@ -140,7 +141,9 @@ fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
     let revoke = Closure::once_into_js(move || {
         let _ = web_sys::Url::revoke_object_url(&url);
     });
-    let _ = window().set_timeout_with_callback_and_timeout_and_arguments_0(revoke.unchecked_ref(), 5000);
+    if let Some(w) = window() {
+        let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(revoke.unchecked_ref(), 5000);
+    }
     log::info!("exported {name} ({} bytes)", bytes.len());
     Ok(())
 }
@@ -316,7 +319,7 @@ impl WebApp {
         }
         app.ui = app.ui.sanitized();
         let n = opts.workers.unwrap_or_else(|| {
-            let cores = window().navigator().hardware_concurrency() as usize;
+            let cores = window().map_or(1, |w| w.navigator().hardware_concurrency() as usize);
             cores.saturating_sub(1).clamp(1, 4)
         });
         let workers =
@@ -517,8 +520,10 @@ pub fn start() {
     log::info!("lightcraft: wasm instantiated at {:.0} ms", perf_now());
     let opts = Options::from_url();
     wasm_bindgen_futures::spawn_local(async move {
-        let Some(canvas) =
-            window().document().and_then(|d| d.get_element_by_id("lightcraft_canvas")).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok())
+        let Some(canvas) = window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id("lightcraft_canvas"))
+            .and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok())
         else {
             log::error!("missing <canvas id=\"lightcraft_canvas\">");
             return;
@@ -528,7 +533,7 @@ pub fn start() {
         let r = runner.start(canvas, eframe::WebOptions::default(), Box::new(move |cc| Ok(Box::new(WebApp::new(cc, boot))))).await;
         match r {
             Ok(()) => {
-                if let Some(el) = window().document().and_then(|d| d.get_element_by_id("lightcraft_loading")) {
+                if let Some(el) = window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id("lightcraft_loading")) {
                     el.remove();
                 }
             }

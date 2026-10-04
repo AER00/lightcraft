@@ -96,7 +96,14 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
             "import",
             "Import photos",
             "Add image/raw files to the library. Folders are scanned recursively for photos; relative paths resolve against the server's working directory. The first imported photo becomes active. Returns the new photo ids.",
-            json!({"paths": {"type": "array", "items": {"type": "string"}, "description": "Files and/or folders"}, "album": {"type": "integer", "description": "Also add to this album id"}}),
+            json!({
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Files and/or folders"},
+                "album": {"type": "integer", "description": "Also add to this album id"},
+                "mode": {"type": "string", "enum": ["add", "copy"], "description": "add (default) = reference the files in place; copy = copy them into `destination` (default: the library's Originals/)"},
+                "destination": {"type": "string", "description": "Copy: destination folder"},
+                "organize": {"type": "string", "description": "Copy: folders inside the destination — date (YYYY/YYYY-MM-DD, default), month (YYYY/YYYY-MM), flat, or a folder template such as {date:%Y}/{date:%Y%m%d} (→ 2026/20260114; the template's / make the levels, tokens as for rename; relative, no ..). Dated by capture time, else the import time"},
+                "rename": {"type": "string", "description": "Copy: file-name template, e.g. {date:%Y%m%d_%H%M%S}_{seq:3} (run_command photo.renameTokens lists the tags); the extension is kept"}
+            }),
             &["paths"],
         ),
         tool(
@@ -454,8 +461,10 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
                 return ToolResult::error(format!("no photos found in {paths:?}"));
             }
             let mut p = json!({"paths": files});
-            if let Some(a) = args.get("album") {
-                p["album"] = a.clone();
+            for k in ["album", "mode", "destination", "organize", "rename"] {
+                if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
+                    p[k] = v.clone();
+                }
             }
             ToolResult::from(exec(b, "library.import", p).map(|mut r| {
                 if let Some(o) = r.as_object_mut() {

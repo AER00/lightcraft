@@ -28,9 +28,10 @@ fn mats() -> &'static OkMats {
         let to_lms = XYZ_TO_LMS.mul(&REC2020.to_xyz());
         OkMats {
             to_lms: to_lms.to_f32(),
-            from_lms: to_lms.inverse().expect("invertible").to_f32(),
+            // constant, invertible matrices (round trips tested below): the identity fallback can't happen
+            from_lms: to_lms.inverse().unwrap_or(Mat3::IDENTITY).to_f32(),
             to_lab: LMS_TO_LAB.to_f32(),
-            from_lab: LMS_TO_LAB.inverse().expect("invertible").to_f32(),
+            from_lab: LMS_TO_LAB.inverse().unwrap_or(Mat3::IDENTITY).to_f32(),
         }
     })
 }

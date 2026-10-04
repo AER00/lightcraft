@@ -27,7 +27,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
         Dialog::Rename { .. } => "Rename Photos",
-        Dialog::Import { .. } => "Add Photos",
+        Dialog::Import { .. } => "Import Photos",
         Dialog::LabelNames { .. } => "Edit Color Label Names",
         Dialog::CaptureTime { .. } => "Edit Capture Time",
         Dialog::RenameKeyword { .. } => "Rename Keyword",
@@ -289,10 +289,18 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 Dialog::Rename { template, start } => {
                     let n = app.session.targets(&json!({})).len();
                     ui.label(egui::RichText::new(format!("{n} photo{}", if n == 1 { "" } else { "s" })).color(t.text_dim));
-                    field(ui, "Template", |ui| {
-                        let r = ui.add(egui::TextEdit::singleline(template).hint_text("{name}").desired_width(f32::INFINITY));
+                    let template_id = egui::Id::new("rename-template");
+                    let tags_open = field(ui, "Template", |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let w = (ui.available_width() - 50.0).max(80.0);
+                        let r = ui.add(egui::TextEdit::singleline(template).id(template_id).hint_text("{name}").desired_width(w));
                         crate::widgets::register(ui.ctx(), "field:renameTemplate", r.rect);
+                        crate::import::tag_toggle(ui, "renameTemplate")
                     });
+                    if tags_open {
+                        crate::import::tag_help(ui, "renameTemplate", template, template_id);
+                    }
+                    crate::import::unknown_tags_warning(ui, template);
                     field(ui, "Presets", |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         for (i, (label, tpl)) in
@@ -305,7 +313,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     });
                     field(ui, "Start at", |ui| ui.add(egui::DragValue::new(start).range(0..=999_999)));
                     ui.label(
-                        egui::RichText::new("Tokens: {name} {num} {seq} {seq:3} {date} {date:%Y-%m-%d} {folder} {camera} {lens} {iso} {rating} {title} {creator}. Files are renamed on disk (with their XMP sidecars); existing names get -1, -2…")
+                        egui::RichText::new("Tags: see Tags beside the template. Files are renamed on disk (with their XMP sidecars); existing names get -1, -2…")
                             .color(t.text_dim),
                     );
                     let preview = app.session.execute("photo.renamePreview", &json!({"template": template, "start": start})).unwrap_or_default();
@@ -576,9 +584,17 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         use lightcraft_engine::export::DngCompression as Z;
                         choices(ui, "Compression", "exportDngCompression", &[(Z::Lossless, "Lossless"), (Z::Deflate, "ZIP"), (Z::Uncompressed, "None")], &mut opts.dng_compression);
                     }
-                    field(ui, "File name", |ui| {
-                        ui.add(egui::TextEdit::singleline(&mut opts.naming).hint_text("{name}-{seq}  ·  {date}  ·  {title}  ·  {folder}").desired_width(f32::INFINITY))
+                    let naming_id = egui::Id::new("export-naming");
+                    let tags_open = field(ui, "File name", |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let w = (ui.available_width() - 50.0).max(80.0);
+                        ui.add(egui::TextEdit::singleline(&mut opts.naming).id(naming_id).hint_text("{name}-{seq}  ·  {date}  ·  {title}  ·  {folder}").desired_width(w));
+                        crate::import::tag_toggle(ui, "exportNaming")
                     });
+                    if tags_open {
+                        crate::import::tag_help(ui, "exportNaming", &mut opts.naming, naming_id);
+                    }
+                    crate::import::unknown_tags_warning(ui, &opts.naming);
                     if opts.naming.contains("{seq") {
                         let mut v = opts.start_number as f64;
                         if num(ui, &START_NUMBER, &mut v) {
@@ -704,7 +720,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let ok = match &dlg {
                     Dialog::Import { opts } => {
                         let n = opts.selected_paths().len();
-                        add_label = format!("Add {n} Photo{}", if n == 1 { "" } else { "s" });
+                        add_label = format!("Import {n} Photo{}", if n == 1 { "" } else { "s" });
                         add_label.as_str()
                     }
                     Dialog::Merge { .. } => "Merge",
@@ -729,8 +745,11 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         close = true;
     }
     if confirm {
-        let _ = confirm_dialog(app, &dlg);
-        close = true;
+        match confirm_dialog(app, &dlg) {
+            // the import review stays open on an error (e.g. an unusable folder template)
+            Err(e) if matches!(dlg, Dialog::Import { .. }) => app.toast(ctx, e),
+            _ => close = true,
+        }
     }
     app.ui.dialog = if close { None } else { Some(dlg) };
 }

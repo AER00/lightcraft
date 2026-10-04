@@ -5,24 +5,48 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use lightcraft_catalog::{Op, PhotoId, Source};
+use lightcraft_catalog::{Catalog, Op, Photo, PhotoId, Source};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd, str_param};
 use crate::{Result, Session};
+
+/// The file Missing Photos checks for `p`, if it is in scope: a library photo (not in Recently
+/// Deleted, not a Local-only record seen while browsing a folder) whose original is a file.
+///
+/// Local browse records are out of scope on purpose: browsing can leave tens of thousands of
+/// them in the catalog, they never show in library views (Missing Photos included), and a
+/// folder that is gone is simply not browsed again. The sidebar count, the Missing Photos view,
+/// `library.missing` and Find Missing Photos all use this one rule.
+pub fn checked_path(p: &Photo) -> Option<&str> {
+    match &p.source {
+        Source::File { path } if p.in_library() => Some(path),
+        _ => None,
+    }
+}
+
+/// Every in-scope photo's file ([`checked_path`]), without touching the disk.
+pub fn candidates(cat: &Catalog) -> Vec<String> {
+    cat.photos().filter_map(|p| checked_path(p).map(str::to_string)).collect()
+}
+
+/// [`missing`] with the existence check supplied (tests count the file-system calls).
+pub fn missing_with(cat: &Catalog, mut exists: impl FnMut(&str) -> bool) -> Vec<(PhotoId, String)> {
+    cat.photos().filter_map(|p| checked_path(p).filter(|f| !exists(f)).map(|f| (p.id, f.to_string()))).collect()
+}
 
 /// Library photos whose original file can't be found: (id, path).
 pub fn missing(s: &Session) -> Vec<(PhotoId, String)> {
     if cfg!(target_arch = "wasm32") {
         return Vec::new();
     }
-    s.catalog
-        .photos()
-        .filter_map(|p| match &p.source {
-            Source::File { path } if !p.deleted && !Path::new(path).exists() => Some((p.id, path.clone())),
-            _ => None,
-        })
-        .collect()
+    missing_with(&s.catalog, |f| Path::new(f).exists())
+}
+
+/// Whether photo `id` is in scope and its file is gone (the Missing Photos view checks only
+/// the photos its query already narrowed to).
+pub fn is_missing(cat: &Catalog, id: PhotoId) -> bool {
+    !cfg!(target_arch = "wasm32") && cat.photo(id).and_then(|p| checked_path(p)).is_some_and(|f| !Path::new(f).exists())
 }
 
 fn relink_op(id: PhotoId, path: &str) -> Op {
@@ -50,7 +74,11 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
     {
         ops.extend(crate::cmd::convert::content_op(id, ph, info));
     }
-    s.commit("Relink Photo", if ops.len() == 1 { ops.pop().expect("one op") } else { Op::Batch { ops } })?;
+    let op = match <[Op; 1]>::try_from(ops) {
+        Ok([op]) => op,
+        Err(ops) => Op::Batch { ops },
+    };
+    s.commit("Relink Photo", op)?;
     s.media.forget(id);
     Ok(json!({"id": id.0, "path": abs}))
 }

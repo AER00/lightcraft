@@ -6,6 +6,7 @@
 //! - Blur ([`blur`]): separable Gaussian via repeated box filters (O(1) per pixel in the radius).
 //! - [`Histogram`] of display-encoded RGB + luminance.
 #![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod blur;
 pub mod histogram;
@@ -243,7 +244,7 @@ impl Rgba8 {
         if bytes.len() != width * height * 4 {
             return None;
         }
-        Some(Self { width, height, data: bytes.chunks_exact(4).map(|c| [c[0], c[1], c[2], c[3]]).collect() })
+        Some(Self { width, height, data: bytes.as_chunks::<4>().0.iter().map(|c| [c[0], c[1], c[2], c[3]]).collect() })
     }
     /// Linear Rec.709/sRGB primaries float image from 8-bit sRGB.
     pub fn to_linear(&self) -> Rgb32f {

@@ -86,6 +86,9 @@ pub struct Buf {
 
 impl Buf {
     pub fn raw(&self) -> &wgpu::Buffer {
+        // `buf` is `Some` from construction (`Gpu::buffer`/`upload`) until `Drop` takes it back
+        // for the pool, so a live `Buf` always has it.
+        #[allow(clippy::expect_used)]
         &self.buf.as_ref().expect("live buffer").0
     }
 }
@@ -442,7 +445,12 @@ impl Gpu {
 
     /// Record kernel `name` with parameters `p` over buffers `bufs` (None = unused binding).
     pub fn run(&self, enc: &mut wgpu::CommandEncoder, name: &str, p: &[u32], bufs: &[Option<&Buf>], groups: [u32; 3]) {
-        let k = self.kernels.get(name).unwrap_or_else(|| panic!("unknown kernel {name}"));
+        let Some(k) = self.kernels.get(name) else {
+            // a kernel name typo: fail this render over to the CPU instead of crashing
+            log::error!("gpu: unknown kernel {name}");
+            crate::mark_broken();
+            return;
+        };
         assert_eq!(bufs.len(), k.nbuf, "{name}: binding count");
         let params = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
@@ -479,11 +487,21 @@ impl Gpu {
             let _ = tx.send(r);
         });
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        // A failed readback (device lost, out of memory) marks the GPU broken: the caller
+        // (`crate::render`) then discards this render's zeroed result and renders on the CPU.
+        let failed = |why: String| {
+            log::error!("gpu readback failed: {why}");
+            crate::mark_broken();
+            vec![<T as bytemuck::Zeroable>::zeroed(); len]
+        };
         match rx.recv() {
             Ok(Ok(())) => {}
-            other => panic!("gpu readback failed: {other:?}"),
+            other => return failed(format!("{other:?}")),
         }
-        let data = slice.get_mapped_range().expect("mapped");
+        let data = match slice.get_mapped_range() {
+            Ok(d) => d,
+            Err(e) => return failed(format!("{e:?}")),
+        };
         let out: Vec<T> = bytemuck::cast_slice(&data).to_vec();
         drop(data);
         staging.unmap();

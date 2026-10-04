@@ -4,6 +4,7 @@
 //! The pipeline evaluates it; the catalog stores it; presets, copy/paste, sync, versions and history
 //! are operations on it. Numeric sliders are addressed by id through [`controls`].
 #![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod controls;
 pub mod presets;

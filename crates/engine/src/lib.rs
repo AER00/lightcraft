@@ -17,6 +17,7 @@ pub mod demo;
 pub mod devices;
 pub mod export;
 pub mod files;
+pub mod guard;
 pub mod import;
 pub mod library;
 pub mod media;
@@ -237,7 +238,8 @@ impl Session {
         let log_start = self.pending_log.len();
         let was_active = self.active();
         self.depth += 1;
-        let r = (spec.run)(self, params);
+        // last-resort guard: a panic in a command is that command's error, not a crash
+        let r = guard::catch(&format!("`{id}`"), || (spec.run)(self, params)).unwrap_or_else(|e| Err(EngineError::Other(e)));
         self.depth -= 1;
         if self.depth == 0 && was_active.is_some() && self.active() != was_active {
             self.previous_active = was_active;
@@ -507,8 +509,9 @@ impl Session {
                 });
             }
             if self.source == LibrarySource::Missing {
-                let missing: std::collections::HashSet<PhotoId> = cmd::missing::missing(self).into_iter().map(|m| m.0).collect();
-                self.visible.retain(|id| missing.contains(id));
+                // only the photos the query kept (library photos, not Local browse records) are checked
+                let cat = &self.catalog;
+                self.visible.retain(|id| cmd::missing::is_missing(cat, *id));
             }
             if self.source != LibrarySource::RecentlyDeleted {
                 self.visible = self.catalog.arrange_stacks(&self.visible);
