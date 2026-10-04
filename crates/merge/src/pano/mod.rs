@@ -223,7 +223,7 @@ pub fn stitch(frames: Vec<Frame>, opts: &PanoOptions, progress: &Progress) -> Re
         Projection::Auto => choose_projection(&frames, &cams),
         p => p,
     };
-    let fmed = median(used.iter().map(|&i| cams[i].expect("used").f).collect());
+    let fmed = median(used.iter().filter_map(|&i| cams[i].map(|c| c.f)).collect());
     let Some((bx0, by0, bx1, by1)) = bounds(&frames, &cams, projection, fmed) else {
         return Err(MergeError::NoOverlap(format!("the field of view ({:.0}°) is too wide for a perspective projection", fov.0)));
     };

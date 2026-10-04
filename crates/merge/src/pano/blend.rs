@@ -106,14 +106,14 @@ pub fn push_pull(vals: &mut Buf, wgt: &[f32]) {
         }
         pm.data[i * (c + 1) + c] = a;
     }
-    let mut levels = vec![pm];
-    while levels.last().is_some_and(|l| l.w > 1 || l.h > 1) {
-        let d = down(levels.last().expect("level"));
-        levels.push(d);
+    // the finer levels, and the coarsest (1 × 1) one
+    let (mut levels, mut l) = (Vec::new(), pm);
+    while l.w > 1 || l.h > 1 {
+        let d = down(&l);
+        levels.push(std::mem::replace(&mut l, d));
     }
     // normalise the coarsest, then fill each finer level's holes from the coarser one
     let mut filled = {
-        let l = levels.last().expect("level");
         let mut f = Buf::new(l.w, l.h, c);
         for i in 0..l.w * l.h {
             let a = l.data[i * (c + 1) + c];
@@ -123,8 +123,7 @@ pub fn push_pull(vals: &mut Buf, wgt: &[f32]) {
         }
         f
     };
-    for li in (0..levels.len() - 1).rev() {
-        let l = &levels[li];
+    for l in levels.iter().rev() {
         let coarse = up(&filled, l.w, l.h);
         let mut f = Buf::new(l.w, l.h, c);
         for i in 0..l.w * l.h {
@@ -235,7 +234,8 @@ impl Blender {
             }
             res = Some(b);
         }
-        res.expect("level 0")
+        // `0..=levels` always yields level 0
+        res.unwrap_or_else(|| Buf::new(self.w, self.h, 3))
     }
 }
 
