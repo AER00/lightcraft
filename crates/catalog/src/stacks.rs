@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn group_merge_set_top_remove_and_arrange() {
         let (mut c, ids) = cat(6, &[]);
-        let [a, b, x, d, e, f] = ids[..] else { unreachable!() };
+        let [a, b, x, d, e, f] = ids[..] else { panic!("six ids") };
         let op = c.group_ops(b, &[a, b, x], false).unwrap();
         let inv = c.apply(op).unwrap();
         let s = c.stack_of(a).unwrap().clone();

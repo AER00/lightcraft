@@ -87,7 +87,7 @@ impl Store for FsStore {
             }
             self.appender = Some((name.to_string(), f));
         }
-        let (_, f) = self.appender.as_mut().expect("appender just opened");
+        let Some((_, f)) = self.appender.as_mut() else { return Err(io::Error::other("appender not open")) };
         f.write_all(data)?;
         f.sync_data()
     }
