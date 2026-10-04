@@ -73,6 +73,9 @@ pub struct Interaction {
     pub original: Arc<DevelopSettings>,
 }
 
+/// Source of [`Session::visible_shared`] generations (process-wide, so two sessions never share one).
+static VISIBLE_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 pub struct Session {
     /// Auto Sync: edits to the active photo also change the other selected photos (the settings
     /// that changed, nothing else).
@@ -83,8 +86,12 @@ pub struct Session {
     pub sort: Sort,
     pub selection: Selection,
     /// The grid order for the current source/filter/sort (cached by catalog revision).
-    visible: Vec<PhotoId>,
+    /// Shared, so frontends can hold it across frames without copying ([`Session::visible_shared`]).
+    visible: Arc<[PhotoId]>,
     visible_key: Option<(u64, String)>,
+    /// Identifies the current `visible` list: a new value (unique in the process) every time it
+    /// is recomputed, so frontends can key their per-view caches on it instead of hashing the ids.
+    visible_gen: u64,
     /// Photos in the current source with no filter on (cached like `visible`).
     total: Option<((u64, String), usize)>,
     pub undo: Vec<UndoEntry>,
@@ -178,8 +185,9 @@ impl Session {
             filter: Filter::default(),
             sort: Sort::default(),
             selection: Selection::default(),
-            visible: Vec::new(),
+            visible: Vec::new().into(),
             visible_key: None,
+            visible_gen: 0,
             total: None,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -487,7 +495,7 @@ impl Session {
                 f.folder = Some(b.path);
                 f.subfolders = b.subfolders;
             }
-            self.visible = self.catalog.query(&f, &self.sort);
+            let mut visible = self.catalog.query(&f, &self.sort);
             if matches!(self.source, LibrarySource::Album(_))
                 && self.sort.key == lightcraft_catalog::SortKey::CaptureDate
                 && let LibrarySource::Album(a) = self.source
@@ -496,15 +504,15 @@ impl Session {
                 && self.filter == Filter::default()
             {
                 let order = al.photos.clone();
-                self.visible.sort_by_key(|id| order.iter().position(|x| x == id).unwrap_or(usize::MAX));
+                visible.sort_by_key(|id| order.iter().position(|x| x == id).unwrap_or(usize::MAX));
                 if !self.sort.ascending {
-                    self.visible.reverse();
+                    visible.reverse();
                 }
             }
             if self.source == LibrarySource::RecentlyAdded {
                 // newest import first, whatever the sort (the grid groups by import day)
                 let cat = &self.catalog;
-                self.visible.sort_by(|a, b| {
+                visible.sort_by(|a, b| {
                     let key = |id: &PhotoId| cat.photo(*id).map(|p| p.imported.clone()).unwrap_or_default();
                     key(b).cmp(&key(a)).then(a.cmp(b))
                 });
@@ -512,11 +520,13 @@ impl Session {
             if self.source == LibrarySource::Missing {
                 // only the photos the query kept (library photos, not Local browse records) are checked
                 let cat = &self.catalog;
-                self.visible.retain(|id| cmd::missing::is_missing(cat, *id));
+                visible.retain(|id| cmd::missing::is_missing(cat, *id));
             }
             if self.source != LibrarySource::RecentlyDeleted {
-                self.visible = self.catalog.arrange_stacks(&self.visible);
+                visible = self.catalog.arrange_stacks(&visible);
             }
+            self.visible = visible.into();
+            self.visible_gen = VISIBLE_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.visible_key = Some(key);
         }
         &self.visible
@@ -544,6 +554,14 @@ impl Session {
 
     pub fn visible_cloned(&mut self) -> Vec<PhotoId> {
         self.visible().to_vec()
+    }
+
+    /// The visible photos without copying them, with their generation: equal generations mean
+    /// the very same list (same catalog revision, source, filter, sort), so a frontend can cache
+    /// whatever it derives from the list under that number.
+    pub fn visible_shared(&mut self) -> (u64, Arc<[PhotoId]>) {
+        self.visible();
+        (self.visible_gen, self.visible.clone())
     }
 
     /// Targets of photo commands: explicit `ids`/`id` param, else the selection.

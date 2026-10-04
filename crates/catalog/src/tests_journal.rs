@@ -274,3 +274,48 @@ fn fs_store_roundtrip() {
     assert_eq!(c3.to_snapshot(), c.to_snapshot());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The streamed snapshot is byte-for-byte the format written before streaming (issue #37), so
+/// existing libraries load and older builds can read new snapshots; FsStore and MemStore agree.
+#[test]
+fn streamed_snapshot_keeps_the_on_disk_format() {
+    let (m, _, full) = sample_catalog_with_log();
+    let (mut j, c, _) = open(&m);
+    assert_eq!(c.to_snapshot(), full.to_snapshot());
+    j.snapshot(&c).unwrap();
+    let legacy = format!("{{\"format\":\"lightcraft-catalog\",\"version\":1,\"seq\":{},\"catalog\":{}}}\n", j.seq(), c.to_snapshot());
+    assert_eq!(String::from_utf8(m.get(SNAPSHOT).unwrap()).unwrap(), legacy);
+    assert_eq!(j.stats().last_snapshot.bytes, legacy.len() as u64);
+
+    let dir = std::env::temp_dir().join(format!("lc-journal-stream-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // an old-style snapshot (written by a build before streaming) loads, and is rewritten the same
+    std::fs::write(dir.join(SNAPSHOT), legacy.as_bytes()).unwrap();
+    let (mut fj, fc, r) = Journal::open(Box::new(FsStore::open(&dir).unwrap())).unwrap();
+    assert_eq!((fc.to_snapshot(), r.snapshot_seq), (c.to_snapshot(), j.seq()));
+    fj.snapshot(&fc).unwrap();
+    assert_eq!(std::fs::read(dir.join(SNAPSHOT)).unwrap(), legacy.as_bytes());
+    drop(fj);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A snapshot that fails while streaming (serialisation or I/O error) leaves the old file in
+/// place and removes its temp file.
+#[test]
+fn failed_streamed_write_keeps_the_old_file() {
+    let dir = std::env::temp_dir().join(format!("lc-journal-streamfail-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = FsStore::open(&dir).unwrap();
+    s.write_atomic(SNAPSHOT, b"old").unwrap();
+    let r = s.write_atomic_with(SNAPSHOT, &mut |w| {
+        w.write_all(b"partial new content")?;
+        Err(std::io::Error::other("serialisation failed"))
+    });
+    assert!(r.is_err());
+    assert_eq!(std::fs::read(dir.join(SNAPSHOT)).unwrap(), b"old");
+    assert!(!dir.join(format!("{SNAPSHOT}.tmp")).exists());
+    assert_eq!(s.write_atomic_with(SNAPSHOT, &mut |w| w.write_all(b"new")).unwrap(), 3);
+    assert_eq!(std::fs::read(dir.join(SNAPSHOT)).unwrap(), b"new");
+    let _ = std::fs::remove_dir_all(&dir);
+}

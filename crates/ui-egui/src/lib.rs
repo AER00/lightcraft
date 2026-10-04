@@ -26,6 +26,8 @@ pub mod widgets;
 #[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
+mod tests_grid;
+#[cfg(test)]
 mod tests_masking;
 #[cfg(test)]
 mod tests_panels;
@@ -63,6 +65,8 @@ pub struct Services {
     pub pick_files: Option<PickFiles>,
     /// Open dialog for preset files (`.lcpreset`, `.xmp`, `.lrtemplate`, `.zip`, `.dng`, Luminar `.lmp` / `.mplumpack`).
     pub pick_preset_files: Option<PickFiles>,
+    /// Open dialog for a GPS track log (`.gpx`; Photo ▸ Auto-Tag from Tracklog…).
+    pub pick_tracklog: Option<PickFiles>,
     /// Save dialog for an exported `.lcpreset` file.
     pub save_preset_file: Option<SaveFile>,
     /// Open dialog for point-curve preset files (`.lccurve`).
@@ -86,7 +90,15 @@ pub struct Services {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Perf {
+    /// Layout of the last frame ([`LightcraftApp::ui`], including commands run from widgets).
     pub frame_ms: f64,
+    /// Per-frame logic before layout ([`LightcraftApp::logic`]: control channel, shortcuts,
+    /// render polling, pending catalog persistence).
+    pub logic_ms: f64,
+    /// The whole update of the last frame: logic + layout.
+    pub update_ms: f64,
+    /// The slowest whole update since start.
+    pub max_update_ms: f64,
     pub fps: f64,
 }
 
@@ -404,6 +416,12 @@ impl LightcraftApp {
 
     /// Per-frame logic before layout (control channel, renders, shortcuts, drops).
     pub fn logic(&mut self, ctx: &egui::Context) {
+        let t0 = now_ms();
+        self.logic_inner(ctx);
+        self.perf.logic_ms = now_ms() - t0;
+    }
+
+    fn logic_inner(&mut self, ctx: &egui::Context) {
         if !self.styled {
             theme::install_fonts(ctx);
             theme::apply(ctx);
@@ -535,6 +553,13 @@ impl LightcraftApp {
         raw.events.extend(self.synthetic.drain(..n));
     }
 
+    /// Frame timings once layout is done (`t0`: when layout started).
+    fn end_frame(&mut self, t0: f64) {
+        self.perf.frame_ms = now_ms() - t0;
+        self.perf.update_ms = self.perf.logic_ms + self.perf.frame_ms;
+        self.perf.max_update_ms = self.perf.max_update_ms.max(self.perf.update_ms);
+    }
+
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
@@ -555,7 +580,7 @@ impl LightcraftApp {
             panels::dialogs::show(self, &ctx);
             panels::toast(self, &ctx);
             self.widgets = widgets::take_registry(&ctx);
-            self.perf.frame_ms = now_ms() - t0;
+            self.end_frame(t0);
             return;
         }
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
@@ -594,7 +619,7 @@ impl LightcraftApp {
         panels::grid::drag_feedback(self, &ctx);
         panels::toast(self, &ctx);
         self.widgets = widgets::take_registry(&ctx);
-        self.perf.frame_ms = now_ms() - t0;
+        self.end_frame(t0);
     }
 }
 
@@ -659,7 +684,6 @@ mod drop_tests {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
-    date_runs: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateRun>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
@@ -667,8 +691,10 @@ pub struct Caches {
     album_counts: Option<(u64, std::sync::Arc<std::collections::HashMap<lightcraft_catalog::AlbumId, usize>>)>,
     /// How often the album counts were recomputed (tests check that unchanged frames don't).
     pub album_count_scans: usize,
-    /// The grid's layout (by photos, shapes, width, thumbnail size, grouping).
-    pub grid_layout: Option<(u64, std::sync::Arc<panels::grid::GridLayout>)>,
+    /// The grid's date runs, layout and indexes (by the visible list's generation).
+    pub grid: panels::grid::GridCache,
+    /// What the grid did on its frames (benchmarks and tests check unchanged frames stay cheap).
+    pub grid_stats: panels::grid::GridStats,
 }
 
 /// The left panel's counts.
@@ -755,24 +781,6 @@ impl Caches {
                 });
                 self.filter_values = Some((cat.revision, v.clone()));
                 v
-            }
-        }
-    }
-    /// Date headers for `ids` in the grid.
-    pub fn date_runs(
-        &mut self,
-        cat: &lightcraft_catalog::Catalog,
-        ids: &[lightcraft_catalog::PhotoId],
-        key: lightcraft_catalog::SortKey,
-        by: lightcraft_catalog::GroupBy,
-    ) -> std::sync::Arc<Vec<lightcraft_catalog::DateRun>> {
-        let k = key_of((cat.revision, ids, format!("{key:?}{by:?}")));
-        match &self.date_runs {
-            Some((h, r)) if *h == k => r.clone(),
-            _ => {
-                let r = std::sync::Arc::new(cat.date_runs(ids, key, by));
-                self.date_runs = Some((k, r.clone()));
-                r
             }
         }
     }

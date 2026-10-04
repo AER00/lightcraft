@@ -15,7 +15,8 @@
 //!
 //! Every top-level [`Session::execute`] persists the ops it produced (fsynced) before returning,
 //! so a crash loses at most the command in flight. The log is compacted into a snapshot when it
-//! grows (see [`lightcraft_catalog::SnapshotPolicy`]) and on [`Session::close_library`].
+//! grows (see [`lightcraft_catalog::SnapshotPolicy`]; written by a worker thread on native, see
+//! [`lightcraft_catalog::journal`]) and on [`Session::close_library`].
 
 use std::path::{Path, PathBuf};
 
@@ -91,6 +92,10 @@ impl Library {
     pub fn journal(&self) -> &Journal {
         &self.journal
     }
+    #[cfg(test)]
+    pub(crate) fn journal_mut(&mut self) -> &mut Journal {
+        &mut self.journal
+    }
     pub fn thumbs_dir(&self) -> PathBuf {
         self.dir.join("thumbs")
     }
@@ -141,6 +146,15 @@ fn presets_json(s: &Session) -> String {
     serde_json::to_string_pretty(&f).unwrap_or_default()
 }
 
+/// Finish a background compaction that is done (cheap otherwise). A failed one lost nothing (the
+/// log is kept whole) and is retried later; it is reported like other persistence errors.
+fn poll_compaction(lib: &mut Library) {
+    if let Err(e) = lib.journal.poll() {
+        log::error!("library: compaction: {e}");
+        lib.last_error = Some(format!("compaction: {e}"));
+    }
+}
+
 fn read_json<T: serde::de::DeserializeOwned>(store: &mut dyn Store, name: &str) -> Option<T> {
     store.read(name).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok())
 }
@@ -160,6 +174,12 @@ impl Session {
     pub fn open_library_in(&mut self, stores: LibraryStores, seed_demo: bool) -> Result<&LoadReport> {
         let LibraryStores { dir, catalog, mut files, on_disk } = stores;
         self.media.smart_dir = on_disk.then(|| crate::smart::dir(&dir));
+        // the current library may be these same files: let its background snapshot land first
+        if let Some(old) = self.library.as_mut()
+            && let Err(e) = old.journal.wait()
+        {
+            log::error!("library: {e}");
+        }
         let (mut journal, catalog, report) = Journal::open(catalog)?;
         self.catalog = catalog;
         self.undo.clear();
@@ -245,9 +265,11 @@ impl Session {
             self.pending_log.clear();
             lib.last_error = None;
         }
+        poll_compaction(lib);
         // Never snapshot mid-interaction: the catalog then holds an uncommitted preview value.
+        // The snapshot is written by a worker thread (natively); appends go on meanwhile.
         if lib.journal.wants_snapshot() && self.interaction.is_none() {
-            lib.journal.snapshot(&self.catalog)?;
+            lib.journal.snapshot_in_background(&self.catalog)?;
         }
         let presets = presets_json(self);
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
@@ -266,6 +288,8 @@ impl Session {
     pub fn persist_if_dirty(&mut self) {
         if self.library.is_some() && !self.pending_log.is_empty() {
             let _ = self.persist();
+        } else if let Some(lib) = self.library.as_mut() {
+            poll_compaction(lib);
         }
     }
 
