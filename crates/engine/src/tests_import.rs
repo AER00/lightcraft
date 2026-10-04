@@ -585,3 +585,31 @@ fn smart_previews_folder_is_chosen_per_library() {
     assert_eq!(r["custom"], false, "{r}");
     assert_eq!(r["path"], lib.join("Smart Previews").to_string_lossy().as_ref());
 }
+
+/// Missing Photos covers library photos only: a small library next to many Local browse
+/// records (and a deleted photo) checks — and lists, and counts — the library files alone.
+#[test]
+fn missing_photos_skip_local_browse_records() {
+    use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+    let gone = std::env::temp_dir().join(format!("lc-missing-scope-{}", std::process::id()));
+    let mut s = Session::new();
+    let mut ops = Vec::new();
+    for i in 0..205u64 {
+        let path = gone.join(format!("IMG_{i:04}.jpg")).to_string_lossy().to_string();
+        let mut p = Photo::new(PhotoId(i + 1), Source::File { path }, &format!("IMG_{i:04}.jpg"), "JPEG", 60, 40, "2026-01-01T00:00:00");
+        p.local = i >= 5; // 5 library photos, 200 seen while browsing
+        p.deleted = i == 4;
+        ops.push(Op::AddPhoto { photo: Box::new(p) });
+    }
+    s.commit("Add", Op::Batch { ops }).unwrap();
+    let mut checked = 0;
+    let lost = crate::cmd::missing::missing_with(&s.catalog, |_| {
+        checked += 1;
+        false
+    });
+    assert_eq!((checked, lost.len()), (4, 4), "only the non-deleted library files are checked");
+    assert_eq!(crate::cmd::missing::candidates(&s.catalog).len(), 4, "the sidebar count checks the same files");
+    assert_eq!(s.execute("library.missing", &json!({})).unwrap().as_array().map(Vec::len), Some(4));
+    s.execute("library.source", &json!({"kind": "missing"})).unwrap();
+    assert_eq!(s.visible_cloned().len(), 4, "the view lists what the count counts");
+}
