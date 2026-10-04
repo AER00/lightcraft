@@ -21,7 +21,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 <!-- parity:summary -->
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
-| A. Import (IMP) | 10 | 2 | 1 | 1 | 3/4 (75%) | 4/4 (100%) |
+| A. Import (IMP) | 11 | 2 | 1 | 1 | 3/4 (75%) | 5/5 (100%) |
 | B. Library management (LIB) | 22 | 1 | 2 | 2 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 16 | 0 | 1 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 11 | 0 | 2 | 0 | 4/4 (100%) | 4/4 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 30 | 9 | 40 | 9 | — | 20/21 (95%) |
-| **Total** | 385 | 25 | 91 | 37 | 194/198 (98%) | 137/145 (94%) |
+| **Total** | 386 | 25 | 91 | 37 | 194/198 (98%) | 138/146 (95%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.3%** of 501 in-scope rows — P0 99.0% of 198 · P1 96.2% of 145 · P2 39.2% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.4%** of 502 in-scope rows — P0 99.0% of 198 · P1 96.2% of 146 · P2 39.2% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -99,7 +99,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-IMP-ADD-DIALOG | Add photos/folders | P0 | ✅ | `cmd:file.addPhotos`, `cmd:library.importPreview`, `cmd:library.import` (`mode`, `album`, `albumName`, `preset`, `keywords`), `crates/ui-egui/src/import.rs` | review dialog (Import Photos): the scanned source (a scanned folder is not added to Local), candidate grid with thumbnails and checkboxes (duplicates by path/content marked and unchecked), transfer mode (add in place / copy, each explained), album (existing/new), preset, keywords; the folder scan runs on a background thread with a progress window and Cancel (a NAS folder no longer freezes the window); batched import with a progress window; one undo step. Drag-and-drop still imports directly |
+| LR-IMP-ADD-DIALOG | Add photos/folders | P0 | ✅ | `cmd:file.addPhotos`, `cmd:library.importPreview`, `cmd:library.import` (`mode`, `album`, `albumName`, `preset`, `keywords`), `crates/ui-egui/src/import.rs` | review dialog (Import Photos): the scanned source (a scanned folder is not added to Local), candidate grid with thumbnails and checkboxes (duplicates by path/content marked and unchecked), transfer mode (add in place / copy / move, each explained), album (existing/new), preset, keywords; the folder scan runs on a background thread with a progress window and Cancel (a NAS folder no longer freezes the window); batched import with a progress window; one undo step. Drag-and-drop still imports directly |
 | LR-IMP-DRAGDROP | Drop files/folders to import | P0 | ✅ | `crates/ui-egui/src/lib.rs` (dropped files → `cmd:library.import`) | dropping onto a specific album not supported |
 | LR-IMP-DUPES | Skip duplicates by content | P1 | ✅ | `crates/engine/src/import.rs`, `crates/engine/src/tests_import.rs` | |
 | LR-IMP-DEVICE | Import from camera/card | P1 | ✅ | `cmd:library.devices`, `cmd:file.addFromDevice`, `crates/engine/src/devices.rs` | mounted volumes with a DCIM folder (macOS /Volumes, Linux /media and /run/media, Windows drive letters); File → Import from Device → the import review, copying into the library by default; menus serve the last scan and rescan in the background (never blocking a frame; hot-plugs repaint); no PTP/MTP (cameras that don't mount as a disk) |
@@ -112,6 +112,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-IMP-SIDECAR-SPLIT | Separate XMP sidecar variants | P2 | ⬜ | `cmd:library.xmpPreferences` | sidecar naming option exists (stem/full), no split sidecars |
 | LR-IMP-FORMATS | Supported formats | P0 | 🟡 | `crates/codecs/src/lib.rs`, `crates/raw/src/lib.rs` | JPEG, PNG, TIFF, WebP, JXL, PSD, GIF, BMP; DNG (incl. lossy / Smart Preview DNG), CR2, ARW, NEF, RAF, RW2, PEF, ORF. Missing: CR3, compressed NEF/RAF/ORF, RW2 v4 (preview only: imported with `preview_only` = the decoder's reason, rendered as a rendered JPEG, flagged by a grid badge and loupe/Edit/Info notices, `previewOnly` in `catalog.query`; Reload clears it once the file decodes), HEIC/AVIF decode |
 | LR-IMP-CULL-AT-IMPORT | Culling analysis at import | P2 | 🟡 | `cmd:photo.analyze` | run Assisted Culling on the imported photos (they're selected after an import); not automatic |
+| LR-IMP-MOVE | Move on import [Classic] | P1 | ✅ | `cmd:library.import` (`mode` move), `crates/engine/src/import_move.rs`, `crates/engine/src/tests_import_move.rs`, `crates/ui-egui/src/import.rs` | Transfer ▸ Move with Copy's destination, folders (day / month / one folder / custom template), rename template and example destination; XMP sidecars (both namings) move along; each source is removed only after its destination is written (hard link on the same volume, else copied, synced and compared byte for byte) and its catalog record is saved; failed, duplicate, unchecked files keep their sources, taken names get -1, -2…, never overwritten; files already in the destination/library are added in place; sources that can't be removed (read-only card) are kept and reported (`kept`). Undo removes the photos from the library but leaves the moved files at the destination. No Copy as DNG while moving |
 | LR-IMP-DNG-CONVERT | Convert to DNG on import [Classic] | P2 | ✅ | `cmd:library.import` (`dng`), `crates/ui-egui/src/import.rs` | copy imports: Raw files ▸ Copy as DNG (lossless; the card is untouched) |
 
 ## B. Library management (LIB)

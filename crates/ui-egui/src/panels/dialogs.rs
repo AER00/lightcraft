@@ -720,7 +720,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let ok = match &dlg {
                     Dialog::Import { opts } => {
                         let n = opts.selected_paths().len();
-                        add_label = format!("Import {n} Photo{}", if n == 1 { "" } else { "s" });
+                        let verb = if opts.copy && opts.move_files { "Move" } else { "Import" };
+                        add_label = format!("{verb} {n} Photo{}", if n == 1 { "" } else { "s" });
                         add_label.as_str()
                     }
                     Dialog::Merge { .. } => "Merge",

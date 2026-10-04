@@ -19,6 +19,7 @@ pub mod export;
 pub mod files;
 pub mod guard;
 pub mod import;
+mod import_move;
 pub mod library;
 pub mod media;
 pub mod memory;
@@ -599,6 +600,8 @@ mod tests_color;
 mod tests_export;
 #[cfg(test)]
 mod tests_import;
+#[cfg(test)]
+mod tests_import_move;
 #[cfg(test)]
 mod tests_libops;
 #[cfg(test)]

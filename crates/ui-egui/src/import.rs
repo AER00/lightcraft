@@ -1,8 +1,8 @@
 //! The import review dialog (File → Import Photos… / Import from Folder… / Import from Device):
 //! the source it scanned (a scanned folder is *not* added to Local), the files found under it as
 //! a grid of thumbnails with checkboxes (duplicates marked and unchecked), the destination (add in
-//! place / copy into the library's `Originals/` or a chosen folder, filed by day, by month, into
-//! one folder or by a custom folder template, optionally renamed), an album
+//! place / copy or move into the library's `Originals/` or a chosen folder, filed by day, by month,
+//! into one folder or by a custom folder template, optionally renamed), an album
 //! (existing or new), a preset and keywords to apply. Importing runs in small batches, one per
 //! frame, with a progress window; the whole import is one undo step.
 
@@ -29,6 +29,9 @@ pub struct ImportDialog {
     pub checked: Vec<bool>,
     /// Copy into the library (else add in place).
     pub copy: bool,
+    /// With `copy`: move instead — the originals are removed from the source once each copy is
+    /// verified and catalogued (`library.import` mode `move`).
+    pub move_files: bool,
     /// Existing album to add to.
     pub album: Option<u64>,
     /// …or a new album with this name.
@@ -98,6 +101,9 @@ pub struct ImportTask {
     pub imported: usize,
     pub duplicates: usize,
     pub failed: usize,
+    /// Move: originals moved, and sources left in place (reported by the engine with a reason).
+    pub moved: usize,
+    pub kept: usize,
     undo0: usize,
     first: Option<u64>,
     /// Reading a folder for the Local view: the photos stay out of the library, and nothing is
@@ -289,7 +295,12 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
         let r = app.session.execute("album.create", &json!({"name": d.new_album.trim()})).map_err(|e| e.to_string())?;
         album = r["id"].as_u64();
     }
-    let mut params = json!({"mode": if d.copy { "copy" } else { "add" }, "keywords": d.keywords()});
+    let mode = match (d.copy, d.move_files) {
+        (false, _) => "add",
+        (true, false) => "copy",
+        (true, true) => "move",
+    };
+    let mut params = json!({"mode": mode, "keywords": d.keywords()});
     if let Some(a) = album {
         params["album"] = json!(a);
     }
@@ -310,7 +321,7 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
             params["rename"] = json!(d.rename.trim());
             params["renameStart"] = json!(1);
         }
-        if d.dng {
+        if d.dng && !d.move_files {
             params["dng"] = json!(true);
         }
     }
@@ -341,6 +352,11 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
             task.imported += len("imported");
             task.duplicates += len("duplicates");
             task.failed += len("failed");
+            task.moved += len("moved");
+            task.kept += len("kept");
+            for k in v["kept"].as_array().into_iter().flatten() {
+                log::warn!("import: kept {}: {}", k["path"].as_str().unwrap_or(""), k["reason"].as_str().unwrap_or(""));
+            }
             if task.first.is_none() {
                 task.first = v["imported"].as_array().and_then(|a| a.first()).and_then(Value::as_u64);
             }
@@ -367,7 +383,14 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
     if let Some(f) = task.first {
         let _ = app.run("library.select", json!({"ids": [f]}));
     }
-    let mut msg = format!("Imported {} photo{}", task.imported, if task.imported == 1 { "" } else { "s" });
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    let mut msg = format!("Imported {} photo{}", task.imported, plural(task.imported));
+    if task.params["mode"] == "move" {
+        msg.push_str(&format!(" · {} moved", task.moved));
+        if task.kept > 0 {
+            msg.push_str(&format!(" · {} original{} left at the source", task.kept, plural(task.kept)));
+        }
+    }
     if task.duplicates > 0 {
         msg.push_str(&format!(" · {} duplicate{} skipped", task.duplicates, if task.duplicates == 1 { "" } else { "s" }));
     }
@@ -448,24 +471,36 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
         ui.spacing_mut().item_spacing.x = 4.0;
         if crate::widgets::text_button(ui, "importAdd", "Add in place", !d.copy).on_hover_text("Reference the files where they are").clicked() {
             d.copy = false;
+            d.move_files = false;
         }
         let can_copy = app.session.library.as_ref().is_some_and(|l| l.on_disk) || app.services.pick_folder.is_some();
-        let r = ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importCopy", "Copy", d.copy)).inner;
+        let r = ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importCopy", "Copy", d.copy && !d.move_files)).inner;
         if r.on_hover_text("Copy the files (into the library's Originals/, or a folder you choose)").clicked() {
             d.copy = true;
+            d.move_files = false;
+        }
+        let r = ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importMove", "Move", d.copy && d.move_files)).inner;
+        if r.on_hover_text("Move the files (into the library's Originals/, or a folder you choose), removing them from the source").clicked() {
+            d.copy = true;
+            d.move_files = true;
         }
     });
-    ui.label(
-        egui::RichText::new(if d.copy {
-            "Copy: the files are copied to the folder below and the library uses the copies; the originals are left as they are."
-        } else {
-            "Add in place: the library references the files where they are; nothing is copied or moved."
+    let r = ui.label(
+        egui::RichText::new(match (d.copy, d.move_files) {
+            (true, false) => {
+                "Copy: the files are copied to the folder below and the library uses the copies; the originals are left as they are."
+            }
+            (true, true) => {
+                "Move: the files are moved to the folder below; each original (and its XMP sidecar) is removed from the source only after its copy is verified. Duplicates and files that fail stay where they are."
+            }
+            _ => "Add in place: the library references the files where they are; nothing is copied or moved.",
         })
-        .color(t.text_dim)
+        .color(if d.copy && d.move_files { t.caution } else { t.text_dim })
         .small(),
     );
+    register(ui.ctx(), "label:importModeHelp", r.rect);
     if d.copy {
-        field(ui, "Copy to", |ui| {
+        field(ui, if d.move_files { "Move to" } else { "Copy to" }, |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let shown = if d.destination.trim().is_empty() { "Library Originals".to_string() } else { d.destination.clone() };
             ui.label(egui::RichText::new(shown).color(Tokens::get(ui.ctx()).text_label));
@@ -527,10 +562,12 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
                     .small(),
             );
         }
-        field(ui, "Raw files", |ui| {
-            let r = ui.checkbox(&mut d.dng, "Copy as DNG");
-            register(ui.ctx(), "check:importDng", r.rect);
-        });
+        if !d.move_files {
+            field(ui, "Raw files", |ui| {
+                let r = ui.checkbox(&mut d.dng, "Copy as DNG");
+                register(ui.ctx(), "check:importDng", r.rect);
+            });
+        }
         let rename_id = egui::Id::new("import-rename");
         let tags_open = field(ui, "Rename", |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;

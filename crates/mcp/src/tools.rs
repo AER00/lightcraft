@@ -99,10 +99,10 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
             json!({
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Files and/or folders"},
                 "album": {"type": "integer", "description": "Also add to this album id"},
-                "mode": {"type": "string", "enum": ["add", "copy"], "description": "add (default) = reference the files in place; copy = copy them into `destination` (default: the library's Originals/)"},
-                "destination": {"type": "string", "description": "Copy: destination folder"},
-                "organize": {"type": "string", "description": "Copy: folders inside the destination — date (YYYY/YYYY-MM-DD, default), month (YYYY/YYYY-MM), flat, or a folder template such as {date:%Y}/{date:%Y%m%d} (→ 2026/20260114; the template's / make the levels, tokens as for rename; relative, no ..). Dated by capture time, else the import time"},
-                "rename": {"type": "string", "description": "Copy: file-name template, e.g. {date:%Y%m%d_%H%M%S}_{seq:3} (run_command photo.renameTokens lists the tags); the extension is kept"}
+                "mode": {"type": "string", "enum": ["add", "copy", "move"], "description": "add (default) = reference the files in place; copy = copy them into `destination` (default: the library's Originals/); move = as copy, then each original and its XMP sidecars are removed from the source once the copy is verified and catalogued (duplicates and failures keep their sources; `kept` lists sources left in place and why; undo leaves the moved files at the destination)"},
+                "destination": {"type": "string", "description": "Copy or move: destination folder"},
+                "organize": {"type": "string", "description": "Copy or move: folders inside the destination — date (YYYY/YYYY-MM-DD, default), month (YYYY/YYYY-MM), flat, or a folder template such as {date:%Y}/{date:%Y%m%d} (→ 2026/20260114; the template's / make the levels, tokens as for rename; relative, no ..). Dated by capture time, else the import time"},
+                "rename": {"type": "string", "description": "Copy or move: file-name template, e.g. {date:%Y%m%d_%H%M%S}_{seq:3} (run_command photo.renameTokens lists the tags); the extension is kept"}
             }),
             &["paths"],
         ),

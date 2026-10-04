@@ -6,13 +6,16 @@
 //! 3. Probe the rest — dimensions, metadata, and the **content hash** of the bytes — in parallel
 //!    on native targets.
 //! 4. Skip **duplicates by content** (same bytes already in the library, or twice in this batch).
-//! 5. *Add* in place (the photo points at the original file) or *copy* into the library's
-//!    `Originals/YYYY/YYYY-MM-DD/` folder (names made unique) and point at the copy.
+//! 5. *Add* in place (the photo points at the original file), *copy* into the library's
+//!    `Originals/YYYY/YYYY-MM-DD/` folder (names made unique) and point at the copy, or *move*
+//!    there: placed like a copy (with its XMP sidecars), and the original removed only once its
+//!    catalog record is committed and saved (see [`crate::import_move`] for the safety rules).
 //! 6. Apply each photo's XMP sidecar (or a raw/DNG file's embedded XMP): the sidecar wins for
 //!    metadata and develop settings are restored (see [`crate::sidecar`]). Its capture time fills
 //!    in when the file has none (read before step 5, so it also files and names the copy).
 //! 7. Optionally apply a preset and add keywords (the import dialog's options).
-//! 8. Commit all new photos as one undoable op.
+//! 8. Commit all new photos as one undoable op. (Undoing a move removes the catalog records;
+//!    the files stay at the destination — undo never moves files back over a card.)
 //!
 //! The import dialog first calls [`scan`] (`library.importPreview`): the same expansion, probing
 //! and duplicate detection without adding anything, so the user can review the candidates. The
@@ -40,6 +43,9 @@ pub enum ImportMode {
     Add,
     /// Copy the files into the library's `Originals/` folder.
     Copy,
+    /// Move the files there: as Copy, then each original (and its sidecars) is removed from the
+    /// source once the copy is verified and catalogued.
+    Move,
 }
 
 /// What an import does besides adding the photos.
@@ -147,12 +153,36 @@ pub struct Duplicate {
 pub struct ImportReport {
     pub imported: Vec<u64>,
     pub duplicates: Vec<Duplicate>,
+    /// Move: the originals that were moved (and removed from the source).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub moved: Vec<Moved>,
+    /// Move: originals (or sidecars) left at the source, and why — the photo may still have been
+    /// imported (from its copy, or in place).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub kept: Vec<Kept>,
     /// (path, error)
     pub failed: Vec<(String, String)>,
     /// Files found after expanding folders.
     pub scanned: usize,
     /// Photos whose metadata/develop settings were read from an XMP sidecar (or embedded XMP).
     pub sidecars: usize,
+}
+
+/// A file moved by an import.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Moved {
+    pub from: String,
+    pub to: String,
+    /// Its sidecars' new paths.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sidecars: Vec<String>,
+}
+
+/// A source a Move left where it was.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Kept {
+    pub path: String,
+    pub reason: String,
 }
 
 /// The develop settings a photo gets on import: raws start from their as-shot white balance with
@@ -502,7 +532,11 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
     let mode = opts.mode;
     // Only a library on disk has an `Originals/` folder. The browser build keeps the bytes of every
     // added file in its own storage already, so "copy" there means "add".
-    let mode = if mode == ImportMode::Copy && s.library.as_ref().is_some_and(|l| !l.on_disk) { ImportMode::Add } else { mode };
+    let transfer = matches!(mode, ImportMode::Copy | ImportMode::Move);
+    let mode = if transfer && s.library.as_ref().is_some_and(|l| !l.on_disk) { ImportMode::Add } else { mode };
+    if mode == ImportMode::Move && opts.local {
+        return Err(crate::EngineError::Other("browsing a folder never moves its files".into()));
+    }
     let lib_dir = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
     // where copies go: the chosen folder, else the library's Originals/
     let copy_root = opts
@@ -511,8 +545,8 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         .filter(|d| !d.trim().is_empty())
         .map(std::path::PathBuf::from)
         .or_else(|| lib_dir.as_ref().map(|l| l.join("Originals")));
-    if mode == ImportMode::Copy && copy_root.is_none() {
-        return Err(crate::EngineError::Other("copying needs a destination folder or an open library".into()));
+    if matches!(mode, ImportMode::Copy | ImportMode::Move) && copy_root.is_none() {
+        return Err(crate::EngineError::Other("copying or moving needs a destination folder or an open library".into()));
     }
     let mut seq = opts.rename_start.max(1);
     let files = expand(paths, lib_dir.as_deref());
@@ -552,6 +586,8 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
     crate::memory::release();
     let now = (s.clock)();
     let mut ops = promote;
+    // Move: placed at the destination, sources untouched until the records are committed
+    let mut placed: Vec<crate::import_move::Placed> = Vec::new();
     for (path, info) in todo.into_iter().zip(probed) {
         let info = match info {
             Ok(i) => i,
@@ -586,8 +622,9 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
             info.captured = sidecar.as_ref().and_then(|sc| sc.captured.clone());
         }
         let stored = match (mode, &copy_root) {
-            (ImportMode::Copy, Some(root))
-                if !Path::new(&path).starts_with(root) && !lib_dir.as_ref().is_some_and(|l| Path::new(&path).starts_with(l)) =>
+            (ImportMode::Copy | ImportMode::Move, Some(root))
+                if !crate::import_move::inside(Path::new(&path), root)
+                    && !lib_dir.as_ref().is_some_and(|l| crate::import_move::inside(Path::new(&path), l)) =>
             {
                 // the templates see the photo as it will be catalogued (undated: the import time)
                 let own = Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -599,13 +636,39 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
                     seq += 1;
                     n
                 });
-                match copy_into(root, &path, &opts.organize.folders(&q), name.as_deref()) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        report.failed.push((path, e));
-                        continue;
+                let folders = opts.organize.folders(&q);
+                if mode == ImportMode::Move && !crate::import_move::is_symlink(Path::new(&path)) {
+                    let dir = folders.iter().fold(root.to_path_buf(), |d, f| d.join(f));
+                    let name = name.unwrap_or(own);
+                    match crate::import_move::place(Path::new(&path), &dir, &name) {
+                        Ok(pl) => {
+                            let dst = pl.dst.to_string_lossy().to_string();
+                            placed.push(pl);
+                            dst
+                        }
+                        Err(e) => {
+                            report.failed.push((path, e));
+                            continue;
+                        }
+                    }
+                } else {
+                    if mode == ImportMode::Move {
+                        let reason = "a symbolic link: the file it points to was copied, the link and its target stay";
+                        report.kept.push(Kept { path: path.clone(), reason: reason.into() });
+                    }
+                    match copy_into(root, &path, &folders, name.as_deref()) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            report.failed.push((path, e));
+                            continue;
+                        }
                     }
                 }
+            }
+            (ImportMode::Move, _) => {
+                let reason = "already inside the destination or the library: added where it is";
+                report.kept.push(Kept { path: path.clone(), reason: reason.into() });
+                path.clone()
             }
             _ => path.clone(),
         };
@@ -661,10 +724,50 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         p.local = opts.local;
         ops.push(Op::AddPhoto { photo: Box::new(p) });
     }
-    if !ops.is_empty() {
-        s.commit(&format!("Add {} Photo{}", ops.len(), if ops.len() == 1 { "" } else { "s" }), Op::Batch { ops })?;
+    let log0 = s.pending_log.len();
+    if !ops.is_empty()
+        && let Err(e) = s.commit(&format!("Add {} Photo{}", ops.len(), if ops.len() == 1 { "" } else { "s" }), Op::Batch { ops })
+    {
+        // nothing was catalogued: take the moves back (their sources were never touched)
+        placed.iter().for_each(crate::import_move::rollback);
+        return Err(e);
+    }
+    if !placed.is_empty() {
+        finish_moves(s, placed, log0, &mut report);
     }
     Ok(report)
+}
+
+/// Move, after the commit: save the library, then remove each source whose destination is
+/// still intact. Nothing is removed when the library can't be saved.
+fn finish_moves(s: &mut Session, placed: Vec<crate::import_move::Placed>, log0: usize, report: &mut ImportReport) {
+    // (saving here clears the pending ops, so the sidecars `execute` would auto-write are written here)
+    let auto: Vec<Op> = if s.xmp.auto_write { s.pending_log.get(log0..).map(<[Op]>::to_vec).unwrap_or_default() } else { Vec::new() };
+    let before = s.pending_log.len();
+    if let Err(e) = s.persist() {
+        for p in placed {
+            let reason = format!("the library could not be saved ({e}): the original stays; the photo uses the copy at {}", p.dst.display());
+            report.kept.push(Kept { path: p.src.to_string_lossy().to_string(), reason });
+        }
+        return;
+    }
+    for p in placed {
+        let from = p.src.to_string_lossy().to_string();
+        match crate::import_move::finish(&p) {
+            Ok(kept) => {
+                let sidecars = p.sidecars.iter().map(|sc| sc.dst.to_string_lossy().to_string()).collect();
+                report.moved.push(Moved { from, to: p.dst.to_string_lossy().to_string(), sidecars });
+                report.kept.extend(kept.into_iter().map(|(path, reason)| Kept { path, reason }));
+            }
+            Err(reason) => {
+                log::warn!("import: move {from}: {reason}");
+                report.kept.push(Kept { path: from, reason });
+            }
+        }
+    }
+    if s.pending_log.len() < before && s.interaction.is_none() && !auto.is_empty() {
+        s.auto_write_sidecars(&auto);
+    }
 }
 
 /// The current local time as ISO 8601 (`YYYY-MM-DDTHH:MM:SS`, UTC on targets without a clock
