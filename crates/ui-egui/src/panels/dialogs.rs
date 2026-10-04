@@ -745,8 +745,11 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         close = true;
     }
     if confirm {
-        let _ = confirm_dialog(app, &dlg);
-        close = true;
+        match confirm_dialog(app, &dlg) {
+            // the import review stays open on an error (e.g. an unusable folder template)
+            Err(e) if matches!(dlg, Dialog::Import { .. }) => app.toast(ctx, e),
+            _ => close = true,
+        }
     }
     app.ui.dialog = if close { None } else { Some(dlg) };
 }
