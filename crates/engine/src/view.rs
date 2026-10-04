@@ -108,3 +108,96 @@ impl Selection {
         self.active = Some(id);
     }
 }
+
+/// One active filter, shown as a removable chip above the grid.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilterChip {
+    pub label: String,
+    /// `library.filter` patch that clears just this filter.
+    pub clear: serde_json::Value,
+}
+
+/// The chips for every constraint in the filter bar / search / sidebar (not the source itself).
+pub fn filter_chips(f: &Filter, cat: &Catalog) -> Vec<FilterChip> {
+    use lightcraft_catalog::{MediaKind, RatingOp};
+    use serde_json::{Value::Null, json};
+    let mut v = Vec::new();
+    let mut add = |label: String, clear: serde_json::Value| v.push(FilterChip { label, clear });
+    if !f.text.trim().is_empty() {
+        add(format!("Search: “{}”", f.text.trim()), json!({"text": ""}));
+    }
+    if f.rating > 0 {
+        let op = match f.rating_op {
+            RatingOp::AtLeast => "≥",
+            RatingOp::Exactly => "=",
+            RatingOp::AtMost => "≤",
+        };
+        add(format!("Rating {op} {}★", f.rating), json!({"rating": 0}));
+    }
+    if let Some(fl) = f.flag {
+        add(format!("Flag: {}", format!("{fl:?}").to_lowercase()), json!({"flag": Null}));
+    }
+    let mut labels = f.labels.clone();
+    labels.extend(f.label.filter(|l| !labels.contains(l)));
+    if !labels.is_empty() {
+        let names: Vec<String> = labels.iter().map(|l| cat.label_name(*l)).collect();
+        add(format!("Label: {}", names.join(" or ")), json!({"label": Null, "labels": []}));
+    }
+    if let Some(k) = f.kind {
+        let n = match k {
+            MediaKind::Image => "Photos",
+            MediaKind::Raw => "Raw",
+            MediaKind::Video => "Videos",
+        };
+        add(format!("Type: {n}"), json!({"kind": Null}));
+    }
+    if let Some(m) = &f.merged {
+        let n = match m.as_str() {
+            "hdr" => "HDR",
+            "panorama" => "Panoramas",
+            "hdrPanorama" => "HDR panoramas",
+            _ => "Merged",
+        };
+        add(format!("Type: {n}"), json!({"merged": Null}));
+    }
+    if let Some(e) = f.edited {
+        add(if e { "Edited".into() } else { "Unedited".into() }, json!({"edited": Null}));
+    }
+    for (name, key, val) in [("Camera", "camera", &f.camera), ("Lens", "lens", &f.lens), ("Keyword", "keyword", &f.keyword)] {
+        if let Some(x) = val {
+            add(format!("{name}: {x}"), json!({key: Null}));
+        }
+    }
+    if let Some(d) = &f.date {
+        add(format!("Date: {}", date_label(d)), json!({"date": Null}));
+    }
+    if let Some(d) = &f.imported {
+        add(format!("Imported: {}", date_label(d)), json!({"imported": Null}));
+    }
+    match (&f.date_from, &f.date_to) {
+        (Some(a), Some(b)) => add(format!("Captured {a} – {b}"), json!({"dateFrom": Null, "dateTo": Null})),
+        (Some(a), None) => add(format!("Captured from {a}"), json!({"dateFrom": Null})),
+        (None, Some(b)) => add(format!("Captured until {b}"), json!({"dateTo": Null})),
+        _ => {}
+    }
+    if let Some(rs) = f.rule_set.as_ref().filter(|r| !r.rules.is_empty()) {
+        add(format!("Rules: {}", rs.describe()), json!({"ruleSet": Null}));
+    }
+    if !f.only.is_empty() {
+        add(format!("Only {} photos", f.only.len()), json!({"only": []}));
+    }
+    v
+}
+
+/// `2026-01-16` → "January 16, 2026"; `2026-01` → "January 2026"; anything else as is.
+fn date_label(d: &str) -> String {
+    const MONTHS: [&str; 12] =
+        ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    let parts: Vec<&str> = d.split('-').collect();
+    let month = parts.get(1).and_then(|m| m.parse::<usize>().ok()).filter(|m| (1..=12).contains(m)).map(|m| MONTHS[m - 1]);
+    match (parts.as_slice(), month) {
+        ([y, _, day], Some(m)) => format!("{m} {}, {y}", day.trim_start_matches('0')),
+        ([y, _], Some(m)) => format!("{m} {y}"),
+        _ => d.to_string(),
+    }
+}
