@@ -1,5 +1,5 @@
 //! Cameras and memory cards: mounted volumes with a `DCIM` folder (the DCF layout every camera
-//! writes). Listed by `library.devices`; the app offers them under File → Add from Device, and
+//! writes). Listed by `library.devices`; the app offers them under File → Import from Device, and
 //! the import review copies from them into the library.
 //!
 //! Menus are rebuilt every frame (even with their popups closed), so [`devices`] never touches the

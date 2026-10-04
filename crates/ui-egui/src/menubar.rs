@@ -55,7 +55,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
         &[
             "file.addPhotos",
             "file.addFolder",
-            "@Add from Device",
+            "@Import from Device",
             "---",
             "app.openLibrary",
             "---",
@@ -433,7 +433,7 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
             v.extend(groups.into_iter().map(|(label, g, k)| item("library.sort", json!({"group": k}), label, None, true, Some(cur.group == g))));
             v
         }
-        "Add from Device" => {
+        "Import from Device" => {
             let devices = lightcraft_engine::devices::devices();
             if devices.is_empty() {
                 vec![item("file.addFromDevice", Value::Null, "No Camera or Card Found", None, false, None)]
@@ -731,6 +731,28 @@ mod tests {
             MenuNode::Submenu { children, .. } => find(children, id),
             _ => None,
         })
+    }
+
+    /// File opens with the import entry points, worded as importing (not as adding a sidebar
+    /// folder): Import Photos… (⇧⌘I), Import from Folder…, Import from Device ▸.
+    #[test]
+    fn file_menu_starts_with_the_import_entry_points() {
+        let bar = menu_bar(&app());
+        let file = &bar.iter().find(|(t, _)| t == "File").expect("File menu").1;
+        let labels: Vec<String> = file
+            .iter()
+            .take(3)
+            .map(|n| match n {
+                MenuNode::Item { label, shortcut, .. } => format!("{label}{}", shortcut.as_deref().map(|s| format!(" [{s}]")).unwrap_or_default()),
+                MenuNode::Submenu { label, .. } => format!("{label} ▸"),
+                MenuNode::Separator => "---".into(),
+            })
+            .collect();
+        assert_eq!(labels[0], "Import Photos… [Cmd+Shift+I]");
+        assert_eq!(labels[1..], ["Import from Folder…".to_string(), "Import from Device ▸".to_string()]);
+        let all: Vec<MenuNode> = bar.iter().flat_map(|(_, v)| v.clone()).collect();
+        let text = serde_json::to_string(&all).unwrap();
+        assert!(!text.contains("Add Folder") && !text.contains("\"Add Photos"), "no add-folder wording left in the menus");
     }
 
     #[test]

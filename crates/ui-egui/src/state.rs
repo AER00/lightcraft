@@ -403,7 +403,7 @@ pub enum Dialog {
         minutes: i32,
         zone: f32,
     },
-    /// The import review (File → Add Photos…).
+    /// The import review (File → Import Photos…).
     Import {
         opts: Box<crate::import::ImportDialog>,
     },

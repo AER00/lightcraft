@@ -27,7 +27,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
         Dialog::Rename { .. } => "Rename Photos",
-        Dialog::Import { .. } => "Add Photos",
+        Dialog::Import { .. } => "Import Photos",
         Dialog::LabelNames { .. } => "Edit Color Label Names",
         Dialog::CaptureTime { .. } => "Edit Capture Time",
         Dialog::RenameKeyword { .. } => "Rename Keyword",
@@ -720,7 +720,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let ok = match &dlg {
                     Dialog::Import { opts } => {
                         let n = opts.selected_paths().len();
-                        add_label = format!("Add {n} Photo{}", if n == 1 { "" } else { "s" });
+                        add_label = format!("Import {n} Photo{}", if n == 1 { "" } else { "s" });
                         add_label.as_str()
                     }
                     Dialog::Merge { .. } => "Merge",
