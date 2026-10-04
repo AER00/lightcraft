@@ -166,7 +166,7 @@ fn services() -> Services {
         pick_preset_files: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .set_title("Import Presets")
-                .add_filter("Presets & Profiles", &["lcpreset", "xmp", "lrtemplate", "zip", "dng", "cube"])
+                .add_filter("Presets & Profiles", &["lcpreset", "xmp", "lrtemplate", "zip", "dng", "lmp", "mplumpack", "cube"])
                 .pick_files()
                 .unwrap_or_default()
                 .into_iter()

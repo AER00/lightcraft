@@ -1,7 +1,8 @@
 //! Importing other editors' presets: XMP preset files, classic `.lrtemplate` files (a Lua table
 //! literal), photos that carry their edits as an XMP packet ("DNG presets" from mobile apps,
 //! edited JPEG/TIFF), and zip bundles of any of these. Everything ends up as `crs:` properties
-//! mapped by [`crate::crs`].
+//! mapped by [`crate::crs`]. Luminar looks (`.lmp`, `.mplumpack` collections) are read by
+//! [`crate::preset_luminar`].
 //!
 //! Written from the formats' public structure (Lua's table syntax, the ZIP application note,
 //! ISO 16684-1 XMP) and black-box observation; no third-party code or preset content was used.
@@ -23,7 +24,7 @@ pub struct Imported {
 }
 
 /// Extensions of files read as presets (beyond our own `.lcpreset`).
-pub const PRESET_EXTS: &[&str] = &["xmp", "lrtemplate", "zip", "dng"];
+pub const PRESET_EXTS: &[&str] = &["xmp", "lrtemplate", "zip", "dng", "lmp", "mplumpack"];
 
 // ------------------------------------------------------------------------------------- zip
 
@@ -426,15 +427,24 @@ pub fn group_from_dir(dir: &str) -> Option<String> {
         "new",
         "old",
         "adobe",
+        "luminar",
+        "skylum",
+        "looks",
+        "lmp",
+        "mplumpack",
+        "contents",
+        "resources",
     ];
     let generic = |name: &str| {
         let lower = name.to_ascii_lowercase();
         lower.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).all(|w| FILLER.contains(&w) || w.chars().all(|c| c.is_ascii_digit()))
     };
-    dir.split(['/', '\\']).rev().find(|p| !p.is_empty() && !generic(p)).map(str::to_string)
+    // a macOS bundle (`Look.lmp/Contents/…`) is a file, not a group
+    let bundle = |p: &str| p.to_ascii_lowercase().ends_with(".lmp");
+    dir.split(['/', '\\']).rev().find(|p| !p.is_empty() && !generic(p) && !bundle(p)).map(str::to_string)
 }
 
-fn build(props: &Props, values: &crate::crs_masks::Values, name: String, group: Option<String>, from_photo: bool) -> Option<Imported> {
+pub(crate) fn build(props: &Props, values: &crate::crs_masks::Values, name: String, group: Option<String>, from_photo: bool) -> Option<Imported> {
     let (mut settings, unmapped) = crate::crs::to_partial_report(props, Some(values), None, crate::crs_masks::DEFAULT_ASPECT);
     if from_photo && let Some(o) = settings.as_object_mut() {
         // a photo's own framing and absolute white balance don't belong in a look
@@ -486,6 +496,8 @@ pub fn read_presets(name: &str, bytes: &[u8], group: Option<String>) -> Result<V
             }
             Ok(out)
         }
+        "lmp" => crate::preset_luminar::read_lmp(name, bytes, group).map(|i| vec![i]),
+        "mplumpack" => crate::preset_luminar::read_mplumpack(name, bytes),
         "lrtemplate" => {
             let text = String::from_utf8_lossy(bytes);
             let (title, props, values) = lrtemplate_props(text.trim_start_matches('\u{feff}'))?;
@@ -522,7 +534,7 @@ pub fn read_presets(name: &str, bytes: &[u8], group: Option<String>) -> Result<V
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 

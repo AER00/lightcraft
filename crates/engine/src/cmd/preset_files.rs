@@ -1,4 +1,4 @@
-//! Preset files: import `.lcpreset`, XMP, `.lrtemplate`, DNG-preset and zip bundles; export `.lcpreset`.
+//! Preset files: import `.lcpreset`, XMP, `.lrtemplate`, DNG-preset, Luminar looks and zip bundles; export `.lcpreset`.
 
 use serde_json::{Value, json};
 
@@ -83,7 +83,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Import Presets",
             [],
             None,
-            "{paths: [file or folder], group?, dryRun?} — .lcpreset, XMP presets, .lrtemplate, photos carrying edits (DNG/JPEG/TIFF \"DNG presets\") and .zip bundles of these; folders give their name as group; crs: fields mapped per docs/xmp-interop.md → {imported: [{id,name,group,file,unmapped}], skipped, failed}",
+            "{paths: [file or folder], group?, dryRun?} — .lcpreset, XMP presets, .lrtemplate, photos carrying edits (DNG/JPEG/TIFF \"DNG presets\"), Luminar looks (.lmp, .mplumpack collections) and .zip bundles of these; folders give their name as group; crs: fields mapped per docs/xmp-interop.md → {imported: [{id,name,group,file,unmapped}], skipped, failed}",
             always,
             import
         ),
