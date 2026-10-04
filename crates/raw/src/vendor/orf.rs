@@ -79,7 +79,7 @@ pub(crate) fn cfa_from_data(d: &[u16], w: usize, a: Rect) -> Cfa {
             anti += (p(1, 0) - p(0, 1)).unsigned_abs();
         }
     }
-    Cfa::bayer(if main < anti { "GRBG" } else { "RGGB" }).expect("static")
+    Cfa::bayer_static(if main < anti { "GRBG" } else { "RGGB" })
 }
 
 pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {

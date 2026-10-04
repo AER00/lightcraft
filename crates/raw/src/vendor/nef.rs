@@ -84,7 +84,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
         .map(|v| [v[0] as f32, 1.0, v[1] as f32]);
     let cfa = match (raw.u64s(t::CFA_REPEAT_PATTERN_DIM).as_deref(), raw.bytes(t::CFA_PATTERN_EP)) {
         (Some([2, 2]), Some(p)) if p.len() == 4 && p.iter().all(|&c| c <= 2) => Cfa { width: 2, height: 2, pattern: p.to_vec() },
-        _ => Cfa::bayer("RGGB").expect("static"),
+        _ => Cfa::bayer_static("RGGB"),
     };
     let white = white_from_data(samples, bits);
     let active_w = trailing_masked_columns(samples, w, h, white);

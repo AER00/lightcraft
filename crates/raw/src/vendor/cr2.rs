@@ -117,7 +117,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         }
     }
     let wb = mn.as_ref().and_then(|m| m.ifd.u64s(COLOR_BALANCE)).and_then(|v| wb_from_color_balance(&v));
-    let cfa = Cfa::bayer("RGGB").expect("static");
+    let cfa = Cfa::bayer_static("RGGB");
     let black = if active.x >= 8 {
         black_from_columns(&data, width, 2..active.x - 2, active.y..active.y + active.height, active)
     } else {
