@@ -9,7 +9,16 @@
 ← {"id": 2, "ok": false, "error": "unknown command `nope`"}
 ```
 
-Requests are answered on the UI thread between frames (timeout 60 s). The MCP server's connect
+Requests are answered on the UI thread between frames (timeout 60 s).
+
+**Only requests are read.** Every line must be a JSON object with a string `method` (`id` and `params` are
+optional; blank lines are skipped). Anything else — text that isn't JSON, a JSON array or number, an object without
+`method`, invalid UTF-8, or a line longer than 4 MiB — gets one error reply
+(`{"ok": false, "error": "… closing the connection"}`) and the server **closes the connection**; nothing sent after
+it on that connection runs. This keeps an HTTP request (for example a web page's cross-origin `fetch` to
+`127.0.0.1:<port>`) from smuggling a command in its body: its request line is rejected first. Junk never reaches the
+UI thread, and at most 16 connections are served at once (further ones get an error line and are closed). Clients
+that hit an error reply should reconnect. The port has no authentication, so only enable it when you need it. The MCP server's connect
 mode ([mcp.md](mcp.md)) is a thin layer over this channel. Implementation:
 `crates/ui-egui/src/control.rs` (methods) and `apps/lightcraft/src/control_server.rs` (transport).
 
