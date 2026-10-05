@@ -424,22 +424,32 @@ fn info_overlay(app: &LightcraftApp, p: &egui::Painter, canvas: Rect, photo: &li
 /// Face/pet/focus regions read from XMP (MWG-RS), drawn as boxes over the photo. Read-only —
 /// LightCraft doesn't write regions yet.
 fn region_overlay(p: &egui::Painter, map: &CanvasMap, photo: &lightcraft_catalog::Photo) {
-    use lightcraft_meta::RegionKind;
     let t = Tokens::get(p.ctx());
+    let clip = p.clip_rect();
     for r in &photo.meta.regions {
-        let color = match r.kind {
-            RegionKind::Face => Color32::from_rgb(255, 214, 10),
-            RegionKind::Pet => Color32::from_rgb(120, 220, 120),
-            RegionKind::Focus | RegionKind::BarCode | RegionKind::Other(_) => Color32::from_white_alpha(140),
-        };
         let rect = Rect::from_two_pos(map.screen(Point::new(r.rect.x0, r.rect.y0)), map.screen(Point::new(r.rect.x1, r.rect.y1)));
-        p.rect_stroke(rect, 2.0, Stroke::new(1.5, color), StrokeKind::Outside);
-        if let Some(name) = &r.name {
-            let g = p.layout_no_wrap(name.clone(), t.font(12.0), color);
-            let at = pos2(rect.left(), rect.top() - g.size().y - 2.0);
-            p.galley(at + vec2(1.0, 1.0), g.clone(), Color32::from_black_alpha(200));
-            p.galley(at, g, color);
-        }
+        // white with a black keyline just outside it, so the box shows on any background
+        p.rect_stroke(rect.expand(1.0), 0.0, Stroke::new(1.0, Color32::from_black_alpha(190)), StrokeKind::Outside);
+        p.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::WHITE), StrokeKind::Outside);
+        let Some(name) = &r.name else { continue };
+        // the name in a dark label with a caret, centred above the box (below it when there is no room)
+        let g = p.layout_no_wrap(name.clone(), t.font(13.0), Color32::from_gray(225));
+        let (pad, caret) = (vec2(14.0, 7.0), 5.0);
+        let size = g.size() + pad * 2.0;
+        let above = rect.top() - caret - size.y >= clip.top();
+        let (top, tip, base) = if above {
+            (rect.top() - caret - size.y, rect.top() - 1.0, rect.top() - caret - 1.0)
+        } else {
+            (rect.bottom() + caret, rect.bottom() + 1.0, rect.bottom() + caret + 1.0)
+        };
+        let left = (rect.center().x - size.x / 2.0).clamp(clip.left(), (clip.right() - size.x).max(clip.left()));
+        let label = Rect::from_min_size(pos2(left, top), size);
+        let fill = Color32::from_rgba_unmultiplied(56, 56, 56, 235);
+        p.rect_filled(label, 3.0, fill);
+        p.rect_stroke(label, 3.0, Stroke::new(1.0, Color32::from_black_alpha(160)), StrokeKind::Inside);
+        let cx = rect.center().x.clamp(label.left() + caret + 4.0, label.right() - caret - 4.0);
+        p.add(egui::Shape::convex_polygon(vec![pos2(cx - caret, base), pos2(cx + caret, base), pos2(cx, tip)], fill, Stroke::NONE));
+        p.galley(label.min + pad, g, Color32::from_gray(225));
     }
 }
 
