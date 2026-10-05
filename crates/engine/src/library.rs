@@ -64,6 +64,12 @@ pub struct Library {
     pub forgot_local: Option<lightcraft_catalog::ForgetPlan>,
     presets_written: String,
     view_written: Vec<u8>,
+    /// Settings files that were unreadable or damaged when the library opened (`library.info` →
+    /// `settingsWarnings`; shown by the UI once, see [`Session::take_library_warnings`]).
+    pub settings_warnings: Vec<String>,
+    warnings_reported: usize,
+    /// Settings files that couldn't be read or set aside: never overwritten this session.
+    blocked: Vec<&'static str>,
     /// Keeps other processes out of this library while it's open (last: released after the
     /// journal's background snapshot has landed).
     lock: Option<LibraryLock>,
@@ -191,8 +197,49 @@ fn program_name() -> String {
     }
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(store: &mut dyn Store, name: &str) -> Option<T> {
-    store.read(name).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok())
+/// Problems reading the settings files (`presets.json`, `prefs.json`, `view.json`) when the library
+/// opened (issue #103). A missing file is not a problem (defaults). A file that doesn't parse is
+/// kept as `<name>.corrupt-<unix time>` before the defaults are used (so the next save can't
+/// lose it); a file that can't be read at all (locked by another program, I/O error) is never
+/// written this session, so its content survives until the library is opened again.
+#[derive(Default)]
+struct SettingsLoad {
+    warnings: Vec<String>,
+    /// Files not to overwrite this session.
+    blocked: Vec<&'static str>,
+}
+
+impl SettingsLoad {
+    fn read<T: serde::de::DeserializeOwned>(&mut self, store: &mut dyn Store, name: &'static str) -> Option<T> {
+        let bytes = match store.read(name) {
+            Ok(b) => b?,
+            Err(e) => {
+                log::error!("library: {name}: {e}");
+                self.blocked.push(name);
+                self.warnings.push(format!(
+                    "{name} couldn't be read ({e}). LightCraft uses the defaults for now and won't overwrite the file; reopen the library to try again."
+                ));
+                return None;
+            }
+        };
+        let err = match serde_json::from_slice(&bytes) {
+            Ok(v) => return Some(v),
+            Err(e) => e,
+        };
+        let secs = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let keep = format!("{name}.corrupt-{secs}");
+        log::error!("library: {name} is damaged: {err}");
+        match store.write_atomic(&keep, &bytes) {
+            Ok(()) => self.warnings.push(format!("{name} is damaged ({err}). It was kept as {keep}, and the defaults are used.")),
+            Err(w) => {
+                self.blocked.push(name);
+                self.warnings.push(format!(
+                    "{name} is damaged ({err}) and couldn't be set aside ({w}). LightCraft uses the defaults and won't overwrite the file."
+                ));
+            }
+        }
+        None
+    }
 }
 
 impl Session {
@@ -259,8 +306,9 @@ impl Session {
             crate::demo::load(self);
             journal.snapshot(&self.catalog)?;
         }
+        let mut settings = SettingsLoad::default();
         // presets
-        if let Some(f) = read_json::<PresetsFile>(files.as_mut(), "presets.json") {
+        if let Some(f) = settings.read::<PresetsFile>(files.as_mut(), "presets.json") {
             for p in &mut self.presets {
                 p.favorite = p.builtin && f.favorites.contains(&p.id) || (!p.builtin && p.favorite);
             }
@@ -274,7 +322,7 @@ impl Session {
             self.profile_recent = f.profile_recent.into_iter().filter(known).take(crate::presets::RECENT_PROFILES).collect();
         }
         // preferences
-        let prefs = read_json::<PrefsFile>(files.as_mut(), "prefs.json").unwrap_or_default();
+        let prefs = settings.read::<PrefsFile>(files.as_mut(), "prefs.json").unwrap_or_default();
         self.xmp = prefs.xmp;
         self.last_export = prefs.last_export;
         self.export_presets = prefs.export_presets;
@@ -295,7 +343,7 @@ impl Session {
             self.media.smart_dir = Some(d.clone());
         }
         // view state
-        if let Some(v) = read_json::<ViewFile>(files.as_mut(), "view.json") {
+        if let Some(v) = settings.read::<ViewFile>(files.as_mut(), "view.json") {
             self.source = v.source;
             self.browse = v.browse;
             self.filter = v.filter;
@@ -328,6 +376,9 @@ impl Session {
             forgot_local: None,
             presets_written,
             view_written,
+            settings_warnings: settings.warnings,
+            warnings_reported: 0,
+            blocked: settings.blocked,
             lock: lock.take(),
         });
         // forget untouched Local records of folders not browsed for a while (journaled at once)
@@ -381,7 +432,7 @@ impl Session {
         }
         let presets = presets_json(self);
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
-        if presets != lib.presets_written {
+        if presets != lib.presets_written && !lib.blocked.contains(&"presets.json") {
             if let Err(e) = lib.files.write_atomic("presets.json", presets.as_bytes()) {
                 log::error!("library: presets: {e}");
             } else {
@@ -462,7 +513,7 @@ impl Session {
         }
         let v = self.view_json();
         let Some(lib) = self.library.as_mut() else { return };
-        if v != lib.view_written {
+        if v != lib.view_written && !lib.blocked.contains(&"view.json") {
             match lib.files.write_atomic("view.json", &v) {
                 Ok(()) => lib.view_written = v,
                 Err(e) => log::error!("library: view: {e}"),
@@ -491,7 +542,20 @@ impl Session {
         })
         .unwrap_or_default();
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
+        if lib.blocked.contains(&"prefs.json") {
+            return Err(EngineError::Other(
+                "prefs: prefs.json couldn't be read when the library opened, so it isn't overwritten; reopen the library to save preferences".into(),
+            ));
+        }
         lib.files.write_atomic("prefs.json", &v).map_err(|e| EngineError::Other(format!("prefs: {e}")))
+    }
+
+    /// Settings-file warnings of the open library not handed out yet (the UI shows each once).
+    pub fn take_library_warnings(&mut self) -> Vec<String> {
+        let Some(lib) = self.library.as_mut() else { return vec![] };
+        let new = lib.settings_warnings[lib.warnings_reported..].to_vec();
+        lib.warnings_reported = lib.settings_warnings.len();
+        new
     }
 
     /// The thumbnail disk cache budget in bytes ([`Session::cache_mb`], else the default).

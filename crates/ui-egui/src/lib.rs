@@ -35,6 +35,8 @@ mod tests_masking;
 #[cfg(test)]
 mod tests_panels;
 #[cfg(test)]
+mod tests_quit_unsaved;
+#[cfg(test)]
 mod tests_scroll;
 #[cfg(test)]
 mod tests_unsaved;
@@ -125,6 +127,12 @@ pub struct LightcraftApp {
     pub native_shortcuts: std::collections::HashSet<String>,
     /// The host is [`headless::Headless`] (it answers viewport screenshot commands itself).
     pub headless_host: bool,
+    /// Warnings to show one at a time (damaged settings files…, issue #103).
+    pub notices: Vec<String>,
+    /// Quitting was stopped because changes couldn't be saved: the prompt's text.
+    pub quit_prompt: Option<String>,
+    /// Quit Anyway was chosen: the window may close with unsaved changes.
+    pub quit_confirmed: bool,
     control_rx: Option<Receiver<ControlRequest>>,
     pending_screenshots: Vec<PendingShot>,
     screenshot_token: u64,
@@ -192,6 +200,9 @@ impl LightcraftApp {
             native_menu: false,
             native_shortcuts: Default::default(),
             headless_host: false,
+            notices: vec![],
+            quit_prompt: None,
+            quit_confirmed: false,
             control_rx: None,
             pending_screenshots: vec![],
             screenshot_token: 0,
@@ -462,6 +473,11 @@ impl LightcraftApp {
         } else {
             self.fonts_ready = true;
         }
+        panels::notices::logic(self);
+        // closing the window (or Quit) with changes only in memory: retry, else ask first
+        if ctx.input(|i| i.viewport().close_requested()) && !panels::notices::may_close(self) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
         let now = ctx.input(|i| i.time);
         let dt = now - self.last_time;
         if dt > 0.0 {
@@ -608,6 +624,7 @@ impl LightcraftApp {
             // full-screen preview: the photo alone on black
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(egui::Color32::BLACK)).show(ui, |ui| panels::detail::show(self, ui));
             panels::second::show(self, &ctx);
+            panels::notices::show(self, &ctx);
             panels::dialogs::show(self, &ctx);
             panels::library_problem::show(self, &ctx);
             panels::toast(self, &ctx);
@@ -645,6 +662,7 @@ impl LightcraftApp {
             state::ViewMode::Reference => panels::compare::show_reference(self, ui),
         });
         panels::second::show(self, &ctx);
+        panels::notices::show(self, &ctx);
         panels::dialogs::show(self, &ctx);
         panels::library_problem::show(self, &ctx);
         import::progress(self, &ctx);

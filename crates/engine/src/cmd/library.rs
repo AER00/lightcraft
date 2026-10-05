@@ -867,6 +867,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 "logRecords": j.log_records(),
                 "logBytes": j.log_bytes(),
                 "lastError": lib.last_error,
+                // settings files that were unreadable or damaged at open (kept, defaults used)
+                "settingsWarnings": lib.settings_warnings,
                 // changes applied in memory whose write failed (retried by every save)
                 "unsavedOps": s.unsaved().map_or(0, |u| u.0),
                 "unsavedError": s.unsaved().map(|u| u.1),
