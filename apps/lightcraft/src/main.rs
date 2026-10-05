@@ -17,6 +17,7 @@
 //! window (issue #7). Their `--help` / `--version` output and diagnostics then have no console to
 //! go to; use `lightcraft-cli` (a console program) from a terminal, or a debug build.
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod alloc_release;

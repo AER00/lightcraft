@@ -2080,6 +2080,7 @@ dependencies = [
  "lightcraft-codecs",
  "lightcraft-engine",
  "lightcraft-raster",
+ "lightcraft-sysmem",
  "lightcraft-ui-egui",
  "log",
  "muda",
@@ -2112,6 +2113,7 @@ dependencies = [
  "lightcraft-mcp",
  "lightcraft-merge",
  "lightcraft-raster",
+ "lightcraft-sysmem",
  "lightcraft-ui-egui",
  "serde_json",
 ]
@@ -2320,6 +2322,10 @@ dependencies = [
  "rayon",
  "serde",
 ]
+
+[[package]]
+name = "lightcraft-sysmem"
+version = "0.1.1"
 
 [[package]]
 name = "lightcraft-tiff"
