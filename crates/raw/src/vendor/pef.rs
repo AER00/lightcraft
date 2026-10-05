@@ -99,6 +99,10 @@ impl<'a> Bits<'a> {
         self.skip(k);
         v
     }
+    /// Bits handed out so far (may exceed the source length: zeros are read past its end).
+    pub fn consumed_bits(&self) -> usize {
+        self.pos * 8 - self.n as usize
+    }
     pub fn overrun(&self) -> bool {
         self.pos > self.src.len() + 8
     }

@@ -3,6 +3,7 @@
 pub mod arw;
 pub mod cr2;
 pub mod nef;
+pub mod nefc;
 pub mod orf;
 pub mod pef;
 pub mod raf;
