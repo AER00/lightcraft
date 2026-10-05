@@ -234,7 +234,7 @@ pub(crate) fn finish(p: &Placed) -> Result<Vec<(String, String)>, String> {
 }
 
 /// A photo (by extension) still beside a stem-named sidecar, sharing its stem.
-fn sibling_photo(sidecar: &Path) -> Option<String> {
+pub(crate) fn sibling_photo(sidecar: &Path) -> Option<String> {
     let dir = sidecar.parent()?;
     let stem = sidecar.file_stem()?.to_string_lossy().to_string();
     fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find_map(|f| {

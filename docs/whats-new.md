@@ -44,7 +44,8 @@
   `img_1-1.JPG`; on case-insensitive volumes the case change still goes through.
 - Rename Photos reports files it could not move back after a failure (issue #105), e.g. when a network share drops
   mid-batch: the error lists them (old → new) and the library points at their new names (an undoable partial rename),
-  so none shows as missing. Find Missing Photos also finds renamed files by their content, prefers a content match
+  so none shows as missing. Renaming one of a raw + JPEG pair copies their shared `IMG_0001.xmp` instead of taking
+  it away from the other (issue #92). Find Missing Photos also finds renamed files by their content, prefers a content match
   over a same-name same-size look-alike, and skips (and reports) photos it can't tell apart instead of guessing.
 - Smart albums with a rule editor: match all / any / none, nested groups, 26 fields.
 - Quick Collection and target album (B in the grid), keyword sets (⌥1–⌥9), colour-label sets.
