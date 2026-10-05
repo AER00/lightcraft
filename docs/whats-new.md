@@ -21,6 +21,9 @@
 - Export file names use the Rename Photos tokens ({title}, {seq:2}, {date:%Y-%m-%d}…), plus new {num}, {folder}, {lens}, {iso}, {rating}, {creator}.
 - Copyright status, rights usage terms and copyright info URL in Info, metadata presets and exports.
 - Auto-Tag from Tracklog: GPS locations for your photos from a GPX track log, matched by capture time.
+- A change that can't be saved to disk (full or unplugged drive) is no longer silent: the command reports
+  "saved in memory but not written to disk", the top bar shows a warning, and LightCraft keeps retrying until the
+  save goes through.
 
 ### Editing
 - Auto Sync: edits apply to every selected photo. Auto B&W mix. Automatic versions.

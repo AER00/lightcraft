@@ -867,6 +867,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 "logRecords": j.log_records(),
                 "logBytes": j.log_bytes(),
                 "lastError": lib.last_error,
+                // changes applied in memory whose write failed (retried by every save)
+                "unsavedOps": s.unsaved().map_or(0, |u| u.0),
+                "unsavedError": s.unsaved().map(|u| u.1),
                 "persistence": j.stats(),
                 "cache": cache,
                 "load": {

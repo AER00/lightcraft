@@ -33,6 +33,8 @@ mod tests_masking;
 mod tests_panels;
 #[cfg(test)]
 mod tests_scroll;
+#[cfg(test)]
+mod tests_unsaved;
 
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -281,6 +283,26 @@ impl LightcraftApp {
         }
     }
 
+    /// Announce when saving the library starts failing (changes then live only in memory and are
+    /// retried) and when it works again; the top bar's cloud icon shows the state meanwhile.
+    fn save_status(&mut self, ctx: &egui::Context) {
+        let unsaved = self.session.unsaved().map(|(n, e)| (n, e.to_string()));
+        match (unsaved, self.ui.unsaved_seen) {
+            (Some((n, e)), false) => {
+                self.ui.unsaved_seen = true;
+                let t = ctx.input(|i| i.time);
+                let what = if n == 1 { "1 change".to_string() } else { format!("{n} changes") };
+                self.ui.toast = Some((format!("{what} saved in memory but not written to disk: {e} — LightCraft will retry"), t + 6.0));
+            }
+            (None, true) => {
+                self.ui.unsaved_seen = false;
+                self.toast(ctx, "Library saved");
+            }
+            (Some(_), true) => ctx.request_repaint_after(std::time::Duration::from_secs(2)), // retry
+            (None, false) => {}
+        }
+    }
+
     pub fn toast(&mut self, ctx: &egui::Context, text: impl Into<String>) {
         let t = ctx.input(|i| i.time);
         self.ui.toast = Some((text.into(), t + 1.4));
@@ -448,6 +470,7 @@ impl LightcraftApp {
         import::poll_scan(self, ctx);
         import::tick(self, ctx);
         self.preview_build_status(ctx);
+        self.save_status(ctx);
         self.slideshow_tick(ctx);
         // back from an external editor: pick up the files it saved
         let focused = ctx.input(|i| i.focused);

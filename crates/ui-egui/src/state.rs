@@ -203,6 +203,10 @@ pub struct UiState {
     /// The Build Previews run last announced (its identity, finished?).
     #[serde(skip)]
     pub preview_build_seen: Option<(usize, bool)>,
+    /// Saving the library is failing (announced with a toast; the top bar shows a warning until
+    /// a later save succeeds).
+    #[serde(skip)]
+    pub unsaved_seen: bool,
     pub view: ViewMode,
     pub left_panel: bool,
     pub right: RightPanel,
@@ -505,6 +509,7 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             preview_build_seen: None,
+            unsaved_seen: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,
             left_panel: false,
