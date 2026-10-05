@@ -414,6 +414,16 @@ fn parse_one_region(item: &XmpValue, px_dims: Option<(f64, f64)>) -> Option<Regi
         (true, Some((dw, dh))) => (cx / dw, cy / dh, w / dw, h / dh),
         (true, None) => return None,
     };
+    // Lightroom Classic stores the box of a photo with Exif orientation 6 / 8 in the sensor's own frame
+    // and writes the orientation as the region's `mwg-rs:Rotation` (−π/2 for 6, +π/2 for 8; 0 for 1)
+    // while `AppliedToDimensions` names the upright size. Turn it into the upright frame.
+    let rotation = item.field("mwg-rs:Rotation").and_then(XmpValue::text).and_then(parse_number).filter(|r| r.is_finite());
+    let quarter = std::f64::consts::FRAC_PI_2;
+    let (cx, cy, w, h) = match rotation {
+        Some(r) if (r + quarter).abs() < 0.05 => (1.0 - cy, cx, h, w),
+        Some(r) if (r - quarter).abs() < 0.05 => (cy, 1.0 - cx, h, w),
+        _ => (cx, cy, w, h),
+    };
     let name = item.field("mwg-rs:Name").and_then(XmpValue::text).map(str::to_string).filter(|s| !s.is_empty());
     let description = item.field("mwg-rs:Description").and_then(XmpValue::text).map(str::to_string).filter(|s| !s.is_empty());
     let kind = match item.field("mwg-rs:Type").and_then(XmpValue::text).unwrap_or("") {
@@ -871,6 +881,38 @@ mod tests {
         assert_eq!(regions[2].kind, RegionKind::Pet);
         assert_eq!(regions[2].name.as_deref(), Some("Rex"));
         assert_eq!(regions[2].description.as_deref(), Some("Good boy"));
+    }
+
+    /// Lightroom Classic writes a portrait photo's (Exif orientation 6 / 8) box in the sensor's frame and
+    /// records the orientation as `mwg-rs:Rotation` (−π/2 / +π/2); the reader returns the upright frame.
+    #[test]
+    fn mwg_regions_quarter_turn_rotation_is_mapped_to_the_upright_frame() {
+        let x = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description rdf:about=""
+                xmlns:mwg-rs="http://www.metadataworkinggroup.com/schemas/regions/"
+                xmlns:stArea="http://ns.adobe.com/xmp/sType/Area#">
+              <mwg-rs:Regions rdf:parseType="Resource">
+                <mwg-rs:RegionList>
+                  <rdf:Bag>
+                    <rdf:li rdf:parseType="Resource" mwg-rs:Rotation="-1.57080" mwg-rs:Type="Face">
+                      <mwg-rs:Area rdf:parseType="Resource" stArea:x="0.3" stArea:y="0.4" stArea:w="0.2" stArea:h="0.3"/>
+                    </rdf:li>
+                    <rdf:li rdf:parseType="Resource" mwg-rs:Rotation="1.57080" mwg-rs:Type="Face">
+                      <mwg-rs:Area rdf:parseType="Resource" stArea:x="0.3" stArea:y="0.4" stArea:w="0.2" stArea:h="0.3"/>
+                    </rdf:li>
+                    <rdf:li rdf:parseType="Resource" mwg-rs:Rotation="0.00000" mwg-rs:Type="Face">
+                      <mwg-rs:Area rdf:parseType="Resource" stArea:x="0.3" stArea:y="0.4" stArea:w="0.2" stArea:h="0.3"/>
+                    </rdf:li>
+                  </rdf:Bag>
+                </mwg-rs:RegionList>
+              </mwg-rs:Regions>
+            </rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        let regions = parse_xmp(x).unwrap().metadata.regions;
+        assert_eq!(regions.len(), 3, "{regions:?}");
+        let near = |r: Rect, b: [f64; 4]| [r.x0 - b[0], r.y0 - b[1], r.x1 - b[2], r.y1 - b[3]].iter().all(|d| d.abs() < 1e-9);
+        assert!(near(regions[0].rect, [0.45, 0.2, 0.75, 0.4]), "−π/2 (orientation 6): {:?}", regions[0].rect);
+        assert!(near(regions[1].rect, [0.25, 0.6, 0.55, 0.8]), "+π/2 (orientation 8): {:?}", regions[1].rect);
+        assert!(near(regions[2].rect, [0.2, 0.25, 0.4, 0.55]), "0 is untouched: {:?}", regions[2].rect);
     }
 
     /// A second, differently-shaped encoding: each region is its own `rdf:Description` (rather than an
