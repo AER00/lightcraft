@@ -89,6 +89,9 @@ pub enum SourceRef {
         path: String,
         max_edge: usize,
         loader: Option<FileLoader>,
+        /// The photo's smart preview, used when the original can't be read (offline drive). The
+        /// UI thread never checks whether the original is there; the render worker finds out.
+        fallback: Option<std::path::PathBuf>,
     },
     /// A smart preview standing in for a missing original.
     Smart {
@@ -105,10 +108,20 @@ impl SourceRef {
         let image = match self {
             SourceRef::Loaded(a) => return Ok((**a).clone()),
             SourceRef::Demo { scene, max_edge } => Arc::new(scene.render_fit(*max_edge)),
-            SourceRef::File { path, max_edge, loader } => match loader {
-                Some(l) => return l(path, *max_edge).map(|(image, info)| DecodedSource { image: Arc::new(image), info: Some(info) }),
-                None => return Err(format!("no decoder available for {path}")),
-            },
+            SourceRef::File { path, max_edge, loader, fallback } => {
+                let r = match loader {
+                    Some(l) => l(path, *max_edge).map(|(image, info)| DecodedSource { image: Arc::new(image), info: Some(info) }),
+                    None => Err(format!("no decoder available for {path}")),
+                };
+                // An offline original renders from its smart preview (no decoder facts: header ones).
+                return match (r, fallback) {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    (Err(e), Some(sp)) if crate::smart::is_valid(sp) => {
+                        crate::smart::load(sp).map(|image| DecodedSource { image, info: None }).map_err(|e2| format!("{e}; smart preview: {e2}"))
+                    }
+                    (r, _) => r,
+                };
+            }
             #[cfg(not(target_arch = "wasm32"))]
             SourceRef::Smart { path } => crate::smart::load(path)?,
             #[cfg(target_arch = "wasm32")]
@@ -137,6 +150,9 @@ pub struct MediaCache {
     pub file_bytes: Option<crate::merge::ByteReader>,
     /// The library's smart previews folder (originals offline: render from the proxy).
     pub smart_dir: Option<std::path::PathBuf>,
+    /// Whether originals (and smart previews) are on disk: cached and checked off the UI thread
+    /// in the app (see [`crate::availability`]).
+    pub availability: crate::availability::Availability,
     scenes: Vec<lightcraft_scenes::Scene>,
     /// Rendered thumbnails (memory, plus disk once a library is attached).
     pub rendered: Arc<PreviewCache>,
@@ -156,6 +172,7 @@ impl Default for MediaCache {
             preview_loader: None,
             file_bytes: None,
             smart_dir: None,
+            availability: Default::default(),
             scenes: Vec::new(),
             rendered: Arc::new(PreviewCache::memory(rendered_budget(budget))),
         }
@@ -312,15 +329,22 @@ impl MediaCache {
             (Source::Demo { .. }, SourceLevel::Full) => p.width.max(p.height).max(1) as usize,
             _ => usize::MAX,
         });
-        // the original is offline: its smart preview, when there is one
+        // the original is offline: its smart preview, when there is one. Only cached answers are
+        // used here (no file-system call on the UI thread in the app); an original not known to
+        // be offline is tried first and its smart preview is the render worker's fallback.
         #[cfg(not(target_arch = "wasm32"))]
-        if let (Source::File { path }, Some(dir)) = (&p.source, &self.smart_dir)
-            && !std::path::Path::new(path).exists()
-        {
+        if let (Source::File { path }, Some(dir)) = (&p.source, &self.smart_dir) {
             let sp = dir.join(crate::smart::file_name(p));
-            if sp.exists() {
+            // (a proxy cut short fails to load, like the offline original; the worker's fallback
+            // in `SourceRef::load` only uses a proxy that passes `smart::is_valid`)
+            if self.availability.is_offline(path) && self.availability.exists(&sp.to_string_lossy()) == Some(true) {
                 return SourceRef::Smart { path: sp };
             }
+            let mut r = self.origin_ref(&p.source, max_edge);
+            if let SourceRef::File { fallback, .. } = &mut r {
+                *fallback = Some(sp);
+            }
+            return r;
         }
         self.origin_ref(&p.source, max_edge)
     }
@@ -335,10 +359,10 @@ impl MediaCache {
                 }
                 match self.scenes.iter().find(|s| s.id == *scene) {
                     Some(s) => SourceRef::Demo { scene: Box::new(s.clone()), max_edge },
-                    None => SourceRef::File { path: format!("demo:{scene}"), max_edge, loader: None },
+                    None => SourceRef::File { path: format!("demo:{scene}"), max_edge, loader: None, fallback: None },
                 }
             }
-            Source::File { path } => SourceRef::File { path: path.clone(), max_edge, loader: self.file_loader.clone() },
+            Source::File { path } => SourceRef::File { path: path.clone(), max_edge, loader: self.file_loader.clone(), fallback: None },
         }
     }
 }
@@ -823,6 +847,7 @@ mod tests {
                 image.data.fill([0.1; 3]);
                 Ok((image, info))
             })),
+            fallback: None,
         };
         job.info = SourceInfo::default(); // Header facts cannot override decoder facts.
         job.settings = Arc::new(DevelopSettings::default());

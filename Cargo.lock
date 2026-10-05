@@ -2361,6 +2361,7 @@ dependencies = [
 name = "lightcraft-web"
 version = "0.2.0"
 dependencies = [
+ "crc32fast",
  "eframe",
  "egui",
  "js-sys",
