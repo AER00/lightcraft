@@ -212,18 +212,9 @@ fn services() -> Services {
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
-        write_shared: Some(std::sync::Arc::new(|p: &str, b: &[u8]| {
-            if let Some(dir) = std::path::Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {
-                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-            }
-            std::fs::write(p, b).map_err(|e| e.to_string())
-        })),
-        write: Some(Box::new(|p: &str, b: &[u8]| {
-            if let Some(dir) = std::path::Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {
-                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-            }
-            std::fs::write(p, b).map_err(|e| e.to_string())
-        })),
+        // atomic (temp file + sync + rename): a failed write never leaves a truncated file
+        write_shared: Some(std::sync::Arc::new(lightcraft_engine::export::write_file)),
+        write: Some(Box::new(lightcraft_engine::export::write_file)),
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),

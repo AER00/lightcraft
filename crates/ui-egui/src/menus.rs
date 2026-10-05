@@ -932,7 +932,12 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             if let Ok(v) = &r {
                 let n = v["found"].as_array().map_or(0, Vec::len);
                 let left = v["missing"].as_u64().unwrap_or(0);
-                app.toast(&egui::Context::default(), format!("Found {n} missing photo{}; {left} still missing", if n == 1 { "" } else { "s" }));
+                let unsure = v["ambiguous"].as_array().map_or(0, Vec::len);
+                let unsure = if unsure > 0 { format!(" ({unsure} with several look-alike files: use Locate)") } else { String::new() };
+                app.toast(
+                    &egui::Context::default(),
+                    format!("Found {n} missing photo{}; {left} still missing{unsure}", if n == 1 { "" } else { "s" }),
+                );
             }
             r
         }

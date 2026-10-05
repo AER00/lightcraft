@@ -86,6 +86,24 @@ fn render_subcommand() {
     assert!(String::from_utf8_lossy(&o.stderr).contains("unknown control"));
 }
 
+/// Issue #93: `render IMG -o IMG` replaced its own input with the render.
+#[test]
+fn render_refuses_to_overwrite_its_input() {
+    let input = tmp("self-in.png");
+    gradient_png(&input);
+    let before = std::fs::read(&input).unwrap();
+    let dir = input.parent().unwrap();
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let other_spelling = dir.join("sub/../self-in.png");
+    for out in [&input, &other_spelling] {
+        let o =
+            Command::new(BIN).args(["render", input.to_str().unwrap(), "-o", out.to_str().unwrap(), "--set", "light.exposure=1"]).output().unwrap();
+        assert!(!o.status.success());
+        assert!(String::from_utf8_lossy(&o.stderr).contains("never writes over an original"), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    assert_eq!(std::fs::read(&input).unwrap(), before, "the input is untouched");
+}
+
 #[test]
 fn render_export_options() {
     let input = tmp("o-in.png");

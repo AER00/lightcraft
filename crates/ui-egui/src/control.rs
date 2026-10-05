@@ -291,12 +291,19 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
             ok(Value::Null)
         }
         "ui.screenshot" => {
+            // never over a photo's original
+            if let Some(Err(e)) = s("path").map(|path| app.session.check_write_target(path)) {
+                return err(e);
+            }
             ctx.request_repaint();
             Outcome::Screenshot { path: s("path").map(str::to_string), headless: p.get("headless").and_then(Value::as_bool).unwrap_or(false) }
         }
         "ui.render" => {
             let id = p.get("id").and_then(Value::as_u64).map(lightcraft_catalog::PhotoId).or(app.session.active());
             let Some(id) = id else { return err("no photo") };
+            if let Some(Err(e)) = s("path").map(|path| app.session.check_write_target(path)) {
+                return err(e);
+            }
             let size = p.get("size").and_then(Value::as_u64).unwrap_or(1600) as usize;
             match app.session.render_now(id, size, size) {
                 Ok(r) => match (s("path"), app.services.png.as_ref()) {
@@ -357,11 +364,7 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     let to = Destination { dir: dir.clone(), exact: p.get("path").and_then(Value::as_str).map(str::to_string) };
     let background = p.get("background").and_then(Value::as_bool).unwrap_or(false) && app.services.write_shared.is_some();
     let out = if background {
-        let items = ids
-            .iter()
-            .enumerate()
-            .map(|(i, id)| lightcraft_engine::export::prepare_export(&mut app.session, *id, &opts, i + 1))
-            .collect::<Result<Vec<_>, _>>()?;
+        let items = lightcraft_engine::export::prepare_batch(&mut app.session, &ids, &opts)?;
         crate::export_task::start(app, items, opts, to)?
     } else {
         let w = app.services.write.as_mut().ok_or("no writer")?;
