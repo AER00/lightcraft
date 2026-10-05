@@ -144,6 +144,45 @@ fn browsing_a_folder_lists_its_photos_without_adding_them() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Issue #105: Find Missing finds renamed files by content, prefers the content match over a
+/// same-name same-size impostor, and skips (reports) photos it can't tell apart.
+#[test]
+fn find_missing_matches_renamed_files_by_content() {
+    let dir = temp_dir("missing-content");
+    std::fs::create_dir_all(dir.join("old")).unwrap();
+    std::fs::create_dir_all(dir.join("moved/real")).unwrap();
+    for (n, seed) in [("a.png", 1), ("b.png", 2), ("c.png", 3)] {
+        write_png(&dir.join("old").join(n), seed);
+    }
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [dir.join("old").to_string_lossy()]})).unwrap();
+    // an impostor: same name and size, other bytes
+    let impostor = |src: &Path, dst: &Path| {
+        let mut b = std::fs::read(src).unwrap();
+        let k = b.len() - 20;
+        b[k] ^= 0xff;
+        std::fs::write(dst, b).unwrap();
+    };
+    // a: renamed; b: renamed, with an impostor under its old name; c: gone, two impostors
+    std::fs::rename(dir.join("old/a.png"), dir.join("moved/Trip-001.png")).unwrap();
+    impostor(&dir.join("old/b.png"), &dir.join("moved/b.png"));
+    std::fs::rename(dir.join("old/b.png"), dir.join("moved/real/Trip-002.png")).unwrap();
+    impostor(&dir.join("old/c.png"), &dir.join("moved/c.png"));
+    impostor(&dir.join("old/c.png"), &dir.join("moved/real/c.png"));
+    std::fs::remove_file(dir.join("old/c.png")).unwrap();
+    let r = s.execute("library.findMissing", &json!({"folder": dir.join("moved").to_string_lossy()})).unwrap();
+    let found = r["found"].as_array().unwrap();
+    assert_eq!(found.len(), 2, "{r}");
+    let to = |name: &str| {
+        found.iter().find(|f| f["from"].as_str().unwrap().ends_with(name)).map(|f| (f["to"].as_str().unwrap().to_string(), f["by"].clone()))
+    };
+    assert_eq!(to("a.png"), Some((dir.join("moved/Trip-001.png").to_string_lossy().to_string(), json!("content"))));
+    assert_eq!(to("b.png"), Some((dir.join("moved/real/Trip-002.png").to_string_lossy().to_string(), json!("content"))), "not the impostor");
+    assert_eq!(r["missing"], 1);
+    assert_eq!(r["ambiguous"][0]["candidates"].as_array().map(Vec::len), Some(2), "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn missing_files_are_found_and_relinked() {
     let dir = std::env::temp_dir().join(format!("lc-missing-{}", std::process::id()));
