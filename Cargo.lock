@@ -3026,6 +3026,7 @@ dependencies = [
 name = "lightcraft-codecs"
 version = "0.5.0"
 dependencies = [
+ "avif-serialize",
  "bytemuck",
  "image",
  "image-webp",
@@ -3039,6 +3040,7 @@ dependencies = [
  "moxcms 0.9.1",
  "png",
  "proptest",
+ "rav1e",
  "ravif",
  "rayon",
  "serde",
