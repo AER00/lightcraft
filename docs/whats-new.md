@@ -10,6 +10,12 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- Browser version (experimental), keeping a library safe (issue #107): File ▸ Back Up Library… downloads the catalog
+  and every imported photo as one zip, and File ▸ Restore Library from Backup… brings it back (the current library
+  is kept). A failed save (storage full) now shows the unsaved warning and is retried, a photo that can't be stored
+  isn't added, a second tab shows a message instead of overwriting the first, `?reset` asks first, and the page says
+  when the browser may evict the library. Hosting: the sample cache headers no longer mark the (unhashed) files
+  immutable, and HOSTING.md describes the actual build.
 - Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other
   models whose sensor starts on a green-blue row) no longer come out magenta (issue #85): the colour-filter
   layout is read from each file instead of assumed.

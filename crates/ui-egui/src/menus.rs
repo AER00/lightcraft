@@ -116,6 +116,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("file.addFolder", "Import from Folder…", None, "File"),
     ("file.addFromDevice", "Import from Device", None, ""),
     ("file.findMissing", "Find Missing Photos…", None, "File"),
+    ("file.backupLibrary", "Back Up Library…", None, "File"),
+    ("file.restoreLibrary", "Restore Library from Backup…", None, "File"),
     ("photo.locate", "Locate Missing File…", None, ""),
     ("dialog.saveMetadataPreset", "Save Metadata Preset…", None, ""),
     ("app.quit", "Quit LightCraft", Some("Cmd+Q"), "File"),
@@ -381,6 +383,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "app.openLibrary" => crate::panels::settings::open_library(app, p),
+        "file.backupLibrary" | "file.restoreLibrary" => {
+            let action = if id == "file.backupLibrary" { app.services.backup_library.as_mut() } else { app.services.restore_library.as_mut() };
+            match action {
+                Some(f) => f(&mut app.session),
+                None => Err("not available here: on the desktop the library is a folder; back it up with your other files".into()),
+            }
+        }
         "view.filmstrip" => {
             app.ui.filmstrip = !app.ui.filmstrip;
             Ok(Value::Null)
@@ -1188,6 +1197,8 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         "view.compare" => app.session.catalog.len() > 1,
         "view.fullScreenPreview" | "view.infoOverlay" | "view.navigator" => app.session.active().is_some() || app.ui.fullscreen,
         "app.openLibrary" | "file.addFolder" => app.services.pick_folder.is_some(),
+        "file.backupLibrary" => app.services.backup_library.is_some(),
+        "file.restoreLibrary" => app.services.restore_library.is_some(),
         "compare.swap" | "compare.makeSelect" => app.ui.view == ViewMode::Compare,
         s if s.starts_with("dialog.merge") || (s.starts_with("merge.") && s.ends_with("Last")) => {
             app.session.targets(&serde_json::json!({})).len() >= 2 && app.merge.final_task.is_none()
