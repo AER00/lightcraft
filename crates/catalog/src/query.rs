@@ -39,6 +39,8 @@ pub struct Filter {
     pub date: Option<String>,
     /// A keyword; hierarchical keywords match their children too (`travel` finds `travel|italy`).
     pub keyword: Option<String>,
+    /// A person: photos with a named face region of this name (case-insensitive), as read from XMP.
+    pub person: Option<String>,
     pub camera: Option<String>,
     /// Lens (case-insensitive substring).
     pub lens: Option<String>,
@@ -113,6 +115,7 @@ fn token_matches(p: &Photo, tok: &str) -> bool {
             "camera" => p.meta.camera.to_lowercase().contains(val),
             "lens" => p.meta.lens.to_lowercase().contains(val),
             "keyword" | "kw" => p.meta.keywords.iter().any(|k| crate::keywords::is_under(k, val)),
+            "person" | "who" => has_person(p, val),
             "type" | "kind" => format!("{:?}", p.kind).eq_ignore_ascii_case(val),
             "edited" => (val == "true" || val == "yes") == p.is_edited(),
             "date" => p.date().starts_with(val),
@@ -123,6 +126,12 @@ fn token_matches(p: &Photo, tok: &str) -> bool {
     }
     let hay = [&p.file_name, &p.meta.title, &p.meta.caption, &p.meta.camera, &p.meta.lens, &p.meta.location, &p.format];
     hay.iter().any(|h| h.to_lowercase().contains(&t)) || p.meta.keywords.iter().any(|k| k.to_lowercase().contains(&t))
+}
+
+/// Whether `p` has a named face region called `name` (case-insensitive).
+fn has_person(p: &Photo, name: &str) -> bool {
+    let name = name.trim().to_lowercase();
+    p.meta.regions.iter().any(|r| r.kind == lightcraft_meta::RegionKind::Face && r.name.as_deref().is_some_and(|n| n.to_lowercase() == name))
 }
 
 impl Filter {
@@ -152,9 +161,14 @@ impl Filter {
         if let Some(e) = self.edited {
             v.push(if e { "edited".into() } else { "unedited".into() });
         }
-        for (name, val) in
-            [("keyword", &self.keyword), ("camera", &self.camera), ("lens", &self.lens), ("date", &self.date), ("imported", &self.imported)]
-        {
+        for (name, val) in [
+            ("keyword", &self.keyword),
+            ("person", &self.person),
+            ("camera", &self.camera),
+            ("lens", &self.lens),
+            ("date", &self.date),
+            ("imported", &self.imported),
+        ] {
             if let Some(x) = val {
                 v.push(format!("{name} {x}"));
             }
@@ -267,6 +281,11 @@ impl Filter {
         {
             return false;
         }
+        if let Some(n) = &self.person
+            && !has_person(p, n)
+        {
+            return false;
+        }
         if let Some(c) = &self.camera
             && !p.meta.camera.eq_ignore_ascii_case(c)
         {
@@ -329,6 +348,28 @@ impl Catalog {
             }
         }
         m.into_iter().collect()
+    }
+
+    /// The people named on faces in the library (MWG regions read from XMP) with the number of
+    /// photos each appears in, most photos first, then by name. Names that differ only in case are
+    /// one person, shown as first seen. A person twice in one photo counts once.
+    pub fn people(&self) -> Vec<(String, usize)> {
+        let mut m: std::collections::HashMap<String, (String, usize)> = Default::default();
+        for p in self.photos().filter(|p| p.in_library()) {
+            let mut seen: Vec<String> = Vec::new();
+            for r in p.meta.regions.iter().filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
+                let Some(name) = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else { continue };
+                let key = name.to_lowercase();
+                if seen.contains(&key) {
+                    continue;
+                }
+                m.entry(key.clone()).or_insert_with(|| (name.to_string(), 0)).1 += 1;
+                seen.push(key);
+            }
+        }
+        let mut v: Vec<(String, usize)> = m.into_values().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+        v
     }
 }
 

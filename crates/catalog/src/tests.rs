@@ -297,3 +297,47 @@ fn folder_identity_ignores_spelling() {
     assert!(folder_within("/a/b", "/"));
     assert!(folder_within("C:\\x", "c:\\"));
 }
+
+/// People come from named *face* regions: counted once per photo, case-insensitive, most photos
+/// first; pets and unnamed faces are not people; the `person` filter and `person:` token match.
+#[test]
+fn people_from_named_face_regions() {
+    use lightcraft_meta::{Rect, Region, RegionKind};
+    let region = |name: Option<&str>, kind: RegionKind| Region {
+        rect: Rect { x0: 0.4, y0: 0.4, x1: 0.6, y1: 0.6 },
+        kind,
+        name: name.map(str::to_string),
+        description: None,
+    };
+    let mut c = Catalog::new();
+    let mut add = |name: &str, regions: Vec<Region>| {
+        let id = c.alloc_photo_id();
+        let mut p = Photo::new(id, Source::Demo { scene: 1 }, name, "JPEG", 6000, 4000, "2026-09-30T10:00:00");
+        p.meta.regions = regions;
+        c.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        id
+    };
+    let a = add(
+        "a.jpg",
+        vec![region(Some("Jane Doe"), RegionKind::Face), region(Some("jane doe"), RegionKind::Face), region(Some("Rex"), RegionKind::Pet)],
+    );
+    let b =
+        add("b.jpg", vec![region(Some("JANE DOE"), RegionKind::Face), region(Some("John Roe"), RegionKind::Face), region(None, RegionKind::Face)]);
+    let d = add("d.jpg", vec![region(Some("John Roe"), RegionKind::Face)]);
+    let e = add("e.jpg", vec![region(Some("Sam"), RegionKind::Face)]);
+    add("f.jpg", vec![]);
+    assert_eq!(
+        c.people(),
+        vec![("Jane Doe".to_string(), 2), ("John Roe".to_string(), 2), ("Sam".to_string(), 1)],
+        "once per photo, pets and unnamed faces left out"
+    );
+
+    let q = |f: Filter| c.query(&f, &Sort::default());
+    assert_eq!(q(Filter { person: Some("jane doe".into()), ..Default::default() }).len(), 2);
+    let mut got = q(Filter { person: Some("John Roe".into()), ..Default::default() });
+    got.sort();
+    assert_eq!(got, vec![b, d]);
+    assert!(q(Filter { person: Some("Rex".into()), ..Default::default() }).is_empty(), "a pet is not a person");
+    assert_eq!(q(Filter { text: "person:SAM".into(), ..Default::default() }), vec![e], "the search token finds a person, any case");
+    assert!(q(Filter { person: Some("Jane Doe".into()), ..Default::default() }).contains(&a));
+}

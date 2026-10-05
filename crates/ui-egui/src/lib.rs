@@ -789,6 +789,7 @@ mod drop_tests {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
+    people: Option<(u64, std::sync::Arc<Vec<(String, usize)>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
@@ -831,6 +832,17 @@ impl Caches {
             _ => {
                 let t = std::sync::Arc::new(cat.keyword_tree());
                 self.keyword_tree = Some((cat.revision, t.clone()));
+                t
+            }
+        }
+    }
+    /// The people named on faces, with photo counts.
+    pub fn people(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<(String, usize)>> {
+        match &self.people {
+            Some((r, t)) if *r == cat.revision => t.clone(),
+            _ => {
+                let t = std::sync::Arc::new(cat.people());
+                self.people = Some((cat.revision, t.clone()));
                 t
             }
         }
