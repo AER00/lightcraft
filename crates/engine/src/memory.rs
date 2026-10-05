@@ -44,7 +44,12 @@ fn total_ram() -> Option<usize> {
         let out = std::process::Command::new("/usr/sbin/sysctl").args(["-n", "hw.memsize"]).output().ok()?;
         String::from_utf8_lossy(&out.stdout).trim().parse().ok()
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "freebsd")]
+    {
+        let out = std::process::Command::new("/sbin/sysctl").args(["-n", "hw.physmem"]).output().ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
     {
         None
     }
