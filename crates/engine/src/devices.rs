@@ -35,7 +35,9 @@ fn mount_parents() -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     if cfg!(target_os = "macos") {
         out.push("/Volumes".into());
-    } else if cfg!(target_os = "linux") {
+    } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+        // Linux desktops mount under /media/$USER or /run/media/$USER; FreeBSD's automounter
+        // (automount/autofs, or a desktop's) under /media. Missing folders are skipped.
         if let Ok(user) = std::env::var("USER") {
             out.push(format!("/media/{user}").into());
             out.push(format!("/run/media/{user}").into());
