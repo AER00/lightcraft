@@ -17,6 +17,7 @@ lightcraft-scenes = { workspace = true }
 lightcraft-pipeline = { workspace = true }
 lightcraft-gpu = { workspace = true }
 lightcraft-catalog = { workspace = true }
+web-time = { workspace = true }
 lightcraft-preview = { workspace = true }
 lightcraft-codecs = { workspace = true }
 lightcraft-raw = { workspace = true }

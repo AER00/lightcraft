@@ -111,9 +111,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             }
             // right icons
             let mut x = full.right() - 18.0;
+            // saving is failing: the cloud icon turns into a warning until a save succeeds
+            let unsaved = app.session.unsaved().map(|(n, e)| {
+                format!(
+                    "{n} change{} saved in memory but not written to disk: {e}\nLightCraft retries automatically; quitting now would lose {}.",
+                    if n == 1 { "" } else { "s" },
+                    if n == 1 { "it" } else { "them" }
+                )
+            });
+            let cloud_tip = unsaved.as_deref().unwrap_or("Local library — no cloud account needed");
             for (id, icon, tip, cmd) in [
                 ("discord", Icon::Chat, "Join the ArtCraft community on Discord", "app.discord"),
-                ("cloud", Icon::Cloud, "Local library — no cloud account needed", ""),
+                ("cloud", Icon::Cloud, cloud_tip, ""),
                 ("help", Icon::Help, "Keyboard shortcuts", "app.shortcuts"),
                 ("share", Icon::Share, "Export", "dialog.export"),
                 ("bell", Icon::Bell, "Activity", "panel.activity"),
@@ -121,7 +130,21 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let r = Rect::from_center_size(pos2(x, full.center().y), vec2(28.0, 28.0));
                 let resp = ui.interact(r, egui::Id::new(("top", id)), Sense::click()).on_hover_text(tip);
                 register(ui.ctx(), format!("icon:{id}"), r);
-                paint(ui.painter(), r.shrink(5.0), icon, if resp.hovered() { t.text } else { t.icon });
+                let warn = id == "cloud" && unsaved.is_some();
+                let colour = if warn {
+                    t.caution
+                } else if resp.hovered() {
+                    t.text
+                } else {
+                    t.icon
+                };
+                paint(ui.painter(), r.shrink(5.0), icon, colour);
+                if warn {
+                    let c = r.right_top() + vec2(-5.0, 6.0);
+                    ui.painter().circle_filled(c, 6.0, t.reject);
+                    ui.painter().text(c, Align2::CENTER_CENTER, "!", t.semibold(9.5), t.canvas);
+                    register(ui.ctx(), "indicator:unsaved", r);
+                }
                 if resp.clicked() && !cmd.is_empty() {
                     let _ = app.run(cmd, json!({}));
                 }
