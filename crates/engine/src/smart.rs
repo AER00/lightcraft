@@ -130,11 +130,16 @@ pub fn migrate(from: &Path, to: &Path, what: Existing) -> (usize, Vec<String>) {
             Existing::Discard => std::fs::remove_file(&src),
             _ => {
                 let dst = to.join(e.file_name());
-                if dst.exists() {
-                    // named by content: the copy already there is the same preview
+                if is_valid(&dst) {
+                    // named by content: the complete copy already there is the same preview
                     std::fs::remove_file(&src)
                 } else {
-                    std::fs::rename(&src, &dst).or_else(|_| std::fs::copy(&src, &dst).and_then(|_| std::fs::remove_file(&src)))
+                    // across drives: copied atomically (never a partial proxy at the new place)
+                    std::fs::rename(&src, &dst).or_else(|_| {
+                        std::fs::read(&src)
+                            .and_then(|b| lightcraft_catalog::safe_file::write_atomic(&dst, &b))
+                            .and_then(|()| std::fs::remove_file(&src))
+                    })
                 }
             }
         };
@@ -144,6 +149,29 @@ pub fn migrate(from: &Path, to: &Path, what: Existing) -> (usize, Vec<String>) {
         }
     }
     (done, failed)
+}
+
+/// A cheap check that the smart preview at `path` is complete: our header, then a JPEG from its
+/// start marker to its end marker. A file cut short by a crash, a full drive or an unplugged one
+/// fails it (and is then rebuilt by Build Smart Previews, not counted as there).
+pub fn is_valid(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let mut head = Vec::with_capacity(256);
+    if (&mut f).take(256).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    let Some(rest) = head.strip_prefix(MAGIC) else { return false };
+    let Some(nl) = rest.iter().position(|b| *b == b'\n') else { return false };
+    let size_ok = rest
+        .get(..nl)
+        .and_then(|h| serde_json::from_slice::<serde_json::Value>(h).ok())
+        .is_some_and(|h| h["w"].as_u64().is_some_and(|w| w > 0) && h["h"].as_u64().is_some_and(|h| h > 0));
+    if !size_ok || rest.get(nl + 1..nl + 3) != Some(&[0xFF, 0xD8][..]) {
+        return false;
+    }
+    let mut end = [0u8; 2];
+    f.seek(SeekFrom::End(-2)).is_ok() && f.read_exact(&mut end).is_ok() && end == [0xFF, 0xD9]
 }
 
 /// Load the proxy at `path`.
@@ -190,6 +218,27 @@ mod tests {
         assert!(a.join("note.txt").exists(), "only smart previews are touched");
         assert_eq!(migrate(&b, &a, Existing::Discard).0, 1);
         assert_eq!(stats(&b).0, 0);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn damaged_proxies_are_invalid_and_never_kept_over_good_ones() {
+        let base = temp("valid");
+        let (a, b) = (base.join("a"), base.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let img = lightcraft_scenes::demo_library()[0].render(64, 40);
+        let good = encode(&img).unwrap();
+        std::fs::write(a.join("1.lcsp"), &good).unwrap();
+        assert!(is_valid(&a.join("1.lcsp")));
+        for cut in [good.len() - 1, good.len() / 2, 10, 0] {
+            std::fs::write(b.join("1.lcsp"), &good[..cut]).unwrap();
+            assert!(!is_valid(&b.join("1.lcsp")), "cut at {cut}");
+        }
+        assert!(!is_valid(&b.join("missing.lcsp")));
+        // moving onto a damaged copy replaces it instead of deleting the good one
+        assert_eq!(migrate(&a, &b, Existing::Move).0, 1);
+        assert_eq!(std::fs::read(b.join("1.lcsp")).unwrap(), good);
         let _ = std::fs::remove_dir_all(&base);
     }
 
