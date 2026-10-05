@@ -57,6 +57,9 @@ pub enum EngineError {
     /// be written. They stay queued and are written by the next successful save.
     #[error("saved in memory but not written to disk: {0}; LightCraft will retry")]
     NotSaved(String),
+    /// Another process (the app, `lightcraft-cli`, another computer) has the library open.
+    #[error("{0}")]
+    LibraryInUse(String),
     #[error("{0}")]
     Other(String),
 }

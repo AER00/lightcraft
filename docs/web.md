@@ -80,6 +80,10 @@ same-origin or send CORP/CORS headers (the bundle has no third-party resources).
     the background within a frame or two, each file replaced atomically, in modification order
     (`apps/lightcraft-web/src/files.rs`). View state and UI prefs are saved every second when they
     change (a tab can close without notice).
+  - Known limitation: the browser storage has no file locks, so two tabs of the same origin open
+    the same library and the last one to write a snapshot wins (the desktop app and the CLI lock
+    a library folder: `catalog.lock`, issue #99). Use one tab at a time; a guard through the Web
+    Locks API (`navigator.locks`) is still to do.
   - `originals/<content hash>`: the bytes of every imported photo. The catalog refers to them as
     `web/<hash>/<file name>`; the main thread keeps recently used originals in memory (≤ 768 MB)
     and loads the rest on demand (the active photo is prefetched).
