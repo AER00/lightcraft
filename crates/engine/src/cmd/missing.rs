@@ -1,8 +1,9 @@
 //! Missing originals: photos whose file is no longer where the library expects it (moved,
 //! renamed, on an unplugged drive), and relinking them — one at a time (`photo.relink`) or by
-//! searching a folder for files with the same name and size (`library.findMissing`).
+//! searching a folder for files with the same name and size, or the same content
+//! (`library.findMissing`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use lightcraft_catalog::{Catalog, Op, Photo, PhotoId, Source};
@@ -83,8 +84,29 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"id": id.0, "path": abs}))
 }
 
-/// Search `folder` (recursively) for each missing photo's file name — and its size when the
-/// library knows it — and relink every match in one undoable step.
+/// The stored content hash of a photo, without the `:dupN` suffix duplicates get.
+fn stored_hash(p: &Photo) -> Option<&str> {
+    p.content_hash.as_deref().map(|h| h.split(':').next().unwrap_or(h)).filter(|h| !h.is_empty())
+}
+
+/// The content hash of the file at `path` (as import computes it), if it can be read.
+fn file_hash(path: &str) -> Option<String> {
+    std::fs::read(path).ok().map(|b| lightcraft_preview::hash_bytes(&b).to_string())
+}
+
+/// Search `folder` (recursively) for each missing photo's file and relink every match in one
+/// undoable step.
+///
+/// Matching, per photo:
+/// 1. a file with the same name (any letter case), the same size and the same content hash;
+/// 2. renamed: a file of the same size with the same content hash (only same-size files are
+///    read, so this stays cheap);
+/// 3. without a hash to confirm (or the file was edited in place): the one file with the same
+///    name and size. Several such files are ambiguous: the photo is skipped and reported in
+///    `ambiguous`, never guessed (two cameras' `IMG_0001.CR3` of one size are different photos).
+///
+/// Files that are already some photo's original, or that another photo was just matched with,
+/// are not used.
 fn find_missing(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "library.findMissing";
     let folder = str_param(p, "folder").ok_or_else(|| bad(C, "missing `folder`"))?;
@@ -93,27 +115,72 @@ fn find_missing(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let lost = missing(s);
     if lost.is_empty() {
-        return Ok(json!({"found": [], "missing": 0}));
+        return Ok(json!({"found": [], "missing": 0, "ambiguous": []}));
     }
-    // file name (lower case) → candidate paths
+    let in_use: HashSet<String> = s.catalog.photos().filter_map(|p| checked_path(p).map(str::to_string)).collect();
+    // file name (lower case) → candidate paths; size → paths (filled lazily)
     let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
-    for f in crate::import::expand(&[folder.to_string()], None) {
-        if let Some(n) = Path::new(&f).file_name() {
-            by_name.entry(n.to_string_lossy().to_lowercase()).or_default().push(f);
+    let files: Vec<String> = crate::import::expand(&[folder.to_string()], None).into_iter().filter(|f| !in_use.contains(f)).collect();
+    for f in &files {
+        if let Some(n) = Path::new(f).file_name() {
+            by_name.entry(n.to_string_lossy().to_lowercase()).or_default().push(f.clone());
         }
     }
+    let mut by_size: Option<HashMap<u64, Vec<String>>> = None;
+    let mut hashes: HashMap<String, Option<String>> = HashMap::new();
+    let mut hash_of = |f: &str| hashes.entry(f.to_string()).or_insert_with(|| file_hash(f)).clone();
+    let size_of = |f: &str| std::fs::metadata(f).map(|m| m.len()).ok();
+    let mut used: HashSet<String> = HashSet::new();
     let mut ops = Vec::new();
     let mut found = Vec::new();
+    let mut ambiguous = Vec::new();
     for (id, old) in &lost {
+        let Some(ph) = s.catalog.photo(*id) else { continue };
         let name = Path::new(old).file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-        let size = s.catalog.photo(*id).map(|p| p.file_size).unwrap_or(0);
-        let hit = by_name.get(&name).and_then(|c| {
-            c.iter().find(|f| size == 0 || std::fs::metadata(f).is_ok_and(|m| m.len() == size)).or_else(|| (c.len() == 1 && size == 0).then(|| &c[0]))
-        });
-        if let Some(path) = hit {
-            ops.push(relink_op(*id, path));
-            found.push(json!({"id": id.0, "from": old, "to": path}));
+        let size = ph.file_size;
+        let hash = stored_hash(ph).map(str::to_string);
+        let named: Vec<&String> = by_name
+            .get(&name)
+            .map(|c| c.iter().filter(|f| !used.contains(*f) && (size == 0 || size_of(f) == Some(size))).collect())
+            .unwrap_or_default();
+        // 1. same name and size, confirmed by the content hash
+        let mut hit: Option<(String, &str)> =
+            hash.as_deref().and_then(|h| named.iter().find(|f| hash_of(f).as_deref() == Some(h))).map(|f| (f.to_string(), "name"));
+        // 2. renamed: same size and content
+        if hit.is_none()
+            && let Some(h) = &hash
+            && size > 0
+        {
+            let sizes = by_size.get_or_insert_with(|| {
+                let mut m: HashMap<u64, Vec<String>> = HashMap::new();
+                for f in &files {
+                    if let Some(n) = size_of(f) {
+                        m.entry(n).or_default().push(f.clone());
+                    }
+                }
+                m
+            });
+            hit = sizes
+                .get(&size)
+                .and_then(|c| c.iter().find(|f| !used.contains(*f) && hash_of(f).as_deref() == Some(h.as_str())))
+                .map(|f| (f.clone(), "content"));
         }
+        // 3. same name and size only (no hash, or the file was edited in place): one candidate
+        //    is taken, several are ambiguous and skipped rather than guessed
+        if hit.is_none() {
+            match named.len() {
+                1 => hit = Some((named[0].clone(), "name")),
+                0 => {}
+                _ => {
+                    ambiguous.push(json!({"id": id.0, "from": old, "candidates": named}));
+                    continue;
+                }
+            }
+        }
+        let Some((path, by)) = hit else { continue };
+        ops.push(relink_op(*id, &path));
+        found.push(json!({"id": id.0, "from": old, "to": path, "by": by}));
+        used.insert(path);
     }
     let still = lost.len() - found.len();
     if !ops.is_empty() {
@@ -124,7 +191,7 @@ fn find_missing(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
-    Ok(json!({"found": found, "missing": still}))
+    Ok(json!({"found": found, "missing": still, "ambiguous": ambiguous}))
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -146,7 +213,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Find Missing Photos",
             [],
             None,
-            "{folder} — relink every missing photo whose file (same name and size) is somewhere in the folder → {found: [{id, from, to}], missing}",
+            "{folder} — relink every missing photo whose file is somewhere in the folder: same name and size (and content, when the library knows its hash), or — renamed — same size and content → {found: [{id, from, to, by: name|content}], missing, ambiguous: [{id, from, candidates}] (several same-name candidates and no hash to tell them apart: skipped)}",
             always,
             find_missing
         ),

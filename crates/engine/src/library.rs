@@ -411,16 +411,35 @@ impl Session {
     }
 
     /// Flush everything and write a snapshot (on quit). Ends an open interaction first.
+    ///
+    /// The snapshot is written even when appending the queued ops fails: it is a fresh file
+    /// holding everything in memory, so it saves those ops too (the log handle may be the only
+    /// thing that's broken). Fails only if nothing could be saved; the ops then stay queued.
     pub fn close_library(&mut self) -> Result<()> {
         if self.library.is_none() {
             return Ok(());
         }
         let _ = self.end_interaction();
-        self.persist()?;
+        let persisted = self.persist();
         self.save_view();
+        let unlogged = if persisted.is_err() { self.pending_log.len() as u64 } else { 0 };
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
-        lib.journal.snapshot(&self.catalog)?;
-        Ok(())
+        let before = lib.journal.seq();
+        let snapshot = lib.journal.snapshot_with_unlogged(&self.catalog, unlogged);
+        if unlogged > 0 && lib.journal.seq() == before + unlogged {
+            // the snapshot holds the queued ops: they are saved, never append them again
+            log::info!("library: {unlogged} queued change(s) saved in the closing snapshot");
+            self.pending_log.clear();
+            lib.unsaved_error = None;
+            lib.retry_at = None;
+            lib.last_error = None;
+        }
+        match (persisted, snapshot) {
+            (_, Ok(())) => Ok(()),
+            // neither the log nor the snapshot took the queued ops
+            (Err(EngineError::NotSaved(e)), Err(s)) if lib.journal.seq() == before => Err(EngineError::NotSaved(format!("{e}; snapshot: {s}"))),
+            (_, Err(s)) => Err(s.into()),
+        }
     }
 
     fn view_json(&self) -> Vec<u8> {
