@@ -134,7 +134,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     }
                 }
             }
-            people_section(app, ui);
             keywords_section(app, ui);
             ui.add_space(10.0);
             if row(app, ui, "recentlyDeleted", Icon::Trash, "Recently Deleted", Some(deleted), src == LibrarySource::RecentlyDeleted, 0.0).clicked() {
@@ -663,30 +662,6 @@ fn is_within(app: &LightcraftApp, id: lightcraft_catalog::AlbumId, ancestor: lig
         }
     }
     false
-}
-
-/// "People": the names on faces read from XMP (MWG regions), with photo counts. A click filters the
-/// grid to that person; a second click clears it. (Names only for now: no face detection or
-/// identity yet, and LightCraft does not write regions.)
-fn people_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
-    let t = Tokens::get(ui.ctx());
-    let people = app.caches.people(&app.session.catalog);
-    if people.is_empty() {
-        return;
-    }
-    ui.add_space(10.0);
-    let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-    ui.painter().text(pos2(hr.left() + 18.0, hr.center().y), Align2::LEFT_CENTER, "People", t.semibold(13.5), t.text_label);
-    for (name, count) in people.iter() {
-        let sel = app.session.filter.person.as_deref().is_some_and(|k| k.eq_ignore_ascii_case(name));
-        // a long name must not run into the count
-        let shown = if name.chars().count() > 22 { format!("{}…", name.chars().take(21).collect::<String>()) } else { name.clone() };
-        let resp = row(app, ui, &format!("person:{name}"), Icon::Subject, &shown, Some(*count), sel, 0.0).on_hover_text(name);
-        if resp.clicked() {
-            let v = if sel { serde_json::Value::Null } else { json!(name) };
-            let _ = app.run("library.filter", json!({"person": v}));
-        }
-    }
 }
 
 /// "Keywords": the library's keyword tree with photo counts (`a|b|c` keywords nest). A click

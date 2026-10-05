@@ -350,27 +350,45 @@ impl Catalog {
         m.into_iter().collect()
     }
 
-    /// The people named on faces in the library (MWG regions read from XMP) with the number of
-    /// photos each appears in, most photos first, then by name. Names that differ only in case are
-    /// one person, shown as first seen. A person twice in one photo counts once.
-    pub fn people(&self) -> Vec<(String, usize)> {
-        let mut m: std::collections::HashMap<String, (String, usize)> = Default::default();
+    /// The people named on faces in the library (MWG regions read from XMP): how many photos each
+    /// appears in and the photo showing their largest face (for a card's picture). Most photos first,
+    /// then by name. Names that differ only in case are one person, shown as first seen; a person
+    /// twice in one photo counts once.
+    pub fn people(&self) -> Vec<Person> {
+        let mut m: std::collections::HashMap<String, (Person, f64)> = Default::default();
         for p in self.photos().filter(|p| p.in_library()) {
             let mut seen: Vec<String> = Vec::new();
             for r in p.meta.regions.iter().filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
                 let Some(name) = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else { continue };
                 let key = name.to_lowercase();
-                if seen.contains(&key) {
-                    continue;
+                // the face's size in pixels of the photo
+                let area = (r.rect.x1 - r.rect.x0) * (r.rect.y1 - r.rect.y0) * p.width as f64 * p.height as f64;
+                let (person, best) =
+                    m.entry(key.clone()).or_insert_with(|| (Person { name: name.to_string(), count: 0, photo: p.id, face: r.rect }, area));
+                if !seen.contains(&key) {
+                    person.count += 1;
+                    seen.push(key);
                 }
-                m.entry(key.clone()).or_insert_with(|| (name.to_string(), 0)).1 += 1;
-                seen.push(key);
+                if area > *best || (area == *best && p.id < person.photo) {
+                    (person.photo, person.face, *best) = (p.id, r.rect, area);
+                }
             }
         }
-        let mut v: Vec<(String, usize)> = m.into_values().collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+        let mut v: Vec<Person> = m.into_values().map(|(p, _)| p).collect();
+        v.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
         v
     }
+}
+
+/// A person named on faces in the library ([`Catalog::people`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Person {
+    pub name: String,
+    /// Photos they appear in.
+    pub count: usize,
+    /// The photo with their largest face, and that face (normalized, in the photo's upright frame).
+    pub photo: PhotoId,
+    pub face: lightcraft_meta::Rect,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

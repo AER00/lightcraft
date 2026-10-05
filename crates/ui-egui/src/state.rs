@@ -16,6 +16,8 @@ pub enum ViewMode {
     Survey,
     /// A reference photo (left, fixed) beside the active photo (right, being edited).
     Reference,
+    /// A card per person named on faces (close-up, name, photo count).
+    People,
 }
 
 /// The right-hand tool/panel shown next to the tool strip.

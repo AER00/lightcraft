@@ -713,6 +713,7 @@ impl LightcraftApp {
             state::ViewMode::Compare => panels::compare::show_compare(self, ui),
             state::ViewMode::Survey => panels::compare::show_survey(self, ui),
             state::ViewMode::Reference => panels::compare::show_reference(self, ui),
+            state::ViewMode::People => panels::people::show(self, ui),
         });
         panels::second::show(self, &ctx);
         panels::notices::show(self, &ctx);
@@ -789,7 +790,7 @@ mod drop_tests {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
-    people: Option<(u64, std::sync::Arc<Vec<(String, usize)>>)>,
+    people: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
@@ -837,7 +838,7 @@ impl Caches {
         }
     }
     /// The people named on faces, with photo counts.
-    pub fn people(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<(String, usize)>> {
+    pub fn people(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::Person>> {
         match &self.people {
             Some((r, t)) if *r == cat.revision => t.clone(),
             _ => {

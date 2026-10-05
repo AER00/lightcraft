@@ -323,14 +323,16 @@ fn people_from_named_face_regions() {
     );
     let b =
         add("b.jpg", vec![region(Some("JANE DOE"), RegionKind::Face), region(Some("John Roe"), RegionKind::Face), region(None, RegionKind::Face)]);
-    let d = add("d.jpg", vec![region(Some("John Roe"), RegionKind::Face)]);
+    let big = Rect { x0: 0.2, y0: 0.2, x1: 0.8, y1: 0.8 };
+    let d = add("d.jpg", vec![Region { rect: big, ..region(Some("John Roe"), RegionKind::Face) }]);
     let e = add("e.jpg", vec![region(Some("Sam"), RegionKind::Face)]);
     add("f.jpg", vec![]);
-    assert_eq!(
-        c.people(),
-        vec![("Jane Doe".to_string(), 2), ("John Roe".to_string(), 2), ("Sam".to_string(), 1)],
-        "once per photo, pets and unnamed faces left out"
-    );
+    let people = c.people();
+    let summary: Vec<(&str, usize)> = people.iter().map(|p| (p.name.as_str(), p.count)).collect();
+    assert_eq!(summary, vec![("Jane Doe", 2), ("John Roe", 2), ("Sam", 1)], "once per photo, pets and unnamed faces left out");
+    // the picture is the person's largest face; ties go to the lower photo id
+    assert_eq!((people[0].photo, people[0].face), (a, Rect { x0: 0.4, y0: 0.4, x1: 0.6, y1: 0.6 }));
+    assert_eq!((people[1].photo, people[1].face), (d, big), "the larger face wins over an earlier, smaller one");
 
     let q = |f: Filter| c.query(&f, &Sort::default());
     assert_eq!(q(Filter { person: Some("jane doe".into()), ..Default::default() }).len(), 2);
