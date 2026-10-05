@@ -21,13 +21,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 <!-- parity:summary -->
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
-| A. Import (IMP) | 11 | 2 | 1 | 1 | 3/4 (75%) | 5/5 (100%) |
+| A. Import (IMP) | 11 | 3 | 1 | 1 | 3/5 (60%) | 5/5 (100%) |
 | B. Library management (LIB) | 22 | 1 | 2 | 2 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 16 | 0 | 1 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 11 | 0 | 2 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
 | F. Edit panel — global adjustments (EDIT) | 42 | 1 | 5 | 1 | 28/28 (100%) | 13/14 (93%) |
-| G. Profiles (PROF) | 6 | 1 | 3 | 0 | 3/3 (100%) | 2/3 (67%) |
+| G. Profiles (PROF) | 6 | 2 | 3 | 0 | 3/4 (75%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 7 | 1 | 2 | 2 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
@@ -44,23 +44,37 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 15 | 1 | 2 | 1 | 8/8 (100%) | 6/6 (100%) |
+| X. Cross-cutting behaviours (BEHAV) | 15 | 2 | 2 | 1 | 8/8 (100%) | 6/7 (86%) |
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 30 | 9 | 40 | 9 | — | 20/21 (95%) |
-| **Total** | 386 | 25 | 91 | 37 | 194/198 (98%) | 138/146 (95%) |
+| **Total** | 386 | 28 | 91 | 37 | 194/200 (97%) | 138/147 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.4%** of 502 in-scope rows — P0 99.0% of 198 · P1 96.2% of 146 · P2 39.2% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.2%** of 505 in-scope rows — P0 98.5% of 200 · P1 95.9% of 147 · P2 39.2% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
 
-Ordered by tier, then user value, then (low) effort. Take the first one nobody is working on.
+Ordered by user impact, then tier, then effort. The checklist above counts features that *exist*; these are the gaps
+that decide whether a photographer can switch (see the honest assessment in [ROADMAP.md](../ROADMAP.md#where-we-stand)).
+Take the first one nobody is working on.
 
-1. **LR-IMP-FORMATS** (P0) — CR3, compressed RAF/ORF, RW2 v4, Nikon "lossy after split" NEF (preview only today:
-    such photos are marked `preview_only` and the UI says they are edited from the camera's embedded JPEG); HEIC/AVIF
-    decode (no permissive pure-Rust decoder yet). High value, high effort (clean sources needed).
-2. **LR-EDIT-OPTICS-PROFILE** (P1) — a lens-profile database of our own (embedded DNG/maker corrections work today).
+1. **LR-PROF-CAMERACOLOR** (P0): our own camera colour calibration. Every non-DNG raw is developed with a neutral
+   matrix today, so colours are muted. Start by fitting each camera to its own embedded JPEG and using matrices the
+   files carry themselves; never Adobe data.
+2. **LR-IMP-FORMATS** (P0): **CR3** first (every Canon body since ~2018), then compressed RAF / ORF, RW2 v4, Nikon
+   "lossy after split" NEF, Canon sRAW; HEIC/AVIF decode. Clean-room, from prose descriptions only (see
+   `crates/raw/src/vendor/nefc.rs` for how compressed NEF was done). Until decoded, such photos are `preview_only`.
+3. **LR-IMP-CAMERA-COVERAGE** (P0): per-model verification; grow the CC0 corpus and fix per-model bugs (like the CR2
+   colour-filter layout, fixed in #85 by reading the file's own tag).
+4. **LR-BEHAV-RENDER-FIDELITY** (P1): a side-by-side fidelity suite against Lightroom renders (kept local in `plan/`),
+   then tune tone, highlights, texture/clarity/dehaze, NR and sharpening against it.
+5. **LR-EDIT-OPTICS-PROFILE** (P1): a lens-profile database of our own (embedded DNG/maker corrections work today).
+6. **AI masks and Enhance** (LR-MASK-SUBJECT / SKY / PEOPLE / OBJECTS, LR-EDIT-DETAIL-DENOISE, SUPERRES, LENSBLUR):
+   blocked on a model strategy (permissively licensed weights or our own training, pure-Rust inference). A maintainer
+   decision, not just engineering.
+7. **HDR** (Q. HDR, LR-EXP-HDR), **video** (R. Video), **Classic output modules** (Map view, Book, Slideshow module,
+   Print, publish): large, well understood, lower priority than 1–5.
 
 ## Shortcuts: conflicts and missing bindings
 
@@ -111,6 +125,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-IMP-LOCAL | Work on files in place | P0 | ✅ | `cmd:library.browse`, `cmd:photo.addToLibrary`, `cmd:library.import` (mode add), `cmd:local.addRoot`, `cmd:local.hide`, `cmd:local.restoreHidden`, `crates/engine/src/cmd/browse.rs`, `crates/ui-egui/src/panels/left.rs` (`local_section`), `crates/ui-egui/src/panels/grid.rs` (`folder_header`) | Local: browse Pictures / Desktop / Downloads / Home or any folder without adding it (breadcrumb, Include subfolders, Add N to My Photos); browsed photos stay out of All Photos, albums and counts; folders picked with Browse Folder… (or Keep in Local / Add to Local on a folder row) stay listed across restarts, and browsing a folder inside a listed one highlights it inside that tree (opened down to it, siblings reachable) instead of adding a root; edits go to XMP sidecars; importing promotes them; right-click a top-level location → Remove from Local hides the shortcut only (nothing on disk or in the catalog changes), saved with the UI state, and “Show N hidden locations” (or Browse Folder… on it) brings it back; a folder is one location however its path is spelled (`/` or `\`, trailing separator, `.`/`..`, drive-letter case; `folder_key` in `crates/catalog/src/query.rs`); browsed photos nobody changed are forgotten once their folder has not been browsed for 30 days (Settings → Performance → Local folders, 0 = never; checked when the library opens, or `cmd:library.forgetLocal` with `dryRun`; files and sidecars stay, browsing again brings them back; see `crates/catalog/src/local.rs` for what counts as a change) |
 | LR-IMP-SIDECAR-SPLIT | Separate XMP sidecar variants | P2 | ⬜ | `cmd:library.xmpPreferences` | sidecar naming option exists (stem/full), no split sidecars |
 | LR-IMP-FORMATS | Supported formats | P0 | 🟡 | `crates/codecs/src/lib.rs`, `crates/raw/src/lib.rs` | JPEG, PNG, TIFF, WebP, JXL, PSD, GIF, BMP; DNG (incl. lossy / Smart Preview DNG), CR2 (colour-filter layout from the file's `CR2CFAPattern` tag, issue #85), ARW, NEF (uncompressed, lossless and lossy compressed 12/14-bit, `crates/raw/src/vendor/nefc.rs`), RAF, RW2, PEF, ORF. Missing: CR3, compressed RAF/ORF, RW2 v4, NEF "lossy after split" (preview only: imported with `preview_only` = the decoder's reason, rendered as a rendered JPEG, flagged by a grid badge and loupe/Edit/Info notices, `previewOnly` in `catalog.query`; Reload clears it once the file decodes), HEIC/AVIF decode |
+| LR-IMP-CAMERA-COVERAGE | Camera coverage, verified per model | P0 | 🟡 | `crates/raw/tests/corpus.rs`, `xtask/src/main.rs` | a supported container is not the same as every camera that writes it decoding correctly: ~40 CC0 corpus files (plus ~60 NEFs checked by hand) against the >1,000 models Lightroom lists; per-model differences still surface (e.g. the CR2 colour-filter layout differed by model until it was read from the file's own tag, issue #85, checked on 35 CR2 bodies). Grow the CC0 corpus per model and test each sample decodes with plausible colour |
 | LR-IMP-CULL-AT-IMPORT | Culling analysis at import | P2 | 🟡 | `cmd:photo.analyze` | run Assisted Culling on the imported photos (they're selected after an import); not automatic |
 | LR-IMP-MOVE | Move on import [Classic] | P1 | ✅ | `cmd:library.import` (`mode` move), `crates/engine/src/import_move.rs`, `crates/engine/src/tests_import_move.rs`, `crates/ui-egui/src/import.rs` | Transfer ▸ Move with Copy's destination, folders (day / month / one folder / custom template), rename template and example destination; XMP sidecars (both namings) move along; each source is removed only after its destination is written (hard link on the same volume, else copied, synced and compared byte for byte) and its catalog record is saved; failed, duplicate, unchecked files keep their sources, taken names get -1, -2…, never overwritten; files already in the destination/library are added in place; sources that can't be removed (read-only card) are kept and reported (`kept`). Undo removes the photos from the library but leaves the moved files at the destination. No Copy as DNG while moving |
 | LR-IMP-DNG-CONVERT | Convert to DNG on import [Classic] | P2 | ✅ | `cmd:library.import` (`dng`), `crates/ui-egui/src/import.rs` | copy imports: Raw files ▸ Copy as DNG (lossless; the card is untouched) |
@@ -261,6 +276,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-PROF-ADOBE | Standard raw looks (own equivalents) | P0 | ✅ | `crates/engine/src/presets.rs` (`PROFILES`), `crates/pipeline/src/profiles.rs` | six own looks: Color, Neutral, Vivid, Landscape, Portrait, Monochrome |
 | LR-PROF-ADAPTIVE | Adaptive profiles | P2 | ⬜ | | |
 | LR-PROF-CAMERA | Camera-matching looks | P2 | ⬜ | | |
+| LR-PROF-CAMERACOLOR | Camera colour calibration (own) | P0 | 🟡 | `crates/raw/src/color.rs` | DNG files use the colour matrices they carry; every other raw uses a neutral fallback (camera RGB ≈ linear sRGB, `matrix_is_fallback`) with as-shot white balance, so colours are muted and not accurate. Needs our own per-camera calibration: matrices the files carry themselves (e.g. Olympus `ColorMatrix`), fitting each camera to its own embedded JPEG, then chart shots. Adobe matrices / DCPs are never used. Biggest image-quality gap today |
 | LR-PROF-CREATIVE | Creative profiles (own) | P2 | ✅ | `cmd:develop.profile`, `crates/pipeline/src/profiles.rs` | 16 own looks in Film / Cinematic / Muted / B&W (tone + point-curve fades, colour grading, mixer / B&W mix); scale with `ctl:profile.amount`; sliders untouched |
 | LR-PROF-LEGACY | Legacy profiles | P2 | ⬜ | | |
 | LR-PROF-NONRAW | Profiles for non-raw files | P0 | ✅ | `cmd:develop.profile` | same looks apply to JPEG/TIFF |
@@ -481,6 +497,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-BG-TASKS | Background tasks | P0 | ✅ | `crates/preview/src/lib.rs` (`JobPool`), `crates/ui-egui/src/export_task.rs`, `crates/ui-egui/src/import.rs` | renders off the UI thread; exports started from the UI run on a worker thread with a progress panel and Cancel (`ui.inspect` → `export`); imports show a progress window. No combined activity centre |
 | LR-BEHAV-OFFLINE | Offline editing | P1 | ✅ | | local-first: everything works offline |
 | LR-BEHAV-GPU | GPU acceleration | P0 | ✅ | `crates/gpu/src/render.rs`, `cmd:app.gpu`, `docs/gpu-pipeline.md` | CPU fallback per render on device limits, out of memory, device errors / loss, incomplete or black results (`perf.gpuReason`, `perf.gpuFallback`); short submissions for slow iGPUs; no tiling beyond the buffer limit (CPU) |
+| LR-BEHAV-RENDER-FIDELITY | Rendering matches Lightroom | P1 | 🟡 | `crates/pipeline/src/lib.rs`, `crates/pipeline/src/tone.rs` | every slider exists and works, but the character of the result (tone curve shape, highlight recovery, texture / clarity / dehaze, noise reduction, sharpening, default look) is tuned by eye; there is no systematic side-by-side comparison against Lightroom on the same CC0 raws. Needs a fidelity suite: Lightroom reference renders kept only in the local `plan/` (never committed), compared per slider and preset with a perceptual metric |
 | LR-BEHAV-DRAGDROP | Drag and drop | P1 | ✅ | `crates/ui-egui/src/lib.rs`, `crates/ui-egui/src/panels/grid.rs` (`drag_feedback`), `crates/ui-egui/src/panels/left.rs` (`drop_target`) | files → app (import); grid photos → an album row (adds the selection, with a count badge while dragging) |
 | LR-BEHAV-TOAST | Toast notifications | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` | |
 | LR-BEHAV-PANEL-RESIZE | Resizable side panels | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`resizable_side`), `crates/ui-egui/src/state.rs` (`LEFT_WIDTH`, `RIGHT_WIDTH`), `crates/ui-egui/src/tests_panels.rs` | drag the left sidebar's right edge (200–480 pt) or the right panel's left edge (250–520 pt); the photo area keeps ≥ 360 pt; widths are kept across panels, views and restarts (`leftWidth` / `rightWidth` in the UI state); the Presets column stays fixed |
