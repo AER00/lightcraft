@@ -173,6 +173,51 @@ fn foreign_crs_sidecar_on_import_and_read_from_file() {
     let _ = std::fs::remove_dir_all(&src);
 }
 
+const MWG_REGIONS: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:mwg-rs="http://www.metadataworkinggroup.com/schemas/regions/"
+    xmlns:stArea="http://ns.adobe.com/xmp/sType/Area#"
+    xmlns:stDim="http://ns.adobe.com/xap/1.0/sType/Dimensions#">
+   <mwg-rs:Regions>
+    <rdf:Description>
+     <mwg-rs:AppliedToDimensions stDim:w="100" stDim:h="100" stDim:unit="pixel"/>
+     <mwg-rs:RegionList>
+      <rdf:Bag>
+       <rdf:li>
+        <rdf:Description mwg-rs:Name="Jane Doe" mwg-rs:Type="Face">
+         <mwg-rs:Area stArea:x="0.5" stArea:y="0.5" stArea:w="0.3" stArea:h="0.4" stArea:unit="normalized"/>
+        </rdf:Description>
+       </rdf:li>
+      </rdf:Bag>
+     </mwg-rs:RegionList>
+    </rdf:Description>
+   </mwg-rs:Regions>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"#;
+
+/// A face region written by Lightroom (MWG-RS) into a sidecar reaches `Photo.meta.regions` on
+/// import — the same path real catalogs use, exercised end to end rather than just at the parser.
+#[test]
+fn regions_from_sidecar_are_read_on_import() {
+    let src = temp_dir("regions");
+    write_png(&src.join("portrait.png"), 9);
+    std::fs::write(src.join("portrait.xmp"), MWG_REGIONS).unwrap();
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(r["sidecars"], 1);
+    let p = s.catalog.photos().next().unwrap().clone();
+    assert_eq!(p.meta.regions.len(), 1);
+    let region = &p.meta.regions[0];
+    assert_eq!(region.name.as_deref(), Some("Jane Doe"));
+    assert_eq!(region.kind, lightcraft_meta::RegionKind::Face);
+    assert!((region.rect.width() - 0.3).abs() < 1e-9, "{:?}", region.rect);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
 fn synthetic_dng(xmp: &str) -> Vec<u8> {
     synthetic_dng_with(Some(xmp), lightcraft_meta::Metadata::default())
 }

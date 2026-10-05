@@ -333,6 +333,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let map = CanvasMap::new(&frame, img_rect);
     let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
     info_overlay(app, &p, canvas, &photo);
+    region_overlay(&p, &map, &photo);
     // a fine grid while a transform (geometry) slider is dragged, to judge verticals
     if app.ui.dragging_control.as_deref().is_some_and(|c| c.starts_with("geometry.")) {
         let n = 12;
@@ -418,6 +419,28 @@ fn info_overlay(app: &LightcraftApp, p: &egui::Painter, canvas: Rect, photo: &li
         y += g.size().y + 3.0;
     }
     register(p.ctx(), "canvas:infoOverlay", Rect::from_min_max(canvas.min, pos2(canvas.left() + 320.0, y)));
+}
+
+/// Face/pet/focus regions read from XMP (MWG-RS), drawn as boxes over the photo. Read-only —
+/// LightCraft doesn't write regions yet.
+fn region_overlay(p: &egui::Painter, map: &CanvasMap, photo: &lightcraft_catalog::Photo) {
+    use lightcraft_meta::RegionKind;
+    let t = Tokens::get(p.ctx());
+    for r in &photo.meta.regions {
+        let color = match r.kind {
+            RegionKind::Face => Color32::from_rgb(255, 214, 10),
+            RegionKind::Pet => Color32::from_rgb(120, 220, 120),
+            RegionKind::Focus | RegionKind::BarCode | RegionKind::Other(_) => Color32::from_white_alpha(140),
+        };
+        let rect = Rect::from_two_pos(map.screen(Point::new(r.rect.x0, r.rect.y0)), map.screen(Point::new(r.rect.x1, r.rect.y1)));
+        p.rect_stroke(rect, 2.0, Stroke::new(1.5, color), StrokeKind::Outside);
+        if let Some(name) = &r.name {
+            let g = p.layout_no_wrap(name.clone(), t.font(12.0), color);
+            let at = pos2(rect.left(), rect.top() - g.size().y - 2.0);
+            p.galley(at + vec2(1.0, 1.0), g.clone(), Color32::from_black_alpha(200));
+            p.galley(at, g, color);
+        }
+    }
 }
 
 /// A raw shown from its embedded JPEG (issue #10): a pill at the canvas' top centre saying so;

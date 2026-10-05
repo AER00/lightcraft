@@ -183,6 +183,9 @@ pub struct Meta {
     pub copyright_url: String,
     pub creator: String,
     pub keywords: Vec<String>,
+    /// Face/pet/focus regions read from XMP (MWG-RS). Read-only today; nothing in
+    /// LightCraft writes regions yet.
+    pub regions: Vec<lightcraft_meta::Region>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

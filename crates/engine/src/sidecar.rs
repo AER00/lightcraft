@@ -99,6 +99,7 @@ pub struct SidecarData {
     pub alt_text: Option<String>,
     pub extended_description: Option<String>,
     pub keywords: Option<Vec<String>>,
+    pub regions: Option<Vec<lightcraft_meta::Region>>,
     /// Capture time (ISO 8601) from `exif:DateTimeOriginal`, `photoshop:DateCreated` or
     /// `xmp:CreateDate` (first found). Used only when the file itself has no capture time.
     pub captured: Option<String>,
@@ -133,6 +134,7 @@ pub fn parse_sidecar(xmp: &str, raw: bool) -> std::result::Result<SidecarData, S
         alt_text: m.alt_text.clone(),
         extended_description: m.extended_description.clone(),
         keywords: (!m.keywords.is_empty()).then(|| m.keywords.clone()),
+        regions: (!m.regions.is_empty()).then(|| m.regions.clone()),
         captured: m.capture_time.map(|d| d.to_iso()),
         ..Default::default()
     };
@@ -201,6 +203,9 @@ pub fn merge_into(p: &mut Photo, sc: &SidecarData, now: &str) -> bool {
     }
     if let Some(k) = &sc.keywords {
         m.keywords = k.clone();
+    }
+    if let Some(r) = &sc.regions {
+        m.regions = r.clone();
     }
     let develop = match &sc.develop {
         Some(DevelopPatch::Full(s)) => (**s).clone(),
