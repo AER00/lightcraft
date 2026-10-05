@@ -275,37 +275,47 @@ fn module_source(m: &Module, consts: &str) -> String {
 }
 
 impl Gpu {
-    /// Create a device on the best available adapter (no software fallback), or `None`.
-    pub fn new() -> Option<Gpu> {
+    /// Create a device on the best available adapter (no software fallback), or why there is none.
+    pub fn new() -> Result<Gpu, String> {
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
         desc.backends = wgpu::Backends::PRIMARY;
         let instance = wgpu::Instance::new(desc);
         let adapter = pollster::block_on(
             instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() }),
         )
-        .ok()?;
+        .map_err(|e| format!("no GPU adapter ({e})"))?;
         let info = adapter.get_info();
         if info.device_type == wgpu::DeviceType::Cpu {
             log::info!("gpu: only a software adapter ({}), using the CPU pipeline", info.name);
-            return None;
+            return Err(format!("software adapter ({}) skipped: the CPU pipeline is faster", info.name));
         }
-        let limits = adapter.limits();
+        let mut limits = adapter.limits();
         if limits.max_storage_buffers_per_shader_stage < 10 {
             log::info!("gpu: {} has too few storage buffers per stage", info.name);
-            return None;
+            return Err(format!("{} has too few storage buffers per shader stage ({} < 10)", info.name, limits.max_storage_buffers_per_shader_stage));
+        }
+        if let Some((binding, buffer)) = limits_override() {
+            limits.max_storage_buffer_binding_size = limits.max_storage_buffer_binding_size.min(binding);
+            limits.max_buffer_size = limits.max_buffer_size.min(buffer);
+            log::info!("gpu: LIGHTCRAFT_GPU_LIMITS: storage bindings ≤ {} MiB, buffers ≤ {} MiB", binding >> 20, buffer >> 20);
         }
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("lightcraft"),
             required_limits: limits.clone(),
             ..Default::default()
         }))
-        .ok()?;
-        // Errors outside an error scope (e.g. out of memory during a render): log, and stop using
-        // the GPU (the render in flight is redone on the CPU).
+        .map_err(|e| format!("{}: device creation failed ({e})", info.name))?;
+        // Errors outside a render's error scopes (see `ErrorScopes`): log, and stop using the GPU.
         device.on_uncaptured_error(std::sync::Arc::new(|e| {
             log::error!("gpu: {e}");
-            crate::mark_broken();
+            crate::mark_broken(&format!("device error: {e}"));
         }));
+        // wgpu reports a lost device (driver reset, GPU hang, watchdog) only here — never as an
+        // error — so without this callback a lost device went unnoticed.
+        device.set_device_lost_callback(|reason, msg| {
+            log::error!("gpu: device lost ({reason:?}): {msg}");
+            crate::mark_broken(&format!("device lost ({reason:?}): {msg}"));
+        });
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let consts = constants();
         let mut kernels = HashMap::new();
@@ -334,7 +344,7 @@ impl Gpu {
         }
         if let Some(e) = pollster::block_on(scope.pop()) {
             log::error!("gpu: kernels failed to build on {}: {e}", info.name);
-            return None;
+            return Err(format!("{}: kernels failed to build ({e})", info.name));
         }
         let dummy = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("dummy"),
@@ -343,13 +353,20 @@ impl Gpu {
             mapped_at_creation: false,
         });
         let max_buffer = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);
-        log::info!("gpu: {} ({:?})", info.name, info.backend);
-        Some(Gpu { device, queue, info, kernels, dummy, free: Default::default(), max_buffer })
+        log::info!("gpu: {} ({:?}), buffers ≤ {} MiB", info.name, info.backend, max_buffer >> 20);
+        Ok(Gpu { device, queue, info, kernels, dummy, free: Default::default(), max_buffer })
     }
 
     /// A buffer of `len` 32-bit values with undefined contents (a recycled one when possible).
+    ///
+    /// A buffer over the device limit fails the render ([`FailKind::Limit`]) instead of raising a
+    /// validation error: the caller gets a placeholder and the render is redone on the CPU.
     pub fn buffer(&self, len: usize) -> Buf {
         let size = (len.max(1) * 4) as u64;
+        if size > self.limit() {
+            self.over_limit(size);
+            return Buf { buf: Some(Tracked::new(self.placeholder())), len };
+        }
         let recycled = {
             let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
             // the smallest pooled buffer that holds `size` with at most 25 % to spare: photos of
@@ -426,6 +443,10 @@ impl Gpu {
         if bytes.is_empty() {
             return self.buffer(1);
         }
+        if bytes.len() as u64 > self.limit() {
+            self.over_limit(bytes.len() as u64);
+            return Buf { buf: Some(Tracked::new(self.placeholder())), len };
+        }
         let buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: bytes,
@@ -434,9 +455,32 @@ impl Gpu {
         Buf { buf: Some(Tracked::new(buf)), len }
     }
 
+    fn over_limit(&self, size: u64) {
+        fail(
+            FailKind::Limit,
+            format!("a {} MiB buffer exceeds the device's {} MiB storage-buffer limit", size.div_ceil(1 << 20), self.limit() >> 20),
+        );
+    }
+
+    /// Stands in for a buffer that could not be created (the render has failed already).
+    fn placeholder(&self) -> wgpu::Buffer {
+        self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("placeholder"),
+            size: 16,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
     /// Whether a buffer of `len` 32-bit values fits the device limits.
     pub fn fits(&self, len: usize) -> bool {
-        (len as u64) * 4 <= self.max_buffer
+        (len as u64) * 4 <= self.limit()
+    }
+
+    /// Largest buffer a render may use (bytes): the device limit, or a lower one set for the
+    /// render on this thread ([`LimitOverride`]).
+    pub fn limit(&self) -> u64 {
+        LIMIT.try_with(|l| l.get()).ok().flatten().map_or(self.max_buffer, |l| l.min(self.max_buffer))
     }
 
     pub fn encoder(&self) -> wgpu::CommandEncoder {
@@ -445,10 +489,12 @@ impl Gpu {
 
     /// Record kernel `name` with parameters `p` over buffers `bufs` (None = unused binding).
     pub fn run(&self, enc: &mut wgpu::CommandEncoder, name: &str, p: &[u32], bufs: &[Option<&Buf>], groups: [u32; 3]) {
+        if failed() {
+            return; // the render is redone on the CPU: don't spend the GPU on it
+        }
         let Some(k) = self.kernels.get(name) else {
             // a kernel name typo: fail this render over to the CPU instead of crashing
-            log::error!("gpu: unknown kernel {name}");
-            crate::mark_broken();
+            fail(FailKind::Fatal, format!("unknown kernel {name}"));
             return;
         };
         assert_eq!(bufs.len(), k.nbuf, "{name}: binding count");
@@ -470,8 +516,16 @@ impl Gpu {
     }
 
     /// Submit `enc`, then read back the first `len` 32-bit values of `src`.
+    ///
+    /// A failed readback (device lost, map error, timeout) fails the render ([`FailKind::Fatal`])
+    /// and returns zeros, which the caller discards; after an earlier failure in the same render
+    /// nothing more is submitted.
     pub fn finish_and_read<T: bytemuck::Pod>(&self, mut enc: wgpu::CommandEncoder, src: &Buf, len: usize) -> Vec<T> {
         assert!(len <= src.len, "readback of {len} values from a buffer of {}", src.len);
+        let zeros = || vec![<T as bytemuck::Zeroable>::zeroed(); len];
+        if failed() {
+            return zeros();
+        }
         let size = (len * 4) as u64;
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
@@ -486,17 +540,20 @@ impl Gpu {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        // A failed readback (device lost, out of memory) marks the GPU broken: the caller
-        // (`crate::render`) then discards this render's zeroed result and renders on the CPU.
         let failed = |why: String| {
-            log::error!("gpu readback failed: {why}");
-            crate::mark_broken();
-            vec![<T as bytemuck::Zeroable>::zeroed(); len]
+            fail(FailKind::Fatal, format!("readback failed: {why}"));
+            zeros()
         };
-        match rx.recv() {
+        // A lost device makes the wait fail and the map callback never run: checking both keeps
+        // this from blocking forever (or handing back an unwritten buffer as the image).
+        if let Err(e) = self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(READBACK_TIMEOUT) }) {
+            return failed(format!("{e}"));
+        }
+        // another thread's poll may be the one that runs the callback: allow it a moment
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
             Ok(Ok(())) => {}
-            other => return failed(format!("{other:?}")),
+            Ok(Err(e)) => return failed(format!("{e}")),
+            Err(e) => return failed(format!("map callback: {e}")),
         }
         let data = match slice.get_mapped_range() {
             Ok(d) => d,
@@ -506,6 +563,127 @@ impl Gpu {
         drop(data);
         staging.unmap();
         out
+    }
+}
+
+/// Longest wait for a render's GPU work: beyond it the render fails over to the CPU (drivers
+/// normally reset a hung GPU much sooner).
+const READBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// `LIGHTCRAFT_GPU_LIMITS`: lower the device limits, e.g. to reproduce a smaller adapter.
+/// `webgpu` / `downlevel` = 128 MiB storage bindings and 256 MiB buffers (the WebGPU defaults),
+/// `<n>` = n MiB storage bindings and 2n MiB buffers. Returns (binding bytes, buffer bytes).
+fn limits_override() -> Option<(u64, u64)> {
+    parse_limits(&std::env::var("LIGHTCRAFT_GPU_LIMITS").ok()?)
+}
+
+fn parse_limits(v: &str) -> Option<(u64, u64)> {
+    let v = v.trim().to_ascii_lowercase();
+    match v.as_str() {
+        "" => None,
+        "webgpu" | "downlevel" | "default" => {
+            let d = wgpu::Limits::default();
+            Some((d.max_storage_buffer_binding_size, d.max_buffer_size))
+        }
+        n => {
+            let mb: u64 = n.trim_end_matches("mib").trim_end_matches("mb").trim().parse().ok()?;
+            let b = mb.max(1) << 20;
+            Some((b, 2 * b))
+        }
+    }
+}
+
+/// How a GPU render failed (it is then redone on the CPU).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FailKind {
+    /// A buffer over the device limits: this render only.
+    Limit,
+    /// The device ran out of memory: this render only (the buffer pool is emptied).
+    OutOfMemory,
+    /// The image came back entirely black: redone on the CPU in case the GPU dropped work.
+    Blank,
+    /// Device error or loss, readback failure, incomplete image: the GPU is not used again.
+    Fatal,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Failure {
+    pub kind: FailKind,
+    pub reason: String,
+}
+
+thread_local! {
+    /// A lower buffer limit for the render on this thread (fault injection in tests).
+    static LIMIT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Lowers [`Gpu::limit`] on this thread while it lives.
+pub(crate) struct LimitOverride;
+
+impl LimitOverride {
+    pub fn new(bytes: u64) -> LimitOverride {
+        LIMIT.with(|l| l.set(Some(bytes)));
+        LimitOverride
+    }
+}
+
+impl Drop for LimitOverride {
+    fn drop(&mut self) {
+        let _ = LIMIT.try_with(|l| l.set(None));
+    }
+}
+
+thread_local! {
+    /// The first failure of the render running on this thread.
+    static FAILURE: std::cell::RefCell<Option<Failure>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Record a failure of the render running on this thread (the first one is kept).
+pub(crate) fn fail(kind: FailKind, reason: String) {
+    let _ = FAILURE.try_with(|f| {
+        let mut f = f.borrow_mut();
+        if f.is_none() {
+            *f = Some(Failure { kind, reason });
+        }
+    });
+}
+
+/// Has the render on this thread failed?
+pub(crate) fn failed() -> bool {
+    FAILURE.try_with(|f| f.borrow().is_some()).unwrap_or(false)
+}
+
+/// The render's failure, clearing it.
+pub(crate) fn take_failure() -> Option<Failure> {
+    FAILURE.try_with(|f| f.borrow_mut().take()).ok().flatten()
+}
+
+/// wgpu error scopes around a render: out-of-memory, validation and internal errors raised by
+/// this thread's calls are captured (instead of reaching the uncaptured-error handler) and fail
+/// the render.
+pub(crate) struct ErrorScopes([wgpu::ErrorScopeGuard; 3]);
+
+impl ErrorScopes {
+    pub fn push(g: &Gpu) -> ErrorScopes {
+        ErrorScopes([
+            g.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory),
+            g.device.push_error_scope(wgpu::ErrorFilter::Validation),
+            g.device.push_error_scope(wgpu::ErrorFilter::Internal),
+        ])
+    }
+
+    /// Pop the scopes: the most telling error captured (out of memory first — an allocation
+    /// failure makes later commands invalid too — then internal, then validation).
+    pub fn pop(self) -> Option<Failure> {
+        let [oom, validation, internal] = self.0;
+        // scopes pop in reverse order of their creation
+        let internal = pollster::block_on(internal.pop());
+        let validation = pollster::block_on(validation.pop());
+        let oom = pollster::block_on(oom.pop());
+        if let Some(e) = oom {
+            return Some(Failure { kind: FailKind::OutOfMemory, reason: format!("out of device memory: {e}") });
+        }
+        internal.or(validation).map(|e| Failure { kind: FailKind::Fatal, reason: format!("device error: {e}") })
     }
 }
 
@@ -528,4 +706,24 @@ pub fn groups1(n: usize) -> [u32; 3] {
     let g = n.div_ceil(256).max(1);
     let x = g.min(32768);
     [x as u32, g.div_ceil(x) as u32, 1]
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn limits_override_parses() {
+        assert_eq!(super::parse_limits("webgpu"), Some((128 << 20, 256 << 20)));
+        assert_eq!(super::parse_limits(" Downlevel "), Some((128 << 20, 256 << 20)));
+        assert_eq!(super::parse_limits("64"), Some((64 << 20, 128 << 20)));
+        assert_eq!(super::parse_limits("512MiB"), Some((512 << 20, 1024 << 20)));
+        assert_eq!(super::parse_limits(""), None);
+        assert_eq!(super::parse_limits("lots"), None);
+    }
+
+    #[test]
+    fn dispatches_stay_within_the_workgroup_limit() {
+        // 1-D kernels over a 100 MP image and 2-D ones over 16k × 16k stay under 65535 per axis
+        assert!(super::groups1(100_000_000 * 3).iter().all(|g| *g <= 65535));
+        assert!(super::groups2(16384, 16384, [16, 16]).iter().all(|g| *g <= 65535));
+    }
 }

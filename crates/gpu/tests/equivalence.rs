@@ -65,6 +65,32 @@ fn typical(s: &mut DevelopSettings) {
     s.detail.sharpen_amount = 40.0;
 }
 
+/// A render big enough for the per-pixel stage to run in several bands of rows (and the render
+/// in many submissions), with grain (position-dependent) and masks.
+#[test]
+fn banded_full_size_render_matches() {
+    if !gpu() {
+        return;
+    }
+    let (w, h) = (3000, 2000);
+    let src = scene(3, w, h);
+    let mut s = DevelopSettings::default();
+    typical(&mut s);
+    s.grain.amount = 30.0;
+    s.vignette.amount = -30.0;
+    s.masks = vec![Mask {
+        components: vec![MaskComponent {
+            name: None,
+            op: MaskOp::Add,
+            invert: false,
+            shape: MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.9) },
+        }],
+        adjust: lightcraft_develop::LocalAdjustments { exposure: -0.6, ..Default::default() },
+        ..Default::default()
+    }];
+    check("banded 3000×2000", &src, &SourceInfo { raw: true, ..Default::default() }, &s, &RenderRequest::fit(w, h));
+}
+
 fn cases() -> Vec<(&'static str, Edit)> {
     vec![
         ("default", |_| {}),

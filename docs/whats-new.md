@@ -9,6 +9,14 @@
   with a counterpart here come along, the rest is listed.
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
+### Reliability
+- Exports are never black because of the GPU (issue #78): a GPU render that runs out of device
+  memory, exceeds the GPU's buffer limits, hits a driver error or reset, or comes back
+  incomplete is redone on the CPU — the file is the same image either way. Work is sent to the GPU
+  in short pieces so slow integrated GPUs aren't reset by their watchdog. `ui.inspect` → `perf`
+  (`gpuReason`, `gpuFallback`), Help ▸ System Info and Settings ▸ Performance say why the GPU isn't
+  used (e.g. a skipped software adapter such as llvmpipe) and why the last render fell back.
+
 ### Library
 - Smart albums with a rule editor: match all / any / none, nested groups, 26 fields.
 - Quick Collection and target album (B in the grid), keyword sets (⌥1–⌥9), colour-label sets.

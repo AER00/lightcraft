@@ -186,11 +186,17 @@ pub fn specs() -> Vec<CommandSpec> {
                 "versions": ph.versions.iter().map(|v| json!({"name": v.name, "created": v.created})).collect::<Vec<_>>(),
             }))
         }),
-        cmd!(query "app.gpu", "GPU Rendering", [], None, "{enabled?: bool} — allow/forbid GPU rendering (CPU fallback; LIGHTCRAFT_GPU=0 forbids it for the process)", always, |_, p| {
+        cmd!(query "app.gpu", "GPU Rendering", [], None, "{enabled?: bool} — allow/forbid GPU rendering (CPU fallback; LIGHTCRAFT_GPU=0 forbids it for the process); returns {enabled, available, adapter, reason (why the GPU is off), lastFallback (latest render redone on the CPU, and why)}", always, |_, p| {
             if let Some(on) = p.get("enabled").and_then(Value::as_bool) {
                 lightcraft_gpu::set_enabled(on);
             }
-            Ok(json!({"enabled": lightcraft_gpu::enabled(), "available": lightcraft_gpu::available(), "adapter": lightcraft_gpu::adapter_name()}))
+            Ok(json!({
+                "enabled": lightcraft_gpu::enabled(),
+                "available": lightcraft_gpu::available(),
+                "adapter": lightcraft_gpu::adapter_name(),
+                "reason": lightcraft_gpu::unavailable_reason(),
+                "lastFallback": lightcraft_gpu::last_fallback(),
+            }))
         }),
         cmd!(query "library.memory", "Memory Usage", [], None, "{} — bytes held by each cache (decoded sources, rendered previews, GPU buffers; heap when instrumented)", always, |s, _| {
             Ok(serde_json::to_value(s.memory_report()).unwrap_or_default())

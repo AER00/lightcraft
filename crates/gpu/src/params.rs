@@ -71,6 +71,8 @@ const FIELDS: &[(&str, usize)] = &[
     ("OUT_Y", 3),
     ("OUT_TRC", 1),
     ("OUT_GAMMA", 1),
+    // first row of a band dispatch (the kernel runs over rows Y0.., see `render`)
+    ("Y0", 1),
 ];
 
 /// `(name, index)` of every field (for the WGSL constants).
@@ -87,7 +89,7 @@ pub fn finish_fields() -> Vec<(&'static str, usize)> {
 }
 
 /// Offset of field `name`; `None` (and a debug assertion) for a name not in [`FIELDS`].
-fn index(name: &str) -> Option<usize> {
+pub fn index(name: &str) -> Option<usize> {
     let mut i = 0;
     for (n, len) in FIELDS {
         if *n == name {
