@@ -24,6 +24,9 @@
 - A change that can't be saved to disk (full or unplugged drive) is no longer silent: the command reports
   "saved in memory but not written to disk", the top bar shows a warning, and LightCraft keeps retrying until the
   save goes through.
+- Smaller, faster catalogs: photos you only looked at in Local (never added, rated or edited) are forgotten once
+  their folder has not been browsed for 30 days — your files and sidecars stay, and browsing the folder shows them
+  again. Change the period (or turn it off) in Settings → Performance.
 
 ### Editing
 - Auto Sync: edits apply to every selected photo. Auto B&W mix. Automatic versions.

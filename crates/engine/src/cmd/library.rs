@@ -870,6 +870,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 // changes applied in memory whose write failed (retried by every save)
                 "unsavedOps": s.unsaved().map_or(0, |u| u.0),
                 "unsavedError": s.unsaved().map(|u| u.1),
+                // untouched Local records forgotten when the library opened
+                "forgotLocal": lib.forgot_local.as_ref().map(|p| json!({"forgotten": p.evict.len(), "local": p.local, "keptRecent": p.kept_recent, "keptTouched": p.kept_touched, "keptInUse": p.kept_in_use})),
                 "persistence": j.stats(),
                 "cache": cache,
                 "load": {
