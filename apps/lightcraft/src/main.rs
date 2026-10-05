@@ -202,7 +202,9 @@ impl PrefsWriter {
 
 fn services() -> Services {
     Services {
-        pick_folder: Some(Box::new(|| rfd::FileDialog::new().set_title("Open Library").pick_folder().map(|p| p.to_string_lossy().to_string()))),
+        pick_folder: Some(Box::new(|| {
+            rfd::FileDialog::new().set_title(lightcraft_ui_egui::i18n::tr("Open Library")).pick_folder().map(|p| p.to_string_lossy().to_string())
+        })),
         open_with: Some(Box::new(|path: &str, app: &str| {
             // spawned, never waited for: the editor runs alongside
             let app = app.trim();
@@ -254,7 +256,7 @@ fn services() -> Services {
         pick_files: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .add_filter(
-                    "Photos",
+                    lightcraft_ui_egui::i18n::tr("Photos"),
                     &[
                         "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "cr3", "nef", "nrw", "arw", "raf", "orf", "rw2", "pef", "psd",
                         "jxl", "gif", "bmp",
@@ -268,8 +270,11 @@ fn services() -> Services {
         })),
         pick_preset_files: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .set_title("Import Presets")
-                .add_filter("Presets & Profiles", &["lcpreset", "xmp", "lrtemplate", "zip", "dng", "lmp", "mplumpack", "cube"])
+                .set_title(lightcraft_ui_egui::i18n::tr("Import Presets"))
+                .add_filter(
+                    lightcraft_ui_egui::i18n::tr("Presets & Profiles"),
+                    &["lcpreset", "xmp", "lrtemplate", "zip", "dng", "lmp", "mplumpack", "cube"],
+                )
                 .pick_files()
                 .unwrap_or_default()
                 .into_iter()
@@ -278,24 +283,24 @@ fn services() -> Services {
         })),
         pick_tracklog: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .set_title("Auto-Tag from Tracklog")
-                .add_filter("GPS Track Log", &["gpx"])
+                .set_title(lightcraft_ui_egui::i18n::tr("Auto-Tag from Tracklog"))
+                .add_filter(lightcraft_ui_egui::i18n::tr("GPS Track Log"), &["gpx"])
                 .pick_file()
                 .map(|p| vec![p.to_string_lossy().to_string()])
                 .unwrap_or_default()
         })),
         save_preset_file: Some(Box::new(|name: &str| {
             rfd::FileDialog::new()
-                .set_title("Export Presets")
-                .add_filter("LightCraft Preset", &["lcpreset"])
+                .set_title(lightcraft_ui_egui::i18n::tr("Export Presets"))
+                .add_filter(lightcraft_ui_egui::i18n::tr("LightCraft Preset"), &["lcpreset"])
                 .set_file_name(name)
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
         pick_curve_preset_files: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .set_title("Import Point Curve Presets")
-                .add_filter("Point Curve Presets", &["lccurve", "json"])
+                .set_title(lightcraft_ui_egui::i18n::tr("Import Point Curve Presets"))
+                .add_filter(lightcraft_ui_egui::i18n::tr("Point Curve Presets"), &["lccurve", "json"])
                 .pick_files()
                 .unwrap_or_default()
                 .into_iter()
@@ -304,8 +309,8 @@ fn services() -> Services {
         })),
         save_curve_preset_file: Some(Box::new(|name: &str| {
             rfd::FileDialog::new()
-                .set_title("Export Point Curve Presets")
-                .add_filter("Point Curve Presets", &["lccurve"])
+                .set_title(lightcraft_ui_egui::i18n::tr("Export Point Curve Presets"))
+                .add_filter(lightcraft_ui_egui::i18n::tr("Point Curve Presets"), &["lccurve"])
                 .set_file_name(name)
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
@@ -434,6 +439,7 @@ fn main() -> eframe::Result {
             if let Some(ui) = prefs {
                 app.ui = ui;
             }
+            lightcraft_ui_egui::i18n::set_language(app.ui.language);
             app.integrated_titlebar = cfg!(target_os = "macos");
             app.notices.extend(prefs_warning);
             // what's on disk now: only changes are written
