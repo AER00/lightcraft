@@ -1007,5 +1007,15 @@
   "Side panels": "サイドパネル",
   "Text direction": "文字の方向",
   "Horizontal text": "横書き",
-  "Vertical text": "縦書き"
+  "Vertical text": "縦書き",
+  "Your library couldn't be opened": "ライブラリを開けませんでした",
+  "LightCraft couldn't find where to keep your library.": "ライブラリの保存場所が見つかりませんでした。",
+  "LightCraft couldn't open the library at": "次の場所にあるライブラリを開けませんでした：",
+  "Try Again": "再試行",
+  "Choose Another Library…": "別のライブラリを選択…",
+  "Continue Without Saving": "保存せずに続行",
+  "Quit": "終了",
+  "Temporary session — your library isn't open, and nothing you do here is saved.": "一時セッション：ライブラリが開かれていないため、ここでの操作は保存されません。",
+  "Back Up Library…": "ライブラリをバックアップ…",
+  "Restore Library from Backup…": "バックアップからライブラリを復元…"
 }
