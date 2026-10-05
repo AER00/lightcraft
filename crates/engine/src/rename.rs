@@ -313,6 +313,12 @@ pub(crate) trait MoveFs {
     fn same_file(&self, a: &Path, b: &Path) -> bool;
     /// Rename `a` to `b`, failing (never replacing) when `b` exists.
     fn rename_no_replace(&self, a: &Path, b: &Path) -> std::io::Result<()>;
+    /// Copy `a` to a new file `b` (an independent copy, never a link), failing when `b` exists.
+    fn copy_no_replace(&self, a: &Path, b: &Path) -> std::io::Result<()>;
+    fn remove_file(&self, p: &Path) -> std::io::Result<()>;
+    /// Another photo file beside the stem-named sidecar `sidecar` that shares its stem (e.g.
+    /// `IMG_1.JPG` for `IMG_1.xmp`), which still uses that sidecar.
+    fn stem_sibling(&self, sidecar: &Path) -> Option<String>;
 }
 
 /// The real file system.
@@ -366,6 +372,23 @@ impl MoveFs for RealFs {
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
             Err(_) => std::fs::rename(a, b),
         }
+    }
+
+    fn copy_no_replace(&self, a: &Path, b: &Path) -> std::io::Result<()> {
+        use std::io::Write;
+        let bytes = std::fs::read(a)?;
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(b)?;
+        f.write_all(&bytes).and_then(|_| f.sync_all()).inspect_err(|_| {
+            let _ = std::fs::remove_file(b);
+        })
+    }
+
+    fn remove_file(&self, p: &Path) -> std::io::Result<()> {
+        std::fs::remove_file(p)
+    }
+
+    fn stem_sibling(&self, sidecar: &Path) -> Option<String> {
+        crate::import_move::sibling_photo(sidecar)
     }
 }
 
@@ -427,7 +450,8 @@ pub(crate) fn move_file_with(fs: &dyn MoveFs, from: &str, to: &str) -> std::resu
         return Err(fail(format!("{to} already exists")));
     }
     move_one(fs, f, t).map_err(|e| fail(format!("rename {from}: {e}")))?;
-    let mut done: Vec<(PathBuf, PathBuf)> = Vec::new(); // sidecars moved
+    // sidecars moved (or copied: `true`)
+    let mut done: Vec<(PathBuf, PathBuf, bool)> = Vec::new();
     for (sc, naming, upper) in sidecars(from) {
         if !fs.is_file(&sc) {
             continue;
@@ -436,28 +460,35 @@ pub(crate) fn move_file_with(fs: &dyn MoveFs, from: &str, to: &str) -> std::resu
         if upper {
             dst = dst.with_extension("XMP");
         }
-        if fs.exists(&dst) && !is_respelling(fs, &sc, &dst) {
+        // a stem sidecar another file still uses (`IMG_1.xmp` of `IMG_1.CR3` and `IMG_1.JPG`)
+        // is copied, not taken away from it (issue #92)
+        let shared = naming == SidecarNaming::Stem && fs.stem_sibling(&sc).is_some();
+        if fs.exists(&dst) && (shared || !is_respelling(fs, &sc, &dst)) {
             continue; // never overwrite: the old sidecar stays where it was
         }
-        if let Err(e) = move_one(fs, &sc, &dst) {
+        let r = if shared { fs.copy_no_replace(&sc, &dst) } else { move_one(fs, &sc, &dst) };
+        if let Err(e) = r {
             let mut message = format!("rename {}: {e}", sc.display());
             // the file first: if it can't go back, the sidecars that moved stay with it
             if let Err(e) = move_one(fs, t, f) {
                 message.push_str(&format!("; {from} could not be moved back ({e}): it is now {to}"));
                 if !done.is_empty() {
-                    let names: Vec<String> = done.iter().map(|(_, b)| b.display().to_string()).collect();
+                    let names: Vec<String> = done.iter().map(|(_, b, _)| b.display().to_string()).collect();
                     message.push_str(&format!(" with its sidecar {}", names.join(", ")));
                 }
                 return Err(MoveError { message, moved: true });
             }
-            for (a, b) in done.iter().rev() {
-                if let Err(e) = move_one(fs, b, a) {
+            for (a, b, copied) in done.iter().rev() {
+                if *copied {
+                    // the original is still there: the copy just goes (a leftover copy loses nothing)
+                    let _ = fs.remove_file(b);
+                } else if let Err(e) = move_one(fs, b, a) {
                     message.push_str(&format!("; sidecar {} could not be moved back ({e}): it is now {}", a.display(), b.display()));
                 }
             }
             return Err(fail(message));
         }
-        done.push((sc, dst));
+        done.push((sc, dst, shared));
     }
     Ok(())
 }
@@ -747,6 +778,27 @@ mod tests {
             self.files.borrow_mut()[i].0 = b.to_string_lossy().to_string();
             Ok(())
         }
+        fn copy_no_replace(&self, a: &Path, b: &Path) -> std::io::Result<()> {
+            if self.exists(b) {
+                return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "exists"));
+            }
+            let i = self.idx(a).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no such file"))?;
+            let c = self.files.borrow()[i].1.clone();
+            self.files.borrow_mut().push((b.to_string_lossy().to_string(), c));
+            Ok(())
+        }
+        fn remove_file(&self, p: &Path) -> std::io::Result<()> {
+            let i = self.idx(p).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no such file"))?;
+            self.files.borrow_mut().remove(i);
+            Ok(())
+        }
+        fn stem_sibling(&self, sidecar: &Path) -> Option<String> {
+            let stem = sidecar.with_extension("").to_string_lossy().to_string();
+            self.files.borrow().iter().map(|(f, _)| f.clone()).find(|f| {
+                let p = Path::new(f);
+                p.with_extension("").to_string_lossy() == stem && !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("xmp"))
+            })
+        }
     }
 
     fn file_photo(id: u64, path: &str) -> Photo {
@@ -847,6 +899,34 @@ mod tests {
         assert!(!e.moved);
         assert_eq!(fs.listing().len(), 3);
         assert!(fs.listing().iter().all(|(p, _)| p.starts_with("/p/d.")));
+    }
+
+    /// Issue #92 (comment): renaming one of `IMG_1.CR3` + `IMG_1.JPG` copies their shared
+    /// `IMG_1.xmp` instead of taking it away from the other; the last one renamed takes it.
+    #[test]
+    fn shared_stem_sidecar_is_copied_not_taken() {
+        let fs = FakeFs::new(false, &[("/p/IMG_1.CR3", "raw"), ("/p/IMG_1.JPG", "jpg"), ("/p/IMG_1.xmp", "shared"), ("/p/IMG_1.CR3.xmp", "own")]);
+        move_file_with(&fs, "/p/IMG_1.CR3", "/p/Trip_1.CR3").unwrap();
+        assert_eq!(
+            fs.listing(),
+            vec![
+                ("/p/IMG_1.JPG".into(), "jpg".into()),
+                ("/p/IMG_1.xmp".into(), "shared".into()),
+                ("/p/Trip_1.CR3".into(), "raw".into()),
+                ("/p/Trip_1.CR3.xmp".into(), "own".into()),
+                ("/p/Trip_1.xmp".into(), "shared".into()),
+            ]
+        );
+        // the JPEG is the last one using it: it moves
+        move_file_with(&fs, "/p/IMG_1.JPG", "/p/Trip_2.JPG").unwrap();
+        assert!(fs.listing().contains(&("/p/Trip_2.xmp".into(), "shared".into())));
+        assert!(!fs.exists(Path::new("/p/IMG_1.xmp")));
+        // a failure after the copy removes the copy and keeps the original
+        let fs = FakeFs::new(false, &[("/p/A.CR3", "raw"), ("/p/A.JPG", "jpg"), ("/p/A.xmp", "shared"), ("/p/A.CR3.xmp", "own")]);
+        fs.fail.borrow_mut().push("A.CR3.xmp".into());
+        assert!(move_file_with(&fs, "/p/A.CR3", "/p/B.CR3").is_err());
+        assert_eq!(fs.listing().len(), 4);
+        assert!(fs.listing().contains(&("/p/A.xmp".into(), "shared".into())) && !fs.exists(Path::new("/p/B.xmp")));
     }
 
     /// Issue #95 on the real disk, whichever kind of volume the temp folder is on.
