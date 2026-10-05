@@ -102,7 +102,7 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
     let dir = s.media.smart_dir.clone().ok_or_else(|| bad(C, "smart previews need a library on disk"))?;
     let discard = p.get("discard").and_then(Value::as_bool).unwrap_or(false);
     let ids = if p.get("ids").is_some() || !s.selection.ids.is_empty() { s.targets(p) } else { s.visible_cloned() };
-    let (mut built, mut removed, mut failed) = (0usize, 0usize, Vec::new());
+    let (mut built, mut repaired, mut removed, mut failed) = (0usize, 0usize, 0usize, Vec::new());
     if !discard {
         // a chosen folder on another drive must be there: never recreate it on this one
         if s.smart_previews_dir.is_some() {
@@ -123,20 +123,27 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
             }
             continue;
         }
-        if path.exists() {
+        // a complete proxy is kept; a missing or damaged one (cut short by a crash or a full
+        // drive) is (re)built
+        let damaged = path.exists();
+        if damaged && crate::smart::is_valid(&path) {
             built += 1;
             continue;
         }
+        // atomic: a failed write leaves no partial proxy that would pass for a built one
         let r = s
             .source_now(id, crate::media::SourceLevel::Preview)
             .and_then(|src| crate::smart::encode(&src))
-            .and_then(|b| std::fs::write(&path, b).map_err(|e| e.to_string()));
+            .and_then(|b| lightcraft_catalog::safe_file::write_atomic(&path, &b).map_err(|e| format!("{}: {e}", path.display())));
         match r {
-            Ok(()) => built += 1,
+            Ok(()) => {
+                built += 1;
+                repaired += usize::from(damaged);
+            }
             Err(e) => failed.push(json!([id.0, e])),
         }
     }
-    Ok(json!({"built": built, "removed": removed, "failed": failed}))
+    Ok(json!({"built": built, "repaired": repaired, "removed": removed, "failed": failed}))
 }
 
 /// The smart previews folder: where it is, whether it is custom, what it holds, whether it can be
@@ -205,7 +212,7 @@ fn smart_location(s: &mut Session, p: &Value) -> Result<Value> {
 /// Whether photo `id` has a smart preview.
 pub fn has_smart_preview(s: &Session, id: lightcraft_catalog::PhotoId) -> bool {
     match (&s.media.smart_dir, s.catalog.photo(id)) {
-        (Some(dir), Some(p)) => dir.join(crate::smart::file_name(p)).exists(),
+        (Some(dir), Some(p)) => crate::smart::is_valid(&dir.join(crate::smart::file_name(p))),
         _ => false,
     }
 }
@@ -218,7 +225,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Build Smart Previews",
             [],
             None,
-            "{ids?, discard?: bool} — build (or discard) the smart previews of the selected photos (else all in view): compact proxies in the library that keep photos editable and exportable (at proxy size) while their originals are offline → {built, removed, failed}",
+            "{ids?, discard?: bool} — build (or discard) the smart previews of the selected photos (else all in view): compact proxies in the library that keep photos editable and exportable (at proxy size) while their originals are offline; a damaged proxy (cut short) is rebuilt → {built, repaired, removed, failed}",
             always,
             smart
         ),

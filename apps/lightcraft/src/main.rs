@@ -7,7 +7,9 @@
 //! `~/Pictures/LightCraft Library`; a new library starts with the
 //! procedural demo photos unless `--no-demo` or files are given. Files and folders on the command
 //! line are imported (duplicates are skipped). `--memory` runs an in-memory session that writes
-//! nothing (demo photos unless files are given; used by the README showcase scripts).
+//! nothing (demo photos unless files are given; used by the README showcase scripts). A library
+//! that can't be opened is never replaced silently: the window says why and asks what to do
+//! (`lightcraft_ui_egui::panels::library_problem`).
 //!
 //! `--control <port>` (or `LIGHTCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
 //! `{"id":1,"method":"ui.inspect","params":{}}` → `{"id":1,"ok":true,"result":…}`.
@@ -26,6 +28,7 @@ mod control_server;
 mod native_menu;
 
 use lightcraft_engine::Session;
+use lightcraft_ui_egui::panels::library_problem::LibraryProblem;
 use lightcraft_ui_egui::{LightcraftApp, Services, UiState};
 
 /// Reverse-DNS app id: Wayland app id, `.desktop` file and hicolor icon name.
@@ -307,33 +310,28 @@ fn services() -> Services {
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
-        write_shared: Some(std::sync::Arc::new(|p: &str, b: &[u8]| {
-            if let Some(dir) = std::path::Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {
-                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-            }
-            std::fs::write(p, b).map_err(|e| e.to_string())
-        })),
-        write: Some(Box::new(|p: &str, b: &[u8]| {
-            if let Some(dir) = std::path::Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()) {
-                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-            }
-            std::fs::write(p, b).map_err(|e| e.to_string())
-        })),
+        // atomic (temp file + sync + rename): a failed write never leaves a truncated file
+        write_shared: Some(std::sync::Arc::new(lightcraft_engine::export::write_file)),
+        write: Some(Box::new(lightcraft_engine::export::write_file)),
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),
     }
 }
 
-/// The persistent library session (or an in-memory one with `--memory` / if the library can't open).
-fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: bool) -> Session {
-    let fallback = || if seed_demo { Session::with_demo() } else { Session::new() }.with_fs().with_system_clock();
+/// The persistent library session, or with `--memory` an in-memory one (demo photos).
+///
+/// If the library can't be opened the session is empty and in memory — never seeded with the
+/// demo photos, never written anywhere — and the problem is returned: the window then says so
+/// and offers Try Again / Choose Another Library… / Continue Without Saving / Quit (issue #100).
+fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: bool) -> (Session, Option<LibraryProblem>) {
     if in_memory {
-        return fallback();
+        return (if seed_demo { Session::with_demo() } else { Session::new() }.with_fs().with_system_clock(), None);
     }
+    let unopened = || Session::new().with_fs().with_system_clock();
     let Some(dir) = dir else {
-        eprintln!("lightcraft: no library location (set --library or LIGHTCRAFT_LIBRARY); running in memory");
-        return fallback();
+        eprintln!("lightcraft: no library location (set --library or LIGHTCRAFT_LIBRARY)");
+        return (unopened(), Some(LibraryProblem::new("", "There is no home folder to keep the library in. Choose a folder for it.")));
     };
     let t0 = std::time::Instant::now();
     let mut s = Session::new().with_fs().with_system_clock();
@@ -347,11 +345,11 @@ fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: boo
                 if torn > 0 { ", torn tail repaired" } else { "" },
                 t0.elapsed().as_secs_f64() * 1000.0
             );
-            s
+            (s, None)
         }
         Err(e) => {
-            eprintln!("lightcraft: can't open library {}: {e}; running in memory", dir.display());
-            fallback()
+            eprintln!("lightcraft: can't open library {}: {e}", dir.display());
+            (unopened(), Some(LibraryProblem::new(dir.to_string_lossy(), e.to_string())))
         }
     }
 }
@@ -428,7 +426,7 @@ fn main() -> eframe::Result {
         "LightCraft",
         options,
         Box::new(move |cc| {
-            let session = open_session(in_memory, library_dir, seed_demo && files.is_empty());
+            let (session, problem) = open_session(in_memory, library_dir, seed_demo && files.is_empty());
             let mut app = LightcraftApp::new(session, services());
             if let Some(ui) = prefs {
                 app.ui = ui;
@@ -446,7 +444,11 @@ fn main() -> eframe::Result {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);
             }
-            if !files.is_empty() {
+            if let Some(mut p) = problem {
+                // imported once the user has chosen where (into the library, or the temporary session)
+                p.pending_import = files;
+                app.library_problem = Some(p);
+            } else if !files.is_empty() {
                 let _ = app.run("library.import", serde_json::json!({"paths": files}));
                 app.ui.view = lightcraft_ui_egui::state::ViewMode::PhotoGrid;
             }

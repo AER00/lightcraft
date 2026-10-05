@@ -29,6 +29,8 @@ mod tests_curve;
 #[cfg(test)]
 mod tests_grid;
 #[cfg(test)]
+mod tests_library_problem;
+#[cfg(test)]
 mod tests_masking;
 #[cfg(test)]
 mod tests_panels;
@@ -178,6 +180,9 @@ pub struct LightcraftApp {
     gpu_applied: Option<bool>,
     /// The memory budget setting last applied (MB, 0 = automatic).
     memory_applied: Option<u32>,
+    /// The library failed to open at launch: the blocking window, then the temporary-session
+    /// banner (issue #100). Cleared once a library opens.
+    pub library_problem: Option<panels::library_problem::LibraryProblem>,
 }
 
 impl LightcraftApp {
@@ -224,6 +229,7 @@ impl LightcraftApp {
             window_is_fullscreen: false,
             gpu_applied: None,
             memory_applied: None,
+            library_problem: None,
         }
     }
 
@@ -451,6 +457,7 @@ impl LightcraftApp {
     /// Per-frame logic before layout (control channel, renders, shortcuts, drops).
     pub fn logic(&mut self, ctx: &egui::Context) {
         let t0 = now_ms();
+        panels::library_problem::logic(self);
         self.logic_inner(ctx);
         self.perf.logic_ms = now_ms() - t0;
     }
@@ -619,6 +626,7 @@ impl LightcraftApp {
             panels::second::show(self, &ctx);
             panels::notices::show(self, &ctx);
             panels::dialogs::show(self, &ctx);
+            panels::library_problem::show(self, &ctx);
             panels::toast(self, &ctx);
             self.widgets = widgets::take_registry(&ctx);
             self.end_frame(t0);
@@ -627,6 +635,7 @@ impl LightcraftApp {
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
         // right panels and left panel run to the bottom; the bottom bar sits between them).
         panels::topbar::show(self, ui);
+        panels::library_problem::banner(self, ui);
         panels::strip::show(self, ui);
         if self.ui.right != state::RightPanel::None {
             panels::right::show(self, ui);
@@ -655,6 +664,7 @@ impl LightcraftApp {
         panels::second::show(self, &ctx);
         panels::notices::show(self, &ctx);
         panels::dialogs::show(self, &ctx);
+        panels::library_problem::show(self, &ctx);
         import::progress(self, &ctx);
         import::scan_progress(self, &ctx);
         export_task::poll(self, &ctx);
