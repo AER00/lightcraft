@@ -211,7 +211,7 @@ impl NativeMenu {
         // the application menu
         let app_menu = Submenu::new("LightCraft", true);
         let about = MenuItem::with_id("app.about", "About LightCraft", true, None);
-        let settings = MenuItem::with_id(SETTINGS, "Settings…", true, accelerator(SETTINGS_KEY));
+        let settings = MenuItem::with_id(SETTINGS, app.ui.language.tr("Settings…"), true, accelerator(SETTINGS_KEY));
         let quit = MenuItem::with_id(QUIT, "Quit LightCraft", true, accelerator("Cmd+Q"));
         let _ = app_menu.append_items(&[
             &about,
@@ -230,7 +230,7 @@ impl NativeMenu {
 
         for (title, nodes) in &bar {
             let sub = Submenu::new(title, true);
-            if title == "Window" {
+            if title == app.ui.language.tr("Window") {
                 let _ = sub.append_items(&[
                     &PredefinedMenuItem::minimize(None),
                     &PredefinedMenuItem::maximize(Some("Zoom")),
@@ -245,15 +245,15 @@ impl NativeMenu {
                 .collect();
             let nodes = tidy_separators(nodes);
             self.append_nodes(&sub, &nodes);
-            if title == "File" {
+            if title == app.ui.language.tr("File") {
                 // ⌘W, the system's own item
                 let _ = sub.append_items(&[&PredefinedMenuItem::separator(), &PredefinedMenuItem::close_window(None)]);
             }
-            if title == "Window" {
+            if title == app.ui.language.tr("Window") {
                 let _ = sub.append_items(&[&PredefinedMenuItem::separator(), &PredefinedMenuItem::bring_all_to_front(None)]);
                 sub.set_as_windows_menu_for_nsapp();
             }
-            if title == "Help" {
+            if title == app.ui.language.tr("Help") {
                 sub.set_as_help_menu_for_nsapp();
             }
             let _ = self.menu.append(&sub);

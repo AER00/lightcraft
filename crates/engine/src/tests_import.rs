@@ -391,6 +391,44 @@ fn smart_previews_stand_in_for_offline_originals() {
     let _ = std::fs::remove_dir_all(&lib);
 }
 
+/// Issue #106: a smart preview cut short (crash, full drive) counted as built forever and failed
+/// exactly when the original went offline. Writes are atomic now, and a damaged proxy is not
+/// reported as present and is rebuilt.
+#[test]
+fn damaged_smart_previews_are_rebuilt_and_failed_writes_leave_none() {
+    let src = temp_dir("smartdmg-src");
+    let lib = temp_dir("smartdmg-lib");
+    write_png(&src.join("a.png"), 5);
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    s.execute("library.import", &json!({"paths": [src.join("a.png").to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    let dir = s.media.smart_dir.clone().unwrap();
+    let file = dir.join(crate::smart::file_name(s.catalog.photo(id).unwrap()));
+    {
+        let _fault = lightcraft_catalog::safe_file::fail_writes_after(64);
+        let r = s.execute("library.smartPreviews", &json!({})).unwrap();
+        assert_eq!((r["built"].as_u64(), r["failed"].as_array().map(Vec::len)), (Some(0), Some(1)), "{r}");
+    }
+    assert!(!file.exists(), "no partial proxy");
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "no temp file left");
+    assert_eq!(s.execute("photo.smartPreview", &json!({})).unwrap()["smartPreview"], false);
+
+    let r = s.execute("library.smartPreviews", &json!({})).unwrap();
+    assert_eq!((r["built"].as_u64(), r["repaired"].as_u64()), (Some(1), Some(0)), "{r}");
+    assert!(crate::smart::is_valid(&file));
+    // cut short, as by a crash before the fix
+    let full = std::fs::read(&file).unwrap();
+    std::fs::write(&file, &full[..full.len() / 2]).unwrap();
+    assert!(!crate::smart::is_valid(&file));
+    assert_eq!(s.execute("photo.smartPreview", &json!({})).unwrap()["smartPreview"], false, "not counted as there");
+    let r = s.execute("library.smartPreviews", &json!({})).unwrap();
+    assert_eq!((r["built"].as_u64(), r["repaired"].as_u64()), (Some(1), Some(1)), "{r}");
+    assert_eq!(std::fs::read(&file).unwrap(), full, "rebuilt whole");
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&lib);
+}
+
 /// LUT profiles: a .cube imports as a creative profile (into the library), renders differently
 /// (Amount 0 = no change), is listed in the profile browser and comes back with the library.
 #[test]
