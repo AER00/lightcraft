@@ -21,6 +21,9 @@
   used (e.g. a skipped software adapter such as llvmpipe) and why the last render fell back.
 
 ### Library
+- Rename Folder… and Move Folder To… (Local) can be undone and redone (issue #97): the folder moves back on disk with
+  its photos and XMP sidecars, and the photos point at it again. If something now occupies the old place, the undo
+  is refused and nothing is overwritten.
 - Smart albums with a rule editor: match all / any / none, nested groups, 26 fields.
 - Quick Collection and target album (B in the grid), keyword sets (⌥1–⌥9), colour-label sets.
 - Colour-label filter with several labels at once; expandable folder tree in Local.

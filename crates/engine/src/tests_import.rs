@@ -441,6 +441,70 @@ fn folders_rename_and_move_with_their_photos() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Rename / Move Folder are undo steps (issue #97): undo renames the folder back on disk (files and
+/// sidecars along) and restores the photos' paths, redo repeats it; a destination taken in the
+/// meantime is never overwritten — the step is refused, reported and stays on the stack.
+#[test]
+fn folder_rename_and_move_undo_and_redo_on_disk() {
+    let root = temp_dir("folders-undo");
+    let a = root.join("Trip");
+    write_png(&a.join("one.png"), 3);
+    std::fs::write(a.join("one.xmp"), "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>").unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [a.to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    let path = |s: &Session| match &s.catalog.photo(id).unwrap().source {
+        lightcraft_catalog::Source::File { path } => path.clone(),
+        _ => panic!(),
+    };
+    let undo0 = s.undo.len();
+    let b = root.join("Italy");
+    s.execute("folder.rename", &json!({"path": a.to_string_lossy(), "name": "Italy"})).unwrap();
+    assert_eq!(s.undo.len(), undo0 + 1, "one undo step");
+    assert!(s.undo.last().unwrap().label.contains("Rename Folder"));
+    assert!(b.join("one.png").exists() && !a.exists());
+
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(a.join("one.png").exists() && a.join("one.xmp").exists() && !b.exists(), "renamed back on disk");
+    assert_eq!(path(&s), a.join("one.png").to_string_lossy());
+    s.media.forget(id);
+    assert!(s.render_now(id, 16, 16).is_ok());
+
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert!(b.join("one.png").exists() && b.join("one.xmp").exists() && !a.exists());
+    assert_eq!(path(&s), b.join("one.png").to_string_lossy());
+
+    // the old name is taken now: undo is refused, nothing is overwritten, the step stays
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::write(a.join("keep.txt"), "mine").unwrap();
+    let undo_n = s.undo.len();
+    let e = s.execute("edit.undo", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("already exists"), "{e}");
+    assert_eq!(s.undo.len(), undo_n, "the step stays on the stack");
+    assert_eq!(std::fs::read_to_string(a.join("keep.txt")).unwrap(), "mine");
+    assert!(b.join("one.png").exists());
+    assert_eq!(path(&s), b.join("one.png").to_string_lossy());
+    std::fs::remove_dir_all(&a).unwrap();
+
+    // move into another folder, undo, redo
+    let into = root.join("Archive");
+    s.execute("folder.move", &json!({"path": b.to_string_lossy(), "into": into.to_string_lossy()})).unwrap();
+    let moved = into.join("Italy");
+    assert_eq!(path(&s), moved.join("one.png").to_string_lossy());
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(b.join("one.png").exists() && !moved.exists());
+    assert_eq!(path(&s), b.join("one.png").to_string_lossy());
+    // the redo target is taken (even by an empty folder): refused, nothing replaced
+    std::fs::create_dir_all(&moved).unwrap();
+    assert!(s.execute("edit.redo", &json!({})).is_err());
+    assert!(b.join("one.png").exists());
+    std::fs::remove_dir(&moved).unwrap();
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert!(moved.join("one.png").exists() && moved.join("one.xmp").exists() && !b.exists());
+    assert_eq!(path(&s), moved.join("one.png").to_string_lossy());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Assisted culling: a burst (same scene, seconds apart) of a sharp and two soft shots, plus an
 /// unrelated photo: the burst is grouped, the sharp one is its best, blurry shots can be rejected.
 #[test]

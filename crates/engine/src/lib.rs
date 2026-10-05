@@ -67,6 +67,22 @@ pub type Result<T> = std::result::Result<T, EngineError>;
 pub struct UndoEntry {
     pub label: String,
     pub op: Op,
+    /// A folder to rename on disk (`from` → `to`) before `op` is applied: Rename / Move Folder
+    /// (whose `op` relinks the photos inside). Never overwrites; refused when `to` exists.
+    pub folder: Option<FolderMove>,
+}
+
+/// A folder renamed or moved on disk as part of an undo step.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderMove {
+    pub from: String,
+    pub to: String,
+}
+
+impl FolderMove {
+    fn reversed(&self) -> Self {
+        Self { from: self.to.clone(), to: self.from.clone() }
+    }
 }
 
 /// An in-progress slider drag / brush stroke: one undo step when it ends.
@@ -301,11 +317,21 @@ impl Session {
         let fwd = op.clone();
         let inv = self.catalog.apply(op)?;
         self.pending_log.push(fwd);
-        self.undo.push(UndoEntry { label: label.to_string(), op: inv });
+        self.undo.push(UndoEntry { label: label.to_string(), op: inv, folder: None });
         if self.undo.len() > 1000 {
             self.undo.remove(0);
         }
         self.redo.clear();
+        Ok(())
+    }
+
+    /// [`Session::commit`] for an op that goes with a folder already renamed on disk; the undo
+    /// step renames it back (`folder` is the undo direction: current place → old place).
+    pub(crate) fn commit_with_folder(&mut self, label: &str, op: Op, folder: FolderMove) -> Result<()> {
+        self.commit(label, op)?;
+        if let Some(e) = self.undo.last_mut() {
+            e.folder = Some(folder);
+        }
         Ok(())
     }
 
@@ -339,9 +365,13 @@ impl Session {
         if n < 2 || n > self.undo.len() {
             return;
         }
+        // a step that moves a folder on disk stays on its own
+        if self.undo[self.undo.len() - n..].iter().any(|e| e.folder.is_some()) {
+            return;
+        }
         let tail = self.undo.split_off(self.undo.len() - n);
         let ops = tail.into_iter().rev().map(|e| e.op).collect();
-        self.undo.push(UndoEntry { label: label.to_string(), op: Op::Batch { ops } });
+        self.undo.push(UndoEntry { label: label.to_string(), op: Op::Batch { ops }, folder: None });
     }
 
     /// Apply without recording undo (interactive previews).
@@ -352,7 +382,7 @@ impl Session {
 
     pub fn undo_step(&mut self) -> Result<String> {
         let e = self.undo.pop().ok_or_else(|| EngineError::Other("nothing to undo".into()))?;
-        let redo = match self.apply_with_files(&e.op) {
+        let redo = match self.apply_with_files(&e.op, e.folder.as_ref()) {
             Ok(r) => r,
             Err(err) => {
                 self.undo.push(e);
@@ -360,13 +390,13 @@ impl Session {
             }
         };
         self.pending_log.push(e.op);
-        self.redo.push(UndoEntry { label: e.label.clone(), op: redo });
+        self.redo.push(UndoEntry { label: e.label.clone(), op: redo, folder: e.folder.as_ref().map(FolderMove::reversed) });
         Ok(e.label)
     }
 
     pub fn redo_step(&mut self) -> Result<String> {
         let e = self.redo.pop().ok_or_else(|| EngineError::Other("nothing to redo".into()))?;
-        let undo = match self.apply_with_files(&e.op) {
+        let undo = match self.apply_with_files(&e.op, e.folder.as_ref()) {
             Ok(r) => r,
             Err(err) => {
                 self.redo.push(e);
@@ -374,19 +404,37 @@ impl Session {
             }
         };
         self.pending_log.push(e.op);
-        self.undo.push(UndoEntry { label: e.label.clone(), op: undo });
+        self.undo.push(UndoEntry { label: e.label.clone(), op: undo, folder: e.folder.as_ref().map(FolderMove::reversed) });
         Ok(e.label)
     }
 
-    /// Apply an undo/redo op, first moving the files its renames imply (all or nothing).
-    fn apply_with_files(&mut self, op: &Op) -> Result<Op> {
+    /// Apply an undo/redo op, first renaming the step's folder and moving the files its renames
+    /// imply (all or nothing).
+    fn apply_with_files(&mut self, op: &Op, folder: Option<&FolderMove>) -> Result<Op> {
+        if let Some(f) = folder {
+            cmd::browse::rename_folder_on_disk(&f.from, &f.to).map_err(|e| EngineError::Other(format!("can't move the folder back: {e}")))?;
+        }
+        let undo_folder = || {
+            if let Some(f) = folder {
+                let _ = cmd::browse::rename_folder_on_disk(&f.to, &f.from);
+            }
+        };
         let moves = self.file_moves(op);
-        Session::move_files(&moves)?;
+        if let Err(e) = Session::move_files(&moves) {
+            undo_folder();
+            return Err(e);
+        }
         match self.catalog.apply(op.clone()) {
-            Ok(inv) => Ok(inv),
+            Ok(inv) => {
+                if let Some(f) = folder {
+                    cmd::browse::follow_folder(self, &f.from, &f.to);
+                }
+                Ok(inv)
+            }
             Err(e) => {
                 let back: Vec<(String, String)> = moves.iter().rev().map(|(a, b)| (b.clone(), a.clone())).collect();
                 let _ = Session::move_files(&back);
+                undo_folder();
                 Err(e.into())
             }
         }
