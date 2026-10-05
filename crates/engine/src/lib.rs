@@ -379,15 +379,22 @@ impl Session {
         Ok(e.label)
     }
 
-    /// Apply an undo/redo op, first moving the files its renames imply (all or nothing).
+    /// Apply an undo/redo op, first moving the files its renames imply (all or nothing). Files
+    /// that can't be moved back after a failure are reported and the library follows them (a
+    /// logged change outside the undo history), so none goes missing.
     fn apply_with_files(&mut self, op: &Op) -> Result<Op> {
+        let fs = rename::RealFs;
         let moves = self.file_moves(op);
-        Session::move_files(&moves)?;
+        if let Err(e) = rename::move_all(&fs, &moves) {
+            return Err(EngineError::Other(format!("can't move the files back: {}", self.follow_stuck(op, e, false))));
+        }
         match self.catalog.apply(op.clone()) {
             Ok(inv) => Ok(inv),
             Err(e) => {
                 let back: Vec<(String, String)> = moves.iter().rev().map(|(a, b)| (b.clone(), a.clone())).collect();
-                let _ = Session::move_files(&back);
+                if let Err(be) = rename::move_all(&fs, &back) {
+                    return Err(EngineError::Other(format!("{e}; the files could not all be moved back: {}", be.message)));
+                }
                 Err(e.into())
             }
         }

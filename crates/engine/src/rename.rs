@@ -386,31 +386,48 @@ fn move_one(fs: &dyn MoveFs, a: &Path, b: &Path) -> std::io::Result<()> {
         .find(|t| !fs.exists(t))
         .ok_or_else(|| std::io::Error::other("no free temporary name"))?;
     fs.rename_no_replace(a, &tmp)?;
-    fs.rename_no_replace(&tmp, b).inspect_err(|_| {
-        let _ = fs.rename_no_replace(&tmp, a);
+    fs.rename_no_replace(&tmp, b).map_err(|e| match fs.rename_no_replace(&tmp, a) {
+        Ok(()) => e,
+        Err(e2) => std::io::Error::other(format!("{e}; it could not be given its old name back either ({e2}): it is now {}", tmp.display())),
     })
 }
 
-/// Move `from` to `to` (never over an existing file) together with its sidecars. On error nothing
-/// is left moved.
-pub fn move_file(from: &str, to: &str) -> std::result::Result<(), String> {
+/// Why [`move_file`] failed, and what it left behind.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MoveError {
+    /// What went wrong, including every step that could not be undone and where that file is now.
+    pub message: String,
+    /// The file itself ended up at the new path: it moved, a sidecar didn't, and moving the file
+    /// back failed too. Its sidecars that did move stay with it.
+    pub moved: bool,
+}
+
+impl std::fmt::Display for MoveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+/// Move `from` to `to` (never over an existing file) together with its sidecars. On error the
+/// moves are undone; whatever can't be undone is named in the error (see [`MoveError`]).
+pub fn move_file(from: &str, to: &str) -> std::result::Result<(), MoveError> {
     move_file_with(&RealFs, from, to)
 }
 
 /// [`move_file`] on the file system `fs`.
-pub(crate) fn move_file_with(fs: &dyn MoveFs, from: &str, to: &str) -> std::result::Result<(), String> {
+pub(crate) fn move_file_with(fs: &dyn MoveFs, from: &str, to: &str) -> std::result::Result<(), MoveError> {
     if from == to {
         return Ok(());
     }
+    let fail = |message: String| MoveError { message, moved: false };
     let (f, t) = (Path::new(from), Path::new(to));
     // `to` may be this very file spelled differently (case-insensitive volume); any other file
     // there — e.g. `img.jpg` next to `IMG.JPG` on a case-sensitive volume — is never replaced
     if fs.exists(t) && !is_respelling(fs, f, t) {
-        return Err(format!("{to} already exists"));
+        return Err(fail(format!("{to} already exists")));
     }
-    let mut done: Vec<(PathBuf, PathBuf)> = Vec::new();
-    move_one(fs, f, t).map_err(|e| format!("rename {from}: {e}"))?;
-    done.push((f.to_path_buf(), t.to_path_buf()));
+    move_one(fs, f, t).map_err(|e| fail(format!("rename {from}: {e}")))?;
+    let mut done: Vec<(PathBuf, PathBuf)> = Vec::new(); // sidecars moved
     for (sc, naming, upper) in sidecars(from) {
         if !fs.is_file(&sc) {
             continue;
@@ -423,14 +440,71 @@ pub(crate) fn move_file_with(fs: &dyn MoveFs, from: &str, to: &str) -> std::resu
             continue; // never overwrite: the old sidecar stays where it was
         }
         if let Err(e) = move_one(fs, &sc, &dst) {
-            for (a, b) in done.iter().rev() {
-                let _ = move_one(fs, b, a);
+            let mut message = format!("rename {}: {e}", sc.display());
+            // the file first: if it can't go back, the sidecars that moved stay with it
+            if let Err(e) = move_one(fs, t, f) {
+                message.push_str(&format!("; {from} could not be moved back ({e}): it is now {to}"));
+                if !done.is_empty() {
+                    let names: Vec<String> = done.iter().map(|(_, b)| b.display().to_string()).collect();
+                    message.push_str(&format!(" with its sidecar {}", names.join(", ")));
+                }
+                return Err(MoveError { message, moved: true });
             }
-            return Err(format!("rename {}: {e}", sc.display()));
+            for (a, b) in done.iter().rev() {
+                if let Err(e) = move_one(fs, b, a) {
+                    message.push_str(&format!("; sidecar {} could not be moved back ({e}): it is now {}", a.display(), b.display()));
+                }
+            }
+            return Err(fail(message));
         }
         done.push((sc, dst));
     }
     Ok(())
+}
+
+/// What a failed batch of moves ([`move_all`]) left behind.
+#[derive(Debug)]
+pub(crate) struct BatchMoveError {
+    /// The first failure and every move that could not be undone.
+    pub message: String,
+    /// Moves that stayed done, (from, to): those files are at `to` now.
+    pub stuck: Vec<(String, String)>,
+}
+
+/// Move the files `moves` names, all or nothing: after a failure the earlier moves are undone.
+/// Moves that can't be undone (e.g. the network share went away) are reported, not ignored.
+pub(crate) fn move_all(fs: &dyn MoveFs, moves: &[(String, String)]) -> std::result::Result<(), BatchMoveError> {
+    let mut done: Vec<&(String, String)> = Vec::new();
+    for m in moves {
+        let Err(e) = move_file_with(fs, &m.0, &m.1) else {
+            done.push(m);
+            continue;
+        };
+        let mut message = e.message;
+        let mut stuck = Vec::new();
+        if e.moved {
+            stuck.push(m.clone());
+        }
+        for d in done.iter().rev() {
+            if let Err(e) = move_file_with(fs, &d.1, &d.0) {
+                message.push_str(&format!("; {} could not be moved back to {}: {}", d.1, d.0, e.message));
+                if !e.moved {
+                    stuck.push((*d).clone());
+                }
+            }
+        }
+        return Err(BatchMoveError { message, stuck });
+    }
+    Ok(())
+}
+
+/// The `SetFile` ops in `op` (nested batches included) that point a photo at one of `to`.
+fn set_file_ops_to(op: &Op, to: &HashSet<&str>, out: &mut Vec<Op>) {
+    match op {
+        Op::Batch { ops } => ops.iter().for_each(|o| set_file_ops_to(o, to, out)),
+        Op::SetFile { source: Source::File { path }, .. } if to.contains(path.as_str()) => out.push(op.clone()),
+        _ => {}
+    }
 }
 
 impl Session {
@@ -509,21 +583,16 @@ impl Session {
 
     /// Carry out `plans`: move the files (rolled back on failure), then commit one undoable op
     /// that updates the photos (and their virtual copies).
+    ///
+    /// When a failure can't be fully rolled back, the files that kept their new names are
+    /// committed as a smaller undoable rename, so the library points at them (nothing goes
+    /// missing), and the error lists them (old → new).
     pub fn apply_rename(&mut self, plans: &[RenamePlan]) -> Result<usize> {
-        let mut moved: Vec<(String, String)> = Vec::new();
-        for pl in plans {
-            if let (Some(a), Some(b)) = (&pl.from_path, &pl.to_path)
-                && a != b
-            {
-                if let Err(e) = move_file(a, b) {
-                    for (a, b) in moved.iter().rev() {
-                        let _ = move_file(b, a);
-                    }
-                    return Err(EngineError::Other(e));
-                }
-                moved.push((a.clone(), b.clone()));
-            }
-        }
+        self.apply_rename_with(&RealFs, plans)
+    }
+
+    /// [`Session::apply_rename`] on the file system `fs`.
+    pub(crate) fn apply_rename_with(&mut self, fs: &dyn MoveFs, plans: &[RenamePlan]) -> Result<usize> {
         let mut ops = Vec::new();
         let by_path: HashMap<&str, &RenamePlan> = plans.iter().filter_map(|p| p.from_path.as_deref().map(|f| (f, p))).collect();
         for p in self.catalog.photos() {
@@ -541,15 +610,64 @@ impl Session {
             }
         }
         let n = ops.len();
+        let op = Op::Batch { ops };
+        let moves: Vec<(String, String)> = plans
+            .iter()
+            .filter_map(|pl| match (&pl.from_path, &pl.to_path) {
+                (Some(a), Some(b)) if a != b => Some((a.clone(), b.clone())),
+                _ => None,
+            })
+            .collect();
+        if let Err(e) = move_all(fs, &moves) {
+            return Err(EngineError::Other(self.follow_stuck(&op, e, true)));
+        }
         if n > 0
-            && let Err(e) = self.commit(&format!("Rename {n} Photo{}", if n == 1 { "" } else { "s" }), Op::Batch { ops })
+            && let Err(err) = self.commit(&format!("Rename {n} Photo{}", if n == 1 { "" } else { "s" }), op)
         {
-            for (a, b) in moved.iter().rev() {
-                let _ = move_file(b, a);
+            let back: Vec<(String, String)> = moves.iter().rev().map(|(a, b)| (b.clone(), a.clone())).collect();
+            if let Err(e) = move_all(fs, &back) {
+                return Err(EngineError::Other(format!("{err}; the renamed files could not all be moved back: {}", e.message)));
             }
-            return Err(e);
+            return Err(err);
         }
         Ok(n)
+    }
+
+    /// After a failed batch of moves for `op`: point the photos whose files stayed moved at
+    /// their new paths (an undoable "partly" rename when `undoable`, otherwise a plain logged
+    /// change), so the library matches the disk. Returns the message for the user.
+    pub(crate) fn follow_stuck(&mut self, op: &Op, e: BatchMoveError, undoable: bool) -> String {
+        let mut msg = e.message;
+        if e.stuck.is_empty() {
+            return msg;
+        }
+        let to: HashSet<&str> = e.stuck.iter().map(|m| m.1.as_str()).collect();
+        let mut keep = Vec::new();
+        set_file_ops_to(op, &to, &mut keep);
+        let list: Vec<String> = e.stuck.iter().map(|(a, b)| format!("{a} → {b}")).collect();
+        let n = e.stuck.len();
+        let s = if n == 1 { "" } else { "s" };
+        let fix = Op::Batch { ops: keep };
+        let applied = if undoable {
+            self.commit(&format!("Rename {n} Photo{s} (partly)"), fix)
+        } else {
+            match self.catalog.apply(fix.clone()) {
+                Ok(_) => {
+                    self.pending_log.push(fix);
+                    Ok(())
+                }
+                Err(e) => Err(e.into()),
+            }
+        };
+        match applied {
+            Ok(()) => msg
+                .push_str(&format!(". {n} file{s} could not be moved back and kept the new name; the library now points there: {}", list.join(", "))),
+            Err(err) => msg.push_str(&format!(
+                ". {n} file{s} could not be moved back and the library could not follow ({err}); relink with Find Missing Photos: {}",
+                list.join(", ")
+            )),
+        }
+        msg
     }
 
     /// File moves an undo/redo op implies: `SetFile` ops whose source path differs from the photo's
@@ -572,21 +690,6 @@ impl Session {
         let mut v = Vec::new();
         rec(self, op, &mut v);
         v
-    }
-
-    /// Move the files `moves` names; all or nothing.
-    pub(crate) fn move_files(moves: &[(String, String)]) -> Result<()> {
-        let mut done: Vec<&(String, String)> = Vec::new();
-        for m in moves {
-            if let Err(e) = move_file(&m.0, &m.1) {
-                for (a, b) in done.iter().rev().map(|m| (&m.0, &m.1)) {
-                    let _ = move_file(b, a);
-                }
-                return Err(EngineError::Other(format!("can't undo the rename: {e}")));
-            }
-            done.push(m);
-        }
-        Ok(())
     }
 }
 
@@ -657,7 +760,7 @@ mod tests {
     fn case_only_renames_never_replace_another_file() {
         // case-sensitive: IMG_1.JPG and img_1.JPG are two photos
         let fs = FakeFs::new(false, &[("/p/IMG_1.JPG", "first"), ("/p/img_1.JPG", "second"), ("/p/IMG_1.xmp", "sc1"), ("/p/img_1.xmp", "sc2")]);
-        assert!(move_file_with(&fs, "/p/IMG_1.JPG", "/p/img_1.JPG").unwrap_err().contains("already exists"));
+        assert!(move_file_with(&fs, "/p/IMG_1.JPG", "/p/img_1.JPG").unwrap_err().message.contains("already exists"));
         assert_eq!(fs.listing().len(), 4);
         assert!(fs.listing().contains(&("/p/img_1.JPG".into(), "second".into())));
         // the planner picks a free name instead
@@ -691,6 +794,59 @@ mod tests {
         // case-insensitive, another file under another name: still a collision
         let fs = FakeFs::new(true, &[("/p/A.JPG", "a"), ("/p/b.JPG", "b")]);
         assert!(move_file_with(&fs, "/p/A.JPG", "/p/B.JPG").is_err());
+    }
+
+    /// Issue #105: a rollback that fails is reported, and the library follows the files that kept
+    /// their new names (an undoable partial rename), so nothing goes missing.
+    #[test]
+    fn failed_rollbacks_are_reported_and_followed() {
+        let fs = FakeFs::new(false, &[("/p/a.jpg", "A"), ("/p/a.xmp", "As"), ("/p/b.jpg", "B"), ("/p/c.jpg", "C")]);
+        let mut s = Session::new();
+        for (i, f) in ["/p/a.jpg", "/p/b.jpg", "/p/c.jpg"].iter().enumerate() {
+            s.catalog.apply(Op::AddPhoto { photo: Box::new(file_photo(i as u64 + 1, f)) }).unwrap();
+        }
+        let ids = [PhotoId(1), PhotoId(2), PhotoId(3)];
+        let plans = s.plan_rename_with(&fs, &ids, "Trip-{seq}", 1);
+        // c can't be renamed (the share went away), and neither can Trip-1 be moved back
+        fs.fail.borrow_mut().extend(["c.jpg".to_string(), "Trip-1".to_string()]);
+        let err = s.apply_rename_with(&fs, &plans).unwrap_err().to_string();
+        assert!(err.contains("rename /p/c.jpg"), "{err}");
+        assert!(err.contains("/p/Trip-1.jpg could not be moved back"), "{err}");
+        assert!(err.contains("/p/a.jpg → /p/Trip-1.jpg"), "lists what stayed renamed: {err}");
+        assert_eq!(
+            fs.listing(),
+            vec![
+                ("/p/Trip-1.jpg".into(), "A".into()),
+                ("/p/Trip-1.xmp".into(), "As".into()),
+                ("/p/b.jpg".into(), "B".into()),
+                ("/p/c.jpg".into(), "C".into())
+            ]
+        );
+        // the catalog matches the disk
+        let path = |s: &Session, id: u64| match &s.catalog.photo(PhotoId(id)).unwrap().source {
+            Source::File { path } => path.clone(),
+            Source::Demo { .. } => String::new(),
+        };
+        assert_eq!(path(&s, 1), "/p/Trip-1.jpg");
+        assert_eq!(s.catalog.photo(PhotoId(1)).unwrap().file_name, "Trip-1.jpg");
+        assert_eq!((path(&s, 2), path(&s, 3)), ("/p/b.jpg".into(), "/p/c.jpg".into()));
+        assert_eq!(s.undo.last().map(|e| e.label.as_str()), Some("Rename 1 Photo (partly)"));
+
+        // a sidecar that won't move, and a file that won't go back: the file keeps its new name
+        // with the sidecars that did move, and says so
+        let fs = FakeFs::new(false, &[("/p/d.jpg", "D"), ("/p/d.xmp", "Ds"), ("/p/d.jpg.xmp", "Df")]);
+        fs.fail.borrow_mut().extend(["d.jpg.xmp".to_string(), "/p/e.jpg".to_string()]);
+        let e = move_file_with(&fs, "/p/d.jpg", "/p/e.jpg").unwrap_err();
+        assert!(e.moved, "{e}");
+        assert!(e.message.contains("it is now /p/e.jpg with its sidecar /p/e.xmp"), "{e}");
+        assert_eq!(fs.listing(), vec![("/p/d.jpg.xmp".into(), "Df".into()), ("/p/e.jpg".into(), "D".into()), ("/p/e.xmp".into(), "Ds".into())]);
+        // … and when the file does go back, its sidecars follow it
+        let fs = FakeFs::new(false, &[("/p/d.jpg", "D"), ("/p/d.xmp", "Ds"), ("/p/d.jpg.xmp", "Df")]);
+        fs.fail.borrow_mut().push("d.jpg.xmp".to_string());
+        let e = move_file_with(&fs, "/p/d.jpg", "/p/e.jpg").unwrap_err();
+        assert!(!e.moved);
+        assert_eq!(fs.listing().len(), 3);
+        assert!(fs.listing().iter().all(|(p, _)| p.starts_with("/p/d.")));
     }
 
     /// Issue #95 on the real disk, whichever kind of volume the temp folder is on.
