@@ -133,7 +133,7 @@ fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let mut written = Vec::new();
     let mut write = |path: &str, bytes: &[u8]| -> std::result::Result<(), String> {
-        std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}"))?;
+        crate::export::write_file(path, bytes)?;
         written.push(path.to_string());
         Ok(())
     };
