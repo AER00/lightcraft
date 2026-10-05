@@ -10,7 +10,7 @@ Two thirds of the usable pixels train a ridge-regularised 3×3 **chromaticity** 
 
 The matrix is applied to scene-linear sensor pixels. The curve is carried in `SourceInfo` and applied in the pipeline finish stage, after exposure/WB/local edits. It is never baked into decoded luminance or clipped to JPEG precision. CPU and GPU use the same tone LUT. Contrast, whites and blacks adjust the starting look through the display-domain controls. JPEG neutral rendering and the existing DNG colour model are unchanged.
 
-One third of the pixels are held out from both fits. The combined model must reduce linear-display squared error by at least 30% and have per-channel RMS error ≤0.055. These are provisional acceptance gates, not a colour-accuracy certification. Monochrome, singular, unrelated, aspect-mismatched and poor-fitting references retain the documented fallback. Both fits use the same fixed proxy at every decode resolution.
+One third of the pixels are held out from both fits. The combined model must reduce linear-display squared error by at least 30% and have per-channel RMS error ≤0.10 (0.055 rejected half of the public raw.pixls.us samples tried — ILCE-6400, -6700, -7M4 — whose fits were still 1.5–3× closer to the camera JPEG than the fallback and visibly better). These are provisional acceptance gates, not a colour-accuracy certification. Monochrome, singular, unrelated, aspect-mismatched and poor-fitting references retain the documented fallback. Both fits use the same fixed proxy at every decode resolution.
 
 ## Source metadata and white balance
 

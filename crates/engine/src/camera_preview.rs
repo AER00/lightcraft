@@ -43,6 +43,14 @@ pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransf
     Some(look)
 }
 
+/// A fit must cut the held-out squared error to below this share of the fallback's.
+const MIN_IMPROVEMENT: f64 = 0.7;
+/// ...and stay within this per-channel RMS of the camera JPEG (linear display values). On public
+/// raw.pixls.us samples (eight Sony bodies) good fits that still beat the fallback 1.5–3× landed
+/// at 0.065–0.093 (camera local tone, vignetting and lens processing that a global matrix + curve
+/// cannot follow): visibly better renders that 0.055 rejected.
+const MAX_HOLDOUT_RMS: f64 = 0.10;
+
 fn luma(p: [f64; 3]) -> f64 {
     p[0] * 0.2627 + p[1] * 0.6780 + p[2] * 0.0593
 }
@@ -131,7 +139,7 @@ fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
     if lightcraft_pipeline::profiling() {
         eprintln!("[profile] ARW holdout RMS {:.5} -> {:.5} ({samples} channels)", (before / samples as f64).sqrt(), (after / samples as f64).sqrt());
     }
-    if !after.is_finite() || samples == 0 || after >= before * 0.7 || after / samples as f64 > 0.055f64.powi(2) {
+    if !after.is_finite() || samples == 0 || after >= before * MIN_IMPROVEMENT || after / samples as f64 > MAX_HOLDOUT_RMS.powi(2) {
         return None;
     }
     Some(CameraLook { matrix, tone: curve })
@@ -216,6 +224,30 @@ mod tests {
         assert!(luma(p) > 1.0);
         assert!(tone.apply(0.2) < tone.apply(0.4));
     }
+    #[test]
+    fn accepts_a_much_better_fit_despite_local_camera_processing() {
+        // The camera JPEG departs from any global matrix + curve (local tone, vignetting): ±0.12
+        // per-pixel deviations, ~0.07 RMS. The fit is still far closer than the fallback.
+        let known = Mat3([[1.8, -0.4, -0.1], [-0.2, 1.5, -0.1], [-0.05, -0.3, 1.7]]);
+        let mut sensor = Rgb32f::new(64, 64);
+        let mut reference = sensor.clone();
+        let mut seed = 0x2545_f491_u32;
+        for (i, (src, dst)) in sensor.data.iter_mut().zip(&mut reference.data).enumerate() {
+            let ev = 0.05 + (i % 31) as f32 * 0.017;
+            *src = [ev * (0.8 + (i % 11) as f32 * 0.025), ev, ev * (0.8 + (i % 17) as f32 * 0.014)];
+            let p = known.apply_f32(*src);
+            let y = luminance_2020(p);
+            *dst = p.map(|v| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                let noise = (seed % 2001) as f32 / 1000.0 - 1.0;
+                (v * (1.0 - (-2.5 * y).exp()) / y + 0.12 * noise).clamp(0.005, 0.97)
+            });
+        }
+        assert!(fit_pairs(&sensor, &reference).is_some());
+    }
+
     #[test]
     fn rejects_monochrome_invalid_and_unrelated_previews() {
         let mut sensor = Rgb32f::new(32, 32);
