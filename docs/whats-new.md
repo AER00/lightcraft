@@ -10,6 +10,18 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- Exports and renders never write over a photo's original (issue #93): exporting into the photo's own folder with
+  the same name and "Overwrite" (or Export with Previous repeating it), an exact output path from the control
+  channel or MCP, a merge preview path or `lightcraft-cli render IMG.jpg -o IMG.jpg` is refused with a clear
+  message, and the original is left byte for byte. Ordinary earlier exports are still overwritten when asked.
+  Exported files are written to a temp file, synced and then renamed into place, so a full disk or an unplugged
+  drive never leaves a truncated file; the XMP sidecar of an "Original" export follows the "If file exists"
+  choice too.
+- Convert to DNG, Copy as DNG, Photo Merge and smart previews no longer write straight to the final file (issue
+  #106): a DNG is checked against the raw data, written to a temp file, synced and read back before it gets its
+  name (never replacing a file), and only then is the photo relinked or the raw copy removed — a failed write
+  leaves no DNG and keeps the raw. Smart previews are written the same way; a damaged one (cut short by a crash or
+  a full drive) no longer counts as built and Build Smart Previews replaces it.
 - Import ▸ Copy verifies every copy, like Move (issue #96): each file is written as a new file, synced to disk and
   compared byte for byte with the card. A copy that fails or differs is removed and reported as a failed import —
   so "import complete" means the copies are good before you format the card — and a name that is taken gets -1,
