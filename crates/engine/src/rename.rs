@@ -11,7 +11,11 @@
 //!
 //! Safety:
 //! - a target that exists on disk, or that another photo in the batch gets, receives a `-1`, `-2`…
-//!   suffix — no file is ever overwritten;
+//!   suffix — no file is ever overwritten. Whether an existing target is the photo itself (a
+//!   change of letter case on a case-insensitive volume) is decided by file identity, not by
+//!   comparing names, so on a case-sensitive volume `img_1.jpg` next to `IMG_1.JPG` is a collision
+//!   (issue #95); moves never replace a file even if one appears after the check (hard link +
+//!   unlink where the volume supports it);
 //! - the moves happen before the catalog changes; if one fails, the ones already done are moved
 //!   back and nothing is committed;
 //! - the catalog op ([`Op::SetFile`]) is undoable: undo/redo move the files back and forth (see
@@ -297,47 +301,130 @@ fn sidecars(path: &str) -> Vec<(PathBuf, SidecarNaming, bool)> {
     v
 }
 
+/// The file-system primitives renaming uses. [`RealFs`] is the disk; tests substitute a model of
+/// a case-insensitive or case-sensitive volume (and inject failures).
+pub(crate) trait MoveFs {
+    /// Something (file, folder, link) answers to `p`.
+    fn exists(&self, p: &Path) -> bool;
+    fn is_file(&self, p: &Path) -> bool;
+    /// `a` and `b` name the same file (e.g. `IMG.JPG` and `img.jpg` on a case-insensitive
+    /// volume). Decided by file identity, never by comparing names: on a case-sensitive volume
+    /// they are two different photos. When in doubt: `false`.
+    fn same_file(&self, a: &Path, b: &Path) -> bool;
+    /// Rename `a` to `b`, failing (never replacing) when `b` exists.
+    fn rename_no_replace(&self, a: &Path, b: &Path) -> std::io::Result<()>;
+}
+
+/// The real file system.
+pub(crate) struct RealFs;
+
+impl MoveFs for RealFs {
+    fn exists(&self, p: &Path) -> bool {
+        std::fs::symlink_metadata(p).is_ok()
+    }
+
+    fn is_file(&self, p: &Path) -> bool {
+        p.is_file()
+    }
+
+    fn same_file(&self, a: &Path, b: &Path) -> bool {
+        if a == b {
+            return true;
+        }
+        let (Ok(ma), Ok(mb)) = (std::fs::metadata(a), std::fs::metadata(b)) else { return false };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            ma.dev() == mb.dev() && ma.ino() == mb.ino()
+        }
+        #[cfg(not(unix))]
+        {
+            // no stable file id in std here: `b` is `a` under another spelling when they look
+            // alike and the folder has no entry spelled exactly like `b` (on a case-sensitive
+            // folder holding both `IMG.JPG` and `img.jpg`, both entries are listed)
+            let (Some(dir), Some(name)) = (b.parent(), b.file_name()) else { return false };
+            if a.parent() != Some(dir) || ma.len() != mb.len() || ma.modified().ok() != mb.modified().ok() {
+                return false;
+            }
+            let Ok(entries) = std::fs::read_dir(dir) else { return false };
+            !entries.flatten().any(|e| e.file_name() == name)
+        }
+    }
+
+    fn rename_no_replace(&self, a: &Path, b: &Path) -> std::io::Result<()> {
+        if self.exists(b) {
+            return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, format!("{} already exists", b.display())));
+        }
+        // A hard link fails when `b` exists — even if it appeared since the check above — so
+        // nothing is ever replaced. Volumes without hard links (FAT, some network shares) fall back
+        // to a plain rename after the check.
+        match std::fs::hard_link(a, b) {
+            Ok(()) => std::fs::remove_file(a).inspect_err(|_| {
+                // both names are the same file: dropping the new one loses nothing
+                let _ = std::fs::remove_file(b);
+            }),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
+            Err(_) => std::fs::rename(a, b),
+        }
+    }
+}
+
+/// `from` → `to` differs only in letter case and `to` is that very file (a case-insensitive
+/// volume): the rename must go through a temporary name.
+fn is_respelling(fs: &dyn MoveFs, from: &Path, to: &Path) -> bool {
+    from != to && from.to_string_lossy().to_lowercase() == to.to_string_lossy().to_lowercase() && fs.exists(to) && fs.same_file(from, to)
+}
+
+/// Rename `a` to `b` without ever replacing a file; a change of letter case only goes through a
+/// unique temporary name so case-insensitive volumes see a real change.
+fn move_one(fs: &dyn MoveFs, a: &Path, b: &Path) -> std::io::Result<()> {
+    if !is_respelling(fs, a, b) {
+        return fs.rename_no_replace(a, b);
+    }
+    let tmp = (0..1000u32)
+        .map(|k| a.with_file_name(format!(".lc-rename-{}-{k}", std::process::id())))
+        .find(|t| !fs.exists(t))
+        .ok_or_else(|| std::io::Error::other("no free temporary name"))?;
+    fs.rename_no_replace(a, &tmp)?;
+    fs.rename_no_replace(&tmp, b).inspect_err(|_| {
+        let _ = fs.rename_no_replace(&tmp, a);
+    })
+}
+
 /// Move `from` to `to` (never over an existing file) together with its sidecars. On error nothing
 /// is left moved.
 pub fn move_file(from: &str, to: &str) -> std::result::Result<(), String> {
+    move_file_with(&RealFs, from, to)
+}
+
+/// [`move_file`] on the file system `fs`.
+pub(crate) fn move_file_with(fs: &dyn MoveFs, from: &str, to: &str) -> std::result::Result<(), String> {
     if from == to {
         return Ok(());
     }
     let (f, t) = (Path::new(from), Path::new(to));
-    // a case-only change on a case-insensitive file system "exists" already: that is this file
-    let case_only = from.to_lowercase() == to.to_lowercase();
-    if t.exists() && !case_only {
+    // `to` may be this very file spelled differently (case-insensitive volume); any other file
+    // there — e.g. `img.jpg` next to `IMG.JPG` on a case-sensitive volume — is never replaced
+    if fs.exists(t) && !is_respelling(fs, f, t) {
         return Err(format!("{to} already exists"));
     }
     let mut done: Vec<(PathBuf, PathBuf)> = Vec::new();
-    let mv = |a: &Path, b: &Path| -> std::io::Result<()> {
-        if case_only {
-            // via a temporary name, so case-insensitive file systems see a real change
-            let tmp = a.with_file_name(format!(".lc-rename-{}", std::process::id()));
-            std::fs::rename(a, &tmp)?;
-            std::fs::rename(&tmp, b).inspect_err(|_| {
-                let _ = std::fs::rename(&tmp, a);
-            })
-        } else {
-            std::fs::rename(a, b)
-        }
-    };
-    mv(f, t).map_err(|e| format!("rename {from}: {e}"))?;
+    move_one(fs, f, t).map_err(|e| format!("rename {from}: {e}"))?;
     done.push((f.to_path_buf(), t.to_path_buf()));
     for (sc, naming, upper) in sidecars(from) {
-        if !sc.is_file() {
+        if !fs.is_file(&sc) {
             continue;
         }
         let mut dst = crate::sidecar::sidecar_path(to, naming);
         if upper {
             dst = dst.with_extension("XMP");
         }
-        if dst.exists() && !case_only {
+        if fs.exists(&dst) && !is_respelling(fs, &sc, &dst) {
             continue; // never overwrite: the old sidecar stays where it was
         }
-        if let Err(e) = mv(&sc, &dst) {
+        if let Err(e) = move_one(fs, &sc, &dst) {
             for (a, b) in done.iter().rev() {
-                let _ = std::fs::rename(b, a);
+                let _ = move_one(fs, b, a);
             }
             return Err(format!("rename {}: {e}", sc.display()));
         }
@@ -349,6 +436,11 @@ pub fn move_file(from: &str, to: &str) -> std::result::Result<(), String> {
 impl Session {
     /// Plan renaming `ids` with `template` (sequence numbers from `start`), resolving collisions.
     pub fn plan_rename(&self, ids: &[PhotoId], template: &str, start: usize) -> Vec<RenamePlan> {
+        self.plan_rename_with(&RealFs, ids, template, start)
+    }
+
+    /// [`Session::plan_rename`] on the file system `fs`.
+    pub(crate) fn plan_rename_with(&self, fs: &dyn MoveFs, ids: &[PhotoId], template: &str, start: usize) -> Vec<RenamePlan> {
         // photos sharing one file (virtual copies) rename once
         let mut seen_paths: HashSet<String> = HashSet::new();
         let mut taken: HashSet<String> = HashSet::new(); // lower-case target paths/names claimed in this batch
@@ -382,10 +474,12 @@ impl Session {
                         let name = candidate(k);
                         let tp = dir.join(&name).to_string_lossy().to_string();
                         let key = tp.to_lowercase();
-                        let same = key == path.to_lowercase();
+                        // this very file, maybe spelled differently (case-insensitive volume)? By
+                        // identity: on a case-sensitive volume `img_1.jpg` may be another photo
+                        let same = tp == *path || is_respelling(fs, Path::new(path), Path::new(&tp));
                         // free: not claimed in this batch and not on disk (unless it is this very file).
                         // A file this batch moves away still counts as taken: simple and safe.
-                        let on_disk = Path::new(&tp).exists() && !same;
+                        let on_disk = fs.exists(Path::new(&tp)) && !same;
                         if !taken.contains(&key) && !on_disk {
                             taken.insert(key);
                             break (name, Some(tp));
@@ -499,6 +593,133 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    /// A model volume: files by path with contents; case-insensitive (default APFS/NTFS) or
+    /// case-sensitive (Linux, case-sensitive APFS). `fail` makes renames from a matching source fail.
+    pub(crate) struct FakeFs {
+        pub ci: bool,
+        pub files: RefCell<Vec<(String, Vec<u8>)>>,
+        pub fail: RefCell<Vec<String>>,
+    }
+
+    impl FakeFs {
+        pub fn new(ci: bool, files: &[(&str, &str)]) -> FakeFs {
+            FakeFs {
+                ci,
+                files: RefCell::new(files.iter().map(|(p, c)| (p.to_string(), c.as_bytes().to_vec())).collect()),
+                fail: RefCell::new(Vec::new()),
+            }
+        }
+        fn idx(&self, p: &Path) -> Option<usize> {
+            let p = p.to_string_lossy();
+            self.files.borrow().iter().position(|(f, _)| if self.ci { f.to_lowercase() == p.to_lowercase() } else { *f == p })
+        }
+        /// The listing: (exact path, contents), sorted.
+        pub fn listing(&self) -> Vec<(String, String)> {
+            let mut v: Vec<_> = self.files.borrow().iter().map(|(p, c)| (p.clone(), String::from_utf8_lossy(c).to_string())).collect();
+            v.sort();
+            v
+        }
+    }
+
+    impl MoveFs for FakeFs {
+        fn exists(&self, p: &Path) -> bool {
+            self.idx(p).is_some()
+        }
+        fn is_file(&self, p: &Path) -> bool {
+            self.exists(p)
+        }
+        fn same_file(&self, a: &Path, b: &Path) -> bool {
+            self.idx(a).is_some() && self.idx(a) == self.idx(b)
+        }
+        fn rename_no_replace(&self, a: &Path, b: &Path) -> std::io::Result<()> {
+            if self.fail.borrow().iter().any(|f| a.to_string_lossy().contains(f.as_str())) {
+                return Err(std::io::Error::other("injected failure"));
+            }
+            if self.exists(b) {
+                return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "exists"));
+            }
+            let i = self.idx(a).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no such file"))?;
+            self.files.borrow_mut()[i].0 = b.to_string_lossy().to_string();
+            Ok(())
+        }
+    }
+
+    fn file_photo(id: u64, path: &str) -> Photo {
+        let name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        Photo::new(PhotoId(id), Source::File { path: path.into() }, &name, "JPG", 1, 1, "2026-01-01T00:00:00")
+    }
+
+    /// Issue #95: a case-only rename is a real change on a case-insensitive volume and never
+    /// replaces a different file that differs only by case on a case-sensitive one.
+    #[test]
+    fn case_only_renames_never_replace_another_file() {
+        // case-sensitive: IMG_1.JPG and img_1.JPG are two photos
+        let fs = FakeFs::new(false, &[("/p/IMG_1.JPG", "first"), ("/p/img_1.JPG", "second"), ("/p/IMG_1.xmp", "sc1"), ("/p/img_1.xmp", "sc2")]);
+        assert!(move_file_with(&fs, "/p/IMG_1.JPG", "/p/img_1.JPG").unwrap_err().contains("already exists"));
+        assert_eq!(fs.listing().len(), 4);
+        assert!(fs.listing().contains(&("/p/img_1.JPG".into(), "second".into())));
+        // the planner picks a free name instead
+        let mut s = Session::new();
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(file_photo(1, "/p/IMG_1.JPG")) }).unwrap();
+        let plans = s.plan_rename_with(&fs, &[PhotoId(1)], "img_1", 1);
+        assert_eq!(plans[0].to, "img_1-1.JPG");
+        move_file_with(&fs, "/p/IMG_1.JPG", plans[0].to_path.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            fs.listing(),
+            vec![
+                ("/p/img_1-1.JPG".into(), "first".into()),
+                ("/p/img_1-1.xmp".into(), "sc1".into()),
+                ("/p/img_1.JPG".into(), "second".into()),
+                ("/p/img_1.xmp".into(), "sc2".into())
+            ]
+        );
+        // case-sensitive, target free: a plain rename
+        let fs = FakeFs::new(false, &[("/p/IMG_2.JPG", "x")]);
+        move_file_with(&fs, "/p/IMG_2.JPG", "/p/img_2.JPG").unwrap();
+        assert_eq!(fs.listing(), vec![("/p/img_2.JPG".into(), "x".into())]);
+
+        // case-insensitive: the "existing" target is the photo itself → renamed via a temp name
+        let fs = FakeFs::new(true, &[("/p/IMG_1.JPG", "first"), ("/p/IMG_1.xmp", "sc1")]);
+        let mut s = Session::new();
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(file_photo(1, "/p/IMG_1.JPG")) }).unwrap();
+        let plans = s.plan_rename_with(&fs, &[PhotoId(1)], "img_1", 1);
+        assert_eq!(plans[0].to, "img_1.JPG", "not a collision with itself");
+        move_file_with(&fs, "/p/IMG_1.JPG", "/p/img_1.JPG").unwrap();
+        assert_eq!(fs.listing(), vec![("/p/img_1.JPG".into(), "first".into()), ("/p/img_1.xmp".into(), "sc1".into())]);
+        // case-insensitive, another file under another name: still a collision
+        let fs = FakeFs::new(true, &[("/p/A.JPG", "a"), ("/p/b.JPG", "b")]);
+        assert!(move_file_with(&fs, "/p/A.JPG", "/p/B.JPG").is_err());
+    }
+
+    /// Issue #95 on the real disk, whichever kind of volume the temp folder is on.
+    #[test]
+    fn case_only_rename_on_disk() {
+        let dir = std::env::temp_dir().join(format!("lc-rename-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (upper, lower) = (dir.join("IMG_1.JPG"), dir.join("img_1.JPG"));
+        std::fs::write(&upper, b"first").unwrap();
+        let case_sensitive = !lower.exists();
+        let p = |q: &Path| q.to_string_lossy().to_string();
+        if case_sensitive {
+            std::fs::write(&lower, b"second").unwrap();
+            assert!(move_file(&p(&upper), &p(&lower)).is_err());
+            assert_eq!(std::fs::read(&lower).unwrap(), b"second");
+            assert_eq!(std::fs::read(&upper).unwrap(), b"first");
+        } else {
+            move_file(&p(&upper), &p(&lower)).unwrap();
+            let names: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+            assert_eq!(names, vec!["img_1.JPG".to_string()]);
+            assert_eq!(std::fs::read(&lower).unwrap(), b"first");
+        }
+        // a plain rename never replaces
+        std::fs::write(dir.join("other.JPG"), b"other").unwrap();
+        assert!(move_file(&p(&dir.join("other.JPG")), &p(&lower)).is_err());
+        assert_eq!(std::fs::read(dir.join("other.JPG")).unwrap(), b"other");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn folder_templates_stay_inside_the_destination() {
