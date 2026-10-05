@@ -185,7 +185,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let add = p.get("add").and_then(Value::as_bool).unwrap_or(false);
                 let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
                 let src = s.source_now(id, crate::media::SourceLevel::Thumb).map_err(|e| bad(c, e))?;
-                let info = s.catalog.photo(id).map(|p| crate::media::source_info(p)).unwrap_or_default();
+                let info = s.source_info(id);
                 let d = s.develop_of(id).unwrap_or_default();
                 let req = lightcraft_pipeline::RenderRequest::fit(384, 384);
                 let lab = lightcraft_pipeline::color_range_sample(&src, &info, &d, &req, lightcraft_geom::Point::new(x, y))
@@ -646,7 +646,7 @@ fn spots_edit(s: &mut Session, c: &str, label: &str, f: impl FnOnce(&mut Vec<Spo
 /// An automatic source for `spot` on photo `id` (a small proxy of the photo, framed by `d`).
 fn pick_source(s: &mut Session, id: crate::PhotoId, d: &lightcraft_develop::DevelopSettings, spot: &Spot, avoid: Option<Point>) -> Option<Point> {
     let src = s.source_now(id, crate::media::SourceLevel::Thumb).ok()?;
-    let info = crate::media::source_info(s.catalog.photo(id)?);
+    let info = s.source_info(id);
     lightcraft_pipeline::spots::pick_source(&src, &info, d, spot, avoid)
 }
 

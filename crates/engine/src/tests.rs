@@ -11,6 +11,30 @@ fn active_dev(s: &Session) -> lightcraft_develop::DevelopSettings {
 }
 
 #[test]
+fn changing_one_wb_control_resolves_as_shot_without_stale_tint() {
+    use lightcraft_catalog::{Photo, PhotoId, Source};
+    use lightcraft_develop::{DevelopSettings, WbMode};
+    let mut s = demo();
+    let id = PhotoId(100);
+    let mut p = Photo::new(id, Source::File { path: "synthetic.arw".into() }, "synthetic.arw", "ARW", 16, 16, "");
+    // A catalog made by the old generic-matrix Kelvin inference.
+    p.as_shot_wb = Some((6829.0, -127.0));
+    p.develop = std::sync::Arc::new(DevelopSettings::for_raw(6829.0, -127.0));
+    s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    s.execute("library.select", &json!({"ids": [100], "active": 100})).unwrap();
+    s.execute("develop.set", &json!({"control": "wb.temp", "value": 8000})).unwrap();
+    let d = active_dev(&s);
+    assert_eq!(d.wb.mode, WbMode::Custom);
+    assert_eq!(d.wb.temp, 8000.0);
+    assert_eq!(d.wb.tint, 0.0, "untouched tint comes from the current as-shot reference");
+    s.execute("develop.wb", &json!({"mode": "asShot"})).unwrap();
+    s.execute("develop.set", &json!({"control": "wb.tint", "value": 10})).unwrap();
+    assert_eq!(active_dev(&s).wb.temp, 6500.0);
+    s.execute("develop.reset", &json!({})).unwrap();
+    assert_eq!((active_dev(&s).wb.temp, active_dev(&s).wb.tint), (6500.0, 0.0));
+}
+
+#[test]
 fn demo_library_loads() {
     let mut s = demo();
     assert_eq!(s.visible().len(), 24);

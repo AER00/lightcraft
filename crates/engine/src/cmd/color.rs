@@ -26,7 +26,7 @@ const PROBE_EDGE: usize = 384;
 pub(crate) fn probe(s: &mut Session, c: &str, x: f64, y: f64, neutral: impl FnOnce(&mut DevelopSettings)) -> Result<[f32; 3]> {
     let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
     let src = s.source_now(id, SourceLevel::Thumb).map_err(|e| bad(c, e))?;
-    let info = s.catalog.photo(id).map(|p| crate::media::source_info(p)).unwrap_or_default();
+    let info = s.source_info(id);
     let mut d = (*s.develop_of(id).unwrap_or_default()).clone();
     neutral(&mut d);
     let req = lightcraft_pipeline::RenderRequest::fit(PROBE_EDGE, PROBE_EDGE);

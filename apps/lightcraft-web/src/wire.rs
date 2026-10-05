@@ -15,10 +15,9 @@ use std::sync::Arc;
 
 use lightcraft_engine::catalog::Source;
 use lightcraft_engine::develop::{DevelopSettings, EmbeddedLens};
-use lightcraft_engine::media::{MediaCache, RenderJob, SourceLevel, SourceRef};
+use lightcraft_engine::media::{DecodedSource, MediaCache, RenderJob, SourceLevel, SourceRef};
 use lightcraft_engine::pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
 use lightcraft_preview::Lru;
-use lightcraft_raster::Rgb32f;
 use serde::{Deserialize, Serialize};
 
 use crate::store::hash_of_path;
@@ -31,6 +30,8 @@ pub struct WireJob {
     /// Decode the source at most this long.
     pub max_edge: usize,
     pub raw: bool,
+    #[serde(default)]
+    pub relative_wb: bool,
     pub as_shot_temp: f64,
     pub as_shot_tint: f64,
     pub lens: Option<EmbeddedLens>,
@@ -55,7 +56,7 @@ impl WireJob {
     pub fn from_job(job: &RenderJob, thumb_cached: bool, view: &str) -> WireJob {
         let max_edge = match &job.source {
             SourceRef::Demo { max_edge, .. } | SourceRef::File { max_edge, .. } => *max_edge,
-            SourceRef::Loaded(img) => img.width.max(img.height),
+            SourceRef::Loaded(img) => img.image.width.max(img.image.height),
             SourceRef::Smart { .. } => 2560,
         };
         WireJob {
@@ -63,6 +64,7 @@ impl WireJob {
             origin: job.origin.clone(),
             max_edge,
             raw: job.info.raw,
+            relative_wb: job.info.relative_wb,
             as_shot_temp: job.info.as_shot_temp,
             as_shot_tint: job.info.as_shot_tint,
             lens: job.info.lens,
@@ -79,7 +81,14 @@ impl WireJob {
     }
 
     pub fn info(&self) -> SourceInfo {
-        SourceInfo { raw: self.raw, as_shot_temp: self.as_shot_temp, as_shot_tint: self.as_shot_tint, lens: self.lens }
+        SourceInfo {
+            raw: self.raw,
+            as_shot_temp: self.as_shot_temp,
+            as_shot_tint: self.as_shot_tint,
+            lens: self.lens,
+            relative_wb: self.relative_wb,
+            ..Default::default()
+        }
     }
 
     pub fn request(&self) -> RenderRequest {
@@ -119,7 +128,7 @@ const WORKER_SOURCE_BYTES: usize = 192 << 20;
 
 /// The synchronous part of a worker: decoded-source cache + rendering.
 pub struct WorkerCore {
-    sources: Lru<String, Arc<Rgb32f>>,
+    sources: Lru<String, DecodedSource>,
     media: MediaCache,
     stages: HashMap<String, Arc<StageCache>>,
 }
@@ -150,21 +159,25 @@ impl WorkerCore {
             Some(s) => s,
             None => {
                 let src = match (&job.origin, original) {
-                    (Source::File { .. }, Some(bytes)) => Arc::new(lightcraft_engine::files::load_bytes(bytes, job.max_edge)?.0),
+                    (Source::File { .. }, Some(bytes)) => {
+                        let (image, info) = lightcraft_engine::files::load_bytes(bytes, job.max_edge)?;
+                        DecodedSource::new(Arc::new(image), Some(info))
+                    }
                     (Source::File { path }, None) => return Err(format!("{path}: original not found in browser storage")),
-                    (origin @ Source::Demo { .. }, _) => self.media.origin_ref(origin, job.max_edge).load()?,
+                    (origin @ Source::Demo { .. }, _) => self.media.origin_ref(origin, job.max_edge).load_source()?,
                 };
-                let cost = src.width * src.height * 12 + 64;
+                let cost = src.image.width * src.image.height * 12 + 64;
                 self.sources.insert(key, src.clone(), cost);
                 src
             }
         };
+        let info = src.info_or(job.info());
         Ok(match &job.stages {
             Some(view) => {
                 let st = self.stages.entry(view.clone()).or_default().clone();
-                lightcraft_engine::pipeline::render_cached(&src, &job.info(), &job.settings, &job.request(), &st)
+                lightcraft_engine::pipeline::render_cached(&src.image, &info, &job.settings, &job.request(), &st)
             }
-            None => lightcraft_engine::pipeline::render(&src, &job.info(), &job.settings, &job.request()),
+            None => lightcraft_engine::pipeline::render(&src.image, &info, &job.settings, &job.request()),
         })
     }
 }
@@ -295,6 +308,7 @@ mod tests {
             origin,
             max_edge: 512,
             raw: false,
+            relative_wb: false,
             as_shot_temp: 6500.0,
             as_shot_tint: 0.0,
             lens: None,

@@ -331,6 +331,11 @@ impl Photo {
     pub fn develops_raw(&self) -> bool {
         self.kind == MediaKind::Raw && self.preview_only.is_none()
     }
+    /// The current ARW reader has vendor WB multipliers but no measured camera illuminant.
+    /// Use adjustments relative to the camera's as-shot look, as for rendered photographs.
+    pub fn relative_wb(&self) -> bool {
+        self.develops_raw() && self.format.eq_ignore_ascii_case("ARW")
+    }
     /// The develop settings import gave this photo: [`Photo::camera_defaults`], or the user's
     /// default preset applied on top of them ([`Photo::import_look`]).
     pub fn import_defaults(&self) -> DevelopSettings {
@@ -342,7 +347,8 @@ impl Photo {
     /// The built-in defaults for this photo, before any user default preset: raws start from
     /// their as-shot white balance; embedded lens corrections on when the file has them.
     pub fn camera_defaults(&self) -> DevelopSettings {
-        let mut d = match self.as_shot_wb {
+        let wb = if self.relative_wb() { Some((6500.0, 0.0)) } else { self.as_shot_wb };
+        let mut d = match wb {
             Some((t, tint)) => DevelopSettings::for_raw(t, tint),
             None => DevelopSettings::default(),
         };

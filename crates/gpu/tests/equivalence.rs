@@ -22,6 +22,27 @@ fn gpu() -> bool {
     ok
 }
 
+#[test]
+fn camera_tone_and_relative_wb() {
+    if !gpu() {
+        return;
+    }
+    let src = scene(2, 320, 240);
+    let curve = lightcraft_pipeline::tone::CameraTone::new(std::array::from_fn(|i| {
+        let x = 0.004 * 1.18f32.powi(i as i32);
+        [x, 1.0 - (-2.0 * x).exp()]
+    }))
+    .unwrap();
+    let info = SourceInfo { raw: true, relative_wb: true, camera_tone: Some(curve), ..Default::default() };
+    let mut s = DevelopSettings::default();
+    check("camera tone neutral", &src, &info, &s, &RenderRequest::fit(320, 240));
+    s.light.exposure = 1.0;
+    s.light.contrast = 40.0;
+    s.wb.mode = WbMode::Custom;
+    s.wb.temp = 8000.0;
+    check("camera tone edited", &src, &info, &s, &RenderRequest::fit(320, 240));
+}
+
 fn scene(i: usize, w: usize, h: usize) -> Arc<Rgb32f> {
     Arc::new(lightcraft_scenes::demo_library()[i].render(w, h))
 }

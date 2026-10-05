@@ -61,7 +61,7 @@ pub fn effective_wb(info: &SourceInfo, s: &DevelopSettings) -> (f64, f64) {
     use lightcraft_develop::WbMode;
     match s.wb.mode {
         WbMode::AsShot => (info.as_shot_temp, info.as_shot_tint),
-        m if info.raw => m.preset().unwrap_or((s.wb.temp, s.wb.tint)),
+        m if info.raw && !info.relative_wb => m.preset().unwrap_or((s.wb.temp, s.wb.tint)),
         _ => (s.wb.temp, s.wb.tint),
     }
 }

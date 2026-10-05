@@ -64,11 +64,14 @@ pub struct SourceInfo {
     pub raw: bool,
     pub as_shot_temp: f64,
     pub as_shot_tint: f64,
+    /// No measured camera illuminant: WB adjustments are relative to the camera's rendered look.
+    pub relative_wb: bool,
+    pub camera_tone: Option<tone::CameraTone>,
 }
 
 impl Default for SourceInfo {
     fn default() -> Self {
-        Self { raw: false, as_shot_temp: 6500.0, as_shot_tint: 0.0, lens: None }
+        Self { raw: false, as_shot_temp: 6500.0, as_shot_tint: 0.0, lens: None, relative_wb: false, camera_tone: None }
     }
 }
 

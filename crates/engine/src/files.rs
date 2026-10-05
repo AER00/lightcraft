@@ -131,7 +131,9 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
             std::mem::swap(&mut w, &mut h);
         }
         let (t, tint) = xy_to_temp_tint(lightcraft_raw::color::as_shot_white_xy_of(&raw));
-        let as_shot_wb = Some((t.round(), tint.round()));
+        // Vendor RGB multipliers do not identify an absolute illuminant without camera calibration.
+        let relative = raw.format == lightcraft_raw::RawFormat::Arw && !lightcraft_raw::color::has_matrix(&raw.color);
+        let as_shot_wb = Some(if relative { (6500.0, 0.0) } else { (t.round(), tint.round()) });
         let embedded_lens = embedded_lens(&raw);
         return Ok(ProbeInfo {
             embedded_lens,
@@ -221,6 +223,9 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
             }
             Err(e) => return Err(e.to_string()),
         };
+        let xy = lightcraft_raw::color::as_shot_white_xy(&raw);
+        let t = lightcraft_raw::color::camera_transform(&raw, xy);
+        let camera_look = crate::camera_preview::fit_preview(&raw, &bytes, &t);
         drop(bytes);
         // Embedded lens corrections are applied by the pipeline ("Enable Profile Corrections"), not baked in.
         let lens = embedded_lens(&raw.info());
@@ -242,12 +247,10 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
         // the samples aren't needed any more (the colour model below reads only the tags)
         raw.data = lightcraft_raw::RawData::U16(Vec::new());
         let mut stages = vec![("develop", t0.elapsed())];
-        let xy = lightcraft_raw::color::as_shot_white_xy(&raw);
-        let t = lightcraft_raw::color::camera_transform(&raw, xy);
         stages.push(("transform", t0.elapsed()));
         lightcraft_raw::highlight::reconstruct(&mut img, t.wb, HIGHLIGHT_CLIP);
         stages.push(("highlights", t0.elapsed()));
-        let m = t.matrix.to_f32();
+        let m = camera_look.map(|p| p.matrix.mul(&t.matrix)).unwrap_or(t.matrix).to_f32();
         let gain = 2f32.powf(t.baseline_exposure as f32);
         let wb = t.wb;
         img.map_in_place(|p| {
@@ -276,7 +279,12 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
             eprintln!("[profile] raw source {}×{} (max {max_edge}, ms after decode): {}", img.width, img.height, parts.join(", "));
         }
         let (temp, tint) = xy_to_temp_tint(xy);
-        return Ok((img, SourceInfo { raw: true, as_shot_temp: temp.round(), as_shot_tint: tint.round(), lens }));
+        let relative = raw.format == lightcraft_raw::RawFormat::Arw && t.matrix_is_fallback;
+        let (temp, tint) = if relative { (6500.0, 0.0) } else { (temp.round(), tint.round()) };
+        return Ok((
+            img,
+            SourceInfo { raw: true, as_shot_temp: temp, as_shot_tint: tint, lens, relative_wb: relative, camera_tone: camera_look.map(|p| p.tone) },
+        ));
     }
     let d = lightcraft_codecs::decode(&bytes, lightcraft_codecs::DecodeOptions::fit(max_edge as u32, max_edge as u32)).map_err(|e| e.to_string())?;
     drop(bytes);
