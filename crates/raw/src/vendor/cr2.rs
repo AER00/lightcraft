@@ -7,6 +7,11 @@
 //! - The raw data is IFD#3's single strip: a lossless-JPEG frame (usually 2 or 4 components).
 //! - The decoded sample stream fills vertical slices left to right: `cr2_slice = [n, w, last]` means `n` slices of
 //!   width `w` then one of width `last`; each slice is filled top to bottom, row by row.
+//! - Colour filter layout: IFD#3 tag `0xc5e0` (`CR2CFAPattern` in the ExifTool EXIF tag-name docs): 1 = RGGB,
+//!   2 = BGGR, 3 = GBRG, 4 = GRBG, anchored at the top-left of the full decoded sensor (masked borders included).
+//!   It differs by model (e.g. 3 on the 50D/60D/7D/550D/5D Mark II, 1 on the 40D/5D Mark III/6D/5DS R), so it is
+//!   read per file (no model table); files without the tag fall back to RGGB (issue #85). The parity of the
+//!   `SensorInfo` borders does *not* predict it (RGGB files come with both even and odd top borders).
 //! - `SensorInfo` (maker note `0x00e0`): sensor width/height and the left/top/right/bottom borders of the image
 //!   area; the masked columns left of it give the black level.
 //! - `ColorBalance` (maker note `0x4001`): as-shot `RGGB` levels at a model-dependent offset; we probe the known
@@ -21,11 +26,24 @@ use lightcraft_tiff::{Ifd, Tiff, makernote, tags as t};
 
 const CR2_SLICE: u16 = 0xc640;
 const SRAW_TYPE: u16 = 0xc6c5;
+const CR2_CFA_PATTERN: u16 = 0xc5e0;
 const SENSOR_INFO: u16 = 0x00e0;
 const COLOR_BALANCE: u16 = 0x4001;
 
 fn raw_ifd(tiff: &Tiff) -> Option<&Ifd> {
     tiff.ifds.get(3).or_else(|| tiff.ifds.iter().rev().find(|i| i.contains(CR2_SLICE)))
+}
+
+/// Bayer layout from the raw IFD's `CR2CFAPattern` (`0xc5e0`) value; `None` for missing/unknown values.
+fn cfa_from_tag(v: Option<u64>) -> Option<Cfa> {
+    let name = match v? {
+        1 => "RGGB",
+        2 => "BGGR",
+        3 => "GBRG",
+        4 => "GRBG",
+        _ => return None,
+    };
+    Some(Cfa::bayer_static(name))
 }
 
 /// As-shot WB multipliers (R, G, B; G = 1) from the ColorBalance array.
@@ -117,7 +135,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         }
     }
     let wb = mn.as_ref().and_then(|m| m.ifd.u64s(COLOR_BALANCE)).and_then(|v| wb_from_color_balance(&v));
-    let cfa = Cfa::bayer_static("RGGB");
+    let cfa = cfa_from_tag(raw.u64(CR2_CFA_PATTERN)).unwrap_or_else(|| Cfa::bayer_static("RGGB"));
     let black = if active.x >= 8 {
         black_from_columns(&data, width, 2..active.x - 2, active.y..active.y + active.height, active)
     } else {
@@ -185,6 +203,7 @@ pub(crate) mod tests {
         ifd0.set_child(t::EXIF_IFD, exif);
         let mut ifd3 = IfdBuilder::new();
         ifd3.set(t::COMPRESSION, Value::Short(vec![6]));
+        ifd3.set(CR2_CFA_PATTERN, Value::Long(vec![3]));
         if let Some(s) = slices {
             ifd3.set(CR2_SLICE, Value::Short(s.to_vec()));
         }
@@ -206,9 +225,22 @@ pub(crate) mod tests {
             assert_eq!(crate::probe_info(&bytes).unwrap(), r.info());
             assert_eq!(r.data, RawData::U16(img));
             assert_eq!(r.orientation, Orientation::Rotate270);
+            assert_eq!(r.cfa.as_ref().map(Cfa::name).as_deref(), Some("GBRG"), "CR2CFAPattern 3");
             assert_eq!(r.metadata.iso, Some(400));
             assert!(r.develop(crate::Method::Ahd).is_ok());
         }
+    }
+
+    #[test]
+    fn cfa_pattern_tag() {
+        let name = |v| cfa_from_tag(v).map(|c| c.name());
+        assert_eq!(name(Some(1)).as_deref(), Some("RGGB"));
+        assert_eq!(name(Some(2)).as_deref(), Some("BGGR"));
+        assert_eq!(name(Some(3)).as_deref(), Some("GBRG"));
+        assert_eq!(name(Some(4)).as_deref(), Some("GRBG"));
+        assert_eq!(name(Some(0)), None);
+        assert_eq!(name(Some(7)), None);
+        assert_eq!(name(None), None);
     }
 
     #[test]

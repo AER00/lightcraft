@@ -234,6 +234,13 @@ const RAW_SAMPLES: &[(&str, &str)] = &[
     ("arw-sony-a7m4-lossless-l.arw", "https://raw.pixls.us/data/Sony/ILCE-7M4/ILCE-7M4_DSC06674_FullFrame-LossLess-Compressed-Large.ARW"),
     ("arw-sony-a7m4-lossless-m.arw", "https://raw.pixls.us/data/Sony/ILCE-7M4/ILCE-7M4_DSC06675_FullFrame-LossLess-Compressed-Medium.ARW"),
     ("arw-sony-a7m4-lossless-s.arw", "https://raw.pixls.us/data/Sony/ILCE-7M4/ILCE-7M4_DSC06676_FullFrame-LossLess-Compressed-Small.ARW"),
+    // CR2 colour-filter layouts differ by model (issue #85): CR2CFAPattern 3 (GBRG) and 1 (RGGB) samples
+    ("cr2-canon-40d.cr2", "https://raw.pixls.us/data/Canon/EOS%2040D/_MG_0153.CR2"),
+    ("cr2-canon-550d.cr2", "https://raw.pixls.us/data/Canon/EOS%20550D/IMG_4047.CR2"),
+    ("cr2-canon-5d2.cr2", "https://raw.pixls.us/data/Canon/EOS%205D%20Mark%20II/08.canon.raw.cr2"),
+    ("cr2-canon-5dsr.cr2", "https://raw.pixls.us/data/Canon/EOS%205DS%20R/_DSR2002.CR2"),
+    ("cr2-canon-6d.cr2", "https://raw.pixls.us/data/Canon/EOS%206D/EOS_6D_RAW.CR2"),
+    ("cr2-canon-7d.cr2", "https://raw.pixls.us/data/Canon/EOS%207D/RAW_CANON_EOS_7D-raw.CR2"),
     ("cr2-canon-5d3-sraw2.cr2", "https://raw.pixls.us/getfile.php/773/nice/Canon%20-%20EOS%205D%20Mark%20III%20-%20sRAW2%20%28sRAW%29.CR2"),
     ("cr2-canon-5d3.cr2", "https://raw.pixls.us/getfile.php/771/nice/Canon%20-%20EOS%205D%20Mark%20III.CR2"),
     ("cr2-canon-80d.cr2", "https://raw.pixls.us/getfile.php/1294/nice/Canon%20-%20EOS%2080D%20-%20RAW%20%283:2%29.CR2"),

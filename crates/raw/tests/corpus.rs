@@ -122,6 +122,54 @@ fn correlation(a: &[f64], b: &[f64]) -> f64 {
     cov / (va * vb).sqrt()
 }
 
+/// Which diagonal of each 2×2 cell (anchored at raw pixel (0, 0)) holds the green sites: the two greens of a Bayer
+/// cell see nearly the same light, so their mean absolute difference is far smaller than across the other diagonal.
+/// Returns `true` when green sits at (0, 0)/(1, 1) (GBRG/GRBG), `false` for (1, 0)/(0, 1) (RGGB/BGGR).
+fn green_on_main_diagonal(img: &lightcraft_raw::RawImage) -> bool {
+    let lightcraft_raw::RawData::U16(d) = &img.data else { panic!("float data") };
+    let (w, a) = (img.width, img.active_area);
+    let (mut main, mut anti) = (0f64, 0f64);
+    for y in ((a.y + 2) & !1..a.y + a.height - 2).step_by(2) {
+        for x in ((a.x + 2) & !1..a.x + a.width - 2).step_by(2) {
+            let v = |dx: usize, dy: usize| d[(y + dy) * w + x + dx] as f64;
+            main += (v(0, 0) - v(1, 1)).abs();
+            anti += (v(1, 0) - v(0, 1)).abs();
+        }
+    }
+    main < anti
+}
+
+/// Canon CR2 colour-filter layouts differ by model (issue #85); the decoder reads them from the `CR2CFAPattern` tag.
+/// The expected layouts were checked visually (natural colours vs. the embedded preview) and agree with the
+/// green-diagonal statistic of the mosaic itself.
+#[test]
+fn corpus_cr2_cfa_patterns() {
+    let dir = corpus_root().join("raw");
+    let cases = [
+        ("cr2-canon-40d.cr2", "RGGB"),
+        ("cr2-canon-550d.cr2", "GBRG"),
+        ("cr2-canon-5d2.cr2", "GBRG"),
+        ("cr2-canon-5d3.cr2", "RGGB"),
+        ("cr2-canon-5dsr.cr2", "RGGB"),
+        ("cr2-canon-6d.cr2", "RGGB"),
+        ("cr2-canon-7d.cr2", "GBRG"),
+        ("cr2-canon-80d.cr2", "RGGB"),
+    ];
+    let mut seen = 0;
+    for (name, want) in cases {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            eprintln!("skip: {name} absent");
+            continue;
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let got = img.cfa.as_ref().map(|c| c.name()).unwrap_or_default();
+        assert_eq!(got, want, "{name}: CFA layout");
+        assert_eq!(green_on_main_diagonal(&img), want.starts_with('G'), "{name}: mosaic statistics disagree with {want}");
+        seen += 1;
+    }
+    eprintln!("CR2 CFA layouts checked on {seen} files");
+}
+
 /// raw.pixls.us has the same D5100 scene as 14-bit lossless compressed and uncompressed NEF: the Huffman decode must
 /// match the uncompressed image (up to the small differences between two exposures).
 #[test]
