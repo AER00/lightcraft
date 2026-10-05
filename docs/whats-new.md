@@ -10,6 +10,10 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- Import ▸ Copy verifies every copy, like Move (issue #96): each file is written as a new file, synced to disk and
+  compared byte for byte with the card. A copy that fails or differs is removed and reported as a failed import —
+  so "import complete" means the copies are good before you format the card — and a name that is taken gets -1,
+  -2… instead of being replaced.
 - Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other
   models whose sensor starts on a green-blue row) no longer come out magenta (issue #85): the colour-filter
   layout is read from each file instead of assumed.
