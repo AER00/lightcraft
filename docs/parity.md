@@ -463,7 +463,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-PREF-GENERAL | General settings | P0 | ✅ | `cmd:app.settings`, `cmd:app.openLibrary`, `crates/ui-egui/src/panels/settings.rs` | General / Import / Performance / Interface tabs; app settings in ui.json, library settings in prefs.json |
+| LR-PREF-GENERAL | General settings | P0 | ✅ | `cmd:app.settings`, `cmd:app.openLibrary`, `crates/ui-egui/src/panels/settings.rs`, `crates/ui-egui/src/panels/notices.rs` | General / Import / Performance / Interface tabs; app settings in ui.json (written atomically, saved when the library changes and every few seconds), library settings in prefs.json; a damaged settings file is kept as `.corrupt-<time>` and reported, an unreadable one is not overwritten that session (`library.info` → `settingsWarnings`); quitting with unsaved changes retries, then asks |
 | LR-PREF-LOCALSTORAGE | Storage & cache | P1 | ✅ | `cmd:library.preferences`, `cmd:library.clearPreviews`, `cmd:library.compact` | thumbnail cache size + clear in Settings → Performance; library location + Open Library… in General |
 | LR-PREF-ACCOUNT | Account | OOS | 🚫 | | |
 | LR-PREF-INTERFACE | Interface options | P1 | ✅ | `cmd:app.settings` | filmstrip names/badges, grid badges (auto/always/never), square-grid names, navigator, info overlay |

@@ -11,6 +11,7 @@ pub mod filterbar;
 pub mod grid;
 pub mod left;
 pub mod masking;
+pub mod notices;
 pub mod presets;
 pub mod profiles;
 pub mod right;
