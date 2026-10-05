@@ -50,6 +50,11 @@
   used (e.g. a skipped software adapter such as llvmpipe) and why the last render fell back.
 - The thumbnail cache only ever counts and deletes its own files (issue #98): a library opened on a folder that
   already has a `thumbs/` folder of other pictures no longer loses them when the cache is trimmed or cleared.
+- Settings files are never quietly reset (issue #103): a damaged `prefs.json`, `presets.json` or `view.json` is kept
+  as `<name>.corrupt-<time>` and you're told; one that can't be read (e.g. locked by another program) is left alone
+  for the session instead of being overwritten with defaults. The app settings (`ui.json`, which remembers your
+  library) are written atomically and saved as soon as you open another library, not only at quit. Quitting while
+  changes couldn't be saved tries once more, then asks: Try Saving Again, Quit Anyway or Cancel.
 
 ### Library
 - Rename Photos never overwrites another photo when only the letter case changes (issue #95): on case-sensitive

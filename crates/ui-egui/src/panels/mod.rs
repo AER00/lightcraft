@@ -12,6 +12,7 @@ pub mod grid;
 pub mod left;
 pub mod library_problem;
 pub mod masking;
+pub mod notices;
 pub mod presets;
 pub mod profiles;
 pub mod right;
