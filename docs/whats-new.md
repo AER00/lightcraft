@@ -10,6 +10,10 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- A save that fails part-way (a full disk, a network share that drops) no longer looks like a damaged catalog
+  afterwards (issue #101): the partial write is cut off before LightCraft retries, so the next launch replays every
+  change. Catalogs already holding such a fragment load in full. Quitting while the catalog log can't be written
+  still saves your queued changes in the closing snapshot.
 - Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other
   models whose sensor starts on a green-blue row) no longer come out magenta (issue #85): the colour-filter
   layout is read from each file instead of assumed.

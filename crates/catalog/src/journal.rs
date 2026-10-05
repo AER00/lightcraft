@@ -10,6 +10,12 @@
 //! Loading = snapshot + replay of the records with `seq > snapshot seq`. Recovery rules:
 //! - a **torn final record** (crash mid-append: truncated line or bad CRC at the end) is dropped
 //!   and the file is cut back to the last good record, so later appends start on a clean line;
+//! - a **failed append** (disk full, a dropped network share) may leave part of its batch in the
+//!   file: [`Journal::append`] cuts the log back to the last whole record before returning the
+//!   error (or, if that fails too, before the next append), so the retry — the same ops with the
+//!   same `seq`s — starts on a clean line. Logs written by builds without that cut-back hold the
+//!   fragment glued to the first retried record on one line; the loader recognises the whole,
+//!   CRC-valid record at the end of such a line and skips only the fragment;
 //! - records already covered by the snapshot (crash between writing the snapshot and resetting
 //!   the log) are skipped;
 //! - a bad record **followed by good ones** is real damage: replay stops there, the log is kept
@@ -62,6 +68,9 @@ pub struct LoadReport {
     pub failed: usize,
     /// Bytes of a torn final record that were dropped.
     pub torn_bytes: u64,
+    /// Partial records left mid-log by a failed append that was retried (written by builds that
+    /// didn't cut the log back after a failed write): skipped, the retried records were replayed.
+    pub torn_fragments: usize,
     /// The damaged log was preserved under this name.
     pub damaged: Option<String>,
     /// No catalog files existed (a new library).
@@ -140,6 +149,9 @@ pub struct Journal {
     pending: Option<Pending>,
     /// After a failed background snapshot: don't retry before the log has this many records.
     retry_at_records: u64,
+    /// A failed append may have left part of its records after `log_bytes`, and cutting them off
+    /// failed too: the next append cuts the log back to `log_bytes` first.
+    tail_dirty: bool,
 }
 
 /// A background snapshot in flight.
@@ -180,6 +192,18 @@ pub fn decode_record(line: &str) -> Option<(u64, Op)> {
         return None;
     }
     serde_json::from_str(body).ok().map(|op| (seq, op))
+}
+
+/// A line that doesn't decode but ends with a whole record: a fragment of a failed append followed
+/// by the record that retried it (the retry re-encodes the same ops with the same `seq`s). Returns
+/// the fragment's length and the record, if that record continues the log (`seq <= last + 1`).
+/// The record's CRC must match, so damage is never mistaken for it.
+fn resync(line: &[u8], last: u64) -> Option<(usize, (u64, Op))> {
+    const START: &[u8] = b"{\"seq\":";
+    (1..line.len().saturating_sub(START.len() - 1)).filter(|&i| line[i..].starts_with(START)).find_map(|i| {
+        let rec = std::str::from_utf8(&line[i..]).ok().map(|l| l.trim_end_matches('\r')).and_then(decode_record)?;
+        (rec.0 <= last + 1).then_some((i, rec))
+    })
 }
 
 /// Write `catalog.snap` for the state after op `seq`, streaming the JSON into the store (no
@@ -242,6 +266,7 @@ impl Journal {
             stats: PersistStats::default(),
             pending: None,
             retry_at_records: 0,
+            tail_dirty: false,
         };
         let log = log.unwrap_or_default();
 
@@ -261,7 +286,17 @@ impl Journal {
                 good_end = next;
                 continue;
             }
-            match line.and_then(decode_record) {
+            let mut record = line.and_then(decode_record);
+            if record.is_none()
+                && let Some((at, r)) = resync(&log[pos..line_end], j.seq)
+            {
+                // the torn start of a failed append, then the retried records (older builds
+                // appended them right after the fragment)
+                log::warn!("catalog log: skipped a partial record ({at} bytes) left by a failed write");
+                report.torn_fragments += 1;
+                record = Some(r);
+            }
+            match record {
                 Some((seq, op)) if seq <= j.seq => {
                     // already in the snapshot
                     let _ = op;
@@ -301,10 +336,13 @@ impl Journal {
                 report.torn_bytes = (log.len() - good_end) as u64;
                 log::warn!("catalog log: dropped a torn final record ({} bytes)", report.torn_bytes);
                 j.store.truncate(LOG, good_end as u64).map_err(io)?;
+                j.log_bytes = good_end as u64;
             } else if needs_newline {
                 j.store.append(LOG, b"\n").map_err(io)?;
+                j.log_bytes = good_end as u64 + 1;
+            } else {
+                j.log_bytes = good_end as u64;
             }
-            j.log_bytes = good_end as u64;
         }
         catalog.revision = 0;
         Ok((j, catalog, report))
@@ -323,7 +361,20 @@ impl Journal {
             buf.push_str(&encode_record(seq, op));
             buf.push('\n');
         }
-        self.store.append(LOG, buf.as_bytes()).map_err(io)?;
+        if self.tail_dirty {
+            self.store.truncate(LOG, self.log_bytes).map_err(io)?;
+            self.tail_dirty = false;
+        }
+        if let Err(e) = self.store.append(LOG, buf.as_bytes()) {
+            // Part of the batch may be in the file. Cut it back to the last whole record, so the
+            // retry (same seqs) starts on a clean line instead of after a fragment that would
+            // read back as damage.
+            if let Err(t) = self.store.truncate(LOG, self.log_bytes) {
+                log::error!("catalog: can't cut the log back after a failed append: {t}");
+                self.tail_dirty = true;
+            }
+            return Err(io(e));
+        }
         if let Some(p) = self.pending.as_mut() {
             p.tail.extend_from_slice(buf.as_bytes());
             p.tail_records += ops.len() as u64;
@@ -343,12 +394,22 @@ impl Journal {
 
     /// Write a snapshot of `catalog` (which must reflect every appended op) and reset the log.
     pub fn snapshot(&mut self, catalog: &Catalog) -> Result<()> {
+        self.snapshot_with_unlogged(catalog, 0)
+    }
+
+    /// [`Journal::snapshot`] of a catalog that also reflects `unlogged` ops applied after the
+    /// last appended one but never written to the log (their append failed). The snapshot counts
+    /// them (it holds the state after op `seq + unlogged`), so they are saved and must not be
+    /// appended afterwards. Once the snapshot is durable [`Journal::seq`] includes them, even if
+    /// resetting the log then fails (the error is still returned).
+    pub fn snapshot_with_unlogged(&mut self, catalog: &Catalog, unlogged: u64) -> Result<()> {
         // never two snapshot writers; the one in flight is older, so it must land first
         if let Err(e) = self.wait() {
             log::warn!("catalog: background snapshot failed ({e}); writing one now");
         }
         let t0 = web_time::Instant::now();
-        let mut timing = match write_snapshot(self.store.as_mut(), self.seq, catalog) {
+        let seq = self.seq + unlogged;
+        let mut timing = match write_snapshot(self.store.as_mut(), seq, catalog) {
             Ok(t) => t,
             Err(e) => {
                 // nothing lost (the log is whole); don't retry on every append
@@ -357,6 +418,9 @@ impl Journal {
                 return Err(io(e));
             }
         };
+        // the snapshot is durable: it holds every op up to `seq`
+        self.seq = seq;
+        self.snapshot_seq = seq;
         let t2 = web_time::Instant::now();
         // A crash here leaves old records in the log; they are skipped by seq on load.
         self.store.write_atomic(LOG, b"").map_err(io)?;
@@ -365,10 +429,10 @@ impl Journal {
         timing.blocking_ms = timing.total_ms;
         timing.records = self.log_records;
         self.record_snapshot(timing);
-        self.snapshot_seq = self.seq;
         self.log_records = 0;
         self.log_bytes = 0;
         self.retry_at_records = 0;
+        self.tail_dirty = false;
         Ok(())
     }
 
@@ -459,6 +523,7 @@ impl Journal {
         self.log_records = p.tail_records;
         self.log_bytes = p.tail.len() as u64;
         self.retry_at_records = 0;
+        self.tail_dirty = false;
         Ok(())
     }
 

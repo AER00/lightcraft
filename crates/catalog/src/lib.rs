@@ -646,3 +646,5 @@ mod tests_background;
 mod tests_journal;
 #[cfg(test)]
 mod tests_local;
+#[cfg(test)]
+mod tests_torn_append;
