@@ -5,6 +5,11 @@
 //!   snapshot — crash-safe and diff-friendly (see [`journal`]);
 //! - **undo/redo**: the engine keeps inverse ops;
 //! - **determinism**: replaying the log reproduces the state exactly (property-tested).
+//!
+//! **Catalog format version** ([`journal::VERSION`], see [`journal`] → *Format versions*): adding
+//! an [`Op`] variant or a serialized field means bumping it. Newer builds read every older format
+//! (and upgrade it on open); older builds refuse a newer library with [`CatalogError::Newer`]
+//! instead of reading part of it.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -46,6 +51,10 @@ pub enum CatalogError {
     Corrupt(String),
     #[error("catalog storage: {0}")]
     Io(String),
+    /// The library was written by a newer LightCraft (a newer catalog format, or a change this
+    /// version doesn't know). Nothing was read into the session and nothing was modified.
+    #[error("this library was written by a newer version of LightCraft ({0}); update LightCraft to open it. The library was left unchanged.")]
+    Newer(String),
 }
 
 pub type Result<T> = std::result::Result<T, CatalogError>;
@@ -642,6 +651,8 @@ impl Catalog {
 mod tests;
 #[cfg(test)]
 mod tests_background;
+#[cfg(test)]
+mod tests_format_version;
 #[cfg(test)]
 mod tests_journal;
 #[cfg(test)]
