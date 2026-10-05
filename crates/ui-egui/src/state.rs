@@ -131,6 +131,8 @@ impl InfoOverlay {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
+    /// Display language, independent of catalog data and command ids.
+    pub language: crate::i18n::Language,
     /// Library opened at launch when no `--library` is given (empty = the default location).
     pub library_path: String,
     pub startup_view: StartupView,
@@ -155,6 +157,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         AppSettings {
+            language: crate::i18n::default_language(),
             library_path: String::new(),
             startup_view: StartupView::Last,
             confirm_delete: false,
