@@ -290,7 +290,7 @@ impl MediaCache {
             && !std::path::Path::new(path).exists()
         {
             let sp = dir.join(crate::smart::file_name(p));
-            if sp.exists() {
+            if crate::smart::is_valid(&sp) {
                 return SourceRef::Smart { path: sp };
             }
         }
