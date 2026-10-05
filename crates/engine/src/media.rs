@@ -26,7 +26,7 @@ use lightcraft_raster::{Histogram, Rgb32f, Rgba8};
 use serde::{Deserialize, Serialize};
 
 /// Bump when the pipeline's output changes, to invalidate cached thumbnails.
-pub const RENDER_CACHE_VERSION: u64 = 5;
+pub const RENDER_CACHE_VERSION: u64 = 6;
 
 /// Thumbnails render at one of these long edges (so window/cell size changes reuse the cache).
 pub const THUMB_SIZES: [usize; 4] = [128, 256, 384, 512];
@@ -71,9 +71,16 @@ pub type FileLoader = Arc<dyn Fn(&str, usize) -> Result<(Rgb32f, SourceInfo), St
 /// `max_edge` (set by the app). `None`: no usable preview.
 pub type PreviewLoader = Arc<dyn Fn(&str, usize) -> Option<Rgba8> + Send + Sync>;
 
+/// Pixels and the source interpretation learned while decoding; they must be cached together.
+#[derive(Clone)]
+pub struct DecodedSource {
+    pub image: Arc<Rgb32f>,
+    pub info: Option<SourceInfo>,
+}
+
 #[derive(Clone)]
 pub enum SourceRef {
-    Loaded(Arc<Rgb32f>),
+    Loaded(Box<DecodedSource>),
     Demo {
         scene: Box<lightcraft_scenes::Scene>,
         max_edge: usize,
@@ -91,28 +98,33 @@ pub enum SourceRef {
 
 impl SourceRef {
     pub fn load(&self) -> Result<Arc<Rgb32f>, String> {
-        match self {
-            SourceRef::Loaded(a) => Ok(a.clone()),
-            SourceRef::Demo { scene, max_edge } => Ok(Arc::new(scene.render_fit(*max_edge))),
+        self.load_source().map(|s| s.image)
+    }
+
+    pub fn load_source(&self) -> Result<DecodedSource, String> {
+        let image = match self {
+            SourceRef::Loaded(a) => return Ok((**a).clone()),
+            SourceRef::Demo { scene, max_edge } => Arc::new(scene.render_fit(*max_edge)),
             SourceRef::File { path, max_edge, loader } => match loader {
-                Some(l) => l(path, *max_edge).map(|(img, _)| Arc::new(img)),
-                None => Err(format!("no decoder available for {path}")),
+                Some(l) => return l(path, *max_edge).map(|(image, info)| DecodedSource { image: Arc::new(image), info: Some(info) }),
+                None => return Err(format!("no decoder available for {path}")),
             },
             #[cfg(not(target_arch = "wasm32"))]
-            SourceRef::Smart { path } => crate::smart::load(path),
+            SourceRef::Smart { path } => crate::smart::load(path)?,
             #[cfg(target_arch = "wasm32")]
-            SourceRef::Smart { .. } => Err("smart previews are not available here".into()),
-        }
+            SourceRef::Smart { .. } => return Err("smart previews are not available here".into()),
+        };
+        Ok(DecodedSource { image, info: None })
     }
 }
 
 pub struct MediaCache {
     /// Decoded thumbnail-level sources (LRU by bytes).
-    thumbs: Lru<PhotoId, Arc<Rgb32f>>,
+    thumbs: Lru<PhotoId, DecodedSource>,
     /// Decoded preview-level sources with their last use ([`lightcraft_preview::next_tick`]).
-    previews: Vec<(PhotoId, Arc<Rgb32f>, u64)>,
+    previews: Vec<(PhotoId, DecodedSource, u64)>,
     /// The last full-resolution original (exports; one at a time: ~300 MB at 24 MP).
-    full: Option<(PhotoId, Arc<Rgb32f>, u64)>,
+    full: Option<(PhotoId, DecodedSource, u64)>,
     /// How many previews to keep (LRU).
     pub preview_capacity: usize,
     /// Bytes all decoded sources and rendered previews in memory may take together (the cache
@@ -156,7 +168,7 @@ fn rendered_budget(share: usize) -> usize {
 }
 
 fn source_bytes(img: &Rgb32f) -> usize {
-    img.data.len() * 12 + 64
+    img.data.len() * 12 + 64 + std::mem::size_of::<SourceInfo>()
 }
 
 impl MediaCache {
@@ -207,8 +219,8 @@ impl MediaCache {
             let Some((tick, which)) = candidates.into_iter().flatten().min() else { break };
             let freed = match which {
                 0 => self.thumbs.pop_oldest(),
-                1 => self.previews.iter().position(|e| e.2 == tick).map(|i| source_bytes(&self.previews.remove(i).1)),
-                2 => self.full.take().map(|e| source_bytes(&e.1)),
+                1 => self.previews.iter().position(|e| e.2 == tick).map(|i| source_bytes(&self.previews.remove(i).1.image)),
+                2 => self.full.take().map(|e| source_bytes(&e.1.image)),
                 _ => self.rendered.evict_oldest(),
             };
             match freed {
@@ -219,6 +231,10 @@ impl MediaCache {
     }
 
     pub fn get(&mut self, id: PhotoId, level: SourceLevel) -> Option<Arc<Rgb32f>> {
+        self.get_source(id, level).map(|s| s.image)
+    }
+
+    fn get_source(&mut self, id: PhotoId, level: SourceLevel) -> Option<DecodedSource> {
         match level {
             SourceLevel::Thumb => self.thumbs.get(&id).cloned(),
             SourceLevel::Preview => self.previews.iter_mut().find(|e| e.0 == id).map(|e| {
@@ -232,11 +248,23 @@ impl MediaCache {
         }
     }
 
+    fn source_facts(&self, id: PhotoId) -> Option<SourceInfo> {
+        self.thumbs
+            .peek(&id)
+            .and_then(|s| s.info)
+            .or_else(|| self.previews.iter().find(|e| e.0 == id).and_then(|e| e.1.info))
+            .or_else(|| self.full.as_ref().filter(|e| e.0 == id).and_then(|e| e.1.info))
+    }
+
     pub fn insert(&mut self, id: PhotoId, level: SourceLevel, img: Arc<Rgb32f>) {
+        self.insert_source(id, level, DecodedSource { image: img, info: None });
+    }
+
+    fn insert_source(&mut self, id: PhotoId, level: SourceLevel, img: DecodedSource) {
         let tick = lightcraft_preview::next_tick();
         match level {
             SourceLevel::Thumb => {
-                let cost = source_bytes(&img);
+                let cost = source_bytes(&img.image);
                 self.thumbs.insert(id, img, cost);
             }
             SourceLevel::Preview => {
@@ -270,14 +298,14 @@ impl MediaCache {
     /// Decoded sources held: (thumbnail level, preview level, full size).
     pub fn usage(&self) -> (crate::memory::Usage, crate::memory::Usage, crate::memory::Usage) {
         use crate::memory::Usage;
-        let previews = Usage::new(self.previews.len(), self.previews.iter().map(|e| source_bytes(&e.1)).sum());
-        let full = self.full.as_ref().map(|e| Usage::new(1, source_bytes(&e.1))).unwrap_or_default();
+        let previews = Usage::new(self.previews.len(), self.previews.iter().map(|e| source_bytes(&e.1.image)).sum());
+        let full = self.full.as_ref().map(|e| Usage::new(1, source_bytes(&e.1.image))).unwrap_or_default();
         (Usage::new(self.thumbs.len(), self.thumbs.cost()), previews, full)
     }
 
     pub fn source_ref(&mut self, p: &Photo, level: SourceLevel) -> SourceRef {
-        if let Some(a) = self.get(p.id, level) {
-            return SourceRef::Loaded(a);
+        if let Some(a) = self.get_source(p.id, level) {
+            return SourceRef::Loaded(Box::new(a));
         }
         // Procedural scenes have a nominal size: "full" is that size, not unbounded.
         let max_edge = level.max_edge().min(match (&p.source, level) {
@@ -344,7 +372,7 @@ pub struct RenderResult {
     pub key: u64,
     pub rendered: Result<Rendered, String>,
     /// A source that was loaded by this job (to be inserted into the cache).
-    pub loaded: Option<Arc<Rgb32f>>,
+    pub loaded: Option<DecodedSource>,
     /// Set for a [`QuickJob`]'s stand-in: where the image came from.
     pub quick: Option<QuickSource>,
 }
@@ -410,12 +438,14 @@ impl RenderJob {
             };
         }
         let was_loaded = matches!(self.source, SourceRef::Loaded(_));
-        match self.source.load() {
-            Ok(src) => {
+        match self.source.load_source() {
+            Ok(source) => {
+                let src = &source.image;
+                let info = source.info.unwrap_or(self.info);
                 // Thumbnails (many small jobs side by side) stay on the CPU; views and exports use
                 // the GPU when there is one.
                 let gpu = self.cache.is_none();
-                let rendered = develop(&src, &self.info, &self.settings, &self.request, self.stages.as_deref(), gpu);
+                let rendered = develop(src, &info, &self.settings, &self.request, self.stages.as_deref(), gpu);
                 if let Some((cache, key)) = &self.cache {
                     cache.put(*key, Arc::new(rendered.image.clone()));
                 }
@@ -429,7 +459,7 @@ impl RenderJob {
                     level: self.level,
                     key: self.key,
                     rendered: Ok(rendered),
-                    loaded: (!was_loaded).then_some(src),
+                    loaded: (!was_loaded).then_some(source),
                     quick: None,
                 }
             }
@@ -521,11 +551,16 @@ pub fn content_key(p: &Photo) -> String {
 pub fn source_info(p: &Photo) -> SourceInfo {
     // Procedural demo scenes are scene-referred HDR (like raw files): use the filmic tone map.
     if matches!(p.source, Source::Demo { .. }) {
-        return SourceInfo { raw: true, as_shot_temp: 6500.0, as_shot_tint: 0.0, lens: None };
+        return SourceInfo { raw: true, ..Default::default() };
     }
     // A raw shown from its embedded preview is a rendered (display-referred) JPEG: relative white
     // balance and the display tone curve, like any other rendered file.
-    if p.develops_raw() { SourceInfo { raw: true, as_shot_temp: 5500.0, as_shot_tint: 0.0, lens: p.embedded_lens } } else { SourceInfo::default() }
+    if p.develops_raw() {
+        let (temp, tint) = if p.relative_wb() { (6500.0, 0.0) } else { p.as_shot_wb.unwrap_or((5500.0, 0.0)) };
+        SourceInfo { raw: true, as_shot_temp: temp, as_shot_tint: tint, lens: p.embedded_lens, relative_wb: p.relative_wb(), ..Default::default() }
+    } else {
+        SourceInfo::default()
+    }
 }
 
 impl crate::Session {
@@ -680,7 +715,7 @@ impl crate::Session {
     /// Accept a finished job's loaded source into the cache.
     pub fn accept(&mut self, r: &RenderResult) {
         if let Some(src) = &r.loaded {
-            self.media.insert(r.photo, r.level, src.clone());
+            self.media.insert_source(r.photo, r.level, src.clone());
         }
     }
 
@@ -723,12 +758,21 @@ impl crate::Session {
         Ok(job)
     }
 
+    /// Prefer decoder facts to header-only metadata for pixel-statistics commands.
+    pub fn source_info(&self, id: PhotoId) -> SourceInfo {
+        if let Some(info) = self.media.source_facts(id) {
+            return info;
+        }
+        self.catalog.photo(id).map(|p| source_info(p)).unwrap_or_default()
+    }
+
     /// The source proxy for pixel-statistics commands (auto tone/WB), loading synchronously.
     pub fn source_now(&mut self, id: PhotoId, level: SourceLevel) -> Result<Arc<Rgb32f>, String> {
         let p = self.catalog.photo(id).ok_or("no such photo")?.clone();
-        let r = self.media.source_ref(&p, level).load()?;
-        self.media.insert(id, level, r.clone());
-        Ok(r)
+        let r = self.media.source_ref(&p, level).load_source()?;
+        let image = r.image.clone();
+        self.media.insert_source(id, level, r);
+        Ok(image)
     }
 }
 
@@ -759,6 +803,41 @@ pub type FileProbe = Arc<dyn Fn(&str) -> Result<ProbeInfo, String> + Send + Sync
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoder_info_survives_render_jobs_cache_and_eviction() {
+        let tone = lightcraft_pipeline::tone::CameraTone::new(std::array::from_fn(|i| {
+            let x = 0.01 * (i + 1) as f32;
+            [x, (x * 2.0).min(0.9)]
+        }))
+        .unwrap();
+        let info = SourceInfo { raw: true, relative_wb: true, camera_tone: Some(tone), ..Default::default() };
+        let mut s = crate::Session::with_demo();
+        let id = s.active().unwrap();
+        let mut job = s.render_job(id, 64, 64, false, true).unwrap();
+        job.source = SourceRef::File {
+            path: "synthetic.arw".into(),
+            max_edge: 64,
+            loader: Some(Arc::new(move |_, _| {
+                let mut image = Rgb32f::new(64, 64);
+                image.data.fill([0.1; 3]);
+                Ok((image, info))
+            })),
+        };
+        job.info = SourceInfo::default(); // Header facts cannot override decoder facts.
+        job.settings = Arc::new(DevelopSettings::default());
+        let r = job.clone().run();
+        assert_eq!(r.loaded.as_ref().unwrap().info, Some(info));
+        let expected = lightcraft_pipeline::render(&r.loaded.as_ref().unwrap().image, &info, &job.settings, &job.request);
+        assert_eq!(r.rendered.as_ref().unwrap().image.data, expected.image.data);
+        s.accept(&r);
+        job.source = s.media.source_ref(s.catalog.photo(id).unwrap(), job.level);
+        let again = job.run();
+        assert!(again.loaded.is_none());
+        assert_eq!(r.rendered.unwrap().image.data, again.rendered.unwrap().image.data);
+        s.media.forget(id);
+        assert!(s.media.get_source(id, r.level).is_none());
+    }
 
     #[test]
     fn budget_evicts_least_recently_used_across_caches() {

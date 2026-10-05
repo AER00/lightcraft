@@ -14,12 +14,75 @@ pub const LUT_MIN_EV: f32 = -14.0;
 pub const LUT_MAX_EV: f32 = 10.0;
 pub const LUT_N: usize = 4096;
 
+/// A file-local camera look, fitted independently of the scene-linear colour transform.
+/// Knots are scene/display-linear luminance pairs. Keeping this in the finish stage preserves
+/// RAW exposure and highlight headroom; it is never baked into the decoded sensor pixels.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub struct CameraTone {
+    knots: [[f32; 2]; 32],
+}
+
+impl<'de> serde::Deserialize<'de> for CameraTone {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Wire {
+            knots: [[f32; 2]; 32],
+        }
+        let w = Wire::deserialize(d)?;
+        Self::new(w.knots).ok_or_else(|| serde::de::Error::custom("invalid camera tone curve"))
+    }
+}
+
+impl CameraTone {
+    pub fn new(knots: [[f32; 2]; 32]) -> Option<Self> {
+        let mut previous = [0.0, 0.0];
+        for p in knots {
+            if !p.iter().all(|v| v.is_finite()) || p[0] <= previous[0] || p[1] < previous[1] || p[1] >= 1.0 {
+                return None;
+            }
+            previous = p;
+        }
+        Some(Self { knots })
+    }
+
+    pub fn apply(&self, y: f32) -> f32 {
+        if !y.is_finite() || y <= 0.0 {
+            return 0.0;
+        }
+        let mut previous = [0.0, 0.0];
+        for p in self.knots {
+            if y <= p[0] {
+                let t = (y - previous[0]) / (p[0] - previous[0]);
+                return previous[1] + t * (p[1] - previous[1]);
+            }
+            previous = p;
+        }
+        let a = self.knots[30];
+        let b = self.knots[31];
+        // Extend beyond observed (unclipped) highlights with a continuous, bounded shoulder.
+        let slope = ((b[1] - a[1]) / (b[0] - a[0])).clamp(0.1, 16.0);
+        1.0 - (1.0 - b[1]) * (-(y - b[0]) * slope / (1.0 - b[1]).max(0.01)).exp()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ToneMap {
     lut: Vec<f32>,
 }
 
 impl ToneMap {
+    pub fn camera(curve: &CameraTone, contrast: f64, whites: f64, blacks: f64) -> ToneMap {
+        let adjustment = Self::display(contrast, whites, blacks);
+        let neutral = contrast == 0.0 && whites == 0.0 && blacks == 0.0;
+        let lut = (0..LUT_N)
+            .map(|i| {
+                let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
+                let y = curve.apply(GREY * 2f32.powf(ev));
+                if neutral { y } else { adjustment.apply(y) }
+            })
+            .collect();
+        ToneMap { lut }
+    }
     /// `contrast`, `whites`, `blacks` in −100..100 (Lightroom slider units).
     pub fn new(contrast: f64, whites: f64, blacks: f64) -> ToneMap {
         let c = (contrast / 100.0) as f32;
@@ -115,6 +178,32 @@ fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn camera_curve_preserves_black_and_extends_headroom() {
+        let knots = std::array::from_fn(|i| {
+            let x = 0.005 * 1.15f32.powi(i as i32);
+            [x, 1.0 - (-3.0 * x).exp()]
+        });
+        let curve = CameraTone::new(knots).unwrap();
+        let base = ToneMap::camera(&curve, 0.0, 0.0, 0.0);
+        assert_eq!(base.apply(0.0), 0.0);
+        assert!(base.apply(0.1) < base.apply(0.2));
+        let mut previous = 0.0;
+        for i in 0..2000 {
+            let y = 1e-6 * 1.01f32.powi(i);
+            let v = base.apply(y);
+            assert!((0.0..=1.0).contains(&v));
+            assert!(v >= previous - 1e-6);
+            previous = v;
+        }
+        assert!((base.apply(0.1) - curve.apply(0.1)).abs() < 0.001);
+        assert!(ToneMap::camera(&curve, 50.0, 0.0, 0.0).apply(0.3) > base.apply(0.3));
+        let mut invalid = knots;
+        invalid[1][0] = invalid[0][0];
+        assert!(CameraTone::new(invalid).is_none());
+        assert!(serde_json::from_value::<CameraTone>(serde_json::json!({"knots": invalid})).is_err());
+    }
 
     #[test]
     fn monotone_and_bounded() {

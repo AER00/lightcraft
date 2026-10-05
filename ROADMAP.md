@@ -175,7 +175,7 @@ Not decoded yet — preview only (no permissively licensed description; black-bo
   from the same-colour pixel two to the left), the reconstruction rule for scales 2/3 is not established.
 - **Olympus compressed ORF**, **Fujifilm compressed RAF**, **Canon CR3/CRX** (M11.1), **Canon sRAW/mRAW**, lossy DNG.
 
-**Camera colour matrices:** ARW files can use a guarded correction fitted from their own embedded JPEG (see `docs/camera-preview-colour.md`); this is a per-file camera-look estimate, not measured calibration. Other non-DNG raws and rejected fits use the documented neutral fallback (camera RGB ≈ linear sRGB, flagged
+**Camera colour matrices:** ARW files can use guarded, separate chromaticity and tone estimates from their own embedded JPEG (see `docs/camera-preview-colour.md`); this is a per-file camera-look estimate with relative WB, not measured calibration or absolute-Kelvin WB. Other non-DNG raws and rejected fits use the documented neutral fallback (camera RGB ≈ linear sRGB, flagged
 `matrix_is_fallback`) with the file's as-shot white-balance multipliers. Clean sources to evaluate next: manufacturer
 matrices stored in the files themselves (Olympus ImageProcessing `ColorMatrix`, Pentax/Panasonic equivalents) and our
 own chart-based calibration (M11.4). Adobe matrices are never used.
