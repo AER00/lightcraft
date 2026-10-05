@@ -576,3 +576,132 @@ fn copyright_status_usage_terms_and_url_round_trip() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&lib);
 }
+
+/// A sidecar another raw developer wrote: develop settings in attributes and elements, a
+/// structured edit history, an unknown namespace.
+const OTHER_APP_SIDECAR: &str = r#"<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Other Toolkit">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+    xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/"
+    xmlns:stEvt="http://ns.adobe.com/xap/1.0/sType/ResourceEvent#"
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+    xmlns:other="http://example.com/other/1.0/"
+    xmp:Rating="2"
+    crs:Version="99.0"
+    crs:Exposure2012="+0.65"
+    crs:HasSettings="True"
+    other:Secret="keep me">
+   <xmpMM:History>
+    <rdf:Seq>
+     <rdf:li stEvt:action="derived" stEvt:parameters="converted from image/x-raw to image/png"/>
+    </rdf:Seq>
+   </xmpMM:History>
+   <crs:ToneCurvePV2012>
+    <rdf:Seq>
+     <rdf:li>0, 0</rdf:li>
+     <rdf:li>128, 140</rdf:li>
+     <rdf:li>255, 255</rdf:li>
+    </rdf:Seq>
+   </crs:ToneCurvePV2012>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"#;
+
+/// Issue #92: saving merges into another app's sidecar instead of replacing it.
+#[test]
+fn saving_merges_into_another_apps_sidecar() {
+    let src = temp_dir("merge");
+    let lib = temp_dir("merge-lib");
+    write_png(&src.join("shot.png"), 1);
+    std::fs::write(src.join("shot.xmp"), OTHER_APP_SIDECAR).unwrap();
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    s.execute("library.import", &json!({"paths": [src.join("shot.png").to_string_lossy()]})).unwrap();
+    let id = only(&s);
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    s.execute("photo.rate", &json!({"rating": 5})).unwrap();
+    s.execute("photo.setMeta", &json!({"title": "Harbour", "keywords": ["boats"]})).unwrap();
+    s.execute("develop.set", &json!({"control": "effects.clarity", "value": 30})).unwrap();
+    let r = s.execute("photo.saveMetadataToFile", &json!({})).unwrap();
+    assert_eq!(r["merged"][0], src.join("shot.xmp").to_string_lossy().as_ref(), "{r}");
+    let out = std::fs::read_to_string(src.join("shot.xmp")).unwrap();
+    // the other app's data, byte for byte
+    for part in [
+        "crs:Exposure2012=\"+0.65\"",
+        "other:Secret=\"keep me\"",
+        "   <xmpMM:History>\n    <rdf:Seq>\n     <rdf:li stEvt:action=\"derived\" stEvt:parameters=\"converted from image/x-raw to image/png\"/>\n    </rdf:Seq>\n   </xmpMM:History>",
+        "   <crs:ToneCurvePV2012>\n    <rdf:Seq>\n     <rdf:li>0, 0</rdf:li>\n     <rdf:li>128, 140</rdf:li>",
+    ] {
+        assert!(out.contains(part), "lost {part:?}:\n{out}");
+    }
+    let d = lightcraft_meta::parse_xmp(&out).unwrap();
+    assert_eq!(d.metadata.rating, Some(5), "ours replaces theirs");
+    assert_eq!(d.metadata.title.as_deref(), Some("Harbour"));
+    assert_eq!(d.properties.get("crs:Version"), Some(&vec!["99.0".to_string()]));
+    let saved = s.catalog.photo(id).unwrap().develop.clone();
+    // reading it back restores our settings (lc:settings wins over crs:)
+    s.execute("develop.set", &json!({"control": "effects.clarity", "value": 0})).unwrap();
+    s.execute("photo.readMetadataFromFile", &json!({})).unwrap();
+    assert_eq!(s.catalog.photo(id).unwrap().develop, saved);
+    // saving again keeps one LightCraft description and the other app's data
+    s.execute("photo.rate", &json!({"rating": 3})).unwrap();
+    s.execute("photo.saveMetadataToFile", &json!({})).unwrap();
+    let again = std::fs::read_to_string(src.join("shot.xmp")).unwrap();
+    assert_eq!(again.matches("<rdf:Description").count(), 2, "{again}");
+    assert!(again.contains("other:Secret=\"keep me\"") && again.contains("crs:Exposure2012=\"+0.65\""));
+    assert_eq!(lightcraft_meta::parse_xmp(&again).unwrap().metadata.rating, Some(3));
+
+    // a sidecar that isn't XMP is kept as a backup before it is replaced
+    std::fs::write(src.join("shot.xmp"), b"<not xmp").unwrap();
+    let r = s.execute("photo.saveMetadataToFile", &json!({})).unwrap();
+    let backup = r["backups"][0]["backup"].as_str().unwrap().to_string();
+    assert!(backup.contains("shot.xmp.bak-"), "{r}");
+    assert_eq!(std::fs::read(&backup).unwrap(), b"<not xmp");
+    assert_eq!(lightcraft_meta::parse_xmp(&std::fs::read_to_string(src.join("shot.xmp")).unwrap()).unwrap().metadata.rating, Some(3));
+    // … and another one never overwrites the first backup
+    std::fs::write(src.join("shot.xmp"), b"<still not xmp").unwrap();
+    let r = s.execute("photo.saveMetadataToFile", &json!({})).unwrap();
+    let second = r["backups"][0]["backup"].as_str().unwrap().to_string();
+    assert_ne!(second, backup);
+    assert_eq!(std::fs::read(&backup).unwrap(), b"<not xmp");
+    assert_eq!(std::fs::read(&second).unwrap(), b"<still not xmp");
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&lib);
+}
+
+/// Issue #92: two catalogued files with one stem (`IMG_1.jpg` + `IMG_1.png`) don't share a
+/// Stem-named sidecar: the first by name keeps `IMG_1.xmp`, the other writes and reads
+/// `IMG_1.png.xmp`.
+#[test]
+fn files_sharing_a_stem_get_their_own_sidecars() {
+    let src = temp_dir("stem");
+    let lib = temp_dir("stem-lib");
+    write_png(&src.join("IMG_1.png"), 1);
+    let img = lightcraft_raster::Rgba8::from_fn(40, 24, |x, y| [(x * 6) as u8, (y * 9) as u8, 7, 255]);
+    let jpg =
+        crate::export::encode_image(&img, &crate::export::ExportOptions { format: crate::export::ExportFormat::Jpeg, ..Default::default() }).unwrap();
+    std::fs::write(src.join("IMG_1.jpg"), jpg).unwrap();
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let id = |s: &Session, name: &str| s.catalog.photos().find(|p| p.file_name == name).unwrap().id;
+    let (j, p) = (id(&s, "IMG_1.jpg"), id(&s, "IMG_1.png"));
+    assert_eq!(s.sidecar_naming(j), crate::sidecar::SidecarNaming::Stem);
+    assert_eq!(s.sidecar_naming(p), crate::sidecar::SidecarNaming::Full);
+    s.execute("photo.rate", &json!({"ids": [j.0], "rating": 2})).unwrap();
+    s.execute("photo.rate", &json!({"ids": [p.0], "rating": 5})).unwrap();
+    let r = s.execute("photo.saveMetadataToFile", &json!({"ids": [j.0, p.0]})).unwrap();
+    assert_eq!(r["written"].as_array().unwrap().len(), 2, "{r}");
+    let rating = |f: &str| lightcraft_meta::parse_xmp(&std::fs::read_to_string(src.join(f)).unwrap()).unwrap().metadata.rating;
+    assert_eq!(rating("IMG_1.xmp"), Some(2));
+    assert_eq!(rating("IMG_1.png.xmp"), Some(5));
+    // each reads its own back
+    s.execute("photo.rate", &json!({"ids": [j.0, p.0], "rating": 0})).unwrap();
+    s.execute("photo.readMetadataFromFile", &json!({"ids": [j.0, p.0]})).unwrap();
+    assert_eq!((s.catalog.photo(j).unwrap().rating, s.catalog.photo(p).unwrap().rating), (2, 5));
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&lib);
+}
