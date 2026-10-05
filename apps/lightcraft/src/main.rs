@@ -316,6 +316,9 @@ fn services() -> Services {
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),
+        // the library is a folder on disk: backed up with the user's other files
+        backup_library: None,
+        restore_library: None,
     }
 }
 
