@@ -4,7 +4,7 @@
 //!
 //! The library (catalog, presets, thumbnail cache) lives in `--library DIR`, else
 //! `$LIGHTCRAFT_LIBRARY`, else the library last opened with Settings → Open Library…, else
-//! `~/Pictures/LightCraft Japanese Library`; a new library starts with the
+//! `~/Pictures/LightCraft Library` (`LightCraft Japanese Library` with `japanese-local`); a new library starts with the
 //! procedural demo photos unless `--no-demo` or files are given. Files and folders on the command
 //! line are imported (duplicates are skipped). `--memory` runs an in-memory session that writes
 //! nothing (demo photos unless files are given; used by the README showcase scripts).
@@ -67,7 +67,8 @@ impl eframe::App for App {
 
 fn config_dir() -> Option<std::path::PathBuf> {
     if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support/LightCraft Japanese"))
+        let name = if cfg!(feature = "japanese-local") { "LightCraft Japanese" } else { "LightCraft" };
+        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support").join(name))
     } else if cfg!(windows) {
         std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("LightCraft"))
     } else {
@@ -269,7 +270,7 @@ lightcraft — photo library + raw developer
 USAGE: lightcraft [OPTIONS] [FILES/FOLDERS…]   (files and folders are imported)
 
 OPTIONS:
-  --library DIR    open (or create) this library (default: ~/Pictures/LightCraft Japanese Library; env LIGHTCRAFT_LIBRARY)
+  --library DIR    open (or create) this library (default: ~/Pictures/LightCraft Library; env LIGHTCRAFT_LIBRARY)
   --no-demo        don't seed a new library with the procedural demo photos
   --memory         throwaway in-memory session (alias --demo); nothing is saved
   --control PORT   serve the JSON-lines control channel on 127.0.0.1:PORT (env LIGHTCRAFT_CONTROL_PORT;
@@ -320,7 +321,8 @@ fn main() -> eframe::Result {
         if let Some(path) = std::env::var_os("LIGHTCRAFT_LIBRARY").filter(|p| !p.is_empty()) {
             return Some(path.into());
         }
-        std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Pictures/LightCraft Japanese Library"))
+        let name = if cfg!(feature = "japanese-local") { "LightCraft Japanese Library" } else { "LightCraft Library" };
+        std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Pictures").join(name))
     });
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -342,7 +344,9 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let session = open_session(in_memory, library_dir, seed_demo && files.is_empty());
             let mut app = LightcraftApp::new(session, services());
-            app.ui.settings.language = lightcraft_ui_egui::i18n::Language::Japanese;
+            if cfg!(feature = "japanese-local") {
+                app.ui.settings.language = lightcraft_ui_egui::i18n::Language::Japanese;
+            }
             if let Some(ui) = prefs {
                 app.ui = ui;
             }

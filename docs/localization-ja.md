@@ -26,3 +26,7 @@
 
 表示・フォント・言語の切り替え・設定の保存・コマンドIDの保持は
 `cargo test -p lightcraft-ui-egui i18n::tests` で検証します。
+
+通常ビルドでは既存の英語表示と保存場所を維持します。別アプリの日本語版は
+`cargo build --release -p lightcraft -p lightcraft-cli --features lightcraft/japanese-local`
+でビルドしてから `scripts/package-japanese-macos.py` で作成します。
