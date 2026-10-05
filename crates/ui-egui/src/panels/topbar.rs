@@ -19,7 +19,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let mut sw = 640.0f32.min(full.width() - 460.0).max(200.0);
             if !app.native_menu {
                 // leave room for the in-window menus left of the (centred) search field
-                let menus_right = full.left() + 140.0 + crate::menubar::bar_width(ui) + 24.0;
+                let menus_right = full.left() + 140.0 + crate::menubar::bar_width(ui, app.ui.language) + 24.0;
                 sw = sw.min(2.0 * (full.center().x - menus_right)).max(200.0);
             }
             let search_left = full.center().x - sw / 2.0;
