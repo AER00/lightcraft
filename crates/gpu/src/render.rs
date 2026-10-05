@@ -12,7 +12,7 @@ use lightcraft_pipeline::{Plan, RenderRequest, Rendered, SourceInfo, local};
 use lightcraft_raster::resample::Filter;
 use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8};
 
-use crate::ctx::{Buf, Gpu, groups1, groups2};
+use crate::ctx::{Buf, FailKind, Gpu, fail, groups1, groups2};
 use crate::params::{Present, finish_block};
 
 /// Device-resident stages of one view, kept next to the CPU [`lightcraft_pipeline::StageCache`]
@@ -128,27 +128,54 @@ impl GpuStages {
 pub(crate) struct Cx<'a> {
     pub gpu: &'a Gpu,
     enc: Option<wgpu::CommandEncoder>,
+    /// Kernel invocations recorded since the last submit.
+    pending: u64,
 }
+
+/// Kernel invocations recorded before a render submits them (under one full-size pass over a
+/// 24 MP export, several passes over a preview): no single submission runs long.
+const FLUSH_INVOCATIONS: u64 = 16 << 20;
+
+/// Pixels per dispatch of the per-pixel stage (the heaviest kernel).
+const BAND_PIXELS: usize = 4 << 20;
 
 impl<'a> Cx<'a> {
     pub fn new(gpu: &'a Gpu) -> Cx<'a> {
-        Cx { gpu, enc: Some(gpu.encoder()) }
+        Cx { gpu, enc: Some(gpu.encoder()), pending: 0 }
     }
 
     /// Record kernel `name` (see [`Gpu::run`]).
     pub fn run(&mut self, name: &str, p: &[u32], bufs: &[Option<&Buf>], groups: [u32; 3]) {
         let enc = self.enc.get_or_insert_with(|| self.gpu.encoder());
         self.gpu.run(enc, name, p, bufs, groups);
+        // every kernel runs 256 invocations per workgroup
+        self.pending += groups.iter().map(|g| *g as u64).product::<u64>() * 256;
+        if self.pending >= FLUSH_INVOCATIONS {
+            self.flush();
+        }
     }
 
     /// Submit what is recorded and read back `len` values of `b`.
     pub fn read<T: bytemuck::Pod>(&mut self, b: &Buf, len: usize) -> Vec<T> {
+        self.pending = 0;
         let enc = self.enc.take().unwrap_or_else(|| self.gpu.encoder());
         self.gpu.finish_and_read(enc, b, len)
     }
 
+    /// Submit what is recorded so far without waiting. Renders submit stage by stage and every
+    /// [`FLUSH_INVOCATIONS`]: long submissions are what GPU watchdogs reset (Windows TDR, the
+    /// i915 hang check; issue #78's iGPU spent seconds on an export recorded as one submission),
+    /// and buffers dropped by earlier work become reusable by later work (lower peak memory).
+    pub fn flush(&mut self) {
+        self.pending = 0;
+        if let Some(enc) = self.enc.take() {
+            self.gpu.submit([enc.finish()]);
+        }
+    }
+
     /// Submit what is recorded and wait for it (profiling only: stage timings).
     pub fn sync(&mut self) {
+        self.pending = 0;
         if let Some(enc) = self.enc.take() {
             self.gpu.submit([enc.finish()]);
         }
@@ -434,12 +461,13 @@ struct Host {
     log_l: Option<Arc<Plane>>,
 }
 
-fn profiling() -> bool {
+pub(crate) fn profiling() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("LIGHTCRAFT_PROFILE").is_some())
 }
 
-/// Render on `gpu`, reusing `stages` (if given). `None` when the render does not fit the device.
+/// Render on `gpu`, reusing `stages` (if given). `None` (or a result the caller discards) when the
+/// render failed: the reason is recorded with [`crate::ctx::fail`].
 pub fn render(
     gpu: &Gpu,
     src: &Arc<Rgb32f>,
@@ -447,20 +475,31 @@ pub fn render(
     s: &DevelopSettings,
     req: &RenderRequest,
     stages: Option<&GpuStages>,
+    fault: Option<crate::Fault>,
 ) -> Option<Rendered> {
     let mut t = profiling().then(std::time::Instant::now);
-    // Under `LIGHTCRAFT_PROFILE` each stage is submitted and waited for, so the timings are real.
-    let lap = |what: &str, t: &mut Option<std::time::Instant>, cx: &mut Cx<'_>| {
-        if let Some(t) = t {
+    // Each stage is submitted on its own; under `LIGHTCRAFT_PROFILE` also waited for, so the
+    // timings are real.
+    let lap = |what: &str, t: &mut Option<std::time::Instant>, cx: &mut Cx<'_>| match t {
+        Some(t) => {
             cx.sync();
             eprintln!("  gpu {what}: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
             *t = std::time::Instant::now();
         }
+        None => cx.flush(),
     };
     let plan = lightcraft_pipeline::plan(src, info, s, req);
     let (w, h) = (plan.w, plan.h);
     let n = w * h;
+    let _limit = match fault {
+        Some(crate::Fault::Limit(bytes)) => Some(crate::ctx::LimitOverride::new(bytes)),
+        _ => None,
+    };
     if !gpu.fits(n * 3) {
+        fail(
+            FailKind::Limit,
+            format!("{w}×{h} needs {} MiB buffers, over the device's {} MiB storage-buffer limit", (n * 12).div_ceil(1 << 20), gpu.limit() >> 20),
+        );
         return None;
     }
     let s = &*plan.settings;
@@ -521,23 +560,35 @@ pub fn render(
     };
     let (p, aux) = finish_block(&fp, &terms, &present);
     let aux = gpu.upload(&aux);
-    let out = gpu.buffer(n);
-    cx.run(
-        "main",
-        &p,
-        &[
-            Some(&lin),
-            Some(&prep.log_l),
-            Some(&prep.base),
-            prep.clarity.as_deref(),
-            prep.texture.as_deref(),
-            prep.dark.as_deref(),
-            masks.as_ref(),
-            Some(&aux),
-            Some(&out),
-        ],
-        groups2(w, h, [16, 16]),
-    );
+    // cleared, so that work which never ran cannot pass for an image (see the check below)
+    let out = cx.zeroed(n);
+    if fault == Some(crate::Fault::Validation) {
+        // a dispatch the device rejects (too many workgroups)
+        cx.run("box_h", &[0; 5], &[Some(&aux), Some(&out)], [gpu.device.limits().max_compute_workgroups_per_dimension + 1, 1, 1]);
+    }
+    // in bands of rows: each dispatch (and submission) stays short on a slow GPU
+    let rows = (BAND_PIXELS / w.max(1) / 16 * 16).max(16); // whole workgroups: bands never overlap
+    let y0_at = crate::params::index("Y0").unwrap_or(0);
+    let mut p = p;
+    for y0 in (0..h).step_by(rows).filter(|_| fault != Some(crate::Fault::DropWork)) {
+        p[y0_at] = y0 as u32;
+        cx.run(
+            "main",
+            &p,
+            &[
+                Some(&lin),
+                Some(&prep.log_l),
+                Some(&prep.base),
+                prep.clarity.as_deref(),
+                prep.texture.as_deref(),
+                prep.dark.as_deref(),
+                masks.as_ref(),
+                Some(&aux),
+                Some(&out),
+            ],
+            groups2(w, rows.min(h - y0), [16, 16]),
+        );
+    }
     // the alpha a mask overlay shows: copied out before the readback below submits
     let overlay_mask = req.overlay.mask(s).map(|m| {
         let list = s.masks.iter().filter(|m| m.visible && !m.components.is_empty());
@@ -549,8 +600,25 @@ pub fn render(
     let data: Vec<[u8; 4]> = cx.read(&out, n);
     let image = Rgba8 { width: w, height: h, data };
     lap("finish + readback", &mut t, &mut cx);
+    if crate::ctx::failed() {
+        return None;
+    }
+    // The per-pixel kernel writes alpha 255 everywhere and `out` was cleared: a pixel with any
+    // other alpha means work silently did not run (a driver that reset or dropped a submission
+    // without reporting it — issue #78's all-black exports).
+    let unwritten = unwritten(&image.data);
+    if unwritten > 0 {
+        fail(FailKind::Fatal, format!("the GPU returned an incomplete image ({unwritten} of {n} pixels unwritten)"));
+        return None;
+    }
     let histogram = Histogram::of_srgb8(&image);
     lap("histogram", &mut t, &mut cx);
+    // An entirely black result (upstream work that did not run would give that too): redo it on
+    // the CPU, which costs time only for the rare photo that really is black.
+    if n >= 4096 && [&histogram.r, &histogram.g, &histogram.b].iter().all(|c| c.first() == Some(&histogram.total)) {
+        fail(FailKind::Blank, "the GPU result is entirely black; rendering it on the CPU to be sure".into());
+        return None;
+    }
     let mut image = image;
     let overlay_mask = overlay_mask.map(|r| match r {
         Ok(b) => cx.read_plane(&b, w, h),
@@ -563,6 +631,11 @@ pub fn render(
     });
     lightcraft_pipeline::visualize::apply(&mut image, req.overlay, &plan, overlay_mask.as_ref());
     Some(Rendered { image, histogram, deep: None })
+}
+
+/// Pixels whose alpha is not 255 (cheap: no early exit, so it vectorizes).
+fn unwritten(data: &[[u8; 4]]) -> usize {
+    data.chunks(4096).filter(|c| c.iter().fold(255u8, |a, p| a & p[3]) != 255).map(|c| c.iter().filter(|p| p[3] != 255).count()).sum()
 }
 
 /// The white-balanced, retouched, denoised image.
@@ -679,6 +752,7 @@ fn prepare(cx: &mut Cx<'_>, lin: &Buf, plan: &Plan<'_>, req: &RenderRequest, pla
                 let sub = cx.gpu.buffer(m);
                 map(cx, "subsample", m, &[local::AIRLIGHT_STEP as u32], [Some(&d), None, None], &sub);
                 let air = local::airlight_of(cx.read(&sub, m));
+                cx.flush();
                 let b = Arc::new(d);
                 planes.dark = Some((sg.to_bits(), b.clone(), air));
                 (Some(b), air)

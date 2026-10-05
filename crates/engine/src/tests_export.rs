@@ -174,3 +174,36 @@ fn prepared_exports_run_on_another_thread() {
     assert_eq!(files[0]["width"], 48);
     assert_eq!(seen.lock().unwrap().len(), 2);
 }
+
+/// Issue #78: a GPU render whose work never ran (a driver that drops a submission without an
+/// error) gave an all-black export. The export must come from the CPU instead — the same
+/// image — with the reason recorded.
+#[test]
+fn export_falls_back_to_the_cpu_when_gpu_work_is_lost() {
+    let mut s = Session::with_demo();
+    let id = s.active().unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.4})).unwrap();
+    s.execute("develop.set", &json!({"control": "effects.clarity", "value": 20})).unwrap();
+    let o = ExportOptions::from_json(&json!({"format": "png"}));
+    let mean = |b: &[u8]| {
+        let d = lightcraft_codecs::decode(b, Default::default()).unwrap().image;
+        d.data.iter().map(|p| (p[0] + p[1] + p[2]) as f64).sum::<f64>() / (3 * d.data.len()) as f64
+    };
+    let gpu = lightcraft_gpu::available();
+    let healthy = mean(&export_photo(&mut s, id, &o, 1).unwrap().bytes);
+    lightcraft_gpu::inject_fault(lightcraft_gpu::Fault::DropWork);
+    let faulted = export_photo(&mut s, id, &o, 1).unwrap().bytes;
+    if gpu {
+        let why = lightcraft_gpu::last_fallback().unwrap_or_default();
+        assert!(why.contains("incomplete"), "{why}");
+        // the GPU is off for the process now: this export renders on the CPU
+        assert!(!lightcraft_gpu::available());
+    }
+    let cpu = export_photo(&mut s, id, &o, 1).unwrap().bytes;
+    lightcraft_gpu::reset_failures();
+    let px = |b: &[u8]| lightcraft_codecs::decode(b, Default::default()).unwrap().image.data;
+    assert!(px(&faulted) == px(&cpu), "the fallback is the CPU render");
+    let m = mean(&faulted);
+    assert!(m > 0.02, "not black: mean {m}");
+    assert!((m - healthy).abs() < 0.01, "GPU {healthy} vs CPU {m}");
+}

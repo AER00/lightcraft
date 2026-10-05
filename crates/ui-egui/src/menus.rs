@@ -856,7 +856,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 ("Version".to_string(), env!("CARGO_PKG_VERSION").to_string()),
                 ("System".to_string(), format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH)),
                 ("CPU threads".to_string(), std::thread::available_parallelism().map(|n| n.get().to_string()).unwrap_or_else(|_| "?".into())),
-                ("GPU".to_string(), gpu.unwrap_or_else(|| "none (CPU rendering)".into())),
+                (
+                    "GPU".to_string(),
+                    gpu.unwrap_or_else(|| match lightcraft_engine::gpu::unavailable_reason() {
+                        Some(why) => format!("none (CPU rendering): {why}"),
+                        None => "none (CPU rendering)".into(),
+                    }),
+                ),
                 ("GPU rendering".to_string(), if app.ui.settings.gpu { "on".into() } else { "off".into() }),
                 ("Memory budget".to_string(), mb(lightcraft_engine::memory::default_budget() as u64)),
                 ("Preview size".to_string(), format!("{} px", app.ui.settings.preview_edge)),
@@ -872,6 +878,9 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 format!("{:.1} ms (logic {:.1} ms; slowest {:.0} ms)", app.perf.update_ms, app.perf.logic_ms, app.perf.max_update_ms),
             ));
             rows.push(("Last loupe render".into(), format!("{:.0} ms", app.renderer.last_main_ms)));
+            if let Some(f) = lightcraft_engine::gpu::last_fallback() {
+                rows.push(("Last GPU fallback".into(), f));
+            }
             let r = json!(rows.iter().map(|(k, v)| json!({"label": k, "value": v})).collect::<Vec<_>>());
             if p.get("open").and_then(Value::as_bool).unwrap_or(true) {
                 app.ui.dialog = Some(Dialog::SystemInfo { rows });

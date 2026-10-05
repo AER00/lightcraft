@@ -243,11 +243,11 @@ fn out_encode(v: f32) -> f32 {
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let w = pu(F_W);
     let h = pu(F_H);
-    if (gid.x >= w || gid.y >= h) {
+    let x = gid.x;
+    let y = gid.y + pu(F_Y0);
+    if (x >= w || y >= h) {
         return;
     }
-    let x = gid.x;
-    let y = gid.y;
     let i = y * w + x;
     let n = w * h;
     let gain = pf(F_GAIN);
