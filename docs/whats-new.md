@@ -42,6 +42,10 @@
   has open — on this computer or another one sharing the folder — says who has it ("already open in LightCraft (process
   123 on studio-mac)") instead of letting both write and silently drop each other's edits. A crash never leaves the
   library locked: the lock is the operating system's and goes away with the program.
+- If your library can't be opened at launch (open in another program, unreadable, on a drive that isn't connected,
+  written by a newer LightCraft), LightCraft says so and why, and offers Try Again, Choose Another Library…, Continue
+  Without Saving and Quit (issue #100). It no longer quietly starts a demo session that looked like a reset library and
+  lost everything at quit; a temporary session shows a banner the whole time and never writes to your library.
 
 ### Editing
 - Auto Sync: edits apply to every selected photo. Auto B&W mix. Automatic versions.
