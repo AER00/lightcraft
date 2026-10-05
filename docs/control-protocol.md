@@ -30,7 +30,7 @@ mode ([mcp.md](mcp.md)) is a thin layer over this channel. Implementation:
 | `engine.commands` | — | Engine + UI commands: id, label, menu, shortcut, params doc, enabled |
 | `ui.menu.list` | — | Menu entries (flat: id, label, menu path, shortcut, enabled) |
 | `ui.menu.tree` | — | The menu bar as shown (File … Help): items `{id, params?, label, shortcut?, enabled, checked?}`, separators, submenus — the model behind the native macOS menu bar and the in-window menus |
-| `ui.inspect` | — | UI state, window, canvas/image rects, `scroll: {grid, filmstrip}` (scroll offsets in points, `null` until drawn), active photo, selection, perf (`frameMs` = layout, `logicMs` = per-frame logic before it, `updateMs` = both, `maxUpdateMs`, `fps`, render queue …, `gpu` = adapter in use, `gpuReason` = why renders don't use the GPU, `gpuFallback` = latest render redone on the CPU and why — see `docs/gpu-pipeline.md`), status, memory (bytes per cache, see `library.memory`; plus stage caches and textures), `export: {running: {total, done, current} \| null, last}` |
+| `ui.inspect` | — | UI state, window, canvas/image rects, `scroll: {grid, filmstrip}` (scroll offsets in points, `null` until drawn), active photo, selection, perf (`frameMs` = layout, `logicMs` = per-frame logic before it, `updateMs` = both, `maxUpdateMs`, `fps`, render queue …, `gpu` = adapter in use, `gpuReason` = why renders don't use the GPU, `gpuFallback` = latest render redone on the CPU and why — see `docs/gpu-pipeline.md`), status, memory (bytes per cache, see `library.memory`; plus stage caches and textures), `export: {running: {total, done, current} \| null, last}`, `notices` (warnings waiting to be shown, e.g. a damaged settings file; OK = `button:noticeOk`), `quitPrompt` (why quitting was stopped: unsaved changes; `button:quitRetry` / `button:quitAnyway` / `button:quitCancel`) |
 | `ui.widgets` | `{filter?}` | On-screen widgets `{id, rect: [x, y, w, h]}` (screen points) |
 | `ui.clickWidget` / `ui.dragWidget` / `ui.hoverWidget` | `{id, count?, fx?, fy?}` / `{id, toX?, toY?, dx?, dy?, steps?}` / `{id, fx?, fy?}` | Real egui input on a widget (hover: the pointer rests on it, e.g. for preset/profile previews) |
 | `ui.move` / `ui.click` / `ui.drag` | `{x, y, count?, button?}` / `{x, y, toX, toY, steps?}` | Raw pointer input, screen points |
@@ -57,6 +57,15 @@ is `{ops, error}` (else `null`), `library.info` reports `unsavedOps` / `unsavedE
 shows a warning (widget `indicator:unsaved`). Queries and commands that change nothing still succeed. A failed
 compaction (snapshot) is not a failed command — the log is kept whole — and only shows in `library.info` →
 `lastError`.
+
+### When the library can't be opened
+
+If the desktop app can't open its library at launch (another program has it open, an unreadable or newer-format
+catalog, a missing drive), the session starts empty and in memory — never with demo photos — and a window asks what
+to do: `ui.inspect` → `libraryProblem` is `{path, error, temporarySession, pendingImport}` (else `null`); its buttons
+are `button:libraryRetry`, `button:libraryChoose`, `button:libraryTemporary` (Continue Without Saving) and
+`button:libraryQuit`. A temporary session shows a banner (`indicator:temporarySession`, `button:libraryReopen`) and
+writes nothing. `app.openLibrary` opening a library ends it.
 
 ## Headless rendering (no window, no GPU)
 

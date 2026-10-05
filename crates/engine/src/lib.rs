@@ -24,6 +24,7 @@ pub mod library;
 pub mod media;
 pub mod memory;
 pub mod merge;
+pub mod originals;
 pub mod preset_import;
 pub mod preset_luminar;
 pub mod presets;
@@ -56,6 +57,9 @@ pub enum EngineError {
     /// be written. They stay queued and are written by the next successful save.
     #[error("saved in memory but not written to disk: {0}; LightCraft will retry")]
     NotSaved(String),
+    /// Another process (the app, `lightcraft-cli`, another computer) has the library open.
+    #[error("{0}")]
+    LibraryInUse(String),
     #[error("{0}")]
     Other(String),
 }
@@ -378,15 +382,22 @@ impl Session {
         Ok(e.label)
     }
 
-    /// Apply an undo/redo op, first moving the files its renames imply (all or nothing).
+    /// Apply an undo/redo op, first moving the files its renames imply (all or nothing). Files
+    /// that can't be moved back after a failure are reported and the library follows them (a
+    /// logged change outside the undo history), so none goes missing.
     fn apply_with_files(&mut self, op: &Op) -> Result<Op> {
+        let fs = rename::RealFs;
         let moves = self.file_moves(op);
-        Session::move_files(&moves)?;
+        if let Err(e) = rename::move_all(&fs, &moves) {
+            return Err(EngineError::Other(format!("can't move the files back: {}", self.follow_stuck(op, e, false))));
+        }
         match self.catalog.apply(op.clone()) {
             Ok(inv) => Ok(inv),
             Err(e) => {
                 let back: Vec<(String, String)> = moves.iter().rev().map(|(a, b)| (b.clone(), a.clone())).collect();
-                let _ = Session::move_files(&back);
+                if let Err(be) = rename::move_all(&fs, &back) {
+                    return Err(EngineError::Other(format!("{e}; the files could not all be moved back: {}", be.message)));
+                }
                 Err(e.into())
             }
         }
@@ -633,6 +644,8 @@ mod tests_organize;
 mod tests_persist;
 #[cfg(test)]
 mod tests_prefs;
+#[cfg(test)]
+mod tests_settings_files;
 #[cfg(test)]
 mod tests_spots;
 #[cfg(test)]

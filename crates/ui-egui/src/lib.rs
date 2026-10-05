@@ -29,9 +29,13 @@ mod tests_curve;
 #[cfg(test)]
 mod tests_grid;
 #[cfg(test)]
+mod tests_library_problem;
+#[cfg(test)]
 mod tests_masking;
 #[cfg(test)]
 mod tests_panels;
+#[cfg(test)]
+mod tests_quit_unsaved;
 #[cfg(test)]
 mod tests_scroll;
 #[cfg(test)]
@@ -123,6 +127,12 @@ pub struct LightcraftApp {
     pub native_shortcuts: std::collections::HashSet<String>,
     /// The host is [`headless::Headless`] (it answers viewport screenshot commands itself).
     pub headless_host: bool,
+    /// Warnings to show one at a time (damaged settings files…, issue #103).
+    pub notices: Vec<String>,
+    /// Quitting was stopped because changes couldn't be saved: the prompt's text.
+    pub quit_prompt: Option<String>,
+    /// Quit Anyway was chosen: the window may close with unsaved changes.
+    pub quit_confirmed: bool,
     control_rx: Option<Receiver<ControlRequest>>,
     pending_screenshots: Vec<PendingShot>,
     screenshot_token: u64,
@@ -170,6 +180,9 @@ pub struct LightcraftApp {
     gpu_applied: Option<bool>,
     /// The memory budget setting last applied (MB, 0 = automatic).
     memory_applied: Option<u32>,
+    /// The library failed to open at launch: the blocking window, then the temporary-session
+    /// banner (issue #100). Cleared once a library opens.
+    pub library_problem: Option<panels::library_problem::LibraryProblem>,
 }
 
 impl LightcraftApp {
@@ -187,6 +200,9 @@ impl LightcraftApp {
             native_menu: false,
             native_shortcuts: Default::default(),
             headless_host: false,
+            notices: vec![],
+            quit_prompt: None,
+            quit_confirmed: false,
             control_rx: None,
             pending_screenshots: vec![],
             screenshot_token: 0,
@@ -213,6 +229,7 @@ impl LightcraftApp {
             window_is_fullscreen: false,
             gpu_applied: None,
             memory_applied: None,
+            library_problem: None,
         }
     }
 
@@ -440,6 +457,7 @@ impl LightcraftApp {
     /// Per-frame logic before layout (control channel, renders, shortcuts, drops).
     pub fn logic(&mut self, ctx: &egui::Context) {
         let t0 = now_ms();
+        panels::library_problem::logic(self);
         self.logic_inner(ctx);
         self.perf.logic_ms = now_ms() - t0;
     }
@@ -454,6 +472,11 @@ impl LightcraftApp {
             self.styled = true;
         } else {
             self.fonts_ready = true;
+        }
+        panels::notices::logic(self);
+        // closing the window (or Quit) with changes only in memory: retry, else ask first
+        if ctx.input(|i| i.viewport().close_requested()) && !panels::notices::may_close(self) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
         let now = ctx.input(|i| i.time);
         let dt = now - self.last_time;
@@ -601,7 +624,9 @@ impl LightcraftApp {
             // full-screen preview: the photo alone on black
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(egui::Color32::BLACK)).show(ui, |ui| panels::detail::show(self, ui));
             panels::second::show(self, &ctx);
+            panels::notices::show(self, &ctx);
             panels::dialogs::show(self, &ctx);
+            panels::library_problem::show(self, &ctx);
             panels::toast(self, &ctx);
             self.widgets = widgets::take_registry(&ctx);
             self.end_frame(t0);
@@ -610,6 +635,7 @@ impl LightcraftApp {
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
         // right panels and left panel run to the bottom; the bottom bar sits between them).
         panels::topbar::show(self, ui);
+        panels::library_problem::banner(self, ui);
         panels::strip::show(self, ui);
         if self.ui.right != state::RightPanel::None {
             panels::right::show(self, ui);
@@ -636,7 +662,9 @@ impl LightcraftApp {
             state::ViewMode::Reference => panels::compare::show_reference(self, ui),
         });
         panels::second::show(self, &ctx);
+        panels::notices::show(self, &ctx);
         panels::dialogs::show(self, &ctx);
+        panels::library_problem::show(self, &ctx);
         import::progress(self, &ctx);
         import::scan_progress(self, &ctx);
         export_task::poll(self, &ctx);
