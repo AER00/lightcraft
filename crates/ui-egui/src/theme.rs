@@ -117,6 +117,10 @@ pub fn install_fonts(ctx: &egui::Context) {
     let mut semi = vec!["Inter-SemiBold".to_string()];
     semi.extend(fallback);
     fonts.families.insert(FontFamily::Name(FONT_SEMIBOLD.into()), semi);
+    fonts.font_data.insert("japanese".into(), Arc::new(FontData::from_static(lightcraft_engine::export::WATERMARK_JAPANESE_FONT)));
+    for stack in fonts.families.values_mut() {
+        stack.push("japanese".into());
+    }
     ctx.set_fonts(fonts);
 }
 

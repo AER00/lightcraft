@@ -258,13 +258,9 @@ pub fn sidecar_packet(p: &Photo, cat: &lightcraft_catalog::Catalog) -> String {
     lightcraft_meta::write_xmp_lc(&meta, &lc)
 }
 
-/// Write `data` to `path` atomically (temp file + rename).
+/// Write `data` to `path` atomically (temp file + sync + rename).
 fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    let tmp = path.with_extension(format!("xmp.tmp-{}", std::process::id()));
-    std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
+    lightcraft_catalog::safe_file::write_atomic(path, data)
 }
 
 fn file_path(p: &Photo) -> Option<&str> {

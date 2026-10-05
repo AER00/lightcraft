@@ -71,7 +71,7 @@ impl DateTime {
         };
         let (h, m) = match rest.split_once(':') {
             Some((h, m)) => (num(h)?, num(m)?),
-            None if rest.len() == 4 => (num(&rest[..2])?, num(&rest[2..])?),
+            None if rest.len() == 4 => (num(rest.get(..2)?)?, num(rest.get(2..)?)?),
             None => (num(rest)?, 0),
         };
         if h > 18 || m > 59 {
@@ -178,6 +178,17 @@ mod tests {
         assert_eq!(DateTime::parse_offset("+0930"), Some(570));
         assert_eq!(DateTime::parse_offset("   :  "), None);
         assert_eq!(DateTime::parse_offset("+99:00"), None);
+    }
+
+    #[test]
+    fn unicode_offsets_are_rejected_without_panicking() {
+        for offset in ["+1€", "-1€", "+€1", "-€1"] {
+            assert_eq!(DateTime::parse_offset(offset), None);
+            let date = format!("2024-06-01T13:45:59{offset}");
+            let metadata = crate::Metadata { capture_time: DateTime::parse_iso("2024-06-01T13:45:59Z"), ..Default::default() };
+            let xmp = crate::write_xmp(&metadata, None).replace("2024-06-01T13:45:59+00:00", &date);
+            assert!(crate::parse_xmp(&xmp).unwrap().metadata.capture_time.is_none());
+        }
     }
 
     #[test]

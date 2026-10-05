@@ -202,6 +202,8 @@ pub enum Anchor {
 #[serde(default, rename_all = "camelCase")]
 pub struct Watermark {
     pub text: String,
+    /// Basic Japanese vertical lettering: upright glyphs in columns from right to left.
+    pub vertical: bool,
     /// Text height as a fraction of the image's short edge.
     pub size: f32,
     /// 0..1.
@@ -226,6 +228,7 @@ impl Default for Watermark {
     fn default() -> Self {
         Self {
             text: String::new(),
+            vertical: false,
             size: 0.035,
             opacity: 0.7,
             anchor: Anchor::BottomRight,
@@ -241,6 +244,9 @@ impl Default for Watermark {
 
 /// Inter SemiBold (OFL, see assets/ATTRIBUTION.md).
 static WATERMARK_FONT: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
+/// BIZ UDMincho (OFL), Japanese fallback on both native and web.
+/// Bundled OFL Japanese font bytes, shared by watermarks and UI glyph fallback.
+pub static WATERMARK_JAPANESE_FONT: &[u8] = include_bytes!("../../../assets/fonts/BIZUDMincho-Regular.ttf");
 
 /// Draw `wm` onto `img` (straight alpha blending of the encoded values).
 pub fn draw_watermark(img: &mut Rgba8, wm: &Watermark) {
@@ -288,23 +294,67 @@ fn watermark_coverage(width: usize, height: usize, wm: &Watermark, mut blend_px:
         return;
     }
     let Ok(font) = FontRef::try_from_slice(WATERMARK_FONT) else { return };
+    let Ok(japanese) = FontRef::try_from_slice(WATERMARK_JAPANESE_FONT) else { return };
+    let fonts = [font, japanese];
     let short = width.min(height) as f32;
     let px = (wm.size.clamp(0.005, 0.5) * short).max(6.0);
-    let sf = font.as_scaled(PxScale::from(px));
-    // Lay out one line.
     let mut glyphs = Vec::new();
     let mut x = 0.0f32;
+    let mut y = 0.0f32;
+    let mut tw = 0.0f32;
     let mut prev = None;
-    for ch in text.chars() {
-        let id = sf.glyph_id(ch);
-        if let Some(p) = prev {
-            x += sf.kern(p, id);
+    let columns = text.split('\n').count();
+    let mut column = 0usize;
+    for original in text.chars() {
+        if original == '\n' {
+            if wm.vertical {
+                column = column.saturating_add(1);
+                tw = tw.max(y);
+                y = 0.0;
+            } else {
+                tw = tw.max(x);
+                x = 0.0;
+                y += px;
+            }
+            prev = None;
+            continue;
         }
-        glyphs.push(id.with_scale_and_position(px, point(x, sf.ascent())));
-        x += sf.h_advance(id);
-        prev = Some(id);
+        let vertical_form = match original {
+            '、' => '︑',
+            '。' => '︒',
+            '（' => '︵',
+            '）' => '︶',
+            '「' => '﹁',
+            '」' => '﹂',
+            '『' => '﹃',
+            '』' => '﹄',
+            '【' => '︻',
+            '】' => '︼',
+            '…' => '︙',
+            other => other,
+        };
+        let ch = if wm.vertical && fonts[1].glyph_id(vertical_form).0 != 0 { vertical_form } else { original };
+        let face = usize::from(fonts[0].glyph_id(ch).0 == 0);
+        let sf = fonts[face].as_scaled(PxScale::from(px));
+        let id = sf.glyph_id(ch);
+        if wm.vertical {
+            let left = columns.saturating_sub(column.saturating_add(1)) as f32 * px;
+            let pen = point(left + (px - sf.h_advance(id)) / 2.0, y + sf.ascent());
+            let rotation = matches!(original, 'ー' | '—' | '–').then_some((left + px / 2.0, y + px / 2.0));
+            glyphs.push((face, id.with_scale_and_position(px, pen), rotation));
+            y += px;
+        } else {
+            if let Some((previous_face, previous)) = prev
+                && previous_face == face
+            {
+                x += sf.kern(previous, id);
+            }
+            glyphs.push((face, id.with_scale_and_position(px, point(x, y + sf.ascent())), None));
+            x += sf.h_advance(id);
+            prev = Some((face, id));
+        }
     }
-    let (tw, th) = (x, sf.ascent() - sf.descent());
+    let (tw, th) = if wm.vertical { (columns as f32 * px, tw.max(y)) } else { (tw.max(x), y + px) };
     let inset = wm.inset.clamp(0.0, 0.4) * short;
     let (w, h) = (width as f32, height as f32);
     use Anchor::*;
@@ -328,10 +378,17 @@ fn watermark_coverage(width: usize, height: usize, wm: &Watermark, mut blend_px:
     let passes: &[(f32, [u8; 3], f32)] =
         if wm.shadow { &[((px * 0.05).max(1.0), [0, 0, 0], 0.45), (0.0, wm.color, 1.0)] } else { &[(0.0, wm.color, 1.0)] };
     for &(off, col, a) in passes {
-        for g in &glyphs {
-            if let Some(o) = font.outline_glyph(g.clone()) {
+        for (face, g, rotation) in &glyphs {
+            if let Some(o) = fonts.get(*face).and_then(|font| font.outline_glyph(g.clone())) {
                 let b = o.px_bounds();
-                o.draw(|gx, gy, cov| blend((ox + off + b.min.x) as i32 + gx as i32, (oy + off + b.min.y) as i32 + gy as i32, cov, col, a * alpha));
+                o.draw(|gx, gy, cov| {
+                    let (sx, sy) = (b.min.x + gx as f32, b.min.y + gy as f32);
+                    let (sx, sy) = match rotation {
+                        Some((cx, cy)) => (cx - (sy - cy), cy + (sx - cx)),
+                        None => (sx, sy),
+                    };
+                    blend((ox + off + sx) as i32, (oy + off + sy) as i32, cov, col, a * alpha);
+                });
             }
         }
     }
@@ -930,6 +987,8 @@ pub struct PreparedExport {
     pub photo: lightcraft_catalog::PhotoId,
     pub file_name: String,
     work: Work,
+    /// The library's originals, which [`run_batch`] never writes over (shared by a batch).
+    guard: std::sync::Arc<crate::originals::OriginalGuard>,
 }
 
 struct RenderWork {
@@ -952,12 +1011,30 @@ enum Work {
     },
 }
 
-/// Set up the export of photo `id` at 1-based position `seq` of a batch.
+/// Set up the export of photo `id` at 1-based position `seq` of a batch. (For a whole batch use
+/// [`prepare_batch`]: it looks at the library's originals once.)
 pub fn prepare_export(
     session: &mut crate::Session,
     id: lightcraft_catalog::PhotoId,
     o: &ExportOptions,
     seq: usize,
+) -> Result<PreparedExport, String> {
+    let guard = std::sync::Arc::new(session.original_guard());
+    prepare_guarded(session, id, o, seq, guard)
+}
+
+/// [`prepare_export`] for each of `ids` in order (`{seq}` = position, from 1).
+pub fn prepare_batch(session: &mut crate::Session, ids: &[lightcraft_catalog::PhotoId], o: &ExportOptions) -> Result<Vec<PreparedExport>, String> {
+    let guard = std::sync::Arc::new(session.original_guard());
+    ids.iter().enumerate().map(|(i, id)| prepare_guarded(session, *id, o, i + 1, guard.clone())).collect()
+}
+
+fn prepare_guarded(
+    session: &mut crate::Session,
+    id: lightcraft_catalog::PhotoId,
+    o: &ExportOptions,
+    seq: usize,
+    guard: std::sync::Arc<crate::originals::OriginalGuard>,
 ) -> Result<PreparedExport, String> {
     let p = session.catalog.photo(id).ok_or("no such photo")?;
     let file_name = o.file_name_for(p, seq);
@@ -979,7 +1056,7 @@ pub fn prepare_export(
             size: (p.width as usize, p.height as usize),
         }
     };
-    Ok(PreparedExport { photo: id, file_name, work })
+    Ok(PreparedExport { photo: id, file_name, work, guard })
 }
 
 impl PreparedExport {
@@ -1031,14 +1108,16 @@ pub enum DngCompression {
 }
 
 /// The destination of a batch: a folder (with `ExportOptions::subfolder` and the conflict policy
-/// applied), or one exact file path (single photo; overwritten).
+/// applied to each file together with its sidecars), or one exact file path (single photo; an
+/// ordinary file already there is replaced). Either way a catalogued original (or its sidecar)
+/// is never written over: see [`crate::originals`].
 #[derive(Clone, Debug, Default)]
 pub struct Destination {
     pub dir: String,
     pub exact: Option<String>,
 }
 
-/// Export `ids` in order ([`prepare_export`] + [`run_batch`]), stopping at the first error.
+/// Export `ids` in order ([`prepare_batch`] + [`run_batch`]), stopping at the first error.
 pub fn export_batch(
     session: &mut crate::Session,
     ids: &[lightcraft_catalog::PhotoId],
@@ -1047,15 +1126,34 @@ pub fn export_batch(
     write: &mut dyn FnMut(&str, &[u8]) -> Result<(), String>,
     exists: &dyn Fn(&str) -> bool,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let items = ids.iter().enumerate().map(|(i, id)| prepare_export(session, *id, o, i + 1)).collect::<Result<Vec<_>, _>>()?;
+    let items = prepare_batch(session, ids, o)?;
     run_batch(items, o, to, write, exists, true, &mut |_, _| true)
 }
 
+/// Write an exported or rendered file on disk: its folder is created if needed, and the file is
+/// replaced atomically ([`lightcraft_catalog::safe_file::write_atomic`]: a temp file, synced, then
+/// renamed), so a failure part-way leaves any previous file intact and no truncated one. The
+/// native writer behind exports, renders and screenshots (app, CLI, MCP).
+pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
+    let p = std::path::Path::new(path);
+    if let Some(dir) = p.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    lightcraft_catalog::safe_file::write_atomic(p, bytes).map_err(|e| format!("{path}: {e}"))
+}
+
+/// The path of the sidecar with extension `ext` of the exported file `main`.
+fn sidecar_path(main: &str, ext: &str) -> String {
+    std::path::Path::new(main).with_extension(ext).to_string_lossy().to_string()
+}
+
 /// Run prepared exports in order: pick each one's path, and hand the bytes (and sidecars) to
-/// `write`. `exists` tells whether a path is taken (conflict policy). `progress(done, next file)`
-/// is called before each photo; returning false cancels the rest. Returns one JSON object per
-/// photo: `{path, width, height, bytes, sidecars}`, `{skipped: path}` or (unless
-/// `stop_on_error`) `{photo, file, error}`.
+/// `write`. `exists` tells whether a path is taken. The conflict policy applies to a file and its
+/// sidecars as one: with Unique both get the same free name, with Skip the photo is skipped when
+/// either is taken. A path that is a catalogued original (or its sidecar) is refused whatever the
+/// policy. `progress(done, next file)` is called before each photo; returning false cancels the
+/// rest. Returns one JSON object per photo: `{path, width, height, bytes, sidecars}`,
+/// `{skipped: path}` or (unless `stop_on_error`) `{photo, file, error}`.
 pub fn run_batch(
     items: Vec<PreparedExport>,
     o: &ExportOptions,
@@ -1075,7 +1173,7 @@ pub fn run_batch(
         if !progress(i, &item.file_name) {
             break;
         }
-        let (photo, name) = (item.photo, item.file_name.clone());
+        let (photo, name, guard) = (item.photo, item.file_name.clone(), item.guard.clone());
         let e = match item.run() {
             Ok(e) => e,
             Err(err) if stop_on_error => return Err(err),
@@ -1084,14 +1182,18 @@ pub fn run_batch(
                 continue;
             }
         };
+        // the exported file and its sidecars
+        let group = |main: &str| std::iter::once(main.to_string()).chain(e.sidecars.iter().map(|(x, _)| sidecar_path(main, x))).collect::<Vec<_>>();
         let path = match to.exact.as_deref().filter(|_| single) {
-            Some(p) => p.to_string(),
+            Some(p) => Ok(p.to_string()),
             None => {
-                let mut path = join(&dir, &e.file_name);
-                let busy = |p: &str, taken: &std::collections::HashSet<String>| taken.contains(p) || exists(p);
-                if busy(&path, &taken) {
+                let path = join(&dir, &e.file_name);
+                let busy = |main: &str| group(main).iter().any(|p| taken.contains(p) || exists(p));
+                if !busy(&path) {
+                    Ok(path)
+                } else {
                     match o.conflict {
-                        Conflict::Overwrite => {}
+                        Conflict::Overwrite => Ok(path),
                         Conflict::Skip => {
                             out.push(json!({"skipped": path}));
                             continue;
@@ -1099,29 +1201,34 @@ pub fn run_batch(
                         Conflict::Unique => {
                             let (stem, ext) = e.file_name.rsplit_once('.').map_or((e.file_name.as_str(), None), |(a, b)| (a, Some(b)));
                             let name = |n: usize| join(&dir, &ext.map_or(format!("{stem}-{n}"), |x| format!("{stem}-{n}.{x}")));
-                            path = (2..).map(name).find(|p| !busy(p, &taken)).expect("a free name");
+                            (2..1_000_000).map(name).find(|p| !busy(p)).ok_or_else(|| format!("{path}: no free file name"))
                         }
                     }
                 }
-                path
             }
         };
-        let written = write(&path, &e.bytes).and_then(|()| {
-            let mut sidecars = Vec::new();
-            for (ext, bytes) in &e.sidecars {
-                let sc = std::path::Path::new(&path).with_extension(ext).to_string_lossy().to_string();
-                write(&sc, bytes)?;
-                sidecars.push(sc);
+        let file = path.clone().unwrap_or_else(|_| name.clone());
+        let written = path.and_then(|path| {
+            let files = group(&path);
+            // never over an original, whatever the conflict policy or the exact path said
+            for f in &files {
+                guard.check(std::path::Path::new(f))?;
             }
-            Ok(sidecars)
+            write(&path, &e.bytes)?;
+            let mut sidecars = Vec::new();
+            for ((_, bytes), sc) in e.sidecars.iter().zip(files.iter().skip(1)) {
+                write(sc, bytes)?;
+                sidecars.push(sc.clone());
+            }
+            Ok((path, files, sidecars))
         });
         match written {
-            Ok(sidecars) => {
-                taken.insert(path.clone());
+            Ok((path, files, sidecars)) => {
+                taken.extend(files);
                 out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars}));
             }
             Err(err) if stop_on_error => return Err(err),
-            Err(err) => out.push(json!({"photo": photo.0, "file": path, "error": err})),
+            Err(err) => out.push(json!({"photo": photo.0, "file": file, "error": err})),
         }
     }
     Ok(out)
@@ -1225,6 +1332,44 @@ mod tests {
         // string shorthand
         assert_eq!(ExportOptions::from_json(&serde_json::json!({"watermark": "© Me"})).watermark.unwrap().text, "© Me");
         assert!(ExportOptions::from_json(&serde_json::json!({"watermark": ""})).watermark.is_none());
+    }
+
+    #[test]
+    fn japanese_watermarks_support_vertical_columns_and_legacy_defaults() {
+        use ab_glyph::Font;
+        let font = ab_glyph::FontRef::try_from_slice(WATERMARK_JAPANESE_FONT).unwrap();
+        for c in "日本語".chars() {
+            assert_ne!(font.glyph_id(c).0, 0);
+        }
+        let old = ExportOptions::from_json(&json!({"watermark": {"text": "日本語"}}));
+        assert!(!old.watermark.unwrap().vertical);
+        let options =
+            ExportOptions::from_json(&json!({"watermark": {"text": "日本語", "vertical": true, "size": 0.1, "shadow": false, "opacity": 1.0}}));
+        let wm = options.watermark.unwrap();
+        assert!(wm.vertical);
+        let round: Watermark = serde_json::from_value(serde_json::to_value(&wm).unwrap()).unwrap();
+        assert!(round.vertical);
+        let mut img = Rgba8::new(400, 300);
+        img.data.fill([0, 0, 0, 255]);
+        draw_watermark(&mut img, &wm);
+        let lit: Vec<_> = (0..300).flat_map(|y| (0..400).map(move |x| (x, y))).filter(|&(x, y)| img.get(x, y)[0] > 64).collect();
+        assert!(lit.len() > 100);
+        let w = lit.iter().map(|p| p.0).max().unwrap() - lit.iter().map(|p| p.0).min().unwrap();
+        let h = lit.iter().map(|p| p.1).max().unwrap() - lit.iter().map(|p| p.1).min().unwrap();
+        assert!(h > w * 2, "vertical Japanese must extend down the column");
+        let two = Watermark { text: "日\n本".into(), anchor: Anchor::TopLeft, inset: 0.0, ..wm };
+        img.data.fill([0, 0, 0, 255]);
+        draw_watermark(&mut img, &two);
+        for (text, dx) in [("本", 0), ("日", 30)] {
+            let mut single = Rgba8::new(400, 300);
+            single.data.fill([0, 0, 0, 255]);
+            draw_watermark(&mut single, &Watermark { text: text.into(), ..two.clone() });
+            for y in 0..30 {
+                for x in 0..30 {
+                    assert_eq!(img.get(x + dx, y), single.get(x, y), "newlines move columns left");
+                }
+            }
+        }
     }
 
     #[test]
