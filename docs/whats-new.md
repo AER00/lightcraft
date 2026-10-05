@@ -17,6 +17,11 @@
   Exported files are written to a temp file, synced and then renamed into place, so a full disk or an unplugged
   drive never leaves a truncated file; the XMP sidecar of an "Original" export follows the "If file exists"
   choice too.
+- Convert to DNG, Copy as DNG, Photo Merge and smart previews no longer write straight to the final file (issue
+  #106): a DNG is checked against the raw data, written to a temp file, synced and read back before it gets its
+  name (never replacing a file), and only then is the photo relinked or the raw copy removed — a failed write
+  leaves no DNG and keeps the raw. Smart previews are written the same way; a damaged one (cut short by a crash or
+  a full drive) no longer counts as built and Build Smart Previews replaces it.
 - Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other
   models whose sensor starts on a green-blue row) no longer come out magenta (issue #85): the colour-filter
   layout is read from each file instead of assumed.

@@ -329,6 +329,55 @@ fn convert_raw_to_dng() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Issue #106: Convert to DNG wrote straight to the final name (no temp file, sync or check) and
+/// relinked the photo even when the write was cut short. A failed write now leaves no DNG and
+/// the photo on its raw; a good one is verified and never replaces an existing file.
+#[test]
+fn convert_to_dng_is_verified_and_atomic() {
+    let dir = temp_dir("todng-safe");
+    // a synthetic raw (stored as DNG, catalogued as a NEF so Convert to DNG takes it)
+    let raw = dir.join("shot.dng");
+    let bytes = synthetic_dng_with(None, Default::default());
+    std::fs::write(&raw, &bytes).unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [raw.to_string_lossy()]})).unwrap();
+    let id = s.catalog.photos().next().unwrap().id;
+    let path = raw.to_string_lossy().to_string();
+    s.catalog
+        .apply(lightcraft_catalog::Op::Relink {
+            id,
+            file_name: "shot.dng".into(),
+            source: lightcraft_catalog::Source::File { path: path.clone() },
+            format: Some("NEF".into()),
+        })
+        .unwrap();
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    let names = || {
+        let mut v: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        v.sort();
+        v
+    };
+    {
+        // the drive fills up part-way
+        let _fault = lightcraft_catalog::safe_file::fail_writes_after(200);
+        let r = s.execute("photo.convertToDng", &json!({})).unwrap();
+        assert_eq!(r["converted"].as_array().unwrap().len(), 0, "{r}");
+        assert!(r["skipped"][0][1].as_str().unwrap().contains("the raw is kept"), "{r}");
+    }
+    assert_eq!(names(), ["shot.dng"], "no partial DNG");
+    assert_eq!(s.catalog.photo(id).unwrap().source, lightcraft_catalog::Source::File { path: path.clone() }, "not relinked");
+    // a good conversion: a new name (the existing file is not replaced), decodable, relinked
+    let r = s.execute("photo.convertToDng", &json!({})).unwrap();
+    let out = r["converted"][0]["path"].as_str().unwrap().to_string();
+    assert!(out.ends_with("shot-2.dng"), "{r}");
+    assert_eq!(std::fs::read(&raw).unwrap(), bytes, "the raw is untouched");
+    let back = lightcraft_raw::decode(&std::fs::read(&out).unwrap()).unwrap();
+    assert_eq!(back.data, lightcraft_raw::decode(&bytes).unwrap().data);
+    assert_eq!(s.catalog.photo(id).unwrap().source, lightcraft_catalog::Source::File { path: out });
+    assert_eq!(names(), ["shot-2.dng", "shot.dng"], "no temp file left");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Edit in External Editor (engine half): a 16-bit TIFF `-Edit` copy with the edits, next to
 /// the original, added and stacked on top of it; a second one doesn't overwrite the first.
 #[test]
