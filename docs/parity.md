@@ -793,3 +793,11 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | KEYC-DEVELOP | Classic develop keys (V, ⌘U, ⇧⌘U, R, Q, K, M, ⇧M, ⇧W, ⇧J, ⇧Q…) | P2 | 🟡 | `cmd:develop.treatment`, `cmd:develop.reset`, `cmd:crop.reset` | V, ⇧⌘R, ⌥⌘R, W, J, Y, ⇧Y, \ match; R/K/M/⇧M differ; no Classic keymap layer |
 | KEYC-MODULE-OUTPUT | Book / slideshow / print / map / web keys | P2 | ⬜ | | modules not implemented |
 | KEYC-HELP | Classic help keys (⌘/, F1) | P2 | 🟡 | `cmd:app.shortcuts` | ⌘/ only |
+
+### Japanese text watermarks
+
+`app.export` watermark objects accept `vertical` (boolean, defaults to false). The export
+dialog offers Horizontal/Vertical and multiline text. Japanese glyphs fall back to bundled
+Shippori Mincho. Vertical lettering uses upright em cells and right-to-left newline columns;
+Latin stays upright. Advanced Japanese composition remains open. Regression coverage:
+`export::tests::japanese_watermarks_support_vertical_columns_and_legacy_defaults`.

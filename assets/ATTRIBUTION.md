@@ -9,6 +9,8 @@ covers a whole directory), or if a licence file referenced in the Licence column
 | Path | Asset | Creator | Source | Licence | Added | Modifications |
 |---|---|---|---|---|---|---|
 | `assets/fonts/Inter-*.ttf` (Regular, Medium, SemiBold) | Inter | Rasmus Andersson | https://github.com/rsms/inter | SIL Open Font License 1.1 (`assets/fonts/OFL-Inter.txt`) | 2026-09-30 | none |
+| `assets/fonts/ShipporiMincho-Regular.ttf` | Shippori Mincho Regular | The Shippori Mincho Project Authors (FONTDASU) | https://github.com/google/fonts/tree/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/shipporimincho | OFL-1.1 (`assets/fonts/OFL-ShipporiMincho.txt`) | 2026-10-05 | Unmodified; SHA-256 769b5269f0f9bc6534b352c0e6bd856a566e03ff788f107191c2d835863570b2 |
+| `assets/fonts/OFL-ShipporiMincho.txt` | Shippori Mincho licence | The Shippori Mincho Project Authors (FONTDASU) | https://github.com/google/fonts/blob/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/shipporimincho/OFL.txt | OFL-1.1 | 2026-10-05 | Unmodified |
 | `assets/app-icon/` (`lightcraft.svg` and the PNG/ICNS/ICO/SVG files derived from it) | LightCraft app icon (lynx) | LightCraft project owner (drawn in ArtCraft) | original work (vectorised from the owner's drawing; see `assets/app-icon/README.md`) | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) | 2026-10-02 | vectorised to SVG; rendered to PNG/ICNS/ICO by `packaging/icons.sh` |
 | `crates/scenes/` (generated images) | Procedural demo photographs | LightCraft contributors | original work (generated at runtime, no source imagery) | MIT OR Apache-2.0 | 2026-09-30 | n/a |
 | `crates/ui-egui/src/icons.rs` | UI icons drawn as vector paths in code | LightCraft contributors | original work | MIT OR Apache-2.0 | 2026-09-30 | n/a |
