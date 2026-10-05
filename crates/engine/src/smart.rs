@@ -1,13 +1,16 @@
 //! Smart previews: a compact proxy of each photo (its decoded preview-size source, about 1 MB)
 //! kept in the library, so photos stay editable — and exportable at proxy size — while their
 //! originals are offline (an unplugged drive). The proxy is the scene-linear source scaled into
-//! 0..1 by a stored factor, sRGB-encoded and saved as a JPEG after a one-line header.
+//! 0..1 by a stored factor, sRGB-encoded and saved as a JPEG after a one-line header. The header
+//! also keeps the decoder's file-local camera tone curve (Sony ARW camera look), which is applied
+//! at render time and is not baked into the pixels.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use lightcraft_catalog::Photo;
 use lightcraft_color::transfer::linear_to_srgb;
+use lightcraft_pipeline::tone::CameraTone;
 use lightcraft_raster::{Rgb32f, Rgba8};
 
 const MAGIC: &[u8] = b"LCSP1\n";
@@ -18,8 +21,11 @@ pub fn file_name(p: &Photo) -> String {
     format!("{:032x}.lcsp", h.0)
 }
 
-/// Encode a source image as a smart preview.
-pub fn encode(img: &Rgb32f) -> Result<Vec<u8>, String> {
+/// The most header [`is_valid`] reads (the JSON line before the JPEG).
+const HEADER_MAX: u64 = 4096;
+
+/// Encode a source image (and the decoder's camera tone curve, if any) as a smart preview.
+pub fn encode(img: &Rgb32f, tone: Option<&CameraTone>) -> Result<Vec<u8>, String> {
     // scale so all but the brightest 0.05 % fit into 0..1
     let mut lum: Vec<f32> = img.data.iter().map(|c| c[0].max(c[1]).max(c[2])).filter(|v| v.is_finite()).collect();
     let scale = if lum.is_empty() {
@@ -47,22 +53,29 @@ pub fn encode(img: &Rgb32f) -> Result<Vec<u8>, String> {
     )
     .map_err(|e| e.to_string())?;
     let mut out = MAGIC.to_vec();
-    out.extend_from_slice(format!("{{\"w\":{},\"h\":{},\"scale\":{scale}}}\n", img.width, img.height).as_bytes());
+    let mut head = serde_json::json!({"w": img.width, "h": img.height, "scale": scale});
+    if let Some(t) = tone {
+        head["tone"] = serde_json::to_value(t).map_err(|e| e.to_string())?;
+    }
+    out.extend_from_slice(head.to_string().as_bytes());
+    out.push(b'\n');
     out.extend_from_slice(&jpg);
     Ok(out)
 }
 
-/// Decode a smart preview back into a source image.
-pub fn decode(bytes: &[u8]) -> Result<Rgb32f, String> {
+/// Decode a smart preview back into a source image and its stored camera tone curve (an invalid
+/// curve is ignored, like a missing one).
+pub fn decode(bytes: &[u8]) -> Result<(Rgb32f, Option<CameraTone>), String> {
     let rest = bytes.strip_prefix(MAGIC).ok_or("not a smart preview")?;
     let nl = rest.iter().position(|b| *b == b'\n').ok_or("bad smart preview")?;
     let head: serde_json::Value = serde_json::from_slice(&rest[..nl]).map_err(|e| e.to_string())?;
     let scale = head["scale"].as_f64().unwrap_or(1.0) as f32;
+    let tone = head.get("tone").and_then(|t| serde_json::from_value::<CameraTone>(t.clone()).ok());
     let d = lightcraft_codecs::decode(&rest[nl + 1..], Default::default()).map_err(|e| e.to_string())?;
     // the decoder undoes the sRGB encoding; the values are the source's own primaries
     let mut img = d.image;
     img.data.iter_mut().for_each(|c| *c = c.map(|v| v * scale));
-    Ok(img)
+    Ok((img, tone))
 }
 
 /// Where a library keeps its smart previews.
@@ -157,8 +170,8 @@ pub fn migrate(from: &Path, to: &Path, what: Existing) -> (usize, Vec<String>) {
 pub fn is_valid(path: &Path) -> bool {
     use std::io::{Read, Seek, SeekFrom};
     let Ok(mut f) = std::fs::File::open(path) else { return false };
-    let mut head = Vec::with_capacity(256);
-    if (&mut f).take(256).read_to_end(&mut head).is_err() {
+    let mut head = Vec::with_capacity(1024);
+    if (&mut f).take(HEADER_MAX).read_to_end(&mut head).is_err() {
         return false;
     }
     let Some(rest) = head.strip_prefix(MAGIC) else { return false };
@@ -175,9 +188,9 @@ pub fn is_valid(path: &Path) -> bool {
 }
 
 /// Load the proxy at `path`.
-pub fn load(path: &Path) -> Result<Arc<Rgb32f>, String> {
+pub fn load(path: &Path) -> Result<crate::media::DecodedSource, String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    decode(&b).map(Arc::new)
+    decode(&b).map(|(image, camera_tone)| crate::media::DecodedSource { image: Arc::new(image), info: None, camera_tone })
 }
 
 #[cfg(test)]
@@ -228,7 +241,7 @@ mod tests {
         std::fs::create_dir_all(&a).unwrap();
         std::fs::create_dir_all(&b).unwrap();
         let img = lightcraft_scenes::demo_library()[0].render(64, 40);
-        let good = encode(&img).unwrap();
+        let good = encode(&img, None).unwrap();
         std::fs::write(a.join("1.lcsp"), &good).unwrap();
         assert!(is_valid(&a.join("1.lcsp")));
         for cut in [good.len() - 1, good.len() / 2, 10, 0] {
@@ -243,10 +256,44 @@ mod tests {
     }
 
     #[test]
+    fn camera_tone_travels_with_the_proxy() {
+        let tone = CameraTone::new(std::array::from_fn(|i| {
+            let x = 0.004 * 1.17f32.powi(i as i32);
+            [x, 0.95 * (1.0 - (-2.7 * x).exp())]
+        }))
+        .unwrap();
+        let img = lightcraft_scenes::demo_library()[0].render(64, 40);
+        let bytes = encode(&img, Some(&tone)).unwrap();
+        assert_eq!(decode(&bytes).unwrap().1, Some(tone));
+        let dir = temp("tone");
+        let path = dir.join("t.lcsp");
+        std::fs::write(&path, &bytes).unwrap();
+        // the longer header is still read by the validity check, and the curve by `load`
+        assert!(is_valid(&path));
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.camera_tone, Some(tone));
+        let header = lightcraft_pipeline::SourceInfo { raw: true, ..Default::default() };
+        assert_eq!(loaded.info_or(header).camera_tone, Some(tone));
+        // a hostile curve (reversing knots) is ignored, not trusted
+        let nl = MAGIC.len() + bytes[MAGIC.len()..].iter().position(|b| *b == b'\n').unwrap();
+        let mut head: serde_json::Value = serde_json::from_slice(&bytes[MAGIC.len()..nl]).unwrap();
+        let mut knots: Vec<[f32; 2]> = serde_json::from_value(head["tone"]["knots"].clone()).unwrap();
+        knots.swap(3, 4);
+        head["tone"]["knots"] = serde_json::json!(knots);
+        let mut hostile = MAGIC.to_vec();
+        hostile.extend_from_slice(head.to_string().as_bytes());
+        hostile.extend_from_slice(&bytes[nl..]);
+        let (pixels, tone) = decode(&hostile).unwrap();
+        assert_eq!((pixels.width, tone), (img.width, None));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn roundtrip_keeps_the_picture() {
         let img = lightcraft_scenes::demo_library()[0].render(160, 100);
-        let back = decode(&encode(&img).unwrap()).unwrap();
+        let (back, tone) = decode(&encode(&img, None).unwrap()).unwrap();
         assert_eq!((back.width, back.height), (img.width, img.height));
+        assert!(tone.is_none());
         let mut err = 0.0f64;
         for (a, b) in img.data.iter().zip(&back.data) {
             for k in 0..3 {
