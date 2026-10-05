@@ -244,9 +244,9 @@ impl Default for Watermark {
 
 /// Inter SemiBold (OFL, see assets/ATTRIBUTION.md).
 static WATERMARK_FONT: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
-/// Shippori Mincho (OFL), Japanese fallback on both native and web.
+/// BIZ UDMincho (OFL), Japanese fallback on both native and web.
 /// Bundled OFL Japanese font bytes, shared by watermarks and UI glyph fallback.
-pub static WATERMARK_JAPANESE_FONT: &[u8] = include_bytes!("../../../assets/fonts/ShipporiMincho-Regular.ttf");
+pub static WATERMARK_JAPANESE_FONT: &[u8] = include_bytes!("../../../assets/fonts/BIZUDMincho-Regular.ttf");
 
 /// Draw `wm` onto `img` (straight alpha blending of the encoded values).
 pub fn draw_watermark(img: &mut Rgba8, wm: &Watermark) {

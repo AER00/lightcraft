@@ -15,6 +15,6 @@ list (author, source, license) is in assets/ATTRIBUTION.md.
 Inter (assets/fonts/Inter-*.ttf) — SIL Open Font License 1.1. See assets/fonts/OFL-Inter.txt.
 Showcase photographs by Ansel Adams, Dorothea Lange and NASA (docs/images/) — public domain. See assets/ATTRIBUTION.md.
 
-Shippori Mincho: Copyright 2021 The Shippori Mincho Project Authors
-(https://github.com/fontdasu/ShipporiMincho). SIL Open Font License 1.1;
-see assets/fonts/OFL-ShipporiMincho.txt.
+BIZ UDMincho: Copyright 2022 The BIZ UDMincho Project Authors
+(https://github.com/googlefonts/morisawa-biz-ud-mincho). SIL Open Font License 1.1;
+see assets/fonts/OFL-BIZUDMincho.txt.

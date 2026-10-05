@@ -193,7 +193,7 @@ own chart-based calibration (M11.4). Adobe matrices are never used.
 ## Japanese interface and text watermarks
 
 English/Japanese interface language is persisted in UI state. Core menus have Japanese
-translations; untranslated panels and dialogs retain English. Shippori Mincho is bundled
+translations; untranslated panels and dialogs retain English. BIZ UDMincho is bundled
 under OFL for Japanese glyph coverage without system fonts. Text watermarks now accept
 `vertical: true` in export JSON/presets and expose an orientation selector. Japanese
 characters stay upright in top-to-bottom columns, with newlines starting columns to the

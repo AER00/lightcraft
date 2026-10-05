@@ -798,6 +798,6 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 
 `app.export` watermark objects accept `vertical` (boolean, defaults to false). The export
 dialog offers Horizontal/Vertical and multiline text. Japanese glyphs fall back to bundled
-Shippori Mincho. Vertical lettering uses upright em cells and right-to-left newline columns;
+BIZ UDMincho. Vertical lettering uses upright em cells and right-to-left newline columns;
 Latin stays upright. Advanced Japanese composition remains open. Regression coverage:
 `export::tests::japanese_watermarks_support_vertical_columns_and_legacy_defaults`.
