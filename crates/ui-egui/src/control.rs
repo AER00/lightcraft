@@ -83,6 +83,7 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "hoverPreview": app.hover_preview.as_ref().map(|h| h.label.clone()),
         "status": app.ui.status,
         "unsaved": app.session.unsaved().map(|(n, e)| json!({"ops": n, "error": e})),
+        "libraryProblem": app.library_problem.as_ref().map(crate::panels::library_problem::LibraryProblem::to_json),
         "scan": app.scan.as_ref().map(crate::import::ScanTask::status),
         "export": {"running": app.export.as_ref().map(crate::export_task::ExportTask::status), "last": app.last_export_result},
         "memory": memory(app),
