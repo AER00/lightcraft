@@ -19,6 +19,8 @@
   in short pieces so slow integrated GPUs aren't reset by their watchdog. `ui.inspect` → `perf`
   (`gpuReason`, `gpuFallback`), Help ▸ System Info and Settings ▸ Performance say why the GPU isn't
   used (e.g. a skipped software adapter such as llvmpipe) and why the last render fell back.
+- The thumbnail cache only ever counts and deletes its own files (issue #98): a library opened on a folder that
+  already has a `thumbs/` folder of other pictures no longer loses them when the cache is trimmed or cleared.
 
 ### Library
 - Smart albums with a rule editor: match all / any / none, nested groups, 26 fields.
