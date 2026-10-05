@@ -2,6 +2,11 @@
 //! The folder's photos are probed in place as `local` photos — only folder views list them —
 //! and edits go to the files' XMP sidecars like any photo added in place. "Add to My Photos"
 //! makes them ordinary library photos.
+//!
+//! Each browse records when the folders it listed were browsed. Untouched records of folders
+//! not browsed for [`Session::forget_local_days`] are forgotten (when the library opens, or with
+//! `library.forgetLocal`); see [`lightcraft_catalog::local`] for what "untouched" means. Files
+//! and sidecars on disk are never touched, and browsing the folder again brings them back.
 
 use std::path::Path;
 
@@ -35,10 +40,111 @@ fn browse(s: &mut Session, p: &Value) -> Result<Value> {
         v
     };
     let report = import_with(s, &files, &ImportOptions { mode: ImportMode::Add, local: true, ..Default::default() })?;
+    stamp_browsed(s, &dir_s, &files);
     s.browse = Some(Browse { path: dir_s.clone(), subfolders });
     s.source = LibrarySource::Folder;
     let shown = s.visible().len();
     Ok(json!({"path": dir_s, "subfolders": subfolders, "photos": shown, "new": report.imported.len(), "failed": report.failed.len()}))
+}
+
+/// Folders whose browse time is refreshed at most this often (keeps repeated browsing from
+/// growing the log; far finer than the days the eviction counts in).
+const RESTAMP_SECS: i64 = 3600;
+
+/// Record that `root` and the folders of `files` were browsed now (journaled, not an undo step).
+fn stamp_browsed(s: &mut Session, root: &str, files: &[String]) {
+    let now = (s.clock)();
+    let now_s = lightcraft_catalog::stacks::iso_seconds(&now);
+    let mut folders: std::collections::BTreeSet<String> =
+        files.iter().filter_map(|f| Path::new(f).parent().map(|d| d.to_string_lossy().trim_end_matches(['/', '\\']).to_string())).collect();
+    folders.insert(root.to_string());
+    let ops: Vec<Op> = folders
+        .into_iter()
+        .filter(|f| {
+            let at = s.catalog.last_browsed(f).and_then(lightcraft_catalog::stacks::iso_seconds);
+            match (at, now_s) {
+                (Some(at), Some(n)) => n - at >= RESTAMP_SECS || n < at,
+                _ => true,
+            }
+        })
+        .map(|folder| Op::SetBrowsed { folder, at: Some(now.clone()) })
+        .collect();
+    if !ops.is_empty() {
+        let op = Op::Batch { ops };
+        if s.catalog.apply(op.clone()).is_ok() {
+            s.pending_log.push(op);
+        }
+    }
+}
+
+/// Photos the session still needs, whatever their state: shown, selected, being edited, or
+/// referred to by an undo / redo step.
+fn in_use(s: &mut Session) -> std::collections::HashSet<PhotoId> {
+    let mut keep: std::collections::HashSet<PhotoId> = s.visible().iter().copied().collect();
+    keep.extend(s.selection.ids.iter().copied());
+    keep.extend(s.selection.active);
+    keep.extend(s.previous_active);
+    keep.extend(s.interaction.as_ref().map(|i| i.photo));
+    keep.extend(s.before.keys().copied());
+    for e in s.undo.iter().chain(s.redo.iter()) {
+        e.op.photo_ids(&mut |id| {
+            keep.insert(id);
+        });
+    }
+    keep
+}
+
+impl Session {
+    /// Forget untouched Local records whose folder wasn't browsed for `days` (default
+    /// [`Session::forget_local_days`]; 0 = never). With `dry_run`, only report what would go.
+    /// Journaled (durable, replayed after a crash) but not an undo step; nothing on disk changes.
+    pub fn forget_local(&mut self, dry_run: bool, days: Option<u32>) -> lightcraft_catalog::ForgetPlan {
+        let days = days.unwrap_or(self.forget_local_days);
+        let now = (self.clock)();
+        let keep = in_use(self);
+        let smart = self.media.smart_dir.clone();
+        let plan = self
+            .catalog
+            .forget_local_plan(&now, days, &|p| keep.contains(&p.id) || smart.as_ref().is_some_and(|d| d.join(crate::smart::file_name(p)).exists()));
+        if dry_run {
+            return plan;
+        }
+        for op in plan.ops() {
+            match self.catalog.apply(op.clone()) {
+                Ok(_) => self.pending_log.push(op),
+                Err(e) => log::warn!("forget Local records: {e}"),
+            }
+        }
+        if !plan.evict.is_empty() {
+            log::info!("forgot {} untouched Local record(s) of folders not browsed for {days} days", plan.evict.len());
+        }
+        plan
+    }
+}
+
+fn forget_local(s: &mut Session, p: &Value) -> Result<Value> {
+    let dry_run = bool_or(p, "dryRun", false);
+    let days = match p.get("days") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            Some(v.as_u64().ok_or_else(|| bad("library.forgetLocal", "days must be a whole number (0 = never)"))?.min(u64::from(u32::MAX)) as u32)
+        }
+    };
+    let used = days.unwrap_or(s.forget_local_days);
+    let plan = s.forget_local(dry_run, days);
+    if !dry_run && !plan.evict.is_empty() {
+        s.compact_soon();
+    }
+    Ok(json!({
+        "dryRun": dry_run,
+        "days": used,
+        "local": plan.local,
+        "forgotten": plan.evict.len(),
+        "keptRecent": plan.kept_recent,
+        "keptTouched": plan.kept_touched,
+        "keptInUse": plan.kept_in_use,
+        "foldersStamped": plan.stamp.len(),
+    }))
 }
 
 /// The browsed photos among `ids` (default: the selection) become library photos.
@@ -97,6 +203,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{path, subfolders?: bool} — show a folder's photos without adding them to the library (they're read in place; edits go to XMP sidecars) → {path, photos, new}",
             always,
             browse
+        ),
+        cmd!(
+            "library.forgetLocal",
+            "Forget Unchanged Local Photos",
+            [],
+            None,
+            "{dryRun?: bool, days?: n (default: the library preference, 0 = never)} — remove Local (browsed, not added) photos nobody changed, of folders not browsed for `days`, from the catalog; files and sidecars stay, browsing the folder again brings them back; not an undo step → {local, forgotten, keptRecent, keptTouched, keptInUse, foldersStamped, days, dryRun}",
+            always,
+            forget_local
         ),
         cmd!("photo.addToLibrary", "Add to My Photos", ["Photo"], None, "{ids?} — browsed (Local) photos join the library", always, add_to_library),
     ]

@@ -11,6 +11,7 @@
 pub mod dates;
 pub mod journal;
 pub mod keywords;
+pub mod local;
 pub mod model;
 pub mod query;
 pub mod rules;
@@ -24,6 +25,7 @@ pub use dates::{DateRun, GroupBy};
 pub use journal::{Journal, LoadReport, PersistStats, SnapshotPolicy, SnapshotTiming};
 pub use keywords::KeywordNode;
 use lightcraft_develop::DevelopSettings;
+pub use local::{DEFAULT_FORGET_DAYS, ForgetPlan, folder_of};
 pub use model::*;
 pub use query::{DateGroup, Filter, RatingOp, Sort, SortKey};
 pub use rules::{Match, Rule, RuleSet};
@@ -190,6 +192,12 @@ pub enum Op {
         label: ColorLabel,
         name: Option<String>,
     },
+    /// When a Local folder was last browsed (ISO 8601; `None` = forget the time). Not an undo
+    /// step: it drives forgetting untouched Local records (see [`local`]).
+    SetBrowsed {
+        folder: String,
+        at: Option<String>,
+    },
     /// Several ops as one step (undo applies the inverses in reverse).
     Batch {
         ops: Vec<Op>,
@@ -209,6 +217,9 @@ pub struct Catalog {
     /// Custom colour label names.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     label_names: BTreeMap<ColorLabel, String>,
+    /// When each Local folder was last browsed (folder path → ISO 8601), see [`local`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    browsed: BTreeMap<String, String>,
     /// Increments on every applied op.
     #[serde(skip)]
     pub revision: u64,
@@ -547,6 +558,14 @@ impl Catalog {
                 };
                 Op::SetLabelName { label, name: old }
             }
+            Op::SetBrowsed { folder, at } => {
+                let folder = crate::query::folder_key(&folder);
+                let old = match at {
+                    Some(t) => self.browsed.insert(folder.clone(), t),
+                    None => self.browsed.remove(&folder),
+                };
+                Op::SetBrowsed { folder, at: old }
+            }
             Op::Batch { ops } => {
                 let mut inverses = Vec::with_capacity(ops.len());
                 for op in ops {
@@ -625,3 +644,5 @@ mod tests;
 mod tests_background;
 #[cfg(test)]
 mod tests_journal;
+#[cfg(test)]
+mod tests_local;

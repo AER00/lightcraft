@@ -44,6 +44,11 @@ fn photo(c: &mut Catalog, i: u64) -> Photo {
     p.meta.iso = Some(400);
     p.as_shot_wb = Some((5200.0, 3.0));
     p.local = !i.is_multiple_of(10);
+    if p.local {
+        // as a browse catalogues it: import defaults, a baseline fingerprint
+        p.develop = Arc::new(p.import_defaults());
+        p.set_local_baseline();
+    }
     if !p.local {
         let mut d = DevelopSettings::default();
         d.light.exposure = (i % 7) as f64 * 0.1;
@@ -152,6 +157,47 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             blocking.push(s.blocking_ms);
         }
         println!("  background compaction blocking: {}", stats(blocking));
+
+        // forget the untouched Local records (folders last browsed long ago; every 7th folder
+        // recently; every 50th Local record rated), then compact
+        let folders: std::collections::BTreeSet<String> = cat.photos().filter(|p| p.local).filter_map(|p| folder_of(p)).collect();
+        let mut ops: Vec<Op> = folders
+            .iter()
+            .enumerate()
+            .map(|(k, f)| Op::SetBrowsed {
+                folder: f.clone(),
+                at: Some(if k % 7 == 0 { "2026-09-30T00:00:00" } else { "2026-06-01T00:00:00" }.into()),
+            })
+            .collect();
+        ops.extend(cat.photos().filter(|p| p.local && p.id.0.is_multiple_of(50)).map(|p| Op::SetRating { id: p.id, rating: 2 }).collect::<Vec<_>>());
+        for op in &ops {
+            cat.apply(op.clone())?;
+        }
+        j.append(&ops)?;
+        j.snapshot(&cat)?;
+        let before = j.stats().last_snapshot.bytes;
+        let t = Instant::now();
+        let plan = cat.forget_local_plan("2026-10-05T00:00:00", DEFAULT_FORGET_DAYS, &|_| false);
+        let plan_ms = ms(t);
+        let t = Instant::now();
+        let ops = plan.ops();
+        for op in &ops {
+            cat.apply(op.clone())?;
+        }
+        j.append(&ops)?;
+        let apply_ms = ms(t);
+        j.snapshot(&cat)?;
+        let after = j.stats().last_snapshot.bytes;
+        println!(
+            "  forget Local: {} of {} local records forgotten (kept: {} recent, {} touched, {} in use); plan {plan_ms:.1} ms, apply+append {apply_ms:.1} ms; snapshot {:.1} MB -> {:.1} MB",
+            plan.evict.len(),
+            plan.local,
+            plan.kept_recent,
+            plan.kept_touched,
+            plan.kept_in_use,
+            before as f64 / 1e6,
+            after as f64 / 1e6
+        );
 
         drop(j);
         if std::env::var_os("PERSIST_BENCH_NO_LOAD").is_some() {

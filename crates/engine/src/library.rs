@@ -52,6 +52,8 @@ pub struct Library {
     pub report: LoadReport,
     /// Last persistence error (shown by the UI; ops stay pending and are retried).
     pub last_error: Option<String>,
+    /// What forgetting untouched Local records did when the library opened.
+    pub forgot_local: Option<lightcraft_catalog::ForgetPlan>,
     presets_written: String,
     view_written: Vec<u8>,
 }
@@ -133,6 +135,9 @@ struct PrefsFile {
     cache_mb: u32,
     /// Folder for smart previews (default: `Smart Previews` in the library).
     smart_previews_dir: Option<String>,
+    /// Days after which untouched Local records of unbrowsed folders are forgotten (missing =
+    /// the default, 0 = never).
+    forget_local_days: Option<u32>,
 }
 
 fn presets_json(s: &Session) -> String {
@@ -222,6 +227,7 @@ impl Session {
         self.recent_keywords = prefs.recent_keywords;
         self.import_defaults = prefs.import;
         self.cache_mb = prefs.cache_mb;
+        self.forget_local_days = prefs.forget_local_days.unwrap_or(lightcraft_catalog::DEFAULT_FORGET_DAYS);
         self.smart_previews_dir = prefs.smart_previews_dir.filter(|_| on_disk).map(PathBuf::from);
         if let Some(d) = &self.smart_previews_dir {
             self.media.smart_dir = Some(d.clone());
@@ -248,8 +254,23 @@ impl Session {
             self.media.attach_disk_cache(&dir.join("thumbs"), self.cache_bytes());
         }
         let view_written = self.view_json();
-        let library = self.library.insert(Library { dir, on_disk, journal, files, report, last_error: None, presets_written, view_written });
-        Ok(&library.report)
+        self.library = Some(Library { dir, on_disk, journal, files, report, last_error: None, forgot_local: None, presets_written, view_written });
+        // forget untouched Local records of folders not browsed for a while (journaled at once)
+        if self.forget_local_days > 0 {
+            let plan = self.forget_local(false, None);
+            if !plan.evict.is_empty() {
+                self.compact_soon();
+            } else if let Err(e) = self.persist() {
+                log::error!("library: {e}");
+            }
+            if let Some(lib) = self.library.as_mut() {
+                lib.forgot_local = Some(plan);
+            }
+        }
+        match &self.library {
+            Some(lib) => Ok(&lib.report),
+            None => Err(EngineError::Other("library closed while opening".into())),
+        }
     }
 
     /// Write pending ops to the log (fsynced), compact when due, and save changed presets.
@@ -351,6 +372,7 @@ impl Session {
             import: self.import_defaults.clone(),
             cache_mb: self.cache_mb,
             smart_previews_dir: self.smart_previews_dir.as_ref().map(|d| d.to_string_lossy().to_string()),
+            forget_local_days: Some(self.forget_local_days),
         })
         .unwrap_or_default();
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
@@ -371,6 +393,24 @@ impl Session {
             self.media.attach_disk_cache(&dir, self.cache_bytes());
         }
         self.save_prefs()
+    }
+
+    /// Save, then start compacting in the background (natively; synchronously elsewhere): after
+    /// a change that shrinks the catalog a lot, so the smaller snapshot replaces the old one.
+    /// Errors are logged and reported like other persistence errors (nothing is lost).
+    pub fn compact_soon(&mut self) {
+        if let Err(e) = self.persist() {
+            log::error!("library: {e}");
+            return;
+        }
+        if self.interaction.is_some() {
+            return;
+        }
+        let Some(lib) = self.library.as_mut() else { return };
+        if let Err(e) = lib.journal.snapshot_in_background(&self.catalog) {
+            log::error!("library: compaction: {e}");
+            lib.last_error = Some(format!("compaction: {e}"));
+        }
     }
 
     /// Compact the log into a snapshot now.

@@ -21,6 +21,9 @@
 - Export file names use the Rename Photos tokens ({title}, {seq:2}, {date:%Y-%m-%d}…), plus new {num}, {folder}, {lens}, {iso}, {rating}, {creator}.
 - Copyright status, rights usage terms and copyright info URL in Info, metadata presets and exports.
 - Auto-Tag from Tracklog: GPS locations for your photos from a GPX track log, matched by capture time.
+- Smaller, faster catalogs: photos you only looked at in Local (never added, rated or edited) are forgotten once
+  their folder has not been browsed for 30 days — your files and sidecars stay, and browsing the folder shows them
+  again. Change the period (or turn it off) in Settings → Performance.
 
 ### Editing
 - Auto Sync: edits apply to every selected photo. Auto B&W mix. Automatic versions.

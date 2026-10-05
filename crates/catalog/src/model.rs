@@ -272,6 +272,10 @@ pub struct Photo {
     /// picture style baked in — so it is treated as a rendered (non-raw) source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview_only: Option<String>,
+    /// A Local record: the fingerprint of its state when the browse catalogued it, to tell
+    /// whether the user changed anything since (see [`crate::local`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_baseline: Option<u64>,
 }
 
 /// What assisted culling measured on a photo.
@@ -319,6 +323,7 @@ impl Photo {
             import_look: None,
             analysis: None,
             preview_only: None,
+            local_baseline: None,
         }
     }
     /// A raw file developed from its sensor data: not a rendered image, and not a raw shown from

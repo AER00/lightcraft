@@ -722,6 +722,10 @@ pub fn import_with(s: &mut Session, paths: &[String], opts: &ImportOptions) -> c
         }
         report.imported.push(id.0);
         p.local = opts.local;
+        if opts.local {
+            // the state as browsed: a later change keeps the record from being forgotten
+            p.set_local_baseline();
+        }
         ops.push(Op::AddPhoto { photo: Box::new(p) });
     }
     let log0 = s.pending_log.len();
