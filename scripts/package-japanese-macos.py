@@ -42,7 +42,7 @@ shutil.copy2(root / "target/release/lightcraft-cli", macos / "lightcraft-cli")
 shutil.copy2(root / "assets/app-icon/lightcraft.icns", resources / "LightCraft.icns")
 licenses = resources / "Licenses"
 licenses.mkdir()
-for source in ("LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "assets/fonts/OFL-Inter.txt", "assets/fonts/OFL-BIZUDGothic.txt", "assets/app-icon/LICENSE.txt"):
+for source in ("LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "assets/fonts/OFL-Inter.txt", "assets/fonts/OFL-BIZUDGothic.txt", "assets/fonts/OFL-BIZUDMincho.txt", "assets/app-icon/LICENSE.txt"):
     shutil.copy2(root / source, licenses / ("Icon-LICENSE.txt" if source == "assets/app-icon/LICENSE.txt" else pathlib.Path(source).name))
 shutil.copy2(root / "docs/localization-ja.md", resources / "日本語版について.md")
 subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(macos / "lightcraft-cli")], check=True)

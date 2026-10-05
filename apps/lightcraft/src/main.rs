@@ -85,7 +85,18 @@ fn load_prefs() -> Option<UiState> {
         return None;
     }
     let bytes = std::fs::read(config_dir()?.join("ui.json")).ok()?;
-    serde_json::from_slice::<UiState>(&bytes).ok().map(UiState::sanitized)
+    decode_saved_ui(&bytes)
+}
+
+fn decode_saved_ui(bytes: &[u8]) -> Option<UiState> {
+    let mut saved: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    if saved.get("language").is_none()
+        && let Some(language) = saved.pointer("/settings/language").cloned()
+        && let Some(object) = saved.as_object_mut()
+    {
+        object.insert("language".into(), language);
+    }
+    serde_json::from_value::<UiState>(saved).ok().map(UiState::sanitized)
 }
 
 fn save_prefs(app: &LightcraftApp) {
@@ -345,12 +356,12 @@ fn main() -> eframe::Result {
             let session = open_session(in_memory, library_dir, seed_demo && files.is_empty());
             let mut app = LightcraftApp::new(session, services());
             if cfg!(feature = "japanese-local") {
-                app.ui.settings.language = lightcraft_ui_egui::i18n::Language::Japanese;
+                app.ui.language = lightcraft_ui_egui::i18n::Language::Ja;
             }
             if let Some(ui) = prefs {
                 app.ui = ui;
             }
-            lightcraft_ui_egui::i18n::set_language(app.ui.settings.language);
+            lightcraft_ui_egui::i18n::set_language(app.ui.language);
             app.integrated_titlebar = cfg!(target_os = "macos");
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
@@ -371,4 +382,17 @@ fn main() -> eframe::Result {
             )))
         }),
     )
+}
+
+#[cfg(test)]
+mod preference_tests {
+    use super::decode_saved_ui;
+    use lightcraft_ui_egui::i18n::Language;
+    #[test]
+    fn language_migrates_and_upstream_choice_wins() {
+        assert_eq!(decode_saved_ui(br#"{"settings":{"language":"ja"}}"#).unwrap().language, Language::Ja);
+        assert_eq!(decode_saved_ui(br#"{"language":"en","settings":{"language":"ja"}}"#).unwrap().language, Language::En);
+        assert_eq!(decode_saved_ui(br#"{"language":"ja"}"#).unwrap().language, Language::Ja);
+        assert!(decode_saved_ui(b"not JSON").is_none());
+    }
 }

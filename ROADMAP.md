@@ -189,3 +189,13 @@ own chart-based calibration (M11.4). Adobe matrices are never used.
   Local roots and cleanup, 85k-photo grid and catalog performance, background compaction, failed-save errors, GPU
   export hardening, clippy 1.99. Added the honest *Where we stand* assessment and *Where we're going* priorities; added
   tracker rows for camera colour, camera coverage and render fidelity.
+
+## Japanese interface and text watermarks
+
+English/Japanese interface language is persisted in UI state. Core menus have Japanese
+translations; untranslated panels and dialogs retain English. BIZ UDMincho is bundled
+under OFL for Japanese glyph coverage without system fonts. Text watermarks now accept
+`vertical: true` in export JSON/presets and expose an orientation selector. Japanese
+characters stay upright in top-to-bottom columns, with newlines starting columns to the
+left. This is basic lettering, without tate-chu-yoko, ruby, kinsoku, or general vertical
+OpenType shaping. The same coverage renderer serves 8/16/32-bit exports.

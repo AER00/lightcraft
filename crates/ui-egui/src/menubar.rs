@@ -259,6 +259,8 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
     let u = &app.ui;
     let panel = |p: RightPanel| Some(u.right == p);
     match id {
+        "app.language.english" => Some(u.language == crate::i18n::Language::En),
+        "app.language.japanese" => Some(u.language == crate::i18n::Language::Ja),
         "develop.autoSync" => Some(app.session.auto_sync),
         "view.photoCounts" => Some(u.show_counts),
         "view.secondWindow" => Some(u.second_window),
@@ -668,7 +670,7 @@ const TITLE_GAP: f32 = 24.0;
 /// Width of the in-window menu bar's titles.
 pub fn bar_width(ui: &egui::Ui) -> f32 {
     let t = crate::theme::Tokens::get(ui.ctx());
-    MENUS.iter().map(|m| ui.painter().layout_no_wrap(m.to_string(), t.font(13.0), t.text).size().x + TITLE_GAP).sum::<f32>()
+    MENUS.iter().map(|m| ui.painter().layout_no_wrap(crate::i18n::tr(m).to_string(), t.font(13.0), t.text).size().x + TITLE_GAP).sum::<f32>()
 }
 
 /// The in-window menu bar (hosts without a native one): one dropdown per menu, or a single
@@ -677,8 +679,10 @@ pub fn show_in_window(app: &mut LightcraftApp, ui: &mut egui::Ui, max_width: f32
     let t = crate::theme::Tokens::get(ui.ctx());
     let bar = menu_bar(app);
     let font = t.font(13.0);
-    let widths: Vec<f32> =
-        bar.iter().map(|(title, _)| ui.painter().layout_no_wrap(title.clone(), font.clone(), t.text).size().x + TITLE_GAP).collect();
+    let widths: Vec<f32> = bar
+        .iter()
+        .map(|(title, _)| ui.painter().layout_no_wrap(crate::i18n::tr(title).to_string(), font.clone(), t.text).size().x + TITLE_GAP)
+        .collect();
     let total: f32 = widths.iter().sum();
     let mut clicked: Option<(String, Value)> = None;
     let start = ui.cursor().left();

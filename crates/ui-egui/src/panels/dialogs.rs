@@ -551,8 +551,9 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                                 wm.image_width = (width / 100.0) as f32;
                             }
                         } else {
+                            choices(ui, app.ui.language.tr("Text direction"), "exportWmOrientation", &[(false, app.ui.language.tr("Horizontal text")), (true, app.ui.language.tr("Vertical text"))], &mut wm.vertical);
                             field(ui, "Text", |ui| {
-                                ui.add(egui::TextEdit::singleline(&mut wm.text).hint_text("© Your Name").desired_width(f32::INFINITY))
+                                ui.add(egui::TextEdit::multiline(&mut wm.text).desired_rows(2).hint_text("© Your Name").desired_width(f32::INFINITY))
                             });
                         }
                         choices(

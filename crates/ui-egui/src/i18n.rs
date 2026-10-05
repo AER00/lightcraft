@@ -9,17 +9,37 @@ include!(concat!(env!("OUT_DIR"), "/ja-formats.rs"));
 pub enum Language {
     #[default]
     #[serde(rename = "en")]
-    English,
+    En,
     #[serde(rename = "ja")]
-    Japanese,
+    Ja,
+}
+
+impl Language {
+    pub const ALL: [Self; 2] = [Self::En, Self::Ja];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::En => "English",
+            Self::Ja => "日本語",
+        }
+    }
+    pub fn parse(code: &str) -> Option<Self> {
+        match code {
+            "en" => Some(Self::En),
+            "ja" => Some(Self::Ja),
+            _ => None,
+        }
+    }
+    pub fn tr(self, source: &str) -> &str {
+        if self == Self::Ja { japanese().get(source).map(String::as_str).unwrap_or(source) } else { source }
+    }
 }
 
 thread_local! {
-    static LANGUAGE: Cell<Language> = const { Cell::new(Language::English) };
+    static LANGUAGE: Cell<Language> = const { Cell::new(Language::En) };
 }
 
 pub fn default_language() -> Language {
-    if std::env::var("LIGHTCRAFT_LANGUAGE").as_deref() == Ok("ja") { Language::Japanese } else { Language::English }
+    if std::env::var("LIGHTCRAFT_LANGUAGE").as_deref() == Ok("ja") { Language::Ja } else { Language::En }
 }
 
 pub fn set_language(language: Language) {
@@ -27,7 +47,7 @@ pub fn set_language(language: Language) {
 }
 
 pub fn is_japanese() -> bool {
-    LANGUAGE.with(|value| value.get() == Language::Japanese)
+    LANGUAGE.with(|value| value.get() == Language::Ja)
 }
 
 fn japanese() -> &'static BTreeMap<String, String> {
@@ -60,34 +80,34 @@ mod tests {
 
     #[test]
     fn language_switches_and_unknown_text_survives() {
-        set_language(Language::Japanese);
+        set_language(Language::Ja);
         assert_eq!(tr("Exposure"), "露出");
         assert_eq!(tr("my-photo.jpg"), "my-photo.jpg");
         assert_eq!(tr("develop.set"), "develop.set");
         assert_eq!(crate::menubar::display_item_label("album.addPhotos", &serde_json::json!({"id": 1}), "Color"), "Color");
         assert_eq!(crate::menubar::display_item_label("app.export", &serde_json::json!({"preset": "Color"}), "Color"), "Color");
         assert_eq!(crate::menubar::display_item_label("view.photoGrid", &serde_json::Value::Null, "Color"), "カラー");
-        set_language(Language::English);
+        set_language(Language::En);
         assert_eq!(tr("Exposure"), "Exposure");
     }
 
     #[test]
     fn translated_formats_preserve_counts_and_remove_english_plural_suffixes() {
-        set_language(Language::Japanese);
+        set_language(Language::Ja);
         assert_eq!(tr_format!("{n} photo{}", "s", n = 12), "12枚");
         assert_eq!(tr_format!("Exported {ok} of {total} photo{}", "s", ok = 4, total = 12), "12枚中4枚を書き出しました");
-        set_language(Language::English);
+        set_language(Language::En);
         assert_eq!(tr_format!("{n} photo{}", "s", n = 12), "12 photos");
     }
 
     #[test]
     fn preferences_round_trip_and_old_settings_remain_readable() {
-        let old: crate::state::AppSettings = serde_json::from_str("{}").unwrap();
-        assert_eq!(old.language, Language::English);
-        let settings = crate::state::AppSettings { language: Language::Japanese, ..old };
+        let old: crate::state::UiState = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.language, Language::En);
+        let settings = crate::state::UiState { language: Language::Ja, ..old };
         let saved = serde_json::to_string(&settings).unwrap();
-        let restored: crate::state::AppSettings = serde_json::from_str(&saved).unwrap();
-        assert_eq!(restored.language, Language::Japanese);
+        let restored: crate::state::UiState = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.language, Language::Ja);
     }
 
     #[test]
@@ -95,7 +115,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
         let mut app = crate::LightcraftApp::new(lightcraft_engine::Session::with_demo(), Default::default());
-        app.ui.settings.language = Language::Japanese;
+        app.ui.language = Language::Ja;
         app.ui.left_panel = true;
         let mut text = String::new();
         fn collect(shape: &egui::epaint::Shape, text: &mut String) {
@@ -136,7 +156,7 @@ mod tests {
         // Locale affects presentation only: command ids remain the same.
         let ids = |app: &crate::LightcraftApp| crate::menus::menu_entries(app).into_iter().map(|entry| entry.id).collect::<Vec<_>>();
         let japanese_ids = ids(&app);
-        set_language(Language::English);
+        set_language(Language::En);
         assert_eq!(japanese_ids, ids(&app));
     }
 }

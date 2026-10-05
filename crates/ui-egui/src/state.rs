@@ -131,8 +131,6 @@ impl InfoOverlay {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
-    /// Display language, independent of catalog data and command ids.
-    pub language: crate::i18n::Language,
     /// Library opened at launch when no `--library` is given (empty = the default location).
     pub library_path: String,
     pub startup_view: StartupView,
@@ -157,7 +155,6 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         AppSettings {
-            language: crate::i18n::default_language(),
             library_path: String::new(),
             startup_view: StartupView::Last,
             confirm_delete: false,
@@ -203,6 +200,8 @@ pub const MIN_PHOTO_WIDTH: f32 = 360.0;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
+    #[serde(default = "crate::i18n::default_language")]
+    pub language: crate::i18n::Language,
     /// The Build Previews run last announced (its identity, finished?).
     #[serde(skip)]
     pub preview_build_seen: Option<(usize, bool)>,
@@ -511,6 +510,7 @@ pub enum Dialog {
 impl Default for UiState {
     fn default() -> Self {
         UiState {
+            language: crate::i18n::default_language(),
             preview_build_seen: None,
             unsaved_seen: false,
             luminance_map_restore: None,

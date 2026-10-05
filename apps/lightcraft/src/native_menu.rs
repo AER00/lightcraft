@@ -342,7 +342,7 @@ impl NativeMenu {
     /// Per frame: run chosen items, then sync labels / enabled / checked and the text-focus
     /// accelerators with the app state.
     pub fn update(&mut self, app: &mut LightcraftApp, ctx: &egui::Context) {
-        lightcraft_ui_egui::i18n::set_language(app.ui.settings.language);
+        lightcraft_ui_egui::i18n::set_language(app.ui.language);
         while let Ok(key) = self.rx.try_recv() {
             if key == QUIT {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
