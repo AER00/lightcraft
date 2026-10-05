@@ -348,7 +348,15 @@ impl Journal {
             log::warn!("catalog: background snapshot failed ({e}); writing one now");
         }
         let t0 = web_time::Instant::now();
-        let mut timing = write_snapshot(self.store.as_mut(), self.seq, catalog).map_err(io)?;
+        let mut timing = match write_snapshot(self.store.as_mut(), self.seq, catalog) {
+            Ok(t) => t,
+            Err(e) => {
+                // nothing lost (the log is whole); don't retry on every append
+                self.stats.failed_snapshots += 1;
+                self.retry_at_records = self.log_records + self.policy.max_records;
+                return Err(io(e));
+            }
+        };
         let t2 = web_time::Instant::now();
         // A crash here leaves old records in the log; they are skipped by seq on load.
         self.store.write_atomic(LOG, b"").map_err(io)?;

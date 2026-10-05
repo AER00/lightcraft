@@ -82,6 +82,7 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "loupe": app.loupe_shown.map(|(p, src)| json!({"photo": p.0, "source": src, "pending": app.renderer.is_pending(crate::render::Slot::Main)})),
         "hoverPreview": app.hover_preview.as_ref().map(|h| h.label.clone()),
         "status": app.ui.status,
+        "unsaved": app.session.unsaved().map(|(n, e)| json!({"ops": n, "error": e})),
         "scan": app.scan.as_ref().map(crate::import::ScanTask::status),
         "export": {"running": app.export.as_ref().map(crate::export_task::ExportTask::status), "last": app.last_export_result},
         "memory": memory(app),

@@ -14,7 +14,10 @@
 //! via [`Session::open_library_in`] (the browser build keeps them in OPFS or IndexedDB).
 //!
 //! Every top-level [`Session::execute`] persists the ops it produced (fsynced) before returning,
-//! so a crash loses at most the command in flight. The log is compacted into a snapshot when it
+//! so a crash loses at most the command in flight. When that write fails the command returns
+//! [`EngineError::NotSaved`]: its change stays applied in memory and queued, and every later save
+//! retries the queue ([`Session::unsaved`] reports it meanwhile), so nothing is lost once the
+//! disk is writable again. The log is compacted into a snapshot when it
 //! grows (see [`lightcraft_catalog::SnapshotPolicy`]; written by a worker thread on native, see
 //! [`lightcraft_catalog::journal`]) and on [`Session::close_library`].
 
@@ -52,6 +55,11 @@ pub struct Library {
     pub report: LoadReport,
     /// Last persistence error (shown by the UI; ops stay pending and are retried).
     pub last_error: Option<String>,
+    /// Why the last append of queued ops failed; `None` once a save succeeds. While set, changes
+    /// exist only in memory ([`Session::unsaved`]).
+    pub unsaved_error: Option<String>,
+    /// When the frame loop may retry a failed append ([`Session::persist_if_dirty`] backs off).
+    retry_at: Option<web_time::Instant>,
     /// What forgetting untouched Local records did when the library opened.
     pub forgot_local: Option<lightcraft_catalog::ForgetPlan>,
     presets_written: String,
@@ -160,6 +168,9 @@ fn poll_compaction(lib: &mut Library) {
     }
 }
 
+/// How long the frame loop waits before retrying a failed append (commands retry at once).
+const RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
+
 fn read_json<T: serde::de::DeserializeOwned>(store: &mut dyn Store, name: &str) -> Option<T> {
     store.read(name).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok())
 }
@@ -254,7 +265,19 @@ impl Session {
             self.media.attach_disk_cache(&dir.join("thumbs"), self.cache_bytes());
         }
         let view_written = self.view_json();
-        self.library = Some(Library { dir, on_disk, journal, files, report, last_error: None, forgot_local: None, presets_written, view_written });
+        self.library = Some(Library {
+            dir,
+            on_disk,
+            journal,
+            files,
+            report,
+            last_error: None,
+            unsaved_error: None,
+            retry_at: None,
+            forgot_local: None,
+            presets_written,
+            view_written,
+        });
         // forget untouched Local records of folders not browsed for a while (journaled at once)
         if self.forget_local_days > 0 {
             let plan = self.forget_local(false, None);
@@ -274,23 +297,38 @@ impl Session {
     }
 
     /// Write pending ops to the log (fsynced), compact when due, and save changed presets.
-    /// Called after every top-level command; cheap when nothing changed.
+    /// Called after every top-level command; cheap when nothing changed. Fails (with
+    /// [`EngineError::NotSaved`]) only when the queued ops couldn't be written; they stay queued.
     pub fn persist(&mut self) -> Result<()> {
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         if !self.pending_log.is_empty() {
             if let Err(e) = lib.journal.append(&self.pending_log) {
-                lib.last_error = Some(e.to_string());
-                log::error!("library: {e}");
-                return Err(e.into());
+                // the ops stay queued (and applied in memory): the next persist retries them
+                let reason = e.to_string();
+                log::error!("library: {} change(s) not written to disk: {reason}", self.pending_log.len());
+                lib.last_error = Some(reason.clone());
+                lib.unsaved_error = Some(reason.clone());
+                lib.retry_at = Some(web_time::Instant::now() + RETRY_BACKOFF);
+                return Err(EngineError::NotSaved(reason));
             }
+            if lib.unsaved_error.take().is_some() {
+                log::info!("library: queued changes written to disk");
+            }
+            lib.retry_at = None;
             self.pending_log.clear();
             lib.last_error = None;
         }
         poll_compaction(lib);
         // Never snapshot mid-interaction: the catalog then holds an uncommitted preview value.
         // The snapshot is written by a worker thread (natively); appends go on meanwhile.
-        if lib.journal.wants_snapshot() && self.interaction.is_none() {
-            lib.journal.snapshot_in_background(&self.catalog)?;
+        // A failed compaction loses nothing (the log is kept whole and compacted later): it is
+        // reported (`library.info` → `lastError`), not returned.
+        if lib.journal.wants_snapshot()
+            && self.interaction.is_none()
+            && let Err(e) = lib.journal.snapshot_in_background(&self.catalog)
+        {
+            log::error!("library: compaction: {e}");
+            lib.last_error = Some(format!("compaction: {e}"));
         }
         let presets = presets_json(self);
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
@@ -307,11 +345,20 @@ impl Session {
     /// Persist if commands left ops pending (cheap; frontends call it once per frame for state
     /// changed outside [`Session::execute`]).
     pub fn persist_if_dirty(&mut self) {
-        if self.library.is_some() && !self.pending_log.is_empty() {
+        let backing_off = self.library.as_ref().and_then(|l| l.retry_at).is_some_and(|t| web_time::Instant::now() < t);
+        if self.library.is_some() && !self.pending_log.is_empty() && !backing_off {
             let _ = self.persist();
         } else if let Some(lib) = self.library.as_mut() {
             poll_compaction(lib);
         }
+    }
+
+    /// Changes applied in memory but not yet written to disk because saving failed: the number of
+    /// queued ops and why (`None` when everything is saved, or no library is open). Retried by
+    /// every command and by [`Session::persist_if_dirty`].
+    pub fn unsaved(&self) -> Option<(usize, &str)> {
+        let lib = self.library.as_ref()?;
+        lib.unsaved_error.as_deref().filter(|_| !self.pending_log.is_empty()).map(|e| (self.pending_log.len(), e))
     }
 
     /// Flush everything and write a snapshot (on quit). Ends an open interaction first.

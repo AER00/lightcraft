@@ -52,6 +52,10 @@ pub enum EngineError {
     BadParams { cmd: String, msg: String },
     #[error("{0}")]
     Catalog(#[from] lightcraft_catalog::CatalogError),
+    /// The command's change is applied (in memory, undoable) but its journal records could not
+    /// be written. They stay queued and are written by the next successful save.
+    #[error("saved in memory but not written to disk: {0}; LightCraft will retry")]
+    NotSaved(String),
     #[error("{0}")]
     Other(String),
 }
@@ -270,9 +274,18 @@ impl Session {
             self.auto_write_sidecars(&self.pending_log[log_start..]);
         }
         if self.depth == 0 && self.library.is_some() {
-            // Make the command durable before reporting success (on failure the ops stay pending,
-            // are retried after the next command, and `library.info` reports the error).
-            let _ = self.persist();
+            // Make the command durable before reporting success. When the command's own records
+            // can't be appended, it fails with `NotSaved`: the change stays applied in memory and
+            // queued, and the next save (any later command, or the frame loop) retries it. Other
+            // persistence trouble (a failed compaction, an older queued change still unwritten by
+            // a command that changed nothing) doesn't fail the command; `library.info` reports it.
+            let produced = self.pending_log.len() > log_start;
+            if let Err(e @ EngineError::NotSaved(_)) = self.persist()
+                && produced
+                && r.is_ok()
+            {
+                return Err(e);
+            }
         }
         r
     }
@@ -616,6 +629,8 @@ mod tests_library;
 mod tests_merge;
 #[cfg(test)]
 mod tests_organize;
+#[cfg(test)]
+mod tests_persist;
 #[cfg(test)]
 mod tests_prefs;
 #[cfg(test)]

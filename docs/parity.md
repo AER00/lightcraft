@@ -472,7 +472,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-BEHAV-AUTOSAVE | Instant autosave | P0 | ✅ | `crates/catalog/src/journal.rs`, `crates/engine/src/library.rs` | |
+| LR-BEHAV-AUTOSAVE | Instant autosave | P0 | ✅ | `crates/catalog/src/journal.rs`, `crates/engine/src/library.rs` | every change fsynced before the command returns; a failed write fails the command ("saved in memory but not written to disk"), keeps the change queued and retries; top-bar warning until saved |
 | LR-BEHAV-UNDO | Global undo | P0 | ✅ | `cmd:edit.undo`, `crates/engine/src/tests.rs` (`rating_flag_undo_redo`) | covers ratings, albums, deletes, edits |
 | LR-BEHAV-MULTISELECT | Multi-selection | P0 | ✅ | `cmd:library.select` (`replace`/`add`/`toggle`/`range`), `cmd:library.selectAll` | |
 | LR-BEHAV-BATCH | Batch apply to selection | P0 | ✅ | `cmd:photo.rate`, `cmd:develop.paste`, `cmd:preset.apply`, `cmd:app.export` | |
