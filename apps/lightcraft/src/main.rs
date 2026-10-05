@@ -4,7 +4,7 @@
 //!
 //! The library (catalog, presets, thumbnail cache) lives in `--library DIR`, else
 //! `$LIGHTCRAFT_LIBRARY`, else the library last opened with Settings → Open Library…, else
-//! `~/Pictures/LightCraft Library` (`LightCraft Japanese Library` with `japanese-local`); a new library starts with the
+//! `~/Pictures/LightCraft Library`; a new library starts with the
 //! procedural demo photos unless `--no-demo` or files are given. Files and folders on the command
 //! line are imported (duplicates are skipped). `--memory` runs an in-memory session that writes
 //! nothing (demo photos unless files are given; used by the README showcase scripts).
@@ -67,8 +67,7 @@ impl eframe::App for App {
 
 fn config_dir() -> Option<std::path::PathBuf> {
     if cfg!(target_os = "macos") {
-        let name = if cfg!(feature = "japanese-local") { "LightCraft Japanese" } else { "LightCraft" };
-        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support").join(name))
+        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support/LightCraft"))
     } else if cfg!(windows) {
         std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("LightCraft"))
     } else {
@@ -85,18 +84,7 @@ fn load_prefs() -> Option<UiState> {
         return None;
     }
     let bytes = std::fs::read(config_dir()?.join("ui.json")).ok()?;
-    decode_saved_ui(&bytes)
-}
-
-fn decode_saved_ui(bytes: &[u8]) -> Option<UiState> {
-    let mut saved: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-    if saved.get("language").is_none()
-        && let Some(language) = saved.pointer("/settings/language").cloned()
-        && let Some(object) = saved.as_object_mut()
-    {
-        object.insert("language".into(), language);
-    }
-    serde_json::from_value::<UiState>(saved).ok().map(UiState::sanitized)
+    serde_json::from_slice::<UiState>(&bytes).ok().map(UiState::sanitized)
 }
 
 fn save_prefs(app: &LightcraftApp) {
@@ -328,13 +316,7 @@ fn main() -> eframe::Result {
             .filter(|p| !p.is_empty() && std::env::var_os("LIGHTCRAFT_LIBRARY").is_none())
             .map(Into::into)
     });
-    let library_dir = library_dir.or_else(|| {
-        if let Some(path) = std::env::var_os("LIGHTCRAFT_LIBRARY").filter(|p| !p.is_empty()) {
-            return Some(path.into());
-        }
-        let name = if cfg!(feature = "japanese-local") { "LightCraft Japanese Library" } else { "LightCraft Library" };
-        std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Pictures").join(name))
-    });
+    let library_dir = library_dir.or_else(lightcraft_engine::library::default_dir);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("LightCraft")
@@ -355,9 +337,6 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let session = open_session(in_memory, library_dir, seed_demo && files.is_empty());
             let mut app = LightcraftApp::new(session, services());
-            if cfg!(feature = "japanese-local") {
-                app.ui.language = lightcraft_ui_egui::i18n::Language::Ja;
-            }
             if let Some(ui) = prefs {
                 app.ui = ui;
             }
@@ -384,15 +363,3 @@ fn main() -> eframe::Result {
     )
 }
 
-#[cfg(test)]
-mod preference_tests {
-    use super::decode_saved_ui;
-    use lightcraft_ui_egui::i18n::Language;
-    #[test]
-    fn language_migrates_and_upstream_choice_wins() {
-        assert_eq!(decode_saved_ui(br#"{"settings":{"language":"ja"}}"#).unwrap().language, Language::Ja);
-        assert_eq!(decode_saved_ui(br#"{"language":"en","settings":{"language":"ja"}}"#).unwrap().language, Language::En);
-        assert_eq!(decode_saved_ui(br#"{"language":"ja"}"#).unwrap().language, Language::Ja);
-        assert!(decode_saved_ui(b"not JSON").is_none());
-    }
-}
