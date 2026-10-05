@@ -21,6 +21,9 @@
   used (e.g. a skipped software adapter such as llvmpipe) and why the last render fell back.
 
 ### Library
+- Rename Photos never overwrites another photo when only the letter case changes (issue #95): on case-sensitive
+  volumes (Linux, case-sensitive APFS) `img_1.JPG` next to `IMG_1.JPG` is a different photo and the renamed one gets
+  `img_1-1.JPG`; on case-insensitive volumes the case change still goes through.
 - Smart albums with a rule editor: match all / any / none, nested groups, 26 fields.
 - Quick Collection and target album (B in the grid), keyword sets (⌥1–⌥9), colour-label sets.
 - Colour-label filter with several labels at once; expandable folder tree in Local.
