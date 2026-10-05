@@ -10,6 +10,27 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- Exports and renders never write over a photo's original (issue #93): exporting into the photo's own folder with
+  the same name and "Overwrite" (or Export with Previous repeating it), an exact output path from the control
+  channel or MCP, a merge preview path or `lightcraft-cli render IMG.jpg -o IMG.jpg` is refused with a clear
+  message, and the original is left byte for byte. Ordinary earlier exports are still overwritten when asked.
+  Exported files are written to a temp file, synced and then renamed into place, so a full disk or an unplugged
+  drive never leaves a truncated file; the XMP sidecar of an "Original" export follows the "If file exists"
+  choice too.
+- Convert to DNG, Copy as DNG, Photo Merge and smart previews no longer write straight to the final file (issue
+  #106): a DNG is checked against the raw data, written to a temp file, synced and read back before it gets its
+  name (never replacing a file), and only then is the photo relinked or the raw copy removed — a failed write
+  leaves no DNG and keeps the raw. Smart previews are written the same way; a damaged one (cut short by a crash or
+  a full drive) no longer counts as built and Build Smart Previews replaces it.
+- Import ▸ Copy verifies every copy, like Move (issue #96): each file is written as a new file, synced to disk and
+  compared byte for byte with the card. A copy that fails or differs is removed and reported as a failed import —
+  so "import complete" means the copies are good before you format the card — and a name that is taken gets -1,
+  -2… instead of being replaced.
+- Saving metadata to an XMP sidecar another application wrote no longer replaces it (issue #92): LightCraft merges its
+  fields in and keeps the rest — e.g. that application's develop settings and edit history — byte for byte. A
+  sidecar that isn't valid XMP is copied to `<name>.xmp.bak-<time>` first. With the default stem naming, a raw and a
+  JPEG with the same name (`IMG_0001.CR3` + `IMG_0001.JPG`) no longer share one sidecar: the raw keeps `IMG_0001.xmp`,
+  the JPEG uses `IMG_0001.JPG.xmp`.
 - A save that fails part-way (a full disk, a network share that drops) no longer looks like a damaged catalog
   afterwards (issue #101): the partial write is cut off before LightCraft retries, so the next launch replays every
   change. Catalogs already holding such a fragment load in full. Quitting while the catalog log can't be written
@@ -27,8 +48,18 @@
   in short pieces so slow integrated GPUs aren't reset by their watchdog. `ui.inspect` → `perf`
   (`gpuReason`, `gpuFallback`), Help ▸ System Info and Settings ▸ Performance say why the GPU isn't
   used (e.g. a skipped software adapter such as llvmpipe) and why the last render fell back.
+- The thumbnail cache only ever counts and deletes its own files (issue #98): a library opened on a folder that
+  already has a `thumbs/` folder of other pictures no longer loses them when the cache is trimmed or cleared.
 
 ### Library
+- Rename Photos never overwrites another photo when only the letter case changes (issue #95): on case-sensitive
+  volumes (Linux, case-sensitive APFS) `img_1.JPG` next to `IMG_1.JPG` is a different photo and the renamed one gets
+  `img_1-1.JPG`; on case-insensitive volumes the case change still goes through.
+- Rename Photos reports files it could not move back after a failure (issue #105), e.g. when a network share drops
+  mid-batch: the error lists them (old → new) and the library points at their new names (an undoable partial rename),
+  so none shows as missing. Renaming one of a raw + JPEG pair copies their shared `IMG_0001.xmp` instead of taking
+  it away from the other (issue #92). Find Missing Photos also finds renamed files by their content, prefers a content match
+  over a same-name same-size look-alike, and skips (and reports) photos it can't tell apart instead of guessing.
 - Smart albums with a rule editor: match all / any / none, nested groups, 26 fields.
 - Quick Collection and target album (B in the grid), keyword sets (⌥1–⌥9), colour-label sets.
 - Colour-label filter with several labels at once; expandable folder tree in Local.

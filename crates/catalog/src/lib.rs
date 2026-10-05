@@ -20,6 +20,7 @@ pub mod local;
 pub mod model;
 pub mod query;
 pub mod rules;
+pub mod safe_file;
 pub mod stacks;
 pub mod store;
 
