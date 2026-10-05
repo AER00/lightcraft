@@ -202,6 +202,8 @@ pub enum Anchor {
 #[serde(default, rename_all = "camelCase")]
 pub struct Watermark {
     pub text: String,
+    /// Basic Japanese vertical lettering: upright glyphs in columns from right to left.
+    pub vertical: bool,
     /// Text height as a fraction of the image's short edge.
     pub size: f32,
     /// 0..1.
@@ -226,6 +228,7 @@ impl Default for Watermark {
     fn default() -> Self {
         Self {
             text: String::new(),
+            vertical: false,
             size: 0.035,
             opacity: 0.7,
             anchor: Anchor::BottomRight,
@@ -241,6 +244,9 @@ impl Default for Watermark {
 
 /// Inter SemiBold (OFL, see assets/ATTRIBUTION.md).
 static WATERMARK_FONT: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
+/// BIZ UDMincho (OFL), Japanese fallback on both native and web.
+/// Bundled OFL Japanese font bytes, shared by watermarks and UI glyph fallback.
+pub static WATERMARK_JAPANESE_FONT: &[u8] = include_bytes!("../../../assets/fonts/BIZUDMincho-Regular.ttf");
 
 /// Draw `wm` onto `img` (straight alpha blending of the encoded values).
 pub fn draw_watermark(img: &mut Rgba8, wm: &Watermark) {
@@ -288,23 +294,67 @@ fn watermark_coverage(width: usize, height: usize, wm: &Watermark, mut blend_px:
         return;
     }
     let Ok(font) = FontRef::try_from_slice(WATERMARK_FONT) else { return };
+    let Ok(japanese) = FontRef::try_from_slice(WATERMARK_JAPANESE_FONT) else { return };
+    let fonts = [font, japanese];
     let short = width.min(height) as f32;
     let px = (wm.size.clamp(0.005, 0.5) * short).max(6.0);
-    let sf = font.as_scaled(PxScale::from(px));
-    // Lay out one line.
     let mut glyphs = Vec::new();
     let mut x = 0.0f32;
+    let mut y = 0.0f32;
+    let mut tw = 0.0f32;
     let mut prev = None;
-    for ch in text.chars() {
-        let id = sf.glyph_id(ch);
-        if let Some(p) = prev {
-            x += sf.kern(p, id);
+    let columns = text.split('\n').count();
+    let mut column = 0usize;
+    for original in text.chars() {
+        if original == '\n' {
+            if wm.vertical {
+                column = column.saturating_add(1);
+                tw = tw.max(y);
+                y = 0.0;
+            } else {
+                tw = tw.max(x);
+                x = 0.0;
+                y += px;
+            }
+            prev = None;
+            continue;
         }
-        glyphs.push(id.with_scale_and_position(px, point(x, sf.ascent())));
-        x += sf.h_advance(id);
-        prev = Some(id);
+        let vertical_form = match original {
+            '、' => '︑',
+            '。' => '︒',
+            '（' => '︵',
+            '）' => '︶',
+            '「' => '﹁',
+            '」' => '﹂',
+            '『' => '﹃',
+            '』' => '﹄',
+            '【' => '︻',
+            '】' => '︼',
+            '…' => '︙',
+            other => other,
+        };
+        let ch = if wm.vertical && fonts[1].glyph_id(vertical_form).0 != 0 { vertical_form } else { original };
+        let face = usize::from(fonts[0].glyph_id(ch).0 == 0);
+        let sf = fonts[face].as_scaled(PxScale::from(px));
+        let id = sf.glyph_id(ch);
+        if wm.vertical {
+            let left = columns.saturating_sub(column.saturating_add(1)) as f32 * px;
+            let pen = point(left + (px - sf.h_advance(id)) / 2.0, y + sf.ascent());
+            let rotation = matches!(original, 'ー' | '—' | '–').then_some((left + px / 2.0, y + px / 2.0));
+            glyphs.push((face, id.with_scale_and_position(px, pen), rotation));
+            y += px;
+        } else {
+            if let Some((previous_face, previous)) = prev
+                && previous_face == face
+            {
+                x += sf.kern(previous, id);
+            }
+            glyphs.push((face, id.with_scale_and_position(px, point(x, y + sf.ascent())), None));
+            x += sf.h_advance(id);
+            prev = Some((face, id));
+        }
     }
-    let (tw, th) = (x, sf.ascent() - sf.descent());
+    let (tw, th) = if wm.vertical { (columns as f32 * px, tw.max(y)) } else { (tw.max(x), y + px) };
     let inset = wm.inset.clamp(0.0, 0.4) * short;
     let (w, h) = (width as f32, height as f32);
     use Anchor::*;
@@ -328,10 +378,17 @@ fn watermark_coverage(width: usize, height: usize, wm: &Watermark, mut blend_px:
     let passes: &[(f32, [u8; 3], f32)] =
         if wm.shadow { &[((px * 0.05).max(1.0), [0, 0, 0], 0.45), (0.0, wm.color, 1.0)] } else { &[(0.0, wm.color, 1.0)] };
     for &(off, col, a) in passes {
-        for g in &glyphs {
-            if let Some(o) = font.outline_glyph(g.clone()) {
+        for (face, g, rotation) in &glyphs {
+            if let Some(o) = fonts.get(*face).and_then(|font| font.outline_glyph(g.clone())) {
                 let b = o.px_bounds();
-                o.draw(|gx, gy, cov| blend((ox + off + b.min.x) as i32 + gx as i32, (oy + off + b.min.y) as i32 + gy as i32, cov, col, a * alpha));
+                o.draw(|gx, gy, cov| {
+                    let (sx, sy) = (b.min.x + gx as f32, b.min.y + gy as f32);
+                    let (sx, sy) = match rotation {
+                        Some((cx, cy)) => (cx - (sy - cy), cy + (sx - cx)),
+                        None => (sx, sy),
+                    };
+                    blend((ox + off + sx) as i32, (oy + off + sy) as i32, cov, col, a * alpha);
+                });
             }
         }
     }
@@ -1225,6 +1282,44 @@ mod tests {
         // string shorthand
         assert_eq!(ExportOptions::from_json(&serde_json::json!({"watermark": "© Me"})).watermark.unwrap().text, "© Me");
         assert!(ExportOptions::from_json(&serde_json::json!({"watermark": ""})).watermark.is_none());
+    }
+
+    #[test]
+    fn japanese_watermarks_support_vertical_columns_and_legacy_defaults() {
+        use ab_glyph::Font;
+        let font = ab_glyph::FontRef::try_from_slice(WATERMARK_JAPANESE_FONT).unwrap();
+        for c in "日本語".chars() {
+            assert_ne!(font.glyph_id(c).0, 0);
+        }
+        let old = ExportOptions::from_json(&json!({"watermark": {"text": "日本語"}}));
+        assert!(!old.watermark.unwrap().vertical);
+        let options =
+            ExportOptions::from_json(&json!({"watermark": {"text": "日本語", "vertical": true, "size": 0.1, "shadow": false, "opacity": 1.0}}));
+        let wm = options.watermark.unwrap();
+        assert!(wm.vertical);
+        let round: Watermark = serde_json::from_value(serde_json::to_value(&wm).unwrap()).unwrap();
+        assert!(round.vertical);
+        let mut img = Rgba8::new(400, 300);
+        img.data.fill([0, 0, 0, 255]);
+        draw_watermark(&mut img, &wm);
+        let lit: Vec<_> = (0..300).flat_map(|y| (0..400).map(move |x| (x, y))).filter(|&(x, y)| img.get(x, y)[0] > 64).collect();
+        assert!(lit.len() > 100);
+        let w = lit.iter().map(|p| p.0).max().unwrap() - lit.iter().map(|p| p.0).min().unwrap();
+        let h = lit.iter().map(|p| p.1).max().unwrap() - lit.iter().map(|p| p.1).min().unwrap();
+        assert!(h > w * 2, "vertical Japanese must extend down the column");
+        let two = Watermark { text: "日\n本".into(), anchor: Anchor::TopLeft, inset: 0.0, ..wm };
+        img.data.fill([0, 0, 0, 255]);
+        draw_watermark(&mut img, &two);
+        for (text, dx) in [("本", 0), ("日", 30)] {
+            let mut single = Rgba8::new(400, 300);
+            single.data.fill([0, 0, 0, 255]);
+            draw_watermark(&mut single, &Watermark { text: text.into(), ..two.clone() });
+            for y in 0..30 {
+                for x in 0..30 {
+                    assert_eq!(img.get(x + dx, y), single.get(x, y), "newlines move columns left");
+                }
+            }
+        }
     }
 
     #[test]
