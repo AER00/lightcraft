@@ -24,6 +24,7 @@ pub mod library;
 pub mod media;
 pub mod memory;
 pub mod merge;
+pub mod originals;
 pub mod preset_import;
 pub mod preset_luminar;
 pub mod presets;
@@ -56,6 +57,9 @@ pub enum EngineError {
     /// be written. They stay queued and are written by the next successful save.
     #[error("saved in memory but not written to disk: {0}; LightCraft will retry")]
     NotSaved(String),
+    /// Another process (the app, `lightcraft-cli`, another computer) has the library open.
+    #[error("{0}")]
+    LibraryInUse(String),
     #[error("{0}")]
     Other(String),
 }
@@ -409,8 +413,11 @@ impl Session {
     }
 
     /// Apply an undo/redo op, first renaming the step's folder and moving the files its renames
-    /// imply (all or nothing).
+    /// imply (all or nothing). Files that can't be moved back after a failure are reported and the
+    /// library follows them (a logged change outside the undo history), so none goes missing; the
+    /// folder is only moved back when no file was left behind at its new path.
     fn apply_with_files(&mut self, op: &Op, folder: Option<&FolderMove>) -> Result<Op> {
+        let fs = rename::RealFs;
         if let Some(f) = folder {
             cmd::browse::rename_folder_on_disk(&f.from, &f.to).map_err(|e| EngineError::Other(format!("can't move the folder back: {e}")))?;
         }
@@ -420,9 +427,11 @@ impl Session {
             }
         };
         let moves = self.file_moves(op);
-        if let Err(e) = Session::move_files(&moves) {
-            undo_folder();
-            return Err(e);
+        if let Err(e) = rename::move_all(&fs, &moves) {
+            if e.stuck.is_empty() {
+                undo_folder();
+            }
+            return Err(EngineError::Other(format!("can't move the files back: {}", self.follow_stuck(op, e, false))));
         }
         match self.catalog.apply(op.clone()) {
             Ok(inv) => {
@@ -433,7 +442,9 @@ impl Session {
             }
             Err(e) => {
                 let back: Vec<(String, String)> = moves.iter().rev().map(|(a, b)| (b.clone(), a.clone())).collect();
-                let _ = Session::move_files(&back);
+                if let Err(be) = rename::move_all(&fs, &back) {
+                    return Err(EngineError::Other(format!("{e}; the files could not all be moved back: {}", be.message)));
+                }
                 undo_folder();
                 Err(e.into())
             }
@@ -681,6 +692,8 @@ mod tests_organize;
 mod tests_persist;
 #[cfg(test)]
 mod tests_prefs;
+#[cfg(test)]
+mod tests_settings_files;
 #[cfg(test)]
 mod tests_spots;
 #[cfg(test)]
