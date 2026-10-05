@@ -10,6 +10,13 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- Exports and renders never write over a photo's original (issue #93): exporting into the photo's own folder with
+  the same name and "Overwrite" (or Export with Previous repeating it), an exact output path from the control
+  channel or MCP, a merge preview path or `lightcraft-cli render IMG.jpg -o IMG.jpg` is refused with a clear
+  message, and the original is left byte for byte. Ordinary earlier exports are still overwritten when asked.
+  Exported files are written to a temp file, synced and then renamed into place, so a full disk or an unplugged
+  drive never leaves a truncated file; the XMP sidecar of an "Original" export follows the "If file exists"
+  choice too.
 - Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other
   models whose sensor starts on a green-blue row) no longer come out magenta (issue #85): the colour-filter
   layout is read from each file instead of assumed.
