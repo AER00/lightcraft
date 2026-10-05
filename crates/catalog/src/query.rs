@@ -355,8 +355,16 @@ impl Catalog {
     /// then by name. Names that differ only in case are one person, shown as first seen; a person
     /// twice in one photo counts once.
     pub fn people(&self) -> Vec<Person> {
+        self.people_in(&Filter::default())
+    }
+
+    /// [`Self::people`] among the photos `filter` lets through (its `person` is ignored): what the
+    /// People view offers while other filters (a date, a rating, an album…) are active, so picking
+    /// a person never ends in an empty grid.
+    pub fn people_in(&self, filter: &Filter) -> Vec<Person> {
+        let filter = Filter { person: None, ..filter.clone() };
         let mut m: std::collections::HashMap<String, (Person, f64)> = Default::default();
-        for p in self.photos().filter(|p| p.in_library()) {
+        for p in self.photos().filter(|p| filter.matches(p, self)) {
             let mut seen: Vec<String> = Vec::new();
             for r in p.meta.regions.iter().filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
                 let Some(name) = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else { continue };

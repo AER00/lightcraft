@@ -342,4 +342,21 @@ fn people_from_named_face_regions() {
     assert!(q(Filter { person: Some("Rex".into()), ..Default::default() }).is_empty(), "a pet is not a person");
     assert_eq!(q(Filter { text: "person:SAM".into(), ..Default::default() }), vec![e], "the search token finds a person, any case");
     assert!(q(Filter { person: Some("Jane Doe".into()), ..Default::default() }).contains(&a));
+
+    // other filters narrow who is offered (so picking a person never ends in an empty grid); the
+    // `person` filter itself does not
+    c.apply(Op::SetRating { id: b, rating: 3 }).unwrap();
+    let names = |f: Filter| c.people_in(&f).into_iter().map(|p| (p.name, p.count)).collect::<Vec<_>>();
+    let rated = Filter { rating: 1, ..Default::default() };
+    assert_eq!(
+        names(rated.clone()),
+        vec![("JANE DOE".to_string(), 1), ("John Roe".to_string(), 1)],
+        "only the rated photo's people, counted within it, spelled as first seen there"
+    );
+    assert_eq!(
+        names(Filter { person: Some("Sam".into()), ..rated }),
+        names(Filter { rating: 1, ..Default::default() }),
+        "the person filter is ignored"
+    );
+    assert_eq!(names(Filter { rating: 5, ..Default::default() }), vec![], "nobody in the filtered photos");
 }

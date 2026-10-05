@@ -790,7 +790,7 @@ mod drop_tests {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
-    people: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
+    people: Option<(u64, lightcraft_catalog::Filter, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
@@ -837,13 +837,19 @@ impl Caches {
             }
         }
     }
-    /// The people named on faces, with photo counts.
-    pub fn people(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::Person>> {
+    /// The people named on faces among the photos the filter lets through (its own `person` aside),
+    /// with photo counts.
+    pub fn people(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+        filter: &lightcraft_catalog::Filter,
+    ) -> std::sync::Arc<Vec<lightcraft_catalog::Person>> {
+        let key = lightcraft_catalog::Filter { person: None, ..filter.clone() };
         match &self.people {
-            Some((r, t)) if *r == cat.revision => t.clone(),
+            Some((r, f, t)) if *r == cat.revision && *f == key => t.clone(),
             _ => {
-                let t = std::sync::Arc::new(cat.people());
-                self.people = Some((cat.revision, t.clone()));
+                let t = std::sync::Arc::new(cat.people_in(&key));
+                self.people = Some((cat.revision, key, t.clone()));
                 t
             }
         }

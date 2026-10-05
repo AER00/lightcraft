@@ -20,20 +20,20 @@ const HEADER_H: f32 = 44.0;
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
-    let people = app.caches.people(&app.session.catalog);
+    let people = app.caches.people(&app.session.catalog, &app.session.filter);
     let (head, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
     ui.painter().text(pos2(head.left() + PAD, head.center().y), Align2::LEFT_CENTER, "Named People", t.semibold(15.0), t.text);
     ui.painter().text(pos2(head.right() - PAD, head.center().y), Align2::RIGHT_CENTER, people.len().to_string(), t.font(13.0), t.text_dim);
+    // the filters narrowing the list (a date, a keyword…), removable here
+    let chips = lightcraft_engine::filter_chips(&app.session.filter, &app.session.catalog);
+    super::chips::show(app, ui, &chips);
     if people.is_empty() {
-        let c = ui.available_rect_before_wrap().center();
-        ui.painter().text(c, Align2::CENTER_CENTER, "No named people yet", t.semibold(15.0), t.text_label);
-        ui.painter().text(
-            c + vec2(0.0, 26.0),
-            Align2::CENTER_CENTER,
-            "Face names written to XMP by Lightroom and other apps show up here.",
-            t.font(13.0),
-            t.text_dim,
-        );
+        let (title, body) = if chips.is_empty() {
+            ("No named people yet", "Face names written to XMP by Lightroom and other apps show up here.")
+        } else {
+            ("No named people in these photos", "Remove a filter above, or choose Clear all")
+        };
+        super::empty_message(ui, ui.available_rect_before_wrap(), title, body);
         return;
     }
     let ppp = ui.ctx().pixels_per_point();
