@@ -26,7 +26,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | C. Views & navigation (VIEW) | 15 | 1 | 1 | 0 | 8/9 (89%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 11 | 1 | 1 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
-| F. Edit panel — global adjustments (EDIT) | 42 | 2 | 4 | 1 | 28/28 (100%) | 13/14 (93%) |
+| F. Edit panel — global adjustments (EDIT) | 43 | 2 | 3 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 7 | 1 | 3 | 0 | 3/4 (75%) | 3/3 (100%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 7 | 1 | 2 | 2 | 4/4 (100%) | 2/3 (67%) |
@@ -37,9 +37,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | N. Copy / paste / sync (SYNC) | 5 | 0 | 0 | 0 | 3/3 (100%) | 1/1 (100%) |
 | O. Merge (MERGE) | 4 | 0 | 0 | 0 | — | — |
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
-| Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
+| Q. HDR (HDR) | 2 | 3 | 0 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 15 | 1 | 2 | 0 | 7/7 (100%) | 7/7 (100%) |
+| S. Export (EXP) | 15 | 2 | 1 | 0 | 7/7 (100%) | 7/7 (100%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 6 | 1 | 2 | 2 | 1/1 (100%) | 4/4 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 82 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 75 | 3 | 3 | 1 | 49/52 (94%) | 23/24 (96%) |
 | Lightroom Classic extras | 32 | 11 | 39 | 9 | — | 22/24 (92%) |
-| **Total** | 394 | 38 | 84 | 36 | 193/200 (97%) | 142/152 (93%) |
+| **Total** | 397 | 42 | 77 | 36 | 193/200 (97%) | 142/152 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.0%** of 516 in-scope rows — P0 98.2% of 200 · P1 95.7% of 152 · P2 42.9% of 163.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **81.0%** of 516 in-scope rows — P0 98.2% of 200 · P1 95.7% of 152 · P2 46.0% of 163.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -238,7 +238,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 |---|---|---|---|---|---|
 | LR-EDIT-AUTO | Auto settings | P0 | ✅ | `cmd:develop.auto`, `crates/pipeline/src/auto.rs` | |
 | LR-EDIT-BW | Black & white | P0 | ✅ | `cmd:develop.treatment` | |
-| LR-EDIT-HDR-MODE | HDR editing | P2 | ⬜ | | |
+| LR-EDIT-HDR-MODE | HDR editing | P2 | ✅ | `cmd:develop.hdr`, `ctl:hdr.maxEv`, `crates/ui-egui/src/panels/edit.rs` (`hdr_row`) | HDR switch in the Light panel; see Q. HDR |
 | LR-EDIT-LIGHT-EXPOSURE | Exposure | P0 | ✅ | `ctl:light.exposure` | |
 | LR-EDIT-LIGHT-CONTRAST | Contrast | P0 | ✅ | `ctl:light.contrast` | |
 | LR-EDIT-LIGHT-HIGHLIGHTS | Highlights | P0 | ✅ | `ctl:light.highlights` | |
@@ -423,11 +423,11 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-HDR-EDIT | HDR editing | P2 | ⬜ | | |
-| LR-HDR-SDRPREVIEW | SDR preview of HDR | P2 | ⬜ | | |
-| LR-HDR-VISUALIZE | Visualize HDR range | P2 | ⬜ | | |
-| LR-HDR-LIMIT | HDR headroom limit | P2 | ⬜ | | |
-| LR-HDR-EXPORT | HDR export | P2 | ⬜ | | |
+| LR-HDR-EDIT | HDR editing | P2 | 🟡 | `cmd:develop.hdr`, `crates/pipeline/src/tone.rs` (`ToneMap::hdr`), `crates/pipeline/src/tests_hdr.rs` | HDR tone map (SDR curve through the midtones, highlights up to the headroom limit) and float HDR render, CPU only; no on-screen HDR display yet (LR-VIEW-HDR-DISPLAY); HDR settings not yet read from crs XMP |
+| LR-HDR-SDRPREVIEW | SDR preview of HDR | P2 | 🟡 | `ctl:hdr.sdr*` | SDR rendition sliders (brightness, contrast, highlights, shadows, whites, clarity) used by every SDR view and export; no separate SDR-preview toggle until HDR display lands |
+| LR-HDR-VISUALIZE | Visualize HDR range | P2 | ✅ | `cmd:view.visualizeHdr`, `crates/pipeline/src/visualize.rs` (`hdr_range`) | grey below SDR white, four colour bands by stops above it |
+| LR-HDR-LIMIT | HDR headroom limit | P2 | ✅ | `ctl:hdr.maxEv`, `cmd:develop.hdr` | 0 to 5 stops |
+| LR-HDR-EXPORT | HDR export | P2 | 🟡 | `cmd:app.export`, `crates/codecs/src/gainmap.rs`, `crates/engine/src/export.rs` (`encode_gain_map_jpeg`) | `hdr` export option: ISO 21496-1 gain map JPEG (plus Adobe hdrgm and Apple XMP), 32-bit float TIFF; AVIF PQ/HLG not yet; no HEIC (no permissive HEVC encoder) |
 
 ## R. Video (VID)
 
@@ -451,7 +451,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EXP-BITDEPTH | Bit depth | P1 | ✅ | `cmd:app.export` (`bitDepth`), `crates/pipeline/src/output.rs` (`OutputDepth`), `crates/engine/src/export.rs` | 16-bit PNG/TIFF rendered at 16 bits (TIFF defaults to 16), 32-bit float linear TIFF with a linear profile, 10-bit AVIF; high-bit-depth renders run on the CPU |
 | LR-EXP-COMPRESSION | TIFF compression | P1 | ✅ | `cmd:app.export` (`tiffCompression`: none / lzw / zip) | |
 | LR-EXP-COLORSPACE | Output colour space | P0 | ✅ | `cmd:app.export` (`colorSpace`), `crates/pipeline/src/output.rs`, `crates/engine/src/export.rs` | sRGB, Display P3, Adobe RGB (1998) compatible, ProPhoto RGB, Rec. 2020: rendered from the working space with gamut mapping into the target gamut (CPU + GPU), own ICC profile embedded; AVIF stays sRGB (muxer has no ICC) |
-| LR-EXP-HDR | HDR output | P2 | ⬜ | | |
+| LR-EXP-HDR | HDR output | P2 | 🟡 | `cmd:app.export`, `crates/ui-egui/src/panels/dialogs.rs` | HDR output checkbox in the export dialog: gain map JPEG, float TIFF; AVIF later |
 | LR-EXP-SHARPEN | Output sharpening | P1 | ✅ | `cmd:app.export` (`sharpen`, `sharpenAmount`) | |
 | LR-EXP-METADATA | Metadata policy | P1 | ✅ | `cmd:app.export` (`metadata`, `removeLocation`) | |
 | LR-EXP-WATERMARK | Watermark | P1 | ✅ | `cmd:app.export` (`watermark`: text, or `{text, vertical, size, opacity, anchor, inset, color, shadow, image, imageWidth}`), `crates/engine/src/export.rs` (`Watermark`, `WATERMARK_PARAMS`) | text (`size` = height as a fraction of the short edge, 0.005..0.5, default 0.035; `color` sRGB `[r,g,b]`; `shadow`; Japanese vertical glyph forms and origins, tested by `biz_ud_vertical_watermarks_place_punctuation_at_the_top_right`; extended grapheme cells keep decomposed dakuten/handakuten and Latin accents together, tested by `vertical_watermarks_keep_combining_marks_in_one_cell` and `upright_watermark_cell_retains_multiple_glyphs` (see `docs/vertical-watermarks.md`)) or a graphic with transparency (`image` path, `imageWidth` = fraction of the photo's width, 0.01..1, converted to the output colour space); `anchor`, `inset` (fraction of the short edge, 0..0.4), `opacity` 0..1. Unknown keys and out-of-range values are errors (issue #183) |

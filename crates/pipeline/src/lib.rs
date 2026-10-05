@@ -474,7 +474,8 @@ enum Src<'a> {
 fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, cache: Option<&StageCache>) -> Rendered {
     // sections switched off with their eye render as if at their defaults (issue #316)
     let effective = s.effective();
-    let rendition = settings_for(&effective, req);
+    let edit: &DevelopSettings = &effective;
+    let rendition = settings_for(edit, req);
     let s: &DevelopSettings = &rendition;
     // `Instant::now()` panics on wasm32-unknown-unknown: only read the clock when profiling.
     let lap = |what: &str, t: &mut Option<std::time::Instant>| {
@@ -547,7 +548,15 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     let mut image = image;
     let mask = overlay_alpha(req.overlay, &plan, &prep);
     visualize::apply(&mut image, req.overlay, &plan, mask.as_ref());
-    let image = if plan.keep.is_some() { cut(&image) } else { image };
+    let mut image = if plan.keep.is_some() { cut(&image) } else { image };
+    if req.overlay == Overlay::HdrRange && edit.hdr.enabled {
+        // the HDR rendition of the same request says how far above SDR white each pixel goes
+        let hreq = RenderRequest { depth: OutputDepth::F32Hdr, overlay: Overlay::None, proof: None, ..*req };
+        if let Some(hdr) = render(src_img, info, edit, &hreq).deep {
+            visualize::hdr_range(&mut image, &hdr, req.space.luma());
+        }
+        lap("visualize hdr", &mut t);
+    }
     Rendered { image, histogram, deep: None }
 }
 
