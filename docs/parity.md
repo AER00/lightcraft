@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 15 | 2 | 2 | 1 | 8/8 (100%) | 6/7 (86%) |
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 30 | 9 | 40 | 9 | — | 20/21 (95%) |
-| **Total** | 386 | 28 | 91 | 37 | 194/200 (97%) | 138/147 (94%) |
+| Lightroom Classic extras | 31 | 9 | 40 | 9 | — | 21/22 (95%) |
+| **Total** | 387 | 28 | 91 | 37 | 194/200 (97%) | 139/148 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.2%** of 505 in-scope rows — P0 98.5% of 200 · P1 95.9% of 147 · P2 39.2% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.2%** of 506 in-scope rows — P0 98.5% of 200 · P1 95.9% of 148 · P2 39.2% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -713,6 +713,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-SURVEY | Survey view | P2 | ✅ | `cmd:view.survey` | N |
 | LRC-LIB-REFVIEW | Reference view | P2 | ✅ | `cmd:view.reference`, `cmd:photo.setReference`, `crates/ui-egui/src/panels/compare.rs` (`show_reference`) | View ▸ Reference View (⇧R): the reference photo beside the active one (edited with the Edit panel); photo menu ▸ Set as Reference Photo |
 | LRC-LIB-CATALOG-PANEL | Catalog sets | P1 | ✅ | `cmd:library.source` (`missing`) | all, recently added, picks, recently deleted, missing photos (when any) |
+| LRC-LIB-CATALOG-LOCK | Catalog open in one program at a time | P1 | ✅ | `cmd:app.openLibrary`, `crates/catalog/src/lock.rs`, `crates/engine/src/library.rs` (`open_library`) | exclusive OS lock on `catalog.lock` for the session (app and `lightcraft-cli --library`); a second opener is refused with who has it (`catalog.lock.owner`: program, process, computer); released by the OS on a crash, so never stale; file systems without locks open unprotected with a warning; no read-only mode; the browser build (OPFS) has no guard across tabs yet |
 | LRC-LIB-FOLDERS | Disk folder tree | P1 | ✅ | `cmd:library.browse`, `cmd:folder.rename`, `cmd:folder.move`, `crates/ui-egui/src/panels/left.rs` (`local_section`, `folder_tree`) | standard places + the browsed folder + Browse Folder…, each an expandable tree of subfolders, breadcrumb navigation; context menu: Rename Folder…, Move Folder To…, Show in Finder (on disk, photos relinked; like the file manager, not an undo step) |
 | LRC-LIB-COLLECTIONS | Collections & sets | P1 | ✅ | `cmd:album.create`, `cmd:album.createSmart`, `cmd:album.toggleTarget`, `cmd:album.setTarget`, `cmd:album.clearQuick` | albums + folders (sets), smart albums (rule editor), Quick Collection and target album (B in the grids adds / removes the selection; album menu ▸ Set as Target Album; the target is marked +) |
 | LRC-LIB-SMARTCOLL | Smart-collection rules | P1 | ✅ | `cmd:album.createSmart`, `cmd:album.setRules`, `cmd:album.ruleFields`, `cmd:dialog.smartAlbum`, `crates/catalog/src/rules.rs`, `crates/ui-egui/src/panels/rules_editor.rs` | rule editor: match all / any / none, nested groups (⌥+ or + Group), 26 fields (rating, flag, label, type, edits, keywords, any text, filename, format, title, caption, camera, lens, location, creator, copyright, copyright status, capture / import / edit date, ISO, aperture, focal length, megapixels, GPS, virtual copy, album) with text / number / date / in-the-last operators; live match count; also usable as a library filter (`ruleSet`) |

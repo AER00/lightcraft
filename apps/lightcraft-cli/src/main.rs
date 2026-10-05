@@ -91,6 +91,17 @@ USAGE:
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
+/// Why `--library DIR` can't be opened; for a library open in another program, how to work with
+/// that one instead (issue #99).
+fn library_error(dir: &str, e: lightcraft_engine::EngineError) -> String {
+    match e {
+        lightcraft_engine::EngineError::LibraryInUse(why) => format!(
+            "{dir}: {why}\nTo work with the library while the app has it open, start the app with `--control PORT` and use `lightcraft-cli mcp --connect 127.0.0.1:PORT`."
+        ),
+        e => format!("{dir}: {e}"),
+    }
+}
+
 fn main() -> ExitCode {
     // `--features dhat-heap`: count allocations; the profile is written when `_heap` drops
     // (LIGHTCRAFT_DHAT_FILE, default dhat-heap.json).
@@ -182,7 +193,7 @@ fn mcp(args: &[String]) -> Result<(), String> {
             let mut h = match &library {
                 Some(dir) => {
                     let mut h = Headless::default();
-                    let r = h.session.open_library(dir, demo).map_err(|e| e.to_string())?;
+                    let r = h.session.open_library(dir, demo).map_err(|e| library_error(dir, e))?;
                     eprintln!("lightcraft-cli mcp: opened library {dir} ({r:?})");
                     h
                 }
@@ -419,7 +430,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let mut h = match &library {
                 Some(dir) => {
                     let mut h = Headless::default();
-                    h.session.open_library(dir, demo).map_err(|e| e.to_string())?;
+                    h.session.open_library(dir, demo).map_err(|e| library_error(dir, e))?;
                     h
                 }
                 None if demo => Headless::demo(),
@@ -580,7 +591,7 @@ fn snapshot(args: &[String]) -> Result<(), String> {
     let mut session = match &library {
         Some(dir) => {
             let mut s = Session::new().with_fs();
-            s.open_library(dir, false).map_err(|e| format!("{dir}: {e}"))?;
+            s.open_library(dir, false).map_err(|e| library_error(dir, e))?;
             s
         }
         None if files.is_empty() => Session::with_demo().with_fs(),

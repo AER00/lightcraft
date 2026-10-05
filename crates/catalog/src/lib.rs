@@ -12,6 +12,7 @@ pub mod dates;
 pub mod journal;
 pub mod keywords;
 pub mod local;
+pub mod lock;
 pub mod model;
 pub mod query;
 pub mod rules;
@@ -26,6 +27,7 @@ pub use journal::{Journal, LoadReport, PersistStats, SnapshotPolicy, SnapshotTim
 pub use keywords::KeywordNode;
 use lightcraft_develop::DevelopSettings;
 pub use local::{DEFAULT_FORGET_DAYS, ForgetPlan, folder_of};
+pub use lock::{LibraryLock, LockError, LockOwner};
 pub use model::*;
 pub use query::{DateGroup, Filter, RatingOp, Sort, SortKey};
 pub use rules::{Match, Rule, RuleSet};
@@ -646,3 +648,5 @@ mod tests_background;
 mod tests_journal;
 #[cfg(test)]
 mod tests_local;
+#[cfg(test)]
+mod tests_lock;

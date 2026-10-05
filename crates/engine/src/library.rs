@@ -23,7 +23,7 @@
 
 use std::path::{Path, PathBuf};
 
-use lightcraft_catalog::{FsStore, Journal, LoadReport, Store};
+use lightcraft_catalog::{FsStore, Journal, LibraryLock, LoadReport, Store};
 use lightcraft_develop::Preset;
 use serde::{Deserialize, Serialize};
 
@@ -64,6 +64,9 @@ pub struct Library {
     pub forgot_local: Option<lightcraft_catalog::ForgetPlan>,
     presets_written: String,
     view_written: Vec<u8>,
+    /// Keeps other processes out of this library while it's open (last: released after the
+    /// journal's background snapshot has landed).
+    lock: Option<LibraryLock>,
 }
 
 /// Where a library's files live (see [`Session::open_library_in`]).
@@ -171,6 +174,23 @@ fn poll_compaction(lib: &mut Library) {
 /// How long the frame loop waits before retrying a failed append (commands retry at once).
 const RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// `a` and `b` name the same directory.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// This program, for the lock owner note ("LightCraft", "lightcraft-cli").
+fn program_name() -> String {
+    let exe = std::env::current_exe().ok().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()));
+    match exe.as_deref() {
+        Some("lightcraft") | None => "LightCraft".into(),
+        Some(other) => other.to_string(),
+    }
+}
+
 fn read_json<T: serde::de::DeserializeOwned>(store: &mut dyn Store, name: &str) -> Option<T> {
     store.read(name).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok())
 }
@@ -178,16 +198,47 @@ fn read_json<T: serde::de::DeserializeOwned>(store: &mut dyn Store, name: &str) 
 impl Session {
     /// Open (or create) the library at `dir` into this session, replacing its catalog. With
     /// `seed_demo`, a newly created library starts with the procedural demo photos.
+    ///
+    /// The library is locked for this session ([`lightcraft_catalog::lock`]): if another process
+    /// has it open, this fails with [`EngineError::LibraryInUse`] and nothing is read or changed.
+    /// Reopening the library this session already has open keeps its lock.
     pub fn open_library(&mut self, dir: impl AsRef<Path>, seed_demo: bool) -> Result<&LoadReport> {
         let dir = dir.as_ref().to_path_buf();
         let open = || FsStore::open(&dir).map_err(|e| EngineError::Other(format!("can't open library {}: {e}", dir.display())));
         let stores = LibraryStores { catalog: Box::new(open()?), files: Box::new(open()?), on_disk: true, dir: dir.clone() };
-        self.open_library_in(stores, seed_demo)
+        // the library open in this session (same directory): hand its lock over
+        let reused = self.library.as_mut().filter(|l| same_dir(&l.dir, &dir)).and_then(|l| l.lock.take());
+        let reusing = reused.is_some();
+        let mut lock = match reused {
+            Some(l) => Some(l),
+            None => Some(LibraryLock::acquire(&dir, &program_name()).map_err(|e| EngineError::LibraryInUse(e.to_string()))?),
+        };
+        if let Err(e) = self.open_stores(stores, seed_demo, &mut lock) {
+            if reusing && let Some(lib) = self.library.as_mut() {
+                lib.lock = lock.take();
+            }
+            return Err(e);
+        }
+        self.loaded_report()
     }
 
     /// Open (or create) a library whose files live in `stores` (e.g. browser storage), replacing
-    /// this session's catalog.
+    /// this session's catalog. Not locked: the host guards against a second opener (see
+    /// [`Session::open_library`] for directories).
     pub fn open_library_in(&mut self, stores: LibraryStores, seed_demo: bool) -> Result<&LoadReport> {
+        self.open_stores(stores, seed_demo, &mut None)?;
+        self.loaded_report()
+    }
+
+    fn loaded_report(&self) -> Result<&LoadReport> {
+        match &self.library {
+            Some(lib) => Ok(&lib.report),
+            None => Err(EngineError::Other("library closed while opening".into())),
+        }
+    }
+
+    /// Open `stores`; the new library takes `lock` once nothing can fail any more.
+    fn open_stores(&mut self, stores: LibraryStores, seed_demo: bool, lock: &mut Option<LibraryLock>) -> Result<()> {
         let LibraryStores { dir, catalog, mut files, on_disk } = stores;
         self.media.smart_dir = on_disk.then(|| crate::smart::dir(&dir));
         // the current library may be these same files: let its background snapshot land first
@@ -277,6 +328,7 @@ impl Session {
             forgot_local: None,
             presets_written,
             view_written,
+            lock: lock.take(),
         });
         // forget untouched Local records of folders not browsed for a while (journaled at once)
         if self.forget_local_days > 0 {
@@ -290,10 +342,7 @@ impl Session {
                 lib.forgot_local = Some(plan);
             }
         }
-        match &self.library {
-            Some(lib) => Ok(&lib.report),
-            None => Err(EngineError::Other("library closed while opening".into())),
-        }
+        Ok(())
     }
 
     /// Write pending ops to the log (fsynced), compact when due, and save changed presets.

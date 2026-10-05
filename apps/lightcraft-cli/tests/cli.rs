@@ -242,3 +242,31 @@ fn devices_are_listed_and_imported_from() {
     let line: Value = serde_json::from_slice(o.stdout.split(|b| *b == b'\n').next().unwrap()).unwrap();
     assert_eq!(line["result"]["candidates"].as_array().map(Vec::len), Some(1), "{line}");
 }
+
+/// Issue #99: a library open in one process (here `mcp --library`) is refused by a second one,
+/// with who has it and how to drive the running app instead; free again once the first exits.
+#[test]
+fn a_library_open_in_another_process_is_refused() {
+    let lib = tmp("locked-lib");
+    let _ = std::fs::remove_dir_all(&lib);
+    let lib_s = lib.to_str().unwrap();
+    let mut holder =
+        Command::new(BIN).args(["mcp", "--library", lib_s]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+    let mut err = BufReader::new(holder.stderr.take().unwrap());
+    let mut line = String::new();
+    while !line.contains("opened library") {
+        line.clear();
+        assert!(err.read_line(&mut line).unwrap() > 0, "mcp exited before opening the library");
+    }
+    let (ok, _, stderr) = run_cli(&["--library", lib_s, "library.info"], None);
+    assert!(!ok);
+    assert!(stderr.contains("already open in lightcraft-cli") && stderr.contains(&format!("process {}", holder.id())), "{stderr}");
+    assert!(stderr.contains("mcp --connect"), "{stderr}");
+
+    drop(holder.stdin.take()); // EOF: the server exits and lets go of the library
+    assert!(holder.wait().unwrap().success());
+    let (ok, lines, stderr) = run_cli(&["--library", lib_s, "library.info"], None);
+    assert!(ok, "{stderr}");
+    assert_eq!(lines[0]["ok"], true);
+    let _ = std::fs::remove_dir_all(&lib);
+}

@@ -38,6 +38,10 @@
 - Smaller, faster catalogs: photos you only looked at in Local (never added, rated or edited) are forgotten once
   their folder has not been browsed for 30 days — your files and sidecars stay, and browsing the folder shows them
   again. Change the period (or turn it off) in Settings → Performance.
+- A library is open in one program at a time (issue #99): opening a library that LightCraft or `lightcraft-cli` already
+  has open — on this computer or another one sharing the folder — says who has it ("already open in LightCraft (process
+  123 on studio-mac)") instead of letting both write and silently drop each other's edits. A crash never leaves the
+  library locked: the lock is the operating system's and goes away with the program.
 
 ### Editing
 - Auto Sync: edits apply to every selected photo. Auto B&W mix. Automatic versions.
