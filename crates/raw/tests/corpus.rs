@@ -23,8 +23,6 @@ const KNOWN_UNSUPPORTED: &[&str] = &[
     "rw2-panasonic-gx80",       // "
     "rw2-panasonic-g9-b",       // "
     "orf-olympus-em",           // Olympus compressed ORF
-    "nef-nikon-d5100-lossless", // Nikon Huffman NEF
-    "nef-nikon-d7000-lossy",    // "
     "sraw",                     // Canon sRAW / mRAW
 ];
 
@@ -93,4 +91,57 @@ fn corpus_raw_decodes() {
         }
     }
     eprintln!("corpus/raw: {ok} decoded, {unsupported} known-unsupported (preview only)");
+}
+
+/// Green-channel means of 32×32 blocks.
+fn block_means(img: &lightcraft_raw::RawImage) -> Vec<f64> {
+    let lightcraft_raw::RawData::U16(d) = &img.data else { panic!("float data") };
+    let (w, h, b) = (img.width, img.height, 32);
+    let mut out = Vec::new();
+    for by in 0..h / b {
+        for bx in 0..w / b {
+            let (mut s, mut n) = (0f64, 0f64);
+            for y in by * b..by * b + b {
+                for x in (bx * b..bx * b + b).step_by(2) {
+                    s += d[y * w + x + (y & 1)] as f64;
+                    n += 1.0;
+                }
+            }
+            out.push(s / n);
+        }
+    }
+    out
+}
+
+fn correlation(a: &[f64], b: &[f64]) -> f64 {
+    let n = a.len() as f64;
+    let (ma, mb) = (a.iter().sum::<f64>() / n, b.iter().sum::<f64>() / n);
+    let cov: f64 = a.iter().zip(b).map(|(x, y)| (x - ma) * (y - mb)).sum();
+    let va: f64 = a.iter().map(|x| (x - ma).powi(2)).sum();
+    let vb: f64 = b.iter().map(|y| (y - mb).powi(2)).sum();
+    cov / (va * vb).sqrt()
+}
+
+/// raw.pixls.us has the same D5100 scene as 14-bit lossless compressed and uncompressed NEF: the Huffman decode must
+/// match the uncompressed image (up to the small differences between two exposures).
+#[test]
+fn corpus_nef_compressed_matches_uncompressed() {
+    let dir = corpus_root().join("raw");
+    let (Ok(a), Ok(b)) = (std::fs::read(dir.join("nef-nikon-d5100-lossless.nef")), std::fs::read(dir.join("nef-nikon-d5100-uncompressed.nef")))
+    else {
+        eprintln!("skip: D5100 NEF pair absent");
+        return;
+    };
+    let (a, b) = (decode(&a).unwrap(), decode(&b).unwrap());
+    assert_eq!((a.width, a.height, a.bits), (b.width, b.height, b.bits));
+    let r = correlation(&block_means(&a), &block_means(&b));
+    eprintln!("D5100 lossless vs uncompressed: block correlation {r:.4}");
+    assert!(r > 0.98, "correlation {r}");
+    // the lossy 12-bit D7000 file decodes into the curve's range and isn't flat
+    if let Ok(c) = std::fs::read(dir.join("nef-nikon-d7000-lossy12.nef")) {
+        let c = decode(&c).unwrap();
+        let m = block_means(&c);
+        let (lo, hi) = m.iter().fold((f64::MAX, 0f64), |(l, h), &v| (l.min(v), h.max(v)));
+        assert!(hi <= 4095.0 && hi - lo > 500.0, "D7000 block means {lo}..{hi}");
+    }
 }

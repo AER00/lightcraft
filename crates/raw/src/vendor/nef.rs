@@ -1,22 +1,22 @@
-//! Nikon NEF / NRW — uncompressed variants only.
+//! Nikon NEF / NRW — uncompressed and Huffman-compressed (lossless, lossy) variants.
 //!
 //! Sources: TIFF 6.0 (the raw image is a standard CFA SubIFD), Laurent Clévy's NEF structure notes (prose: IFD
 //! layout, SubIFDs, maker note header) and the ExifTool Nikon tag-name documentation (`0x000c` WB_RBLevels,
-//! `0x003d` BlackLevel). Nikon's Huffman-compressed variants (compression 34713: lossless, lossy type 1/2) are
-//! **not** implemented: the only descriptions we found are derived from GPL code, which our clean-room rules
-//! forbid. The coding is T.81-style (difference category + additional bits, as in Pentax PEF), but unlike PEF the
-//! Huffman tables are not stored in the files and our black-box table search has not converged (see ROADMAP.md).
-//! They are reported as [`RawError::Unsupported`]; their embedded previews still work.
+//! `0x003d` BlackLevel, `0x0096` NEFLinearizationTable). The Huffman-compressed data (compression 34713) is decoded
+//! by [`super::nefc`], which documents its clean-room sources; files it can't decode yet ("lossy after split")
+//! are reported as [`RawError::Unsupported`] and their embedded previews still work.
 
-use super::white_from_data;
+use super::{nefc, white_from_data};
 use crate::tiffraw::{Packing, read_image};
 use crate::{BlackLevel, Cfa, ColorData, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
 use lightcraft_geom::Orientation;
+use lightcraft_tiff::image::ImageInfo;
 use lightcraft_tiff::tags::{self as t, photometric};
-use lightcraft_tiff::{Ifd, Tiff, makernote};
+use lightcraft_tiff::{ByteOrder, Ifd, Tiff, makernote};
 
 const WB_RB_LEVELS: u16 = 0x000c;
 const BLACK_LEVEL: u16 = 0x003d;
+const LINEARIZATION_TABLE: u16 = 0x0096;
 
 fn raw_ifd(tiff: &Tiff) -> Option<&Ifd> {
     tiff.all_ifds()
@@ -47,30 +47,15 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
     let ifd0 = &tiff.ifds[0];
     let raw = raw_ifd(&tiff).ok_or_else(|| RawError::Unsupported("NEF without a CFA image IFD".into()))?;
     let info = raw.image()?;
-    if info.compression == t::compression::NIKON {
-        return Err(RawError::Unsupported("Nikon Huffman-compressed NEF (no clean-room description available)".into()));
-    }
     let (w, h) = (info.width as usize, info.height as usize);
     let bits = info.bits() as u32;
-    let row_samples = w * info.samples_per_pixel as usize;
-    let chunks = info.chunks(bytes.len() as u64);
-    let rows_in_first = chunks.first().map(|c| c.height as usize).unwrap_or(h).max(1);
-    let bytes_per_row = chunks.first().map(|c| c.len as usize / rows_in_first).unwrap_or(0);
-    let packing = if bytes_per_row >= row_samples * 2 {
-        Packing::Word16
-    } else if bits == 12 && bytes_per_row * 8 >= row_samples * 12 && bytes_per_row * 8 < row_samples * 13 {
-        Packing::Msb
-    } else if info.compression == 1 && bits != 8 && bits != 16 {
-        return Err(RawError::Unsupported(format!("NEF uncompressed packing ({bytes_per_row} bytes per {row_samples}-sample row)")));
-    } else {
-        Packing::Msb
-    };
-    let data = read_image(bytes, &info, tiff.order, packing)?;
-    let RawData::U16(ref samples) = data else { return Err(RawError::Unsupported("float NEF".into())) };
-
     let make = ifd0.string(t::MAKE).unwrap_or_default();
     let mn =
         tiff.exif().and_then(|e| e.get(t::MAKER_NOTE)).and_then(|e| makernote::parse_makernote(bytes, e.offset, e.count() as u64, tiff.order, &make));
+    let data =
+        if info.compression == t::compression::NIKON { compressed(bytes, &info, mn.as_ref())? } else { uncompressed(bytes, &info, tiff.order)? };
+    let RawData::U16(ref samples) = data else { return Err(RawError::Unsupported("float NEF".into())) };
+
     let black = match mn.as_ref().and_then(|m| m.ifd.f64s(BLACK_LEVEL)).as_deref() {
         Some([a, b, c, d]) if [a, b, c, d].iter().all(|v| **v < 16384.0) => {
             BlackLevel { repeat_rows: 2, repeat_cols: 2, values: vec![*a as f32, *b as f32, *c as f32, *d as f32], ..Default::default() }
@@ -112,6 +97,46 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
     };
     img.validate()?;
     Ok(img)
+}
+
+/// Uncompressed strips: 16-bit words or 12-bit MSB-packed, told apart by the strip size.
+fn uncompressed(bytes: &[u8], info: &ImageInfo, order: ByteOrder) -> Result<RawData> {
+    let (w, h) = (info.width as usize, info.height as usize);
+    let bits = info.bits() as u32;
+    let row_samples = w * info.samples_per_pixel as usize;
+    let chunks = info.chunks(bytes.len() as u64);
+    let rows_in_first = chunks.first().map(|c| c.height as usize).unwrap_or(h).max(1);
+    let bytes_per_row = chunks.first().map(|c| c.len as usize / rows_in_first).unwrap_or(0);
+    let packing = if bytes_per_row >= row_samples * 2 {
+        Packing::Word16
+    } else if bits == 12 && bytes_per_row * 8 >= row_samples * 12 && bytes_per_row * 8 < row_samples * 13 {
+        Packing::Msb
+    } else if info.compression == 1 && bits != 8 && bits != 16 {
+        return Err(RawError::Unsupported(format!("NEF uncompressed packing ({bytes_per_row} bytes per {row_samples}-sample row)")));
+    } else {
+        Packing::Msb
+    };
+    read_image(bytes, info, order, packing)
+}
+
+/// Nikon Huffman-compressed strip (see [`super::nefc`]); the decode table is maker note `0x0096`.
+fn compressed(bytes: &[u8], info: &ImageInfo, mn: Option<&makernote::MakerNote>) -> Result<RawData> {
+    // (some Z bodies label uncompressed, row-padded data 34713 without a table: not handled here yet)
+    let table = mn
+        .and_then(|m| Some((m.ifd.bytes(LINEARIZATION_TABLE)?, m.order)))
+        .ok_or_else(|| RawError::Unsupported("Nikon compressed NEF without a linearization table (maker note 0x96)".into()))?;
+    if info.samples_per_pixel != 1 {
+        return Err(RawError::Unsupported(format!("Nikon compressed NEF with {} samples per pixel", info.samples_per_pixel)));
+    }
+    let bits = info.bits() as u32;
+    let table = nefc::parse_table(table.0, table.1, bits)?;
+    // one strip in every sample; several would be contiguous parts of the same bit stream
+    let chunks = info.chunks(bytes.len() as u64);
+    let (Some(first), Some(last)) = (chunks.first(), chunks.last()) else { return Err(RawError::Corrupt("NEF: no image data".into())) };
+    let end = last.offset.saturating_add(last.len).min(bytes.len() as u64);
+    let src = usize::try_from(first.offset).ok().zip(usize::try_from(end).ok()).and_then(|(a, b)| bytes.get(a..b));
+    let src = src.ok_or_else(|| RawError::Corrupt("NEF: image data outside the file".into()))?;
+    Ok(RawData::U16(nefc::decode(src, info.width as usize, info.height as usize, bits, &table)?))
 }
 
 #[cfg(test)]
@@ -159,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn compressed_is_unsupported() {
+    fn compressed_without_table_is_unsupported() {
         let bytes = nef(34713, 14, vec![vec![0; 64]], 8, 8, 8);
         assert!(matches!(crate::decode(&bytes), Err(RawError::Unsupported(_))));
     }

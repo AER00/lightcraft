@@ -45,3 +45,7 @@
 - Slideshow, second window, All Metadata, System Info.
 - Edit in External Editor (⇧⌘E): a 16-bit TIFF copy, stacked, refreshed when you come back.
 - Lossy DNG files and Smart Previews open as raw photos.
+- Compressed Nikon NEFs (lossless and lossy compressed, 12- and 14-bit — e.g. D3200, D5100, D7000, D750, D850, Z 50)
+  now develop from the raw data instead of the camera's embedded JPEG, so a B&W or other picture style set in the
+  camera no longer gets baked in. Photos already imported as "preview only" switch over on Reload. (Files that
+  Nikon splits into two differently compressed halves still use the preview for now.)
