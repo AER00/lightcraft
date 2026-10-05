@@ -480,6 +480,7 @@ impl LightcraftApp {
 
     /// Per-frame logic before layout (control channel, renders, shortcuts, drops).
     pub fn logic(&mut self, ctx: &egui::Context) {
+        i18n::set_language(self.ui.language);
         let t0 = now_ms();
         panels::library_problem::logic(self);
         self.logic_inner(ctx);
@@ -657,6 +658,7 @@ impl LightcraftApp {
 
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        i18n::set_language(self.ui.language);
         let ctx = ui.ctx().clone();
         if !self.fonts_ready {
             ctx.request_repaint();
