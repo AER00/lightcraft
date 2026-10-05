@@ -9,6 +9,7 @@
 pub mod control;
 pub mod export_task;
 pub mod headless;
+pub mod i18n;
 pub mod icons;
 pub mod import;
 pub mod links;

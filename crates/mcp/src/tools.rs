@@ -205,7 +205,7 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
                 "removeLocation": {"type": "boolean"},
                 "colorSpace": {"type": "string", "enum": ["srgb", "displayP3", "adobeRgb", "proPhoto", "rec2020"], "description": "Output colour space (default sRGB; AVIF is always sRGB). adobeRgb = Adobe RGB (1998) compatible; the embedded ICC profile is generated from the published primaries"},
                 "bitDepth": {"type": "integer", "enum": [8, 10, 16, 32], "description": "Bits per channel: PNG 8|16 (default 8), TIFF 8|16|32 (default 16; 32 = linear float with a linear profile), AVIF 8|10; JPEG/WebP are 8-bit"},
-                "watermark": {"description": "Text, or {text, size (fraction of short edge), opacity, anchor (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight), inset, color [r,g,b], shadow}"}
+                "watermark": {"description": "Text, or {text, vertical (boolean; defaults to false), size (fraction of short edge), opacity, anchor (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight), inset, color [r,g,b], shadow}"}
             }),
             &[],
         ),
@@ -352,9 +352,9 @@ fn image_result(file: &std::path::Path, max: Option<u32>, format: &str, save_to:
         (bytes, w, h)
     };
     if let Some(p) = save_to
-        && let Err(e) = std::fs::write(p, &bytes)
+        && let Err(e) = lightcraft_engine::export::write_file(p, &bytes)
     {
-        return ToolResult::error(format!("{p}: {e}"));
+        return ToolResult::error(e);
     }
     let mime = if jpeg { "image/jpeg" } else { "image/png" };
     let mut info = meta;
@@ -372,7 +372,18 @@ fn image_result(file: &std::path::Path, max: Option<u32>, format: &str, save_to:
     }
 }
 
+/// A user-given `path` to save to must not be a photo's original (or its sidecar).
+fn check_save_path(b: &mut dyn Backend, args: &Value) -> Result<(), String> {
+    match args.get("path").and_then(Value::as_str) {
+        Some(p) => exec(b, "export.checkTarget", json!({"path": p})).map(|_| ()),
+        None => Ok(()),
+    }
+}
+
 fn render_photo(b: &mut dyn Backend, args: &Value) -> ToolResult {
+    if let Err(e) = check_save_path(b, args) {
+        return ToolResult::error(e);
+    }
     let size = args.get("size").and_then(Value::as_u64).unwrap_or(1024).clamp(16, 4096);
     let id = match args.get("id").and_then(Value::as_u64) {
         Some(id) => Some(id),
@@ -394,6 +405,9 @@ fn render_photo(b: &mut dyn Backend, args: &Value) -> ToolResult {
 }
 
 fn screenshot(b: &mut dyn Backend, args: &Value) -> ToolResult {
+    if let Err(e) = check_save_path(b, args) {
+        return ToolResult::error(e);
+    }
     let file = temp_path("screenshot");
     let path = file.to_string_lossy().to_string();
     match b.call("ui.screenshot", json!({"path": path})) {
