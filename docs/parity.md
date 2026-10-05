@@ -44,13 +44,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 15 | 2 | 2 | 1 | 8/8 (100%) | 6/7 (86%) |
+| X. Cross-cutting behaviours (BEHAV) | 15 | 3 | 2 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 31 | 9 | 40 | 9 | — | 21/22 (95%) |
-| **Total** | 387 | 28 | 91 | 37 | 194/200 (97%) | 139/148 (94%) |
+| **Total** | 387 | 29 | 91 | 37 | 194/200 (97%) | 139/149 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.2%** of 506 in-scope rows — P0 98.5% of 200 · P1 95.9% of 148 · P2 39.2% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.2%** of 507 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 39.2% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -496,6 +496,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-PROGRESSIVE | Progressive rendering | P0 | ✅ | `crates/engine/src/media.rs`, `crates/preview/src/lib.rs` | |
 | LR-BEHAV-BG-TASKS | Background tasks | P0 | ✅ | `crates/preview/src/lib.rs` (`JobPool`), `crates/ui-egui/src/export_task.rs`, `crates/ui-egui/src/import.rs` | renders off the UI thread; exports started from the UI run on a worker thread with a progress panel and Cancel (`ui.inspect` → `export`); imports show a progress window. No combined activity centre |
 | LR-BEHAV-OFFLINE | Offline editing | P1 | ✅ | | local-first: everything works offline |
+| LR-BEHAV-WEB-SAFETY | Library safety in the browser build | P1 | 🟡 | `cmd:file.backupLibrary`, `cmd:file.restoreLibrary`, `apps/lightcraft-web/src/safety.rs`, `apps/lightcraft-web/src/backup.rs`, `apps/lightcraft-web/src/files.rs` | web only (experimental): Back Up Library (zip of the catalog and every stored original) and a non-destructive Restore; failed saves show as unsaved and are retried; a photo that can't be stored isn't added; one tab per library (Web Locks); notices for storage that isn't persistent and for a library that can't open; `?reset` asks first; a panic shows a message. Missing: `?safe` start, deleting originals of removed photos, zip64 (backups > 4 GB) |
 | LR-BEHAV-GPU | GPU acceleration | P0 | ✅ | `crates/gpu/src/render.rs`, `cmd:app.gpu`, `docs/gpu-pipeline.md` | CPU fallback per render on device limits, out of memory, device errors / loss, incomplete or black results (`perf.gpuReason`, `perf.gpuFallback`); short submissions for slow iGPUs; no tiling beyond the buffer limit (CPU) |
 | LR-BEHAV-RENDER-FIDELITY | Rendering matches Lightroom | P1 | 🟡 | `crates/pipeline/src/lib.rs`, `crates/pipeline/src/tone.rs` | every slider exists and works, but the character of the result (tone curve shape, highlight recovery, texture / clarity / dehaze, noise reduction, sharpening, default look) is tuned by eye; there is no systematic side-by-side comparison against Lightroom on the same CC0 raws. Needs a fidelity suite: Lightroom reference renders kept only in the local `plan/` (never committed), compared per slider and preset with a perceptual metric |
 | LR-BEHAV-DRAGDROP | Drag and drop | P1 | ✅ | `crates/ui-egui/src/lib.rs`, `crates/ui-egui/src/panels/grid.rs` (`drag_feedback`), `crates/ui-egui/src/panels/left.rs` (`drop_target`) | files → app (import); grid photos → an album row (adds the selection, with a count badge while dragging) |
