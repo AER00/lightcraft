@@ -49,6 +49,15 @@ shows a warning (widget `indicator:unsaved`). Queries and commands that change n
 compaction (snapshot) is not a failed command — the log is kept whole — and only shows in `library.info` →
 `lastError`.
 
+### When the library can't be opened
+
+If the desktop app can't open its library at launch (another program has it open, an unreadable or newer-format
+catalog, a missing drive), the session starts empty and in memory — never with demo photos — and a window asks what
+to do: `ui.inspect` → `libraryProblem` is `{path, error, temporarySession, pendingImport}` (else `null`); its buttons
+are `button:libraryRetry`, `button:libraryChoose`, `button:libraryTemporary` (Continue Without Saving) and
+`button:libraryQuit`. A temporary session shows a banner (`indicator:temporarySession`, `button:libraryReopen`) and
+writes nothing. `app.openLibrary` opening a library ends it.
+
 ## Headless rendering (no window, no GPU)
 
 The egui UI can be rasterized on the CPU (`crates/ui-egui/src/softpaint.rs`, driven by
