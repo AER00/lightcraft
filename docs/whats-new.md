@@ -68,6 +68,9 @@
   so none shows as missing. Renaming one of a raw + JPEG pair copies their shared `IMG_0001.xmp` instead of taking
   it away from the other (issue #92). Find Missing Photos also finds renamed files by their content, prefers a content match
   over a same-name same-size look-alike, and skips (and reports) photos it can't tell apart instead of guessing.
+- Rename Folder… and Move Folder To… (Local) can be undone and redone (issue #97): the folder moves back on disk with
+  its photos and XMP sidecars, and the photos point at it again. If something now occupies the old place, the undo
+  is refused and nothing is overwritten.
 - Smart albums with a rule editor: match all / any / none, nested groups, 26 fields.
 - Quick Collection and target album (B in the grid), keyword sets (⌥1–⌥9), colour-label sets.
 - Colour-label filter with several labels at once; expandable folder tree in Local.
