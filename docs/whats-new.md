@@ -24,6 +24,10 @@
 - Rename Photos never overwrites another photo when only the letter case changes (issue #95): on case-sensitive
   volumes (Linux, case-sensitive APFS) `img_1.JPG` next to `IMG_1.JPG` is a different photo and the renamed one gets
   `img_1-1.JPG`; on case-insensitive volumes the case change still goes through.
+- Rename Photos reports files it could not move back after a failure (issue #105), e.g. when a network share drops
+  mid-batch: the error lists them (old → new) and the library points at their new names (an undoable partial rename),
+  so none shows as missing. Find Missing Photos also finds renamed files by their content, prefers a content match
+  over a same-name same-size look-alike, and skips (and reports) photos it can't tell apart instead of guessing.
 - Smart albums with a rule editor: match all / any / none, nested groups, 26 fields.
 - Quick Collection and target album (B in the grid), keyword sets (⌥1–⌥9), colour-label sets.
 - Colour-label filter with several labels at once; expandable folder tree in Local.
