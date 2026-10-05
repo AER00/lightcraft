@@ -250,6 +250,8 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
     let u = &app.ui;
     let panel = |p: RightPanel| Some(u.right == p);
     match id {
+        "app.language.english" => Some(u.language == crate::i18n::Language::En),
+        "app.language.japanese" => Some(u.language == crate::i18n::Language::Ja),
         "develop.autoSync" => Some(app.session.auto_sync),
         "view.photoCounts" => Some(u.show_counts),
         "view.secondWindow" => Some(u.second_window),
@@ -593,6 +595,22 @@ pub fn menu_bar(app: &LightcraftApp) -> Vec<(String, Vec<MenuNode>)> {
         }
         bar.push((title.to_string(), tidy(items)));
     }
+    fn translate(nodes: &mut [MenuNode], language: crate::i18n::Language) {
+        for node in nodes {
+            match node {
+                MenuNode::Submenu { label, children } => {
+                    *label = language.tr(label).to_string();
+                    translate(children, language);
+                }
+                MenuNode::Item { label, .. } => *label = language.tr(label).to_string(),
+                MenuNode::Separator => {}
+            }
+        }
+    }
+    for (title, nodes) in &mut bar {
+        *title = app.ui.language.tr(title).to_string();
+        translate(nodes, app.ui.language);
+    }
     bar
 }
 
@@ -646,9 +664,9 @@ pub fn shortcut_text(sc: &str, mac: bool) -> String {
 const TITLE_GAP: f32 = 24.0;
 
 /// Width of the in-window menu bar's titles.
-pub fn bar_width(ui: &egui::Ui) -> f32 {
+pub fn bar_width(ui: &egui::Ui, language: crate::i18n::Language) -> f32 {
     let t = crate::theme::Tokens::get(ui.ctx());
-    MENUS.iter().map(|m| ui.painter().layout_no_wrap(m.to_string(), t.font(13.0), t.text).size().x + TITLE_GAP).sum::<f32>()
+    MENUS.iter().map(|m| ui.painter().layout_no_wrap(language.tr(m).to_string(), t.font(13.0), t.text).size().x + TITLE_GAP).sum::<f32>()
 }
 
 /// The in-window menu bar (hosts without a native one): one dropdown per menu, or a single
@@ -666,14 +684,14 @@ pub fn show_in_window(app: &mut LightcraftApp, ui: &mut egui::Ui, max_width: f32
     if total <= max_width {
         let saved = ui.spacing().item_spacing.x;
         ui.spacing_mut().item_spacing.x = TITLE_GAP;
-        for (title, items) in &bar {
+        for (index, (title, items)) in bar.iter().enumerate() {
             let r = ui.add(egui::Button::new(egui::RichText::new(title).font(font.clone()).color(t.text_label)).frame(false));
-            crate::widgets::register(ui.ctx(), format!("menu:{title}"), r.rect);
+            crate::widgets::register(ui.ctx(), format!("menu:{}", MENUS.get(index).copied().unwrap_or(title.as_str())), r.rect);
             egui::Popup::menu(&r).show(|ui| nodes_ui(ui, items, mac, &mut clicked));
         }
         ui.spacing_mut().item_spacing.x = saved;
     } else {
-        let r = ui.add(egui::Button::new(egui::RichText::new("Menu").font(font.clone()).color(t.text_label)).frame(false));
+        let r = ui.add(egui::Button::new(egui::RichText::new(app.ui.language.tr("Menu")).font(font.clone()).color(t.text_label)).frame(false));
         crate::widgets::register(ui.ctx(), "menu:all", r.rect);
         egui::Popup::menu(&r).show(|ui| {
             for (title, items) in &bar {
