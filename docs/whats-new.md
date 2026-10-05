@@ -39,6 +39,9 @@
   written by a newer LightCraft is refused with "this library was written by a newer version of LightCraft" and left
   untouched — older versions no longer read part of it as a damaged log. Once this version has opened a library,
   LightCraft 0.2.0 and older refuse it ("unsupported format … v2").
+- The control port (`--control`) closes a connection as soon as it receives anything that isn't a JSON request
+  (issue #94): an HTTP request from a web page can no longer carry a command in its body. Lines are capped at
+  4 MiB and connections at 16.
 - Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other
   models whose sensor starts on a green-blue row) no longer come out magenta (issue #85): the colour-filter
   layout is read from each file instead of assumed.
