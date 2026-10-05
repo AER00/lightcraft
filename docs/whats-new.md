@@ -35,6 +35,10 @@
   afterwards (issue #101): the partial write is cut off before LightCraft retries, so the next launch replays every
   change. Catalogs already holding such a fragment load in full. Quitting while the catalog log can't be written
   still saves your queued changes in the closing snapshot.
+- The catalog has a format version (issue #102). Opening a library from an older LightCraft upgrades it; a library
+  written by a newer LightCraft is refused with "this library was written by a newer version of LightCraft" and left
+  untouched — older versions no longer read part of it as a damaged log. Once this version has opened a library,
+  LightCraft 0.2.0 and older refuse it ("unsupported format … v2").
 - Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other
   models whose sensor starts on a green-blue row) no longer come out magenta (issue #85): the colour-filter
   layout is read from each file instead of assumed.

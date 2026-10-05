@@ -1,8 +1,9 @@
 //! Crash-safe catalog persistence: an append-only op log plus periodic snapshots.
 //!
 //! Files (in a [`Store`]):
-//! - `catalog.snap` — `{"format":"lightcraft-catalog","version":1,"seq":N,"catalog":{…}}`, the
-//!   state after op `N`; replaced atomically (temp + fsync + rename).
+//! - `catalog.snap` — `{"format":"lightcraft-catalog","version":V,"seq":N,"catalog":{…}}`, the
+//!   state after op `N` in catalog format `V` ([`VERSION`]); replaced atomically (temp + fsync +
+//!   rename).
 //! - `catalog.log` — JSON lines, one per op applied after the snapshot:
 //!   `{"seq":N,"crc":C,"op":{…}}` where `C` is the CRC-32 of the op's JSON text. Appends are
 //!   fsynced before [`Journal::append`] returns.
@@ -33,6 +34,32 @@
 //!
 //! At most one snapshot is in flight; a synchronous [`Journal::snapshot`] and dropping the journal
 //! first wait for it, so an older snapshot can never replace a newer one.
+//!
+//! # Format versions
+//!
+//! The snapshot's `version` is the catalog format, and it covers the log beside it: the log has
+//! no header of its own, and is only ever appended to under a snapshot of this build's format.
+//!
+//! | Version | Written by | Adds |
+//! |---|---|---|
+//! | (none) | early builds: a log without a snapshot | |
+//! | 1 | up to v0.2.0 | |
+//! | 2 | after v0.2.0 | `Op::SetBrowsed`, `Catalog.browsed`, `Photo.local_baseline` |
+//!
+//! Rules:
+//! - **Bump [`VERSION`]** (and add a row above) in the change that adds an [`Op`] variant or a
+//!   serialized field to the catalog, a photo, an album, a stack or develop settings that an older
+//!   build would misread or silently drop. New fields must deserialize from older data
+//!   (`#[serde(default)]`), so newer builds keep reading every older format.
+//! - **Opening an older format upgrades it**: right after loading, [`Journal::open`] writes a
+//!   snapshot in this build's format (also for a new library), before anything is appended — so a
+//!   library is never a mix, and older builds refuse it from then on instead of reading part of it.
+//!   [`LoadReport::upgraded_from`] says when that happened.
+//! - **A newer format is refused, untouched**: a snapshot whose `version` is above [`VERSION`],
+//!   or a log record whose CRC matches (so it is exactly what was written) but whose op doesn't
+//!   parse, fails [`Journal::open`] with [`CatalogError::Newer`] before any file is modified — it
+//!   is never mistaken for a torn tail or damage. (Builds up to v0.2.0 refuse a v2 snapshot with
+//!   "unsupported format".)
 
 use crate::store::Store;
 use crate::{Catalog, CatalogError, Op, Result};
@@ -40,7 +67,9 @@ use crate::{Catalog, CatalogError, Op, Result};
 pub const SNAPSHOT: &str = "catalog.snap";
 pub const LOG: &str = "catalog.log";
 const FORMAT: &str = "lightcraft-catalog";
-const VERSION: u32 = 1;
+/// The catalog format this build writes (and the newest it reads). See the module docs →
+/// *Format versions*; bump it whenever an [`Op`] variant or a serialized field is added.
+pub const VERSION: u32 = 2;
 
 /// When [`Journal::wants_snapshot`] says it's time to compact the log.
 #[derive(Clone, Copy, Debug)]
@@ -75,6 +104,9 @@ pub struct LoadReport {
     pub damaged: Option<String>,
     /// No catalog files existed (a new library).
     pub created: bool,
+    /// The library was in an older catalog format (`0` = before format versions: a log without a
+    /// snapshot) and was rewritten in this version's format ([`VERSION`]).
+    pub upgraded_from: Option<u32>,
 }
 
 /// Where persistence time goes (reported by `library.info` → `persistence`; printed to stderr
@@ -180,18 +212,46 @@ pub fn encode_record(seq: u64, op: &Op) -> String {
     format!("{{\"seq\":{seq},\"crc\":{crc},\"op\":{body}}}")
 }
 
-/// Parse one log line (without the newline). `None` if it's malformed or the CRC doesn't match.
+/// Parse one log line (without the newline). `None` if it's malformed, the CRC doesn't match, or
+/// the op is one this version doesn't know (see [`Journal::open`]).
 pub fn decode_record(line: &str) -> Option<(u64, Op)> {
-    let rest = line.strip_prefix("{\"seq\":")?;
-    let (seq, rest) = rest.split_once(",\"crc\":")?;
-    let (crc, rest) = rest.split_once(",\"op\":")?;
-    let body = rest.strip_suffix('}')?;
-    let seq: u64 = seq.parse().ok()?;
-    let crc: u32 = crc.parse().ok()?;
-    if crc32fast::hash(body.as_bytes()) != crc {
-        return None;
+    match decode_line(line) {
+        Line::Record(seq, op) => Some((seq, op)),
+        Line::Newer(_) | Line::Bad => None,
     }
-    serde_json::from_str(body).ok().map(|op| (seq, op))
+}
+
+/// One log line, decoded.
+enum Line {
+    Record(u64, Op),
+    /// The CRC matches — the line is exactly what was written — but the op doesn't parse: it
+    /// was written by a newer LightCraft (an op or field this version doesn't know), not damaged.
+    Newer(u64),
+    /// Malformed or a CRC mismatch: torn or damaged.
+    Bad,
+}
+
+fn decode_line(line: &str) -> Line {
+    let parts = || {
+        let rest = line.strip_prefix("{\"seq\":")?;
+        let (seq, rest) = rest.split_once(",\"crc\":")?;
+        let (crc, rest) = rest.split_once(",\"op\":")?;
+        let body = rest.strip_suffix('}')?;
+        Some((seq.parse::<u64>().ok()?, crc.parse::<u32>().ok()?, body))
+    };
+    let Some((seq, crc, body)) = parts() else { return Line::Bad };
+    if crc32fast::hash(body.as_bytes()) != crc {
+        return Line::Bad;
+    }
+    match serde_json::from_str(body) {
+        Ok(op) => Line::Record(seq, op),
+        Err(_) => Line::Newer(seq),
+    }
+}
+
+/// The error for a library written by a newer LightCraft.
+fn newer(what: String) -> CatalogError {
+    CatalogError::Newer(format!("{what}; this version reads catalog format v{VERSION} and older"))
 }
 
 /// A line that doesn't decode but ends with a whole record: a fragment of a failed append followed
@@ -229,10 +289,16 @@ fn write_snapshot(store: &mut dyn Store, seq: u64, catalog: &Catalog) -> std::io
     Ok(SnapshotTiming { serialize_ms, write_sync_ms: (ms_since(t0) - serialize_ms).max(0.0), bytes, ..Default::default() })
 }
 
+/// Just the identification of `catalog.snap` (read before the catalog itself).
 #[derive(serde::Deserialize)]
-struct SnapFile {
+struct SnapHeader {
     format: String,
     version: u32,
+}
+
+/// The whole `catalog.snap` (after [`SnapHeader`] was checked; `format` and `version` are ignored).
+#[derive(serde::Deserialize)]
+struct SnapFile {
     seq: u64,
     catalog: Catalog,
 }
@@ -245,15 +311,20 @@ impl Journal {
         let snap = store.read(SNAPSHOT).map_err(io)?;
         let log = store.read(LOG).map_err(io)?;
         report.created = snap.is_none() && log.is_none();
-        let (mut catalog, snapshot_seq) = match snap {
+        let (mut catalog, snapshot_seq, snapshot_version) = match snap {
             Some(bytes) => {
-                let s: SnapFile = serde_json::from_slice(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?;
-                if s.format != FORMAT || s.version > VERSION {
-                    return Err(CatalogError::Corrupt(format!("{SNAPSHOT}: unsupported format {} v{}", s.format, s.version)));
+                // the header first: a newer snapshot may not parse as this version's catalog
+                let h: SnapHeader = serde_json::from_slice(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?;
+                if h.format != FORMAT {
+                    return Err(CatalogError::Corrupt(format!("{SNAPSHOT}: not a LightCraft catalog (format {:?})", h.format)));
                 }
-                (s.catalog, s.seq)
+                if h.version > VERSION {
+                    return Err(newer(format!("{SNAPSHOT} is catalog format v{}", h.version)));
+                }
+                let s: SnapFile = serde_json::from_slice(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?;
+                (s.catalog, s.seq, Some(h.version))
             }
-            None => (Catalog::new(), 0),
+            None => (Catalog::new(), 0, None),
         };
         report.snapshot_seq = snapshot_seq;
         let mut j = Journal {
@@ -296,6 +367,11 @@ impl Journal {
                 report.torn_fragments += 1;
                 record = Some(r);
             }
+            if record.is_none()
+                && let Some(Line::Newer(seq)) = line.map(decode_line)
+            {
+                return Err(newer(format!("{LOG} record {seq} holds a change this version doesn't know")));
+            }
             match record {
                 Some((seq, op)) if seq <= j.seq => {
                     // already in the snapshot
@@ -312,7 +388,15 @@ impl Journal {
                 }
                 _ => {
                     // bad record (or a gap): torn tail if nothing good follows, else damage
-                    let rest_has_good = log[next..].split(|b| *b == b'\n').any(|l| std::str::from_utf8(l).ok().and_then(decode_record).is_some());
+                    let mut rest_has_good = false;
+                    for l in log[next..].split(|b| *b == b'\n') {
+                        match std::str::from_utf8(l).map(|l| decode_line(l.trim_end_matches('\r'))) {
+                            Ok(Line::Record(..)) => rest_has_good = true,
+                            // refused before anything is modified
+                            Ok(Line::Newer(seq)) => return Err(newer(format!("{LOG} record {seq} holds a change this version doesn't know"))),
+                            Ok(Line::Bad) | Err(_) => {}
+                        }
+                    }
                     if rest_has_good {
                         damaged_at = Some(pos);
                     }
@@ -342,6 +426,27 @@ impl Journal {
                 j.log_bytes = good_end as u64 + 1;
             } else {
                 j.log_bytes = good_end as u64;
+            }
+        }
+        // Bring an older (or new, or snapshot-less) library to this version's format before
+        // anything is appended: a snapshot in this format makes older builds refuse the library
+        // instead of misreading ops or dropping fields they don't know.
+        if report.created {
+            // tiny: written directly, not counted as a compaction
+            let empty = format!("{{\"format\":\"{FORMAT}\",\"version\":{VERSION},\"seq\":0,\"catalog\":{}}}\n", catalog.to_snapshot());
+            if let Err(e) = j.store.write_atomic(SNAPSHOT, empty.as_bytes()) {
+                log::warn!("catalog: can't write the new library's snapshot: {e}");
+            }
+        } else if report.damaged.is_none() && snapshot_version != Some(VERSION) {
+            report.upgraded_from = Some(snapshot_version.unwrap_or(0));
+            match j.snapshot(&catalog) {
+                Ok(()) => {
+                    if let Some(v) = report.upgraded_from {
+                        log::info!("catalog: upgraded from format v{v} to v{VERSION}");
+                    }
+                }
+                // nothing lost: the old files are intact and still load; retried on next open
+                Err(e) => log::warn!("catalog: can't write the format v{VERSION} snapshot: {e}"),
             }
         }
         catalog.revision = 0;
