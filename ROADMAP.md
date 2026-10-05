@@ -46,7 +46,8 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 Priorities, in order. Each points at tracker rows in [`docs/parity.md`](docs/parity.md) → *Top gaps*.
 
 1. **Camera colour calibration of our own** (LR-PROF-CAMERACOLOR, P0): fit each camera to its own embedded JPEG, use
-   matrices the files carry themselves, then chart shots. ARW preview-derived fitting is a guarded first step; expand coverage and validate fidelity.
+   matrices the files carry themselves, then chart shots. Sony ARW's file-local fit (matrix + tone curve from its own
+   JPEG) is the first step; generalise it to the other makes' raws (NEF, RW2, PEF, ORF…), then validate fidelity.
 2. **Raw formats, clean-room** (LR-IMP-FORMATS, P0): **CR3** first, then compressed RAF / ORF, RW2 v4, NEF
    lossy-after-split, sRAW. Decided 2026-10-05: write our own decoders from prose descriptions (never decoder source,
    no LGPL dependency); compressed NEF (#86) is the template.
