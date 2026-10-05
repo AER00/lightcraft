@@ -218,6 +218,36 @@ fn regions_from_sidecar_are_read_on_import() {
     let _ = std::fs::remove_dir_all(&src);
 }
 
+/// Removing a face box is a catalog-only, undoable edit: it never rewrites the sidecar (Lightroom's
+/// regions and everything else in it stay byte for byte), even with auto-write on.
+#[test]
+fn removing_a_region_is_undoable_and_leaves_the_sidecar_alone() {
+    let src = temp_dir("region-remove");
+    write_png(&src.join("portrait.png"), 9);
+    std::fs::write(src.join("portrait.xmp"), MWG_REGIONS).unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    s.execute("library.xmpPreferences", &json!({"autoWrite": true})).unwrap();
+    let before = std::fs::read(src.join("portrait.xmp")).unwrap();
+    let n = s.catalog.photo(id).unwrap().meta.regions.len();
+    assert!(n >= 1);
+    assert!(s.execute("photo.removeRegion", &json!({"index": n})).is_err(), "out of range");
+    assert!(s.execute("photo.removeRegion", &json!({})).is_err(), "no index");
+    let r = s.execute("photo.removeRegion", &json!({"index": 0})).unwrap();
+    assert_eq!(r["removed"], "Jane Doe");
+    assert_eq!(s.catalog.photo(id).unwrap().meta.regions.len(), n - 1);
+    assert_eq!(std::fs::read(src.join("portrait.xmp")).unwrap(), before, "the sidecar is untouched");
+    // an ordinary edit still auto-writes (the guard is per command)
+    s.execute("photo.rate", &json!({"rating": 4})).unwrap();
+    assert_ne!(std::fs::read(src.join("portrait.xmp")).unwrap(), before, "auto-write still works for other edits");
+    // undo brings the region back
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.photo(id).unwrap().meta.regions.len(), n);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
 fn synthetic_dng(xmp: &str) -> Vec<u8> {
     synthetic_dng_with(Some(xmp), lightcraft_meta::Metadata::default())
 }

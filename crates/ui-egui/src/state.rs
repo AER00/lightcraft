@@ -264,6 +264,8 @@ pub struct UiState {
     pub grid_info: String,
     /// Photo counts next to sources and albums in the left panel.
     pub show_counts: bool,
+    /// Face / pet boxes (read from XMP) over the photo in the loupe.
+    pub face_boxes: bool,
     /// Local sidebar locations hidden with “Remove from Local” (folders on disk are untouched).
     pub hidden_locations: Vec<String>,
     /// Copies opened in an external editor this session (reloaded when the window is focused
@@ -550,6 +552,7 @@ impl Default for UiState {
             show_filenames: true,
             grid_info: "filename".into(),
             show_counts: true,
+            face_boxes: true,
             hidden_locations: Vec::new(),
             dragging_control: None,
             external_edits: Vec::new(),

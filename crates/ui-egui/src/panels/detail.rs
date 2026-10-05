@@ -333,7 +333,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let map = CanvasMap::new(&frame, img_rect);
     let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
     info_overlay(app, &p, canvas, &photo);
-    region_overlay(&p, &map, &photo);
+    if app.ui.face_boxes
+        && let Some(index) = region_overlay(ui, &p, &map, &photo)
+    {
+        let _ = app.run("photo.removeRegion", json!({"id": id.0, "index": index}));
+    }
     // a fine grid while a transform (geometry) slider is dragged, to judge verticals
     if app.ui.dragging_control.as_deref().is_some_and(|c| c.starts_with("geometry.")) {
         let n = 12;
@@ -421,16 +425,34 @@ fn info_overlay(app: &LightcraftApp, p: &egui::Painter, canvas: Rect, photo: &li
     register(p.ctx(), "canvas:infoOverlay", Rect::from_min_max(canvas.min, pos2(canvas.left() + 320.0, y)));
 }
 
-/// Face/pet/focus regions read from XMP (MWG-RS), drawn as boxes over the photo. Read-only —
-/// LightCraft doesn't write regions yet.
-fn region_overlay(p: &egui::Painter, map: &CanvasMap, photo: &lightcraft_catalog::Photo) {
+/// Face/pet/focus regions read from XMP (MWG-RS), drawn as boxes over the photo. Hovering a box shows
+/// a × in its corner; clicking it returns that region's index so the caller can remove it (a
+/// catalog-only edit: LightCraft doesn't write regions to XMP).
+fn region_overlay(ui: &egui::Ui, p: &egui::Painter, map: &CanvasMap, photo: &lightcraft_catalog::Photo) -> Option<usize> {
     let t = Tokens::get(p.ctx());
     let clip = p.clip_rect();
-    for r in &photo.meta.regions {
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    let mut remove = None;
+    for (index, r) in photo.meta.regions.iter().enumerate() {
         let rect = Rect::from_two_pos(map.screen(Point::new(r.rect.x0, r.rect.y0)), map.screen(Point::new(r.rect.x1, r.rect.y1)));
         // white with a black keyline just outside it, so the box shows on any background
         p.rect_stroke(rect.expand(1.0), 0.0, Stroke::new(1.0, Color32::from_black_alpha(190)), StrokeKind::Outside);
         p.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::WHITE), StrokeKind::Outside);
+        if pointer.is_some_and(|h| rect.expand(3.0).contains(h)) {
+            let xr = Rect::from_center_size(pos2(rect.right() - 11.0, rect.top() + 11.0), vec2(16.0, 16.0));
+            let resp = ui.interact(xr, egui::Id::new(("region-x", index)), Sense::click());
+            register(ui.ctx(), format!("regionRemove:{index}"), xr);
+            let fill = Color32::from_black_alpha(if resp.hovered() { 235 } else { 190 });
+            p.rect_filled(xr, 2.0, fill);
+            p.rect_stroke(xr, 2.0, Stroke::new(1.0, Color32::from_white_alpha(120)), StrokeKind::Inside);
+            let (c, m) = (xr.center(), 3.5);
+            let cross = Stroke::new(1.4, if resp.hovered() { Color32::WHITE } else { Color32::from_gray(210) });
+            p.line_segment([c - vec2(m, m), c + vec2(m, m)], cross);
+            p.line_segment([c - vec2(m, -m), c + vec2(m, -m)], cross);
+            if resp.on_hover_text("Remove this face box (undo with Edit ▸ Undo)").clicked() {
+                remove = Some(index);
+            }
+        }
         let Some(name) = &r.name else { continue };
         // the name in a dark label with a caret, centred above the box (below it when there is no room)
         let g = p.layout_no_wrap(name.clone(), t.font(13.0), Color32::from_gray(225));
@@ -451,6 +473,7 @@ fn region_overlay(p: &egui::Painter, map: &CanvasMap, photo: &lightcraft_catalog
         p.add(egui::Shape::convex_polygon(vec![pos2(cx - caret, base), pos2(cx + caret, base), pos2(cx, tip)], fill, Stroke::NONE));
         p.galley(label.min + pad, g, Color32::from_gray(225));
     }
+    remove
 }
 
 /// A raw shown from its embedded JPEG (issue #10): a pill at the canvas' top centre saying so;
