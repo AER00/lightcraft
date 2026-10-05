@@ -10,6 +10,9 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other
+  models whose sensor starts on a green-blue row) no longer come out magenta (issue #85): the colour-filter
+  layout is read from each file instead of assumed.
 - Exports are never black because of the GPU (issue #78): a GPU render that runs out of device
   memory, exceeds the GPU's buffer limits, hits a driver error or reset, or comes back
   incomplete is redone on the CPU — the file is the same image either way. Work is sent to the GPU
