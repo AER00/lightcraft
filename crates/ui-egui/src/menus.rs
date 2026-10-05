@@ -11,6 +11,8 @@ use crate::state::{BeforeAfter, Dialog, RightPanel, ViewMode, Zoom};
 pub type UiCommand = (&'static str, &'static str, Option<&'static str>, &'static str);
 
 pub const UI_COMMANDS: &[UiCommand] = &[
+    ("app.language.english", "English", None, "Edit>Language"),
+    ("app.language.japanese", "日本語", None, "Edit>Language"),
     ("view.photoGrid", "Photo Grid", None, "View"),
     ("view.squareGrid", "Square Grid", None, "View"),
     // G: Photo Grid ↔ Square Grid (from other views: the photo grid)
@@ -202,6 +204,10 @@ pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
 
 /// Handle UI commands; `None` means "not a UI command — send it to the engine".
 pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    if matches!(id, "app.language.english" | "app.language.japanese") {
+        app.ui.language = if id == "app.language.japanese" { crate::i18n::Language::Ja } else { crate::i18n::Language::En };
+        return Some(Ok(json!(app.ui.language)));
+    }
     let ctx = egui::Context::default();
     let r: Result<Value, String> = match id {
         "view.photoGrid" => {

@@ -10,6 +10,22 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- Exports and renders never write over a photo's original (issue #93): exporting into the photo's own folder with
+  the same name and "Overwrite" (or Export with Previous repeating it), an exact output path from the control
+  channel or MCP, a merge preview path or `lightcraft-cli render IMG.jpg -o IMG.jpg` is refused with a clear
+  message, and the original is left byte for byte. Ordinary earlier exports are still overwritten when asked.
+  Exported files are written to a temp file, synced and then renamed into place, so a full disk or an unplugged
+  drive never leaves a truncated file; the XMP sidecar of an "Original" export follows the "If file exists"
+  choice too.
+- Convert to DNG, Copy as DNG, Photo Merge and smart previews no longer write straight to the final file (issue
+  #106): a DNG is checked against the raw data, written to a temp file, synced and read back before it gets its
+  name (never replacing a file), and only then is the photo relinked or the raw copy removed — a failed write
+  leaves no DNG and keeps the raw. Smart previews are written the same way; a damaged one (cut short by a crash or
+  a full drive) no longer counts as built and Build Smart Previews replaces it.
+- Import ▸ Copy verifies every copy, like Move (issue #96): each file is written as a new file, synced to disk and
+  compared byte for byte with the card. A copy that fails or differs is removed and reported as a failed import —
+  so "import complete" means the copies are good before you format the card — and a name that is taken gets -1,
+  -2… instead of being replaced.
 - Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other
   models whose sensor starts on a green-blue row) no longer come out magenta (issue #85): the colour-filter
   layout is read from each file instead of assumed.
@@ -19,6 +35,8 @@
   in short pieces so slow integrated GPUs aren't reset by their watchdog. `ui.inspect` → `perf`
   (`gpuReason`, `gpuFallback`), Help ▸ System Info and Settings ▸ Performance say why the GPU isn't
   used (e.g. a skipped software adapter such as llvmpipe) and why the last render fell back.
+- The thumbnail cache only ever counts and deletes its own files (issue #98): a library opened on a folder that
+  already has a `thumbs/` folder of other pictures no longer loses them when the cache is trimmed or cleared.
 
 ### Library
 - Rename Photos never overwrites another photo when only the letter case changes (issue #95): on case-sensitive
