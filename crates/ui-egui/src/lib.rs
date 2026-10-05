@@ -21,6 +21,7 @@ pub mod render;
 pub mod shortcuts;
 pub mod softpaint;
 pub mod state;
+pub mod tasks;
 pub mod theme;
 pub mod widgets;
 
@@ -32,6 +33,8 @@ mod tests_grid;
 mod tests_library_problem;
 #[cfg(test)]
 mod tests_masking;
+#[cfg(test)]
+mod tests_offline;
 #[cfg(test)]
 mod tests_panels;
 #[cfg(test)]
@@ -178,6 +181,8 @@ pub struct LightcraftApp {
     pub scan: Option<import::ScanTask>,
     /// A background export in progress.
     pub export: Option<export_task::ExportTask>,
+    /// Background file-system work of other commands (Find Missing Photos, auto import…).
+    pub tasks: tasks::Tasks,
     /// The files of the last finished background export (`ui.inspect` → `export.last`).
     pub last_export_result: Option<Value>,
     /// The look the loupe shows while the pointer rests on a preset or profile (set by the
@@ -233,6 +238,7 @@ impl LightcraftApp {
             import: None,
             scan: None,
             export: None,
+            tasks: Default::default(),
             last_export_result: None,
             hover_preview: None,
             window_is_fullscreen: false,
@@ -295,7 +301,12 @@ impl LightcraftApp {
             if self.ui.preview_build_seen != Some((key, true)) {
                 self.ui.preview_build_seen = Some((key, true));
                 let (done, failed) = (b.done.load(Ordering::Relaxed), b.failed.load(Ordering::Relaxed));
-                let mut msg = format!("Previews ready for {done} photo{}", if done == 1 { "" } else { "s" });
+                let plural = if done == 1 { "" } else { "s" };
+                let mut msg = match (b.error(), b.what) {
+                    (Some(e), what) => format!("{}: {e}", if what.is_empty() { "previews" } else { what }),
+                    (None, "") => format!("Previews ready for {done} photo{plural}"),
+                    (None, what) => format!("Done ({what}): {done} photo{plural}"),
+                };
                 if failed > 0 {
                     msg.push_str(&format!(" · {failed} couldn't be rendered"));
                 }
@@ -304,7 +315,11 @@ impl LightcraftApp {
         } else {
             if self.ui.preview_build_seen != Some((key, false)) {
                 self.ui.preview_build_seen = Some((key, false));
-                self.toast(ctx, format!("Building previews for {} photos…", b.total));
+                let msg = match b.what {
+                    "" => format!("Building previews for {} photos…", b.total),
+                    what => format!("Working on {what} for {} photos…", b.total),
+                };
+                self.toast(ctx, msg);
             }
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
@@ -478,6 +493,10 @@ impl LightcraftApp {
             // File → Add from Device lists cards scanned in the background: show hot-plugs
             let repaint = ctx.clone();
             lightcraft_engine::devices::on_change(move || repaint.request_repaint());
+            // "is the original there?" (grid, Info panel, Missing Photos) answers from a cache a
+            // worker fills: a sleeping NAS or a dropped share never stalls a frame
+            let repaint = ctx.clone();
+            self.session.media.availability.run_in_background(std::sync::Arc::new(move || repaint.request_repaint()));
             self.styled = true;
         } else {
             self.fonts_ready = true;
@@ -502,6 +521,7 @@ impl LightcraftApp {
         merge::poll(self, ctx);
         import::poll_scan(self, ctx);
         import::tick(self, ctx);
+        tasks::poll(self, ctx);
         self.preview_build_status(ctx);
         self.save_status(ctx);
         self.slideshow_tick(ctx);
@@ -516,17 +536,33 @@ impl LightcraftApp {
             }
         }
         self.ui.was_focused = focused;
-        // auto import: scan the watched folder every few seconds
+        // auto import: list the watched folder every few seconds (on a worker thread: it may be on
+        // a network share), then import what's new like any import (also on a worker thread)
         #[cfg(not(target_arch = "wasm32"))]
-        if self.session.import_defaults.auto_folder.is_some() {
+        if let Some(folder) = self.session.import_defaults.auto_folder.clone() {
+            const LABEL: &str = "Auto Import";
             let now = ctx.input(|i| i.time);
-            if now - self.ui.auto_import_at >= 3.0 {
+            if now - self.ui.auto_import_at >= 3.0 && self.import.is_none() && !self.tasks.is_running(LABEL) {
                 self.ui.auto_import_at = now;
-                if let Ok(r) = self.session.execute("library.autoImportScan", &serde_json::json!({})) {
-                    let n = r["imported"].as_array().map_or(0, Vec::len);
-                    if n > 0 {
-                        self.toast(ctx, format!("Auto Import: added {n} photo{}", if n == 1 { "" } else { "s" }));
+                let work = move || lightcraft_engine::cmd::library::list_auto_import_folder(&folder);
+                let done = |app: &mut LightcraftApp, _ctx: &egui::Context, listing: Result<Vec<(String, u64)>, String>| {
+                    let listing = match listing {
+                        Ok(l) => l,
+                        Err(e) => return log::debug!("auto import: {e}"),
+                    };
+                    let p = serde_json::json!({"listing": listing, "start": false});
+                    let Ok(r) = app.session.execute("library.autoImportScan", &p) else { return };
+                    let Some(mut params) = r.get("import").cloned().filter(|_| app.import.is_none()) else { return };
+                    let paths: Vec<String> =
+                        params["paths"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
+                    if let Some(o) = params.as_object_mut() {
+                        o.remove("paths");
                     }
+                    let undo0 = app.session.undo.len();
+                    app.import = Some(import::ImportTask::new(paths, params, undo0, false).auto());
+                };
+                if let Err(e) = tasks::spawn(self, LABEL, work, done) {
+                    log::warn!("{e}");
                 }
             }
             ctx.request_repaint_after(std::time::Duration::from_secs(3));
@@ -546,8 +582,11 @@ impl LightcraftApp {
             if !presets.is_empty() {
                 let _ = self.run("file.importPresets", serde_json::json!({"paths": presets}));
             }
-            if !photos.is_empty() {
-                let _ = self.run("library.import", serde_json::json!({"paths": photos}));
+            // read and added on a worker thread (dropped folders can be large, or on a slow drive)
+            if !photos.is_empty()
+                && let Err(e) = import::start_paths(self, photos)
+            {
+                self.toast(ctx, e);
             }
         }
     }

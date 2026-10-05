@@ -26,7 +26,12 @@ fn dng_names(path: &str) -> impl Iterator<Item = std::path::PathBuf> {
 /// written to a temp file, synced, read back identical and only then given its name — never
 /// replacing an existing file. On any failure no DNG is left behind and the raw stays in use.
 pub(crate) fn write_dng_for(s: &Session, path: &str, packet: String) -> std::result::Result<String, String> {
-    let bytes = match &s.media.file_bytes {
+    write_dng_with(s.media.file_bytes.as_ref(), path, packet)
+}
+
+/// [`write_dng_for`] without the session (imports convert on a worker thread).
+pub(crate) fn write_dng_with(file_bytes: Option<&crate::merge::ByteReader>, path: &str, packet: String) -> std::result::Result<String, String> {
+    let bytes = match file_bytes {
         Some(r) => r(path)?,
         None => std::fs::read(path).map_err(|e| format!("{path}: {e}"))?,
     };

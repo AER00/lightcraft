@@ -42,6 +42,10 @@
 - The control port (`--control`) closes a connection as soon as it receives anything that isn't a JSON request
   (issue #94): an HTTP request from a web page can no longer carry a command in its body. Lines are capped at
   4 MiB and connections at 16.
+- A sleeping NAS, a dropped network share or a USB drive spinning up no longer freezes the window (issue #104):
+  whether originals are there is checked on a worker thread (grid thumbnails, the Info panel, the photo menu, Missing
+  Photos); importing (also by drag and drop), Find Missing Photos, Build / Discard Smart Previews, the Rename preview,
+  the Local folder tree and Auto Import read the disk on worker threads too. The import progress window has Cancel.
 - Browser version (experimental), keeping a library safe (issue #107): File ▸ Back Up Library… downloads the catalog
   and every imported photo as one zip, and File ▸ Restore Library from Backup… brings it back (the current library
   is kept). A failed save (storage full) now shows the unsaved warning and is retried, a photo that can't be stored

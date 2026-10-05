@@ -15,7 +15,7 @@ mod edit;
 mod export;
 pub mod filters;
 pub mod keywords;
-mod library;
+pub mod library;
 pub mod lut_profiles;
 pub mod manage;
 mod masks;
