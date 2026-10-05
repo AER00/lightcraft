@@ -374,25 +374,14 @@ fn probe_all(probe: Option<&crate::media::FileProbe>, paths: &[String], progress
 }
 
 /// Copy `src` into `root`/`folders` as `name` (default: its own name), made unique with -1, -2…;
-/// returns the new path.
+/// returns the new path. The copy is verified ([`crate::import_move::copy_new`]: a new file,
+/// synced and compared byte for byte); a bad one is removed and the photo reported as failed.
 fn copy_into(root: &Path, src: &str, folders: &[String], name: Option<&str>) -> Result<String, String> {
     let dir = folders.iter().fold(root.to_path_buf(), |d, f| d.join(f));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let name = name
         .map(str::to_string)
         .unwrap_or_else(|| Path::new(src).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "photo".into()));
-    let (stem, ext) = match name.rsplit_once('.') {
-        Some((s, e)) => (s.to_string(), format!(".{e}")),
-        None => (name.clone(), String::new()),
-    };
-    let mut dst = dir.join(&name);
-    let mut i = 1;
-    while dst.exists() {
-        dst = dir.join(format!("{stem}-{i}{ext}"));
-        i += 1;
-    }
-    std::fs::copy(src, &dst).map_err(|e| format!("copy {src}: {e}"))?;
-    Ok(dst.to_string_lossy().to_string())
+    crate::import_move::copy_new(Path::new(src), &dir, &name).map(|p| p.to_string_lossy().to_string())
 }
 
 /// What a [`scan`] needs from the session, so it can run on another thread (a folder on a network

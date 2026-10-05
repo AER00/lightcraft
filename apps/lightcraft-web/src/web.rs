@@ -384,6 +384,7 @@ impl WebApp {
             files: Box::new(files.store()),
             on_disk: false,
         };
+        let mut problem = None;
         match session.open_library_in(stores, true).cloned() {
             Ok(r) => log::info!(
                 "lightcraft: library {} in {:.0} ms ({} photos; snapshot seq {}, {} ops replayed)",
@@ -394,13 +395,17 @@ impl WebApp {
                 r.replayed
             ),
             Err(e) => {
-                // the stored library is left untouched; say plainly that nothing here is saved
-                notice(format!(
-                    "The library stored in this browser could not be opened ({e}). This is a temporary session: nothing you do now is saved. \
-                     The stored library has not been changed."
-                ));
-                session = Session::with_demo();
+                // never a silent demo session (issue #100): an empty one, and the window says why
+                log::error!("opening the library failed: {e}");
+                session = Session::new();
                 originals.install(&mut session);
+                problem = Some(lightcraft_ui_egui::panels::library_problem::LibraryProblem {
+                    can_retry: false,
+                    ..lightcraft_ui_egui::panels::library_problem::LibraryProblem::new(
+                        "the browser's storage for this page",
+                        format!("{e}. Reload the page to try again."),
+                    )
+                });
             }
         }
         if backend.is_some() {
@@ -418,6 +423,7 @@ impl WebApp {
             app.ui = ui;
         }
         app.ui = app.ui.sanitized();
+        app.library_problem = problem;
         let n = opts.workers.unwrap_or_else(|| {
             let cores = window().map_or(1, |w| w.navigator().hardware_concurrency() as usize);
             cores.saturating_sub(1).clamp(1, 4)
