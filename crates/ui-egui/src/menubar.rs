@@ -325,20 +325,21 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 item("library.buildPreviews", json!({"size": "full"}), format!("Build 1:1 Previews ({scope})"), None, !running, None),
                 item("library.cancelPreviews", Value::Null, "Stop Building Previews", None, running, None),
                 MenuNode::Separator,
+                // (read and written on a worker thread: the originals may be on a slow drive)
                 item(
                     "library.smartPreviews",
-                    Value::Null,
+                    json!({"background": true}),
                     format!("Build Smart Previews ({scope})"),
                     None,
-                    app.session.media.smart_dir.is_some(),
+                    app.session.media.smart_dir.is_some() && !running,
                     None,
                 ),
                 item(
                     "library.smartPreviews",
-                    json!({"discard": true}),
+                    json!({"discard": true, "background": true}),
                     format!("Discard Smart Previews ({scope})"),
                     None,
-                    app.session.media.smart_dir.is_some(),
+                    app.session.media.smart_dir.is_some() && !running,
                     None,
                 ),
                 MenuNode::Separator,
@@ -936,7 +937,7 @@ mod tests {
         let mut app = LightcraftApp::new(lightcraft_engine::Session::new().with_fs(), Default::default());
         app.session.execute("library.import", &json!({"paths": [dir.join("a").to_string_lossy()]})).unwrap();
         std::fs::rename(dir.join("a/one.png"), dir.join("b/one.png")).unwrap();
-        let r = run_item(&mut app, "file.findMissing", json!({"folder": dir.join("b").to_string_lossy()})).unwrap();
+        let r = run_item(&mut app, "file.findMissing", json!({"folder": dir.join("b").to_string_lossy(), "wait": true})).unwrap();
         assert_eq!(r["found"].as_array().map(Vec::len), Some(1), "{r}");
         // Locate: an explicit file
         std::fs::rename(dir.join("b/one.png"), dir.join("one-renamed.png")).unwrap();

@@ -538,6 +538,92 @@ fn set_file_ops_to(op: &Op, to: &HashSet<&str>, out: &mut Vec<Op>) {
     }
 }
 
+/// The photos among `ids` a rename handles, in order: photos sharing one file (virtual copies)
+/// rename once. No file-system calls.
+pub fn rename_photos(cat: &lightcraft_catalog::Catalog, ids: &[PhotoId]) -> Vec<std::sync::Arc<Photo>> {
+    let mut seen_paths: HashSet<String> = HashSet::new();
+    ids.iter()
+        .filter_map(|id| cat.photo(*id))
+        .filter(|p| match &p.source {
+            Source::File { path } => seen_paths.insert(path.clone()),
+            _ => true,
+        })
+        .cloned()
+        .collect()
+}
+
+/// [`Session::plan_rename`] for [`rename_photos`], with the "is this name taken on disk?" check
+/// supplied: the Rename dialog plans its preview on a worker thread (a check can block on a slow
+/// drive). Whether a case-only change names this very file is decided on the disk.
+pub fn plan_rename_photos(photos: &[std::sync::Arc<Photo>], template: &str, start: usize, exists: &dyn Fn(&str) -> bool) -> Vec<RenamePlan> {
+    plan_rename_core(photos, template, start, &|p| exists(&p.to_string_lossy()), &|a, b| RealFs.same_file(a, b))
+}
+
+/// Plan renaming `photos`: `exists` says whether something answers to a path, `same_file` whether
+/// two spellings name one file (see [`MoveFs`]).
+fn plan_rename_core(
+    photos: &[std::sync::Arc<Photo>],
+    template: &str,
+    start: usize,
+    exists: &dyn Fn(&Path) -> bool,
+    same_file: &dyn Fn(&Path, &Path) -> bool,
+) -> Vec<RenamePlan> {
+    let mut taken: HashSet<String> = HashSet::new(); // lower-case target paths/names claimed in this batch
+    let mut out = Vec::new();
+    for (seq, p) in (start..).zip(photos) {
+        let want = expand(template, p, seq);
+        let (stem, ext) = split_ext(&want);
+        let (stem, ext) = (stem.to_string(), ext.to_string());
+        let candidate = |k: usize| {
+            if k == 0 {
+                want.clone()
+            } else if ext.is_empty() {
+                format!("{stem}-{k}")
+            } else {
+                format!("{stem}-{k}.{ext}")
+            }
+        };
+        let (to, to_path) = match &p.source {
+            Source::File { path } => {
+                let dir = Path::new(path).parent().map(Path::to_path_buf).unwrap_or_default();
+                let mut k = 0;
+                loop {
+                    let name = candidate(k);
+                    let tp = dir.join(&name).to_string_lossy().to_string();
+                    let key = tp.to_lowercase();
+                    // this very file, maybe spelled differently (case-insensitive volume)? By
+                    // identity: on a case-sensitive volume `img_1.jpg` may be another photo
+                    let (from, to) = (Path::new(path), Path::new(&tp));
+                    let same = tp == *path || (from != to && key == path.to_lowercase() && exists(to) && same_file(from, to));
+                    // free: not claimed in this batch and not on disk (unless it is this very file).
+                    // A file this batch moves away still counts as taken: simple and safe.
+                    if !taken.contains(&key) && (same || !exists(to)) {
+                        taken.insert(key);
+                        break (name, Some(tp));
+                    }
+                    k += 1;
+                }
+            }
+            Source::Demo { .. } => {
+                let mut k = 0;
+                loop {
+                    let name = candidate(k);
+                    if taken.insert(format!("demo:{}", name.to_lowercase())) {
+                        break (name, None);
+                    }
+                    k += 1;
+                }
+            }
+        };
+        let from_path = match &p.source {
+            Source::File { path } => Some(path.clone()),
+            _ => None,
+        };
+        out.push(RenamePlan { id: p.id.0, from: p.file_name.clone(), to, from_path, to_path });
+    }
+    out
+}
+
 impl Session {
     /// Plan renaming `ids` with `template` (sequence numbers from `start`), resolving collisions.
     pub fn plan_rename(&self, ids: &[PhotoId], template: &str, start: usize) -> Vec<RenamePlan> {
@@ -546,70 +632,7 @@ impl Session {
 
     /// [`Session::plan_rename`] on the file system `fs`.
     pub(crate) fn plan_rename_with(&self, fs: &dyn MoveFs, ids: &[PhotoId], template: &str, start: usize) -> Vec<RenamePlan> {
-        // photos sharing one file (virtual copies) rename once
-        let mut seen_paths: HashSet<String> = HashSet::new();
-        let mut taken: HashSet<String> = HashSet::new(); // lower-case target paths/names claimed in this batch
-        let mut out = Vec::new();
-        let mut seq = start;
-        for id in ids {
-            let Some(p) = self.catalog.photo(*id) else { continue };
-            if let Source::File { path } = &p.source
-                && !seen_paths.insert(path.clone())
-            {
-                continue;
-            }
-            let want = expand(template, p, seq);
-            seq += 1;
-            let (stem, ext) = split_ext(&want);
-            let (stem, ext) = (stem.to_string(), ext.to_string());
-            let candidate = |k: usize| {
-                if k == 0 {
-                    want.clone()
-                } else if ext.is_empty() {
-                    format!("{stem}-{k}")
-                } else {
-                    format!("{stem}-{k}.{ext}")
-                }
-            };
-            let (to, to_path) = match &p.source {
-                Source::File { path } => {
-                    let dir = Path::new(path).parent().map(Path::to_path_buf).unwrap_or_default();
-                    let mut k = 0;
-                    loop {
-                        let name = candidate(k);
-                        let tp = dir.join(&name).to_string_lossy().to_string();
-                        let key = tp.to_lowercase();
-                        // this very file, maybe spelled differently (case-insensitive volume)? By
-                        // identity: on a case-sensitive volume `img_1.jpg` may be another photo
-                        let same = tp == *path || is_respelling(fs, Path::new(path), Path::new(&tp));
-                        // free: not claimed in this batch and not on disk (unless it is this very file).
-                        // A file this batch moves away still counts as taken: simple and safe.
-                        let on_disk = fs.exists(Path::new(&tp)) && !same;
-                        if !taken.contains(&key) && !on_disk {
-                            taken.insert(key);
-                            break (name, Some(tp));
-                        }
-                        k += 1;
-                    }
-                }
-                Source::Demo { .. } => {
-                    let mut k = 0;
-                    loop {
-                        let name = candidate(k);
-                        if taken.insert(format!("demo:{}", name.to_lowercase())) {
-                            break (name, None);
-                        }
-                        k += 1;
-                    }
-                }
-            };
-            let from_path = match &p.source {
-                Source::File { path } => Some(path.clone()),
-                _ => None,
-            };
-            out.push(RenamePlan { id: id.0, from: p.file_name.clone(), to, from_path, to_path });
-        }
-        out
+        plan_rename_core(&rename_photos(&self.catalog, ids), template, start, &|p| fs.exists(p), &|a, b| fs.same_file(a, b))
     }
 
     /// Carry out `plans`: move the files (rolled back on failure), then commit one undoable op

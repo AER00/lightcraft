@@ -10,6 +10,7 @@
 //! run them off the UI thread.
 #![forbid(unsafe_code)]
 
+pub mod availability;
 pub mod cmd;
 pub mod crs;
 pub mod crs_masks;
@@ -272,11 +273,22 @@ impl Session {
         (spec.enabled)(self).map_err(|why| EngineError::Disabled(id.to_string(), why))?;
         let empty = Value::Object(Default::default());
         let params = if params.is_null() { &empty } else { params };
+        self.run_command(id, spec.journal.then_some(params), |s| (spec.run)(s, params))
+    }
+
+    /// Run `f` as command `id` with what [`Session::execute`] does around every command: the
+    /// panic guard, auto versions, XMP sidecar auto-write and the durable save (a failed save is
+    /// `NotSaved`). Not journaled. The app's import task commits its batches this way.
+    pub fn execute_fn(&mut self, id: &str, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
+        self.run_command(id, None, f)
+    }
+
+    fn run_command(&mut self, id: &str, journal: Option<&Value>, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
         let log_start = self.pending_log.len();
         let was_active = self.active();
         self.depth += 1;
         // last-resort guard: a panic in a command is that command's error, not a crash
-        let r = guard::catch(&format!("`{id}`"), || (spec.run)(self, params)).unwrap_or_else(|e| Err(EngineError::Other(e)));
+        let r = guard::catch(&format!("`{id}`"), || f(self)).unwrap_or_else(|e| Err(EngineError::Other(e)));
         self.depth -= 1;
         if self.depth == 0 && was_active.is_some() && self.active() != was_active {
             self.previous_active = was_active;
@@ -284,7 +296,10 @@ impl Session {
                 self.auto_version(left);
             }
         }
-        if r.is_ok() && spec.journal && self.depth == 0 {
+        if r.is_ok()
+            && let Some(params) = journal
+            && self.depth == 0
+        {
             self.journal.push((id.to_string(), params.clone()));
             if self.journal.len() > 10_000 {
                 self.journal.drain(..1000);
@@ -560,7 +575,11 @@ impl Session {
 
     /// Photos shown in the grid/filmstrip for the current source, filter and sort.
     pub fn visible(&mut self) -> &[PhotoId] {
-        let key = (self.catalog.revision, format!("{:?}|{:?}|{:?}|{:?}", self.source, self.filter, self.sort, self.browse));
+        let mut key = (self.catalog.revision, format!("{:?}|{:?}|{:?}|{:?}", self.source, self.filter, self.sort, self.browse));
+        if self.source == LibrarySource::Missing && self.media.availability.is_background() {
+            // the view fills in as the background checks find files gone
+            key.1.push_str(&format!("|{}", self.media.availability.generation()));
+        }
         if self.visible_key.as_ref() != Some(&key) {
             // "in the last N days" rules count back from the session's clock
             lightcraft_catalog::rules::set_now(Some((self.clock)()));
@@ -595,8 +614,8 @@ impl Session {
             }
             if self.source == LibrarySource::Missing {
                 // only the photos the query kept (library photos, not Local browse records) are checked
-                let cat = &self.catalog;
-                visible.retain(|id| cmd::missing::is_missing(cat, *id));
+                let (cat, avail) = (&self.catalog, &self.media.availability);
+                visible.retain(|id| cmd::missing::is_missing(cat, avail, *id));
             }
             if self.source != LibrarySource::RecentlyDeleted {
                 visible = self.catalog.arrange_stacks(&visible);
