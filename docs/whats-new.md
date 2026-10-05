@@ -26,6 +26,11 @@
   compared byte for byte with the card. A copy that fails or differs is removed and reported as a failed import —
   so "import complete" means the copies are good before you format the card — and a name that is taken gets -1,
   -2… instead of being replaced.
+- Saving metadata to an XMP sidecar another application wrote no longer replaces it (issue #92): LightCraft merges its
+  fields in and keeps the rest — e.g. that application's develop settings and edit history — byte for byte. A
+  sidecar that isn't valid XMP is copied to `<name>.xmp.bak-<time>` first. With the default stem naming, a raw and a
+  JPEG with the same name (`IMG_0001.CR3` + `IMG_0001.JPG`) no longer share one sidecar: the raw keeps `IMG_0001.xmp`,
+  the JPEG uses `IMG_0001.JPG.xmp`.
 - Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other
   models whose sensor starts on a green-blue row) no longer come out magenta (issue #85): the colour-filter
   layout is read from each file instead of assumed.
