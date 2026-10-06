@@ -253,13 +253,19 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
         let m = camera_look.map(|p| p.matrix.mul(&t.matrix)).unwrap_or(t.matrix).to_f32();
         let gain = 2f32.powf(t.baseline_exposure as f32);
         let wb = t.wb;
+        // A DNG's own profile look (hue/saturation map, look table), DNG spec chapter 6.
+        let tables = lightcraft_raw::profile::ProfileTables::new(&raw.color.profile, lightcraft_raw::color::illuminant_weight(&raw.color, xy));
         img.map_in_place(|p| {
             let c = [p[0] * wb[0], p[1] * wb[1], p[2] * wb[2]];
-            [
-                ((m[0][0] * c[0] + m[0][1] * c[1] + m[0][2] * c[2]) * gain).max(0.0),
-                ((m[1][0] * c[0] + m[1][1] * c[1] + m[1][2] * c[2]) * gain).max(0.0),
-                ((m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2]) * gain).max(0.0),
-            ]
+            let rgb = [
+                m[0][0] * c[0] + m[0][1] * c[1] + m[0][2] * c[2],
+                m[1][0] * c[0] + m[1][1] * c[1] + m[1][2] * c[2],
+                m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2],
+            ];
+            match &tables {
+                Some(tables) => tables.apply(rgb, gain).map(|v| v.max(0.0)),
+                None => rgb.map(|v| (v * gain).max(0.0)),
+            }
         });
         stages.push(("colour", t0.elapsed()));
         let img = fit(&img, max_edge, max_edge, Filter::Box);
@@ -280,17 +286,26 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
         }
         let (temp, tint) = xy_to_temp_tint(xy);
         let relative = raw.format == lightcraft_raw::RawFormat::Arw && t.matrix_is_fallback;
+        let camera_tone = camera_look.map(|p| p.tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));
         let (temp, tint) = if relative { (6500.0, 0.0) } else { (temp.round(), tint.round()) };
-        return Ok((
-            img,
-            SourceInfo { raw: true, as_shot_temp: temp, as_shot_tint: tint, lens, relative_wb: relative, camera_tone: camera_look.map(|p| p.tone) },
-        ));
+        return Ok((img, SourceInfo { raw: true, as_shot_temp: temp, as_shot_tint: tint, lens, relative_wb: relative, camera_tone }));
     }
     let d = lightcraft_codecs::decode(&bytes, lightcraft_codecs::DecodeOptions::fit(max_edge as u32, max_edge as u32)).map_err(|e| e.to_string())?;
     drop(bytes);
     let img = d.to_working();
     let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
     Ok((img.into_oriented(Orientation::from_exif(d.orientation)), SourceInfo::default()))
+}
+
+/// A DNG `ProfileToneCurve` (linear in, linear out, 1.0 = white after exposure compensation) as the
+/// finish stage's camera tone curve: 32 knots, log-spaced over 12 stops below white; above white
+/// the camera tone's shoulder continues it.
+pub(crate) fn dng_tone_curve(curve: &lightcraft_raw::profile::ToneCurve) -> Option<lightcraft_pipeline::tone::CameraTone> {
+    let knots: [[f32; 2]; 32] = std::array::from_fn(|i| {
+        let x = 2f32.powf(-12.0 + 12.0 * i as f32 / 31.0);
+        [x, curve.eval(x).min(0.9995)]
+    });
+    lightcraft_pipeline::tone::CameraTone::new(knots)
 }
 
 /// Orientation for an embedded preview: its own EXIF orientation when it has one, else the raw file's.
@@ -396,6 +411,41 @@ mod tests {
         b.extend_from_slice(&(jpeg.len() as u32).to_be_bytes());
         b.extend_from_slice(&jpeg);
         b
+    }
+
+    /// Issue #138: a DNG's own profile look (hue/saturation map, look table, tone curve) is
+    /// applied when it's developed — Lightroom-converted DNGs rendered flat and muted without it.
+    #[test]
+    fn dng_profile_look_is_applied() {
+        use lightcraft_raw::profile::{HsvTable, ProfileLook, ToneCurve};
+        let plain = crate::tests_xmp::synthetic_dng_with(None, Default::default());
+        let mut raw = lightcraft_raw::decode(&plain).unwrap();
+        let sat = |img: &Rgb32f| {
+            img.data.iter().map(|p| (p[0].max(p[1]).max(p[2]) - p[0].min(p[1]).min(p[2])) / p[0].max(p[1]).max(p[2]).max(1e-6)).sum::<f32>()
+                / img.data.len() as f32
+        };
+        let (before, info) = load_bytes(&plain, 64).unwrap();
+        assert!(sat(&before) > 0.05, "the synthetic scene is coloured");
+        assert!(info.camera_tone.is_none());
+        // a map that removes all saturation, and a tone curve
+        let grey = HsvTable { hue_divisions: 4, sat_divisions: 2, val_divisions: 1, data: vec![[0.0, 0.0, 1.0]; 8], srgb_value: false };
+        raw.color.profile =
+            ProfileLook { hue_sat_map: [Some(grey), None], look_table: None, tone_curve: ToneCurve::from_tag(&[0.0, 0.0, 0.18, 0.3, 1.0, 1.0]) };
+        let with = lightcraft_raw::write_dng(&raw, &Default::default()).unwrap();
+        let (after, info) = load_bytes(&with, 64).unwrap();
+        assert!(sat(&after) < 1e-3, "saturation {} → {}", sat(&before), sat(&after));
+        // a saturation-only map keeps brightness roughly (HSV value is kept in ProPhoto RGB)
+        let mean = |img: &Rgb32f| img.data.iter().map(|p| p[0].max(p[1]).max(p[2])).sum::<f32>() / img.data.len() as f32;
+        assert!((0.8..1.1).contains(&(mean(&after) / mean(&before))), "{} vs {}", mean(&after), mean(&before));
+        let tone = info.camera_tone.expect("the DNG tone curve becomes the camera tone");
+        assert!((tone.apply(0.18) - 0.3).abs() < 0.01, "{}", tone.apply(0.18));
+        // a look table alone changes the render too (applied after exposure)
+        raw.color.profile = ProfileLook {
+            look_table: Some(HsvTable { hue_divisions: 1, sat_divisions: 2, val_divisions: 1, data: vec![[0.0, 1.0, 0.5]; 2], srgb_value: false }),
+            ..Default::default()
+        };
+        let (dim, _) = load_bytes(&lightcraft_raw::write_dng(&raw, &Default::default()).unwrap(), 64).unwrap();
+        assert!((mean(&dim) / mean(&before) - 0.5).abs() < 0.02, "{} vs {}", mean(&dim), mean(&before));
     }
 
     #[test]

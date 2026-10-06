@@ -1,6 +1,7 @@
 //! DNG (Adobe Digital Negative Specification 1.7): raw IFD selection, pixel data (via [`crate::tiffraw`]),
 //! linearization, black/white levels, active area, default crop, CFA description, colour tags, opcode lists.
 
+use crate::profile::{HsvTable, ProfileLook, ToneCurve};
 use crate::tiffraw::{Packing, read_image_in};
 use crate::{BlackLevel, Cfa, ColorData, Mat3, Mode, RawData, RawError, RawFormat, RawImage, Rect, Result, opcodes};
 use lightcraft_color::Xy;
@@ -45,6 +46,27 @@ pub(crate) fn color_data(ifd0: &Ifd, raw: &Ifd) -> ColorData {
         as_shot_white_xy: get(t::AS_SHOT_WHITE_XY).filter(|v| v.len() == 2 && v[0] > 0.0 && v[1] > 0.0).map(|v| Xy::new(v[0], v[1])),
         baseline_exposure: get(t::BASELINE_EXPOSURE).and_then(|v| v.first().copied()).filter(|v| v.is_finite()).unwrap_or(0.0)
             + get(t::BASELINE_EXPOSURE_OFFSET).and_then(|v| v.first().copied()).filter(|v| v.is_finite()).unwrap_or(0.0),
+        profile: profile_look(ifd0, raw),
+    }
+}
+
+/// The profile look tags (`ProfileHueSatMap*`, `ProfileLookTable*`, `ProfileToneCurve`); malformed
+/// ones are ignored. Like the colour tags, read from the raw IFD first, else IFD 0.
+pub(crate) fn profile_look(ifd0: &Ifd, raw: &Ifd) -> ProfileLook {
+    let pick = |tag: u16| if raw.contains(tag) { raw } else { ifd0 };
+    let table = |dims: u16, data: u16, enc: u16| {
+        let ifd = pick(dims);
+        let dims = ifd.u64s(dims)?;
+        let data = ifd.f64s(data)?;
+        HsvTable::from_tags(&dims, &data, ifd.u64s(enc).and_then(|v| v.first().copied()).unwrap_or(0))
+    };
+    ProfileLook {
+        hue_sat_map: [
+            table(t::PROFILE_HUE_SAT_MAP_DIMS, t::PROFILE_HUE_SAT_MAP_DATA_1, t::PROFILE_HUE_SAT_MAP_ENCODING),
+            table(t::PROFILE_HUE_SAT_MAP_DIMS, t::PROFILE_HUE_SAT_MAP_DATA_2, t::PROFILE_HUE_SAT_MAP_ENCODING),
+        ],
+        look_table: table(t::PROFILE_LOOK_TABLE_DIMS, t::PROFILE_LOOK_TABLE_DATA, t::PROFILE_LOOK_TABLE_ENCODING),
+        tone_curve: pick(t::PROFILE_TONE_CURVE).f64s(t::PROFILE_TONE_CURVE).and_then(|v| ToneCurve::from_tag(&v)),
     }
 }
 

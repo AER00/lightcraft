@@ -193,3 +193,40 @@ fn corpus_nef_compressed_matches_uncompressed() {
         assert!(hi <= 4095.0 && hi - lo > 500.0, "D7000 block means {lo}..{hi}");
     }
 }
+
+/// Issue #138: DNGs converted by Adobe software carry their camera profile's hue/saturation map and
+/// look table; we read them (and render with them). Camera-written DNGs here carry none.
+#[test]
+fn corpus_adobe_dngs_carry_profile_looks() {
+    let dir = corpus_root().join("raw");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        eprintln!("skip: {} absent", dir.display());
+        return;
+    };
+    let mut seen = 0;
+    for p in rd.flatten().map(|e| e.path()) {
+        let name = p.file_name().unwrap().to_string_lossy().to_lowercase();
+        if !name.starts_with("dng-") || !name.ends_with(".dng") {
+            continue;
+        }
+        let info = probe_info(&std::fs::read(&p).unwrap()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let look = &info.color.profile;
+        if name.starts_with("dng-adobe-") {
+            seen += 1;
+            let hsm = look.hue_sat_map[0].as_ref().unwrap_or_else(|| panic!("{name}: no hue/sat map"));
+            assert!(hsm.hue_divisions > 1 && hsm.sat_divisions > 1, "{name}");
+            assert!(look.look_table.is_some(), "{name}: no look table");
+            // a profile applied to a mid grey keeps it (close to) neutral
+            let t = lightcraft_raw::profile::ProfileTables::new(look, 0.5).unwrap();
+            let g = t.apply([0.18; 3], 1.0);
+            assert!(g.iter().all(|v| (v - g[0]).abs() < 0.01 * g[0].max(0.01)), "{name}: grey → {g:?}");
+        }
+        eprintln!(
+            "{name:44} profile look: hsm {} look {} tone {}",
+            look.hue_sat_map[0].is_some(),
+            look.look_table.is_some(),
+            look.tone_curve.is_some()
+        );
+    }
+    eprintln!("{seen} Adobe-converted DNGs checked");
+}
