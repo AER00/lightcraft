@@ -183,6 +183,42 @@ fn snapshot_subcommand_renders_the_ui_headlessly() {
     assert_eq!((d.width, d.height), (640, 480));
 }
 
+/// Issue #136: with the GPU switched off from the environment the UI starts and renders on the CPU,
+/// without creating a GPU device (no driver is loaded), and says why.
+#[test]
+fn snapshot_starts_without_a_gpu() {
+    let script = tmp("nogpu.jsonl");
+    std::fs::write(
+        &script,
+        format!(
+            "{}\n{}\n{}\n",
+            json!({"method": "ui.set", "params": {"view": "photoGrid"}}),
+            json!({"method": "engine.execute", "params": {"command": "app.gpu"}}),
+            json!({"method": "ui.screenshot"}),
+        ),
+    )
+    .unwrap();
+    for (var, value, reason) in [("LIGHTCRAFT_GPU", "0", "LIGHTCRAFT_GPU=0"), ("LIGHTCRAFT_GPU_BACKEND", "off", "LIGHTCRAFT_GPU_BACKEND=off")] {
+        let out = tmp(&format!("nogpu-{var}.png"));
+        let o = Command::new(BIN)
+            .env_remove("LIGHTCRAFT_GPU")
+            .env_remove("LIGHTCRAFT_GPU_BACKEND")
+            .env(var, value)
+            .args(["snapshot", "--demo", "--script", script.to_str().unwrap(), "-o", out.to_str().unwrap(), "--size", "480x320"])
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{var}: {}", String::from_utf8_lossy(&o.stderr));
+        let replies: Vec<Value> = String::from_utf8_lossy(&o.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert!(replies.iter().all(|r| r["ok"] == true), "{replies:?}");
+        let gpu = &replies[1]["result"];
+        assert_eq!(gpu["available"], false, "{var}: {gpu}");
+        assert_eq!(gpu["adapter"], Value::Null, "{var}: no device was created: {gpu}");
+        assert!(gpu["reason"].as_str().is_some_and(|r| r.contains(reason)), "{var}: {gpu}");
+        let d = lightcraft_codecs::decode(&std::fs::read(&out).unwrap(), Default::default()).unwrap();
+        assert_eq!((d.width, d.height), (480, 320));
+    }
+}
+
 fn run_cli(args: &[&str], stdin: Option<&str>) -> (bool, Vec<Value>, String) {
     let mut child = Command::new(BIN).arg("run").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     if let Some(text) = stdin {

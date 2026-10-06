@@ -201,8 +201,6 @@ pub struct LightcraftApp {
 
 impl LightcraftApp {
     pub fn new(session: Session, services: Services) -> Self {
-        // GPU device + kernels off the UI thread, before the first photo is opened
-        lightcraft_engine::gpu::warm_up();
         Self {
             session,
             ui: UiState::default(),
@@ -597,6 +595,11 @@ impl LightcraftApp {
         if self.gpu_applied != Some(self.ui.settings.gpu) {
             self.gpu_applied = Some(self.ui.settings.gpu);
             let _ = self.session.execute("app.gpu", &serde_json::json!({"enabled": self.ui.settings.gpu}));
+            // GPU device + kernels off the UI thread, once the window is up and only when GPU
+            // rendering is on: a broken driver must not keep the window from appearing (issue #136)
+            if self.ui.settings.gpu {
+                lightcraft_engine::gpu::warm_up();
+            }
         }
         let mb = self.ui.settings.memory_mb;
         // automatic at startup: leave the engine's default alone

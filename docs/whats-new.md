@@ -10,6 +10,12 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- LightCraft no longer crashes at launch on Windows PCs whose Vulkan driver is broken (issue #136, e.g. some Intel UHD
+  630 drivers): on Windows the window and GPU rendering use DirectX 12 only and never load the Vulkan driver unless
+  asked to. `LIGHTCRAFT_GPU_BACKEND=dx12 | vulkan | metal | off` (or wgpu's `WGPU_BACKEND`, which GPU rendering
+  ignored before) chooses the graphics backend; `off` renders on the CPU. The GPU now starts after the window
+  is up, and only when Settings ▸ Performance ▸ Use the GPU for rendering is on; if LightCraft ever dies while
+  starting the GPU, the next launch starts with GPU rendering off and says how to turn it back on.
 - Exports and renders never write over a photo's original (issue #93): exporting into the photo's own folder with
   the same name and "Overwrite" (or Export with Previous repeating it), an exact output path from the control
   channel or MCP, a merge preview path or `lightcraft-cli render IMG.jpg -o IMG.jpg` is refused with a clear
