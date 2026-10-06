@@ -2904,6 +2904,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-faces"
+version = "0.2.1"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "lightcraft-fetch"
 version = "0.4.0"
 dependencies = [
