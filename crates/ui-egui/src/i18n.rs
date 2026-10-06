@@ -143,20 +143,82 @@ mod tests {
         }
         assert!(text.contains("マイフォト"), "{text}");
         assert!(text.contains("すべての写真"), "{text}");
-        ctx.fonts_mut(|fonts| {
-            for family in [egui::FontFamily::Proportional, egui::FontFamily::Name(crate::theme::FONT_SEMIBOLD.into())] {
-                let font = egui::FontId::new(13.0, family);
-                for message in japanese().values() {
-                    for ch in message.chars().filter(|ch| !ch.is_whitespace()) {
-                        assert!(fonts.has_glyph(&font, ch), "Missing glyph {ch} in {message}");
+        if lightcraft_engine::fonts::japanese(lightcraft_engine::CRAFT_FONTS).next().is_none() {
+            eprintln!("skipped glyph coverage: built without CRAFT_FONTS_DIR, so there is no Japanese UI font");
+        } else {
+            ctx.fonts_mut(|fonts| {
+                for family in [egui::FontFamily::Proportional, egui::FontFamily::Name(crate::theme::FONT_SEMIBOLD.into())] {
+                    let font = egui::FontId::new(13.0, family);
+                    for message in japanese().values() {
+                        for ch in message.chars().filter(|ch| !ch.is_whitespace()) {
+                            assert!(fonts.has_glyph(&font, ch), "Missing glyph {ch} in {message}");
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
         // Locale affects presentation only: command ids remain the same.
         let ids = |app: &crate::LightcraftApp| crate::menus::menu_entries(app).into_iter().map(|entry| entry.id).collect::<Vec<_>>();
         let japanese_ids = ids(&app);
         set_language(Language::En);
         assert_eq!(japanese_ids, ids(&app));
+    }
+    /// The UI families, after one frame so the font definitions are loaded.
+    fn fonts_ctx(craft: &'static [lightcraft_engine::CraftFont]) -> egui::Context {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::theme::font_definitions(craft));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        ctx
+    }
+
+    fn ui_families() -> [egui::FontFamily; 3] {
+        [egui::FontFamily::Proportional, egui::FontFamily::Name(crate::theme::FONT_SEMIBOLD.into()), egui::FontFamily::Monospace]
+    }
+
+    /// Built with craft-fonts, Japanese renders with real glyphs (no tofu) in every UI family.
+    #[test]
+    fn craft_fonts_render_japanese_in_the_ui() {
+        if lightcraft_engine::fonts::japanese(lightcraft_engine::CRAFT_FONTS).next().is_none() {
+            eprintln!("skipped: built without CRAFT_FONTS_DIR, so there is no Japanese UI font");
+            return;
+        }
+        let ctx = fonts_ctx(lightcraft_engine::CRAFT_FONTS);
+        ctx.fonts_mut(|fonts| {
+            for family in ui_families() {
+                let font = egui::FontId::new(13.0, family);
+                for ch in "日本語の文字".chars() {
+                    assert!(fonts.has_glyph(&font, ch), "{ch} in {font:?}");
+                }
+                let galley = fonts.layout_no_wrap("日本語の文字".into(), font.clone(), egui::Color32::WHITE);
+                assert!(galley.size().x > 13.0 * 5.0, "{font:?}: six full-width glyphs, {:?}", galley.size());
+            }
+        });
+    }
+
+    /// Built without craft-fonts, the UI (in Japanese, too) still installs its fonts and runs;
+    /// Latin text keeps Inter.
+    #[test]
+    fn the_ui_works_without_craft_fonts() {
+        let ctx = fonts_ctx(&[]);
+        ctx.fonts_mut(|fonts| {
+            // (Not Monospace: egui's `has_glyph` reports false for glyphs of the family's
+            // replacement-glyph face, which there is Hack, the face that draws Latin.)
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Name(crate::theme::FONT_SEMIBOLD.into())] {
+                let font = egui::FontId::new(13.0, family);
+                assert!("LightCraft".chars().all(|ch| fonts.has_glyph(&font, ch)), "{font:?}");
+            }
+        });
+        let mut app = crate::LightcraftApp::new(lightcraft_engine::Session::with_demo(), Default::default());
+        app.ui.language = Language::Ja;
+        for frame in 0..3 {
+            let input = crate::headless::HeadlessView::raw_input(egui::vec2(1200.0, 800.0), 1.0, frame as f64 / 60.0, vec![]);
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        }
+        set_language(Language::En);
     }
 }
