@@ -3096,6 +3096,7 @@ dependencies = [
  "lightcraft-color",
  "lightcraft-develop",
  "lightcraft-engine",
+ "lightcraft-faces",
  "lightcraft-geom",
  "lightcraft-meta",
  "lightcraft-pipeline",
