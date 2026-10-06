@@ -413,6 +413,15 @@ mod tests {
         assert_eq!(after.develop, before.develop);
         assert_eq!(after.history.len(), before.history.len(), "no history entry while hovering");
         assert!(h.app.session.undo.is_empty());
+        // hovering down across group headers within the presets list retains the preview (no flicker)
+        h.request("ui.hoverWidget", json!({"id": "presetGroup:Creative"}), t);
+        h.step();
+        assert_eq!(h.app.hover_preview.as_ref().map(|p| p.label.as_str()), Some("Preset: High Contrast B&W"));
+        // hovering another preset switches smoothly to it
+        h.request("ui.hoverWidget", json!({"id": "preset:lc.warm-glow"}), t);
+        h.settle(SETTLE);
+        h.step();
+        assert_eq!(h.app.hover_preview.as_ref().map(|p| p.label.as_str()), Some("Preset: Warm Glow"));
         // thumbnails: variant textures for the visible presets
         h.app.ui.preset_thumbs = true;
         h.request("ui.move", json!({"x": 5, "y": 500}), t);

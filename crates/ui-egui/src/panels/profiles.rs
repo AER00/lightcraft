@@ -81,6 +81,20 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(6.0);
     }
     ui.add_space(30.0);
+    let last_hover_id = egui::Id::new("last-profile-hover");
+    let pointer_in_profiles = ui.ctx().input(|i| i.pointer.hover_pos()).is_some_and(|pos| ui.max_rect().contains(pos));
+    if pointer_in_profiles {
+        if app.hover_preview.is_none()
+            && let Some((saved_id, saved_profile_id)) = ui.data(|m| m.get_temp::<(PhotoId, String)>(last_hover_id))
+            && saved_id == id
+            && let Some(p) = profile(&saved_profile_id)
+        {
+            let s = with_profile(&d, p);
+            app.hover_preview = Some(HoverPreview { label: crate::i18n::tr_format!("Profile: {}", p.name), settings: s });
+        }
+    } else {
+        ui.data_mut(|m| m.remove::<(PhotoId, String)>(last_hover_id));
+    }
 }
 
 /// `d` with profile `p` (at 100 % unless it is the applied one).
@@ -127,6 +141,7 @@ fn cell_ui(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings, id: 
     }
     if resp.hovered() && !applied && !over_star {
         app.hover_preview = Some(HoverPreview { label: crate::i18n::tr_format!("Profile: {}", p.name), settings: s.clone() });
+        ui.data_mut(|m| m.insert_temp(egui::Id::new("last-profile-hover"), (id, p.id.to_string())));
     }
     let resp = resp.on_hover_text(format!("{} ({})", p.name, p.group));
     if resp.clicked() {
@@ -134,6 +149,7 @@ fn cell_ui(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings, id: 
             let _ = app.run("profile.favorite", json!({"id": p.id}));
         } else if !applied {
             let _ = app.run("develop.profile", json!({"id": p.id, "amount": 100}));
+            ui.data_mut(|m| m.remove::<(PhotoId, String)>(egui::Id::new("last-profile-hover")));
         }
     }
 }
