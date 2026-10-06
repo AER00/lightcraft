@@ -375,13 +375,16 @@ fn probe_all(probe: Option<&crate::media::FileProbe>, paths: &[String], progress
 
 /// Copy `src` into `root`/`folders` as `name` (default: its own name), made unique with -1, -2…;
 /// returns the new path. The copy is verified ([`crate::import_move::copy_new`]: a new file,
-/// synced and compared byte for byte); a bad one is removed and the photo reported as failed.
-fn copy_into(root: &Path, src: &str, folders: &[String], name: Option<&str>) -> Result<String, String> {
+/// synced and checked against `probe_hash`, the content hash the probe computed — or compared
+/// byte for byte with the source when there is none); a bad one is removed and the photo
+/// reported as failed.
+fn copy_into(root: &Path, src: &str, folders: &[String], name: Option<&str>, probe_hash: Option<&str>) -> Result<String, String> {
     let dir = folders.iter().fold(root.to_path_buf(), |d, f| d.join(f));
     let name = name
         .map(str::to_string)
         .unwrap_or_else(|| Path::new(src).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "photo".into()));
-    crate::import_move::copy_new(Path::new(src), &dir, &name).map(|p| p.to_string_lossy().to_string())
+    let expect = probe_hash.and_then(lightcraft_preview::Hash128::parse);
+    crate::import_move::copy_new(Path::new(src), &dir, &name, expect).map(|p| p.to_string_lossy().to_string())
 }
 
 /// What a [`scan`] needs from the session, so it can run on another thread (a folder on a network
@@ -784,7 +787,7 @@ impl ImportJob {
                             let reason = "a symbolic link: the file it points to was copied, the link and its target stay";
                             out.items.push(PreparedItem::Kept(Kept { path: path.clone(), reason: reason.into() }));
                         }
-                        match copy_into(root, &path, &folders, name.as_deref()) {
+                        match copy_into(root, &path, &folders, name.as_deref(), info.content_hash.as_deref()) {
                             Ok(p) => p,
                             Err(e) => {
                                 out.items.push(PreparedItem::Failed(path, e));

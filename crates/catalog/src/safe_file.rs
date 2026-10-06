@@ -1,11 +1,23 @@
 //! Crash-safe writes of user-visible files: exports, renders, DNG conversions, smart previews and
 //! XMP sidecars all go through here (the catalog's own files use [`crate::store::FsStore`]).
 //!
+//! **Write policy** (issue #134): what can't be recreated — originals, XMP sidecars, the catalog,
+//! settings, DNGs that replace raws, smart previews (the only stand-in while an original is
+//! offline), an edit copy that becomes a library photo — is written **durably**: synced to disk
+//! before it counts as written. What can always be made again from the originals — exports,
+//! renders, screenshots, merge previews — is written **atomically** only: a half-written file
+//! never replaces a good one, but there is no per-file sync (on a USB drive or a NAS that sync
+//! dominates a large export).
+//!
 //! - [`write_atomic`] replaces a file so that after a crash, a full disk or an unplugged drive
 //!   either the old or the complete new content is there — never a truncated mix. The content
 //!   goes to a new temp file in the same folder (unique name, `create_new`), is synced to disk and
 //!   renamed over the target; then the folder is synced (POSIX). Any failure removes the temp
 //!   file and leaves the target as it was.
+//! - [`write_atomic_nosync`] is the same temp file + rename without the two syncs, for
+//!   recreatable outputs only: a failed write still removes the temp file and leaves the target as
+//!   it was, but after a power cut the new file may be lost (on some file systems left empty) —
+//!   it is then simply exported again.
 //! - [`write_new`] / [`write_new_unique`] write a file that must not exist yet: the same temp file
 //!   and sync, plus a read-back check, and the file then appears under its final name **without
 //!   replacing anything** (a hard link, which fails on a taken name; a check-then-rename where the
@@ -21,6 +33,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 thread_local! {
     static FAIL_AFTER: Cell<Option<u64>> = const { Cell::new(None) };
+    static SYNCS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// How many file and folder syncs this module made **on the calling thread** (for tests: a
+/// durable write path syncs, a recreatable output doesn't).
+#[doc(hidden)]
+pub fn syncs_on_this_thread() -> u64 {
+    SYNCS.with(Cell::get)
+}
+
+fn sync_file(f: &File) -> io::Result<()> {
+    SYNCS.with(|c| c.set(c.get() + 1));
+    f.sync_all()
 }
 
 /// Fault injection for tests (in any crate): while the returned guard lives, every write made by
@@ -78,7 +103,7 @@ fn parent_of(path: &Path) -> &Path {
 /// where NTFS journals the rename itself, so errors are ignored.
 pub fn sync_dir(dir: &Path) {
     if let Ok(d) = File::open(dir) {
-        let _ = d.sync_all();
+        let _ = sync_file(&d);
     }
 }
 
@@ -100,9 +125,9 @@ fn create_temp(path: &Path) -> io::Result<(PathBuf, File)> {
     Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("no free temp file name in {}", dir.display())))
 }
 
-/// Write a temp file next to `path` with what `fill` writes, synced to disk. On failure the temp
-/// file is removed. Returns its path and length.
-fn write_temp(path: &Path, fill: &mut dyn FnMut(&mut dyn Write) -> io::Result<()>) -> io::Result<(PathBuf, u64)> {
+/// Write a temp file next to `path` with what `fill` writes, synced to disk when `sync`. On
+/// failure the temp file is removed. Returns its path and length.
+fn write_temp(path: &Path, sync: bool, fill: &mut dyn FnMut(&mut dyn Write) -> io::Result<()>) -> io::Result<(PathBuf, u64)> {
     let (tmp, file) = create_temp(path)?;
     let r = (|| {
         let limit = FAIL_AFTER.with(Cell::get);
@@ -111,7 +136,9 @@ fn write_temp(path: &Path, fill: &mut dyn FnMut(&mut dyn Write) -> io::Result<()
         w.flush()?;
         let n = w.n;
         let f = w.inner.into_inner().map_err(|e| e.into_error())?;
-        f.sync_all()?;
+        if sync {
+            sync_file(&f)?;
+        }
         Ok(n)
     })();
     match r {
@@ -132,12 +159,26 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
 /// [`write_atomic`] with streamed content: `fill` writes it (an error aborts and leaves the old
 /// file). Returns the length written.
 pub fn write_atomic_with(path: &Path, fill: &mut dyn FnMut(&mut dyn Write) -> io::Result<()>) -> io::Result<u64> {
-    let (tmp, n) = write_temp(path, fill)?;
+    replace_with(path, true, fill)
+}
+
+/// Replace (or create) `path` with `data` atomically but **without syncing** it to disk — only for
+/// outputs that can always be recreated (exports, renders, screenshots); see the module docs.
+/// Anything that can't be made again goes through [`write_atomic`].
+pub fn write_atomic_nosync(path: &Path, data: &[u8]) -> io::Result<()> {
+    replace_with(path, false, &mut |w| w.write_all(data)).map(|_| ())
+}
+
+/// Temp file (synced when `sync`) renamed over `path`, then the folder synced when `sync`.
+fn replace_with(path: &Path, sync: bool, fill: &mut dyn FnMut(&mut dyn Write) -> io::Result<()>) -> io::Result<u64> {
+    let (tmp, n) = write_temp(path, sync, fill)?;
     if let Err(e) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }
-    sync_dir(parent_of(path));
+    if sync {
+        sync_dir(parent_of(path));
+    }
     Ok(n)
 }
 
@@ -155,8 +196,11 @@ pub fn write_new_unique(candidates: &mut dyn Iterator<Item = PathBuf>, data: &[u
     let Some(first) = candidates.peek().cloned() else {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "no file name to write"));
     };
-    let (tmp, _) = write_temp(&first, &mut |w| w.write_all(data))?;
+    let (tmp, _) = write_temp(&first, true, &mut |w| w.write_all(data))?;
     let r = (|| {
+        // Kept (issue #134 point 4): these files replace raws (Convert / Copy as DNG) or become
+        // library photos (merges). On a local disk the read usually comes from the cache, but on a
+        // network volume it can go back to the server, and next to encoding a DNG it costs little.
         if !same_content(&tmp, data)? {
             return Err(io::Error::other("the written file reads back different (failing drive or connection?)"));
         }
@@ -284,6 +328,33 @@ mod tests {
         assert!(r.is_err());
         assert_eq!(fs::read(&p).unwrap(), b"the original bytes");
         assert_eq!(names(&d), vec!["photo.jpg"]);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn recreatable_outputs_are_atomic_without_a_sync() {
+        let d = temp("nosync");
+        let p = d.join("export.jpg");
+        let before = syncs_on_this_thread();
+        write_atomic_nosync(&p, b"one").unwrap();
+        write_atomic_nosync(&p, b"two two").unwrap();
+        assert_eq!(syncs_on_this_thread(), before, "no file or folder sync");
+        assert_eq!(fs::read(&p).unwrap(), b"two two");
+        assert_eq!(names(&d), vec!["export.jpg"], "no temp file left");
+        // still atomic: a failure part-way leaves the previous file and no temp file
+        {
+            let _f = fail_writes_after(3);
+            assert!(write_atomic_nosync(&p, &[9u8; 10_000]).is_err());
+        }
+        assert_eq!(fs::read(&p).unwrap(), b"two two");
+        assert_eq!(names(&d), vec!["export.jpg"]);
+        // the durable writers do sync (the file; the folder too where it can be opened)
+        let before = syncs_on_this_thread();
+        write_atomic(&p, b"three").unwrap();
+        let mid = syncs_on_this_thread();
+        assert!(mid > before);
+        write_new(&d.join("new.dng"), b"dng").unwrap();
+        assert!(syncs_on_this_thread() > mid);
         let _ = fs::remove_dir_all(&d);
     }
 
