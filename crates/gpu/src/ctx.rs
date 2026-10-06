@@ -276,14 +276,15 @@ fn module_source(m: &Module, consts: &str) -> String {
 
 impl Gpu {
     /// Create a device on the best available adapter (no software fallback), or why there is none.
-    pub fn new() -> Result<Gpu, String> {
+    pub fn new(backends: wgpu::Backends) -> Result<Gpu, String> {
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-        desc.backends = wgpu::Backends::PRIMARY;
+        // only these drivers are loaded (`crate::backend`: never Vulkan on Windows unless asked)
+        desc.backends = backends;
         let instance = wgpu::Instance::new(desc);
         let adapter = pollster::block_on(
             instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() }),
         )
-        .map_err(|e| format!("no GPU adapter ({e})"))?;
+        .map_err(|e| format!("no GPU adapter among {backends:?} ({e})"))?;
         let info = adapter.get_info();
         if info.device_type == wgpu::DeviceType::Cpu {
             log::info!("gpu: only a software adapter ({}), using the CPU pipeline", info.name);
