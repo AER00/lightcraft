@@ -58,6 +58,17 @@ impl OriginalGuard {
                 }
             }
         }
+        // An imported symlink can have a different name from its original. A write to
+        // that original would change what the library reads through the link. Only do
+        // this fallback for existing targets that the name index did not protect.
+        for (p, what) in self.by_name.values().flatten() {
+            if std::fs::read_link(p).is_ok() && same_file(p, target) {
+                return Err(format!(
+                    "{} is {what} in the library: LightCraft never writes over an original (choose another folder or file name)",
+                    target.display()
+                ));
+            }
+        }
         Ok(())
     }
 }
