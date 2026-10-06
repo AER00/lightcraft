@@ -286,7 +286,10 @@ mod tests {
             let mut h = demo([900.0, 600.0]);
             let r = h.request("ui.set", json!({"view": "detail"}), Duration::from_secs(10));
             assert_eq!(r["ok"], true, "{r}");
-            h.snapshot(SETTLE)
+            // Compare only fully settled frames: a timed-out settle would compare half-rendered
+            // pictures and fail as a misleading pixel diff (seen on loaded CI machines).
+            assert!(h.settle(Duration::from_secs(300)), "the demo detail view did not settle within 300 s");
+            h.paint()
         };
         let (a, b) = (shot(), shot());
         assert_eq!(a.size, b.size);
