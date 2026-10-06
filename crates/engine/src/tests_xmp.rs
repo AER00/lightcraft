@@ -248,6 +248,44 @@ fn removing_a_region_is_undoable_and_leaves_the_sidecar_alone() {
     let _ = std::fs::remove_dir_all(&src);
 }
 
+/// Resizing a face box is a catalog-only, undoable edit with strict input handling; it leaves the
+/// sidecar alone like removal does.
+#[test]
+fn resizing_a_region_validates_clamps_undoes_and_leaves_the_sidecar_alone() {
+    let src = temp_dir("region-resize");
+    write_png(&src.join("portrait.png"), 9);
+    std::fs::write(src.join("portrait.xmp"), MWG_REGIONS).unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    s.execute("library.xmpPreferences", &json!({"autoWrite": true})).unwrap();
+    let before = std::fs::read(src.join("portrait.xmp")).unwrap();
+    let original = s.catalog.photo(id).unwrap().meta.regions[0].rect;
+    let set = |s: &mut Session, rect: serde_json::Value| s.execute("photo.setRegion", &json!({"index": 0, "rect": rect}));
+    // hostile input is an error and changes nothing
+    for bad in [
+        json!({"x0": 0.1, "y0": 0.1, "x1": 0.1, "y1": 0.5}),
+        json!({"x0": 0.1, "y0": 0.1, "x1": 0.1001, "y1": 0.5}),
+        json!({"x0": 0.1, "y0": 0.1, "x1": 0.5}),
+        json!({"x0": "a", "y0": 0.1, "x1": 0.5, "y1": 0.5}),
+        json!({"x0": null, "y0": 0.1, "x1": 0.5, "y1": 0.5}),
+    ] {
+        assert!(set(&mut s, bad.clone()).is_err(), "{bad}");
+    }
+    assert!(s.execute("photo.setRegion", &json!({"index": 9, "rect": {"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.5}})).is_err(), "no such region");
+    assert!(s.execute("photo.setRegion", &json!({"index": 0})).is_err(), "no rect");
+    assert_eq!(s.catalog.photo(id).unwrap().meta.regions[0].rect, original);
+    // corners given in any order and outside the photo are clamped into it
+    let r = set(&mut s, json!({"x0": 0.6, "y0": 1.5, "x1": -0.2, "y1": 0.2})).unwrap();
+    assert_eq!(r["rect"], json!({"x0": 0.0, "y0": 0.2, "x1": 0.6, "y1": 1.0}));
+    let now = s.catalog.photo(id).unwrap().meta.regions[0].rect;
+    assert_eq!((now.x0, now.y0, now.x1, now.y1), (0.0, 0.2, 0.6, 1.0));
+    assert_eq!(std::fs::read(src.join("portrait.xmp")).unwrap(), before, "the sidecar is untouched");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.photo(id).unwrap().meta.regions[0].rect, original);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
 fn synthetic_dng(xmp: &str) -> Vec<u8> {
     synthetic_dng_with(Some(xmp), lightcraft_meta::Metadata::default())
 }

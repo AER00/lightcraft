@@ -336,10 +336,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if !fullscreen {
         filter_pill(app, ui, canvas);
     }
-    if app.ui.face_boxes
-        && let Some(index) = region_overlay(ui, &p, &map, &photo)
-    {
-        let _ = app.run("photo.removeRegion", json!({"id": id.0, "index": index}));
+    if app.ui.face_boxes {
+        match region_overlay(ui, &p, &map, &photo) {
+            Some(RegionEdit::Remove(index)) => {
+                let _ = app.run("photo.removeRegion", json!({"id": id.0, "index": index}));
+            }
+            Some(RegionEdit::Resize(index, r)) => {
+                let _ = app.run("photo.setRegion", json!({"id": id.0, "index": index, "rect": {"x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1}}));
+            }
+            None => {}
+        }
     }
     // a fine grid while a transform (geometry) slider is dragged, to judge verticals
     if app.ui.dragging_control.as_deref().is_some_and(|c| c.starts_with("geometry.")) {
@@ -428,21 +434,90 @@ fn info_overlay(app: &LightcraftApp, p: &egui::Painter, canvas: Rect, photo: &li
     register(p.ctx(), "canvas:infoOverlay", Rect::from_min_max(canvas.min, pos2(canvas.left() + 320.0, y)));
 }
 
+/// What the user did to a face box this frame.
+enum RegionEdit {
+    /// The × was clicked.
+    Remove(usize),
+    /// A handle drag ended: the region's new box (normalized, upright frame).
+    Resize(usize, lightcraft_geom::Rect),
+}
+
+/// Handles of a box: (x, y) as fractions of its width and height, and the cursor they show.
+const REGION_HANDLES: [(f32, f32, egui::CursorIcon); 8] = [
+    (0.0, 0.0, egui::CursorIcon::ResizeNwSe),
+    (0.5, 0.0, egui::CursorIcon::ResizeVertical),
+    (1.0, 0.0, egui::CursorIcon::ResizeNeSw),
+    (1.0, 0.5, egui::CursorIcon::ResizeHorizontal),
+    (1.0, 1.0, egui::CursorIcon::ResizeNwSe),
+    (0.5, 1.0, egui::CursorIcon::ResizeVertical),
+    (0.0, 1.0, egui::CursorIcon::ResizeNeSw),
+    (0.0, 0.5, egui::CursorIcon::ResizeHorizontal),
+];
+
 /// Face/pet/focus regions read from XMP (MWG-RS), drawn as boxes over the photo. Hovering a box shows
-/// a × in its corner; clicking it returns that region's index so the caller can remove it (a
-/// catalog-only edit: LightCraft doesn't write regions to XMP).
-fn region_overlay(ui: &egui::Ui, p: &egui::Painter, map: &CanvasMap, photo: &lightcraft_catalog::Photo) -> Option<usize> {
+/// a × in its corner and eight resize handles. A drag previews the new box live and is reported once,
+/// on release (one undo step); the × reports the region to remove. Both are catalog-only edits:
+/// LightCraft doesn't write regions to XMP.
+fn region_overlay(ui: &egui::Ui, p: &egui::Painter, map: &CanvasMap, photo: &lightcraft_catalog::Photo) -> Option<RegionEdit> {
     let t = Tokens::get(p.ctx());
     let clip = p.clip_rect();
     let pointer = ui.input(|i| i.pointer.hover_pos());
-    let mut remove = None;
+    // the box being dragged: (region index, its box so far)
+    let drag_key = egui::Id::new("region-drag");
+    let live: Option<(usize, lightcraft_geom::Rect)> = ui.data(|d| d.get_temp(drag_key));
+    let mut edit = None;
     for (index, r) in photo.meta.regions.iter().enumerate() {
-        let rect = Rect::from_two_pos(map.screen(Point::new(r.rect.x0, r.rect.y0)), map.screen(Point::new(r.rect.x1, r.rect.y1)));
+        let dragging = live.filter(|(i, _)| *i == index);
+        let norm = dragging.map_or(r.rect, |(_, n)| n);
+        let rect = Rect::from_two_pos(map.screen(Point::new(norm.x0, norm.y0)), map.screen(Point::new(norm.x1, norm.y1)));
         // white with a black keyline just outside it, so the box shows on any background
         p.rect_stroke(rect.expand(1.0), 0.0, Stroke::new(1.0, Color32::from_black_alpha(190)), StrokeKind::Outside);
         p.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::WHITE), StrokeKind::Outside);
-        if pointer.is_some_and(|h| rect.expand(3.0).contains(h)) {
-            let xr = Rect::from_center_size(pos2(rect.right() - 11.0, rect.top() + 11.0), vec2(16.0, 16.0));
+        if dragging.is_some() || (live.is_none() && pointer.is_some_and(|h| rect.expand(8.0).contains(h))) {
+            for (h, (fx, fy, cursor)) in REGION_HANDLES.iter().enumerate() {
+                let c = pos2(rect.left() + fx * rect.width(), rect.top() + fy * rect.height());
+                let resp = ui.interact(Rect::from_center_size(c, vec2(14.0, 14.0)), egui::Id::new(("region-handle", index, h)), Sense::drag());
+                if resp.hovered() || resp.dragged() {
+                    ui.ctx().set_cursor_icon(*cursor);
+                }
+                let sq = Rect::from_center_size(c, vec2(7.0, 7.0));
+                p.rect_filled(sq, 0.0, if resp.hovered() || resp.dragged() { Color32::from_rgb(120, 190, 255) } else { Color32::WHITE });
+                p.rect_stroke(sq, 0.0, Stroke::new(1.0, Color32::from_black_alpha(220)), StrokeKind::Outside);
+                if resp.dragged()
+                    && let Some(pp) = resp.interact_pointer_pos()
+                {
+                    // move the dragged edge(s) to the pointer, never closer than 12 px to the opposite one
+                    let mut n = rect;
+                    if *fx == 0.0 {
+                        n.min.x = pp.x.min(n.max.x - 12.0);
+                    } else if *fx == 1.0 {
+                        n.max.x = pp.x.max(n.min.x + 12.0);
+                    }
+                    if *fy == 0.0 {
+                        n.min.y = pp.y.min(n.max.y - 12.0);
+                    } else if *fy == 1.0 {
+                        n.max.y = pp.y.max(n.min.y + 12.0);
+                    }
+                    let (a, b) = (map.norm(n.min), map.norm(n.max));
+                    let new = lightcraft_geom::Rect {
+                        x0: a.x.min(b.x).clamp(0.0, 1.0),
+                        y0: a.y.min(b.y).clamp(0.0, 1.0),
+                        x1: a.x.max(b.x).clamp(0.0, 1.0),
+                        y1: a.y.max(b.y).clamp(0.0, 1.0),
+                    };
+                    ui.data_mut(|d| d.insert_temp(drag_key, (index, new)));
+                    ui.ctx().request_repaint();
+                }
+                if resp.drag_stopped() {
+                    if let Some((i, new)) = ui.data(|d| d.get_temp::<(usize, lightcraft_geom::Rect)>(drag_key)) {
+                        edit = Some(RegionEdit::Resize(i, new));
+                    }
+                    ui.data_mut(|d| d.remove_temp::<(usize, lightcraft_geom::Rect)>(drag_key));
+                }
+            }
+        }
+        if dragging.is_none() && live.is_none() && pointer.is_some_and(|h| rect.expand(3.0).contains(h)) {
+            let xr = Rect::from_center_size(pos2(rect.right() - 13.0, rect.top() + 13.0), vec2(16.0, 16.0));
             let resp = ui.interact(xr, egui::Id::new(("region-x", index)), Sense::click());
             register(ui.ctx(), format!("regionRemove:{index}"), xr);
             let fill = Color32::from_black_alpha(if resp.hovered() { 235 } else { 190 });
@@ -453,7 +528,7 @@ fn region_overlay(ui: &egui::Ui, p: &egui::Painter, map: &CanvasMap, photo: &lig
             p.line_segment([c - vec2(m, m), c + vec2(m, m)], cross);
             p.line_segment([c - vec2(m, -m), c + vec2(m, -m)], cross);
             if resp.on_hover_text("Remove this face box (undo with Edit ▸ Undo)").clicked() {
-                remove = Some(index);
+                edit = Some(RegionEdit::Remove(index));
             }
         }
         let Some(name) = &r.name else { continue };
@@ -476,7 +551,7 @@ fn region_overlay(ui: &egui::Ui, p: &egui::Painter, map: &CanvasMap, photo: &lig
         p.add(egui::Shape::convex_polygon(vec![pos2(cx - caret, base), pos2(cx + caret, base), pos2(cx, tip)], fill, Stroke::NONE));
         p.galley(label.min + pad, g, Color32::from_gray(225));
     }
-    remove
+    edit
 }
 
 /// A small pill at the loupe's top left naming the active filters: the filmstrip and Next / Previous
