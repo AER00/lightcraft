@@ -207,6 +207,67 @@ fn copy_import_verifies_each_copy() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// Copy verifies against the probe's content hash (issue #134): the hash, not a re-read of the
+/// source, is the reference — a copy that matches the source but not the hash is refused, a
+/// corrupted copy is caught, and the file hash agrees with `hash_bytes` across read chunks.
+#[test]
+fn copy_is_verified_against_the_probe_hash() {
+    use crate::import_move::copy_verified;
+    let base = temp_dir("copyhash");
+    let src = base.join("src.bin");
+    // larger than one 1 MB read, not a multiple of it
+    let bytes: Vec<u8> = (0..(3 << 20) + 12_345u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
+    std::fs::write(&src, &bytes).unwrap();
+    let good = lightcraft_preview::hash_bytes(&bytes);
+    copy_verified(&src, &base.join("ok.bin"), Some(good)).unwrap();
+    assert_eq!(std::fs::read(base.join("ok.bin")).unwrap(), bytes);
+    // a hash that doesn't match: refused (a byte compare with the source would have passed)
+    let stale = lightcraft_preview::hash_bytes(b"what the probe read earlier");
+    let e = copy_verified(&src, &base.join("stale.bin"), Some(stale)).unwrap_err();
+    assert!(e.to_string().contains("differs"), "{e}");
+    assert!(!base.join("stale.bin").exists(), "the refused copy is removed");
+    // a copy that comes out different: caught by the hash
+    inject(Fault::Corrupt);
+    let r = copy_verified(&src, &base.join("bad.bin"), Some(good));
+    inject(Fault::None);
+    assert!(r.is_err());
+    assert!(!base.join("bad.bin").exists());
+    assert_eq!(std::fs::read(&src).unwrap(), bytes, "the source is untouched");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A file replaced after Review Import probed it is not imported on the strength of the old probe:
+/// its copy no longer matches the probe's hash, so it's reported as failed and nothing is left.
+#[test]
+fn copy_import_refuses_a_file_changed_since_the_review() {
+    let base = temp_dir("copychanged");
+    let (card, dest) = (base.join("card"), base.join("out"));
+    write_png(&card.join("a.png"), 3);
+    let mut s = session();
+    let r = s.execute("library.importPreview", &json!({"paths": [card.to_string_lossy()]})).unwrap();
+    assert_eq!(r["scanned"], 1, "{r}");
+    write_png(&card.join("a.png"), 9); // other pixels
+    let r = s
+        .execute(
+            "library.import",
+            &json!({"paths": [card.to_string_lossy()], "mode": "copy", "destination": dest.to_string_lossy(), "organize": "flat"}),
+        )
+        .unwrap();
+    assert_eq!(len(&r, "imported"), 0, "{r}");
+    assert_eq!(len(&r, "failed"), 1, "{r}");
+    assert!(r.to_string().contains("changed meanwhile"), "{r}");
+    assert_eq!(files_under(&dest), Vec::<String>::new());
+    // importing again probes afresh and succeeds
+    let r = s
+        .execute(
+            "library.import",
+            &json!({"paths": [card.to_string_lossy()], "mode": "copy", "destination": dest.to_string_lossy(), "organize": "flat"}),
+        )
+        .unwrap();
+    assert_eq!(len(&r, "imported"), 1, "{r}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A source that can't be removed (a read-only card) stays and is reported; the photo is
 /// imported from its copy.
 #[test]
@@ -318,5 +379,57 @@ fn move_into_the_library_is_saved_before_sources_go() {
     let mut again = Session::new().with_fs();
     again.open_library(&lib, false).unwrap();
     assert_eq!(photo_paths(&again), [want.to_string_lossy()]);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Timing for issue #134 (not a pass/fail test): `cargo test -p lightcraft-engine --release
+/// write_policy_timing -- --ignored --nocapture`. Writes N export-sized files durably (temp +
+/// sync + rename) and atomically only, and copies N files verified byte for byte and against the
+/// probe hash, alternating so a loaded machine affects both alike. `LIGHTCRAFT_BENCH_DIR` puts
+/// the files on another volume (a USB drive or a NAS is where the difference shows).
+#[test]
+#[ignore]
+fn write_policy_timing() {
+    use crate::import_move::copy_verified;
+    use lightcraft_catalog::safe_file::{write_atomic, write_atomic_nosync};
+    use std::time::{Duration, Instant};
+    let root = std::env::var_os("LIGHTCRAFT_BENCH_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let base = root.join(format!("lc-write-policy-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let data = |n: usize, seed: u32| -> Vec<u8> { (0..n as u32).map(|i| (i.wrapping_add(seed).wrapping_mul(2_654_435_761) >> 11) as u8).collect() };
+    let (n, size) = (200usize, 300 << 10);
+    let (mut synced, mut unsynced) = (Duration::ZERO, Duration::ZERO);
+    for i in 0..n {
+        let b = data(size, i as u32);
+        let t = Instant::now();
+        write_atomic(&base.join(format!("sync-{i}.jpg")), &b).unwrap();
+        synced += t.elapsed();
+        let t = Instant::now();
+        write_atomic_nosync(&base.join(format!("nosync-{i}.jpg")), &b).unwrap();
+        unsynced += t.elapsed();
+    }
+    println!("export {n} × {} KB: write_atomic (synced) {synced:?}, write_atomic_nosync {unsynced:?}", size >> 10);
+    let (n, size) = (40usize, 8 << 20);
+    let card = base.join("card");
+    std::fs::create_dir_all(&card).unwrap();
+    let hashes: Vec<_> = (0..n)
+        .map(|i| {
+            let b = data(size, 7 * i as u32);
+            std::fs::write(card.join(format!("{i}.raw")), &b).unwrap();
+            lightcraft_preview::hash_bytes(&b)
+        })
+        .collect();
+    let (mut bytewise, mut hashed) = (Duration::ZERO, Duration::ZERO);
+    for (i, h) in hashes.iter().enumerate() {
+        let src = card.join(format!("{i}.raw"));
+        let t = Instant::now();
+        copy_verified(&src, &base.join(format!("bytes-{i}.raw")), None).unwrap();
+        bytewise += t.elapsed();
+        let t = Instant::now();
+        copy_verified(&src, &base.join(format!("hash-{i}.raw")), Some(*h)).unwrap();
+        hashed += t.elapsed();
+    }
+    println!("copy {n} × {} MB: byte compare with the source {bytewise:?}, probe hash {hashed:?}", size >> 20);
     let _ = std::fs::remove_dir_all(&base);
 }

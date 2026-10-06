@@ -323,3 +323,24 @@ fn a_failed_export_write_keeps_the_previous_file() {
     assert_ne!(std::fs::read(&prev).unwrap(), b"last week's export");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Issue #134: exports can always be made again, so they are written atomically but not synced to
+/// disk file by file; an edit copy that becomes a library photo still is.
+#[test]
+fn exports_are_atomic_without_a_sync() {
+    use crate::export::{Conflict, Destination};
+    use lightcraft_catalog::safe_file::syncs_on_this_thread;
+    let (mut s, id, dir, _src, _) = library_with_jpeg("export-nosync");
+    let out = dir.join("out");
+    let to = Destination { dir: out.to_string_lossy().to_string(), exact: None };
+    let o = ExportOptions { conflict: Conflict::Unique, ..Default::default() };
+    let before = syncs_on_this_thread();
+    for _ in 0..3 {
+        disk_batch(&mut s, id, &o, &to).unwrap();
+    }
+    assert_eq!(syncs_on_this_thread(), before, "no per-file sync for exports");
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 3, "three exports, no temp files");
+    crate::export::write_file_durable(&out.join("edit.tif").to_string_lossy(), b"tiff").unwrap();
+    assert!(syncs_on_this_thread() > before, "the durable writer syncs");
+    let _ = std::fs::remove_dir_all(&dir);
+}
