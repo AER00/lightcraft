@@ -133,3 +133,8 @@
   now develop from the raw data instead of the camera's embedded JPEG, so a B&W or other picture style set in the
   camera no longer gets baked in. Photos already imported as "preview only" switch over on Reload. (Files that
   Nikon splits into two differently compressed halves still use the preview for now.)
+- Sony ARWs from before about 2017 (RX100, RX100 II–V, RX10, NEX, SLT, ILCE-6000, A7 / A7 II / A7R II and their
+  siblings) no longer open bright green (issue #148): their as-shot white balance and black level are read from the
+  file (Sony stores them only in scrambled maker-note data on these bodies), the few columns of padding at the right
+  edge are cropped away, and "12-bit uncompressed" files are no longer clipped. The RX100 series renders much closer
+  to the camera's own JPEG.
