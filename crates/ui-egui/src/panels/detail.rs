@@ -333,6 +333,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let map = CanvasMap::new(&frame, img_rect);
     let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
     info_overlay(app, &p, canvas, &photo);
+    if !fullscreen {
+        filter_pill(app, ui, canvas);
+    }
     if app.ui.face_boxes
         && let Some(index) = region_overlay(ui, &p, &map, &photo)
     {
@@ -474,6 +477,34 @@ fn region_overlay(ui: &egui::Ui, p: &egui::Painter, map: &CanvasMap, photo: &lig
         p.galley(label.min + pad, g, Color32::from_gray(225));
     }
     remove
+}
+
+/// A small pill at the loupe's top left naming the active filters: the filmstrip and Next / Previous
+/// follow them, so a filter must never be invisible here. A click clears them all. It sits in the
+/// canvas margin, so the photo does not move.
+fn filter_pill(app: &mut LightcraftApp, ui: &mut egui::Ui, canvas: Rect) {
+    let chips = lightcraft_engine::filter_chips(&app.session.filter, &app.session.catalog);
+    if chips.is_empty() {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    let p = ui.painter_at(canvas);
+    let label = chips.iter().map(|c| c.label.as_str()).collect::<Vec<_>>().join("  ·  ");
+    let g = p.layout_no_wrap(format!("Filtered: {label}"), t.font(12.0), Color32::from_gray(225));
+    let w = (g.size().x + 40.0).min((canvas.width() - 24.0).max(60.0));
+    let r = Rect::from_min_size(canvas.min + vec2(12.0, 3.0), vec2(w, 20.0));
+    let resp = ui.interact(r, egui::Id::new("loupe-filter-pill"), Sense::click());
+    register(ui.ctx(), "loupe:filters", r);
+    p.rect_filled(r, 10.0, Color32::from_black_alpha(if resp.hovered() { 225 } else { 185 }));
+    let text_clip = Rect::from_min_max(r.min, pos2(r.right() - 24.0, r.max.y));
+    p.with_clip_rect(text_clip).galley(pos2(r.left() + 10.0, r.center().y - g.size().y / 2.0), g, Color32::from_gray(225));
+    let (c, m) = (pos2(r.right() - 13.0, r.center().y), 3.0);
+    let cross = Stroke::new(1.3, if resp.hovered() { Color32::WHITE } else { Color32::from_gray(190) });
+    p.line_segment([c - vec2(m, m), c + vec2(m, m)], cross);
+    p.line_segment([c - vec2(m, -m), c + vec2(m, -m)], cross);
+    if resp.on_hover_text("Click to clear these filters").clicked() {
+        let _ = app.run("library.clearFilter", json!({}));
+    }
 }
 
 /// A raw shown from its embedded JPEG (issue #10): a pill at the canvas' top centre saying so;
