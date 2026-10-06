@@ -78,7 +78,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let current = active.and_then(|id| app.session.develop_of(id)).map(|d| (*d).clone());
             let thumbs = app.ui.preset_thumbs && active.is_some();
             let row_h = if thumbs { 54.0 } else { 26.0 };
-            egui::ScrollArea::vertical().id_salt("presets-scroll").auto_shrink([false, false]).show(ui, |ui| {
+            let scroll = egui::ScrollArea::vertical().id_salt("presets-scroll").auto_shrink([false, false]).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
                 let mut groups: BTreeMap<String, Vec<Preset>> = BTreeMap::new();
                 for p in &app.session.presets {
                     groups.entry(p.group.clone()).or_default().push(p.clone());
@@ -141,11 +142,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                         if resp.hovered()
                             && let Some(s) = look
                         {
-                            app.hover_preview = Some(HoverPreview { label: crate::i18n::tr_format!("Preset: {name}", name = name), settings: s });
+                            let label = crate::i18n::tr_format!("Preset: {name}", name = name);
+                            app.hover_preview = Some(HoverPreview { label: label.clone(), settings: s });
+                            if let Some(id) = active {
+                                ui.data_mut(|d| d.insert_temp(egui::Id::new("last-preset-hover"), (id, pr.clone(), label)));
+                            }
                         }
                         if resp.clicked() {
                             let _ = app.run("preset.apply", json!({"id": pid, "amount": 100}));
                             ui.data_mut(|d| d.insert_temp(amt_id, (pid.clone(), 100.0)));
+                            ui.data_mut(|d| d.remove::<(lightcraft_catalog::PhotoId, Preset, String)>(egui::Id::new("last-preset-hover")));
                             app.toast(ui.ctx(), crate::i18n::tr_format!("Preset: {name}", name = name));
                         }
                         let (builtin, group) = (pr.builtin, pr.group.clone());
@@ -207,6 +213,20 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
                 ui.add_space(30.0);
             });
+            let last_hover_id = egui::Id::new("last-preset-hover");
+            let pointer_in_scroll = ui.ctx().input(|i| i.pointer.hover_pos()).is_some_and(|pos| scroll.inner_rect.contains(pos));
+            if pointer_in_scroll {
+                if app.hover_preview.is_none()
+                    && let (Some(id), Some(curr)) = (active, current.as_ref())
+                    && let Some((saved_id, saved_preset, saved_label)) =
+                        ui.data(|d| d.get_temp::<(lightcraft_catalog::PhotoId, Preset, String)>(last_hover_id))
+                    && saved_id == id
+                {
+                    app.hover_preview = Some(HoverPreview { label: saved_label, settings: saved_preset.apply(curr, 1.0) });
+                }
+            } else {
+                ui.data_mut(|d| d.remove::<(lightcraft_catalog::PhotoId, Preset, String)>(last_hover_id));
+            }
         });
 }
 

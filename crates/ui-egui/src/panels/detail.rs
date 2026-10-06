@@ -280,8 +280,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     } else if show_before {
         shown = draw(Slot::Before, img_rect);
         p.text(pos2(img_rect.left() + 8.0, img_rect.top() + 14.0), Align2::LEFT_CENTER, crate::i18n::tr("Before"), t.font(12.0), t.text);
-    } else if let Some((key, label)) = &hover_key
-        && let Some(tex) = app.renderer.textures.get(&Slot::Hover).filter(|t| t.photo == id && t.key == *key)
+    } else if let Some((_key, label)) = &hover_key
+        && let Some(tex) = app.renderer.textures.get(&Slot::Hover).filter(|t| t.photo == id)
     {
         p.image(tex.tex.id(), img_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         let g = p.layout_no_wrap(label.clone(), t.font(12.0), Color32::WHITE);
