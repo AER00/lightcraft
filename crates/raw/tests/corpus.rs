@@ -230,3 +230,33 @@ fn corpus_adobe_dngs_carry_profile_looks() {
     }
     eprintln!("{seen} Adobe-converted DNGs checked");
 }
+
+/// Issue #148: Sony ARWs from before ~2017 carry no plain white-balance, black-level or crop tags in the raw IFD.
+/// White balance comes from the maker note's enciphered `Tag2010`, the black level from the encrypted `SR2SubIFD`
+/// and the crop from `FullImageSize`; without them the RX100 III opened bright green. Expected values: the black
+/// levels agree with each sensor's dark-pixel floor, the gains with the neutral sky of the camera JPEG.
+#[test]
+fn corpus_sony_pre2017_colour_metadata() {
+    let dir = corpus_root().join("raw");
+    // (file, black, approximate R and B gains, crop width × height)
+    let cases = [
+        ("arw-sony-rx100m3.arw", 800.0, [2.61, 1.72], (5472, 3648)),
+        ("arw-sony-rx100.arw", 800.0, [2.23, 2.00], (5472, 3648)),
+        ("arw-sony-a7rm2-12bit-uncompressed.arw", 512.0, [2.58, 1.46], (7952, 5304)),
+    ];
+    let mut seen = 0;
+    for (name, black, [r, b], (cw, ch)) in cases {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            eprintln!("skip: {name} absent");
+            continue;
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(img.black.mean(), black, "{name}: black level");
+        let wb = img.wb_multipliers.unwrap_or_else(|| panic!("{name}: no as-shot white balance"));
+        assert!((wb[0] - r).abs() < 0.01 && wb[1] == 1.0 && (wb[2] - b).abs() < 0.01, "{name}: white balance {wb:?}");
+        assert_eq!((img.crop.width, img.crop.height), (cw, ch), "{name}: crop");
+        assert!(img.white_at(0) > 16000.0, "{name}: white {} (14-bit scale)", img.white_at(0));
+        seen += 1;
+    }
+    eprintln!("pre-2017 Sony ARW colour metadata checked on {seen} files");
+}
