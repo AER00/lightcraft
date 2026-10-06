@@ -194,8 +194,9 @@ own chart-based calibration (M11.4). Adobe matrices are never used.
 ## Japanese interface and text watermarks
 
 English/Japanese interface language is persisted in UI state. Core menus have Japanese
-translations; untranslated panels and dialogs retain English. BIZ UDMincho is bundled
-under OFL for Japanese glyph coverage without system fonts. Text watermarks now accept
+translations; untranslated panels and dialogs retain English. Japanese glyphs (UI: BIZ UDPGothic;
+watermarks: BIZ UDMincho) come from storytold/craft-fonts, embedded by builds made with the
+optional `CRAFT_FONTS_DIR` input (all releases), so no system fonts are needed. Text watermarks now accept
 `vertical: true` in export JSON/presets and expose an orientation selector. Japanese
 characters stay upright in top-to-bottom columns, with newlines starting columns to the
 left. This is basic lettering, without tate-chu-yoko, ruby, kinsoku, or general vertical

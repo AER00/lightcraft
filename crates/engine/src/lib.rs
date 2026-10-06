@@ -19,6 +19,7 @@ pub mod demo;
 pub mod devices;
 pub mod export;
 pub mod files;
+pub mod fonts;
 pub mod guard;
 pub mod import;
 mod import_move;
@@ -38,6 +39,7 @@ mod view;
 use std::sync::Arc;
 
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
+pub use fonts::{CRAFT_FONTS, CraftFont};
 use lightcraft_catalog::{Catalog, Filter, Op, PhotoId, Sort};
 use lightcraft_develop::DevelopSettings;
 pub use media::{RenderJob, SourceLevel};
