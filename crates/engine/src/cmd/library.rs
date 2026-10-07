@@ -224,11 +224,14 @@ fn select_by(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"selected": n}))
 }
 
-/// `seed` as a non-negative integer, or `default` when absent; anything else is an error.
+/// Seeds stay exactly representable as a JSON double, so web and agent clients read back what they wrote.
+const MAX_SEED: u64 = 1 << 53;
+
+/// `seed` as an integer in `0..2^53`, or `default` when absent or null; anything else is an error.
 fn seed_param(p: &Value, cmd: &str, default: u64) -> Result<u64> {
     match p.get("seed") {
         None | Some(Value::Null) => Ok(default),
-        Some(v) => v.as_u64().ok_or_else(|| bad(cmd, "seed must be a non-negative integer")),
+        Some(v) => v.as_u64().filter(|n| *n < MAX_SEED).ok_or_else(|| bad(cmd, "seed must be an integer from 0 to 2^53 - 1")),
     }
 }
 
@@ -237,7 +240,7 @@ fn seed_param(p: &Value, cmd: &str, default: u64) -> Result<u64> {
 /// clients that read numbers as doubles (web, MCP agents) get the same seed back.
 fn next_seed(prev: u64, now: &str) -> u64 {
     let t = now.bytes().fold(0u64, |h, b| lightcraft_catalog::mix64(h ^ u64::from(b)));
-    (lightcraft_catalog::mix64(prev.wrapping_add(1)) ^ t) & ((1 << 53) - 1)
+    (lightcraft_catalog::mix64(prev.wrapping_add(1)) ^ t) & (MAX_SEED - 1)
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -318,11 +321,11 @@ pub fn specs() -> Vec<CommandSpec> {
             "Reshuffle",
             ["View", "Sort"],
             None,
-            "{seed?: u64} — sort at random; without `seed` a new shuffle each time",
+            "{seed?: 0..2^53-1} — sort at random; without `seed` a new shuffle each time",
             always,
             |s, p| {
                 let seed = match seed_param(p, "library.shuffle", s.sort.seed)? {
-                    given if p.get("seed").is_some() => given,
+                    given if p.get("seed").is_some_and(|v| !v.is_null()) => given,
                     // derived from the previous seed and the session clock: reproducible under a test
                     // clock, and no RNG needed
                     prev => next_seed(prev, &(s.clock)()),
