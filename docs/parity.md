@@ -22,9 +22,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
 | A. Import (IMP) | 11 | 3 | 1 | 1 | 3/5 (60%) | 5/5 (100%) |
-| B. Library management (LIB) | 22 | 1 | 2 | 2 | 9/9 (100%) | 9/9 (100%) |
+| B. Library management (LIB) | 22 | 2 | 1 | 2 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 16 | 0 | 1 | 0 | 9/9 (100%) | 4/4 (100%) |
-| D. Search & filter (FILT) | 11 | 0 | 2 | 0 | 4/4 (100%) | 4/4 (100%) |
+| D. Search & filter (FILT) | 11 | 1 | 1 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
 | F. Edit panel — global adjustments (EDIT) | 42 | 1 | 5 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 6 | 2 | 3 | 0 | 3/4 (75%) | 2/3 (67%) |
@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 16 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 31 | 9 | 40 | 9 | — | 21/22 (95%) |
-| **Total** | 388 | 30 | 90 | 37 | 194/200 (97%) | 139/149 (93%) |
+| Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
+| **Total** | 388 | 33 | 87 | 37 | 194/200 (97%) | 139/149 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.3%** of 508 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 39.9% of 159.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.6%** of 508 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 40.9% of 159.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -145,7 +145,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-FLAG | Pick / reject flags | P0 | ✅ | `cmd:photo.pick`, `cmd:photo.reject`, `cmd:photo.unflag`, `cmd:photo.flag` | pick key is P (see Shortcuts); no flag cycle |
 | LR-LIB-LABEL | Colour labels | P1 | ✅ | `cmd:photo.label`, `cmd:label.setNames`, `cmd:label.names`, `cmd:dialog.labelNames`, keys 6–9 in `crates/ui-egui/src/shortcuts.rs` | Photo menu and grid context menu (coloured, named), Info-panel swatches, label dot in grid cells; editable label names (undoable, journaled); no purple key (as in Lightroom), no custom extra labels |
 | LR-LIB-KEYWORD | Keywords | P0 | ✅ | `cmd:panel.keywords`, `cmd:photo.setMeta` (`addKeywords`/`removeKeywords`), `cmd:keyword.list`, `cmd:keyword.rename`, `cmd:keyword.delete`, `cmd:keyword.merge`, `cmd:keyword.suggest`, `crates/catalog/src/keywords.rs`, `crates/ui-egui/src/panels/left.rs` | left-panel keyword tree with counts (click filters, children included; context menu rename / merge / delete / add / remove); library-wide ops are one undo step and replay from the op log; suggestions (co-occurring / most used / completions) in the Keywords panel; no keyword drag-and-drop |
-| LR-LIB-PEOPLE | People / faces | P2 | ⬜ | | |
+| LR-LIB-PEOPLE | People / faces | P2 | 🟡 | `cmd:view.people`, `cmd:view.faceBoxes`, `cmd:photo.removeRegion`, `cmd:photo.setRegion`, `cmd:library.filter`, `crates/ui-egui/src/panels/people.rs`, `crates/catalog/src/query.rs` (`people`), `crates/engine/src/media.rs` (`face_job`), `crates/meta/src/xmp.rs` | MVP: named face regions read from XMP (MWG-RS, read-only, see `docs/xmp-interop.md`; clipped to the photo; Lightroom's `Rotation` of ±π/2 and π handled, mirrored orientations taken as written; boxes follow Rotate Left/Right and flips; a sidecar stating `mwg-rs:Regions`, even empty, replaces the photo's on re-read, one without leaves them) become cards in the People view (View ▸ People, or the People button in the toolbar): a close-up of the person's largest face, name and photo count; a click filters the grid (`person` in `library.filter`, `person:` search token, filter chip). Face boxes in the loupe can be switched off (View ▸ Face Boxes, toolbar) resized with eight drag handles and removed with the × shown on hover (catalog-only and undoable, one undo step per drag; the sidecar is never rewritten for either); no moving a box by dragging it yet. No face detection, no unnamed people / suggestions, no manual tagging, no writing regions back |
 | LR-LIB-STACK | Stacks | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup`, `cmd:stack.toggle`, `cmd:stack.setTop`, `cmd:stack.remove`, `cmd:stack.auto`, `crates/catalog/src/stacks.rs` | grid/filmstrip count badges, expand/collapse, auto-stack by capture time; no visual-similarity auto-stack |
 | LR-LIB-VERSIONS | Versions | P1 | ✅ | `cmd:version.create` | see section M |
 | LR-LIB-DELETE | Delete / Recently Deleted | P0 | ✅ | `cmd:photo.delete`, `cmd:photo.restore`, `cmd:photo.deletePermanently` | Restore and Delete Permanently in the Photo menu and the photo context menus for photos in Recently Deleted (before, the UI had no way to restore); adding a file that is in Recently Deleted again selects it there (side panel opened) and says how to restore it or import it afresh; no confirmation dialog, no auto-purge after N days, no "Empty" |
@@ -195,7 +195,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-FILT-KEYWORD | Keyword filter | P1 | ✅ | `cmd:library.filter` (`keyword`), `crates/ui-egui/src/panels/filterbar.rs` | keyword picker |
 | LR-FILT-CAMERA | Camera / lens filter | P1 | ✅ | `cmd:library.filter` (`camera`, `lens`), `crates/ui-egui/src/panels/filterbar.rs` | camera and lens pickers |
 | LR-FILT-LOCATION | Location filter | P2 | ✅ | `cmd:library.filter` (`text`, `ruleSet` field `location`) | free text, or a rule on location / city / state / country (smart albums, `library.filter`) |
-| LR-FILT-PEOPLE | People filter | P2 | ⬜ | | |
+| LR-FILT-PEOPLE | People filter | P2 | 🟡 | `cmd:library.filter`, `crates/catalog/src/query.rs` | filter by a person's name (case-insensitive, named Face regions only) from the People view, a filter chip or `person:`; no unnamed / suggested people |
 | LR-FILT-CULL | Culling-score filters | P2 | ✅ | `cmd:library.filter` (`ruleSet` fields `sharpness`, `bestOfGroup`) | Focus and Best of Similar Shots in the rule editor / smart albums |
 | LR-FILT-SORT | Sort | P0 | ✅ | `cmd:library.sort`, `crates/ui-egui/src/panels/bottombar.rs` | no colour-label or custom (manual) order |
 | LR-FILT-SAVED | Filter presets [Classic] | P2 | ✅ | `cmd:filter.savePreset`, `cmd:filter.applyPreset`, `cmd:filter.presets`, `cmd:filter.deletePreset`, `crates/ui-egui/src/panels/filterbar.rs` | filter bar → Presets: apply, save current filter, delete (right-click); saved with the library |
@@ -725,7 +725,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | ✅ | `crates/catalog/src/keywords.rs`, `cmd:keyword.list`, `cmd:keyword.sets`, `cmd:keyword.toggleFromSet`, `cmd:keyword.saveSet`, `cmd:tool.keywordPainter` | hierarchical `a\|b\|c` keywords (tree, parent filters include children, rename moves children); keyword sets + Recent Keywords (⌥1–⌥9); keyword painter (Keywords panel ▸ Paint: click photos in the grid to toggle a keyword, Esc stops) |
 | LRC-LIB-METADATA | Metadata panel & presets | P1 | ✅ | `cmd:photo.setMeta`, `cmd:metadata.savePreset`, `cmd:metadata.applyPreset`, `cmd:metadata.presets`, `cmd:metadata.deletePreset`, `cmd:dialog.captureTime` | IPTC core, accessibility, place, capture-time edit; copyright status (unknown / copyrighted / public domain), rights usage terms and copyright info URL (`photo.setMeta` `copyrightStatus`, `usageTerms`, `copyrightUrl`; XMP Rights Management fields, kept by "copyright only" exports, a smart-album rule); metadata presets (Photo → Metadata Preset, Save Metadata Preset… from the active photo; applied on import from Settings) |
 | LRC-LIB-QUICKDEV | Quick develop | P2 | ✅ | `cmd:develop.quickAdjust`, `crates/ui-egui/src/panels/edit.rs` (`quick_develop`) | grid with several photos selected: Edit panel ▸ Quick Develop steps (exposure ⅓ / 1 stop, contrast, highlights, shadows, whites, blacks, clarity, vibrance, temperature) added to each photo's own value, one undo step |
-| LRC-LIB-PEOPLE | People view | P2 | ⬜ | | |
+| LRC-LIB-PEOPLE | People view | P2 | 🟡 | `cmd:view.people`, `crates/ui-egui/src/panels/people.rs` | Named People cards (face close-up, name, photos) for the photos the active filters let through, with the filter chips shown above them; no Unnamed People, no per-person page, no confirm / reject |
 | LRC-LIB-COMMENTS | Comments panel | P2 | ⬜ | | |
 | LRC-LIB-VISUALSEARCH | Find similar photos | P2 | ✅ | `cmd:library.findSimilar`, `crates/pipeline/src/cull.rs` (`signature`) | photo menu / Photo ▸ Find Similar Photos: look-alike photos (composition and tones), most similar first, as a filter (`only`) |
 | LRC-LIB-MISSING | Missing files & relink | P1 | ✅ | `cmd:library.missing`, `cmd:photo.relink`, `cmd:library.findMissing`, `cmd:file.findMissing`, `cmd:photo.locate`, `crates/engine/src/cmd/missing.rs` (`checked_path`) | File → Find Missing Photos… (anywhere in a folder: same name, size and content hash; renamed files by size + content hash; same name and size alone only when unambiguous — look-alikes are skipped and reported; searched on a worker thread, one undo step), photo menu → Locate Missing File…; unreadable files show "!" in the grid and a reason in the loupe; undo never moves files. Missing Photos in the sidebar (counted on a worker thread; the view, the Info panel, the grid's context menu and thumbnails read file availability from a cache a worker thread fills, so an offline NAS never stalls a frame); it covers library photos only — Local browse records are never checked, for the count, the view, `library.missing` and Find Missing alike |
