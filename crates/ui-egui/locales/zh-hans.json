@@ -1017,5 +1017,7 @@
   "Quit": "退出",
   "Temporary session — your library isn't open, and nothing you do here is saved.": "临时会话 — 图库未打开，此处所做的任何操作都不会保存。",
   "Back Up Library…": "备份图库…",
-  "Restore Library from Backup…": "从备份恢复图库…"
+  "Restore Library from Backup…": "从备份恢复图库…",
+  "In Recently Deleted": "在“最近删除”中",
+  "Reload from Disk": "从磁盘重新读取"
 }
