@@ -360,3 +360,23 @@ fn people_from_named_face_regions() {
     );
     assert_eq!(names(Filter { rating: 5, ..Default::default() }), vec![], "nobody in the filtered photos");
 }
+
+/// Most photos have no regions: the field is left out of the catalog JSON then, and a catalog written
+/// before regions existed (no `regions` key) reads with none.
+#[test]
+fn empty_regions_are_not_serialized_and_default_when_missing() {
+    let m = Meta { keywords: vec!["k".into()], ..Default::default() };
+    let v = serde_json::to_value(&m).unwrap();
+    assert!(v.get("regions").is_none(), "{v}");
+    let back: Meta = serde_json::from_value(v).unwrap();
+    assert!(back.regions.is_empty());
+    let mut with = m.clone();
+    with.regions.push(lightcraft_meta::Region {
+        rect: lightcraft_meta::Rect { x0: 0.1, y0: 0.1, x1: 0.2, y1: 0.2 },
+        kind: lightcraft_meta::RegionKind::Face,
+        name: Some("A".into()),
+        description: None,
+    });
+    let back: Meta = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+    assert_eq!(back, with);
+}

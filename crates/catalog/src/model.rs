@@ -183,8 +183,10 @@ pub struct Meta {
     pub copyright_url: String,
     pub creator: String,
     pub keywords: Vec<String>,
-    /// Face/pet/focus regions read from XMP (MWG-RS). Read-only today; nothing in
-    /// LightCraft writes regions yet.
+    /// Face/pet/focus regions read from XMP (MWG-RS), on the upright (EXIF-oriented) photo.
+    /// Removing or resizing one edits the catalog only; LightCraft never writes regions to XMP.
+    /// Left out of the catalog JSON when empty (most photos), so older catalogs read unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub regions: Vec<lightcraft_meta::Region>,
 }
 
