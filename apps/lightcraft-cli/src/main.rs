@@ -416,39 +416,39 @@ fn run(args: &[String]) -> Result<(), String> {
     if steps.is_empty() {
         return Err("run: no command given (see `lightcraft-cli commands`)".into());
     }
-    let mut backend: Box<dyn Backend> = match connect {
-        Some(addr) => {
-            if demo || library.is_some() || !imports.is_empty() {
-                return Err("--demo, --library and --import apply to headless mode only".into());
-            }
-            Box::new(
-                Remote::connect(&addr)
-                    .map_err(|e| format!("LightCraft is not reachable at {addr} ({e}); start it with `lightcraft --control 7980`"))?,
-            )
-        }
-        None => {
-            let mut h = match &library {
-                Some(dir) => {
-                    let mut h = Headless::default();
-                    h.session.open_library(dir, demo).map_err(|e| library_error(dir, e))?;
-                    h
+    let mut backend: Box<dyn Backend> =
+        match connect {
+            Some(addr) => {
+                if demo || library.is_some() || !imports.is_empty() {
+                    return Err("--demo, --library and --import apply to headless mode only".into());
                 }
-                None if demo => Headless::demo(),
-                None => Headless::default(),
-            };
-            if !imports.is_empty() {
-                let paths = expand_paths(&imports);
-                let r = h.session.execute("library.import", &json!({"paths": paths})).map_err(|e| e.to_string())?;
-                // what follows acts on the imported photos (already-known files are reported as duplicates)
-                let mut ids: Vec<Value> = r["imported"].as_array().cloned().unwrap_or_default();
-                ids.extend(r["duplicates"].as_array().into_iter().flatten().filter_map(|d| d.get("existing").filter(|v| v.is_u64()).cloned()));
-                if let Some(first) = ids.first().cloned() {
-                    h.session.execute("library.select", &json!({"ids": ids, "active": first})).map_err(|e| e.to_string())?;
-                }
+                Box::new(Remote::connect(&addr).map_err(|e| {
+                    format!("LightCraft is not reachable at {addr} ({e}); start it with `lightcraft --control {}`", connect_port(&addr))
+                })?)
             }
-            Box::new(h)
-        }
-    };
+            None => {
+                let mut h = match &library {
+                    Some(dir) => {
+                        let mut h = Headless::default();
+                        h.session.open_library(dir, demo).map_err(|e| library_error(dir, e))?;
+                        h
+                    }
+                    None if demo => Headless::demo(),
+                    None => Headless::default(),
+                };
+                if !imports.is_empty() {
+                    let paths = expand_paths(&imports);
+                    let r = h.session.execute("library.import", &json!({"paths": paths})).map_err(|e| e.to_string())?;
+                    // what follows acts on the imported photos (already-known files are reported as duplicates)
+                    let mut ids: Vec<Value> = r["imported"].as_array().cloned().unwrap_or_default();
+                    ids.extend(r["duplicates"].as_array().into_iter().flatten().filter_map(|d| d.get("existing").filter(|v| v.is_u64()).cloned()));
+                    if let Some(first) = ids.first().cloned() {
+                        h.session.execute("library.select", &json!({"ids": ids, "active": first})).map_err(|e| e.to_string())?;
+                    }
+                }
+                Box::new(h)
+            }
+        };
     let mut out = std::io::stdout().lock();
     let mut failed = 0;
     for s in &steps {
@@ -472,6 +472,12 @@ fn run(args: &[String]) -> Result<(), String> {
 fn take_value<'a>(args: &'a [String], i: &mut usize, flag: &str) -> Result<&'a str, String> {
     *i += 1;
     args.get(*i).map(String::as_str).ok_or_else(|| format!("{flag} needs a value"))
+}
+
+/// The port an `--connect` address names, for the recovery hint. The whole address when it has
+/// no port, so a hint is never built from a guess.
+fn connect_port(addr: &str) -> &str {
+    addr.rsplit_once(':').map_or(addr, |(_, port)| port)
 }
 
 fn render(args: &[String]) -> Result<(), String> {
