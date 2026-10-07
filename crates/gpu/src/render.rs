@@ -422,7 +422,7 @@ fn sample(cx: &mut Cx<'_>, src: &Arc<Rgb32f>, src_buf: Arc<Buf>, plan: &Plan<'_>
         let out = cx.gpu.buffer(sp.ow * sp.oh * 3);
         let mut p = vec![src.width as u32, src.height as u32, sp.ow as u32, sp.oh as u32];
         p.extend(orient_map(fr.orient, src.width, src.height).map(|v| v as u32));
-        cx.run("orient", &p, &[Some(&src_buf), Some(&out)], groups2(sp.ow, sp.oh, [16, 16]));
+        cx.run("orient", &p, &[Some(&src_buf), Some(&out), None], groups2(sp.ow, sp.oh, [16, 16]));
         Arc::new(out)
     };
     let (base, (bw, bh)) = match sp.prefilter {
@@ -433,7 +433,7 @@ fn sample(cx: &mut Cx<'_>, src: &Arc<Rgb32f>, src_buf: Arc<Buf>, plan: &Plan<'_>
         let out = cx.gpu.buffer(w * h * 3);
         let mut p = vec![bw as u32, bh as u32, w as u32, h as u32];
         p.extend(affine_bits(xf));
-        cx.run("sample_affine", &p, &[Some(&base), Some(&out)], groups2(w, h, [16, 16]));
+        cx.run("sample_affine", &p, &[Some(&base), Some(&out), None], groups2(w, h, [16, 16]));
         Arc::new(out)
     };
     match (&sp.mode, fr.warp.as_ref()) {
@@ -444,7 +444,26 @@ fn sample(cx: &mut Cx<'_>, src: &Arc<Rgb32f>, src_buf: Arc<Buf>, plan: &Plan<'_>
         (SampleMode::Warp(o2t), Some(wp)) => {
             let out = cx.gpu.buffer(w * h * 3);
             let p = warp_params(wp, (bw, bh), (w, h), o2t, sp.sx, sp.sy);
-            cx.run("sample_warp", &p, &[Some(&base), Some(&out)], groups2(w, h, [16, 16]));
+            // f32 rounding can cross a source edge. Keep the reference f64
+            // framing decision in a bit mask; color sampling stays on the GPU.
+            let words = w.div_ceil(32);
+            let mut coverage = vec![0u32; words * h];
+            lightcraft_raster::par_rows(&mut coverage, words, |y, row| {
+                for (word, bits) in row.iter_mut().enumerate() {
+                    for bit in 0..32 {
+                        let x = word * 32 + bit;
+                        if x >= w {
+                            break;
+                        }
+                        let t = o2t.apply(lightcraft_geom::Point::new(x as f64 + 0.5, y as f64 + 0.5));
+                        if wp.inside(wp.corrected_to_source(wp.to_corrected(t), 1)) {
+                            *bits |= 1 << bit;
+                        }
+                    }
+                }
+            });
+            let coverage = cx.gpu.upload(&coverage);
+            cx.run("sample_warp", &p, &[Some(&base), Some(&out), Some(&coverage)], groups2(w, h, [16, 16]));
             Arc::new(out)
         }
     }

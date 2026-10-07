@@ -4,6 +4,13 @@ The CPU pipeline (`crates/pipeline`) is the reference ("oracle"). `lightcraft-gp
 evaluates the same stages with wgpu compute shaders (WGSL) on Metal / Vulkan / DX12. Everything is
 pure Rust (wgpu, naga); the drivers are the system's. No GL backend is compiled in.
 
+Warped geometry uses a CPU-computed coverage bit mask for the source boundary.
+The CPU reference evaluates that boundary in double precision; GPU float
+rounding otherwise can turn a blank edge pixel into a photo pixel. The mask
+uses one bit per output pixel (rows padded to 32 bits). Sampling and color
+corrections remain on the GPU, and existing geometry stage caching reuses the
+result. This adds CPU coordinate evaluation only when warped geometry rebuilds.
+
 ## Backends, environment variables and troubleshooting (issue #136)
 wgpu loads the driver of **every** backend in an instance's set while it enumerates adapters — even
 when it then picks another one. A Vulkan driver that crashes there (issue #136: an access violation
