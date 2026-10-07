@@ -94,6 +94,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::Merge { opts } => opts.title(),
         Dialog::Settings { .. } => "Settings",
         Dialog::ConfirmDelete { .. } => "Delete Photos",
+        Dialog::SamModel { .. } => "Download the SAM 3 Model?",
         Dialog::About => "About LightCraft",
         Dialog::Shortcuts => "Keyboard Shortcuts",
     }
@@ -700,6 +701,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 Dialog::Merge { opts } => crate::merge::body(app, ui, opts),
                 Dialog::Import { opts } => crate::import::body(app, ui, opts),
                 Dialog::Settings { tab } => crate::panels::settings::body(app, ui, tab),
+                Dialog::SamModel { error, .. } => sam_model_body(app, ui, error.as_deref()),
                 Dialog::ConfirmDelete { count } => {
                     let what = if *count == 1 { crate::i18n::tr("this photo").to_string() } else { crate::i18n::tr_format!("these {count} photos", count = count) };
                     ui.label(crate::i18n::tr_format!("Move {what} to Recently Deleted?", what = what));
@@ -767,8 +769,21 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let informational = matches!(dlg, Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. });
-                if !informational && ui.button(crate::i18n::tr("Cancel")).clicked() {
-                    close = true;
+                let sam = &app.session.segmenter;
+                let (sam_installed, sam_running, sam_failed) = (sam.installed(), sam.download_status().running, sam.download_status().error.is_some());
+                // no download location in this build: nothing to offer but the manual install
+                let sam_nowhere = !sam_installed && !sam_running && sam.mirrors().is_empty();
+                let cancel = match &dlg {
+                    Dialog::SamModel { .. } if sam_running || sam_installed || sam_nowhere => "Close",
+                    Dialog::SamModel { .. } => "Not Now",
+                    _ => "Cancel",
+                };
+                if !informational {
+                    let r = ui.button(crate::i18n::tr(cancel));
+                    crate::widgets::register(ui.ctx(), "button:dialogCancel", r.rect);
+                    if r.clicked() {
+                        close = true;
+                    }
                 }
                 let add_label;
                 let ok = match &dlg {
@@ -780,10 +795,18 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     }
                     Dialog::Merge { .. } => "Merge",
                     Dialog::ConfirmDelete { .. } => "Delete",
+                    Dialog::SamModel { then: Some(_), .. } if sam_installed => "Continue",
+                    Dialog::SamModel { .. } if sam_installed || sam_running || sam_nowhere => "",
+                    Dialog::SamModel { error, .. } if error.is_some() || sam_failed => "Try Again",
+                    Dialog::SamModel { .. } => "Download",
                     _ if informational => "Close",
                     _ => "OK",
                 };
-                if ui.button(crate::i18n::tr(ok)).clicked() {
+                let r = (!ok.is_empty()).then(|| ui.button(crate::i18n::tr(ok)));
+                if let Some(r) = &r {
+                    crate::widgets::register(ui.ctx(), "button:dialogOk", r.rect);
+                }
+                if r.is_some_and(|r| r.clicked()) {
                     if informational {
                         close = true;
                     } else {
@@ -803,6 +826,17 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         match confirm_dialog(app, &dlg) {
             // the import review stays open on an error (e.g. an unusable folder template)
             Err(e) if matches!(dlg, Dialog::Import { .. }) => app.toast(ctx, e),
+            // the SAM 3 dialog stays open to show the download (or why it can't start)
+            Err(e) if matches!(dlg, Dialog::SamModel { .. }) => {
+                if let Dialog::SamModel { error, .. } = &mut dlg {
+                    *error = Some(e);
+                }
+            }
+            Ok(_) if keeps_open(app, &dlg) => {
+                if let Dialog::SamModel { error, .. } = &mut dlg {
+                    *error = None;
+                }
+            }
             _ => close = true,
         }
     }
@@ -823,8 +857,86 @@ pub fn fmt_gap(v: f64) -> String {
     }
 }
 
+/// Whether a dialog stays open after its action succeeded (the SAM 3 dialog while the model
+/// downloads).
+pub fn keeps_open(app: &LightcraftApp, dlg: &Dialog) -> bool {
+    matches!(dlg, Dialog::SamModel { .. }) && !app.session.segmenter.installed()
+}
+
+/// The SAM 3 dialog: what the model is, its size and licence, and the download's progress.
+fn sam_model_body(app: &mut LightcraftApp, ui: &mut egui::Ui, error: Option<&str>) {
+    use lightcraft_engine::segment::{LICENSE_NAME, LICENSE_URL, MODEL_BYTES};
+    let t = Tokens::get(ui.ctx());
+    let seg = &app.session.segmenter;
+    let d = seg.download_status();
+    if seg.installed() {
+        ui.label(crate::i18n::tr("The SAM 3 model is installed: Object and Describe masks are ready."));
+        return;
+    }
+    let gb = |b: u64| b as f64 / 1e9;
+    ui.label(crate::i18n::tr(
+        "Object and Describe masks use SAM 3, Meta's segmentation model. It isn't part of LightCraft, and everything else works without it.",
+    ));
+    let dir = seg.dir.as_ref().map(|d| d.display().to_string()).unwrap_or_default();
+    ui.label(format!("{} {:.1} GB, {} {dir}", crate::i18n::tr("A one-time download of about"), gb(MODEL_BYTES), crate::i18n::tr("saved in")));
+    ui.label(
+        egui::RichText::new(format!(
+            "{} {LICENSE_NAME} — {}",
+            crate::i18n::tr("Licence:"),
+            crate::i18n::tr("Meta's terms, not LightCraft's. Downloading it means accepting them.")
+        ))
+        .color(t.text_label),
+    );
+    let r = ui.link(crate::i18n::tr("Read the SAM License")).on_hover_text(LICENSE_URL);
+    crate::widgets::register(ui.ctx(), "link:samLicense", r.rect);
+    if r.clicked() {
+        let _ = crate::links::open(app, LICENSE_URL);
+    }
+    let seg = &app.session.segmenter;
+    if d.running {
+        ui.add_space(4.0);
+        let frac = if d.total > 0 { d.done as f64 / d.total as f64 } else { 0.0 };
+        let text = format!("{:.2} / {:.2} GB · {}", gb(d.done), gb(d.total), d.file);
+        let r = ui.add(egui::ProgressBar::new(frac as f32).text(text));
+        crate::widgets::register(ui.ctx(), "progress:samDownload", r.rect);
+        let r = ui.button(crate::i18n::tr("Cancel Download"));
+        crate::widgets::register(ui.ctx(), "button:samCancel", r.rect);
+        if r.clicked() {
+            app.session.segmenter.cancel_download();
+        }
+        ui.label(egui::RichText::new(crate::i18n::tr("You can close this: the download continues, and resumes if interrupted.")).color(t.text_dim));
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+        return;
+    }
+    if seg.mirrors().is_empty() {
+        ui.label(
+            egui::RichText::new(crate::i18n::tr(
+                "This build has no download location for the model yet: put the files in the folder above yourself (see docs/ai-masks.md).",
+            ))
+            .color(t.text_dim),
+        );
+    }
+    if let Some(e) = error.map(str::to_string).or(d.error) {
+        ui.label(egui::RichText::new(format!("{} {e}", crate::i18n::tr("The download didn't work:"))).color(egui::Color32::from_rgb(230, 90, 80)));
+    }
+}
+
 pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_json::Value, String> {
     match dlg {
+        Dialog::SamModel { then, .. } => {
+            if app.session.segmenter.installed() {
+                // installed: start what the user was doing
+                if let Some((kind, op)) = then {
+                    crate::panels::masking::begin_ai(app, kind, op)?;
+                }
+                return Ok(serde_json::Value::Null);
+            }
+            let r = app.run("segment.model.download", json!({"acknowledged": true}));
+            if r.is_ok() {
+                app.ui.sam_downloading = true;
+            }
+            r
+        }
         Dialog::NewAlbum { name, folder } => app.run("album.create", json!({"name": name, "folder": folder, "addSelected": !folder})),
         Dialog::RenameAlbum { id, name } => app.run("album.rename", json!({"id": id, "name": name})),
         Dialog::TextPrompt { value, command, params, key, .. } => {
