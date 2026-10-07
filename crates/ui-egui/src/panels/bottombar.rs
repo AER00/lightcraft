@@ -254,10 +254,10 @@ fn sort_menu(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     ui.separator();
     // a shuffle has no direction worth choosing
     ui.add_enabled_ui(cur.key != Random, |ui| {
-        if ui.selectable_label(cur.ascending, crate::i18n::tr("Ascending")).clicked() {
+        if ui.selectable_label(cur.key != Random && cur.ascending, crate::i18n::tr("Ascending")).clicked() {
             let _ = app.run("library.sort", json!({"ascending": true}));
         }
-        if ui.selectable_label(!cur.ascending, crate::i18n::tr("Descending")).clicked() {
+        if ui.selectable_label(cur.key != Random && !cur.ascending, crate::i18n::tr("Descending")).clicked() {
             let _ = app.run("library.sort", json!({"ascending": false}));
         }
     });

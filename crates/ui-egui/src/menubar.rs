@@ -467,8 +467,22 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
             v.push(item("library.shuffle", json!({}), "Reshuffle", None, cur.key == Random, None));
             v.push(MenuNode::Separator);
             // a shuffle has no direction worth choosing
-            v.push(item("library.sort", json!({"ascending": true}), "Ascending", None, cur.key != Random, Some(cur.ascending)));
-            v.push(item("library.sort", json!({"ascending": false}), "Descending", None, cur.key != Random, Some(!cur.ascending)));
+            v.push(item(
+                "library.sort",
+                json!({"ascending": true}),
+                "Ascending",
+                None,
+                cur.key != Random,
+                (cur.key != Random).then_some(cur.ascending),
+            ));
+            v.push(item(
+                "library.sort",
+                json!({"ascending": false}),
+                "Descending",
+                None,
+                cur.key != Random,
+                (cur.key != Random).then_some(!cur.ascending),
+            ));
             v.push(MenuNode::Separator);
             use lightcraft_catalog::GroupBy;
             let groups = [
@@ -813,6 +827,18 @@ mod tests {
         let kids = sort_children(&menu_bar(&a));
         assert_eq!(count(&kids), 1);
         assert!(matches!(find(&kids, "library.shuffle"), Some(MenuNode::Item { enabled: true, .. })));
+        // no direction is shown as chosen while shuffling
+        let dir_checked = |kids: &[MenuNode]| {
+            kids.iter()
+                .filter_map(|n| match n {
+                    MenuNode::Item { label, checked, .. } if label == "Ascending" || label == "Descending" => Some(*checked),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(dir_checked(&kids), vec![None, None]);
+        a.session.execute("library.sort", &json!({"key": "fileName"})).expect("sort by name");
+        assert!(dir_checked(&sort_children(&menu_bar(&a))).iter().all(Option::is_some), "checks come back for other keys");
     }
 
     /// File opens with the import entry points, worded as importing (not as adding a sidebar
