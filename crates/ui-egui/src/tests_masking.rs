@@ -644,14 +644,19 @@ fn ai_masks_without_the_model_offer_the_download() {
     assert_eq!(h.app.ui.dialog, Some(Dialog::SamModel { then: Some(("object".into(), "new".into())), error: None }));
     assert!(!h.app.session.segmenter.download_status().running, "nothing downloads without a yes");
     if h.app.session.segmenter.mirrors().is_empty() {
-        // Download: no location configured in this build → the reason, in the dialog
+        // no location configured in this build: no Download button (only Close), and an agent
+        // confirming anyway gets the reason; the dialog stays
+        h.step();
+        let r = h.request("ui.clickWidget", json!({"id": "button:dialogOk"}), T);
+        assert_eq!(r["ok"], false, "{r}");
         let r = h.request("ui.dialog.confirm", json!({}), T);
         assert_eq!(r["ok"], false, "{r}");
+        assert!(r["error"].as_str().unwrap_or_default().contains("LIGHTCRAFT_SAM3_MIRRORS"), "{r}");
         assert!(matches!(h.app.ui.dialog, Some(Dialog::SamModel { .. })), "stays open");
+    } else {
+        // with a mirror: Download starts it in the background (here it fails: nothing listens)
         let r = h.request("ui.clickWidget", json!({"id": "button:dialogOk"}), T);
         assert_eq!(r["ok"], true, "{r}");
-        let Some(Dialog::SamModel { error: Some(e), .. }) = &h.app.ui.dialog else { panic!("{:?}", h.app.ui.dialog) };
-        assert!(e.contains("LIGHTCRAFT_SAM3_MIRRORS"), "{e}");
     }
     // (a frame with the message laid out, so the buttons are where they are drawn)
     h.step();

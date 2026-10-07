@@ -771,8 +771,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let informational = matches!(dlg, Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. });
                 let sam = &app.session.segmenter;
                 let (sam_installed, sam_running, sam_failed) = (sam.installed(), sam.download_status().running, sam.download_status().error.is_some());
+                // no download location in this build: nothing to offer but the manual install
+                let sam_nowhere = !sam_installed && !sam_running && sam.mirrors().is_empty();
                 let cancel = match &dlg {
-                    Dialog::SamModel { .. } if sam_running || sam_installed => "Close",
+                    Dialog::SamModel { .. } if sam_running || sam_installed || sam_nowhere => "Close",
                     Dialog::SamModel { .. } => "Not Now",
                     _ => "Cancel",
                 };
@@ -794,7 +796,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     Dialog::Merge { .. } => "Merge",
                     Dialog::ConfirmDelete { .. } => "Delete",
                     Dialog::SamModel { then: Some(_), .. } if sam_installed => "Continue",
-                    Dialog::SamModel { .. } if sam_installed || sam_running => "",
+                    Dialog::SamModel { .. } if sam_installed || sam_running || sam_nowhere => "",
                     Dialog::SamModel { error, .. } if error.is_some() || sam_failed => "Try Again",
                     Dialog::SamModel { .. } => "Download",
                     _ if informational => "Close",
@@ -876,7 +878,7 @@ fn sam_model_body(app: &mut LightcraftApp, ui: &mut egui::Ui, error: Option<&str
         "Object and Describe masks use SAM 3, Meta's segmentation model. It isn't part of LightCraft, and everything else works without it.",
     ));
     let dir = seg.dir.as_ref().map(|d| d.display().to_string()).unwrap_or_default();
-    ui.label(format!("{} {:.1} GB · {dir}", crate::i18n::tr("Download it once (about):"), gb(MODEL_BYTES)));
+    ui.label(format!("{} {:.1} GB, {} {dir}", crate::i18n::tr("A one-time download of about"), gb(MODEL_BYTES), crate::i18n::tr("saved in")));
     ui.label(
         egui::RichText::new(format!(
             "{} {LICENSE_NAME} — {}",

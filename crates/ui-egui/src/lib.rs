@@ -389,6 +389,9 @@ impl LightcraftApp {
             let open = matches!(self.ui.dialog, Some(state::Dialog::SamModel { .. }));
             match (&download.error, open) {
                 (_, true) => {}
+                (Some(e), false) if e.contains("cancelled") => {
+                    self.toast(ctx, crate::i18n::tr("SAM 3 download stopped: it resumes where it left off next time."))
+                }
                 (Some(e), false) => self.toast_error(ctx, format!("The SAM 3 download failed: {e}")),
                 (None, false) if download.finished => {
                     self.toast_error(ctx, crate::i18n::tr("The SAM 3 model is installed: Object and Describe masks are ready."))
