@@ -19,12 +19,40 @@ pub(crate) struct CameraLook {
     pub hue_sat: Option<HsvTable>,
 }
 
+/// Long edge of the sensor/JPEG proxy a single photo's look is fitted on (the acceptance gates
+/// below were set at this size).
+const PROXY: usize = 96;
+/// Long edge of the proxies pooled for a camera profile: small objects (a shirt) get 4× the samples.
+pub(crate) const PROFILE_PROXY: usize = 192;
+
 pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransform) -> Option<CameraLook> {
     if !transform.matrix_is_fallback || raw.format != lightcraft_raw::RawFormat::Arw {
         return None;
     }
+    let (sensor, reference) = proxies(raw, bytes, transform, PROXY)?;
+    // A camera profile pooled from many photos knows colours this photo shows too little of;
+    // only the tone and chroma curves are fitted per photo (DRO and picture styles vary).
+    let profile = raw.metadata.model.as_deref().and_then(crate::camera_profiles::get);
+    let colour = profile.as_ref().and_then(|p| Some((p.matrix().mul(&transform.matrix.inverse()?), p.hue_sat.clone())));
+    let look = fit_pairs_with(&sensor, &reference, colour)?;
+    if lightcraft_pipeline::profiling() {
+        eprintln!(
+            "[profile] ARW camera look: {:?}, {:?}, hue/sat table {}, camera profile {}",
+            look.matrix.0,
+            look.tone,
+            look.hue_sat.is_some(),
+            profile.is_some()
+        );
+    }
+    Some(look)
+}
+
+/// Same-size proxies of the sensor (white-balanced, baseline exposure, through `transform`'s
+/// matrix: the generic camera ≈ sRGB model) and of the file's embedded camera JPEG (linear Rec.2020).
+fn proxies(raw: &RawImage, bytes: &[u8], transform: &CameraTransform, size: usize) -> Option<(Rgb32f, Rgb32f)> {
     let jpeg = lightcraft_raw::embedded_preview(bytes)?;
-    let decoded = lightcraft_codecs::decode(&jpeg, lightcraft_codecs::DecodeOptions { max_size: Some((384, 384)), max_pixels: 64_000_000 }).ok()?;
+    let edge = (2 * size).max(384) as u32;
+    let decoded = lightcraft_codecs::decode(&jpeg, lightcraft_codecs::DecodeOptions { max_size: Some((edge, edge)), max_pixels: 64_000_000 }).ok()?;
     let reference = decoded.to_working();
     let crop = raw.crop.clipped(raw.active_area.width, raw.active_area.height);
     if crop.width == 0 || crop.height == 0 || reference.width == 0 || reference.height == 0 {
@@ -35,17 +63,33 @@ pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransf
         return None;
     }
     // Fixed, bounded proxy: the selected look cannot depend on thumbnail/export resolution.
-    let k = (crop.width.max(crop.height).div_ceil(384).max(2)).div_ceil(2) * 2;
+    let k = (crop.width.max(crop.height).div_ceil(edge as usize).max(2)).div_ceil(2) * 2;
     let sensor = raw.develop_binned(k, 0.99).ok()??;
-    let mut sensor = fit(&sensor, 96, 96, Filter::Box);
+    let mut sensor = fit(&sensor, size, size, Filter::Box);
     let reference = fit(&reference, sensor.width, sensor.height, Filter::Box);
     let gain = 2f32.powf(transform.baseline_exposure as f32);
     sensor.map_in_place(|p| transform.matrix.apply_f32(std::array::from_fn(|i| p[i] * transform.wb[i] * gain)));
-    let look = fit_pairs(&sensor, &reference)?;
-    if lightcraft_pipeline::profiling() {
-        eprintln!("[profile] ARW camera look: {:?}, {:?}, hue/sat table {}", look.matrix.0, look.tone, look.hue_sat.is_some());
+    Some((sensor, reference))
+}
+
+/// Colour training pairs of one ARW for a camera profile: white-balanced camera RGB (with the
+/// baseline exposure) → its camera JPEG (linear Rec.2020). `None` for other files or unusable previews.
+pub(crate) fn profile_pairs(raw: &RawImage, bytes: &[u8]) -> Option<Vec<([f64; 3], [f64; 3])>> {
+    if raw.format != lightcraft_raw::RawFormat::Arw || lightcraft_raw::color::has_matrix(&raw.color) {
+        return None;
     }
-    Some(look)
+    let transform = lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
+    let (sensor, reference) = proxies(raw, bytes, &transform, PROFILE_PROXY)?;
+    let to_camera = transform.matrix.inverse()?;
+    let (pairs, _) = collect_pairs(&sensor, &reference)?;
+    Some(pairs.into_iter().map(|(x, y)| (to_camera.apply(x), y)).collect())
+}
+
+/// A camera profile's colour model (matrix from white-balanced camera RGB, hue/saturation table)
+/// fitted to pairs pooled from many photos.
+pub(crate) fn fit_profile(pairs: &[([f64; 3], [f64; 3])]) -> Option<(Mat3, Option<HsvTable>)> {
+    let matrix = fit_matrix(pairs)?;
+    Some((matrix, fit_hue_sat(pairs, &matrix)))
 }
 
 /// A fit must cut the held-out squared error to below this share of the fallback's.
@@ -72,7 +116,15 @@ fn displayed(scene: [f64; 3], tone: &ToneMap) -> [f64; 3] {
     scene.map(|v| o + (v * o / y - o) * k)
 }
 
+#[cfg(test)]
 fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
+    fit_pairs_with(sensor, reference, None)
+}
+
+/// Training pairs (sensor → JPEG, unclipped midtones) and the wider set including highlights
+/// (for the chroma curve); `None` when too few, or the photo has too little colour.
+type Pairs = Vec<([f64; 3], [f64; 3])>;
+fn collect_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<(Pairs, Pairs)> {
     if (sensor.width, sensor.height) != (reference.width, reference.height) || sensor.data.len() != reference.data.len() {
         return None;
     }
@@ -96,9 +148,11 @@ fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
         colour += usize::from(max - min > 0.05);
         pairs.push((input.map(f64::from), output.map(f64::from)));
     }
-    if pairs.len() < 256 || colour < pairs.len() / 20 {
-        return None;
-    }
+    (pairs.len() >= 256 && colour >= pairs.len() / 20).then_some((pairs, bright))
+}
+
+/// Ridge-regularised 3×3 chromaticity matrix (luminance-normalised RGB) on the training pairs.
+fn fit_matrix(pairs: &[([f64; 3], [f64; 3])]) -> Option<Mat3> {
     let mut gram = [[0.0; 3]; 3];
     let mut cross = [[0.0; 3]; 3];
     for (i, (x, y)) in pairs.iter().enumerate() {
@@ -106,6 +160,9 @@ fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
             continue;
         }
         let (lx, ly) = (luma(*x), luma(*y));
+        if lx <= 0.0 || ly <= 0.0 {
+            continue;
+        }
         for row in 0..3 {
             for col in 0..3 {
                 // Normalising by luminance prevents a camera S-curve from corrupting colour.
@@ -126,14 +183,26 @@ fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
         cross[i][i] += regularization;
     }
     let matrix = Mat3(cross).mul(&Mat3(gram).inverse()?);
-    if !matrix.0.iter().flatten().all(|v| v.is_finite() && v.abs() < 8.0) {
-        return None;
-    }
+    matrix.0.iter().flatten().all(|v| v.is_finite() && v.abs() < 8.0).then_some(matrix)
+}
+
+/// The photo's look: its own matrix (with and without a hue/saturation table), or the given
+/// colour model (a camera profile's, in the sensor proxy's space), each completed with a tone
+/// and chroma curve fitted to this photo.
+fn fit_pairs_with(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>) -> Option<CameraLook> {
+    let (pairs, bright) = collect_pairs(sensor, reference)?;
+    let candidates = match colour {
+        Some(given) => vec![given],
+        None => {
+            let matrix = fit_matrix(&pairs)?;
+            vec![(matrix, fit_hue_sat(&pairs, &matrix)), (matrix, None)]
+        }
+    };
     // Matrix + table when the table helps the held-out pixels, else the matrix alone. Chosen by
     // error in gamma-encoded display values (closer to what is seen: in linear values a slightly
     // missed bright rock outweighs a clearly wrong dark shirt); the acceptance gates below stay linear.
     let mut best: Option<(f64, f64, usize, CameraLook)> = None;
-    for hue_sat in [fit_hue_sat(&pairs, &matrix), None] {
+    for (matrix, hue_sat) in candidates {
         let correction = hue_sat.as_ref().and_then(HueSat::new);
         let colour = |x: [f64; 3]| {
             let p = matrix.apply(x);
@@ -268,15 +337,28 @@ fn fit_hue_sat(pairs: &[([f64; 3], [f64; 3])], matrix: &Mat3) -> Option<HsvTable
     if samples.len() < 64 {
         return None;
     }
-    let mut data = vec![[0.0f32, 1.0, 1.0]; TABLE_VALS * TABLE_HUES * TABLE_SATS];
-    for v in 0..TABLE_VALS {
-        let val = v as f64 / (TABLE_VALS - 1) as f64;
-        for h in 0..TABLE_HUES {
-            let hue = h as f64 * 360.0 / TABLE_HUES as f64;
-            for s in 1..TABLE_SATS {
-                let sat = s as f64 / (TABLE_SATS - 1) as f64;
-                let (mut weight, mut shift, mut log_scale) = (0.0, 0.0, 0.0);
-                for &(hp, sp, vp, dh, ls) in &samples {
+    // Samples by table hue step: a node only looks at hues within its kernel's reach.
+    let step = 360.0 / TABLE_HUES as f64;
+    let mut by_hue: Vec<Vec<(f64, f64, f64, f64, f64)>> = vec![Vec::new(); TABLE_HUES];
+    for sample in samples {
+        if let Some(bin) = by_hue.get_mut(((sample.0.rem_euclid(360.0) / step) as usize).min(TABLE_HUES - 1)) {
+            bin.push(sample);
+        }
+    }
+    let reach = (4.0 * KERNEL_HUE / step).ceil() as usize + 1;
+    use rayon::prelude::*;
+    let data: Vec<[f32; 3]> = (0..TABLE_VALS * TABLE_HUES * TABLE_SATS)
+        .into_par_iter()
+        .map(|index| {
+            let (v, h, s) = (index / (TABLE_HUES * TABLE_SATS), index / TABLE_SATS % TABLE_HUES, index % TABLE_SATS);
+            if s == 0 {
+                return [0.0, 1.0, 1.0];
+            }
+            let (val, hue, sat) = (v as f64 / (TABLE_VALS - 1) as f64, h as f64 * step, s as f64 / (TABLE_SATS - 1) as f64);
+            let (mut weight, mut shift, mut log_scale) = (0.0, 0.0, 0.0);
+            for offset in 0..=2 * reach {
+                let Some(bin) = by_hue.get((h + TABLE_HUES * 2 + offset - reach) % TABLE_HUES) else { continue };
+                for &(hp, sp, vp, dh, ls) in bin {
                     let dhue = (hp - hue + 180.0).rem_euclid(360.0) - 180.0;
                     if dhue.abs() > 4.0 * KERNEL_HUE {
                         continue;
@@ -287,15 +369,14 @@ fn fit_hue_sat(pairs: &[([f64; 3], [f64; 3])], matrix: &Mat3) -> Option<HsvTable
                     shift += k * dh;
                     log_scale += k * ls;
                 }
-                if weight > 0.0
-                    && let Some(entry) = data.get_mut((v * TABLE_HUES + h) * TABLE_SATS + s)
-                {
-                    let shrink = 1.0 / (weight + SHRINK_WEIGHT);
-                    *entry = [(shift * shrink) as f32, (log_scale * shrink).exp() as f32, 1.0];
-                }
             }
-        }
-    }
+            if weight <= 0.0 {
+                return [0.0, 1.0, 1.0];
+            }
+            let shrink = 1.0 / (weight + SHRINK_WEIGHT);
+            [(shift * shrink) as f32, (log_scale * shrink).exp() as f32, 1.0]
+        })
+        .collect();
     data.iter().all(|e| e.iter().all(|v| v.is_finite())).then_some(HsvTable {
         hue_divisions: TABLE_HUES,
         sat_divisions: TABLE_SATS,
@@ -573,6 +654,55 @@ mod tests {
         };
         let (a, b) = (highlight_error(&without), highlight_error(&with));
         assert!(b < 0.5 * a, "highlight error {a:.4} -> {b:.4}");
+    }
+
+    /// Pooled pairs of several "photos" recover the camera's matrix, and a photo given that
+    /// colour model (a camera profile) keeps it, fitting only its own tone.
+    #[test]
+    fn profile_colour_is_pooled_and_then_used_as_given() {
+        let known = Mat3([[1.8, -0.4, -0.1], [-0.2, 1.5, -0.1], [-0.05, -0.3, 1.7]]);
+        let photo = |seed: usize, strength: f32| {
+            let mut sensor = Rgb32f::new(64, 48);
+            let mut reference = sensor.clone();
+            for (i, (src, dst)) in sensor.data.iter_mut().zip(&mut reference.data).enumerate() {
+                let i = i + seed * 7;
+                let ev = 0.04 + (i % 23) as f32 * 0.02;
+                *src = [ev * (0.7 + (i % 11) as f32 * 0.05), ev, ev * (0.7 + (i % 13) as f32 * 0.05)];
+                let p = known.apply_f32(*src);
+                let y = luminance_2020(p);
+                // each photo has its own tone (DRO, picture style)
+                *dst = p.map(|v| v * (1.0 - (-strength * y).exp()) / y);
+            }
+            (sensor, reference)
+        };
+        let mut pool = Vec::new();
+        for seed in 0..4 {
+            let (sensor, reference) = photo(seed, 2.0 + seed as f32 * 0.5);
+            pool.extend(collect_pairs(&sensor, &reference).unwrap().0);
+        }
+        let (matrix, _) = fit_profile(&pool).unwrap();
+        // the camera's colours (luminance-normalised: the tone curve sets brightness)
+        for x in [[0.8, 1.0, 0.75], [1.1, 1.0, 0.8], [0.75, 1.0, 1.2], [1.0; 3]] {
+            let (a, b) = (matrix.apply(x), known.apply(x));
+            let (la, lb) = (luma(a), luma(b));
+            assert!((0..3).all(|c| (a[c] / la - b[c] / lb).abs() < 0.01), "{x:?}: {a:?} vs {b:?}");
+        }
+        let (sensor, reference) = photo(9, 3.5);
+        let look = fit_pairs_with(&sensor, &reference, Some((matrix, None))).unwrap();
+        assert_eq!(look.matrix, matrix);
+        assert!(look.hue_sat.is_none());
+        let tone = ToneMap::camera(&look.tone, 0.0, 0.0, 0.0);
+        let error = sensor
+            .data
+            .iter()
+            .zip(&reference.data)
+            .map(|(x, y)| {
+                let p = displayed(look.matrix.apply(x.map(f64::from)), &tone);
+                (0..3).map(|c| (p[c] - f64::from(y[c])).powi(2)).sum::<f64>() / 3.0
+            })
+            .sum::<f64>()
+            / sensor.data.len() as f64;
+        assert!(error.sqrt() < 0.02, "this photo's own tone is followed: RMS {}", error.sqrt());
     }
 
     #[test]
