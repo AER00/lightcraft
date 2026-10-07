@@ -442,7 +442,8 @@ old
     fn reads_ui_command_ids() {
         let src = "pub const UI_COMMANDS: &[UiCommand] = &[\n    (\"view.detail\", \"Detail\", Some(\"D\"), \"View\"),\n    (\"app.about\", \"About\", None, \"\"),\n];\nfn x() { (\"not.this\", 1); }";
         assert_eq!(ui_command_ids(src), ["view.detail", "app.about"]);
-        let languages = "pub const LANGUAGE_COMMANDS: &[UiCommand] = &[\n    (\"app.language.english\", Locale::En.name(), None, \"Edit>Language\"),\n];\n";
+        let languages =
+            "pub const LANGUAGE_COMMANDS: &[UiCommand] = &[\n    (\"app.language.english\", Locale::En.name(), None, \"Edit>Language\"),\n];\n";
         assert_eq!(ui_command_ids(&format!("{languages}{src}")), ["view.detail", "app.about", "app.language.english"]);
     }
 

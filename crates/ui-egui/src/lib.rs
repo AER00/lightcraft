@@ -157,6 +157,9 @@ pub struct LightcraftApp {
     /// Clear `synthetic_mods` on the next frame.
     synthetic_mods_release: bool,
     styled: bool,
+    /// The language the installed fonts were built for: the CJK fallback order follows the UI
+    /// language's script, so switching language reinstalls them.
+    font_language: i18n::Locale,
     fonts_ready: bool,
     last_time: f64,
     /// Rect of the photo canvas and the displayed image (screen points) from the last frame.
@@ -223,6 +226,7 @@ impl LightcraftApp {
             synthetic_mods: egui::Modifiers::NONE,
             synthetic_mods_release: false,
             styled: false,
+            font_language: i18n::Locale::En,
             fonts_ready: false,
             last_time: 0.0,
             canvas_rect: None,
@@ -502,6 +506,12 @@ impl LightcraftApp {
             let repaint = ctx.clone();
             self.session.media.availability.run_in_background(std::sync::Arc::new(move || repaint.request_repaint()));
             self.styled = true;
+            self.font_language = self.ui.language;
+        } else if self.font_language != self.ui.language {
+            // Shared Han characters take the active language's forms (Japanese faces for 日本語,
+            // the Simplified Chinese face for 简体中文): rebuild the fallback order.
+            theme::install_fonts(ctx);
+            self.font_language = self.ui.language;
         } else {
             self.fonts_ready = true;
         }

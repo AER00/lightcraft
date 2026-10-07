@@ -153,12 +153,6 @@ pub fn language() -> Locale {
     LOCALE.with(std::cell::Cell::get)
 }
 
-/// Whether the active language needs the craft-fonts CJK faces (Inter alone has no CJK glyphs):
-/// the native menu bar uses it to pick a text style.
-pub fn uses_cjk_fonts() -> bool {
-    language().script() != "Latn"
-}
-
 /// Translate a built-in display label, preserving unknown labels verbatim.
 /// Never call this on editable user text, filenames or command identifiers.
 pub fn tr(source: &str) -> &str {
@@ -366,7 +360,8 @@ mod tests {
     /// The language menu covers every language, and a language's own command selects it.
     #[test]
     fn language_commands_cover_every_language() {
-        let commands = [("app.language.english", Locale::En), ("app.language.simplifiedChinese", Locale::ZhHans), ("app.language.japanese", Locale::Ja)];
+        let commands =
+            [("app.language.english", Locale::En), ("app.language.simplifiedChinese", Locale::ZhHans), ("app.language.japanese", Locale::Ja)];
         // One command per language, and every command reachable from the menu table.
         assert_eq!(commands.len(), Locale::ALL.len());
         for (id, language) in commands {
@@ -388,5 +383,152 @@ mod tests {
         let saved = serde_json::to_string(&settings).unwrap();
         let restored: crate::state::UiState = serde_json::from_str(&saved).unwrap();
         assert_eq!(restored.language, Locale::ZhHans);
+    }
+
+    #[test]
+    fn catalogs_contain_core_workflows() {
+        for language in Locale::ALL.iter().filter(|language| **language != Locale::En) {
+            for key in ["Import Photos…", "Export…", "Exposure", "White Balance", "Settings", "Language"] {
+                let value = language.tr(key);
+                assert!(!value.is_empty() && value != key, "{language:?}: {key}");
+            }
+        }
+    }
+
+    /// User-named menu items (presets, albums, label sets) are never translated; built-in labels are.
+    #[test]
+    fn menu_labels_translate_but_user_names_survive() {
+        for language in Locale::ALL {
+            set_language(*language);
+            assert_eq!(crate::menubar::display_item_label("album.addPhotos", &serde_json::json!({"id": 1}), "Color"), "Color");
+            assert_eq!(crate::menubar::display_item_label("app.export", &serde_json::json!({"preset": "Color"}), "Color"), "Color");
+            assert_eq!(crate::menubar::display_item_label("view.photoGrid", &serde_json::Value::Null, "Color"), language.tr("Color"));
+        }
+        set_language(Locale::ZhHans);
+        assert_eq!(crate::menubar::display_item_label("view.photoGrid", &serde_json::Value::Null, "Color"), "颜色");
+        set_language(Locale::Ja);
+        assert_eq!(crate::menubar::display_item_label("view.photoGrid", &serde_json::Value::Null, "Color"), "カラー");
+        set_language(Locale::En);
+    }
+
+    /// The text the whole window paints over a few frames in `language`.
+    fn painted_text(ctx: &egui::Context, app: &mut crate::LightcraftApp, language: Locale) -> String {
+        fn collect(shape: &egui::epaint::Shape, text: &mut String) {
+            match shape {
+                egui::epaint::Shape::Text(shape) => {
+                    text.push_str(&shape.galley.job.text);
+                    text.push('\n');
+                }
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, text)),
+                _ => {}
+            }
+        }
+        app.ui.language = language;
+        let mut text = String::new();
+        for frame in 0..4 {
+            let input = crate::headless::HeadlessView::raw_input(egui::vec2(1600.0, 1000.0), 1.0, frame as f64 / 60.0, vec![]);
+            let mut out = ctx.run_ui(input, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
+            // This inspects shapes without a renderer; discard texture uploads explicitly.
+            out.textures_delta.clear();
+            text.clear();
+            for shape in out.shapes {
+                collect(&shape.shape, &mut text);
+            }
+        }
+        text
+    }
+
+    /// Every language is painted by the real window, switching at runtime reinstalls the fonts
+    /// (their CJK fallback order follows the language), and command ids never change with it.
+    #[test]
+    fn every_language_is_painted_and_menu_ids_stay_the_same() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let mut app = crate::LightcraftApp::new(lightcraft_engine::Session::with_demo(), Default::default());
+        app.ui.left_panel = true;
+        let ids = |app: &crate::LightcraftApp| crate::menus::menu_entries(app).into_iter().map(|entry| entry.id).collect::<Vec<_>>();
+        let english_ids = ids(&app);
+        for language in Locale::ALL {
+            let text = painted_text(&ctx, &mut app, *language);
+            for label in ["My Photos", "All Photos"] {
+                assert!(text.contains(language.tr(label)), "{language:?}: {label} -> {:?} not in\n{text}", language.tr(label));
+            }
+            assert_eq!(app.font_language, *language, "the fonts follow the language");
+            assert_eq!(ids(&app), english_ids, "{language:?}: command ids are presentation-independent");
+        }
+        let text = painted_text(&ctx, &mut app, Locale::Ja);
+        assert!(text.contains("マイフォト") && text.contains("すべての写真"), "{text}");
+        let text = painted_text(&ctx, &mut app, Locale::ZhHans);
+        assert!(text.contains("我的照片") && text.contains("所有照片"), "{text}");
+        set_language(Locale::En);
+    }
+
+    /// The UI families, after one frame so the font definitions are loaded.
+    fn fonts_ctx(craft: &'static [lightcraft_engine::CraftFont]) -> egui::Context {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::theme::font_definitions(craft));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        ctx
+    }
+
+    /// Built with craft-fonts, every CJK language renders with real glyphs (no tofu) in every UI
+    /// family, Monospace included.
+    #[test]
+    fn craft_fonts_render_cjk_in_the_ui() {
+        let samples = [(Locale::Ja, "日本語の文字"), (Locale::ZhHans, "简体中文字")];
+        for (language, sample) in samples {
+            if !lightcraft_engine::CRAFT_FONTS.iter().any(|font| font.covers(language.script())) {
+                eprintln!("skipped {}: built without a craft-fonts face for {}", language.code(), language.script());
+                continue;
+            }
+            set_language(language);
+            let ctx = fonts_ctx(lightcraft_engine::CRAFT_FONTS);
+            ctx.fonts_mut(|fonts| {
+                for family in
+                    [egui::FontFamily::Proportional, egui::FontFamily::Name(crate::theme::FONT_SEMIBOLD.into()), egui::FontFamily::Monospace]
+                {
+                    let font = egui::FontId::new(13.0, family);
+                    for ch in sample.chars() {
+                        assert!(fonts.has_glyph(&font, ch), "{language:?}: {ch} in {font:?}");
+                    }
+                    let galley = fonts.layout_no_wrap(sample.into(), font.clone(), egui::Color32::WHITE);
+                    let wide = 13.0 * (sample.chars().count() as f32 - 1.0);
+                    assert!(galley.size().x > wide, "{language:?} {font:?}: full-width glyphs, {:?}", galley.size());
+                }
+            });
+        }
+        set_language(Locale::En);
+    }
+
+    /// Built without craft-fonts, the UI (in every language) still installs its fonts and runs;
+    /// Latin text keeps Inter.
+    #[test]
+    fn the_ui_works_without_craft_fonts() {
+        let ctx = fonts_ctx(&[]);
+        ctx.fonts_mut(|fonts| {
+            // (Not Monospace: egui's `has_glyph` reports false for glyphs of the family's
+            // replacement-glyph face, which there is Hack, the face that draws Latin.)
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Name(crate::theme::FONT_SEMIBOLD.into())] {
+                let font = egui::FontId::new(13.0, family);
+                assert!("LightCraft".chars().all(|ch| fonts.has_glyph(&font, ch)), "{font:?}");
+            }
+        });
+        let mut app = crate::LightcraftApp::new(lightcraft_engine::Session::with_demo(), Default::default());
+        for language in Locale::ALL {
+            app.ui.language = *language;
+            for frame in 0..3 {
+                let input = crate::headless::HeadlessView::raw_input(egui::vec2(1200.0, 800.0), 1.0, frame as f64 / 60.0, vec![]);
+                let mut out = ctx.run_ui(input, |ui| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                });
+                out.textures_delta.clear();
+            }
+        }
+        set_language(Locale::En);
     }
 }
