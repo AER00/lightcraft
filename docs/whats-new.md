@@ -131,6 +131,12 @@
   lost everything at quit; a temporary session shows a banner the whole time and never writes to your library.
 
 ### Editing
+- AI masks with SAM 3 (Object and Describe in the Masking panel): click an object to select it (⌥-click leaves a
+  part out), or type what to select ("sky", "the red car", "car, road"); both combine with other masks, have an
+  Edge setting, and get a sharper zoomed-in pass in the background. The model runs inside LightCraft in pure Rust
+  and never freezes the window. It is optional and not part of LightCraft (Meta's SAM License, about 3.4 GB): the
+  first time you use an AI mask, LightCraft asks before downloading it, shows the progress, can cancel and resume,
+  and checks the file before using it. Masks keep their selection, so they render and export without the model.
 - Auto Sync: edits apply to every selected photo. Auto B&W mix. Automatic versions.
 - Colour-range masks: click the photo to sample. Luminance ranges: range bar, smoothness, luminance map.
 - ⌘-drag to straighten, ⇧G Guided Upright, a grid while transforming.
