@@ -83,6 +83,11 @@
   changes couldn't be saved tries once more, then asks: Try Saving Again, Quit Anyway or Cancel.
 
 ### Library
+- Photos in Recently Deleted can be restored from the app: right-click ▸ Restore (or Delete Permanently), also in the
+  Photo menu. The filmstrip has the photo context menu too. Adding a file again that is in Recently Deleted no
+  longer just says "duplicate skipped": it opens the side panel on Recently Deleted with the photo selected and says
+  how to restore it or delete it permanently and import it afresh. (For a fresh start on a photo, Reset Edits,
+  Cmd+Shift+R, keeps the photo and clears its edits.)
 - Canon CR3 files show their full-size embedded JPEG (e.g. 6960 × 4640 on an EOS R6 Mark III) instead of the
   1620 × 1080 preview, and import with their metadata: capture time, camera, lens, exposure, GPS and XMP. Their raw
   data is not decoded yet, so they stay preview-only. For CR3s imported earlier, Photo ▸ Reload from Disk (now in
@@ -129,6 +134,10 @@
 - Auto Sync: edits apply to every selected photo. Auto B&W mix. Automatic versions.
 - Colour-range masks: click the photo to sample. Luminance ranges: range bar, smoothness, luminance map.
 - ⌘-drag to straighten, ⇧G Guided Upright, a grid while transforming.
+- Nikon NEFs start from a colour and tone look fitted to the camera's own JPEG, as Sony ARWs do, instead of a muted,
+  greenish neutral rendering (issue #150); white balance is adjusted relative to the as-shot look. 12-bit NEFs
+  (e.g. D750, D780, D850, D7500, Z 50) no longer render nearly black or with crushed shadows: their black level was
+  read in the wrong units.
 
 ### Viewing and sharing
 - Slideshow, second window, All Metadata, System Info.

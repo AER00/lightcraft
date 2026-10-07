@@ -51,6 +51,7 @@ pub enum Gesture {
         mask: u32,
         comp: usize,
         handle: u8,
+        original_shape: MaskShape,
     },
     /// Guided Upright: a guide being drawn from `a` (normalized transformed coordinates).
     Guide {
@@ -867,10 +868,49 @@ pub(crate) fn component_pin(shape: &MaskShape) -> Option<Point> {
 }
 
 /// `shape` moved by `dn` (normalized); `handle` 1/2 = a linear gradient's start/end set to `at`.
-fn moved_shape(shape: &MaskShape, handle: u8, dn: Point, at: Point) -> MaskShape {
+fn moved_shape(shape: &MaskShape, handle: u8, dn: Point, at: Point, map: &CanvasMap, alt: bool) -> MaskShape {
     let mv = |p: Point| Point::new(p.x + dn.x, p.y + dn.y);
     match shape.clone() {
-        MaskShape::Radial { center, rx, ry, angle, feather, invert } => MaskShape::Radial { center: mv(center), rx, ry, angle, feather, invert },
+        MaskShape::Radial { center, rx, ry, angle, feather, invert } => match handle {
+            1 | 3 => {
+                let l = frame_long_norm(map);
+                let dx = (at.x - center.x) / l.0;
+                let dy = (at.y - center.y) / l.1;
+                let (s, co) = angle.to_radians().sin_cos();
+                let new_rx = (dx * co + dy * s).abs().max(0.01);
+                let mut new_ry = ry;
+                if alt {
+                    new_ry = ry * (new_rx / rx.max(0.01));
+                }
+                if (new_rx - new_ry).abs() / new_rx.max(new_ry) < 0.05 {
+                    new_ry = new_rx;
+                }
+                MaskShape::Radial { center, rx: new_rx, ry: new_ry, angle, feather, invert }
+            }
+            2 | 4 => {
+                let l = frame_long_norm(map);
+                let dx = (at.x - center.x) / l.0;
+                let dy = (at.y - center.y) / l.1;
+                let (s, co) = angle.to_radians().sin_cos();
+                let new_ry = (dx * (-s) + dy * co).abs().max(0.01);
+                let mut new_rx = rx;
+                if alt {
+                    new_rx = rx * (new_ry / ry.max(0.01));
+                }
+                if (new_rx - new_ry).abs() / new_rx.max(new_ry) < 0.05 {
+                    new_rx = new_ry;
+                }
+                MaskShape::Radial { center, rx: new_rx, ry: new_ry, angle, feather, invert }
+            }
+            5 => {
+                let l = frame_long_norm(map);
+                let dx = (at.x - center.x) / l.0;
+                let dy = (at.y - center.y) / l.1;
+                let new_angle = dy.atan2(dx).to_degrees();
+                MaskShape::Radial { center, rx, ry, angle: new_angle, feather, invert }
+            }
+            _ => MaskShape::Radial { center: mv(center), rx, ry, angle, feather, invert },
+        },
         MaskShape::Linear { start, end } => match handle {
             1 => MaskShape::Linear { start: at, end },
             2 => MaskShape::Linear { start, end: at },
@@ -915,6 +955,26 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
                         })
                         .collect();
                     p.add(egui::Shape::closed_line(pts, Stroke::new(1.5, Color32::from_white_alpha(230))));
+
+                    let l = frame_long_norm(map);
+                    for (i, a_deg) in [0.0_f64, 90.0_f64, 180.0_f64, 270.0_f64].into_iter().enumerate() {
+                        let a_local = a_deg.to_radians();
+                        let (s, co) = angle.to_radians().sin_cos();
+                        let (x, y) = (rx * a_local.cos(), ry * a_local.sin());
+                        let q = map.screen(Point::new(center.x + (x * co - y * s) * l.0, center.y + (x * s + y * co) * l.1));
+                        p.circle_stroke(q, 5.0, Stroke::new(1.5, Color32::WHITE));
+                        register(ui.ctx(), format!("maskHandle:{}:{ci}:{}", m.id, i + 1), Rect::from_center_size(q, vec2(14.0, 14.0)));
+                        grips.push((m.id, ci, i as u8 + 1, q));
+                    }
+
+                    let (s, co) = angle.to_radians().sin_cos();
+                    let rot_r = rx + 0.08;
+                    let rot_q = map.screen(Point::new(center.x + (rot_r * co) * l.0, center.y + (rot_r * s) * l.1));
+                    let h1_q = map.screen(Point::new(center.x + (rx * co) * l.0, center.y + (rx * s) * l.1));
+                    p.line_segment([h1_q, rot_q], Stroke::new(1.0, Color32::from_white_alpha(200)));
+                    p.circle_stroke(rot_q, 4.0, Stroke::new(1.5, Color32::WHITE));
+                    register(ui.ctx(), format!("maskHandle:{}:{ci}:5", m.id), Rect::from_center_size(rot_q, vec2(14.0, 14.0)));
+                    grips.push((m.id, ci, 5, rot_q));
                 }
                 MaskShape::Linear { start, end } if sel => {
                     let (a, b) = (map.screen(*start), map.screen(*end));
@@ -1003,21 +1063,25 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
             let m = d.masks.iter().find(|m| Some(m.id) == active)?;
             matches!(m.components.first()?.shape, MaskShape::Linear { .. }).then_some((m.id, 0, 0))
         });
-        if let Some((mask, comp, handle)) = grip {
+        if let Some((mask, comp, handle)) = grip
+            && let Some(original_shape) = d.masks.iter().find(|m| m.id == mask).and_then(|m| m.components.get(comp)).map(|c| c.shape.clone())
+        {
             if Some(mask) != active {
                 let _ = app.run("mask.select", json!({"id": mask}));
             }
             let _ = app.run("develop.beginInteraction", json!({"label": "Edit Mask"}));
-            app.gesture = Some(Gesture::MaskHandle { mask, comp, handle });
+            app.gesture = Some(Gesture::MaskHandle { mask, comp, handle, original_shape });
         }
     }
     if resp.dragged()
-        && let (Some(Gesture::MaskHandle { mask, comp, handle }), Some(q)) = (app.gesture.clone(), resp.interact_pointer_pos())
-        && let Some(shape) = d.masks.iter().find(|m| m.id == mask).and_then(|m| m.components.get(comp)).map(|c| &c.shape)
+        && let (Some(Gesture::MaskHandle { mask, comp, handle, original_shape }), Some(q)) = (app.gesture.clone(), resp.interact_pointer_pos())
     {
         let n = map.norm(q);
-        let n0 = map.norm(q - resp.drag_delta());
-        let new_shape = moved_shape(shape, handle, Point::new(n.x - n0.x, n.y - n0.y), n);
+        let press_origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(q);
+        let n0 = map.norm(press_origin);
+        let dn = Point::new(n.x - n0.x, n.y - n0.y);
+        let alt = ui.input(|i| i.modifiers.alt);
+        let new_shape = moved_shape(&original_shape, handle, dn, n, map, alt);
         let _ = app.run("mask.update", json!({"id": mask, "component": comp, "shape": new_shape}));
     }
     if resp.drag_stopped() && matches!(app.gesture, Some(Gesture::MaskHandle { .. })) {
@@ -1300,6 +1364,8 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
                 };
                 let _ = app.run("library.select", json!({"ids": [id.0], "mode": mode}));
             }
+            // the same photo actions as the grid and loupe (Restore / Delete Permanently in Recently Deleted)
+            resp.context_menu(|ui| super::grid::context_menu(app, ui, *id));
         }
     });
 }
