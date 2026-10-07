@@ -171,7 +171,7 @@ fn structure_of(bar: &[(String, Vec<MenuNode>)]) -> String {
             out.push(';');
         }
     }
-    let mut s = format!("{};", lightcraft_ui_egui::i18n::is_japanese());
+    let mut s = format!("{};", lightcraft_ui_egui::i18n::language().code());
     for (t, items) in bar {
         s.push_str(t);
         walk(items, &mut s);

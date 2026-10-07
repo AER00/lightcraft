@@ -245,14 +245,15 @@ impl Default for Watermark {
 /// Inter SemiBold (OFL, see assets/ATTRIBUTION.md).
 static WATERMARK_FONT: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
 
-/// The watermark faces: Inter first, then the craft-fonts Japanese faces (Mincho first, the
-/// watermark's serif look; then any other Japanese face). Without craft-fonts that is Inter alone,
-/// and Japanese characters draw as Inter's missing-glyph box.
+/// The watermark faces: Inter first, then the craft-fonts CJK faces (Mincho first, the watermark's
+/// serif look; then any other CJK face — a watermark has no UI language, so every CJK script is
+/// offered). Without craft-fonts that is Inter alone, and CJK characters draw as Inter's
+/// missing-glyph box.
 fn watermark_fonts(craft: &'static [crate::fonts::CraftFont]) -> Vec<ab_glyph::FontRef<'static>> {
-    let mut japanese: Vec<_> = crate::fonts::japanese(craft).collect();
-    japanese.sort_by_key(|f| !f.is_mincho());
+    let mut cjk: Vec<_> = crate::fonts::cjk(craft).collect();
+    cjk.sort_by_key(|f| !f.is_mincho());
     std::iter::once(WATERMARK_FONT)
-        .chain(japanese.into_iter().map(|f| f.bytes))
+        .chain(cjk.into_iter().map(|f| f.bytes))
         .filter_map(|bytes| ab_glyph::FontRef::try_from_slice(bytes).ok())
         .collect()
 }

@@ -1,5 +1,5 @@
 //! The menu bar model: File, Edit, View, Photo, Window, Help, generated from the command registry
-//! (engine commands with menu paths + [`crate::menus::UI_COMMANDS`]) with live labels, shortcuts,
+//! (engine commands with menu paths + [`crate::menus::ui_commands`]) with live labels, shortcuts,
 //! enabled and checked state.
 //!
 //! One model drives every menu surface: the native macOS menu bar (built by the desktop host), the
@@ -284,8 +284,8 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
     let u = &app.ui;
     let panel = |p: RightPanel| Some(u.right == p);
     match id {
-        "app.language.english" => Some(u.language == crate::i18n::Language::En),
-        "app.language.japanese" => Some(u.language == crate::i18n::Language::Ja),
+        // Every language's command is checked when it is the active one.
+        _ if crate::menus::language_from_command(id).is_some() => Some(crate::menus::language_from_command(id) == Some(u.language)),
         "develop.autoSync" => Some(app.session.auto_sync),
         "view.photoCounts" => Some(u.show_counts),
         "view.secondWindow" => Some(u.second_window),

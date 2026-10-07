@@ -44,13 +44,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 15 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
+| X. Cross-cutting behaviours (BEHAV) | 16 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
-| **Total** | 387 | 33 | 87 | 37 | 194/200 (97%) | 139/149 (93%) |
+| **Total** | 388 | 33 | 87 | 37 | 194/200 (97%) | 139/149 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.6%** of 507 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 40.5% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.6%** of 508 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 40.9% of 159.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -503,7 +503,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-EMPTY-STATES | Empty states | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`empty_message`) | |
 | LR-BEHAV-TOOLTIPS | Tooltips with shortcuts | P0 | ✅ | `crates/ui-egui/src/panels/bottombar.rs` | |
 | LR-BEHAV-ACCESS | Accessibility | P2 | 🟡 | `crates/ui-egui/src/widgets.rs`, `crates/ui-egui/src/panels/grid.rs` | AccessKit (VoiceOver / Narrator / AT-SPI): sliders announce control and value, buttons / icon buttons / dropdowns / section headers / sources their labels and state, grid thumbnails file name, rating, flag and label; the canvas tools (crop, masks) are pointer-only; not audited with a screen reader |
-| LR-BEHAV-LOCALIZE | Localisation | P2 | 🟡 | `crates/ui-egui/src/i18n.rs`, `crates/ui-egui/locales/`, `docs/localization-ja.md` | Japanese/English UI with persisted language preference and Japanese regular/bold fonts; menus, edit, crop/masks, settings, import/export and primary progress messages. Technical errors/release notes and other locales remain untranslated. |
+| LR-BEHAV-LOCALE | Language options | P2 | ✅ | `cmd:app.language.english`, `cmd:app.language.simplifiedChinese`, `cmd:app.language.japanese` | Edit > Language lists every language in the table and the active one is checked; shared with Settings > General (docs/localization.md) |
+| LR-BEHAV-LOCALIZE | Localisation | P2 | 🟡 | `crates/ui-egui/src/i18n.rs`, `crates/ui-egui/locales/`, `docs/localization.md`, `docs/localization-zh-hans.md`, `docs/localization-ja.md` | One table entry per language (code, endonym, ISO 15924 script, catalog): English, Simplified Chinese and Japanese UI with a persisted language preference and craft-fonts regular/bold faces per script; menus, edit, crop/masks, settings, import/export and primary progress messages. Adding a language is a table entry plus two catalogs. Technical errors/release notes and date grouping headers remain English, and the web build embeds only the Japanese face. |
 | LR-BEHAV-LEARN | Tutorials | OOS | 🚫 | | |
 | LR-BEHAV-WHATSNEW | What's new | P2 | ✅ | `cmd:app.whatsNew`, `docs/whats-new.md` | Help ▸ What's New: release highlights |
 | LR-BEHAV-AI-EA | Early-access badges | P2 | ⬜ | | |
