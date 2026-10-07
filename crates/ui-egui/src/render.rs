@@ -90,7 +90,8 @@ pub struct Renderer {
     request_ids: HashMap<Slot, u64>,
     preview_generation: Option<(std::sync::Weak<lightcraft_preview::PreviewCache>, u64)>,
     /// Last thumbnail inputs; weak identities do not retain photo histories or force deep clones.
-    thumb_inputs: HashMap<PhotoId, (std::sync::Weak<lightcraft_catalog::Photo>, usize, u64)>,
+    /// (photo, size bucket, job key, whether the request went through an embedded stand-in)
+    thumb_inputs: HashMap<PhotoId, (std::sync::Weak<lightcraft_catalog::Photo>, usize, u64, bool)>,
     pool: JobPool<Slot, RenderResult>,
     /// Jobs run elsewhere (see [`RenderOffload`]); `queue` holds the ones not started yet.
     offload: Option<Box<dyn RenderOffload>>,
@@ -171,21 +172,33 @@ impl Renderer {
 }
 
 impl Renderer {
+    /// Would asking for this thumbnail again (at `priority`) change nothing?
     pub fn thumb_current(&self, photo: &Arc<lightcraft_catalog::Photo>, bucket: usize, priority: u32) -> bool {
-        let Some((old, size, key)) = self.thumb_inputs.get(&photo.id) else { return false };
-        old.as_ptr() == Arc::as_ptr(photo) && *size == bucket && !self.request_needed(Slot::Thumb(photo.id), *key, priority)
+        let Some(&(ref old, size, key, quick)) = self.thumb_inputs.get(&photo.id) else { return false };
+        if old.as_ptr() != Arc::as_ptr(photo) || size != bucket {
+            return false;
+        }
+        let slot = Slot::Thumb(photo.id);
+        if quick && !self.textures.contains_key(&slot) {
+            // Stand-in path (`grid::request_thumb`): the embedded preview is still on its way, or
+            // the real thumbnail is requested at the background priority whatever the caller's.
+            return self.pending.get(&Slot::ThumbQuick(photo.id)).is_some_and(|p| p.0 == key)
+                || !self.request_needed(slot, key, crate::panels::grid::BACKGROUND_THUMB_PRIORITY);
+        }
+        !self.request_needed(slot, key, priority)
     }
 
-    pub fn remember_thumb(&mut self, photo: &Arc<lightcraft_catalog::Photo>, bucket: usize, key: u64) {
+    /// Remember the inputs of the thumbnail just requested (`quick`: through a stand-in).
+    pub fn remember_thumb(&mut self, photo: &Arc<lightcraft_catalog::Photo>, bucket: usize, key: u64, quick: bool) {
         if self.thumb_inputs.len() >= 1024 && !self.thumb_inputs.contains_key(&photo.id) {
-            self.thumb_inputs.retain(|_, (p, _, _)| p.strong_count() > 0);
+            self.thumb_inputs.retain(|_, (p, _, _, _)| p.strong_count() > 0);
             if self.thumb_inputs.len() >= 1024
                 && let Some(id) = self.thumb_inputs.keys().next().copied()
             {
                 self.thumb_inputs.remove(&id);
             }
         }
-        self.thumb_inputs.insert(photo.id, (Arc::downgrade(photo), bucket, key));
+        self.thumb_inputs.insert(photo.id, (Arc::downgrade(photo), bucket, key, quick));
     }
 
     fn request_needed(&self, slot: Slot, key: u64, priority: u32) -> bool {
@@ -614,7 +627,7 @@ mod thumbnail_tests {
         catalog.apply(Op::AddPhoto { photo: Box::new((*photo()).clone()) }).unwrap();
         let old = catalog.photo(PhotoId(1)).unwrap().clone();
         let mut r = Renderer::default();
-        r.remember_thumb(&old, 384, 77);
+        r.remember_thumb(&old, 384, 77, false);
         r.pending.insert(Slot::Thumb(PhotoId(1)), (77, 10));
         assert!(r.thumb_current(&old, 384, 10));
         assert!(!r.thumb_current(&old, 512, 10));
@@ -649,7 +662,7 @@ mod thumbnail_tests {
         let key = job.key;
         let mut r = Renderer::default();
         r.set_offload(Box::new(Blocked));
-        r.remember_thumb(&p, 384, key);
+        r.remember_thumb(&p, 384, key, false);
         r.request(slot, job, 5);
         assert!(r.thumb_current(&p, 384, 5));
         assert!(!r.thumb_current(&p, 384, 10));
@@ -667,7 +680,7 @@ mod thumbnail_tests {
         let p = photo();
         let slot = Slot::Thumb(p.id);
         let mut r = Renderer::default();
-        r.remember_thumb(&p, 384, 77);
+        r.remember_thumb(&p, 384, 77, false);
         r.pending.insert(Slot::ThumbQuick(p.id), (77, 11));
         assert!(!r.thumb_current(&p, 384, 10));
         r.failed.insert(slot, (77, "no decoder".into(), 0));
@@ -692,15 +705,15 @@ mod thumbnail_tests {
         }
     }
     fn fixture() -> (crate::LightcraftApp, std::rc::Rc<std::cell::RefCell<Work>>, egui::Context) {
-        fixture_with(Session::new())
+        fixture_with(Session::new(), (*photo()).clone())
     }
-    fn fixture_with(mut s: Session) -> (crate::LightcraftApp, std::rc::Rc<std::cell::RefCell<Work>>, egui::Context) {
+    fn fixture_with(mut s: Session, photo: Photo) -> (crate::LightcraftApp, std::rc::Rc<std::cell::RefCell<Work>>, egui::Context) {
         s.media.file_loader = Some(Arc::new(|_, _| {
             let mut image = lightcraft_raster::Rgb32f::new(8, 8);
             image.data.fill([0.3, 0.2, 0.1]);
             Ok((image, Default::default()))
         }));
-        s.catalog.apply(Op::AddPhoto { photo: Box::new((*photo()).clone()) }).unwrap();
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(photo) }).unwrap();
         let mut app = crate::LightcraftApp::new(s, crate::Services::default());
         app.renderer.keep_pixels = true;
         let work = std::rc::Rc::new(std::cell::RefCell::new(Work::default()));
@@ -756,7 +769,7 @@ mod thumbnail_tests {
         let _ = std::fs::remove_dir_all(&lib);
         let mut s = Session::new().with_fs();
         s.open_library(&lib, false).unwrap();
-        let (mut app, work, ctx) = fixture_with(s);
+        let (mut app, work, ctx) = fixture_with(s, (*photo()).clone());
         request(&mut app);
         let (slot, job) = take_job(&work);
         finish(&mut app, &work, &ctx, slot, job.run());
@@ -778,6 +791,47 @@ mod thumbnail_tests {
         assert!(app.renderer.thumb(PhotoId(1)).is_none());
         drop(app);
         let _ = std::fs::remove_dir_all(&lib);
+    }
+
+    #[test]
+    fn raw_quick_path_frames_build_no_jobs() {
+        // an unedited raw: the grid shows its embedded preview first (held here until released),
+        // then queues the real thumbnail behind everything on screen
+        let gate = Arc::new(std::sync::Mutex::new(()));
+        let held = gate.lock().unwrap();
+        let mut s = Session::new();
+        let g = gate.clone();
+        s.media.preview_loader = Some(Arc::new(move |_: &str, _| {
+            drop(g.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+            Some(lightcraft_raster::Rgba8 { width: 4, height: 4, data: vec![[200, 100, 50, 255]; 16] })
+        }));
+        let mut raw = (*photo()).clone();
+        raw.kind = lightcraft_catalog::MediaKind::Raw;
+        raw.develop = Arc::new(raw.camera_defaults());
+        let (mut app, _, ctx) = fixture_with(s, raw);
+        app.renderer.set_offload(Box::new(Blocked));
+        let quick = Slot::ThumbQuick(PhotoId(1));
+        // the stand-in is running
+        for _ in 0..180 {
+            request(&mut app);
+        }
+        assert!(app.renderer.is_pending(quick));
+        assert_eq!(app.renderer.thumb_jobs_built, 1);
+        drop(held);
+        let t0 = std::time::Instant::now();
+        while !app.renderer.textures.contains_key(&quick) {
+            assert!(t0.elapsed() < std::time::Duration::from_secs(20), "the embedded preview never arrived");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            app.renderer.poll(&ctx, &mut app.session);
+        }
+        // the stand-in is shown: one more job queues the real thumbnail at background priority,
+        // and the grid asking at its own (higher) priority every frame does not rebuild it
+        for _ in 0..180 {
+            request(&mut app);
+        }
+        assert_eq!(app.renderer.thumb_jobs_built, 2);
+        assert_eq!(app.renderer.queue.len(), 1);
+        assert_eq!(app.renderer.pending.get(&Slot::Thumb(PhotoId(1))).map(|p| p.1), Some(crate::panels::grid::BACKGROUND_THUMB_PRIORITY));
     }
 
     #[test]
