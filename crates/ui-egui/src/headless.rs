@@ -169,9 +169,11 @@ impl Headless {
         }
     }
 
-    /// Is anything still in progress (renders, queued input)?
+    /// Is anything still in progress (renders, file-system checks the sidebar waits for, queued
+    /// input)?
     pub fn busy(&self) -> bool {
         self.app.renderer.in_flight() > 0
+            || crate::panels::left::fs_cached_running(&self.view.ctx) > 0
             || self.app.merge.busy()
             || self.app.scan.is_some()
             || self.app.import.is_some()
@@ -534,6 +536,9 @@ mod tests {
         ex(&mut h, "photo.setMeta", json!({"ids": [vis[0], vis[1]], "addKeywords": ["travel|italy"]}));
         ex(&mut h, "photo.setMeta", json!({"ids": [vis[2]], "addKeywords": ["travel|france"]}));
         h.request("ui.set", json!({"leftPanel": true}), t);
+        // Local's rows (Downloads, Home, …) appear when their background checks land and push
+        // the keyword rows down: clicking before that hit the row above (`travel|france`)
+        h.settle(SETTLE);
         let r = h.request("ui.clickWidget", json!({"id": "source:keyword:travel"}), t);
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(h.app.session.filter.keyword.as_deref(), Some("travel"));
@@ -558,6 +563,36 @@ mod tests {
         assert_eq!(r["ok"], true, "{r}");
         assert!(h.app.session.catalog.photo(lightcraft_catalog::PhotoId(vis[1])).unwrap().meta.keywords.contains(&"gelato".to_string()));
         h.settle(SETTLE);
+    }
+
+    /// The sidebar's file-system checks run on worker threads and add rows when they land, which
+    /// moves every row below them: `busy()` counts them, so `settle` waits for them before a test
+    /// reads widget positions (a click aimed at a stale rect hits the neighbouring row).
+    #[test]
+    fn settle_waits_for_file_system_checks() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static RELEASE: AtomicBool = AtomicBool::new(false);
+        fn slow_check(_: &str) -> bool {
+            let t0 = Instant::now();
+            while !RELEASE.load(Ordering::Acquire) && t0.elapsed() < Duration::from_secs(60) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            true
+        }
+        let mut h = demo([800.0, 600.0]);
+        h.settle(SETTLE);
+        let check = |h: &mut Headless| {
+            let raw = HeadlessView::raw_input(h.size, 1.0, 0.0, vec![]);
+            let mut got = None;
+            h.view.run(raw, |ui| got = crate::panels::left::fs_cached(ui, "test-slow", "x", f64::INFINITY, slow_check));
+            got
+        };
+        assert_eq!(check(&mut h), None, "the answer is worked out off the UI thread");
+        assert!(h.busy(), "a pending file-system check is pending work");
+        RELEASE.store(true, Ordering::Release);
+        assert!(h.settle(SETTLE));
+        assert!(!h.busy());
+        assert_eq!(check(&mut h), Some(true));
     }
 
     /// Photo > Rename Photos…: the dialog previews and renames the selection.

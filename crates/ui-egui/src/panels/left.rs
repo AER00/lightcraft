@@ -335,6 +335,17 @@ fn list_subfolders(path: &str) -> Vec<(String, String)> {
     v
 }
 
+/// How many [`fs_cached`] answers for `ctx` are being worked out right now. Rows appear (and
+/// the sidebar below them moves) when they land, so the headless driver counts them as pending
+/// work and waits for them before acting on widget positions.
+pub(crate) fn fs_cached_running(ctx: &egui::Context) -> usize {
+    fs_running_counter(ctx).load(std::sync::atomic::Ordering::Acquire)
+}
+
+fn fs_running_counter(ctx: &egui::Context) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<std::sync::Arc<std::sync::atomic::AtomicUsize>>(egui::Id::new("fs-cached-running")).clone())
+}
+
 /// A file-system answer for `path` (`f(path)`), kept per `kind` and path and refreshed on a worker
 /// thread at most every `every` seconds: a folder on a sleeping NAS, a dropped share or a
 /// spinning-up drive never blocks a frame. `None` until the first answer arrives.
@@ -366,18 +377,24 @@ pub(crate) fn fs_cached<T: Clone + Send + 'static>(ui: &egui::Ui, kind: &'static
         due
     };
     if start {
-        let (out, path, repaint) = (cell.clone(), path.to_string(), ui.ctx().clone());
+        use std::sync::atomic::Ordering;
+        let running = fs_running_counter(ui.ctx());
+        running.fetch_add(1, Ordering::AcqRel);
+        let (out, path, repaint, done) = (cell.clone(), path.to_string(), ui.ctx().clone(), running.clone());
         let work = move || {
             let v = f(&path);
             let mut e = out.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             e.value = Some(v);
             e.running = false;
             drop(e);
+            // after the answer is stored: a frame that sees the count drop also sees the answer
+            done.fetch_sub(1, Ordering::AcqRel);
             repaint.request_repaint();
         };
         #[cfg(not(target_arch = "wasm32"))]
         if std::thread::Builder::new().name("lc-fs-list".into()).spawn(work).is_err() {
             cell.lock().unwrap_or_else(std::sync::PoisonError::into_inner).running = false;
+            running.fetch_sub(1, Ordering::AcqRel);
         }
         #[cfg(target_arch = "wasm32")]
         work();
