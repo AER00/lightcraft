@@ -1,5 +1,9 @@
 //! The SAM 3 vision backbone: a 32-layer ViT (Perception Encoder) with 2-D axial rotary
 //! position encoding, windowed attention (24 × 24) in most layers and global attention in four.
+//!
+//! Modified work (Apache License 2.0, §4(b)): ported by the LightCraft contributors in 2026 from
+//! the Python/PyTorch SAM 3 code of Hugging Face Transformers (`models/sam3/modeling_sam3.py`), Copyright The HuggingFace
+//! Team and Meta Platforms, Inc.; translated to Rust on candle and restructured. See NOTICE.
 
 use candle_core::{D, Device, Module, Tensor};
 use candle_nn::{Conv2d, Conv2dConfig, LayerNorm, VarBuilder};

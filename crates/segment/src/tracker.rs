@@ -1,5 +1,9 @@
 //! Point prompts (SAM 3's interactive "tracker" head, SAM 2 style): a prompt encoder for
 //! positive/negative clicks and a two-way-transformer mask decoder over the image features.
+//!
+//! Modified work (Apache License 2.0, §4(b)): ported by the LightCraft contributors in 2026 from
+//! the Python/PyTorch SAM 3 code of Hugging Face Transformers (`models/sam3_tracker/modeling_sam3_tracker.py`), Copyright The HuggingFace
+//! Team and Meta Platforms, Inc.; translated to Rust on candle and restructured. See NOTICE.
 
 use candle_core::{DType, Device, IndexOp, Module, Tensor};
 use candle_nn::{Conv2d, Conv2dConfig, ConvTranspose2d, ConvTranspose2dConfig, LayerNorm, VarBuilder};
