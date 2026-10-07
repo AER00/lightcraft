@@ -466,7 +466,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                                     ui.separator();
                                 }
                                 builtin = b;
-                                if ui.selectable_label(false, &p.name).clicked() {
+                                if ui.selectable_label(false, crate::i18n::builtin_label(&p.name, b)).clicked() {
                                     chosen = Some(p.name);
                                 }
                             }
@@ -701,7 +701,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 Dialog::Import { opts } => crate::import::body(app, ui, opts),
                 Dialog::Settings { tab } => crate::panels::settings::body(app, ui, tab),
                 Dialog::ConfirmDelete { count } => {
-                    let what = if *count == 1 { "this photo".to_string() } else { crate::i18n::tr_format!("these {count} photos", count = count) };
+                    let what = if *count == 1 { crate::i18n::tr("this photo").to_string() } else { crate::i18n::tr_format!("these {count} photos", count = count) };
                     ui.label(crate::i18n::tr_format!("Move {what} to Recently Deleted?", what = what));
                     ui.label(egui::RichText::new(crate::i18n::tr("They can be restored from Recently Deleted until it is emptied.")).color(t.text_dim));
                 }
@@ -710,7 +710,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ui.label(crate::i18n::tr_format!("Version {} — a clean-room, pure-Rust photo library and raw developer.", env!("CARGO_PKG_VERSION")));
                     ui.label(format!("MIT OR Apache-2.0. Fonts: {} (OFL). Icons: original.", crate::theme::font_credits()));
                     ui.add_space(10.0);
-                    let discord = egui::Button::new(egui::RichText::new("Join the ArtCraft Discord").font(t.semibold(15.0)).color(egui::Color32::WHITE))
+                    let discord = egui::Button::new(egui::RichText::new(crate::i18n::tr("Join the ArtCraft Discord")).font(t.semibold(15.0)).color(egui::Color32::WHITE))
                         .fill(t.accent)
                         .min_size(egui::vec2(260.0, 34.0));
                     let r = ui.add(discord).on_hover_text(crate::links::DISCORD);
@@ -724,7 +724,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         ("Source code on GitHub", crate::links::GITHUB),
                         ("ArtCraft — more creative apps", crate::links::WEBSITE),
                     ] {
-                        let r = ui.link(label).on_hover_text(url);
+                        let r = ui.link(crate::i18n::tr(label)).on_hover_text(url);
                         if r.clicked() {
                             let _ = crate::links::open(app, url);
                         }
@@ -775,7 +775,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     Dialog::Import { opts } => {
                         let n = opts.selected_paths().len();
                         let verb = if opts.copy && opts.move_files { "Move" } else { "Import" };
-                        add_label = format!("{verb} {n} Photo{}", if n == 1 { "" } else { "s" });
+                        add_label = crate::i18n::tr_format!("{verb} {n} Photo{}", if n == 1 { "" } else { "s" }, verb = crate::i18n::tr(verb), n = n);
                         add_label.as_str()
                     }
                     Dialog::Merge { .. } => "Merge",

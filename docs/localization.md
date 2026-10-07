@@ -1,22 +1,28 @@
 # Localization
 
 The interface ships in the language it is written in (English) plus every language in the table in
-`crates/ui-egui/src/i18n.rs`. Today that is English, Simplified Chinese (`zh-hans`) and Japanese
-(`ja`). This file is the reference for **adding or maintaining a language**; the per-language notes
-are in [`localization-zh-hans.md`](localization-zh-hans.md) and [`localization-ja.md`](localization-ja.md).
+`crates/ui-egui/src/i18n.rs`. Today that is English, Simplified Chinese (`zh-hans`), Traditional
+Chinese (`zh-hant`, Taiwan) and Japanese (`ja`). This file is the reference for **adding or maintaining a language**; the per-language notes
+are in [`localization-zh-hans.md`](localization-zh-hans.md), [`localization-zh-hant.md`](localization-zh-hant.md) and
+[`localization-ja.md`](localization-ja.md).
 
 ## Adding a language
 
 1. **Translate the two catalogs.** Copy `locales/ja.json` and `locales/ja-formats.json` to
    `locales/<code>.json` and `locales/<code>-formats.json`, then translate the values. Keys are the
-   English source strings and must stay byte-for-byte identical — `cargo test -p lightcraft-ui-egui
-   i18n::tests` fails on a missing, extra or empty entry.
+   English source strings and must stay byte-for-byte identical. The plain catalog may grow at its
+   own pace: a message it lacks shows in English, and `cargo test -p lightcraft-ui-egui i18n::tests
+   -- --nocapture` lists the gaps (it fails on an empty entry or mismatched placeholders). The
+   formats catalog must carry every message (the build fails otherwise), including the date
+   patterns (`{year}`, `{month} {year}`, `{weekday}, {day} {month} {year}`…) that date headings and
+   capture times use in every language but English; weekday names go in the plain catalog.
 2. **Add the table entry** in `crates/ui-egui/src/i18n.rs`:
 
    ```rust
    language_table! {
        En, "en";
        ZhHans, "zh-hans", "简体中文", "Hans", include_str!("../locales/zh-hans.json");
+       ZhHant, "zh-hant", "繁體中文（台灣）", "Hant", include_str!("../locales/zh-hant.json");
        Ja, "ja", "日本語", "Jpan", include_str!("../locales/ja.json");
    }
    ```

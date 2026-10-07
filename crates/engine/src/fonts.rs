@@ -26,6 +26,13 @@ impl CraftFont {
     pub fn is_mincho(&self) -> bool {
         self.family.contains("Mincho")
     }
+
+    /// Whether the font can stand in for `script`: it is meant for it, or — until craft-fonts has a
+    /// Traditional Chinese face — it is a Simplified Chinese face, which carries the Traditional
+    /// characters too (with mainland glyph forms; still closer than the Japanese faces).
+    pub fn serves(&self, script: &str) -> bool {
+        self.covers(script) || (script == "Hant" && self.covers("Hans"))
+    }
 }
 
 /// The craft-fonts faces for Japanese, in `fonts`' order (empty without craft-fonts).
@@ -55,7 +62,7 @@ pub fn cjk_fallback<'a>(fonts: &'a [CraftFont], script: &str, style: &str) -> Ve
         (
             // The language's own script first. A face dedicated to the script is preferred over a
             // multi-script face (Noto Sans CJK SC claims `Hans,Latn`; a Japanese face claims `Jpan`).
-            !font.covers(script),
+            !font.serves(script),
             font.scripts.len() != 1,
             font.family != "BIZ UDPGothic",
             font.style != style,
@@ -99,6 +106,8 @@ mod tests {
         let first = |script: &str| cjk_fallback(FACES, script, "Regular").first().map(|f| f.family);
         assert_eq!(first("Hans"), Some("Noto Sans CJK SC"));
         assert_eq!(first("Jpan"), Some("BIZ UDPGothic"));
+        // No Traditional Chinese face yet: the Chinese face stands in before the Japanese ones.
+        assert_eq!(first("Hant"), Some("Noto Sans CJK SC"));
         // Every CJK face is still offered to every language.
         assert_eq!(cjk_fallback(FACES, "Hans", "Regular").len(), 3);
         assert_eq!(cjk_fallback(&[], "Hans", "Regular").len(), 0);

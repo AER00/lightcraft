@@ -1019,5 +1019,13 @@
   "Back Up Library…": "备份图库…",
   "Restore Library from Backup…": "从备份恢复图库…",
   "In Recently Deleted": "在“最近删除”中",
-  "Reload from Disk": "从磁盘重新读取"
+  "Reload from Disk": "从磁盘重新读取",
+  "Monday": "星期一",
+  "Tuesday": "星期二",
+  "Wednesday": "星期三",
+  "Thursday": "星期四",
+  "Friday": "星期五",
+  "Saturday": "星期六",
+  "Sunday": "星期日",
+  "Unknown Date": "未知日期"
 }
