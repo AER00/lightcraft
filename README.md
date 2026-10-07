@@ -347,6 +347,31 @@ repo; see [craftrules `standards/fonts.md`](https://github.com/storytold/craftru
 The web build needs the `wasm32-unknown-unknown` target and the matching `wasm-bindgen` CLI
 (`cargo xtask web` prints the exact install command); see [docs/web.md](docs/web.md).
 
+**Nix** builds the desktop app and `lightcraft-cli` (the Nix build always includes the craft-fonts input, so Japanese
+text has glyphs):
+
+```sh
+nix run github:storytold/lightcraft                    # the desktop app
+nix build github:storytold/lightcraft                  # → ./result/bin/{lightcraft,lightcraft-cli}
+nix develop github:storytold/lightcraft                # rust toolchain + native deps + fonts
+```
+
+In a flake configuration (NixOS, home-manager, nix-darwin):
+
+```nix
+# flake.nix
+inputs.lightcraft.url = "github:storytold/lightcraft";
+# optional: build against your own nixpkgs instead of the one LightCraft pins
+# inputs.lightcraft.inputs.nixpkgs.follows = "nixpkgs";
+
+# then, in a NixOS or home-manager module (where `inputs` is in scope):
+nixpkgs.overlays = [ inputs.lightcraft.overlays.default ];   # makes `pkgs.lightcraft` available
+environment.systemPackages = [ pkgs.lightcraft ];           # home-manager: home.packages = [ pkgs.lightcraft ];
+```
+
+`nix build` installs the same desktop file, hicolor icons and AppStream metadata as the .deb/.rpm, and runs
+`cargo test --workspace` as its check phase (skip it with `pkgs.lightcraft.overrideAttrs { doCheck = false; }`).
+
 **Keyboard:** <kbd>G</kbd> grid · <kbd>D</kbd> detail · <kbd>E</kbd> edit · <kbd>C</kbd> crop · <kbd>M</kbd> masking ·
 <kbd>Shift</kbd>+<kbd>P</kbd> presets · <kbd>\\</kbd> original · <kbd>Y</kbd> before/after · <kbd>Z</kbd> zoom ·
 <kbd>J</kbd> clipping · <kbd>⌘Z</kbd> undo · <kbd>⌘/</kbd> all shortcuts.

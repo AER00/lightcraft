@@ -8,3 +8,6 @@ plan/
 .DS_Store
 .claude/
 /craft-fonts
+# nix build / nix develop
+/result
+/result-*
