@@ -410,6 +410,42 @@ fn warp_params(
     p
 }
 
+/// Output rows per block of [`coverage_mask`]; a block is one mask word (32 px) wide. 16 rows measured
+/// ~20 % faster than 8 at 6000 × 4000 (fewer interval evaluations, few more edge pixels).
+const COVER_ROWS: usize = 16;
+
+/// The reference framing decision ([`Warp::covers`](lightcraft_pipeline::optics::Warp::covers)) for every
+/// output pixel, one bit per pixel, rows padded to 32-bit words. Blocks of 32 × [`COVER_ROWS`] pixels whose
+/// interval bounds place them clearly inside or outside the image are filled at once
+/// ([`Warp::block_coverage`](lightcraft_pipeline::optics::Warp::block_coverage), the same formulas evaluated
+/// with outward-rounded intervals); only blocks near the image edge evaluate each pixel. Same bits as
+/// evaluating every pixel.
+fn coverage_mask(wp: &lightcraft_pipeline::optics::Warp, o2t: &lightcraft_geom::Affine, w: usize, h: usize) -> Vec<u32> {
+    let words = w.div_ceil(32);
+    let mut coverage = vec![0u32; words * h];
+    if words == 0 {
+        return coverage;
+    }
+    lightcraft_raster::par_rows(&mut coverage, words * COVER_ROWS, |band, rows| {
+        let y0 = band * COVER_ROWS;
+        let y1 = y0 + rows.len() / words;
+        for word in 0..words {
+            let (x0, x1) = (word * 32, (word * 32 + 32).min(w));
+            let full = if x1 - x0 == 32 { u32::MAX } else { (1u32 << (x1 - x0)) - 1 };
+            let block = wp.block_coverage(o2t, x0, x1, y0, y1);
+            for (y, row) in (y0..y1).zip(rows.chunks_exact_mut(words)) {
+                let Some(bits) = row.get_mut(word) else { continue };
+                *bits = match block {
+                    Some(true) => full,
+                    Some(false) => 0,
+                    None => (x0..x1).filter(|&x| wp.covers(o2t, x, y)).fold(0, |b, x| b | 1 << (x - x0)),
+                };
+            }
+        }
+    });
+    coverage
+}
+
 /// Resample the source into the output frame (`Frame::sample`). May return the source buffer
 /// itself when the frame is the identity.
 fn sample(cx: &mut Cx<'_>, src: &Arc<Rgb32f>, src_buf: Arc<Buf>, plan: &Plan<'_>) -> Arc<Buf> {
@@ -446,23 +482,7 @@ fn sample(cx: &mut Cx<'_>, src: &Arc<Rgb32f>, src_buf: Arc<Buf>, plan: &Plan<'_>
             let p = warp_params(wp, (bw, bh), (w, h), o2t, sp.sx, sp.sy);
             // f32 rounding can cross a source edge. Keep the reference f64
             // framing decision in a bit mask; color sampling stays on the GPU.
-            let words = w.div_ceil(32);
-            let mut coverage = vec![0u32; words * h];
-            lightcraft_raster::par_rows(&mut coverage, words, |y, row| {
-                for (word, bits) in row.iter_mut().enumerate() {
-                    for bit in 0..32 {
-                        let x = word * 32 + bit;
-                        if x >= w {
-                            break;
-                        }
-                        let t = o2t.apply(lightcraft_geom::Point::new(x as f64 + 0.5, y as f64 + 0.5));
-                        if wp.inside(wp.corrected_to_source(wp.to_corrected(t), 1)) {
-                            *bits |= 1 << bit;
-                        }
-                    }
-                }
-            });
-            let coverage = cx.gpu.upload(&coverage);
+            let coverage = cx.gpu.upload(&coverage_mask(wp, o2t, w, h));
             cx.run("sample_warp", &p, &[Some(&base), Some(&out), Some(&coverage)], groups2(w, h, [16, 16]));
             Arc::new(out)
         }
@@ -968,6 +988,73 @@ fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Ho
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coverage_mask_matches_per_pixel_decision() {
+        use lightcraft_develop::{EmbeddedLens, EmbeddedWarp};
+        let lens = EmbeddedLens {
+            warp: Some(EmbeddedWarp {
+                planes: [[1.0, -0.03, 0.01, 0.0, 0.001, -0.002]; 3],
+                center: lightcraft_geom::Point::new(0.52, 0.48),
+                radius: 0.6,
+            }),
+            vignette: None,
+        };
+        let mut s = DevelopSettings::default();
+        s.optics.lens_profile = true;
+        s.optics.distortion = -40.0;
+        s.geometry.horizontal = -15.0;
+        s.geometry.rotate = 3.0;
+        for orientation in [Orientation::Normal, Orientation::Rotate270] {
+            s.orientation = orientation;
+            let f = lightcraft_pipeline::geometry::Frame::with_lens(900, 600, &s, true, Some(&lens));
+            let wp = f.warp.as_ref().expect("warp");
+            // widths that do and don't fill the last word; heights that do and don't fill the last band
+            for (w, h) in [f.fit(700, 700), (333, 221), (64, 16), (1, 1)] {
+                let o2t = f.out_to_oriented(w, h);
+                let mask = coverage_mask(wp, &o2t, w, h);
+                let words = w.div_ceil(32);
+                assert_eq!(mask.len(), words * h);
+                for y in 0..h {
+                    for x in 0..w {
+                        let bit = mask[y * words + x / 32] >> (x % 32) & 1 == 1;
+                        assert_eq!(bit, wp.covers(&o2t, x, y), "{orientation:?} {w}x{h}: pixel {x},{y}");
+                    }
+                    let pad = mask[y * words + words - 1] >> (w % 32);
+                    assert!(w.is_multiple_of(32) || pad == 0, "padding bits set");
+                }
+            }
+        }
+    }
+
+    /// The perspective horizon in view: its denominator is exactly 0 on output row 75 (clamped to 1e-300) and
+    /// changes sign there, so the blocks around it are undecided (clamp, and division by a range that may hold
+    /// zero) and are decided per pixel, while blocks clear of it are filled at once.
+    #[test]
+    fn coverage_mask_with_the_horizon_in_view() {
+        use lightcraft_geom::{Affine, Homography};
+        let (w, h) = (900, 600);
+        let mut wp = lightcraft_pipeline::optics::Warp::identity(w as f64, h as f64);
+        // centred coordinates: v = (y − 300) / 450, denominator 2·v + m8, exactly 0 at y = 75.5
+        let m8 = -((75.5 - 300.0) / 450.0 * 2.0);
+        wp.persp_inv = Homography([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 2.0, m8]);
+        wp.persp = wp.persp_inv.inverse().expect("invertible");
+        let o2t = Affine::IDENTITY;
+        assert_eq!(wp.block_coverage(&o2t, 0, 32, 64, 80), None, "the block holding the horizon");
+        assert_eq!(wp.block_coverage(&o2t, 0, 32, 0, 16), Some(false), "beyond the horizon");
+        assert_eq!(wp.block_coverage(&o2t, 448, 480, 288, 304), Some(true), "the centre");
+        let mask = coverage_mask(&wp, &o2t, w, h);
+        let words = w.div_ceil(32);
+        let mut covered = 0;
+        for y in 0..h {
+            for x in 0..w {
+                let bit = mask[y * words + x / 32] >> (x % 32) & 1 == 1;
+                assert_eq!(bit, wp.covers(&o2t, x, y), "pixel {x},{y}");
+                covered += bit as usize;
+            }
+        }
+        assert!(covered > 0 && covered < w * h, "{covered} px covered");
+    }
 
     /// Kernel timings on a 24 MP plane: `cargo test --release -p lightcraft-gpu -- --ignored --nocapture`.
     #[test]
