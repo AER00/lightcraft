@@ -2,6 +2,10 @@
 
 ## October 2026
 
+### RAW decoding
+- Sony ILCE-7M4 downsized lossless ARWs now decode subsampled YCbCr tiles into linear RGB,
+  preserving RAW editing & full-resolution export instead of using embedded JPEG previews.
+
 ### Presets and profiles
 - Import presets from other editors: XMP presets, classic `.lrtemplate` files, "DNG presets" from mobile apps and `.zip`
   bundles of any of these — whole folders at once, grouped by pack. Masks inside presets come along.

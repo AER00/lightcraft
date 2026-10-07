@@ -16,8 +16,6 @@ fn corpus_root() -> PathBuf {
 /// Variants known not to decode yet (see the crate docs): matched against the lower-case file name.
 const KNOWN_UNSUPPORTED: &[&str] = &[
     "cr3-",                     // CR3 / CRX (M11.1)
-    "arw-sony-a7m4-lossless-m", // Sony lossless compressed M/S: subsampled (YCbCr) lossless JPEG
-    "arw-sony-a7m4-lossless-s", // "
     "raf-fuji-xt20-compressed", // Fujifilm compressed RAF
     "rw2-panasonic-gh5.",       // Panasonic raw format 4 (quantised)
     "rw2-panasonic-gx80",       // "

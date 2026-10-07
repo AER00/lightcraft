@@ -514,18 +514,29 @@ mod tests {
     fn keyword_list_filters_renames_and_suggests() {
         // tall: the demo library's own keywords come first in the list
         let mut h = demo([1300.0, 1800.0]);
+        // Host folders arrive asynchronously above Keywords. Keep this keyword fixture's
+        // geometry independent of their existence and the background stat timing.
+        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+            h.app.ui.hidden_locations.extend(
+                ["Pictures", "Desktop", "Downloads", ""]
+                    .map(|sub| if sub.is_empty() { home.clone() } else { std::path::Path::new(&home).join(sub).to_string_lossy().to_string() }),
+            );
+        }
         let t = Duration::from_secs(10);
         let vis: Vec<u64> = h.app.session.visible_cloned().iter().map(|p| p.0).collect();
         let ex = |h: &mut Headless, c: &str, p: Value| h.request("engine.execute", json!({"command": c, "params": p}), Duration::from_secs(10));
         ex(&mut h, "photo.setMeta", json!({"ids": [vis[0], vis[1]], "addKeywords": ["travel|italy"]}));
         ex(&mut h, "photo.setMeta", json!({"ids": [vis[2]], "addKeywords": ["travel|france"]}));
         h.request("ui.set", json!({"leftPanel": true}), t);
+        // Coordinate-based clicks need the updated tree and panel layout to settle first.
+        assert!(h.settle(SETTLE), "keyword tree did not settle");
         let r = h.request("ui.clickWidget", json!({"id": "source:keyword:travel"}), t);
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(h.app.session.filter.keyword.as_deref(), Some("travel"));
         assert_eq!(h.app.session.visible_cloned().len(), 3);
         // open the level, filter by the child
         h.request("ui.clickWidget", json!({"id": "keywordToggle:travel"}), t);
+        assert!(h.settle(SETTLE), "expanded keyword tree did not settle");
         let r = h.request("ui.clickWidget", json!({"id": "source:keyword:travel|italy"}), t);
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(h.app.session.visible_cloned().len(), 2);
@@ -540,6 +551,7 @@ mod tests {
         h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[1]]}}), t);
         ex(&mut h, "photo.setMeta", json!({"ids": [vis[0]], "addKeywords": ["gelato"]}));
         h.request("ui.set", json!({"right": "keywords"}), t);
+        assert!(h.settle(SETTLE), "keyword suggestions did not settle");
         let r = h.request("ui.clickWidget", json!({"id": "kwSuggest:gelato"}), t);
         assert_eq!(r["ok"], true, "{r}");
         assert!(h.app.session.catalog.photo(lightcraft_catalog::PhotoId(vis[1])).unwrap().meta.keywords.contains(&"gelato".to_string()));
@@ -816,6 +828,12 @@ mod tests {
     #[test]
     fn local_location_can_be_hidden_and_restored() {
         let mut h = demo([1300.0, 900.0]);
+        // Windows' temp directory is usually below Home; hiding a location does not
+        // remove it from an expanded ancestor tree. Hide that host root in this fixture.
+        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+            h.app.ui.hidden_locations.push(home);
+        }
+        let initially_hidden = h.app.ui.hidden_locations.len();
         let t = Duration::from_secs(10);
         let dir = std::env::temp_dir().join(format!("lc-ui-hide-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -829,9 +847,10 @@ mod tests {
         h.request("engine.execute", json!({"command": "library.browse", "params": {"path": path}}), t);
         h.settle(SETTLE);
         assert!(ids(&mut h).contains(&format!("source:local:{path}")));
-        assert!(!ids(&mut h).iter().any(|i| i == "source:local:restoreHidden"));
+        assert_eq!(ids(&mut h).iter().any(|i| i == "source:local:restoreHidden"), initially_hidden > 0);
         let r = h.request("engine.execute", json!({"command": "local.hide", "params": {"path": path}}), t);
         assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(h.app.ui.hidden_locations.len(), initially_hidden + 1);
         h.settle(SETTLE);
         let after = ids(&mut h);
         assert!(!after.contains(&format!("source:local:{path}")), "{after:?}");
@@ -857,8 +876,12 @@ mod tests {
             std::fs::create_dir_all(base.join(d)).unwrap();
         }
         let s = |p: std::path::PathBuf| p.to_string_lossy().to_string();
-        let (photos, day1, day2, other) =
-            (s(base.join("Photos")), s(base.join("Photos/2026/20260101")), s(base.join("Photos/2026/20260114")), s(base.join("Other")));
+        let (photos, day1, day2, other) = (
+            s(base.join("Photos")),
+            s(base.join("Photos").join("2026").join("20260101")),
+            s(base.join("Photos").join("2026").join("20260114")),
+            s(base.join("Other")),
+        );
         let exec = |h: &mut Headless, c: &str, p: Value| h.request("engine.execute", json!({"command": c, "params": p}), t);
         let rects = |h: &mut Headless| -> std::collections::HashMap<String, f64> {
             let w = h.request("ui.widgets", json!({"filter": "lc-ui-roots-"}), t);

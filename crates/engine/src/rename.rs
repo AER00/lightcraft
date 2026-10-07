@@ -769,12 +769,15 @@ mod tests {
             }
         }
         fn idx(&self, p: &Path) -> Option<usize> {
-            let p = p.to_string_lossy();
-            self.files.borrow().iter().position(|(f, _)| if self.ci { f.to_lowercase() == p.to_lowercase() } else { *f == p })
+            let p = p.to_string_lossy().replace('\\', "/");
+            self.files.borrow().iter().position(|(f, _)| {
+                let f = f.replace('\\', "/");
+                if self.ci { f.to_lowercase() == p.to_lowercase() } else { f == p }
+            })
         }
         /// The listing: (exact path, contents), sorted.
         pub fn listing(&self) -> Vec<(String, String)> {
-            let mut v: Vec<_> = self.files.borrow().iter().map(|(p, c)| (p.clone(), String::from_utf8_lossy(c).to_string())).collect();
+            let mut v: Vec<_> = self.files.borrow().iter().map(|(p, c)| (p.replace('\\', "/"), String::from_utf8_lossy(c).to_string())).collect();
             v.sort();
             v
         }
@@ -825,8 +828,10 @@ mod tests {
     }
 
     fn file_photo(id: u64, path: &str) -> Photo {
-        let name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        Photo::new(PhotoId(id), Source::File { path: path.into() }, &name, "JPG", 1, 1, "2026-01-01T00:00:00")
+        // Imported catalog paths use native separators, as do planner destinations.
+        let path = Path::new(path).components().collect::<std::path::PathBuf>().to_string_lossy().to_string();
+        let name = Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        Photo::new(PhotoId(id), Source::File { path }, &name, "JPG", 1, 1, "2026-01-01T00:00:00")
     }
 
     /// Issue #95: a case-only rename is a real change on a case-insensitive volume and never
@@ -884,7 +889,7 @@ mod tests {
         let plans = s.plan_rename_with(&fs, &ids, "Trip-{seq}", 1);
         // c can't be renamed (the share went away), and neither can Trip-1 be moved back
         fs.fail.borrow_mut().extend(["c.jpg".to_string(), "Trip-1".to_string()]);
-        let err = s.apply_rename_with(&fs, &plans).unwrap_err().to_string();
+        let err = s.apply_rename_with(&fs, &plans).unwrap_err().to_string().replace('\\', "/");
         assert!(err.contains("rename /p/c.jpg"), "{err}");
         assert!(err.contains("/p/Trip-1.jpg could not be moved back"), "{err}");
         assert!(err.contains("/p/a.jpg → /p/Trip-1.jpg"), "lists what stayed renamed: {err}");
@@ -899,7 +904,7 @@ mod tests {
         );
         // the catalog matches the disk
         let path = |s: &Session, id: u64| match &s.catalog.photo(PhotoId(id)).unwrap().source {
-            Source::File { path } => path.clone(),
+            Source::File { path } => path.replace('\\', "/"),
             Source::Demo { .. } => String::new(),
         };
         assert_eq!(path(&s, 1), "/p/Trip-1.jpg");
