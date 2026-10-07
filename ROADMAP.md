@@ -24,7 +24,7 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 |---|---:|---|---|
 | **Feature checklist** | 79% | P0 core and P1 nearly complete: import (Add / Copy / Move, templates, devices), library, grid/loupe/compare/survey, every Edit slider, curves, colour grading, masking tools, crop/Upright, heal/clone, presets/profiles, versions/history, sync, export, menus, shortcuts | P1: lens-profile database, content-aware fill (patch synthesis), video playback/trim |
 | **RAW coverage** (formats people shoot) | ~55% | DNG (all kinds), CR2, ARW, NEF (uncompressed + Huffman lossless/lossy), uncompressed RAF/ORF, RW2 / RWL / Panasonic RAW (every raw format, checked on 178 files from 118 Panasonic and Leica bodies), PEF; every container's embedded preview (incl. CR3) | **CR3** (every Canon since ~2018), compressed RAF/ORF, Nikon lossy-after-split, Canon sRAW, HEIC/AVIF. NEFs labelled compressed but stored uncompressed (Z 6 packed 14-bit, D850 12-bit uncompressed). Per-model verification is thin (~55 corpus files vs >1,000 models) |
-| **Colour & image quality** | ~55–65% | Pipeline is complete and fast; GPU path CPU-exact within 1/255 | **No measured camera calibration database**: ARW and NEF have a guarded per-file embedded-JPEG colour estimate (docs/camera-preview-colour.md); other non-DNG raws and rejected estimates use a neutral matrix. Colour fidelity remains incomplete. No lens-profile database. No measured fidelity against Lightroom (tone, highlights, texture/clarity, NR, sharpening are tuned by eye) |
+| **Colour & image quality** | ~55–65% | Pipeline is complete and fast; GPU path CPU-exact within 1/255 | **No measured camera calibration database**: ARW, NEF and RW2 have a guarded per-file embedded-JPEG colour estimate (docs/camera-preview-colour.md); other non-DNG raws and rejected estimates use a neutral matrix. Colour fidelity remains incomplete. No lens-profile database. No measured fidelity against Lightroom (tone, highlights, texture/clarity, NR, sharpening are tuned by eye) |
 | **AI & computational** | ~15–20% | Assisted culling (focus, bursts), auto tone, HDR/panorama merge; subject/sky/background masks as classical heuristics | Real segmentation masks (subject, sky, people, objects, landscape, depth), AI denoise, super resolution, lens blur, generative remove, faces/people, natural-language search. **Blocked on a model strategy** (licensable weights or our own training; pure-Rust inference is feasible) |
 | **Workflow & library** | ~85% (single machine) | Robust catalog (journal + snapshots, background compaction, crash-tested), 85k-photo libraries stay responsive, Local browsing with automatic cleanup, XMP interop, keywords, smart albums, Move import | Opening an 85k library takes 1.7–4.7 s; no cloud sync (out of scope), no tablet companion (#74, roadmap), shared albums, publish services, tethering |
 | **Classic modules** | ~30% | Geotagging from GPX track logs, soft proofing (partial), slideshow (basic) | **Map view, Book, Print, Slideshow module, Web, publish services**: ~40 tracker rows ⬜ |
@@ -36,7 +36,7 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 | User | Readiness | What blocks them |
 |---|---:|---|
 | JPEG / DNG shooter, single machine | ~85% | Fidelity polish, AI masks |
-| Nikon / Sony / Panasonic / older-Canon raw shooter | ~65% | Camera colour fidelity and coverage (ARW and NEF preview estimates are only a starting point); Panasonic compacts and kit zooms also miss their embedded distortion correction |
+| Nikon / Sony / Panasonic / older-Canon raw shooter | ~65% | Camera colour fidelity and coverage (ARW, NEF and RW2 preview estimates are only a starting point); Panasonic compacts and kit zooms also miss their embedded distortion correction |
 | Canon CR3 / Fujifilm / Olympus shooter | ~35% | Their raws open as embedded previews only (CR3: the full-size JPEG with full metadata) |
 | Lightroom Classic power user | ~45% | Print, Book, Map, publish, tethering |
 | Relies on AI (masks, denoise) | ~25% | Object / Describe masks via optional SAM 3 (download not yet hosted); no AI denoise |
@@ -46,8 +46,8 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 Priorities, in order. Each points at tracker rows in [`docs/parity.md`](docs/parity.md) → *Top gaps*.
 
 1. **Camera colour calibration of our own** (LR-PROF-CAMERACOLOR, P0): fit each camera to its own embedded JPEG, use
-   matrices the files carry themselves, then chart shots. Sony ARW and Nikon NEF have the file-local fit (matrix + tone
-   curve from their own JPEG); generalise it to the other makes' raws (RW2, PEF, ORF…), then validate fidelity.
+   matrices the files carry themselves, then chart shots. Sony ARW, Nikon NEF and Panasonic RW2 have the file-local fit
+   (matrix + tone curve from their own JPEG); generalise it to the other makes' raws (PEF, ORF…), then validate fidelity.
 2. **Raw formats, clean-room** (LR-IMP-FORMATS, P0): **CR3** first, then compressed RAF / ORF, NEF
    lossy-after-split, sRAW. Decided 2026-10-05: write our own decoders from prose descriptions (never decoder source,
    no LGPL dependency); compressed NEF (#86) is the template.
@@ -84,7 +84,7 @@ hardening (#78), copyright metadata (#51), GPX geotagging (#60), import tag help
 | M8 | Heal / Remove | content-aware remove (PatchMatch), heal, clone, brush spots, visualize spots, red/pet eye | 6–10 | 🚧 (heal, clone, auto source, visualize spots, red/pet eye ✅; PatchMatch remove ⬜) |
 | M9 | Presets, profiles, versions, sync | preset browser + amount, create/import presets, profile browser, versions, history, copy/paste/sync settings | 5–8 | ✅ |
 | M10 | Export & share | export dialog (JPEG/PNG/TIFF/DNG/AVIF/JXL/original), sizing, sharpening, metadata, watermark, naming, batch jobs, XMP sidecars, HDR export | 6–10 | 🚧 (all formats incl. DNG/original, sizing, presets, background jobs ✅; JXL encode, HDR export ⬜) |
-| M11 | RAW II | CR3, RAF (X-Trans), ORF, RW2, PEF, SRW, 3FR, IIQ + long tail; camera calibration DB; HEIC/AVIF/JXL import | 20–35 | 🚧 (RAF uncompressed, RW2 (every raw format), PEF, ORF uncompressed ✅; **camera colour calibration** 🚧 (guarded ARW and NEF preview fitting; measured database still missing), CR3, compressed ORF/RAF ⬜) |
+| M11 | RAW II | CR3, RAF (X-Trans), ORF, RW2, PEF, SRW, 3FR, IIQ + long tail; camera calibration DB; HEIC/AVIF/JXL import | 20–35 | 🚧 (RAF uncompressed, RW2 (every raw format), PEF, ORF uncompressed ✅; **camera colour calibration** 🚧 (guarded ARW, NEF and RW2 preview fitting; measured database still missing), CR3, compressed ORF/RAF ⬜) |
 | M12 | AI & smart features | subject/sky/background/people/object masks, semantic search, faces/People (permissively licensed models, pure-Rust inference) | 20–40 | ⬜ |
 | M13 | Merge | HDR merge (deghost), panorama (projections, boundary warp, fill edges), HDR panorama | 10–15 | ✅ |
 | M14 | Video | import/playback/trim via FilmCraft crates, global edits + presets on video, video export | 6–10 | ⬜ |
@@ -178,7 +178,7 @@ Not decoded yet — preview only (no permissively licensed description; black-bo
   alignment or reset predictors at the split row). The other Nikon Huffman variants are decoded (`crates/raw/src/vendor/nefc.rs` documents the analysis).
 - **Olympus compressed ORF**, **Fujifilm compressed RAF**, **Canon CR3/CRX** (M11.1), **Canon sRAW/mRAW**, lossy DNG.
 
-**Camera colour matrices:** ARW files can use guarded, separate chromaticity and tone estimates from their own embedded JPEG (see `docs/camera-preview-colour.md`); this is a per-file camera-look estimate with relative WB, not measured calibration or absolute-Kelvin WB. Other non-DNG raws and rejected fits use the documented neutral fallback (camera RGB ≈ linear sRGB, flagged
+**Camera colour matrices:** ARW, NEF and RW2 files can use guarded, separate chromaticity and tone estimates from their own embedded JPEG (see `docs/camera-preview-colour.md`); this is a per-file camera-look estimate with relative WB, not measured calibration or absolute-Kelvin WB. Other non-DNG raws and rejected fits use the documented neutral fallback (camera RGB ≈ linear sRGB, flagged
 `matrix_is_fallback`) with the file's as-shot white-balance multipliers. Clean sources to evaluate next: manufacturer
 matrices stored in the files themselves (Olympus ImageProcessing `ColorMatrix`, Pentax equivalents; Panasonic RW2 files carry none) and our
 own chart-based calibration (M11.4). Adobe matrices are never used.
@@ -194,7 +194,7 @@ own chart-based calibration (M11.4). Adobe matrices are never used.
   tracker rows for camera colour, camera coverage and render fidelity.
 - 2026-10-07: Panasonic RW2 / Leica RWL / Panasonic RAW decode in every raw format (compressed 4/6/8, packed 2/5/7,
   16-bit words), black levels, in-camera aspect crops and mapped-out defects established on 178 CC0 files from 118
-  bodies.
+  bodies; RW2 gets the file-local camera look (accepted on 140 of 174 files with a preview).
 
 ## Chinese and Japanese interfaces, and text watermarks
 
