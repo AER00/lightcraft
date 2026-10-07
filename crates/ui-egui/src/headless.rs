@@ -1236,6 +1236,87 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Adding a file again that is in Recently Deleted shows it there (side panel opened, photo
+    /// selected) instead of only saying "duplicate skipped"; its menus offer Restore, and once
+    /// restored a re-add selects it in All Photos.
+    #[test]
+    fn readding_a_deleted_photo_shows_it_in_recently_deleted() {
+        let dir = std::env::temp_dir().join(format!("lc-ui-readd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = lightcraft_raster::Rgba8 { width: 16, height: 12, data: vec![[200, 120, 40, 255]; 16 * 12] };
+        let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+        let file = dir.join("flower.png");
+        std::fs::write(&file, png).unwrap();
+        let paths = vec![file.to_string_lossy().to_string()];
+        let services = crate::Services { png: None, ..Default::default() };
+        let mut app = LightcraftApp::new(lightcraft_engine::Session::with_demo().with_fs(), services);
+        app.ui.view = crate::state::ViewMode::PhotoGrid;
+        let mut h = Headless::new(app, [1300.0, 900.0], 1.0);
+        let t = Duration::from_secs(10);
+        // frames until the import has finished, so its (timed) toast is read before it expires
+        let finish_import = |h: &mut Headless| {
+            let t0 = std::time::Instant::now();
+            while h.app.import.is_some() && t0.elapsed() < Duration::from_secs(30) {
+                h.step();
+            }
+            assert!(h.app.import.is_none(), "import finished");
+        };
+        crate::import::start_paths(&mut h.app, paths.clone()).unwrap();
+        h.settle(SETTLE);
+        let id = h.app.session.selection.active.expect("imported photo selected");
+        h.request("engine.execute", json!({"command": "photo.delete", "params": {"ids": [id.0]}}), t);
+        assert!(h.app.session.catalog.photo(id).unwrap().deleted);
+        let photo_items = |app: &LightcraftApp| -> Vec<String> {
+            let bar = crate::menubar::menu_bar(app);
+            let items = &bar.iter().find(|(title, _)| title == "Photo").expect("Photo menu").1;
+            items.iter().filter_map(|n| if let crate::menubar::MenuNode::Item { id, .. } = n { Some(id.clone()) } else { None }).collect()
+        };
+        assert!(!photo_items(&h.app).contains(&"photo.restore".to_string()), "Restore only for deleted photos");
+
+        h.app.ui.left_panel = false;
+        crate::import::start_paths(&mut h.app, paths.clone()).unwrap();
+        finish_import(&mut h);
+        assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::RecentlyDeleted);
+        assert_eq!(h.app.session.selection.ids, vec![id]);
+        assert!(h.app.ui.left_panel, "the side panel listing Recently Deleted is opened");
+        let toast = h.app.ui.toast.clone().expect("toast").0;
+        assert!(toast.contains("Recently Deleted") && toast.contains("Restore"), "{toast}");
+        let items = photo_items(&h.app);
+        assert!(items.contains(&"photo.restore".to_string()) && items.contains(&"photo.deletePermanently".to_string()), "{items:?}");
+        assert!(!items.contains(&"photo.delete".to_string()), "{items:?}");
+        // a right-click on its filmstrip thumbnail opens the photo menu
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.settle(SETTLE);
+        let cell = h.app.widgets.iter().find(|(w, _)| *w == format!("film:{}", id.0)).map(|(_, r)| *r).expect("filmstrip cell");
+        assert!(!egui::Popup::is_any_open(&h.view.ctx));
+        let r = h.request("ui.click", json!({"x": cell.center().x, "y": cell.center().y, "button": "right"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert!(egui::Popup::is_any_open(&h.view.ctx), "filmstrip context menu");
+
+        let r = h.request("ui.menu.invoke", json!({"id": "photo.restore"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(!h.app.session.catalog.photo(id).unwrap().deleted, "restored");
+        crate::import::start_paths(&mut h.app, paths).unwrap();
+        finish_import(&mut h);
+        assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::All);
+        assert_eq!(h.app.session.selection.ids, vec![id]);
+        let toast = h.app.ui.toast.clone().expect("toast").0;
+        assert!(toast.contains("All Photos"), "{toast}");
+
+        // deleted permanently, the file imports afresh as a new photo
+        h.request("engine.execute", json!({"command": "photo.delete", "params": {"ids": [id.0]}}), t);
+        h.request("engine.execute", json!({"command": "photo.deletePermanently", "params": {"ids": [id.0]}}), t);
+        assert!(h.app.session.catalog.photo(id).is_none());
+        crate::import::start_paths(&mut h.app, vec![file.to_string_lossy().to_string()]).unwrap();
+        h.settle(SETTLE);
+        let fresh = h.app.session.selection.active.expect("re-imported photo selected");
+        assert_ne!(fresh, id);
+        assert!(!h.app.session.catalog.photo(fresh).unwrap().deleted);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Import dialog, copy mode: a chosen destination, one folder, renamed copies numbered across
     /// the import's batches.
     #[test]
