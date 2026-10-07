@@ -37,7 +37,7 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 |---|---:|---|
 | JPEG / DNG shooter, single machine | ~85% | Fidelity polish, AI masks |
 | Nikon / Sony / older-Canon raw shooter | ~65% | Camera colour fidelity and coverage (ARW preview estimates are only a starting point) |
-| Canon CR3 / Fujifilm / Olympus shooter | ~35% | Their raws open as embedded previews only |
+| Canon CR3 / Fujifilm / Olympus shooter | ~35% | Their raws open as embedded previews only (CR3: the full-size JPEG with full metadata) |
 | Lightroom Classic power user | ~45% | Print, Book, Map, publish, tethering |
 | Relies on AI (masks, denoise) | ~25% | No segmentation or AI denoise models |
 

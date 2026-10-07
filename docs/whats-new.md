@@ -83,6 +83,10 @@
   changes couldn't be saved tries once more, then asks: Try Saving Again, Quit Anyway or Cancel.
 
 ### Library
+- Canon CR3 files show their full-size embedded JPEG (e.g. 6960 × 4640 on an EOS R6 Mark III) instead of the
+  1620 × 1080 preview, and import with their metadata: capture time, camera, lens, exposure, GPS and XMP. Their raw
+  data is not decoded yet, so they stay preview-only. For CR3s imported earlier, Photo ▸ Reload from Disk picks
+  up the full-size preview; their camera metadata comes with a fresh import.
 - Rename Photos never overwrites another photo when only the letter case changes (issue #95): on case-sensitive
   volumes (Linux, case-sensitive APFS) `img_1.JPG` next to `IMG_1.JPG` is a different photo and the renamed one gets
   `img_1-1.JPG`; on case-insensitive volumes the case change still goes through.
