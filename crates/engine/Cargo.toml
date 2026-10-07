@@ -29,6 +29,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+sqlite-core = "=0.12.0"
 ab_glyph = { workspace = true }
 lightcraft-segment = { workspace = true, optional = true }
 

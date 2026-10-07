@@ -143,6 +143,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("merge.hdrPanoramaLast", "HDR Panorama with Last Settings", None, "Photo>Photo Merge"),
     ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
     ("file.addFolder", "Import from Folder…", None, "File"),
+    ("file.importLightroom", "Import Lightroom Catalog…", None, "File"),
     ("file.addFromDevice", "Import from Device", None, ""),
     ("file.findMissing", "Find Missing Photos…", None, "File"),
     ("file.backupLibrary", "Back Up Library…", None, "File"),
@@ -961,6 +962,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             // review first: the import dialog lists what was found
             crate::import::open(app, paths)
+        }
+        "file.importLightroom" => {
+            let path =
+                p.get("path").and_then(Value::as_str).map(str::to_string).or_else(|| app.services.pick_lightroom_catalog.as_mut().and_then(|f| f()));
+            match path {
+                Some(path) => app.run("library.importLightroom", json!({"path":path})),
+                None => Ok(Value::Null),
+            }
         }
         "app.quit" => {
             app.ui.quit = true;

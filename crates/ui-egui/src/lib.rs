@@ -98,6 +98,8 @@ pub struct Services {
     pub reveal: Option<RevealFn>,
     /// Choose a folder (Settings → General → Open Library…; desktop only).
     pub pick_folder: Option<PickFolder>,
+    /// Open a Lightroom Classic `.lrcat` catalog for read-only import.
+    pub pick_lightroom_catalog: Option<PickFolder>,
     /// Open a web link in the browser (Help menu, About, Discord button).
     pub open_url: Option<OpenUrlFn>,
     /// Open a file in an external editor (Edit in External Editor; desktop only).

@@ -230,6 +230,13 @@ impl PrefsWriter {
 
 fn services() -> Services {
     Services {
+        pick_lightroom_catalog: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .set_title("Import Lightroom Catalog")
+                .add_filter("Lightroom Classic Catalog", &["lrcat"])
+                .pick_file()
+                .map(|p| p.to_string_lossy().to_string())
+        })),
         pick_folder: Some(Box::new(|| {
             rfd::FileDialog::new().set_title(lightcraft_ui_egui::i18n::tr("Open Library")).pick_folder().map(|p| p.to_string_lossy().to_string())
         })),
