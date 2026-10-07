@@ -215,6 +215,20 @@ impl Headless {
         self.paint()
     }
 
+    /// Wait for a fixture widget whose background directory listing may still be loading.
+    #[cfg(test)]
+    pub(crate) fn wait_for_widget(&mut self, id: &str, timeout: Duration) -> bool {
+        let start = Instant::now();
+        while let Some(remaining) = timeout.checked_sub(start.elapsed()) {
+            let reply = self.request("ui.widgets", json!({"filter": id}), remaining);
+            if reply["result"].as_array().is_some_and(|widgets| widgets.iter().any(|w| w["id"].as_str() == Some(id))) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        false
+    }
+
     /// Send a control-protocol request (see [`crate::control`]) and run frames until it is
     /// answered, then until its input has been consumed. Returns `{"ok": …, "result"|"error": …}`.
     pub fn request(&mut self, method: &str, params: Value, timeout: Duration) -> Value {
@@ -826,10 +840,18 @@ mod tests {
             w["result"].as_array().unwrap().iter().filter_map(|x| x["id"].as_str().map(String::from)).collect()
         };
         h.request("ui.set", json!({"leftPanel": true}), t);
+        // Keep the fixture as a root rather than depending on its location
+        // relative to the machine's built-in Home folder.
+        h.request("engine.execute", json!({"command": "local.addRoot", "params": {"path": path}}), t);
         h.request("engine.execute", json!({"command": "library.browse", "params": {"path": path}}), t);
         h.settle(SETTLE);
         assert!(ids(&mut h).contains(&format!("source:local:{path}")));
         assert!(!ids(&mut h).iter().any(|i| i == "source:local:restoreHidden"));
+        // Test sidebar visibility independently of browsing: hiding a folder
+        // beneath Home otherwise expands the user's entire parent tree and
+        // pushes the restore button outside the viewport.
+        assert_eq!(h.request("ui.clickWidget", json!({"id": "source:all"}), t)["ok"], true);
+        h.settle(SETTLE);
         let r = h.request("engine.execute", json!({"command": "local.hide", "params": {"path": path}}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
@@ -869,11 +891,17 @@ mod tests {
             w["result"].as_array().unwrap().iter().map(|x| (x["id"].as_str().unwrap().to_string(), x["rect"][0].as_f64().unwrap_or(0.0))).collect()
         };
         h.request("ui.set", json!({"leftPanel": true}), t);
+        // Home may also own this temporary directory. Keep the fixture tree
+        // independent of the user's real folders and their async listings.
+        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+            assert_eq!(exec(&mut h, "local.hide", json!({"path": home}))["ok"], true);
+        }
         assert_eq!(exec(&mut h, "local.addRoot", json!({"path": photos}))["ok"], true);
         assert_eq!(exec(&mut h, "local.addRoot", json!({"path": format!("{photos}/")}))["result"]["roots"].as_array().map(Vec::len), Some(1));
         exec(&mut h, "library.browse", json!({"path": day1}));
         h.settle(SETTLE);
         h.step();
+        assert!(h.wait_for_widget(&format!("source:local:{day2}"), t), "the sibling listing did not arrive");
         let r = rects(&mut h);
         assert!(r.contains_key(&format!("source:local:{photos}")), "the kept root stays: {r:?}");
         assert!(r.contains_key(&format!("source:local:{day2}")), "the sibling stays reachable: {r:?}");
@@ -883,9 +911,10 @@ mod tests {
         h.settle(SETTLE);
         assert_eq!(h.app.session.browse.as_ref().map(|b| b.path.clone()), Some(day2.clone()), "the sibling is browsed");
         // another location: the kept root stays listed
-        exec(&mut h, "library.browse", json!({"path": other}));
+        assert_eq!(exec(&mut h, "library.browse", json!({"path": other}))["ok"], true);
         h.settle(SETTLE);
         h.step();
+        assert!(h.wait_for_widget(&format!("source:local:{other}"), t), "the other location did not arrive");
         let r = rects(&mut h);
         assert!(r.contains_key(&format!("source:local:{photos}")) && r.contains_key(&format!("source:local:{other}")), "{r:?}");
         // restart: the kept roots come back with the saved UI state
