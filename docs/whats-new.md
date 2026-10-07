@@ -124,6 +124,10 @@
 - Auto Sync: edits apply to every selected photo. Auto B&W mix. Automatic versions.
 - Colour-range masks: click the photo to sample. Luminance ranges: range bar, smoothness, luminance map.
 - ⌘-drag to straighten, ⇧G Guided Upright, a grid while transforming.
+- Nikon NEFs start from a colour and tone look fitted to the camera's own JPEG, as Sony ARWs do, instead of a muted,
+  greenish neutral rendering (issue #150); white balance is adjusted relative to the as-shot look. 12-bit NEFs
+  (e.g. D750, D780, D850, D7500, Z 50) no longer render nearly black or with crushed shadows: their black level was
+  read in the wrong units.
 
 ### Viewing and sharing
 - Slideshow, second window, All Metadata, System Info.
