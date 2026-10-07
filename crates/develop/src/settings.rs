@@ -782,7 +782,7 @@ pub enum MaskShape {
         seg: Option<crate::SegMask>,
         /// Zoomed-in passes over parts of the image (higher resolution than `seg`), used
         /// inside their rectangles.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[serde(default, skip_serializing_if = "Vec::is_empty", deserialize_with = "crate::segmask::de_detail")]
         detail: Vec<crate::SegMask>,
         /// Edge −100..100: below 0 harder (a steeper transition), above 0 softer (feathered).
         #[serde(default, skip_serializing_if = "is_zero")]
@@ -794,7 +794,7 @@ pub enum MaskShape {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seg: Option<crate::SegMask>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[serde(default, skip_serializing_if = "Vec::is_empty", deserialize_with = "crate::segmask::de_detail")]
         detail: Vec<crate::SegMask>,
         /// Edge −100..100, as for `Object`.
         #[serde(default, skip_serializing_if = "is_zero")]

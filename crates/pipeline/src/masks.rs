@@ -228,7 +228,8 @@ impl SegGrid {
 /// data selects nothing.
 fn sample_seg(seg: Option<&SegMask>, detail: &[SegMask], gain: f32, frame: &Frame, w: usize, h: usize, out: &mut Plane) {
     let coarse = seg.and_then(SegGrid::new);
-    let patches: Vec<SegGrid> = detail.iter().filter_map(SegGrid::new).collect();
+    // (capped: a hostile document can hold many)
+    let patches: Vec<SegGrid> = detail.iter().take(lightcraft_develop::segmask::MAX_DETAIL).filter_map(SegGrid::new).collect();
     if coarse.is_none() && patches.is_empty() {
         return;
     }
@@ -464,6 +465,21 @@ mod tests {
         assert!(a.get(20, 50) < 0.01, "outside the patch: the coarse mask");
         assert!(a.get(120, 50) > 0.99, "inside the patch, its selected half");
         assert!(a.get(190, 50) < 0.01, "inside the patch, its unselected half");
+    }
+
+    #[test]
+    fn a_hostile_number_of_detail_patches_is_capped() {
+        // built in memory (a deserialized document is capped already): only the first
+        // MAX_DETAIL are decoded and sampled, so this needs 4 × 4 MB, not 20 000 × 4 MB
+        let side = 1024;
+        let l: Vec<f32> = vec![12.0; side * side];
+        let patch = SegMask::from_logits_in(side, &l, [0.0, 0.0, 0.5, 1.0]);
+        let shape = MaskShape::Object { hint: vec![Point::new(0.2, 0.5)], exclude: vec![], seg: None, detail: vec![patch; 20_000], edge: 0.0 };
+        let (w, h) = (64, 32);
+        let t = std::time::Instant::now();
+        let a = shape_alpha(&shape, &frame(w, h), w, h, &Rgb32f::new(w, h), &Plane::new(w, h), 0.0);
+        assert!(a.get(5, 16) > 0.99 && a.get(60, 16) < 0.01);
+        assert!(t.elapsed() < std::time::Duration::from_secs(20), "{:?}", t.elapsed());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 # Install the SAM 3 model for LightCraft's Object and Describe masks on Windows
-# (see docs/ai-masks.md; tools/install-sam3.sh is the macOS/Linux version).
+# (see docs/ai-masks.md; tools/install-sam3.sh is the macOS/Linux version). The desktop app
+# offers to download the model itself when an AI mask first needs it; this is for developers.
 #
 # facebook/sam3 is gated: accept the SAM License at https://huggingface.co/facebook/sam3, wait
 # for approval, then:   $env:HF_TOKEN = "hf_..." ; .\tools\install-sam3.ps1
@@ -34,7 +35,26 @@ if ($Token) { $Headers["Authorization"] = "Bearer $Token" }
 $Base = "https://huggingface.co/$Repo/resolve/main"
 foreach ($f in $Files + "model.safetensors") {
     Write-Host "fetching $f"
-    Invoke-WebRequest -Uri "$Base/$f" -Headers $Headers -OutFile (Join-Path $Dir $f)
+    # into a .part file, moved into place only when complete (and, for the weights, verified):
+    # a failed or damaged download never ends up under the real name
+    $final = Join-Path $Dir $f
+    $part = "$final.part"
+    Remove-Item -Force -ErrorAction SilentlyContinue $part
+    try {
+        Invoke-WebRequest -Uri "$Base/$f" -Headers $Headers -OutFile $part
+    } catch {
+        Remove-Item -Force -ErrorAction SilentlyContinue $part
+        throw "download of $Repo/$f failed: $($_.Exception.Message)"
+    }
+    if ($f -eq "model.safetensors") {
+        Write-Host "checking model.safetensors (SHA-256 of 3.4 GB)..."
+        $got = (Get-FileHash $part -Algorithm SHA256).Hash.ToLower()
+        if ($got -ne $Sha256) {
+            Remove-Item -Force $part
+            throw "the download is damaged or not the official checkpoint (got $got); deleted it"
+        }
+    }
+    Move-Item -Force $part $final
 }
 Test-Install
 Write-Host "Restart LightCraft; Object and Describe in the Masking panel now use it."

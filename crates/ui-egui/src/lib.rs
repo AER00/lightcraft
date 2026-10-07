@@ -203,7 +203,9 @@ pub struct LightcraftApp {
 }
 
 impl LightcraftApp {
-    pub fn new(session: Session, services: Services) -> Self {
+    pub fn new(mut session: Session, services: Services) -> Self {
+        // AI mask requests run on the model's worker; frames apply their results (never wait)
+        session.segmenter.background = true;
         Self {
             session,
             ui: UiState::default(),
@@ -358,13 +360,42 @@ impl LightcraftApp {
         self.ui.toast = Some((text.into(), t + secs));
     }
 
-    /// AI masks: start a zoomed-in detail pass once the clicking stops (`ui.detail_due`), and
-    /// apply finished passes.
+    /// AI masks: apply finished background requests (clicks, descriptions, detail passes) and
+    /// show their errors; start a zoomed-in detail pass once the clicking stops
+    /// (`ui.detail_due`); watch the model download. Never waits for the model.
     fn ai_mask_detail(&mut self, ctx: &egui::Context) {
-        if self.session.segment_poll() {
+        let polled = self.session.segment_poll();
+        let now = ctx.input(|i| i.time);
+        if polled.changed {
             ctx.request_repaint();
         }
-        let now = ctx.input(|i| i.time);
+        if let Some(mask) = polled.refine {
+            self.ui.detail_due = Some((now + 0.3, mask));
+        }
+        if let Some(e) = polled.messages.into_iter().last() {
+            self.ai_error(ctx, e, None);
+        }
+        let seg = &self.session.segmenter;
+        if seg.busy() || seg.pending_clicks().is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+        let download = seg.download_status();
+        if download.running {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
+        // a download finishing while its dialog is closed: say so once
+        if self.ui.sam_downloading && !download.running {
+            self.ui.sam_downloading = false;
+            let open = matches!(self.ui.dialog, Some(state::Dialog::SamModel { .. }));
+            match (&download.error, open) {
+                (_, true) => {}
+                (Some(e), false) => self.toast_error(ctx, format!("The SAM 3 download failed: {e}")),
+                (None, false) if download.finished => {
+                    self.toast_error(ctx, crate::i18n::tr("The SAM 3 model is installed: Object and Describe masks are ready."))
+                }
+                (None, false) => {}
+            }
+        }
         if let Some((due, mask)) = self.ui.detail_due {
             if now >= due && !self.session.segmenter.busy() && !self.session.segmenter.detail_busy() {
                 self.ui.detail_due = None;
@@ -377,6 +408,24 @@ impl LightcraftApp {
         }
         if self.session.segmenter.detail_busy() {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+    }
+
+    /// An AI mask error: when the model isn't installed, the dialog that offers to download it
+    /// (`then`: the AI mask to start afterwards); otherwise a toast.
+    pub fn ai_error(&mut self, ctx: &egui::Context, e: impl Into<String>, then: Option<(&str, &str)>) {
+        let e = e.into();
+        if lightcraft_engine::segment::Segmenter::AVAILABLE && e.starts_with(lightcraft_engine::segment::NOT_INSTALLED) {
+            self.offer_sam_download(then);
+        } else {
+            self.toast_error(ctx, e);
+        }
+    }
+
+    /// Open the dialog offering the SAM 3 download (never downloads by itself).
+    pub fn offer_sam_download(&mut self, then: Option<(&str, &str)>) {
+        if self.ui.dialog.is_none() || matches!(self.ui.dialog, Some(state::Dialog::SamModel { .. })) {
+            self.ui.dialog = Some(state::Dialog::SamModel { then: then.map(|(k, o)| (k.to_string(), o.to_string())), error: None });
         }
     }
 

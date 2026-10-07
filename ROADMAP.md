@@ -39,7 +39,7 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 | Nikon / Sony / older-Canon raw shooter | ~65% | Camera colour fidelity and coverage (ARW and NEF preview estimates are only a starting point) |
 | Canon CR3 / Fujifilm / Olympus shooter | ~35% | Their raws open as embedded previews only (CR3: the full-size JPEG with full metadata) |
 | Lightroom Classic power user | ~45% | Print, Book, Map, publish, tethering |
-| Relies on AI (masks, denoise) | ~25% | No segmentation or AI denoise models |
+| Relies on AI (masks, denoise) | ~25% | Object / Describe masks via optional SAM 3 (download not yet hosted); no AI denoise |
 
 ## Where we're going
 
@@ -57,7 +57,9 @@ Priorities, in order. Each points at tracker rows in [`docs/parity.md`](docs/par
    (references stay in the local `plan/`), then tune against the numbers.
 5. **Lens profiles of our own** (LR-EDIT-OPTICS-PROFILE, P1).
 6. **AI model strategy** (maintainer decision): which permissively licensed models (or our own training) for
-   segmentation masks and denoise; then pure-Rust inference. Unblocks M12 and Enhance.
+   segmentation masks and denoise; then pure-Rust inference. Unblocks M12 and Enhance. Object / Describe masks now
+   run Meta's SAM 3 in pure Rust (optional, user-consented download under the non-OSI SAM License; CDN mirrors still
+   to be set up, docs/ai-masks.md); Subject / Sky / People and Enhance are still open.
 7. **Then:** HDR (Q), the Classic output modules (Print first, then Map view, Book, Slideshow), video (R), localisation
    and accessibility.
 

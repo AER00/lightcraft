@@ -291,9 +291,9 @@ pub struct UiState {
     /// (`new` mask, or `add`/`subtract`/`intersect` on the selected one) and the text typed.
     #[serde(skip)]
     pub describe: Option<(String, String)>,
-    /// The mask under the pointer in the Masks list (shown on the photo in red).
+    /// A SAM 3 download was started from the app (to report its end once).
     #[serde(skip)]
-    pub hover_mask: Option<u32>,
+    pub sam_downloading: bool,
     /// When to start the zoomed-in detail pass of an AI mask (app time) and which mask: set by
     /// each click or description, so the pass runs once the clicking stops.
     #[serde(skip)]
@@ -517,6 +517,15 @@ pub enum Dialog {
     Settings {
         tab: String,
     },
+    /// Object and Describe masks need the SAM 3 model, which isn't installed: offer to download
+    /// it (size, licence, progress). `then`: the AI mask to start once it is there (`kind`
+    /// object|prompt, `op` new|add|subtract|intersect).
+    SamModel {
+        then: Option<(String, String)>,
+        /// Why the download couldn't start (shown in the dialog).
+        #[serde(default)]
+        error: Option<String>,
+    },
     /// Confirm moving photos to Recently Deleted.
     ConfirmDelete {
         count: usize,
@@ -553,7 +562,7 @@ impl Default for UiState {
             histogram: true,
             soft_proof: false,
             proof: lightcraft_engine::pipeline::Proof { dest_warning: false, ..Default::default() },
-            mask_overlay: false,
+            mask_overlay: true,
             mask_overlay_mode: "color".into(),
             mask_overlay_color: [230, 30, 40],
             mask_overlay_opacity: 50.0,
@@ -573,8 +582,8 @@ impl Default for UiState {
             focus_search: false,
             renaming_mask: None,
             describe: None,
-            hover_mask: None,
             detail_due: None,
+            sam_downloading: false,
             renaming_component: None,
             quit: false,
             dragging_photos: None,

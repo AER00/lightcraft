@@ -698,22 +698,12 @@ fn targeted_drag(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respon
     }
 }
 
-/// The colour of a mask hovered in the Masks list.
-const HOVER_RED: [u8; 3] = [230, 30, 40];
-
 /// The diagnostic overlay the loupe shows (the selected mask, Point Color's visualized range,
 /// Visualize Spots).
 pub(crate) fn view_overlay(app: &LightcraftApp, d: &DevelopSettings) -> lightcraft_pipeline::Overlay {
     use lightcraft_pipeline::{MaskView, Overlay};
     if app.ui.fullscreen {
         return Overlay::None;
-    }
-    // a mask hovered in the Masks list shows in red; the selected one only with the overlay on (O)
-    if app.ui.right == RightPanel::Masking
-        && let Some(m) = app.ui.hover_mask.and_then(|id| d.masks.iter().find(|m| m.id == id))
-        && !m.components.is_empty()
-    {
-        return Overlay::Mask { id: m.id.min(u16::MAX as u32) as u16, view: MaskView::default(), color: HOVER_RED, opacity: 55 };
     }
     if app.ui.right == RightPanel::Masking
         && app.ui.mask_overlay
@@ -1183,9 +1173,15 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         }
     }
     // Object selections (SAM 3) of the selected mask: each click, green to include, red to exclude
+    // (clicks still on their way to the model included)
+    let pending = app.session.segmenter.pending_clicks().cloned();
     for m in d.masks.iter().filter(|m| Some(m.id) == active) {
-        for c in &m.components {
+        for (k, c) in m.components.iter().enumerate() {
             if let MaskShape::Object { hint, exclude, .. } = &c.shape {
+                let (hint, exclude) = match pending.as_ref().filter(|q| (q.mask, q.comp) == (m.id, k)) {
+                    Some(q) => (&q.hint, &q.exclude),
+                    None => (hint, exclude),
+                };
                 for (pts, col) in [(hint, Color32::from_rgb(40, 200, 90)), (exclude, Color32::from_rgb(230, 60, 60))] {
                     for q in pts {
                         let q = map.screen(*q);
@@ -1212,7 +1208,7 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
                         app.ui.detail_due = Some((ui.input(|i| i.time) + 1.0, mid));
                     }
                 }
-                Err(e) => app.toast_error(ui.ctx(), e),
+                Err(e) => app.ai_error(ui.ctx(), e, Some(("object", "new"))),
             }
         }
         return;

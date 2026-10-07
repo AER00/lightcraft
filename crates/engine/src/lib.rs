@@ -727,6 +727,8 @@ mod tests_persist;
 #[cfg(test)]
 mod tests_prefs;
 #[cfg(test)]
+mod tests_segment;
+#[cfg(test)]
 mod tests_settings_files;
 #[cfg(test)]
 mod tests_spots;

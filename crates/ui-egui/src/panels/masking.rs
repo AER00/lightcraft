@@ -106,7 +106,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                             app.toast(ui.ctx(), "Click the photo to pick a colour · ⇧-click adds more");
                         }
                         "object" => start_object(app, ui.ctx(), "new"),
-                        "prompt" => app.ui.describe = Some(("new".into(), String::new())),
+                        "prompt" => start_describe(app, "new"),
                         "brush" | "linear" | "radial" => {
                             app.ui.tool = kind.to_string();
                             if *kind != "brush" {
@@ -124,9 +124,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
         });
         describe_field(app, ui, true);
-        let status = if app.session.segmenter.busy() {
+        let seg = &app.session.segmenter;
+        let status = if seg.analyzing() {
             Some("Analyzing the photo for AI masks…")
-        } else if app.session.segmenter.detail_busy() || app.ui.detail_due.is_some() {
+        } else if seg.busy() {
+            Some("Selecting…")
+        } else if seg.detail_busy() || app.ui.detail_due.is_some() {
             Some("Refining the mask's detail…")
         } else {
             None
@@ -136,6 +139,21 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ui.label(egui::RichText::new(crate::i18n::tr(status)).color(t.text_dim));
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
         }
+        // the model download, while its dialog is closed
+        let download = seg.download_status();
+        if download.running && app.ui.dialog.is_none() {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let pct = if download.total > 0 { download.done as f64 / download.total as f64 } else { 0.0 };
+                let r = ui.add(
+                    egui::ProgressBar::new(pct as f32).desired_width(ui.available_width() - 70.0).text(format!("SAM 3: {} %", (pct * 100.0).floor())),
+                );
+                register(ui.ctx(), "maskSamProgress", r.rect);
+                if text_button(ui, "maskSamDetails", crate::i18n::tr("Details"), false).clicked() {
+                    app.offer_sam_download(None);
+                }
+            });
+        }
     });
     divider(ui);
     // mask list
@@ -144,17 +162,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ui.label(egui::RichText::new(crate::i18n::tr("Masks")).font(t.semibold(13.0)).color(t.text_label));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let on = app.ui.mask_overlay;
-                if icon_button(
-                    ui,
-                    "maskOverlay",
-                    Icon::Eye,
-                    vec2(24.0, 24.0),
-                    on,
-                    true,
-                    "Always show the selected mask (O); hovering a mask shows it",
-                )
-                .clicked()
-                {
+                if icon_button(ui, "maskOverlay", Icon::Eye, vec2(24.0, 24.0), on, true, "Show overlay (O)").clicked() {
                     app.ui.mask_overlay = !on;
                 }
             });
@@ -163,7 +171,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ui.label(egui::RichText::new(crate::i18n::tr("No masks yet. Choose a mask type above.")).color(t.text_dim));
         }
         let count = d.masks.len();
-        app.ui.hover_mask = None;
         for (index, m) in d.masks.iter().enumerate() {
             let sel = app.session.active_mask == Some(m.id);
             if let Some((rid, name)) = app.ui.renaming_mask.as_mut().filter(|(rid, _)| *rid == m.id) {
@@ -187,10 +194,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
             register(ui.ctx(), format!("mask:{}", m.id), r);
-            // the mask under the pointer shows on the photo (red overlay)
-            if ui.rect_contains_pointer(r) {
-                app.ui.hover_mask = Some(m.id);
-            }
             ui.painter().rect_filled(
                 r,
                 4.0,
@@ -297,9 +300,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 });
                 let resp = resp.inner;
                 register(ui.ctx(), format!("component:{i}"), resp.rect);
-                if ui.rect_contains_pointer(resp.rect) {
-                    app.ui.hover_mask = Some(m.id);
-                }
                 if resp.double_clicked() {
                     app.ui.renaming_component = Some((m.id, i, label.clone()));
                 }
@@ -635,19 +635,60 @@ fn component_row_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, mask: u32, k: 
     }
 }
 
+/// Whether the SAM 3 model is missing in a build that could use it: then the download is
+/// offered (with `then` to start afterwards) instead of starting an AI mask.
+fn needs_model(app: &mut LightcraftApp, kind: &str, op: &str) -> bool {
+    let seg = &app.session.segmenter;
+    let missing = lightcraft_engine::segment::Segmenter::AVAILABLE && seg.dir.is_some() && !seg.installed();
+    if missing {
+        app.offer_sam_download(Some((kind, op)));
+    }
+    missing
+}
+
 /// Start an Object selection (SAM 3 clicks): a new mask, or a component of the selected one
-/// combined by `op`; the photo is analyzed meanwhile.
-fn start_object(app: &mut LightcraftApp, ctx: &egui::Context, op: &str) {
+/// combined by `op`; the photo is analyzed meanwhile (in the background).
+pub(crate) fn start_object(app: &mut LightcraftApp, ctx: &egui::Context, op: &str) {
+    if needs_model(app, "object", op) {
+        return;
+    }
     let r =
         if op == "new" { app.run("mask.add", json!({"kind": "object"})) } else { app.run("mask.addComponent", json!({"op": op, "kind": "object"})) };
     match r {
         Ok(_) => {
             app.ui.tool = "object".into();
-            // a missing model is reported now rather than at the first click
             app.toast(ctx, "Click the object to select it · ⌥-click leaves a part out");
         }
-        Err(e) => app.toast_error(ctx, e),
+        Err(e) => app.ai_error(ctx, e, Some(("object", op))),
     }
+}
+
+/// Start an AI mask of `kind` (object|prompt) combined by `op` (new|add|subtract|intersect),
+/// after the model was installed.
+pub(crate) fn begin_ai(app: &mut LightcraftApp, kind: &str, op: &str) -> Result<serde_json::Value, String> {
+    match kind {
+        "object" => {
+            let r = if op == "new" {
+                app.run("mask.add", json!({"kind": "object"}))
+            } else {
+                app.run("mask.addComponent", json!({"op": op, "kind": "object"}))
+            }?;
+            app.ui.tool = "object".into();
+            Ok(r)
+        }
+        _ => {
+            app.ui.describe = Some((op.to_string(), String::new()));
+            Ok(serde_json::Value::Null)
+        }
+    }
+}
+
+/// Open the Describe field (a new mask, or a component combined by `op`).
+pub(crate) fn start_describe(app: &mut LightcraftApp, op: &str) {
+    if needs_model(app, "prompt", op) {
+        return;
+    }
+    app.ui.describe = Some((op.to_string(), String::new()));
 }
 
 /// The Describe field: type what to select ("sky", "the red car") and press Return.
@@ -691,13 +732,9 @@ fn describe_field(app: &mut LightcraftApp, ui: &mut egui::Ui, new_mask: bool) {
             app.run("mask.addComponent", json!({"op": op, "kind": "prompt", "text": text}))
         };
         match r {
-            Ok(_) => {
-                app.ui.describe = None;
-                if let Some(mid) = app.session.active_mask {
-                    app.ui.detail_due = Some((ui.input(|i| i.time) + 0.3, mid));
-                }
-            }
-            Err(e) => app.toast_error(ui.ctx(), e),
+            // the mask appears when the model has found it (a detail pass follows)
+            Ok(_) => app.ui.describe = None,
+            Err(e) => app.ai_error(ui.ctx(), e, Some(("prompt", op.as_str()))),
         }
     }
 }
@@ -711,7 +748,7 @@ fn component_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, op: &str) {
     let b = ui.button(crate::i18n::tr("Describe…"));
     register(ui.ctx(), format!("maskComp:{op}:prompt"), b.rect);
     if b.clicked() {
-        app.ui.describe = Some((op.to_string(), String::new()));
+        start_describe(app, op);
     }
     for (kind, label) in [
         ("brush", "Brush"),

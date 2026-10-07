@@ -55,6 +55,34 @@ impl SegMask {
     }
 }
 
+/// Most zoomed-in detail patches one AI mask component keeps (the app makes one; each costs a
+/// decode per render, so a hostile document can't make rendering explode).
+pub const MAX_DETAIL: usize = 4;
+
+/// Deserialize a component's detail patches, keeping at most [`MAX_DETAIL`] (the rest are
+/// skipped without being decoded).
+pub(crate) fn de_detail<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<SegMask>, D::Error> {
+    struct Capped;
+    impl<'de> serde::de::Visitor<'de> for Capped {
+        type Value = Vec<SegMask>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a list of segmentations")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<SegMask>, A::Error> {
+            let mut out = Vec::new();
+            while out.len() < MAX_DETAIL {
+                match seq.next_element::<SegMask>()? {
+                    Some(m) => out.push(m),
+                    None => return Ok(out),
+                }
+            }
+            while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+            Ok(out)
+        }
+    }
+    d.deserialize_seq(Capped)
+}
+
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -116,6 +144,30 @@ mod tests {
         for (a, b) in l.iter().zip(&back) {
             assert!((a.clamp(-127.0 / SCALE, 127.0 / SCALE) - b).abs() <= 0.5 / SCALE + 1e-6);
         }
+    }
+
+    #[test]
+    fn a_hostile_document_keeps_at_most_max_detail_patches() {
+        let patch = serde_json::to_value(SegMask::from_logits(4, &[1.0; 16])).unwrap();
+        let shape = serde_json::json!({"kind": "object", "hint": [{"x": 0.5, "y": 0.5}], "detail": vec![patch; 10_000]});
+        let s: crate::MaskShape = serde_json::from_value(shape).unwrap();
+        let crate::MaskShape::Object { detail, .. } = s else { panic!("an Object") };
+        assert_eq!(detail.len(), MAX_DETAIL);
+        // and a whole develop document with them still loads
+        let mut d = crate::DevelopSettings::default();
+        d.masks.push(crate::Mask {
+            id: 1,
+            components: vec![crate::MaskComponent {
+                name: None,
+                op: crate::MaskOp::Add,
+                invert: false,
+                shape: crate::MaskShape::Prompt { text: "x".into(), seg: None, detail: vec![SegMask::from_logits(4, &[1.0; 16]); 50], edge: 0.0 },
+            }],
+            ..Default::default()
+        });
+        let back: crate::DevelopSettings = serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
+        let crate::MaskShape::Prompt { detail, .. } = &back.masks[0].components[0].shape else { panic!("a Prompt") };
+        assert_eq!(detail.len(), MAX_DETAIL);
     }
 
     #[test]

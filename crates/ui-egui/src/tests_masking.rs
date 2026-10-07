@@ -47,20 +47,14 @@ fn mask_overlay_keys_and_pins() {
     exec(&mut h, "mask.add", json!({"kind": "radial", "center": [0.3, 0.4], "rx": 0.1, "ry": 0.1}));
     exec(&mut h, "mask.add", json!({"kind": "linear", "start": [0.7, 0.2], "end": [0.7, 0.6]}));
     assert_eq!(h.app.session.active_mask, Some(2));
-    // no overlay until a mask is hovered in the Masks list; then that mask, in red
+    // the loupe asks the renderer for the selected mask's overlay
     let d = develop(&h);
-    assert_eq!(crate::panels::detail::view_overlay(&h.app, &d), Overlay::None);
-    h.app.ui.hover_mask = Some(1);
-    assert_eq!(crate::panels::detail::view_overlay(&h.app, &d), Overlay::Mask { id: 1, view: MaskView::Color, color: [230, 30, 40], opacity: 55 });
-    h.app.ui.hover_mask = None;
-    // O shows the selected mask all the time (and toggles it off again)
-    h.request("ui.key", json!({"key": "o"}), T);
-    assert!(h.app.ui.mask_overlay);
     let o = crate::panels::detail::view_overlay(&h.app, &d);
     assert_eq!(o, Overlay::Mask { id: 2, view: MaskView::Color, color: [230, 30, 40], opacity: 50 });
+    // O toggles it, Shift+O cycles the colour (and leaves the crop overlay alone)
     h.request("ui.key", json!({"key": "o"}), T);
+    assert!(!h.app.ui.mask_overlay);
     assert_eq!(crate::panels::detail::view_overlay(&h.app, &d), Overlay::None);
-    // Shift+O cycles the colour (and leaves the crop overlay alone)
     h.request("ui.key", json!({"key": "o"}), T);
     let crop = h.app.ui.crop_overlay;
     let colour = h.app.ui.mask_overlay_color;
@@ -625,4 +619,54 @@ fn soft_proofing_flags_out_of_gamut_colours_and_makes_proof_copies() {
     h.request("ui.key", json!({"key": "s"}), T);
     assert!(!h.app.ui.soft_proof);
     assert_ne!(h.app.session.catalog.stack_of(copy.id).unwrap().collapsed, stack.collapsed, "S toggled the stack");
+}
+
+/// Object / Describe without the SAM 3 model: the download is offered (never started without a
+/// yes), the dialog says why it can't start when no mirror is configured, nothing freezes and no
+/// empty mask is left behind.
+#[test]
+fn ai_masks_without_the_model_offer_the_download() {
+    use crate::state::Dialog;
+    use lightcraft_engine::segment::Segmenter;
+    let mut h = detail("panel.masking");
+    let dir = std::env::temp_dir().join(format!("lc-ui-no-sam3-{}", std::process::id()));
+    h.app.session.segmenter.dir = Some(dir.clone());
+    h.app.session.segmenter.mirrors_file = Some(dir.join("none.txt"));
+    let t = std::time::Instant::now();
+    let r = h.request("ui.clickWidget", json!({"id": "maskNew:object"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(develop(&h).masks.is_empty());
+    if !Segmenter::AVAILABLE {
+        // a build without AI masks says so (a toast), no dialog
+        assert_eq!(h.app.ui.dialog, None);
+        return;
+    }
+    assert_eq!(h.app.ui.dialog, Some(Dialog::SamModel { then: Some(("object".into(), "new".into())), error: None }));
+    assert!(!h.app.session.segmenter.download_status().running, "nothing downloads without a yes");
+    if h.app.session.segmenter.mirrors().is_empty() {
+        // Download: no location configured in this build → the reason, in the dialog
+        let r = h.request("ui.dialog.confirm", json!({}), T);
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(matches!(h.app.ui.dialog, Some(Dialog::SamModel { .. })), "stays open");
+        let r = h.request("ui.clickWidget", json!({"id": "button:dialogOk"}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        let Some(Dialog::SamModel { error: Some(e), .. }) = &h.app.ui.dialog else { panic!("{:?}", h.app.ui.dialog) };
+        assert!(e.contains("LIGHTCRAFT_SAM3_MIRRORS"), "{e}");
+    }
+    // (a frame with the message laid out, so the buttons are where they are drawn)
+    h.step();
+    h.step();
+    let r = h.request("ui.clickWidget", json!({"id": "button:dialogCancel"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(h.app.ui.dialog, None);
+    // Describe asks too
+    let r = h.request("ui.clickWidget", json!({"id": "maskNew:prompt"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(h.app.ui.dialog, Some(Dialog::SamModel { then: Some(("prompt".into(), "new".into())), error: None }));
+    assert_eq!(h.app.ui.describe, None);
+    // a click command from an agent gets the not-installed error at once, and the app offers the model
+    let e = h.app.run("mask.add", json!({"kind": "prompt", "text": "sky"})).unwrap_err();
+    assert!(e.starts_with(lightcraft_engine::segment::NOT_INSTALLED), "{e}");
+    assert!(develop(&h).masks.is_empty());
+    assert!(t.elapsed() < SETTLE, "{:?}", t.elapsed());
 }

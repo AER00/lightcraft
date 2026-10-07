@@ -406,7 +406,9 @@ OPTIONS:
 ENVIRONMENT:
   LIGHTCRAFT_GPU_BACKEND=dx12|vulkan|metal|auto|off   graphics backend (default: DX12 on Windows, Metal on macOS,
                    Vulkan on Linux; off = render on the CPU); else WGPU_BACKEND. LIGHTCRAFT_GPU=0: CPU rendering.
-  LIGHTCRAFT_SAM3_DIR=DIR   the SAM 3 model for Object / Describe masks (default: <settings folder>/models/sam3)
+  LIGHTCRAFT_SAM3_DIR=DIR   the SAM 3 model for Object / Describe masks (default: <settings folder>/models/sam3;
+                   optional: LightCraft offers to download it when first needed)
+  LIGHTCRAFT_SAM3_MIRRORS=URL,…   where to download the SAM 3 model from (base URLs, tried in order)
 ";
 
 /// Warnings and errors (failed commands, AI mask analysis) on stderr; `LIGHTCRAFT_LOG=info`
@@ -504,8 +506,11 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let (mut session, problem) = open_session(in_memory, library_dir, seed_demo && files.is_empty());
             // AI masks: the SAM 3 checkpoint (facebook/sam3) in <config>/models/sam3, or LIGHTCRAFT_SAM3_DIR
+            // (never required: without it, AI masks offer to download it; see docs/ai-masks.md)
             session.segmenter.dir =
                 std::env::var_os("LIGHTCRAFT_SAM3_DIR").map(std::path::PathBuf::from).or_else(|| config_dir().map(|d| d.join("models").join("sam3")));
+            // the user's own download locations, one base URL per line (LIGHTCRAFT_SAM3_MIRRORS too)
+            session.segmenter.mirrors_file = config_dir().map(|d| d.join("models").join("sam3-mirrors.txt"));
             let mut app = LightcraftApp::new(session, services());
             if let Some(ui) = prefs {
                 app.ui = ui;

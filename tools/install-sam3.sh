@@ -1,6 +1,9 @@
 #!/bin/sh
 # Install the SAM 3 model for LightCraft's Object and Describe masks (see docs/ai-masks.md).
 #
+# The desktop app offers to download the model itself when an AI mask first needs it; this script
+# is for developers (reference tests, benchmarks) and for installing from Hugging Face directly.
+#
 # The weights are not part of LightCraft: they are Meta's facebook/sam3 checkpoint on Hugging
 # Face, under the SAM License. Access is gated: open https://huggingface.co/facebook/sam3, accept
 # the license, wait for approval, then run this with a token that can read it:
@@ -75,20 +78,29 @@ fi
 mkdir -p "$DIR"
 BASE="https://huggingface.co/$REPO/resolve/main"
 
-fetch() { # fetch FILE DEST [resume]
+# fetch FILE DEST [resume]: HTTP errors never reach DEST (--fail writes no error page), and a
+# resume the server refuses (416) starts over instead of counting as done.
+fetch() {
     set -- "$1" "$2" "${3:-}"
     if [ -n "$TOKEN" ]; then auth="Authorization: Bearer $TOKEN"; else auth="X-No-Auth: 1"; fi
-    code=$(curl -sSL ${3:+-C -} -H "$auth" -w '%{http_code}' -o "$2" "$BASE/$1") || code=$?
+    code=$(curl -fsSL ${3:+-C -} -H "$auth" -w '%{http_code}' -o "$2" "$BASE/$1") || true
     case "$code" in
-        200|206|416) return 0 ;;
+        200|206) return 0 ;;
+        416)
+            echo "the partial download of $1 doesn't match the server's; starting over" >&2
+            rm -f "$2"
+            code=$(curl -fsSL -H "$auth" -w '%{http_code}' -o "$2" "$BASE/$1") || true
+            [ "$code" = 200 ] && return 0
+            echo "download of $REPO/$1 failed ($code)" >&2; return 1 ;;
         401|403) echo "access denied to $REPO/$1 (has your request for facebook/sam3 been approved?)" >&2; return 1 ;;
-        *) echo "download of $REPO/$1 failed ($code)" >&2; return 1 ;;
+        *) echo "download of $REPO/$1 failed (${code:-no response})" >&2; return 1 ;;
     esac
 }
 
 for f in $FILES; do
     echo "fetching $f"
-    fetch "$f" "$DIR/$f"
+    # small files: whole, into place only when complete
+    fetch "$f" "$DIR/$f.part" && mv -f "$DIR/$f.part" "$DIR/$f" || { rm -f "$DIR/$f.part"; exit 1; }
 done
 
 if [ -s "$DIR/model.safetensors" ] && [ "$(sha256 "$DIR/model.safetensors")" = "$SHA256" ]; then
@@ -96,11 +108,19 @@ if [ -s "$DIR/model.safetensors" ] && [ "$(sha256 "$DIR/model.safetensors")" = "
 else
     echo "fetching model.safetensors (3.4 GB; resumes if interrupted)"
     part="$DIR/model.safetensors.part"
-    [ -s "$DIR/model.safetensors" ] && mv -f "$DIR/model.safetensors" "$part"
-    fetch model.safetensors "$part" resume
+    # a wrong model.safetensors is never resumed from: it goes
+    rm -f "$DIR/model.safetensors"
+    if [ -f "$part" ] && [ "$(wc -c < "$part" | tr -d ' ')" -ge "$SIZE" ]; then rm -f "$part"; fi
+    fetch model.safetensors "$part" resume || exit 1
     have=$(wc -c < "$part" | tr -d ' ')
-    if [ "$have" != "$SIZE" ]; then
+    if [ "$have" -lt "$SIZE" ]; then
         echo "incomplete download ($have of $SIZE bytes); run the script again to resume" >&2
+        exit 1
+    fi
+    echo "checking model.safetensors (SHA-256 of 3.4 GB, takes a few seconds)…"
+    if [ "$have" != "$SIZE" ] || [ "$(sha256 "$part")" != "$SHA256" ]; then
+        rm -f "$part"
+        echo "the download is damaged or not the official checkpoint; deleted it, run the script again" >&2
         exit 1
     fi
     mv -f "$part" "$DIR/model.safetensors"
