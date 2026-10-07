@@ -251,6 +251,7 @@ const HIDDEN: &[&str] = &[
     "photo.unflag",
     "photo.label",
     "library.sort",
+    "library.shuffle",
     "album.addPhotos",
     "album.create",
     "library.import",
@@ -788,6 +789,30 @@ mod tests {
             MenuNode::Submenu { children, .. } => find(children, id),
             _ => None,
         })
+    }
+
+    /// The Sort submenu is expanded by hand: Reshuffle appears once (not again from the registry),
+    /// only while sorting at random, and the direction items are off for a shuffle.
+    #[test]
+    fn sort_menu_lists_reshuffle_once_and_only_enables_it_for_random() {
+        fn sort_children(bar: &[(String, Vec<MenuNode>)]) -> Vec<MenuNode> {
+            let view = &bar.iter().find(|(t, _)| t == "View").expect("View menu").1;
+            view.iter()
+                .find_map(|n| match n {
+                    MenuNode::Submenu { label, children } if label == "Sort" => Some(children.clone()),
+                    _ => None,
+                })
+                .expect("Sort submenu")
+        }
+        let count = |nodes: &[MenuNode]| nodes.iter().filter(|n| matches!(n, MenuNode::Item { id, .. } if id == "library.shuffle")).count();
+        let mut a = app();
+        let kids = sort_children(&menu_bar(&a));
+        assert_eq!(count(&kids), 1);
+        assert!(matches!(find(&kids, "library.shuffle"), Some(MenuNode::Item { enabled: false, .. })), "off until Random is chosen");
+        a.session.execute("library.sort", &json!({"key": "random"})).expect("sort at random");
+        let kids = sort_children(&menu_bar(&a));
+        assert_eq!(count(&kids), 1);
+        assert!(matches!(find(&kids, "library.shuffle"), Some(MenuNode::Item { enabled: true, .. })));
     }
 
     /// File opens with the import entry points, worded as importing (not as adding a sidebar
