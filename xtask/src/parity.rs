@@ -442,5 +442,18 @@ old
     fn reads_ui_command_ids() {
         let src = "pub const UI_COMMANDS: &[UiCommand] = &[\n    (\"view.detail\", \"Detail\", Some(\"D\"), \"View\"),\n    (\"app.about\", \"About\", None, \"\"),\n];\nfn x() { (\"not.this\", 1); }";
         assert_eq!(ui_command_ids(src), ["view.detail", "app.about"]);
+        let languages = "pub const LANGUAGE_COMMANDS: &[UiCommand] = &[\n    (\"app.language.english\", Locale::En.name(), None, \"Edit>Language\"),\n];\n";
+        assert_eq!(ui_command_ids(&format!("{languages}{src}")), ["view.detail", "app.about", "app.language.english"]);
+    }
+
+    /// The real menu tables: both are found, so every language command is a known id.
+    #[test]
+    fn reads_the_language_commands_from_menus_rs() {
+        let menus = include_str!("../../crates/ui-egui/src/menus.rs");
+        let ids = ui_command_ids(menus);
+        for id in ["view.detail", "app.language.english", "app.language.japanese", "app.language.simplifiedChinese"] {
+            assert!(ids.iter().any(|known| known == id), "{id} not found");
+        }
+        assert_eq!(ids.iter().filter(|id| id.as_str() == "app.language.english").count(), 1, "one Language menu entry per language");
     }
 }

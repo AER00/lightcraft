@@ -12,9 +12,9 @@ pub type UiCommand = (&'static str, &'static str, Option<&'static str>, &'static
 
 /// The "Edit → Language" entries, one per language in [`crate::i18n::Locale::ALL`], so a language
 /// added to the table shows up in the menu (and in the control channel's command list) by itself.
-const LANGUAGE_COMMANDS: &[UiCommand] = &[
+pub const LANGUAGE_COMMANDS: &[UiCommand] = &[
     ("app.language.english", crate::i18n::Locale::En.name(), None, "Edit>Language"),
-    ("app.language.zh-hans", crate::i18n::Locale::ZhHans.name(), None, "Edit>Language"),
+    ("app.language.simplifiedChinese", crate::i18n::Locale::ZhHans.name(), None, "Edit>Language"),
     ("app.language.japanese", crate::i18n::Locale::Ja.name(), None, "Edit>Language"),
 ];
 
@@ -29,15 +29,13 @@ pub fn ui_commands() -> impl Iterator<Item = &'static UiCommand> {
 pub fn language_from_command(id: &str) -> Option<crate::i18n::Locale> {
     match id {
         "app.language.english" => Some(crate::i18n::Locale::En),
-        "app.language.zh-hans" => Some(crate::i18n::Locale::ZhHans),
+        "app.language.simplifiedChinese" => Some(crate::i18n::Locale::ZhHans),
         "app.language.japanese" => Some(crate::i18n::Locale::Ja),
         _ => None,
     }
 }
 
 pub const UI_COMMANDS: &[UiCommand] = &[
-    ("app.language.english", "English", None, "Edit>Language"),
-    ("app.language.japanese", "日本語", None, "Edit>Language"),
     ("view.photoGrid", "Photo Grid", None, "View"),
     ("view.squareGrid", "Square Grid", None, "View"),
     // G: Photo Grid ↔ Square Grid (from other views: the photo grid)

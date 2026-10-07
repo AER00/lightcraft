@@ -70,7 +70,7 @@ LIGHTCRAFT_LANGUAGE=zh-hans lightcraft-cli snapshot --demo --script tour.jsonl -
 ```
 
 or, with the app running (`--control 7980`), run the language command
-(`engine.execute {"command": "app.language.zh-hans"}`) and take a screenshot.
+(`engine.execute {"command": "app.language.simplifiedChinese"}`) and take a screenshot.
 
 ## Language codes and settings
 

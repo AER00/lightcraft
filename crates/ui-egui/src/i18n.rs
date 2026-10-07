@@ -366,7 +366,7 @@ mod tests {
     /// The language menu covers every language, and a language's own command selects it.
     #[test]
     fn language_commands_cover_every_language() {
-        let commands = [("app.language.english", Locale::En), ("app.language.zh-hans", Locale::ZhHans), ("app.language.japanese", Locale::Ja)];
+        let commands = [("app.language.english", Locale::En), ("app.language.simplifiedChinese", Locale::ZhHans), ("app.language.japanese", Locale::Ja)];
         // One command per language, and every command reachable from the menu table.
         assert_eq!(commands.len(), Locale::ALL.len());
         for (id, language) in commands {
