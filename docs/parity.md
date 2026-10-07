@@ -22,16 +22,16 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
 | A. Import (IMP) | 11 | 3 | 1 | 1 | 3/5 (60%) | 5/5 (100%) |
-| B. Library management (LIB) | 22 | 1 | 2 | 2 | 9/9 (100%) | 9/9 (100%) |
+| B. Library management (LIB) | 22 | 2 | 1 | 2 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 16 | 0 | 1 | 0 | 9/9 (100%) | 4/4 (100%) |
-| D. Search & filter (FILT) | 11 | 0 | 2 | 0 | 4/4 (100%) | 4/4 (100%) |
+| D. Search & filter (FILT) | 11 | 1 | 1 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
 | F. Edit panel — global adjustments (EDIT) | 42 | 1 | 5 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 6 | 2 | 3 | 0 | 3/4 (75%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 7 | 1 | 2 | 2 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
-| K. Masking (MASK) | 14 | 3 | 6 | 0 | 8/8 (100%) | 5/5 (100%) |
+| K. Masking (MASK) | 14 | 4 | 5 | 0 | 8/8 (100%) | 5/5 (100%) |
 | L. Presets (PRE) | 6 | 0 | 1 | 1 | 2/2 (100%) | 2/2 (100%) |
 | M. Versions & history (VER) | 5 | 0 | 0 | 0 | 1/1 (100%) | 3/3 (100%) |
 | N. Copy / paste / sync (SYNC) | 5 | 0 | 0 | 0 | 3/3 (100%) | 1/1 (100%) |
@@ -44,13 +44,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 15 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
+| X. Cross-cutting behaviours (BEHAV) | 16 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 31 | 9 | 40 | 9 | — | 21/22 (95%) |
-| **Total** | 387 | 30 | 90 | 37 | 194/200 (97%) | 139/149 (93%) |
+| Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
+| **Total** | 388 | 34 | 86 | 37 | 194/200 (97%) | 139/149 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.3%** of 507 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 39.6% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.7%** of 508 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 41.2% of 159.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -59,7 +59,7 @@ Ordered by user impact, then tier, then effort. The checklist above counts featu
 that decide whether a photographer can switch (see the honest assessment in [ROADMAP.md](../ROADMAP.md#where-we-stand)).
 Take the first one nobody is working on.
 
-1. **LR-PROF-CAMERACOLOR** (P0): our own camera colour calibration. Sony ARW and Nikon NEF now get a guarded file-local fit to their own embedded JPEG (colour matrix + tone curve, relative WB; ARW: 7 of 10 public samples accepted, mean ΔE vs the camera JPEG 17–26 → 3–10; NEF: 13 of 13 decodable samples from 6 bodies accepted, ΔE 13–46 → 3–8, one mixed-light scene 13 → 12); measured calibration and fidelity remain missing. Other non-DNG raws and rejected fits still use a neutral matrix. Expand validated preview fitting and use matrices the files carry themselves; never Adobe data.
+1. **LR-PROF-CAMERACOLOR** (P0): our own camera colour calibration. Sony ARW and Nikon NEF now get a guarded file-local fit to their own embedded JPEG (colour matrix + hue/saturation/value table + tone and chroma curves, relative WB; per-model profiles pooled from many photos via `lightcraft-cli calibrate`; ARW: 7 of 10 public samples accepted, mean ΔE vs the camera JPEG 17–26 → 3–10; NEF: 13 of 13 decodable samples from 6 bodies accepted, ΔE 13–46 → 3–8, one mixed-light scene 13 → 12); measured calibration and fidelity remain missing. Other non-DNG raws and rejected fits still use a neutral matrix. Expand validated preview fitting and use matrices the files carry themselves; never Adobe data.
 2. **LR-IMP-FORMATS** (P0): **CR3** first (every Canon body since ~2018), then compressed RAF / ORF, RW2 v4, Nikon
    "lossy after split" NEF, Canon sRAW; HEIC/AVIF decode. Clean-room, from prose descriptions only (see
    `crates/raw/src/vendor/nefc.rs` for how compressed NEF was done). Until decoded, such photos are `preview_only`.
@@ -69,8 +69,10 @@ Take the first one nobody is working on.
    then tune tone, highlights, texture/clarity/dehaze, NR and sharpening against it.
 5. **LR-EDIT-OPTICS-PROFILE** (P1): a lens-profile database of our own (embedded DNG/maker corrections work today).
 6. **AI masks and Enhance** (LR-MASK-SUBJECT / SKY / PEOPLE / OBJECTS, LR-EDIT-DETAIL-DENOISE, SUPERRES, LENSBLUR):
-   blocked on a model strategy (permissively licensed weights or our own training, pure-Rust inference). A maintainer
-   decision, not just engineering.
+   Object and Describe masks run SAM 3 in pure Rust (`crates/segment`); the weights (SAM License) are never bundled:
+   the app offers a consented, verified download, but **LightCraft's CDN mirrors are not configured yet** (the
+   built-in list is empty, so today users need their own mirror or a manual install). Subject / Sky / People could
+   use the same model with fixed prompts; denoise / super-resolution models remain a maintainer decision.
 7. **HDR** (Q. HDR, LR-EXP-HDR), **video** (R. Video), **Classic output modules** (Map view, Book, Slideshow module,
    Print, publish): large, well understood, lower priority than 1–5.
 
@@ -145,7 +147,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-FLAG | Pick / reject flags | P0 | ✅ | `cmd:photo.pick`, `cmd:photo.reject`, `cmd:photo.unflag`, `cmd:photo.flag` | pick key is P (see Shortcuts); no flag cycle |
 | LR-LIB-LABEL | Colour labels | P1 | ✅ | `cmd:photo.label`, `cmd:label.setNames`, `cmd:label.names`, `cmd:dialog.labelNames`, keys 6–9 in `crates/ui-egui/src/shortcuts.rs` | Photo menu and grid context menu (coloured, named), Info-panel swatches, label dot in grid cells; editable label names (undoable, journaled); no purple key (as in Lightroom), no custom extra labels |
 | LR-LIB-KEYWORD | Keywords | P0 | ✅ | `cmd:panel.keywords`, `cmd:photo.setMeta` (`addKeywords`/`removeKeywords`), `cmd:keyword.list`, `cmd:keyword.rename`, `cmd:keyword.delete`, `cmd:keyword.merge`, `cmd:keyword.suggest`, `crates/catalog/src/keywords.rs`, `crates/ui-egui/src/panels/left.rs` | left-panel keyword tree with counts (click filters, children included; context menu rename / merge / delete / add / remove); library-wide ops are one undo step and replay from the op log; suggestions (co-occurring / most used / completions) in the Keywords panel; no keyword drag-and-drop |
-| LR-LIB-PEOPLE | People / faces | P2 | ⬜ | | |
+| LR-LIB-PEOPLE | People / faces | P2 | 🟡 | `cmd:view.people`, `cmd:view.faceBoxes`, `cmd:photo.removeRegion`, `cmd:photo.setRegion`, `cmd:library.filter`, `crates/ui-egui/src/panels/people.rs`, `crates/catalog/src/query.rs` (`people`), `crates/engine/src/media.rs` (`face_job`), `crates/meta/src/xmp.rs` | MVP: named face regions read from XMP (MWG-RS, read-only, see `docs/xmp-interop.md`; clipped to the photo; Lightroom's `Rotation` of ±π/2 and π handled, mirrored orientations taken as written; boxes follow Rotate Left/Right and flips; a sidecar stating `mwg-rs:Regions`, even empty, replaces the photo's on re-read, one without leaves them) become cards in the People view (View ▸ People, or the People button in the toolbar): a close-up of the person's largest face, name and photo count; a click filters the grid (`person` in `library.filter`, `person:` search token, filter chip). Face boxes in the loupe can be switched off (View ▸ Face Boxes, toolbar) resized with eight drag handles and removed with the × shown on hover (catalog-only and undoable, one undo step per drag; the sidecar is never rewritten for either); no moving a box by dragging it yet. No face detection, no unnamed people / suggestions, no manual tagging, no writing regions back |
 | LR-LIB-STACK | Stacks | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup`, `cmd:stack.toggle`, `cmd:stack.setTop`, `cmd:stack.remove`, `cmd:stack.auto`, `crates/catalog/src/stacks.rs` | grid/filmstrip count badges, expand/collapse, auto-stack by capture time; no visual-similarity auto-stack |
 | LR-LIB-VERSIONS | Versions | P1 | ✅ | `cmd:version.create` | see section M |
 | LR-LIB-DELETE | Delete / Recently Deleted | P0 | ✅ | `cmd:photo.delete`, `cmd:photo.restore`, `cmd:photo.deletePermanently` | Restore and Delete Permanently in the Photo menu and the photo context menus for photos in Recently Deleted (before, the UI had no way to restore); adding a file that is in Recently Deleted again selects it there (side panel opened) and says how to restore it or import it afresh; no confirmation dialog, no auto-purge after N days, no "Empty" |
@@ -195,7 +197,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-FILT-KEYWORD | Keyword filter | P1 | ✅ | `cmd:library.filter` (`keyword`), `crates/ui-egui/src/panels/filterbar.rs` | keyword picker |
 | LR-FILT-CAMERA | Camera / lens filter | P1 | ✅ | `cmd:library.filter` (`camera`, `lens`), `crates/ui-egui/src/panels/filterbar.rs` | camera and lens pickers |
 | LR-FILT-LOCATION | Location filter | P2 | ✅ | `cmd:library.filter` (`text`, `ruleSet` field `location`) | free text, or a rule on location / city / state / country (smart albums, `library.filter`) |
-| LR-FILT-PEOPLE | People filter | P2 | ⬜ | | |
+| LR-FILT-PEOPLE | People filter | P2 | 🟡 | `cmd:library.filter`, `crates/catalog/src/query.rs` | filter by a person's name (case-insensitive, named Face regions only) from the People view, a filter chip or `person:`; no unnamed / suggested people |
 | LR-FILT-CULL | Culling-score filters | P2 | ✅ | `cmd:library.filter` (`ruleSet` fields `sharpness`, `bestOfGroup`) | Focus and Best of Similar Shots in the rule editor / smart albums |
 | LR-FILT-SORT | Sort | P0 | ✅ | `cmd:library.sort`, `crates/ui-egui/src/panels/bottombar.rs` | no colour-label or custom (manual) order |
 | LR-FILT-SAVED | Filter presets [Classic] | P2 | ✅ | `cmd:filter.savePreset`, `cmd:filter.applyPreset`, `cmd:filter.presets`, `cmd:filter.deletePreset`, `crates/ui-egui/src/panels/filterbar.rs` | filter bar → Presets: apply, save current filter, delete (right-click); saved with the library |
@@ -274,7 +276,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-PROF-ADOBE | Standard raw looks (own equivalents) | P0 | ✅ | `crates/engine/src/presets.rs` (`PROFILES`), `crates/pipeline/src/profiles.rs` | six own looks: Color, Neutral, Vivid, Landscape, Portrait, Monochrome |
 | LR-PROF-ADAPTIVE | Adaptive profiles | P2 | ⬜ | | |
 | LR-PROF-CAMERA | Camera-matching looks | P2 | ⬜ | | |
-| LR-PROF-CAMERACOLOR | Camera colour calibration (own) | P0 | 🟡 | `crates/raw/src/color.rs`, `crates/raw/src/profile.rs`, `crates/engine/src/camera_preview.rs` | DNG files use the colour matrices and the camera-profile look they carry (`ProfileHueSatMap`, `ProfileLookTable`, `ProfileToneCurve`, read from the file at run time per DNG spec ch. 6 — Lightroom-converted DNGs rendered flat and muted without them, issue #138); Sony ARW and Nikon NEF get a guarded file-local fit to their own embedded JPEG — chromaticity matrix + tone curve, relative WB, kept with smart previews (see docs/camera-preview-colour.md); ARW: on 10 public raw.pixls.us samples from 8 bodies 7 fits were accepted, mean ΔE vs the camera JPEG 17–26 → 3–10; NEF: 13 of 13 decodable samples (D750, D780, D850, D7500, Z 50 and local D7500 shots) accepted, ΔE 13–46 → 3–8 (issue #150); this is not measured camera calibration; other raws and rejected fits use a neutral fallback (camera RGB ≈ linear sRGB, `matrix_is_fallback`) with as-shot white balance, so colours are muted and not accurate. Needs our own per-camera calibration: matrices the files carry themselves (e.g. Olympus `ColorMatrix`), fitting each camera to its own embedded JPEG, then chart shots. Adobe matrices / DCPs are never used. Biggest image-quality gap today |
+| LR-PROF-CAMERACOLOR | Camera colour calibration (own) | P0 | 🟡 | `crates/raw/src/color.rs`, `crates/raw/src/profile.rs`, `crates/engine/src/camera_preview.rs` | DNG files use the colour matrices and the camera-profile look they carry (`ProfileHueSatMap`, `ProfileLookTable`, `ProfileToneCurve`, read from the file at run time per DNG spec ch. 6 — Lightroom-converted DNGs rendered flat and muted without them, issue #138); Sony ARW and Nikon NEF get a guarded file-local fit to their own embedded JPEG — chromaticity matrix + hue/saturation/value table + tone and chroma curves, relative WB — or, with a local per-model profile pooled from many photos (`lightcraft-cli calibrate`, `crates/engine/src/camera_profiles.rs`), the profile's colour and only their own tone/chroma curves (on 29 held-out ILCE-7M4 photos mean ΔE vs the camera JPEG 3.54 → 3.10), kept with smart previews (see docs/camera-preview-colour.md); ARW: on 10 public raw.pixls.us samples from 8 bodies 7 fits were accepted, mean ΔE vs the camera JPEG 17–26 → 3–10; NEF: 13 of 13 decodable samples (D750, D780, D850, D7500, Z 50 and local D7500 shots) accepted, ΔE 13–46 → 3–8 (issue #150); this is not measured camera calibration; other raws and rejected fits use a neutral fallback (camera RGB ≈ linear sRGB, `matrix_is_fallback`) with as-shot white balance, so colours are muted and not accurate. Needs our own per-camera calibration: matrices the files carry themselves (e.g. Olympus `ColorMatrix`), fitting each camera to its own embedded JPEG, then chart shots. Adobe matrices / DCPs are never used. Biggest image-quality gap today |
 | LR-PROF-CREATIVE | Creative profiles (own) | P2 | ✅ | `cmd:develop.profile`, `crates/pipeline/src/profiles.rs` | 16 own looks in Film / Cinematic / Muted / B&W (tone + point-curve fades, colour grading, mixer / B&W mix); scale with `ctl:profile.amount`; sliders untouched |
 | LR-PROF-LEGACY | Legacy profiles | P2 | ⬜ | | |
 | LR-PROF-NONRAW | Profiles for non-raw files | P0 | ✅ | `cmd:develop.profile` | same looks apply to JPEG/TIFF |
@@ -328,7 +330,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-MASK-SUBJECT | Select subject | P2 | 🟡 | `cmd:mask.add` (`subject`), `crates/pipeline/src/masks.rs` | saliency heuristic, no segmentation model |
 | LR-MASK-SKY | Select sky | P2 | 🟡 | `cmd:mask.add` (`sky`) | heuristic |
 | LR-MASK-BACKGROUND | Select background | P2 | 🟡 | `cmd:mask.add` (`background`) | inverse of the subject heuristic |
-| LR-MASK-OBJECTS | Object selection | P2 | ⬜ | | shape exists (falls back to the subject heuristic); no UI |
+| LR-MASK-OBJECTS | Object selection | P2 | 🟡 | `cmd:mask.add` (`object`, `prompt`), `cmd:mask.objectPoint`, `cmd:mask.refineDetail`, `cmd:segment.prepare`, `cmd:segment.model.status`, `cmd:segment.model.download`, `cmd:segment.model.cancel`, `crates/segment`, `crates/engine/src/segment/mod.rs` | SAM 3 in pure Rust (candle; Metal on macOS, CPU elsewhere): Object tile → click to include, ⌥-click to leave out; Describe tile → a text prompt selects every instance ("sky", "the red car"); both also as Add/Subtract/Intersect components; + / − under the selected mask; comma lists (`car, road`); a zoomed-in detail pass for 5–10× finer edges on small objects; per-selection Edge (hard ↔ soft). The model runs on its own worker thread (the UI never waits; panics become errors), is unloaded after 10 min idle, and is optional: the segmentation is stored with the mask (288² logits), so renders and exports never need it. Weights are never bundled (SAM License): without them the app offers a consented background download (mirrors, resume, timeouts, SHA-256) — **but no default download location is configured yet** (users set `LIGHTCRAFT_SAM3_MIRRORS` or install by hand; see docs/ai-masks.md). Not verified against Lightroom's Select Object; no brush/box object mode; the first click on a photo waits for its analysis (~4 s on an M4 Pro, much longer on CPU) |
 | LR-MASK-PEOPLE | People parts | P2 | ⬜ | | |
 | LR-MASK-LANDSCAPE | Landscape classes | P2 | ⬜ | | shape exists, evaluates empty |
 | LR-MASK-BRUSH | Brush mask | P0 | ✅ | `cmd:tool.brush`, `cmd:mask.brushStroke` (`autoMask`), `crates/pipeline/src/masks.rs` | size/feather/flow/density/erase; Auto Mask: dabs weighted by similarity to the colour under the dab centre, refined by a guided filter on luminance (CPU + GPU); no A/B brushes, no pressure |
@@ -503,7 +505,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-EMPTY-STATES | Empty states | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`empty_message`) | |
 | LR-BEHAV-TOOLTIPS | Tooltips with shortcuts | P0 | ✅ | `crates/ui-egui/src/panels/bottombar.rs` | |
 | LR-BEHAV-ACCESS | Accessibility | P2 | 🟡 | `crates/ui-egui/src/widgets.rs`, `crates/ui-egui/src/panels/grid.rs` | AccessKit (VoiceOver / Narrator / AT-SPI): sliders announce control and value, buttons / icon buttons / dropdowns / section headers / sources their labels and state, grid thumbnails file name, rating, flag and label; the canvas tools (crop, masks) are pointer-only; not audited with a screen reader |
-| LR-BEHAV-LOCALIZE | Localisation | P2 | 🟡 | `crates/ui-egui/src/i18n.rs`, `crates/ui-egui/locales/`, `docs/localization-ja.md` | Japanese/English UI with persisted language preference and Japanese regular/bold fonts; menus, edit, crop/masks, settings, import/export and primary progress messages. Technical errors/release notes and other locales remain untranslated. |
+| LR-BEHAV-LOCALE | Language options | P2 | ✅ | `cmd:app.language.english`, `cmd:app.language.simplifiedChinese`, `cmd:app.language.traditionalChinese`, `cmd:app.language.japanese` | Edit > Language lists every language in the table and the active one is checked; shared with Settings > General (docs/localization.md) |
+| LR-BEHAV-LOCALIZE | Localisation | P2 | 🟡 | `crates/ui-egui/src/i18n.rs`, `crates/ui-egui/locales/`, `docs/localization.md`, `docs/localization-zh-hans.md`, `docs/localization-zh-hant.md`, `docs/localization-ja.md` | One table entry per language (code, endonym, ISO 15924 script, catalog): English, Simplified Chinese, Traditional Chinese (Taiwan) and Japanese UI with a persisted language preference and craft-fonts regular/bold faces per script; menus, edit, crop/masks, settings, import/export and primary progress messages. Adding a language is a table entry plus two catalogs. Stock presets/profiles, history steps, library headings, date headings and capture times are localised (user-named items stay verbatim); the Traditional Chinese catalog is the most complete, the others fall back to English for messages they lack. Technical errors/release notes remain English; Traditional Chinese borrows the Simplified Chinese face (no TC face in craft-fonts yet), and the web build embeds only the Japanese face. |
 | LR-BEHAV-LEARN | Tutorials | OOS | 🚫 | | |
 | LR-BEHAV-WHATSNEW | What's new | P2 | ✅ | `cmd:app.whatsNew`, `docs/whats-new.md` | Help ▸ What's New: release highlights |
 | LR-BEHAV-AI-EA | Early-access badges | P2 | ⬜ | | |
@@ -724,7 +727,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-LIB-KEYWORDS | Hierarchical keywords, sets, painter | P1 | ✅ | `crates/catalog/src/keywords.rs`, `cmd:keyword.list`, `cmd:keyword.sets`, `cmd:keyword.toggleFromSet`, `cmd:keyword.saveSet`, `cmd:tool.keywordPainter` | hierarchical `a\|b\|c` keywords (tree, parent filters include children, rename moves children); keyword sets + Recent Keywords (⌥1–⌥9); keyword painter (Keywords panel ▸ Paint: click photos in the grid to toggle a keyword, Esc stops) |
 | LRC-LIB-METADATA | Metadata panel & presets | P1 | ✅ | `cmd:photo.setMeta`, `cmd:metadata.savePreset`, `cmd:metadata.applyPreset`, `cmd:metadata.presets`, `cmd:metadata.deletePreset`, `cmd:dialog.captureTime` | IPTC core, accessibility, place, capture-time edit; copyright status (unknown / copyrighted / public domain), rights usage terms and copyright info URL (`photo.setMeta` `copyrightStatus`, `usageTerms`, `copyrightUrl`; XMP Rights Management fields, kept by "copyright only" exports, a smart-album rule); metadata presets (Photo → Metadata Preset, Save Metadata Preset… from the active photo; applied on import from Settings) |
 | LRC-LIB-QUICKDEV | Quick develop | P2 | ✅ | `cmd:develop.quickAdjust`, `crates/ui-egui/src/panels/edit.rs` (`quick_develop`) | grid with several photos selected: Edit panel ▸ Quick Develop steps (exposure ⅓ / 1 stop, contrast, highlights, shadows, whites, blacks, clarity, vibrance, temperature) added to each photo's own value, one undo step |
-| LRC-LIB-PEOPLE | People view | P2 | ⬜ | | |
+| LRC-LIB-PEOPLE | People view | P2 | 🟡 | `cmd:view.people`, `crates/ui-egui/src/panels/people.rs` | Named People cards (face close-up, name, photos) for the photos the active filters let through, with the filter chips shown above them; no Unnamed People, no per-person page, no confirm / reject |
 | LRC-LIB-COMMENTS | Comments panel | P2 | ⬜ | | |
 | LRC-LIB-VISUALSEARCH | Find similar photos | P2 | ✅ | `cmd:library.findSimilar`, `crates/pipeline/src/cull.rs` (`signature`) | photo menu / Photo ▸ Find Similar Photos: look-alike photos (composition and tones), most similar first, as a filter (`only`) |
 | LRC-LIB-MISSING | Missing files & relink | P1 | ✅ | `cmd:library.missing`, `cmd:photo.relink`, `cmd:library.findMissing`, `cmd:file.findMissing`, `cmd:photo.locate`, `crates/engine/src/cmd/missing.rs` (`checked_path`) | File → Find Missing Photos… (anywhere in a folder: same name, size and content hash; renamed files by size + content hash; same name and size alone only when unambiguous — look-alikes are skipped and reported; searched on a worker thread, one undo step), photo menu → Locate Missing File…; unreadable files show "!" in the grid and a reason in the loupe; undo never moves files. Missing Photos in the sidebar (counted on a worker thread; the view, the Info panel, the grid's context menu and thumbnails read file availability from a cache a worker thread fills, so an offline NAS never stalls a frame); it covers library photos only — Local browse records are never checked, for the count, the view, `library.missing` and Find Missing alike |

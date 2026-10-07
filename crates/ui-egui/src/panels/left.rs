@@ -120,14 +120,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.painter().text(pos2(dr.left() + 18.0, dr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("By Date"), t.semibold(13.5), t.text_label);
             for g in app.caches.date_groups(&app.session.catalog).iter() {
                 // year → month → day; a click filters by that prefix, the triangle opens a level
-                if date_row(app, ui, &g.year, &g.year, g.count, 0.0) {
+                if date_row(app, ui, &g.year, &crate::i18n::date_group_label(&g.year, true), g.count, 0.0) {
                     for (m, n) in &g.months {
-                        let label = lightcraft_catalog::dates::group_label(m).split(' ').next().unwrap_or(m).to_string();
+                        let label = crate::i18n::date_group_label(m, true);
                         if date_row(app, ui, m, &label, *n, 16.0) {
                             for (d, n) in g.days.iter().filter(|(d, _)| d.starts_with(m.as_str())) {
-                                let label = lightcraft_catalog::dates::group_label(d);
-                                // "Sunday, 20 September 2026" → "Sunday, 20"
-                                let label = label.rsplitn(3, ' ').nth(2).unwrap_or(&label).to_string();
+                                let label = crate::i18n::date_group_label(d, true);
                                 date_row(app, ui, d, &label, *n, 32.0);
                             }
                         }

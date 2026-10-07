@@ -26,6 +26,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                         ("detail", Icon::Single, ViewMode::Detail, "Detail (D)"),
                         ("compare", Icon::Compare, ViewMode::Compare, "Compare (Shift+C)"),
                         ("survey", Icon::Survey, ViewMode::Survey, "Survey (N)"),
+                        ("people", Icon::Subject, ViewMode::People, "People"),
                     ] {
                         if icon_button(ui, id, icon, vec2(32.0, 32.0), app.ui.view == mode, true, tip).clicked() {
                             let _ = app.run(&format!("view.{id}"), json!({}));
@@ -164,6 +165,11 @@ fn right_side(app: &mut LightcraftApp, ui: &mut egui::Ui, full: Rect) -> f32 {
         .clicked()
         {
             let _ = app.run("view.beforeAfter", json!({}));
+        }
+        if app.ui.view == ViewMode::Detail
+            && icon_button(&mut child, "faceBoxes", Icon::FaceBox, vec2(30.0, 30.0), app.ui.face_boxes, true, "Face boxes").clicked()
+        {
+            let _ = app.run("view.faceBoxes", json!({}));
         }
         if icon_button(&mut child, "filmstrip", Icon::Filmstrip, vec2(30.0, 30.0), app.ui.filmstrip, true, "Filmstrip (/)").clicked() {
             let _ = app.run("view.filmstrip", json!({}));

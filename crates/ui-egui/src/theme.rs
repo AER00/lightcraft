@@ -110,31 +110,35 @@ pub fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(font_definitions(lightcraft_engine::CRAFT_FONTS));
 }
 
-/// Inter (bundled) for Latin text, egui's default fonts, then the craft-fonts Japanese faces as
-/// the last fallback of every family (BIZ UDPGothic first; Bold first for the semibold family).
-/// Without craft-fonts (`craft` empty) Japanese text has no glyphs and shows as boxes.
+/// Inter (bundled) for Latin text, egui's default fonts, then the craft-fonts CJK faces as the last
+/// fallback of every family — the active language's own script first, so shared Han characters keep
+/// that language's forms. Without craft-fonts (`craft` empty) CJK text has no glyphs and shows as
+/// boxes.
 pub fn font_definitions(craft: &'static [lightcraft_engine::CraftFont]) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert("Inter".into(), Arc::new(FontData::from_static(include_bytes!("../../../assets/fonts/Inter-Regular.ttf"))));
     fonts.font_data.insert("Inter-SemiBold".into(), Arc::new(FontData::from_static(include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf"))));
-    let japanese: Vec<_> = lightcraft_engine::fonts::japanese(craft).collect();
-    for f in &japanese {
-        fonts.font_data.insert(craft_font_name(f), Arc::new(FontData::from_static(f.bytes)));
-    }
     // Craft-fonts faces in preference order for a family drawn in `style`.
     let fallback = |style: &str| {
-        let mut faces = japanese.clone();
-        faces.sort_by_key(|f| (f.family != "BIZ UDPGothic", f.style != style, f.family.contains("Mincho")));
-        faces.into_iter().map(craft_font_name).collect::<Vec<_>>()
+        lightcraft_engine::fonts::cjk_fallback(craft, crate::i18n::language().script(), style)
+            .into_iter()
+            .map(craft_font_name)
+            .collect::<Vec<String>>()
     };
+    let (regular, bold) = (fallback("Regular"), fallback("Bold"));
+    for name in regular.iter().chain(bold.iter()) {
+        if let Some(font) = craft.iter().find(|font| &craft_font_name(font) == name) {
+            fonts.font_data.insert(name.clone(), Arc::new(FontData::from_static(font.bytes)));
+        }
+    }
     let defaults: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let mut prop = vec!["Inter".to_string()];
     prop.extend(defaults.iter().cloned());
-    prop.extend(fallback("Regular"));
+    prop.extend(regular);
     fonts.families.insert(FontFamily::Proportional, prop);
     let mut semi = vec!["Inter-SemiBold".to_string()];
     semi.extend(defaults);
-    semi.extend(fallback("Bold"));
+    semi.extend(bold);
     fonts.families.insert(FontFamily::Name(FONT_SEMIBOLD.into()), semi);
     fonts.families.entry(FontFamily::Monospace).or_default().extend(fallback("Regular"));
     fonts

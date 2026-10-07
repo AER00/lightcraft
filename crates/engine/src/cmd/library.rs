@@ -263,7 +263,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Filter",
             [],
             None,
-            "partial Filter: {text?, rating?, ratingOp?: atLeast|exactly|atMost, flag?: pick|reject|none|null, label?, kind?, merged?: hdr|panorama|hdrPanorama|any, edited?, date?, keyword?, camera?}",
+            "partial Filter: {text?, rating?, ratingOp?: atLeast|exactly|atMost, flag?: pick|reject|none|null, label?, kind?, merged?: hdr|panorama|hdrPanorama|any, edited?, date?, keyword?, person?, camera?}",
             always,
             |s, p| {
                 let mut v = serde_json::to_value(&s.filter).unwrap_or_default();
@@ -446,6 +446,66 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("photo.rotateRight", "Rotate Right", ["Photo"], Some("Cmd+]"), "{ids?}", has_selection, |s, p| rotate(s, p, true)),
         cmd!("photo.flipHorizontal", "Flip Horizontal", ["Photo"], None, "{ids?}", has_selection, |s, p| flip(s, p, true)),
         cmd!("photo.flipVertical", "Flip Vertical", ["Photo"], None, "{ids?}", has_selection, |s, p| flip(s, p, false)),
+        // ---- face / pet regions
+        cmd!(
+            "photo.removeRegion",
+            "Remove Face Box",
+            [],
+            None,
+            "{id?, index} — remove one face / pet region (by its position in the photo's regions) from the photo in the catalog; undoable. The XMP sidecar is never rewritten for this, even with auto-write on, so reading the metadata from the file brings the region back",
+            always,
+            |s, p| {
+                let id =
+                    p.get("id").and_then(Value::as_u64).map(PhotoId).or_else(|| s.active()).ok_or_else(|| bad("photo.removeRegion", "no photo"))?;
+                let index = p
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .and_then(|i| usize::try_from(i).ok())
+                    .ok_or_else(|| bad("photo.removeRegion", "missing or invalid `index`"))?;
+                let mut meta = s.catalog.photo(id).ok_or_else(|| bad("photo.removeRegion", "no such photo"))?.meta.clone();
+                if index >= meta.regions.len() {
+                    return Err(bad("photo.removeRegion", "no such region"));
+                }
+                let gone = meta.regions.remove(index);
+                s.commit("Remove Face Box", Op::SetMeta { id, meta: Box::new(meta) })?;
+                s.skip_auto_write = true;
+                Ok(json!({"removed": gone.name}))
+            }
+        ),
+        cmd!(
+            "photo.setRegion",
+            "Resize Face Box",
+            [],
+            None,
+            "{id?, index, rect: {x0, y0, x1, y1}} — set one face / pet region's box (normalized, in the photo's upright frame; clamped to the photo, at least 0.5 % each way) in the catalog; undoable. Like photo.removeRegion it never rewrites the XMP sidecar",
+            always,
+            |s, p| {
+                const C: &str = "photo.setRegion";
+                // a drag is one undo step however many frames it took: the caller commits once, on release
+                let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or_else(|| s.active()).ok_or_else(|| bad(C, "no photo"))?;
+                let index = p
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .and_then(|i| usize::try_from(i).ok())
+                    .ok_or_else(|| bad(C, "missing or invalid `index`"))?;
+                let r = p.get("rect").ok_or_else(|| bad(C, "missing `rect`"))?;
+                let num = |k: &str| {
+                    r.get(k).and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| bad(C, format!("`rect.{k}` must be a finite number")))
+                };
+                let (a, b, c, d) = (num("x0")?, num("y0")?, num("x1")?, num("y1")?);
+                let (x0, x1) = (a.min(c).clamp(0.0, 1.0), a.max(c).clamp(0.0, 1.0));
+                let (y0, y1) = (b.min(d).clamp(0.0, 1.0), b.max(d).clamp(0.0, 1.0));
+                if x1 - x0 < 0.005 || y1 - y0 < 0.005 {
+                    return Err(bad(C, "the box would be too small"));
+                }
+                let mut meta = s.catalog.photo(id).ok_or_else(|| bad(C, "no such photo"))?.meta.clone();
+                let region = meta.regions.get_mut(index).ok_or_else(|| bad(C, "no such region"))?;
+                region.rect = lightcraft_geom::Rect { x0, y0, x1, y1 };
+                s.commit("Resize Face Box", Op::SetMeta { id, meta: Box::new(meta) })?;
+                s.skip_auto_write = true;
+                Ok(json!({"rect": {"x0": x0, "y0": y0, "x1": x1, "y1": y1}}))
+            }
+        ),
         // ---- delete / restore
         cmd!("photo.delete", "Delete Photo", ["Photo"], Some("Delete"), "{ids?} — moves to Recently Deleted", has_selection, |s, p| {
             let v = for_targets(s, p, "Delete", |id| Some(Op::SetDeleted { id, deleted: true }))?;
