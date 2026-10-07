@@ -437,7 +437,20 @@ fn group_header(app: &mut LightcraftApp, ui: &mut egui::Ui, run: &DateRun, ids: 
 /// first gets a stand-in (its cached thumbnail, else its embedded camera preview), and its real
 /// render then follows in the background.
 pub fn request_thumb(app: &mut LightcraftApp, id: PhotoId, size: usize, priority: u32) {
+    let bucket = lightcraft_engine::media::thumb_bucket(size);
+    if let Some(photo) = app.session.catalog.photo(id)
+        && app.renderer.thumb_current(photo, bucket, priority)
+    {
+        return;
+    }
     let Some(job) = app.session.thumb_job(id, size) else { return };
+    #[cfg(test)]
+    {
+        app.renderer.thumb_jobs_built += 1;
+    }
+    if let Some(photo) = app.session.catalog.photo(id) {
+        app.renderer.remember_thumb(photo, bucket, job.key);
+    }
     let quick = if app.renderer.textures.contains_key(&Slot::Thumb(id)) { None } else { app.session.quick_thumb_job(&job) };
     match quick {
         Some(q) => {

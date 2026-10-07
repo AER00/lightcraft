@@ -18,7 +18,7 @@ pub mod lru;
 pub mod pool;
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 pub use disk::{DiskCache, decode_jpeg, encode_jpeg};
 pub use hash::{Hash128, Hasher128, hash_bytes};
@@ -28,6 +28,7 @@ pub use pool::JobPool;
 
 /// Rendered-thumbnail cache: memory LRU over an optional disk cache.
 pub struct PreviewCache {
+    generation: RwLock<u64>,
     mem: Mutex<Lru<Hash128, Arc<Rgba8>>>,
     disk: Option<DiskCache>,
 }
@@ -35,12 +36,12 @@ pub struct PreviewCache {
 impl PreviewCache {
     /// Memory-only cache of at most `mem_bytes`.
     pub fn memory(mem_bytes: usize) -> PreviewCache {
-        PreviewCache { mem: Mutex::new(Lru::new(mem_bytes)), disk: None }
+        PreviewCache { generation: RwLock::new(0), mem: Mutex::new(Lru::new(mem_bytes)), disk: None }
     }
 
     /// Memory LRU + disk cache in `dir` (at most `disk_bytes`).
     pub fn with_disk(mem_bytes: usize, dir: &Path, disk_bytes: u64) -> PreviewCache {
-        PreviewCache { mem: Mutex::new(Lru::new(mem_bytes)), disk: Some(DiskCache::new(dir, disk_bytes)) }
+        PreviewCache { generation: RwLock::new(0), mem: Mutex::new(Lru::new(mem_bytes)), disk: Some(DiskCache::new(dir, disk_bytes)) }
     }
 
     pub fn disk(&self) -> Option<&DiskCache> {
@@ -48,6 +49,19 @@ impl PreviewCache {
     }
 
     pub fn get(&self, key: Hash128) -> Option<Arc<Rgba8>> {
+        self.get_at(self.generation(), key)
+    }
+
+    /// Changes when explicitly cleared; jobs captured before that clear cannot repopulate it.
+    pub fn generation(&self) -> u64 {
+        *self.generation.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub fn get_at(&self, generation: u64, key: Hash128) -> Option<Arc<Rgba8>> {
+        let current = self.generation.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *current != generation {
+            return None;
+        }
         if let Some(v) = self.mem.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
             return Some(v.clone());
         }
@@ -57,6 +71,14 @@ impl PreviewCache {
     }
 
     pub fn put(&self, key: Hash128, img: Arc<Rgba8>) {
+        self.put_at(self.generation(), key, img);
+    }
+
+    pub fn put_at(&self, generation: u64, key: Hash128, img: Arc<Rgba8>) {
+        let current = self.generation.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *current != generation {
+            return;
+        }
         if let Some(d) = &self.disk {
             d.put(key, &img);
         }
@@ -67,13 +89,26 @@ impl PreviewCache {
     /// Like [`Self::put`], but the disk write (a JPEG encode) happens on a background thread, so
     /// the caller (a render about to hand its result to the screen) isn't held up.
     pub fn put_deferred(self: &Arc<Self>, key: Hash128, img: Arc<Rgba8>) {
+        self.put_deferred_at(self.generation(), key, img);
+    }
+
+    pub fn put_deferred_at(self: &Arc<Self>, generation: u64, key: Hash128, img: Arc<Rgba8>) {
+        let current = self.generation.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *current != generation {
+            return;
+        }
         let c = cost(&img);
         self.mem.lock().unwrap_or_else(|e| e.into_inner()).insert(key, img.clone(), c);
+        drop(current);
         if self.disk.is_none() {
             return;
         }
         let me = self.clone();
         let write = move || {
+            let current = me.generation.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if *current != generation {
+                return;
+            }
             if let Some(d) = &me.disk {
                 d.put(key, &img);
             }
@@ -88,6 +123,8 @@ impl PreviewCache {
 
     /// Drop everything (memory and disk).
     pub fn clear(&self) {
+        let mut generation = self.generation.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *generation = generation.wrapping_add(1);
         self.mem.lock().unwrap_or_else(|e| e.into_inner()).clear();
         if let Some(d) = &self.disk {
             d.clear();

@@ -993,6 +993,9 @@ impl Session {
         let source = self.media.origin_ref(&p.source, level.max_edge());
         let key = lightcraft_preview::Hasher128::new().str(&c.path).u64(c.file_size).u64(edge as u64).finish().0 as u64;
         let small = crate::media::RenderJob {
+            request_id: 0,
+            cache_generation: self.media.rendered.generation(),
+            source_key: None,
             photo: id,
             level,
             source,
@@ -1009,7 +1012,7 @@ impl Session {
             (Some(l), MediaKind::Raw) => Some((c.path.clone(), l.clone(), edge)),
             _ => None,
         };
-        Some(crate::media::QuickJob { photo: id, key, cached: Vec::new(), embedded, small: Some(Box::new(small)) })
+        Some(crate::media::QuickJob { request_id: 0, photo: id, key, cached: Vec::new(), embedded, small: Some(Box::new(small)) })
     }
 
     /// Use the system clock for import/edit times (native hosts).

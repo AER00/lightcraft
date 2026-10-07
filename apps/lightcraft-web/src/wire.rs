@@ -17,7 +17,7 @@ use lightcraft_engine::catalog::Source;
 use lightcraft_engine::develop::{DevelopSettings, EmbeddedLens};
 use lightcraft_engine::media::{DecodedSource, MediaCache, RenderJob, SourceLevel, SourceRef};
 use lightcraft_engine::pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
-use lightcraft_preview::Lru;
+use lightcraft_preview::{Hash128, Lru};
 use serde::{Deserialize, Serialize};
 
 use crate::store::hash_of_path;
@@ -25,6 +25,10 @@ use crate::store::hash_of_path;
 /// One render request for a worker.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WireJob {
+    #[serde(default)]
+    pub cache_generation: u64,
+    #[serde(default)]
+    pub source_identity: Option<String>,
     pub level: SourceLevel,
     pub origin: Source,
     /// Decode the source at most this long.
@@ -60,6 +64,8 @@ impl WireJob {
             SourceRef::Smart { .. } => 2560,
         };
         WireJob {
+            cache_generation: job.cache_generation,
+            source_identity: job.source_key.map(|key| key.to_string()),
             level: job.level,
             origin: job.origin.clone(),
             max_edge,
@@ -108,8 +114,8 @@ impl WireJob {
     /// Identifies the decoded source this job needs.
     fn source_key(&self) -> String {
         match &self.origin {
-            Source::File { path } => format!("{}:{path}", self.max_edge),
-            Source::Demo { scene } => format!("{}:demo:{scene}", self.max_edge),
+            Source::File { path } => format!("{}:{:?}:{}:{path}", self.cache_generation, self.source_identity, self.max_edge),
+            Source::Demo { scene } => format!("{}:{:?}:{}:demo:{scene}", self.cache_generation, self.source_identity, self.max_edge),
         }
     }
 
@@ -186,6 +192,8 @@ impl WorkerCore {
 /// pruned like the native disk cache (least recently used first, down to 80 % of the budget).
 #[derive(Default, Serialize, Deserialize)]
 pub struct ThumbIndex {
+    #[serde(default)]
+    namespace: u64,
     /// hex key → (bytes, last use).
     entries: HashMap<String, (u64, u64)>,
     clock: u64,
@@ -196,6 +204,24 @@ pub struct ThumbIndex {
 }
 
 impl ThumbIndex {
+    pub fn namespace(&self) -> u64 {
+        self.namespace
+    }
+
+    /// A persistent new namespace prevents late old workers restoring an invalidated disk hit.
+    pub fn cache_key(&self, key: Hash128) -> String {
+        if self.namespace == 0 {
+            return key.to_string();
+        }
+        lightcraft_preview::Hasher128::new().str(&key.to_string()).str("cleared").u64(self.namespace).finish().to_string()
+    }
+
+    pub fn invalidate(&mut self) -> Vec<String> {
+        self.namespace = self.namespace.wrapping_add(1);
+        self.total = 0;
+        self.dirty = true;
+        self.entries.drain().map(|(key, _)| key).collect()
+    }
     pub fn from_json(bytes: &[u8]) -> ThumbIndex {
         let mut i: ThumbIndex = serde_json::from_slice(bytes).unwrap_or_default();
         i.total = i.entries.values().map(|e| e.0).sum();
@@ -279,6 +305,23 @@ mod tests {
     use lightcraft_engine::Session;
 
     #[test]
+    fn clearing_index_changes_disk_namespace_and_survives_restart() {
+        let key = lightcraft_preview::hash_bytes(b"thumbnail");
+        let mut index = ThumbIndex::default();
+        let old = index.cache_key(key);
+        assert_eq!(old, key.to_string());
+        index.insert(&old, 100);
+        assert_eq!(index.invalidate(), vec![old.clone()]);
+        let new = index.cache_key(key);
+        assert_ne!(old, new);
+        index.insert(&new, 100);
+        let reopened = ThumbIndex::from_json(&index.to_json());
+        assert_eq!(reopened.cache_key(key), new);
+        assert!(!reopened.contains(&old));
+        assert!(reopened.contains(&new));
+    }
+
+    #[test]
     fn wire_job_renders_like_the_engine() {
         let mut s = Session::with_demo();
         let id = s.visible_cloned()[0];
@@ -304,6 +347,8 @@ mod tests {
         let hash = crate::store::content_hash(&bytes);
         let origin = Source::File { path: crate::store::original_path(&hash, "a.png") };
         let job = WireJob {
+            cache_generation: 0,
+            source_identity: None,
             level: SourceLevel::Thumb,
             origin,
             max_edge: 512,
@@ -328,6 +373,12 @@ mod tests {
         let r = core.render(&job, Some(&bytes)).unwrap();
         assert_eq!(r.image.width, 32);
         assert_eq!(core.needs_original(&job), None, "decoded source is kept");
+        let mut reloaded = job.clone();
+        reloaded.source_identity = Some("changed content".into());
+        assert_eq!(core.needs_original(&reloaded).as_deref(), Some(hash.as_str()), "content reload must not reuse an old decoded source");
+        let mut refreshed = job.clone();
+        refreshed.cache_generation = 1;
+        assert_eq!(core.needs_original(&refreshed).as_deref(), Some(hash.as_str()), "explicit refresh must not reuse the old decoded source");
     }
 
     #[test]

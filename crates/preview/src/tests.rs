@@ -4,6 +4,28 @@ use lightcraft_raster::Rgba8;
 
 use super::*;
 
+#[test]
+fn cleared_generation_cannot_read_or_repopulate_memory_or_disk() {
+    let dir = std::env::temp_dir().join(format!("lc-thumbnail-generation-{}-{}", std::process::id(), next_tick()));
+    let cache = Arc::new(PreviewCache::with_disk(1 << 20, &dir, 1 << 20));
+    let key = hash_bytes(b"same-key");
+    let old = cache.generation();
+    let wrong = Arc::new(gradient(8, 8, 255));
+    let correct = Arc::new(gradient(8, 8, 0));
+    cache.put_at(old, key, wrong.clone());
+    assert!(cache.get_at(old, key).is_some());
+    cache.clear();
+    assert!(cache.get(key).is_none());
+    assert!(cache.get_at(old, key).is_none());
+    cache.put_at(old, key, wrong.clone());
+    cache.put_deferred_at(old, key, wrong);
+    assert!(cache.get(key).is_none());
+    assert!(cache.disk().unwrap().get(key).is_none());
+    cache.put_at(cache.generation(), key, correct.clone());
+    assert_eq!(cache.get(key).unwrap().as_bytes(), correct.as_bytes());
+    cache.clear();
+}
+
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lc-preview-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
