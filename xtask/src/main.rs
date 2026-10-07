@@ -81,6 +81,16 @@ pub fn root() -> PathBuf {
 pub fn cargo() -> Command {
     let mut c = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     c.current_dir(root());
+    // Full Windows debuginfo plus one linker per CPU can exhaust RAM before any
+    // tests run. Scope these overridable defaults to CI, including parity/WASM
+    // subprocesses, without changing ordinary developer builds or GPU coverage.
+    if std::env::args().nth(1).as_deref() == Some("ci") {
+        for (key, value) in [("CARGO_PROFILE_DEV_DEBUG", "line-tables-only"), ("CARGO_BUILD_JOBS", "4"), ("RUST_TEST_THREADS", "4")] {
+            if std::env::var_os(key).is_none() {
+                c.env(key, value);
+            }
+        }
+    }
     c
 }
 

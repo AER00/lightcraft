@@ -334,6 +334,12 @@ cargo run --release -p lightcraft-cli -- render photo.jpg -o out.jpg --set light
 cargo xtask ci                                          # fmt, clippy, tests, layering, wasm checks
 ```
 
+CI defaults to line-table debug information, four build jobs and four test
+threads to avoid many full-debuginfo linkers exhausting RAM. CPU speed and GPU
+coverage are unchanged. Explicit `CARGO_PROFILE_DEV_DEBUG`, `CARGO_BUILD_JOBS`
+and `RUST_TEST_THREADS` settings override these defaults (use two jobs/threads
+on a 4 GB machine). Ordinary development commands keep their existing settings.
+
 **Chinese and Japanese text** need the shared font repo, an optional build input (official releases always include it):
 
 ```sh
