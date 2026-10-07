@@ -393,7 +393,7 @@ pub struct ScanInput {
     probe: Option<crate::media::FileProbe>,
     skip: Option<PathBuf>,
     /// path → (photo, its summary) for files already in the library.
-    by_path: HashMap<String, (PhotoId, ImportCandidate)>,
+    by_path: HashMap<PathBuf, (PhotoId, ImportCandidate)>,
     by_hash: HashMap<String, PhotoId>,
     cache: HashMap<String, ProbeInfo>,
 }
@@ -432,7 +432,7 @@ impl ScanInput {
                     existing: Some(p.id.0),
                     ..Default::default()
                 };
-                by_path.insert(path.clone(), (p.id, c));
+                by_path.insert(PathBuf::from(path), (p.id, c));
             }
             if let Some(h) = &p.content_hash {
                 by_hash.insert(h.clone(), p.id);
@@ -458,7 +458,7 @@ pub fn scan(s: &mut Session, paths: &[String]) -> Vec<ImportCandidate> {
 pub fn scan_with(mut input: ScanInput, paths: &[String], progress: &ScanProgress) -> ScanOutput {
     use std::sync::atomic::Ordering::Relaxed;
     let files = expand(paths, input.skip.as_deref());
-    let todo: Vec<String> = files.iter().filter(|f| !input.by_path.contains_key(f.as_str())).cloned().collect();
+    let todo: Vec<String> = files.iter().filter(|f| !input.by_path.contains_key(Path::new(f))).cloned().collect();
     progress.total.store(todo.len(), Relaxed);
     // probes from a preceding `scan` are reused when the file is unchanged (same size)
     let cached: Vec<Option<ProbeInfo>> = todo
@@ -480,7 +480,7 @@ pub fn scan_with(mut input: ScanInput, paths: &[String], progress: &ScanProgress
     let mut out = Vec::with_capacity(files.len());
     let mut kept = HashMap::new();
     for f in files {
-        if let Some((_, c)) = input.by_path.get(&f) {
+        if let Some((_, c)) = input.by_path.get(Path::new(&f)) {
             let mut c = c.clone();
             c.name = Path::new(&f).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| f.clone());
             out.push(c);
