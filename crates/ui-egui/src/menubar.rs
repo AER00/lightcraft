@@ -458,13 +458,16 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 ("File Name", FileName, "fileName"),
                 ("Rating", Rating, "rating"),
                 ("File Size", FileSize, "fileSize"),
+                ("Random", Random, "random"),
             ]
             .into_iter()
             .map(|(label, key, k)| item("library.sort", json!({"key": k}), label, None, true, Some(cur.key == key)))
             .collect();
+            v.push(item("library.shuffle", json!({}), "Reshuffle", None, cur.key == Random, None));
             v.push(MenuNode::Separator);
-            v.push(item("library.sort", json!({"ascending": true}), "Ascending", None, true, Some(cur.ascending)));
-            v.push(item("library.sort", json!({"ascending": false}), "Descending", None, true, Some(!cur.ascending)));
+            // a shuffle has no direction worth choosing
+            v.push(item("library.sort", json!({"ascending": true}), "Ascending", None, cur.key != Random, Some(cur.ascending)));
+            v.push(item("library.sort", json!({"ascending": false}), "Descending", None, cur.key != Random, Some(!cur.ascending)));
             v.push(MenuNode::Separator);
             use lightcraft_catalog::GroupBy;
             let groups = [

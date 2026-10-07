@@ -466,3 +466,72 @@ fn tracklog_auto_tag() {
     assert!(s.execute("photo.autoTagTracklog", &json!({"gpx": GPX, "ids": [ids[0]], "offset": "noon"})).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- random sort: Given the library, When the user picks Random, Then the grid is a stable shuffle
+
+#[test]
+fn random_sort_is_stable_until_reshuffled() {
+    use lightcraft_catalog::SortKey;
+    let mut s = Session::with_demo();
+    let dated = s.visible_cloned();
+    s.execute("library.sort", &json!({"key": "random", "seed": 11})).unwrap();
+    assert_eq!((s.sort.key, s.sort.seed), (SortKey::Random, 11));
+    let a = s.visible_cloned();
+    assert_ne!(a, dated);
+    let mut sorted = a.clone();
+    sorted.sort();
+    let mut all = dated.clone();
+    all.sort();
+    assert_eq!(sorted, all, "a permutation of the same photos");
+    // an unrelated catalog change must not move anything
+    let first = a[0];
+    s.execute("photo.rate", &json!({"rating": 4, "ids": [first.0]})).unwrap();
+    assert_eq!(s.visible_cloned(), a, "same seed, same grid after an edit");
+    assert_eq!(s.execute("library.groups", &json!({})).unwrap(), json!([]), "no date headers for a shuffle");
+    // Reshuffle picks a new seed (and works even with a frozen clock)
+    s.execute("library.shuffle", &json!({})).unwrap();
+    let seed1 = s.sort.seed;
+    assert_eq!(s.sort.key, SortKey::Random);
+    assert_ne!(seed1, 11);
+    assert_ne!(s.visible_cloned(), a);
+    s.execute("library.shuffle", &json!({})).unwrap();
+    assert_ne!(s.sort.seed, seed1, "every reshuffle is new");
+    assert!(s.sort.seed < 1 << 53, "seeds survive a round trip through a JSON double");
+    // an explicit seed is reproducible
+    s.execute("library.shuffle", &json!({"seed": 11})).unwrap();
+    assert_eq!(s.visible_cloned(), a);
+}
+
+#[test]
+fn random_sort_rejects_bad_params() {
+    let mut s = Session::with_demo();
+    let before = s.sort;
+    assert!(s.execute("library.sort", &json!({"seed": "x"})).is_err());
+    assert!(s.execute("library.sort", &json!({"seed": -1})).is_err());
+    assert!(s.execute("library.shuffle", &json!({"seed": 1.5})).is_err());
+    assert_eq!(s.sort, before, "a rejected command leaves the sort alone");
+}
+
+#[test]
+fn random_sort_applies_to_albums_and_folders_too() {
+    let mut s = Session::with_demo();
+    s.execute("library.sort", &json!({"key": "random", "seed": 5})).unwrap();
+    let all = s.visible_cloned();
+    let ids: Vec<u64> = all.iter().take(12).map(|i| i.0).collect();
+    let album = s.execute("album.create", &json!({"name": "Shuffled"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.addPhotos", &json!({"id": album, "ids": ids})).unwrap();
+    s.execute("library.source", &json!({"kind": "album", "id": album})).unwrap();
+    let in_album = s.visible_cloned();
+    assert_eq!(in_album.len(), 12);
+    let expect: Vec<_> = all.iter().filter(|i| in_album.contains(i)).copied().collect();
+    assert_eq!(in_album, expect, "the album shows its photos in the shuffle's order, not manual order");
+}
+
+/// The shuffle comes back after a restart (the sort is part of the saved view state).
+#[test]
+fn random_sort_survives_view_state_round_trip() {
+    use lightcraft_catalog::{Sort, SortKey};
+    let sort = Sort { key: SortKey::Random, seed: u64::MAX, ..Default::default() };
+    let back: Sort = serde_json::from_str(&serde_json::to_string(&sort).unwrap()).unwrap();
+    assert_eq!(back, sort);
+}
