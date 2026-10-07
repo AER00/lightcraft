@@ -297,3 +297,86 @@ fn folder_identity_ignores_spelling() {
     assert!(folder_within("/a/b", "/"));
     assert!(folder_within("C:\\x", "c:\\"));
 }
+
+/// People come from named *face* regions: counted once per photo, case-insensitive, most photos
+/// first; pets and unnamed faces are not people; the `person` filter and `person:` token match.
+#[test]
+fn people_from_named_face_regions() {
+    use lightcraft_meta::{Rect, Region, RegionKind};
+    let region = |name: Option<&str>, kind: RegionKind| Region {
+        rect: Rect { x0: 0.4, y0: 0.4, x1: 0.6, y1: 0.6 },
+        kind,
+        name: name.map(str::to_string),
+        description: None,
+    };
+    let mut c = Catalog::new();
+    let mut add = |name: &str, regions: Vec<Region>| {
+        let id = c.alloc_photo_id();
+        let mut p = Photo::new(id, Source::Demo { scene: 1 }, name, "JPEG", 6000, 4000, "2026-09-30T10:00:00");
+        p.meta.regions = regions;
+        c.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        id
+    };
+    let a = add(
+        "a.jpg",
+        vec![region(Some("Jane Doe"), RegionKind::Face), region(Some("jane doe"), RegionKind::Face), region(Some("Rex"), RegionKind::Pet)],
+    );
+    let b =
+        add("b.jpg", vec![region(Some("JANE DOE"), RegionKind::Face), region(Some("John Roe"), RegionKind::Face), region(None, RegionKind::Face)]);
+    let big = Rect { x0: 0.2, y0: 0.2, x1: 0.8, y1: 0.8 };
+    let d = add("d.jpg", vec![Region { rect: big, ..region(Some("John Roe"), RegionKind::Face) }]);
+    let e = add("e.jpg", vec![region(Some("Sam"), RegionKind::Face)]);
+    add("f.jpg", vec![]);
+    let people = c.people();
+    let summary: Vec<(&str, usize)> = people.iter().map(|p| (p.name.as_str(), p.count)).collect();
+    assert_eq!(summary, vec![("Jane Doe", 2), ("John Roe", 2), ("Sam", 1)], "once per photo, pets and unnamed faces left out");
+    // the picture is the person's largest face; ties go to the lower photo id
+    assert_eq!((people[0].photo, people[0].face), (a, Rect { x0: 0.4, y0: 0.4, x1: 0.6, y1: 0.6 }));
+    assert_eq!((people[1].photo, people[1].face), (d, big), "the larger face wins over an earlier, smaller one");
+
+    let q = |f: Filter| c.query(&f, &Sort::default());
+    assert_eq!(q(Filter { person: Some("jane doe".into()), ..Default::default() }).len(), 2);
+    let mut got = q(Filter { person: Some("John Roe".into()), ..Default::default() });
+    got.sort();
+    assert_eq!(got, vec![b, d]);
+    assert!(q(Filter { person: Some("Rex".into()), ..Default::default() }).is_empty(), "a pet is not a person");
+    assert_eq!(q(Filter { text: "person:SAM".into(), ..Default::default() }), vec![e], "the search token finds a person, any case");
+    assert!(q(Filter { person: Some("Jane Doe".into()), ..Default::default() }).contains(&a));
+
+    // other filters narrow who is offered (so picking a person never ends in an empty grid); the
+    // `person` filter itself does not
+    c.apply(Op::SetRating { id: b, rating: 3 }).unwrap();
+    let names = |f: Filter| c.people_in(&f).into_iter().map(|p| (p.name, p.count)).collect::<Vec<_>>();
+    let rated = Filter { rating: 1, ..Default::default() };
+    assert_eq!(
+        names(rated.clone()),
+        vec![("JANE DOE".to_string(), 1), ("John Roe".to_string(), 1)],
+        "only the rated photo's people, counted within it, spelled as first seen there"
+    );
+    assert_eq!(
+        names(Filter { person: Some("Sam".into()), ..rated }),
+        names(Filter { rating: 1, ..Default::default() }),
+        "the person filter is ignored"
+    );
+    assert_eq!(names(Filter { rating: 5, ..Default::default() }), vec![], "nobody in the filtered photos");
+}
+
+/// Most photos have no regions: the field is left out of the catalog JSON then, and a catalog written
+/// before regions existed (no `regions` key) reads with none.
+#[test]
+fn empty_regions_are_not_serialized_and_default_when_missing() {
+    let m = Meta { keywords: vec!["k".into()], ..Default::default() };
+    let v = serde_json::to_value(&m).unwrap();
+    assert!(v.get("regions").is_none(), "{v}");
+    let back: Meta = serde_json::from_value(v).unwrap();
+    assert!(back.regions.is_empty());
+    let mut with = m.clone();
+    with.regions.push(lightcraft_meta::Region {
+        rect: lightcraft_meta::Rect { x0: 0.1, y0: 0.1, x1: 0.2, y1: 0.2 },
+        kind: lightcraft_meta::RegionKind::Face,
+        name: Some("A".into()),
+        description: None,
+    });
+    let back: Meta = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+    assert_eq!(back, with);
+}

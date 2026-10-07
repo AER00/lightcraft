@@ -39,6 +39,8 @@ pub struct Filter {
     pub date: Option<String>,
     /// A keyword; hierarchical keywords match their children too (`travel` finds `travel|italy`).
     pub keyword: Option<String>,
+    /// A person: photos with a named face region of this name (case-insensitive), as read from XMP.
+    pub person: Option<String>,
     pub camera: Option<String>,
     /// Lens (case-insensitive substring).
     pub lens: Option<String>,
@@ -113,6 +115,7 @@ fn token_matches(p: &Photo, tok: &str) -> bool {
             "camera" => p.meta.camera.to_lowercase().contains(val),
             "lens" => p.meta.lens.to_lowercase().contains(val),
             "keyword" | "kw" => p.meta.keywords.iter().any(|k| crate::keywords::is_under(k, val)),
+            "person" | "who" => has_person(p, val),
             "type" | "kind" => format!("{:?}", p.kind).eq_ignore_ascii_case(val),
             "edited" => (val == "true" || val == "yes") == p.is_edited(),
             "date" => p.date().starts_with(val),
@@ -123,6 +126,12 @@ fn token_matches(p: &Photo, tok: &str) -> bool {
     }
     let hay = [&p.file_name, &p.meta.title, &p.meta.caption, &p.meta.camera, &p.meta.lens, &p.meta.location, &p.format];
     hay.iter().any(|h| h.to_lowercase().contains(&t)) || p.meta.keywords.iter().any(|k| k.to_lowercase().contains(&t))
+}
+
+/// Whether `p` has a named face region called `name` (case-insensitive).
+fn has_person(p: &Photo, name: &str) -> bool {
+    let name = name.trim().to_lowercase();
+    p.meta.regions.iter().any(|r| r.kind == lightcraft_meta::RegionKind::Face && r.name.as_deref().is_some_and(|n| n.to_lowercase() == name))
 }
 
 impl Filter {
@@ -152,9 +161,14 @@ impl Filter {
         if let Some(e) = self.edited {
             v.push(if e { "edited".into() } else { "unedited".into() });
         }
-        for (name, val) in
-            [("keyword", &self.keyword), ("camera", &self.camera), ("lens", &self.lens), ("date", &self.date), ("imported", &self.imported)]
-        {
+        for (name, val) in [
+            ("keyword", &self.keyword),
+            ("person", &self.person),
+            ("camera", &self.camera),
+            ("lens", &self.lens),
+            ("date", &self.date),
+            ("imported", &self.imported),
+        ] {
             if let Some(x) = val {
                 v.push(format!("{name} {x}"));
             }
@@ -267,6 +281,11 @@ impl Filter {
         {
             return false;
         }
+        if let Some(n) = &self.person
+            && !has_person(p, n)
+        {
+            return false;
+        }
         if let Some(c) = &self.camera
             && !p.meta.camera.eq_ignore_ascii_case(c)
         {
@@ -330,6 +349,54 @@ impl Catalog {
         }
         m.into_iter().collect()
     }
+
+    /// The people named on faces in the library (MWG regions read from XMP): how many photos each
+    /// appears in and the photo showing their largest face (for a card's picture). Most photos first,
+    /// then by name. Names that differ only in case are one person, shown as first seen; a person
+    /// twice in one photo counts once.
+    pub fn people(&self) -> Vec<Person> {
+        self.people_in(&Filter::default())
+    }
+
+    /// [`Self::people`] among the photos `filter` lets through (its `person` is ignored): what the
+    /// People view offers while other filters (a date, a rating, an album…) are active, so picking
+    /// a person never ends in an empty grid.
+    pub fn people_in(&self, filter: &Filter) -> Vec<Person> {
+        let filter = Filter { person: None, ..filter.clone() };
+        let mut m: std::collections::HashMap<String, (Person, f64)> = Default::default();
+        for p in self.photos().filter(|p| filter.matches(p, self)) {
+            let mut seen: Vec<String> = Vec::new();
+            for r in p.meta.regions.iter().filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
+                let Some(name) = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else { continue };
+                let key = name.to_lowercase();
+                // the face's size in pixels of the photo
+                let area = (r.rect.x1 - r.rect.x0) * (r.rect.y1 - r.rect.y0) * p.width as f64 * p.height as f64;
+                let (person, best) =
+                    m.entry(key.clone()).or_insert_with(|| (Person { name: name.to_string(), count: 0, photo: p.id, face: r.rect }, area));
+                if !seen.contains(&key) {
+                    person.count += 1;
+                    seen.push(key);
+                }
+                if area > *best || (area == *best && p.id < person.photo) {
+                    (person.photo, person.face, *best) = (p.id, r.rect, area);
+                }
+            }
+        }
+        let mut v: Vec<Person> = m.into_values().map(|(p, _)| p).collect();
+        v.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+        v
+    }
+}
+
+/// A person named on faces in the library ([`Catalog::people`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Person {
+    pub name: String,
+    /// Photos they appear in.
+    pub count: usize,
+    /// The photo with their largest face, and that face (normalized, in the photo's upright frame).
+    pub photo: PhotoId,
+    pub face: lightcraft_meta::Rect,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
