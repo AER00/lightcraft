@@ -414,16 +414,26 @@ fn parse_one_region(item: &XmpValue, px_dims: Option<(f64, f64)>) -> Option<Regi
         (true, Some((dw, dh))) => (cx / dw, cy / dh, w / dw, h / dh),
         (true, None) => return None,
     };
-    // Lightroom Classic stores the box of a photo with Exif orientation 6 / 8 in the sensor's own frame
-    // and writes the orientation as the region's `mwg-rs:Rotation` (−π/2 for 6, +π/2 for 8; 0 for 1)
-    // while `AppliedToDimensions` names the upright size. Turn it into the upright frame.
+    // Lightroom Classic stores the box of a photo with Exif orientation 3 / 6 / 8 in the sensor's own
+    // frame and writes the orientation as the region's `mwg-rs:Rotation` (π for 3, −π/2 for 6, +π/2 for
+    // 8; 0 for 1) while `AppliedToDimensions` names the upright size. Turn it into the upright frame.
+    // MWG has no way to say "mirrored", so orientations 2/4/5/7 can't be told apart from their unmirrored
+    // twins here; boxes on mirrored photos are taken as written (see LR-LIB-PEOPLE in docs/parity.md).
     let rotation = item.field("mwg-rs:Rotation").and_then(XmpValue::text).and_then(parse_number).filter(|r| r.is_finite());
-    let quarter = std::f64::consts::FRAC_PI_2;
+    let (quarter, half) = (std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
     let (cx, cy, w, h) = match rotation {
         Some(r) if (r + quarter).abs() < 0.05 => (1.0 - cy, cx, h, w),
         Some(r) if (r - quarter).abs() < 0.05 => (cy, 1.0 - cx, h, w),
+        Some(r) if (r.abs() - half).abs() < 0.05 => (1.0 - cx, 1.0 - cy, w, h),
         _ => (cx, cy, w, h),
     };
+    // Keep only the part of the box inside the photo: a region hanging off an edge (common for faces
+    // cut by the frame) is clipped, and one entirely outside it (hostile or stale) is dropped, so every
+    // stored rect is within 0..1 and non-empty.
+    let rect = Rect::from_center(Point::new(cx, cy), w, h).intersect(&Rect::UNIT);
+    if rect.is_empty() {
+        return None;
+    }
     let name = item.field("mwg-rs:Name").and_then(XmpValue::text).map(str::to_string).filter(|s| !s.is_empty());
     let description = item.field("mwg-rs:Description").and_then(XmpValue::text).map(str::to_string).filter(|s| !s.is_empty());
     let kind = match item.field("mwg-rs:Type").and_then(XmpValue::text).unwrap_or("") {
@@ -433,7 +443,7 @@ fn parse_one_region(item: &XmpValue, px_dims: Option<(f64, f64)>) -> Option<Regi
         t if t.eq_ignore_ascii_case("barcode") => RegionKind::BarCode,
         t => RegionKind::Other(t.to_string()),
     };
-    Some(Region { rect: Rect::from_center(Point::new(cx, cy), w, h), kind, name, description })
+    Some(Region { rect, kind, name, description })
 }
 
 fn fmt_gps_coord(v: f64, pos: char, neg: char) -> String {
@@ -883,8 +893,9 @@ mod tests {
         assert_eq!(regions[2].description.as_deref(), Some("Good boy"));
     }
 
-    /// Lightroom Classic writes a portrait photo's (Exif orientation 6 / 8) box in the sensor's frame and
-    /// records the orientation as `mwg-rs:Rotation` (−π/2 / +π/2); the reader returns the upright frame.
+    /// Lightroom Classic writes a rotated photo's (Exif orientation 3 / 6 / 8) box in the sensor's frame
+    /// and records the orientation as `mwg-rs:Rotation` (±π / −π/2 / +π/2); the reader returns the
+    /// upright frame.
     #[test]
     fn mwg_regions_quarter_turn_rotation_is_mapped_to_the_upright_frame() {
         let x = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -903,16 +914,24 @@ mod tests {
                     <rdf:li rdf:parseType="Resource" mwg-rs:Rotation="0.00000" mwg-rs:Type="Face">
                       <mwg-rs:Area rdf:parseType="Resource" stArea:x="0.3" stArea:y="0.4" stArea:w="0.2" stArea:h="0.3"/>
                     </rdf:li>
+                    <rdf:li rdf:parseType="Resource" mwg-rs:Rotation="3.14159" mwg-rs:Type="Face">
+                      <mwg-rs:Area rdf:parseType="Resource" stArea:x="0.3" stArea:y="0.4" stArea:w="0.2" stArea:h="0.3"/>
+                    </rdf:li>
+                    <rdf:li rdf:parseType="Resource" mwg-rs:Rotation="-3.14159" mwg-rs:Type="Face">
+                      <mwg-rs:Area rdf:parseType="Resource" stArea:x="0.3" stArea:y="0.4" stArea:w="0.2" stArea:h="0.3"/>
+                    </rdf:li>
                   </rdf:Bag>
                 </mwg-rs:RegionList>
               </mwg-rs:Regions>
             </rdf:Description></rdf:RDF></x:xmpmeta>"#;
         let regions = parse_xmp(x).unwrap().metadata.regions;
-        assert_eq!(regions.len(), 3, "{regions:?}");
+        assert_eq!(regions.len(), 5, "{regions:?}");
         let near = |r: Rect, b: [f64; 4]| [r.x0 - b[0], r.y0 - b[1], r.x1 - b[2], r.y1 - b[3]].iter().all(|d| d.abs() < 1e-9);
         assert!(near(regions[0].rect, [0.45, 0.2, 0.75, 0.4]), "−π/2 (orientation 6): {:?}", regions[0].rect);
         assert!(near(regions[1].rect, [0.25, 0.6, 0.55, 0.8]), "+π/2 (orientation 8): {:?}", regions[1].rect);
         assert!(near(regions[2].rect, [0.2, 0.25, 0.4, 0.55]), "0 is untouched: {:?}", regions[2].rect);
+        assert!(near(regions[3].rect, [0.6, 0.45, 0.8, 0.75]), "π (orientation 3): {:?}", regions[3].rect);
+        assert!(near(regions[4].rect, [0.6, 0.45, 0.8, 0.75]), "−π (orientation 3): {:?}", regions[4].rect);
     }
 
     /// A second, differently-shaped encoding: each region is its own `rdf:Description` (rather than an
@@ -973,6 +992,39 @@ mod tests {
         let regions = parse_xmp(x).unwrap().metadata.regions;
         assert_eq!(regions.len(), 1, "only the last, well-formed region should survive: {regions:?}");
         assert_eq!(regions[0].kind, RegionKind::Face);
+    }
+
+    /// Regions are clipped to the photo frame, and ones that miss the photo entirely are dropped: a
+    /// hostile sidecar can't park a box at x=1e5 (or a 1e5-wide one) that the loupe or the People view
+    /// would then draw or crop far outside the image.
+    #[test]
+    fn mwg_regions_are_clipped_to_the_frame_and_off_photo_ones_dropped() {
+        let x = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description rdf:about=""
+                xmlns:mwg-rs="http://www.metadataworkinggroup.com/schemas/regions/"
+                xmlns:stArea="http://ns.adobe.com/xmp/sType/Area#">
+              <mwg-rs:Regions rdf:parseType="Resource">
+                <mwg-rs:RegionList>
+                  <rdf:Bag>
+                    <rdf:li rdf:parseType="Resource"><mwg-rs:Area rdf:parseType="Resource" stArea:x="1e5" stArea:y="0.5" stArea:w="0.1" stArea:h="0.1"/><mwg-rs:Name>Far right</mwg-rs:Name></rdf:li>
+                    <rdf:li rdf:parseType="Resource"><mwg-rs:Area rdf:parseType="Resource" stArea:x="-3" stArea:y="-3" stArea:w="0.5" stArea:h="0.5"/><mwg-rs:Name>Far left</mwg-rs:Name></rdf:li>
+                    <rdf:li rdf:parseType="Resource"><mwg-rs:Area rdf:parseType="Resource" stArea:x="1.2" stArea:y="0.5" stArea:w="0.2" stArea:h="0.2"/><mwg-rs:Name>Touching edge</mwg-rs:Name></rdf:li>
+                    <rdf:li rdf:parseType="Resource"><mwg-rs:Area rdf:parseType="Resource" stArea:x="0.5" stArea:y="0.5" stArea:w="1e5" stArea:h="1e5"/><mwg-rs:Name>Huge</mwg-rs:Name></rdf:li>
+                    <rdf:li rdf:parseType="Resource"><mwg-rs:Area rdf:parseType="Resource" stArea:x="0.95" stArea:y="0.05" stArea:w="0.2" stArea:h="0.2"/><mwg-rs:Name>Corner</mwg-rs:Name></rdf:li>
+                  </rdf:Bag>
+                </mwg-rs:RegionList>
+              </mwg-rs:Regions>
+            </rdf:Description></rdf:RDF>"#;
+        let regions = parse_xmp(x).unwrap().metadata.regions;
+        let names: Vec<_> = regions.iter().map(|r| r.name.as_deref().unwrap_or("")).collect();
+        assert_eq!(names, ["Huge", "Corner"], "{regions:?}");
+        for r in &regions {
+            let q = r.rect;
+            assert!(q.x0 >= 0.0 && q.y0 >= 0.0 && q.x1 <= 1.0 && q.y1 <= 1.0 && !q.is_empty(), "{q:?}");
+        }
+        assert_eq!(regions[0].rect, Rect::UNIT);
+        let c = regions[1].rect;
+        assert!((c.x0 - 0.85).abs() < 1e-9 && c.x1 == 1.0 && c.y0 == 0.0 && (c.y1 - 0.15).abs() < 1e-9, "{c:?}");
     }
 
     /// `extract()`'s precedence (EXIF/IPTC never carry regions; XMP is read and filled in like keywords).
