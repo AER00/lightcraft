@@ -286,6 +286,49 @@ fn resizing_a_region_validates_clamps_undoes_and_leaves_the_sidecar_alone() {
     let _ = std::fs::remove_dir_all(&src);
 }
 
+/// Re-reading a sidecar: one that has `mwg-rs:Regions` is authoritative, so an emptied region list
+/// clears the stale regions; one without `mwg-rs:Regions` (an app that doesn't do regions) leaves the
+/// photo's regions alone.
+#[test]
+fn rereading_a_sidecar_clears_regions_only_when_it_states_them() {
+    let src = temp_dir("region-reread");
+    write_png(&src.join("portrait.png"), 9);
+    std::fs::write(src.join("portrait.xmp"), MWG_REGIONS).unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    assert_eq!(s.catalog.photo(id).unwrap().meta.regions.len(), 1);
+    // another app rewrote the sidecar without any notion of regions: they stay
+    std::fs::write(
+        src.join("portrait.xmp"),
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="3"/>
+</rdf:RDF></x:xmpmeta>"#,
+    )
+    .unwrap();
+    s.execute("photo.readMetadataFromFile", &json!({})).unwrap();
+    let p = s.catalog.photo(id).unwrap();
+    assert_eq!(p.rating, 3, "the sidecar was read");
+    assert_eq!(p.meta.regions.len(), 1, "a sidecar without mwg-rs:Regions keeps the photo's regions");
+    // a region-aware app removed every region: the sidecar says so, and the catalog follows
+    let emptied = MWG_REGIONS.replace(
+        r#"<rdf:li>
+        <rdf:Description mwg-rs:Name="Jane Doe" mwg-rs:Type="Face">
+         <mwg-rs:Area stArea:x="0.5" stArea:y="0.5" stArea:w="0.3" stArea:h="0.4" stArea:unit="normalized"/>
+        </rdf:Description>
+       </rdf:li>"#,
+        "",
+    );
+    assert_ne!(emptied, MWG_REGIONS);
+    std::fs::write(src.join("portrait.xmp"), emptied).unwrap();
+    s.execute("photo.readMetadataFromFile", &json!({})).unwrap();
+    assert!(s.catalog.photo(id).unwrap().meta.regions.is_empty(), "an emptied region list clears stale regions");
+    // undo brings them back
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.photo(id).unwrap().meta.regions.len(), 1);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
 fn synthetic_dng(xmp: &str) -> Vec<u8> {
     synthetic_dng_with(Some(xmp), lightcraft_meta::Metadata::default())
 }

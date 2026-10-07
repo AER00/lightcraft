@@ -134,7 +134,12 @@ pub fn parse_sidecar(xmp: &str, raw: bool) -> std::result::Result<SidecarData, S
         alt_text: m.alt_text.clone(),
         extended_description: m.extended_description.clone(),
         keywords: (!m.keywords.is_empty()).then(|| m.keywords.clone()),
-        regions: (!m.regions.is_empty()).then(|| m.regions.clone()),
+        // A sidecar that has `mwg-rs:Regions` at all (even an empty list) was written by an app that
+        // knows about regions, so it's authoritative: its list, empty or not, replaces the catalog's.
+        // One without it (most writers, LightCraft's own included, which keeps another app's
+        // `mwg-rs:Regions` byte for byte but never writes one) says nothing about regions, and the
+        // photo's are kept.
+        regions: d.values.contains_key("mwg-rs:Regions").then(|| m.regions.clone()),
         captured: m.capture_time.map(|d| d.to_iso()),
         ..Default::default()
     };
