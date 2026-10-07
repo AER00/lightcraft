@@ -26,7 +26,7 @@ use lightcraft_raster::{Histogram, Rgb32f, Rgba8};
 use serde::{Deserialize, Serialize};
 
 /// Bump when the pipeline's output changes, to invalidate cached thumbnails.
-pub const RENDER_CACHE_VERSION: u64 = 6;
+pub const RENDER_CACHE_VERSION: u64 = 8;
 
 /// Thumbnails render at one of these long edges (so window/cell size changes reuse the cache).
 pub const THUMB_SIZES: [usize; 4] = [128, 256, 384, 512];
@@ -830,7 +830,9 @@ pub struct ProbeInfo {
     pub captured: Option<String>,
     pub meta: lightcraft_catalog::Meta,
     pub as_shot_wb: Option<(f64, f64)>,
-    /// Hash of the file's bytes (hex), for duplicate detection.
+    /// Hash of the file's bytes (hex), for duplicate detection. When it is a 32-digit
+    /// [`lightcraft_preview::hash_bytes`] of the whole file (as the native probe computes it),
+    /// Import → Copy verifies each copy against it instead of reading the source again.
     pub content_hash: Option<String>,
     /// Lens corrections embedded in the file (DNG opcodes).
     pub embedded_lens: Option<lightcraft_develop::EmbeddedLens>,

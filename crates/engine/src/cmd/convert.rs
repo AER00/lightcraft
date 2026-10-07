@@ -149,7 +149,8 @@ fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let mut written = Vec::new();
     let mut write = |path: &str, bytes: &[u8]| -> std::result::Result<(), String> {
-        crate::export::write_file(path, bytes)?;
+        // durable: the TIFF becomes a library photo the external editor then changes
+        crate::export::write_file_durable(path, bytes)?;
         written.push(path.to_string());
         Ok(())
     };

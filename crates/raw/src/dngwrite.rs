@@ -179,6 +179,38 @@ pub fn write_dng(raw: &RawImage, opts: &DngWriteOptions) -> Result<Vec<u8>> {
         ifd.set(t::AS_SHOT_WHITE_XY, rat_vec(&[xy.x, xy.y]));
     }
     ifd.set(t::BASELINE_EXPOSURE, Value::SRational(vec![srational(c.baseline_exposure)]));
+    // the source's own profile look travels with its data (conversions, smart previews, merges)
+    let p = &c.profile;
+    let table_tags = |ifd: &mut IfdBuilder, table: &crate::profile::HsvTable, dims: u16, enc: u16| {
+        ifd.set(dims, Value::Long(vec![table.hue_divisions as u32, table.sat_divisions as u32, table.val_divisions as u32]));
+        if table.srgb_value {
+            ifd.set(enc, Value::Long(vec![1]));
+        }
+    };
+    let flat = |table: &crate::profile::HsvTable| Value::Float(table.data.iter().flatten().copied().collect());
+    match &p.hue_sat_map {
+        [Some(a), b] => {
+            table_tags(&mut ifd, a, t::PROFILE_HUE_SAT_MAP_DIMS, t::PROFILE_HUE_SAT_MAP_ENCODING);
+            ifd.set(t::PROFILE_HUE_SAT_MAP_DATA_1, flat(a));
+            if let Some(b) =
+                b.as_ref().filter(|b| (b.hue_divisions, b.sat_divisions, b.val_divisions) == (a.hue_divisions, a.sat_divisions, a.val_divisions))
+            {
+                ifd.set(t::PROFILE_HUE_SAT_MAP_DATA_2, flat(b));
+            }
+        }
+        [None, Some(b)] => {
+            table_tags(&mut ifd, b, t::PROFILE_HUE_SAT_MAP_DIMS, t::PROFILE_HUE_SAT_MAP_ENCODING);
+            ifd.set(t::PROFILE_HUE_SAT_MAP_DATA_1, flat(b));
+        }
+        [None, None] => {}
+    }
+    if let Some(l) = &p.look_table {
+        table_tags(&mut ifd, l, t::PROFILE_LOOK_TABLE_DIMS, t::PROFILE_LOOK_TABLE_ENCODING);
+        ifd.set(t::PROFILE_LOOK_TABLE_DATA, flat(l));
+    }
+    if let Some(curve) = &p.tone_curve {
+        ifd.set(t::PROFILE_TONE_CURVE, Value::Float(curve.points.iter().flatten().copied().collect()));
+    }
     for (list, tag) in [(&raw.opcodes.list1, t::OPCODE_LIST_1), (&raw.opcodes.list2, t::OPCODE_LIST_2), (&raw.opcodes.list3, t::OPCODE_LIST_3)] {
         if !list.is_empty() {
             ifd.set(tag, Value::Undefined(opcodes::write_list(list)));

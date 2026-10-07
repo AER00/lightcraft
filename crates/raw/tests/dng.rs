@@ -182,6 +182,11 @@ fn base_ifd(w: usize, h: usize, bits: u16, cpp: usize, cfa: bool) -> IfdBuilder 
 }
 
 fn dng(raw: IfdBuilder, order: ByteOrder) -> Vec<u8> {
+    dng_with(raw, order, |_| {})
+}
+
+/// [`dng`] with extra IFD 0 tags (where DNG writers put camera-profile tags).
+fn dng_with(raw: IfdBuilder, order: ByteOrder, extra: impl FnOnce(&mut IfdBuilder)) -> Vec<u8> {
     let mut ifd0 = IfdBuilder::new();
     ifd0.set(t::NEW_SUBFILE_TYPE, Value::Long(vec![1]));
     ifd0.set(t::DNG_VERSION, Value::Byte(vec![1, 6, 0, 0]));
@@ -200,6 +205,7 @@ fn dng(raw: IfdBuilder, order: ByteOrder) -> Vec<u8> {
     exif.set(t::ISO_SPEED, Value::Short(vec![200]));
     ifd0.set_child(t::EXIF_IFD, exif);
     ifd0.add_sub_ifd(raw);
+    extra(&mut ifd0);
     TiffWriter::new(order, false).write(&[ifd0]).unwrap()
 }
 
@@ -460,4 +466,69 @@ fn rejects_unsupported_and_broken() {
     raw.set(t::COMPRESSION, Value::Short(vec![1]));
     raw.set_image(ImageData::Strips { rows_per_strip: 8, strips: vec![vec![0; 128]] });
     assert!(decode(&dng(raw, ByteOrder::Little)).is_err());
+}
+
+/// A Lightroom-style DNG: profile look tags in IFD 0, LinearRaw data in a SubIFD (issue #138).
+fn profile_dng(order: ByteOrder, extra: impl FnOnce(&mut IfdBuilder)) -> Vec<u8> {
+    let (w, h) = (8, 6);
+    let px = pattern(w, h, 3, 16);
+    let mut raw = base_ifd(w, h, 16, 3, false);
+    raw.set(t::COMPRESSION, Value::Short(vec![1]));
+    raw.set_image(ImageData::Strips { rows_per_strip: h as u32, strips: vec![u16_bytes(&px, order)] });
+    dng_with(raw, order, extra)
+}
+
+fn hsv_floats(h: usize, s: usize, v: usize, f: impl Fn(usize, usize, usize) -> [f32; 3]) -> Vec<f32> {
+    (0..v).flat_map(|vi| (0..h).flat_map(move |hi| (0..s).map(move |si| (vi, hi, si)))).flat_map(|(vi, hi, si)| f(vi, hi, si)).collect()
+}
+
+#[test]
+fn profile_look_tags_are_read_from_ifd0() {
+    for order in [ByteOrder::Little, ByteOrder::Big] {
+        let bytes = profile_dng(order, |ifd0| {
+            ifd0.set(t::PROFILE_HUE_SAT_MAP_DIMS, Value::Long(vec![6, 3, 1]));
+            ifd0.set(t::PROFILE_HUE_SAT_MAP_DATA_1, Value::Float(hsv_floats(6, 3, 1, |_, h, s| [h as f32, 1.0 + s as f32 * 0.1, 1.0])));
+            ifd0.set(t::PROFILE_HUE_SAT_MAP_DATA_2, Value::Float(hsv_floats(6, 3, 1, |_, _, _| [0.0, 1.0, 1.0])));
+            ifd0.set(t::PROFILE_LOOK_TABLE_DIMS, Value::Long(vec![4, 2, 3]));
+            ifd0.set(t::PROFILE_LOOK_TABLE_DATA, Value::Float(hsv_floats(4, 2, 3, |v, _, _| [0.0, 1.0, 1.0 - v as f32 * 0.05])));
+            ifd0.set(t::PROFILE_LOOK_TABLE_ENCODING, Value::Long(vec![1]));
+            ifd0.set(t::PROFILE_TONE_CURVE, Value::Float(vec![0.0, 0.0, 0.25, 0.15, 0.5, 0.55, 1.0, 1.0]));
+        });
+        let img = decode(&bytes).unwrap();
+        assert_eq!(img.cpp, 3);
+        let p = &img.color.profile;
+        let hsm = p.hue_sat_map[0].as_ref().unwrap();
+        assert_eq!((hsm.hue_divisions, hsm.sat_divisions, hsm.val_divisions), (6, 3, 1));
+        // value-major, hue-middle, saturation-minor: entry (h = 2, s = 1) is at 2·3 + 1
+        assert_eq!(hsm.data[7], [2.0, 1.1, 1.0]);
+        assert!(p.hue_sat_map[1].is_some());
+        let look = p.look_table.as_ref().unwrap();
+        assert_eq!((look.hue_divisions, look.sat_divisions, look.val_divisions, look.srgb_value), (4, 2, 3, true));
+        assert_eq!(look.data[2 * 4 * 2], [0.0, 1.0, 0.9]);
+        assert_eq!(p.tone_curve.as_ref().unwrap().points.len(), 4);
+        // the header-only probe sees the same profile
+        assert_eq!(lightcraft_raw::probe_info(&bytes).unwrap().color.profile, *p);
+        // our DNG writer keeps the look with the data (conversions, smart previews)
+        let again = decode(&write_dng(&img, &DngWriteOptions::default()).unwrap()).unwrap();
+        assert_eq!(again.color.profile, *p);
+    }
+}
+
+#[test]
+fn malformed_profile_look_tags_are_ignored() {
+    let bytes = profile_dng(ByteOrder::Little, |ifd0| {
+        // data count doesn't match the dimensions
+        ifd0.set(t::PROFILE_HUE_SAT_MAP_DIMS, Value::Long(vec![6, 3, 1]));
+        ifd0.set(t::PROFILE_HUE_SAT_MAP_DATA_1, Value::Float(vec![0.0, 1.0, 1.0]));
+        // one saturation division is not allowed
+        ifd0.set(t::PROFILE_LOOK_TABLE_DIMS, Value::Long(vec![2, 1, 1]));
+        ifd0.set(t::PROFILE_LOOK_TABLE_DATA, Value::Float(vec![0.0, 1.0, 1.0, 0.0, 1.0, 1.0]));
+        // decreasing inputs and a NaN
+        ifd0.set(t::PROFILE_TONE_CURVE, Value::Float(vec![0.0, 0.0, 0.6, 0.5, 0.4, f32::NAN, 1.0, 1.0]));
+    });
+    let img = decode(&bytes).unwrap();
+    assert!(img.color.profile.is_empty(), "{:?}", img.color.profile);
+    // and without any of the tags there is nothing to apply
+    let plain = decode(&profile_dng(ByteOrder::Little, |_| {})).unwrap();
+    assert!(plain.color.profile.is_empty());
 }

@@ -8,7 +8,8 @@
 //!   [`RawImage::develop`] does all of it plus `OpcodeList3` and the default crop; [`RawImage::develop_binned`]
 //!   produces the same at 1/k of the size straight from the mosaic (previews, thumbnails).
 //! - [`color`] implements the DNG colour model (dual-illuminant interpolation, forward matrices, white balance)
-//!   and produces camera → linear Rec.2020 D65 matrices.
+//!   and produces camera → linear Rec.2020 D65 matrices; [`profile`] reads and applies a DNG's own profile
+//!   look tables and tone curve.
 //!
 //! Formats: DNG (uncompressed, lossless JPEG, lossy JPEG (Smart Previews), Deflate incl. floating point, tiled/stripped, CFA and LinearRaw),
 //! Canon CR2, Nikon NEF/NRW (uncompressed, Huffman lossless / lossy compressed), Sony ARW (uncompressed, ARW2, lossless), Fujifilm RAF (uncompressed Bayer
@@ -29,6 +30,7 @@ pub mod highlight;
 pub mod ljpeg;
 pub mod opcodes;
 mod preview;
+pub mod profile;
 mod tiffraw;
 mod unpack;
 mod vendor;
@@ -393,6 +395,10 @@ pub struct ColorData {
     pub as_shot_white_xy: Option<Xy>,
     /// EV to add for a "normal" rendering (`BaselineExposure` + `BaselineExposureOffset`).
     pub baseline_exposure: f64,
+    /// The file's own camera-profile look (`ProfileHueSatMap*`, `ProfileLookTable*`,
+    /// `ProfileToneCurve`), applied by [`color`]'s users at render time.
+    #[serde(default)]
+    pub profile: profile::ProfileLook,
 }
 
 /// A decoded raw image.

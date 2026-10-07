@@ -286,7 +286,10 @@ mod tests {
             let mut h = demo([900.0, 600.0]);
             let r = h.request("ui.set", json!({"view": "detail"}), Duration::from_secs(10));
             assert_eq!(r["ok"], true, "{r}");
-            h.snapshot(SETTLE)
+            // Compare only fully settled frames: a timed-out settle would compare half-rendered
+            // pictures and fail as a misleading pixel diff (seen on loaded CI machines).
+            assert!(h.settle(Duration::from_secs(300)), "the demo detail view did not settle within 300 s");
+            h.paint()
         };
         let (a, b) = (shot(), shot());
         assert_eq!(a.size, b.size);
@@ -413,6 +416,15 @@ mod tests {
         assert_eq!(after.develop, before.develop);
         assert_eq!(after.history.len(), before.history.len(), "no history entry while hovering");
         assert!(h.app.session.undo.is_empty());
+        // hovering down across group headers within the presets list retains the preview (no flicker)
+        h.request("ui.hoverWidget", json!({"id": "presetGroup:Creative"}), t);
+        h.step();
+        assert_eq!(h.app.hover_preview.as_ref().map(|p| p.label.as_str()), Some("Preset: High Contrast B&W"));
+        // hovering another preset switches smoothly to it
+        h.request("ui.hoverWidget", json!({"id": "preset:lc.warm-glow"}), t);
+        h.settle(SETTLE);
+        h.step();
+        assert_eq!(h.app.hover_preview.as_ref().map(|p| p.label.as_str()), Some("Preset: Warm Glow"));
         // thumbnails: variant textures for the visible presets
         h.app.ui.preset_thumbs = true;
         h.request("ui.move", json!({"x": 5, "y": 500}), t);

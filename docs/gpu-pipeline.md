@@ -4,12 +4,59 @@ The CPU pipeline (`crates/pipeline`) is the reference ("oracle"). `lightcraft-gp
 evaluates the same stages with wgpu compute shaders (WGSL) on Metal / Vulkan / DX12. Everything is
 pure Rust (wgpu, naga); the drivers are the system's. No GL backend is compiled in.
 
+## Backends, environment variables and troubleshooting (issue #136)
+wgpu loads the driver of **every** backend in an instance's set while it enumerates adapters — even
+when it then picks another one. A Vulkan driver that crashes there (issue #136: an access violation
+in Intel's `igvk64.dll` on a UHD 630 under Windows 11) takes the process down before any window
+appears, and a native crash cannot be caught. So LightCraft only lets wgpu touch the backends it
+means to use (`lightcraft_gpu::backend`), for its compute device *and* for the desktop window
+(eframe/egui-wgpu, `window_wgpu_options` in `apps/lightcraft/src/main.rs`):
+
+| platform | default (window and compute) |
+|---|---|
+| Windows | DX12 only — the Vulkan driver is never loaded unless asked for |
+| macOS | Metal |
+| Linux / BSD | Vulkan (the window also lists GL, eframe's default; no GL backend is compiled in) |
+
+Overrides (read once at launch):
+- `LIGHTCRAFT_GPU_BACKEND=dx12 | vulkan | metal | gl | auto | off` (comma lists allowed, e.g.
+  `vulkan,dx12`): the backends for both the window and GPU rendering; `off` turns GPU rendering off
+  (CPU pipeline) — the window still needs a backend and keeps the platform default. A backend this
+  build doesn't contain (`gl`) is ignored with a warning.
+- else `WGPU_BACKEND` (wgpu's own variable, same names) — before #136 only the window honoured it,
+  the compute device always used Vulkan + DX12 (+ Metal).
+- `LIGHTCRAFT_GPU=0`: GPU rendering off for the process (the window is unaffected).
+
+**Off the startup path.** The compute device is created on a background thread once the window is
+up (`gpu::warm_up` from the first frame's settings), and never while GPU rendering is off: with
+Settings ▸ Performance ▸ *Use the GPU for rendering* unchecked (applied before the window opens),
+`LIGHTCRAFT_GPU=0` or `LIGHTCRAFT_GPU_BACKEND=off`, no GPU driver is loaded for rendering at all.
+
+**Crash sentinel.** The desktop app writes `gpu-init.marker` into its settings folder (next to
+`ui.json`: `%APPDATA%\LightCraft`, `~/Library/Application Support/LightCraft`,
+`~/.config/lightcraft`) just before the compute device is created and removes it as soon as creation
+returns, successfully or not. If the marker is still there at the next launch, the process died inside
+the driver: LightCraft starts with GPU rendering off (the preference is saved unchecked), removes the
+marker and says so in a notice. Checking *Use the GPU for rendering* again tries the GPU once more
+(and re-arms the sentinel). Not with `LIGHTCRAFT_NO_PREFS` (tests, scripts). Killing the app during
+the ~0.3 s of device creation, or two instances starting at the same moment, can trip it falsely —
+harmless: rendering is then on the CPU until the box is checked again. The sentinel only covers the
+compute device; a crash while the window's renderer starts is avoided by the backend defaults above
+or worked around with `LIGHTCRAFT_GPU_BACKEND`.
+
+**Troubleshooting a crash at startup (Windows).** Start LightCraft from a `.cmd` file or a terminal
+with `set LIGHTCRAFT_GPU_BACKEND=dx12` (the default since #136), or `=off` to keep the GPU out of
+rendering; `set VK_LOADER_DRIVERS_DISABLE=*igvk64*` (Vulkan loader) hides a specific Vulkan driver
+from every program started with it. Help ▸ System Info and `app.gpu` show the adapter and backend in
+use (e.g. `Intel(R) UHD Graphics 630 (Dx12)`).
+
 ## Where it is used
 - `lightcraft_engine::media::develop` (called by every `RenderJob`): loupe / before / compare views,
   `render_now` (CLI, MCP, control channel renders) and exports render on the GPU when one is
   available; grid/filmstrip thumbnails (many small jobs in parallel) stay on the CPU.
 - Anything the GPU path cannot do returns `None` and the CPU renders instead: no adapter (CI
-  machines, software-only adapters), `LIGHTCRAFT_GPU=0` (whole process), the `app.gpu {enabled}`
+  machines, software-only adapters), `LIGHTCRAFT_GPU=0` or `LIGHTCRAFT_GPU_BACKEND=off` (whole
+  process; see [Backends](#backends-environment-variables-and-troubleshooting-issue-136)), the `app.gpu {enabled}`
   command (runtime preference; `ui.inspect` → `perf.gpu` shows the adapter), a buffer larger than
   the device's storage-buffer limit, or a render the device did not complete correctly (see
   [Limits, failures and the CPU fallback](#limits-failures-and-the-cpu-fallback)).

@@ -193,3 +193,70 @@ fn corpus_nef_compressed_matches_uncompressed() {
         assert!(hi <= 4095.0 && hi - lo > 500.0, "D7000 block means {lo}..{hi}");
     }
 }
+
+/// Issue #138: DNGs converted by Adobe software carry their camera profile's hue/saturation map and
+/// look table; we read them (and render with them). Camera-written DNGs here carry none.
+#[test]
+fn corpus_adobe_dngs_carry_profile_looks() {
+    let dir = corpus_root().join("raw");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        eprintln!("skip: {} absent", dir.display());
+        return;
+    };
+    let mut seen = 0;
+    for p in rd.flatten().map(|e| e.path()) {
+        let name = p.file_name().unwrap().to_string_lossy().to_lowercase();
+        if !name.starts_with("dng-") || !name.ends_with(".dng") {
+            continue;
+        }
+        let info = probe_info(&std::fs::read(&p).unwrap()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let look = &info.color.profile;
+        if name.starts_with("dng-adobe-") {
+            seen += 1;
+            let hsm = look.hue_sat_map[0].as_ref().unwrap_or_else(|| panic!("{name}: no hue/sat map"));
+            assert!(hsm.hue_divisions > 1 && hsm.sat_divisions > 1, "{name}");
+            assert!(look.look_table.is_some(), "{name}: no look table");
+            // a profile applied to a mid grey keeps it (close to) neutral
+            let t = lightcraft_raw::profile::ProfileTables::new(look, 0.5).unwrap();
+            let g = t.apply([0.18; 3], 1.0);
+            assert!(g.iter().all(|v| (v - g[0]).abs() < 0.01 * g[0].max(0.01)), "{name}: grey → {g:?}");
+        }
+        eprintln!(
+            "{name:44} profile look: hsm {} look {} tone {}",
+            look.hue_sat_map[0].is_some(),
+            look.look_table.is_some(),
+            look.tone_curve.is_some()
+        );
+    }
+    eprintln!("{seen} Adobe-converted DNGs checked");
+}
+
+/// Issue #148: Sony ARWs from before ~2017 carry no plain white-balance, black-level or crop tags in the raw IFD.
+/// White balance comes from the maker note's enciphered `Tag2010`, the black level from the encrypted `SR2SubIFD`
+/// and the crop from `FullImageSize`; without them the RX100 III opened bright green. Expected values: the black
+/// levels agree with each sensor's dark-pixel floor, the gains with the neutral sky of the camera JPEG.
+#[test]
+fn corpus_sony_pre2017_colour_metadata() {
+    let dir = corpus_root().join("raw");
+    // (file, black, approximate R and B gains, crop width × height)
+    let cases = [
+        ("arw-sony-rx100m3.arw", 800.0, [2.61, 1.72], (5472, 3648)),
+        ("arw-sony-rx100.arw", 800.0, [2.23, 2.00], (5472, 3648)),
+        ("arw-sony-a7rm2-12bit-uncompressed.arw", 512.0, [2.58, 1.46], (7952, 5304)),
+    ];
+    let mut seen = 0;
+    for (name, black, [r, b], (cw, ch)) in cases {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            eprintln!("skip: {name} absent");
+            continue;
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(img.black.mean(), black, "{name}: black level");
+        let wb = img.wb_multipliers.unwrap_or_else(|| panic!("{name}: no as-shot white balance"));
+        assert!((wb[0] - r).abs() < 0.01 && wb[1] == 1.0 && (wb[2] - b).abs() < 0.01, "{name}: white balance {wb:?}");
+        assert_eq!((img.crop.width, img.crop.height), (cw, ch), "{name}: crop");
+        assert!(img.white_at(0) > 16000.0, "{name}: white {} (14-bit scale)", img.white_at(0));
+        seen += 1;
+    }
+    eprintln!("pre-2017 Sony ARW colour metadata checked on {seen} files");
+}

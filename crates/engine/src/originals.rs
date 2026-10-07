@@ -79,9 +79,14 @@ impl crate::Session {
         OriginalGuard::new(&self.catalog)
     }
 
-    /// `Err` when writing `path` would replace a catalogued photo's original or sidecar.
+    /// `Err` when writing `path` would replace a catalogued photo's original or sidecar. A free
+    /// path (the usual case) is answered without building the guard over the whole library.
     pub fn check_write_target(&self, path: &str) -> Result<(), String> {
-        self.original_guard().check(Path::new(path))
+        let path = Path::new(path);
+        if std::fs::symlink_metadata(path).is_err() {
+            return Ok(()); // nothing there to replace
+        }
+        self.original_guard().check(path)
     }
 }
 

@@ -160,7 +160,9 @@ fn smart_run(
             if damaged && crate::smart::is_valid(&path) {
                 n.built += 1;
             } else {
-                // atomic: a failed write leaves no partial proxy that would pass for a built one
+                // atomic: a failed write leaves no partial proxy that would pass for a built one;
+                // and synced (issue #134): built so the photo can be edited while its original
+                // is offline, when it is the only copy — the sync is small next to the decode
                 let r = source
                     .ok_or_else(|| "nothing to build from".to_string())
                     .and_then(|s| s.load_source())

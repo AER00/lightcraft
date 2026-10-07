@@ -10,22 +10,35 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- LightCraft no longer crashes at launch on Windows PCs whose Vulkan driver is broken (issue #136, e.g. some Intel UHD
+  630 drivers): on Windows the window and GPU rendering use DirectX 12 only and never load the Vulkan driver unless
+  asked to. `LIGHTCRAFT_GPU_BACKEND=dx12 | vulkan | metal | off` (or wgpu's `WGPU_BACKEND`, which GPU rendering
+  ignored before) chooses the graphics backend; `off` renders on the CPU. The GPU now starts after the window
+  is up, and only when Settings ▸ Performance ▸ Use the GPU for rendering is on; if LightCraft ever dies while
+  starting the GPU, the next launch starts with GPU rendering off and says how to turn it back on.
 - Exports and renders never write over a photo's original (issue #93): exporting into the photo's own folder with
   the same name and "Overwrite" (or Export with Previous repeating it), an exact output path from the control
   channel or MCP, a merge preview path or `lightcraft-cli render IMG.jpg -o IMG.jpg` is refused with a clear
   message, and the original is left byte for byte. Ordinary earlier exports are still overwritten when asked.
-  Exported files are written to a temp file, synced and then renamed into place, so a full disk or an unplugged
-  drive never leaves a truncated file; the XMP sidecar of an "Original" export follows the "If file exists"
-  choice too.
+  Exported files are written to a temp file and then renamed into place, so a full disk or an unplugged drive
+  never leaves a truncated file; the XMP sidecar of an "Original" export follows the "If file exists" choice too.
 - Convert to DNG, Copy as DNG, Photo Merge and smart previews no longer write straight to the final file (issue
   #106): a DNG is checked against the raw data, written to a temp file, synced and read back before it gets its
   name (never replacing a file), and only then is the photo relinked or the raw copy removed — a failed write
   leaves no DNG and keeps the raw. Smart previews are written the same way; a damaged one (cut short by a crash or
   a full drive) no longer counts as built and Build Smart Previews replaces it.
 - Import ▸ Copy verifies every copy, like Move (issue #96): each file is written as a new file, synced to disk and
-  compared byte for byte with the card. A copy that fails or differs is removed and reported as a failed import —
-  so "import complete" means the copies are good before you format the card — and a name that is taken gets -1,
-  -2… instead of being replaced.
+  checked against the content read from the card. A copy that fails or differs is removed and reported as a failed
+  import — so "import complete" means the copies are good before you format the card — and a name that is taken
+  gets -1, -2… instead of being replaced.
+- Faster exports and card imports, with the same protection for what can't be recreated (issue #134): exports,
+  renders and screenshots are still written to a temp file and renamed into place, but no longer forced to disk
+  one by one — they can always be exported again, and on a USB drive or a NAS that per-file sync dominated a large
+  export. The catalog, XMP sidecars, settings, DNGs, merges, smart previews and the copies an import makes are still
+  synced. Import ▸ Copy now checks each copy against the content hash taken while scanning the card instead of
+  reading the card a third time (Move still compares byte for byte before it deletes a source); a file that changed
+  on the card after Review Import is reported instead of being imported with stale details. Checking an export path
+  against the library's originals no longer scans the whole library when nothing is at that path.
 - Saving metadata to an XMP sidecar another application wrote no longer replaces it (issue #92): LightCraft merges its
   fields in and keeps the rest — e.g. that application's develop settings and edit history — byte for byte. A
   sidecar that isn't valid XMP is copied to `<name>.xmp.bak-<time>` first. With the default stem naming, a raw and a
@@ -120,3 +133,8 @@
   now develop from the raw data instead of the camera's embedded JPEG, so a B&W or other picture style set in the
   camera no longer gets baked in. Photos already imported as "preview only" switch over on Reload. (Files that
   Nikon splits into two differently compressed halves still use the preview for now.)
+- Sony ARWs from before about 2017 (RX100, RX100 II–V, RX10, NEX, SLT, ILCE-6000, A7 / A7 II / A7R II and their
+  siblings) no longer open bright green (issue #148): their as-shot white balance and black level are read from the
+  file (Sony stores them only in scrambled maker-note data on these bodies), the few columns of padding at the right
+  edge are cropped away, and "12-bit uncompressed" files are no longer clipped. The RX100 series renders much closer
+  to the camera's own JPEG.
