@@ -272,6 +272,7 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
     match id {
         "app.language.english" => Some(u.language == crate::i18n::Language::En),
         "app.language.japanese" => Some(u.language == crate::i18n::Language::Ja),
+        "app.language.traditionalChinese" => Some(u.language == crate::i18n::Language::ZhTw),
         "develop.autoSync" => Some(app.session.auto_sync),
         "view.photoCounts" => Some(u.show_counts),
         "view.secondWindow" => Some(u.second_window),
@@ -316,12 +317,18 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
 fn live_label(app: &LightcraftApp, id: &str, label: &str) -> String {
     let n = app.session.selection.ids.len();
     match id {
-        "edit.undo" => {
-            app.session.undo.last().map(|e| crate::i18n::tr_format!("Undo {}", crate::i18n::tr(&e.label))).unwrap_or_else(|| "Undo".into())
-        }
-        "edit.redo" => {
-            app.session.redo.last().map(|e| crate::i18n::tr_format!("Redo {}", crate::i18n::tr(&e.label))).unwrap_or_else(|| "Redo".into())
-        }
+        "edit.undo" => app
+            .session
+            .undo
+            .last()
+            .map(|e| crate::i18n::tr_format!("Undo {}", crate::i18n::history_label(&e.label, &app.session.presets)))
+            .unwrap_or_else(|| "Undo".into()),
+        "edit.redo" => app
+            .session
+            .redo
+            .last()
+            .map(|e| crate::i18n::tr_format!("Redo {}", crate::i18n::history_label(&e.label, &app.session.presets)))
+            .unwrap_or_else(|| "Redo".into()),
         "photo.delete" if n > 1 => crate::i18n::tr_format!("Delete {n} Photos", n = n),
         "photo.virtualCopy" if n > 1 => crate::i18n::tr_format!("Create {n} Virtual Copies", n = n),
         "dialog.rename" if n > 1 => crate::i18n::tr_format!("Rename {n} Photos…", n = n),
@@ -341,19 +348,26 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 item(
                     "library.buildPreviews",
                     json!({"size": "standard", "edge": app.ui.settings.preview_edge}),
-                    format!("Build Standard-Sized Previews ({scope})"),
+                    crate::i18n::tr_format!("Build Standard-Sized Previews ({scope})", scope = crate::i18n::tr(scope)),
                     None,
                     !running,
                     None,
                 ),
-                item("library.buildPreviews", json!({"size": "full"}), format!("Build 1:1 Previews ({scope})"), None, !running, None),
+                item(
+                    "library.buildPreviews",
+                    json!({"size": "full"}),
+                    crate::i18n::tr_format!("Build 1:1 Previews ({scope})", scope = crate::i18n::tr(scope)),
+                    None,
+                    !running,
+                    None,
+                ),
                 item("library.cancelPreviews", Value::Null, "Stop Building Previews", None, running, None),
                 MenuNode::Separator,
                 // (read and written on a worker thread: the originals may be on a slow drive)
                 item(
                     "library.smartPreviews",
                     json!({"background": true}),
-                    format!("Build Smart Previews ({scope})"),
+                    crate::i18n::tr_format!("Build Smart Previews ({scope})", scope = crate::i18n::tr(scope)),
                     None,
                     app.session.media.smart_dir.is_some() && !running,
                     None,
@@ -361,7 +375,7 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 item(
                     "library.smartPreviews",
                     json!({"discard": true, "background": true}),
-                    format!("Discard Smart Previews ({scope})"),
+                    crate::i18n::tr_format!("Discard Smart Previews ({scope})", scope = crate::i18n::tr(scope)),
                     None,
                     app.session.media.smart_dir.is_some() && !running,
                     None,
@@ -394,7 +408,7 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 .map(|(l, sc)| {
                     let name = format!("{l:?}");
                     let label = match app.session.catalog.custom_label_name(*l) {
-                        Some(custom) => format!("{custom} ({name})"),
+                        Some(custom) => format!("{custom} ({})", crate::i18n::tr(&name)),
                         None => name.clone(),
                     };
                     item(
@@ -418,7 +432,7 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 v.push(item(
                     "label.applySet",
                     json!({"name": name}),
-                    format!("Label Set: {name}"),
+                    crate::i18n::tr_format!("Label Set: {name}", name = name),
                     None,
                     true,
                     Some(current.as_deref() == Some(name)),
@@ -499,7 +513,7 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 item(
                     "library.selectBy",
                     json!({"label": name.to_lowercase()}),
-                    crate::i18n::tr_format!("{name} Label", name = name),
+                    crate::i18n::tr_format!("{name} Label", name = crate::i18n::tr(&name)),
                     None,
                     true,
                     None,
@@ -516,7 +530,8 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                     v.push(MenuNode::Separator);
                 }
                 builtin = b;
-                v.push(item("app.export", json!({"preset": p.name, "background": true}), p.name, None, sel, None));
+                let label = crate::i18n::builtin_label(&p.name, b).to_string();
+                v.push(item("app.export", json!({"preset": p.name, "background": true}), label, None, sel, None));
             }
             v.push(MenuNode::Separator);
             v.push(item("dialog.export", Value::Null, "Custom…", None, sel, None));

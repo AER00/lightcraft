@@ -334,15 +334,19 @@ cargo run --release -p lightcraft-cli -- render photo.jpg -o out.jpg --set light
 cargo xtask ci                                          # fmt, clippy, tests, layering, wasm checks
 ```
 
-**Japanese text** needs the shared font repo, an optional build input (official releases always include it):
+**Japanese and Traditional Chinese interface text** needs the shared font repo, an optional build input (official releases always include it):
 
 ```sh
 git clone https://github.com/storytold/craft-fonts ../craft-fonts
 CRAFT_FONTS_DIR=../craft-fonts cargo run --release -p lightcraft
 ```
 
-Without it LightCraft builds and runs the same, but Japanese text has no glyphs. Fonts are never committed to this
+Without it LightCraft builds and runs the same, but CJK interface text has no glyphs. Fonts are never committed to this
 repo; see [craftrules `standards/fonts.md`](https://github.com/storytold/craftrules/blob/main/standards/fonts.md).
+
+**Interface language:** choose **Edit → Language → 繁體中文（台灣）**, or **Settings → General → Language**.
+The choice applies immediately and persists between launches, including native macOS menus and the Keyboard Shortcuts sheet.
+See [繁體中文介面說明](docs/localization-zh-tw.md) for build, coverage and control-channel details.
 
 The web build needs the `wasm32-unknown-unknown` target and the matching `wasm-bindgen` CLI
 (`cargo xtask web` prints the exact install command); see [docs/web.md](docs/web.md).

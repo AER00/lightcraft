@@ -13,6 +13,7 @@ pub type UiCommand = (&'static str, &'static str, Option<&'static str>, &'static
 pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.language.english", "English", None, "Edit>Language"),
     ("app.language.japanese", "日本語", None, "Edit>Language"),
+    ("app.language.traditionalChinese", "繁體中文（台灣）", None, "Edit>Language"),
     ("view.photoGrid", "Photo Grid", None, "View"),
     ("view.squareGrid", "Square Grid", None, "View"),
     // G: Photo Grid ↔ Square Grid (from other views: the photo grid)
@@ -151,10 +152,10 @@ pub const UI_COMMANDS: &[UiCommand] = &[
 fn panel(app: &mut LightcraftApp, ctx: &egui::Context, p: RightPanel, name: &str) {
     if app.ui.right == p {
         app.ui.right = RightPanel::None;
-        app.toast(ctx, crate::i18n::tr_format!("{name} Off", name = name));
+        app.toast(ctx, crate::i18n::tr_format!("{name} Off", name = crate::i18n::tr(name)));
     } else {
         app.ui.right = p;
-        app.toast(ctx, crate::i18n::tr_format!("{name} On", name = name));
+        app.toast(ctx, crate::i18n::tr_format!("{name} On", name = crate::i18n::tr(name)));
         if p.is_edit_tool() && !matches!(app.ui.view, ViewMode::Detail) {
             app.ui.view = ViewMode::Detail;
         }
@@ -206,8 +207,13 @@ pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
 
 /// Handle UI commands; `None` means "not a UI command — send it to the engine".
 pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
-    if matches!(id, "app.language.english" | "app.language.japanese") {
-        app.ui.language = if id == "app.language.japanese" { crate::i18n::Language::Ja } else { crate::i18n::Language::En };
+    if matches!(id, "app.language.english" | "app.language.japanese" | "app.language.traditionalChinese") {
+        app.ui.language = match id {
+            "app.language.japanese" => crate::i18n::Language::Ja,
+            "app.language.traditionalChinese" => crate::i18n::Language::ZhTw,
+            _ => crate::i18n::Language::En,
+        };
+        crate::i18n::set_language(app.ui.language);
         return Some(Ok(json!(app.ui.language)));
     }
     let ctx = egui::Context::default();
