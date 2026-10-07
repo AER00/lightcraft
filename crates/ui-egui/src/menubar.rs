@@ -186,12 +186,15 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "---",
             "photo.saveMetadataToFile",
             "photo.readMetadataFromFile",
+            "photo.reload",
             "app.showInFinder",
             "dialog.rename",
             "dialog.captureTime",
             "photo.tagFromTracklog",
             "---",
             "photo.delete",
+            "photo.restore",
+            "photo.deletePermanently",
         ],
     ),
     (
@@ -252,11 +255,20 @@ const HIDDEN: &[&str] = &[
     "preset.create",
 ];
 
-/// Items only some hosts have are left out of the others' menus (the web build's library backup).
+/// The selection includes a photo in Recently Deleted.
+pub(crate) fn selection_deleted(app: &LightcraftApp) -> bool {
+    let s = &app.session;
+    s.selection.ids.iter().copied().chain(s.selection.active).any(|id| s.catalog.photo(id).is_some_and(|p| p.deleted))
+}
+
+/// Items only some hosts have are left out of the others' menus (the web build's library backup);
+/// Restore and Delete Permanently replace Delete for photos in Recently Deleted.
 fn host_supports(app: &LightcraftApp, id: &str) -> bool {
     match id {
         "file.backupLibrary" => app.services.backup_library.is_some(),
         "file.restoreLibrary" => app.services.restore_library.is_some(),
+        "photo.restore" | "photo.deletePermanently" => selection_deleted(app),
+        "photo.delete" => !selection_deleted(app),
         _ => true,
     }
 }
@@ -828,8 +840,9 @@ mod tests {
         let titles: Vec<&str> = bar.iter().map(|(t, _)| t.as_str()).collect();
         assert_eq!(titles, MENUS);
         let all: Vec<MenuNode> = bar.iter().flat_map(|(_, v)| v.clone()).collect();
-        // every engine command with a menu path is reachable (parameterized ones via submenus)
-        for c in lightcraft_engine::command_specs().iter().filter(|c| !c.menu.is_empty() && !HIDDEN.contains(&c.id)) {
+        // every engine command with a menu path is reachable (parameterized ones via submenus; items
+        // that follow the state, like Restore for deleted photos, when it applies)
+        for c in lightcraft_engine::command_specs().iter().filter(|c| !c.menu.is_empty() && !HIDDEN.contains(&c.id) && host_supports(&app, c.id)) {
             assert!(find(&all, c.id).is_some(), "{} missing from the menu bar", c.id);
         }
         for id in ["photo.rate", "photo.flag", "photo.label", "library.sort", "album.addPhotos", "view.compare", "stack.group", "photo.virtualCopy"] {

@@ -282,6 +282,14 @@ const RAW_SAMPLES: &[(&str, &str)] = &[
         "https://raw.pixls.us/getfile.php/961/nice/Nikon%20-%20D7000%20-%2012bit%2012bit%20compressed%20%28Lossy%20%28type%202%29%29%20%283:2%29.NEF",
     ),
     (
+        "nef-nikon-d7500-lossless12.nef",
+        "https://raw.pixls.us/getfile.php/1532/nice/Nikon%20-%20D7500%20-%2012bit%2012bit%20compressed%20%28Lossless%29%20%283:2%29.NEF",
+    ),
+    (
+        "nef-nikon-d7500-lossless14.nef",
+        "https://raw.pixls.us/getfile.php/1534/nice/Nikon%20-%20D7500%20-%2014bit%2014bit%20compressed%20%28Lossless%29%20%283:2%29.NEF",
+    ),
+    (
         "nrw-nikon-b700-uncompressed.nrw",
         "https://raw.pixls.us/getfile.php/1621/nice/Nikon%20-%20COOLPIX%20B700%20-%2012bit%2012bit%20uncompressed%20%284:3%29.NRW",
     ),
