@@ -335,7 +335,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
 }
 
 /// Shown when an export has nowhere to go (no folder typed or chosen, and no home folder to default to).
-pub const NO_EXPORT_FOLDER: &str = "You need to specify an export location!";
+pub const NO_EXPORT_FOLDER: &str = "Choose an export folder first.";
 
 /// Default export folder: `~/Pictures/LightCraft Exports` (`%USERPROFILE%\Pictures\LightCraft Exports`
 /// on Windows, where `HOME` usually isn't set). Empty when no home folder is known.
