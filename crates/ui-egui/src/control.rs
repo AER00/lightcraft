@@ -267,6 +267,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
                     u.dialog = app.ui.dialog.clone();
                     u.status = app.ui.status.clone();
                     app.ui = u;
+                    crate::i18n::set_language(app.ui.language);
                     ctx.request_repaint();
                     ok(serde_json::to_value(&app.ui).unwrap_or_default())
                 }

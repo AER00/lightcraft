@@ -103,5 +103,20 @@
   "Adding photos… {} of {}": "正在添加照片… 第 {0} 张，共 {1} 张",
   " ({} in Recently Deleted)": "（其中 {0} 张在“最近删除”中）",
   "Already in the library: {} photo{} selected in All Photos": "已在图库中：已在“所有照片”中选择 {0} 张照片{1:.0}",
-  "Already in the library, in Recently Deleted: {} photo{} selected · right-click ▸ Restore, or Delete Permanently to import afresh": "已在图库的“最近删除”中：已选择 {0} 张照片{1:.0} · 右键单击 ▸ 恢复，或永久删除后重新导入"
+  "Already in the library, in Recently Deleted: {} photo{} selected · right-click ▸ Restore, or Delete Permanently to import afresh": "已在图库的“最近删除”中：已选择 {0} 张照片{1:.0} · 右键单击 ▸ 恢复，或永久删除后重新导入",
+  "Auto ({})": "自动（{}）",
+  "Build 1:1 Previews ({scope})": "生成 1:1 预览（{scope}）",
+  "Build Smart Previews ({scope})": "生成智能预览（{scope}）",
+  "Build Standard-Sized Previews ({scope})": "生成标准尺寸预览（{scope}）",
+  "Discard Smart Previews ({scope})": "丢弃智能预览（{scope}）",
+  "Label Set: {name}": "标签集：{name}",
+  "Quick Develop: {name}": "快速编辑：{name}",
+  "Reset {name}": "重置{name}",
+  "Updated “{name}”": "已更新“{name}”",
+  "{verb} {n} Photo{}": "{verb} {n} 张照片{:.0}",
+  "{year}": "{year}年",
+  "{month}": "{month}月",
+  "{month} {year}": "{year}年{month}月",
+  "{weekday}, {day}": "{day}日 {weekday}",
+  "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日 {weekday}"
 }

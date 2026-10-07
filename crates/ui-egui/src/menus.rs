@@ -15,6 +15,7 @@ pub type UiCommand = (&'static str, &'static str, Option<&'static str>, &'static
 pub const LANGUAGE_COMMANDS: &[UiCommand] = &[
     ("app.language.english", crate::i18n::Locale::En.name(), None, "Edit>Language"),
     ("app.language.simplifiedChinese", crate::i18n::Locale::ZhHans.name(), None, "Edit>Language"),
+    ("app.language.traditionalChinese", crate::i18n::Locale::ZhHant.name(), None, "Edit>Language"),
     ("app.language.japanese", crate::i18n::Locale::Ja.name(), None, "Edit>Language"),
 ];
 
@@ -30,6 +31,7 @@ pub fn language_from_command(id: &str) -> Option<crate::i18n::Locale> {
     match id {
         "app.language.english" => Some(crate::i18n::Locale::En),
         "app.language.simplifiedChinese" => Some(crate::i18n::Locale::ZhHans),
+        "app.language.traditionalChinese" => Some(crate::i18n::Locale::ZhHant),
         "app.language.japanese" => Some(crate::i18n::Locale::Ja),
         _ => None,
     }
@@ -231,6 +233,9 @@ pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
 pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
     if let Some(language) = language_from_command(id) {
         app.ui.language = language;
+        // Immediately, not on the next frame: the reply and anything else run this frame
+        // (menus rebuilt from it, toasts) are already in the new language.
+        crate::i18n::set_language(app.ui.language);
         return Some(Ok(json!(app.ui.language)));
     }
     let ctx = egui::Context::default();
