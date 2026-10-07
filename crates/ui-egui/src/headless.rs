@@ -535,12 +535,16 @@ mod tests {
         ex(&mut h, "photo.setMeta", json!({"ids": [vis[0], vis[1]], "addKeywords": ["travel|italy"]}));
         ex(&mut h, "photo.setMeta", json!({"ids": [vis[2]], "addKeywords": ["travel|france"]}));
         h.request("ui.set", json!({"leftPanel": true}), t);
+        // clicks land on last frame's layout: let the keyword list settle first (on a loaded machine a
+        // row could still move, and the click then hit its neighbour, e.g. "sunrise")
+        h.settle(SETTLE);
         let r = h.request("ui.clickWidget", json!({"id": "source:keyword:travel"}), t);
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(h.app.session.filter.keyword.as_deref(), Some("travel"));
         assert_eq!(h.app.session.visible_cloned().len(), 3);
         // open the level, filter by the child
         h.request("ui.clickWidget", json!({"id": "keywordToggle:travel"}), t);
+        h.settle(SETTLE);
         let r = h.request("ui.clickWidget", json!({"id": "source:keyword:travel|italy"}), t);
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(h.app.session.visible_cloned().len(), 2);
