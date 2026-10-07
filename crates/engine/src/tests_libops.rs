@@ -530,3 +530,24 @@ fn random_sort_applies_to_albums_too() {
     let expect: Vec<_> = all.iter().filter(|i| in_album.contains(i)).copied().collect();
     assert_eq!(in_album, expect, "the album shows its photos in the shuffle's order, not manual order");
 }
+
+/// Choosing Random from another sort is a fresh shuffle (not the fixed seed-0 order); picking it
+/// again, or changing only the direction, keeps the shuffle on screen; an explicit seed wins.
+#[test]
+fn choosing_random_starts_a_fresh_shuffle() {
+    let mut s = Session::with_demo();
+    assert_eq!(s.sort.seed, 0);
+    s.execute("library.sort", &json!({"key": "random"})).unwrap();
+    let first = s.sort.seed;
+    assert_ne!(first, 0, "the first Random is not the fixed seed-0 order");
+    s.execute("library.sort", &json!({"key": "random"})).unwrap();
+    s.execute("library.sort", &json!({"ascending": true})).unwrap();
+    assert_eq!(s.sort.seed, first, "already random: the shuffle stays");
+    s.execute("library.sort", &json!({"key": "fileName"})).unwrap();
+    s.execute("library.sort", &json!({"key": "random"})).unwrap();
+    assert_ne!(s.sort.seed, first, "coming back to Random reshuffles");
+    s.execute("library.sort", &json!({"key": "rating"})).unwrap();
+    s.execute("library.sort", &json!({"key": "random", "seed": 42})).unwrap();
+    assert_eq!(s.sort.seed, 42, "an explicit seed is honoured");
+    assert!(s.sort.seed < 1 << 53);
+}

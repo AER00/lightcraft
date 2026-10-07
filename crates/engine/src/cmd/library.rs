@@ -311,7 +311,12 @@ pub fn specs() -> Vec<CommandSpec> {
                     Some(g) => GroupBy::parse(g).ok_or_else(|| bad("library.sort", "group must be auto|none|day|month|year"))?,
                     None => s.sort.group,
                 };
-                let seed = seed_param(p, "library.sort", s.sort.seed)?;
+                let mut seed = seed_param(p, "library.sort", s.sort.seed)?;
+                let explicit = p.get("seed").is_some_and(|v| !v.is_null());
+                if key == SortKey::Random && s.sort.key != SortKey::Random && !explicit {
+                    // switching to Random is a fresh shuffle, not whatever seed was left behind
+                    seed = next_seed(seed, &(s.clock)());
+                }
                 s.sort = Sort { key, ascending: bool_or(p, "ascending", s.sort.ascending), group, seed };
                 ok()
             }

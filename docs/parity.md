@@ -199,7 +199,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-FILT-LOCATION | Location filter | P2 | ✅ | `cmd:library.filter` (`text`, `ruleSet` field `location`) | free text, or a rule on location / city / state / country (smart albums, `library.filter`) |
 | LR-FILT-PEOPLE | People filter | P2 | 🟡 | `cmd:library.filter`, `crates/catalog/src/query.rs` | filter by a person's name (case-insensitive, named Face regions only) from the People view, a filter chip or `person:`; no unnamed / suggested people |
 | LR-FILT-CULL | Culling-score filters | P2 | ✅ | `cmd:library.filter` (`ruleSet` fields `sharpness`, `bestOfGroup`) | Focus and Best of Similar Shots in the rule editor / smart albums |
-| LR-FILT-SORT | Sort | P0 | ✅ | `cmd:library.sort`, `cmd:library.shuffle`, `crates/ui-egui/src/panels/bottombar.rs` | Random sort (seeded, stable under edits; Reshuffle picks a new seed); the shuffle is part of the saved view state; no effect in Recently Added (always newest import first); no colour-label or custom (manual) order |
+| LR-FILT-SORT | Sort | P0 | ✅ | `cmd:library.sort`, `cmd:library.shuffle`, `crates/ui-egui/src/panels/bottombar.rs` | Random sort (seeded, stable under edits; choosing Random or Reshuffle picks a new seed); the shuffle is part of the saved view state; no effect in Recently Added (always newest import first); no colour-label or custom (manual) order |
 | LR-FILT-SAVED | Filter presets [Classic] | P2 | ✅ | `cmd:filter.savePreset`, `cmd:filter.applyPreset`, `cmd:filter.presets`, `cmd:filter.deletePreset`, `crates/ui-egui/src/panels/filterbar.rs` | filter bar → Presets: apply, save current filter, delete (right-click); saved with the library |
 
 ## E. Metadata (META)
