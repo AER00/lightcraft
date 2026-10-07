@@ -83,6 +83,11 @@
   changes couldn't be saved tries once more, then asks: Try Saving Again, Quit Anyway or Cancel.
 
 ### Library
+- Photos in Recently Deleted can be restored from the app: right-click ▸ Restore (or Delete Permanently), also in the
+  Photo menu. The filmstrip has the photo context menu too. Adding a file again that is in Recently Deleted no
+  longer just says "duplicate skipped": it opens the side panel on Recently Deleted with the photo selected and says
+  how to restore it or delete it permanently and import it afresh. (For a fresh start on a photo, Reset Edits,
+  Cmd+Shift+R, keeps the photo and clears its edits.)
 - Rename Photos never overwrites another photo when only the letter case changes (issue #95): on case-sensitive
   volumes (Linux, case-sensitive APFS) `img_1.JPG` next to `IMG_1.JPG` is a different photo and the renamed one gets
   `img_1-1.JPG`; on case-insensitive volumes the case change still goes through.

@@ -1364,6 +1364,8 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
                 };
                 let _ = app.run("library.select", json!({"ids": [id.0], "mode": mode}));
             }
+            // the same photo actions as the grid and loupe (Restore / Delete Permanently in Recently Deleted)
+            resp.context_menu(|ui| super::grid::context_menu(app, ui, *id));
         }
     });
 }

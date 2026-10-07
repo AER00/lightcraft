@@ -44,13 +44,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 15 | 3 | 2 | 1 | 8/8 (100%) | 6/8 (75%) |
+| X. Cross-cutting behaviours (BEHAV) | 15 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 31 | 9 | 40 | 9 | — | 21/22 (95%) |
-| **Total** | 387 | 29 | 91 | 37 | 194/200 (97%) | 139/149 (93%) |
+| **Total** | 387 | 30 | 90 | 37 | 194/200 (97%) | 139/149 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.2%** of 507 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 39.2% of 158.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.3%** of 507 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 39.6% of 158.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -148,7 +148,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-PEOPLE | People / faces | P2 | ⬜ | | |
 | LR-LIB-STACK | Stacks | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup`, `cmd:stack.toggle`, `cmd:stack.setTop`, `cmd:stack.remove`, `cmd:stack.auto`, `crates/catalog/src/stacks.rs` | grid/filmstrip count badges, expand/collapse, auto-stack by capture time; no visual-similarity auto-stack |
 | LR-LIB-VERSIONS | Versions | P1 | ✅ | `cmd:version.create` | see section M |
-| LR-LIB-DELETE | Delete / Recently Deleted | P0 | ✅ | `cmd:photo.delete`, `cmd:photo.restore`, `cmd:photo.deletePermanently` | no confirmation dialog, no auto-purge after N days, no "Empty" |
+| LR-LIB-DELETE | Delete / Recently Deleted | P0 | ✅ | `cmd:photo.delete`, `cmd:photo.restore`, `cmd:photo.deletePermanently` | Restore and Delete Permanently in the Photo menu and the photo context menus for photos in Recently Deleted (before, the UI had no way to restore); adding a file that is in Recently Deleted again selects it there (side panel opened) and says how to restore it or import it afresh; no confirmation dialog, no auto-purge after N days, no "Empty" |
 | LR-LIB-REMOVE-ALBUM | Remove from album | P0 | ✅ | `cmd:album.removePhotos` | |
 | LR-LIB-DUPLICATE | Duplicate a photo | P2 | ✅ | `cmd:photo.duplicate` | Photo ▸ Duplicate: a real `-copy` file with the same settings, metadata and albums (virtual copies share the file) |
 | LR-LIB-RENAME | Batch rename | P1 | ✅ | `cmd:photo.rename`, `cmd:photo.renamePreview`, `cmd:photo.renameTokens`, `cmd:dialog.rename`, `crates/engine/src/rename.rs` (`TOKENS`) | template tokens {name} {num} {seq:N} {date:%Y%m%d} {folder} {camera} {lens} {iso} {rating} {title} {creator} {ext} (shared with export naming and import rename); a Tags picker beside every template field (Rename Photos, import Rename, export File name) lists each tag with meaning + live example, the date directives and the rules, and inserts the clicked tag at the text cursor; unknown tags are flagged; preview; renames files on disk with their XMP sidecars (a stem sidecar another file still shares, e.g. raw + JPEG, is copied rather than taken), never overwriting (-1, -2… suffixes; a change of letter case only is checked by file identity, so on case-sensitive volumes `img_1.jpg` next to `IMG_1.JPG` is a collision), rolls back on failure (a file that can't be moved back is reported old → new and the library follows it as an undoable partial rename; the same for undo/redo); undo/redo move the files; virtual copies follow |
@@ -169,7 +169,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-VIEW-DETAIL | Single-photo view | P0 | ✅ | `cmd:view.detail`, `crates/ui-egui/src/panels/detail.rs` | |
 | LR-VIEW-EDIT | Edit view | P0 | ✅ | `cmd:panel.edit` | |
 | LR-VIEW-FULLSCREEN | Full-screen preview | P1 | ✅ | `cmd:view.fullScreenPreview`, `cmd:view.enterFullScreen` | photo on black, arrows step, Esc exits; ⇧⌘F window full screen |
-| LR-VIEW-FILMSTRIP | Filmstrip | P0 | ✅ | `cmd:view.filmstrip`, `crates/ui-egui/src/panels/detail.rs` | the mouse wheel scrolls it sideways; it follows the active photo only when that changes (centred if off screen), so a scrolled strip stays put |
+| LR-VIEW-FILMSTRIP | Filmstrip | P0 | ✅ | `cmd:view.filmstrip`, `crates/ui-egui/src/panels/detail.rs` | the photo context menu on right-click; the mouse wheel scrolls it sideways; it follows the active photo only when that changes (centred if off screen), so a scrolled strip stays put |
 | LR-VIEW-ZOOM | Zoom & pan | P0 | ✅ | `cmd:view.zoomFit`, `cmd:view.zoom100`, `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle`, `cmd:view.clickZoom` | steps 25–800 % (not 6–1600 %); Fill only in the bottom bar; a click on the photo (and Z / Space) eases to the click-zoom ratio (1:1 default, 2:1, 3:1, 4:1, 8:1 in the bottom bar) |
 | LR-VIEW-NAVIGATOR | Navigator mini map | P1 | ✅ | `cmd:view.navigator`, `crates/ui-egui/src/panels/detail.rs` | shown while zoomed (bottom right); click/drag pans |
 | LR-VIEW-BEFOREAFTER | Before / after | P0 | ✅ | `cmd:view.showOriginal`, `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom`, `cmd:beforeAfter.setBefore`, `cmd:beforeAfter.copyAfterToBefore`, `cmd:beforeAfter.copyBeforeToAfter`, `cmd:beforeAfter.swap`, `cmd:beforeAfter.resetBefore` | all four layouts; before = the import state (defaults + import preset) or a chosen history step / version / the current settings; copy and swap (View → Before/After Settings, History row menu). The chosen before lasts for the session |
@@ -600,7 +600,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-HELP-SHORTCUTS | Keyboard shortcuts | P1 | ✅ | `cmd:app.shortcuts` | |
 | MENU-HELP-FEEDBACK | Send feedback | P2 | ✅ | `cmd:app.feedback` | opens a new issue on the project's GitHub |
 | MENU-HELP-SYSINFO | System info | P2 | ✅ | `cmd:app.systemInfo`, `cmd:library.info` | Help ▸ System Info…: version, OS, CPU threads, GPU, memory budget, preview size, library, timings; Copy to Clipboard; JSON for agents (`open: false`) |
-| MENU-CTX-GRID | Photo context menu | P0 | ✅ | `crates/ui-egui/src/panels/grid.rs` (`context_menu`) | rate, flag, label, add to / remove from album, rename, virtual copy, version, stack, copy / paste / paste selected, reset, merge, rotate, show in Finder, export / export with preset, set as album cover (in an album), delete |
+| MENU-CTX-GRID | Photo context menu | P0 | ✅ | `crates/ui-egui/src/panels/grid.rs` (`context_menu`) | rate, flag, label, add to / remove from album, rename, virtual copy, version, stack, copy / paste / paste selected, reset, merge, rotate, show in Finder, export / export with preset, set as album cover (in an album), delete (restore / delete permanently in Recently Deleted) |
 | MENU-CTX-DETAIL | Loupe context menu | P1 | ✅ | `crates/ui-egui/src/panels/detail.rs` | Zoom submenu (fit, 100%, in, out), then the photo menu |
 | MENU-CTX-ALBUM | Album / folder row menu | P0 | ✅ | `crates/ui-egui/src/panels/left.rs` (`folder_menu`), `cmd:album.move`, `cmd:dialog.export` | add selected, export album (dialog / preset), move to a folder or the top level, rename, delete; smart albums: update rules |
 | MENU-CTX-MASK | Mask / component menu | P0 | ✅ | `crates/ui-egui/src/panels/masking.rs` (`mask_menu`, `component_row_menu`), `cmd:mask.component` | mask rows: duplicate (and invert), invert, show/hide, move, rename, delete; component rows (right-click or "…"): invert, duplicate, mode (add / subtract / intersect), intersect with / subtract a new component, rename (also double-click), delete (the last one deletes the mask) |

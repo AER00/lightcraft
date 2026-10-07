@@ -905,7 +905,14 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
     });
     ui.separator();
-    if ui.button(crate::i18n::tr("Delete Photo")).clicked() {
+    if crate::menubar::selection_deleted(app) {
+        if ui.button(crate::i18n::tr("Restore")).clicked() {
+            let _ = app.run("photo.restore", json!({}));
+        }
+        if ui.button(crate::i18n::tr("Delete Permanently")).clicked() {
+            let _ = app.run("photo.deletePermanently", json!({}));
+        }
+    } else if ui.button(crate::i18n::tr("Delete Photo")).clicked() {
         let _ = app.run("photo.delete", json!({}));
     }
 }

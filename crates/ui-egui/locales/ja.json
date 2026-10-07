@@ -1017,5 +1017,6 @@
   "Quit": "終了",
   "Temporary session — your library isn't open, and nothing you do here is saved.": "一時セッション：ライブラリが開かれていないため、ここでの操作は保存されません。",
   "Back Up Library…": "ライブラリをバックアップ…",
-  "Restore Library from Backup…": "バックアップからライブラリを復元…"
+  "Restore Library from Backup…": "バックアップからライブラリを復元…",
+  "In Recently Deleted": "最近削除した写真内"
 }
