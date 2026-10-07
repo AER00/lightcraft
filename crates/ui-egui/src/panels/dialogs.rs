@@ -733,7 +733,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 Dialog::Shortcuts => {
                     egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
                         egui::Grid::new("shortcuts").striped(true).show(ui, |ui| {
-                            for (id, label, sc, _) in crate::menus::UI_COMMANDS {
+                            for (id, label, sc, _) in crate::menus::ui_commands() {
                                 if let Some(sc) = sc {
                                     ui.label(crate::i18n::tr(label));
                                     ui.label(*sc);
@@ -750,8 +750,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                                 }
                             }
                             for (sc, id, _) in crate::shortcuts::ALIASES {
-                                let label = crate::menus::UI_COMMANDS
-                                    .iter()
+                                let label = crate::menus::ui_commands()
                                     .find(|c| c.0 == *id)
                                     .map(|c| c.1)
                                     .or_else(|| lightcraft_engine::find_command(id).map(|c| c.label))

@@ -137,12 +137,17 @@ pub fn parse(md: &str) -> Doc {
     doc
 }
 
-/// Ids in `UI_COMMANDS` (`("view.detail", "Detail", Some("D"), "View"),` lines).
+/// Ids in the menu tables (`("view.detail", "Detail", Some("D"), "View"),` lines): the language
+/// commands live in their own table, which the Language menu builds from the i18n language list.
 pub fn ui_command_ids(menus_rs: &str) -> Vec<String> {
-    let Some(start) = menus_rs.find("pub const UI_COMMANDS") else { return Vec::new() };
-    let body = &menus_rs[start..];
-    let body = &body[..body.find("];").unwrap_or(body.len())];
-    body.lines().filter_map(|l| l.trim().strip_prefix("(\"")).filter_map(|l| l.split_once('"').map(|(id, _)| id.to_string())).collect()
+    let mut ids = Vec::new();
+    for table in ["pub const UI_COMMANDS", "pub const LANGUAGE_COMMANDS"] {
+        let Some(start) = menus_rs.find(table) else { continue };
+        let body = &menus_rs[start..];
+        let body = &body[..body.find("];").unwrap_or(body.len())];
+        ids.extend(body.lines().filter_map(|l| l.trim().strip_prefix("(\"")).filter_map(|l| l.split_once('"').map(|(id, _)| id.to_string())));
+    }
+    ids
 }
 
 fn known(set: &BTreeSet<String>, id: &str) -> bool {

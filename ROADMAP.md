@@ -29,7 +29,7 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 | **Workflow & library** | ~85% (single machine) | Robust catalog (journal + snapshots, background compaction, crash-tested), 85k-photo libraries stay responsive, Local browsing with automatic cleanup, XMP interop, keywords, smart albums, Move import | Opening an 85k library takes 1.7–4.7 s; no cloud sync (out of scope), no tablet companion (#74, roadmap), shared albums, publish services, tethering |
 | **Classic modules** | ~30% | Geotagging from GPX track logs, soft proofing (partial), slideshow (basic) | **Map view, Book, Print, Slideshow module, Web, publish services**: ~40 tracker rows ⬜ |
 | **HDR & video** | 0% | | HDR edit/display/export; video play/trim/edit/export |
-| **Platform & robustness** | ~70% | macOS native; Windows/Linux builds; web via WASM; no-panic lints workspace-wide, `unsafe` confined to `crates/sysmem`; failed saves are reported; GPU errors fall back to CPU | Windows installer UI unverified on Windows (PR #79); GPU path proven only on Apple + user reports; Japanese/English UI (see docs/localization-ja.md); remaining technical errors and other languages; accessibility partial; headless UI tests time out under machine load |
+| **Platform & robustness** | ~70% | macOS native; Windows/Linux builds; web via WASM; no-panic lints workspace-wide, `unsafe` confined to `crates/sysmem`; failed saves are reported; GPU errors fall back to CPU | Windows installer UI unverified on Windows (PR #79); GPU path proven only on Apple + user reports; Chinese/Japanese/English UI (see docs/localization.md); remaining technical errors and date formats; accessibility partial; headless UI tests time out under machine load |
 
 ### By kind of user
 
@@ -87,7 +87,7 @@ hardening (#78), copyright metadata (#51), GPX geotagging (#60), import tag help
 | M13 | Merge | HDR merge (deghost), panorama (projections, boundary warp, fill edges), HDR panorama | 10–15 | ✅ |
 | M14 | Video | import/playback/trim via FilmCraft crates, global edits + presets on video, video export | 6–10 | ⬜ |
 | M15 | Classic modules | Map, Book, Slideshow, Print, Web; smart collections, stacks, virtual copies, publish services, tethering | 25–40 | 🚧 (smart albums, stacks, virtual copies, compare/survey ✅; Map/Book/Slideshow/Print/Web ⬜) |
-| M16 | 1.0 polish | preferences, shortcut editor, accessibility, localization, packaging (dmg/msi/AppImage/web), hardening | 10–20 | 🚧 (settings, keyboard shortcuts sheet, packaging basics ✅; Japanese/English localisation 🟡; accessibility and other locales ⬜) |
+| M16 | 1.0 polish | preferences, shortcut editor, accessibility, localization, packaging (dmg/msi/AppImage/web), hardening | 10–20 | 🚧 (settings, keyboard shortcuts sheet, packaging basics ✅; Chinese/Japanese/English localisation 🟡; accessibility and further locales ⬜) |
 
 ## Parity estimate (feature count updated 2026-10-05; effort estimate from 2026-10-02)
 
@@ -192,12 +192,14 @@ own chart-based calibration (M11.4). Adobe matrices are never used.
   export hardening, clippy 1.99. Added the honest *Where we stand* assessment and *Where we're going* priorities; added
   tracker rows for camera colour, camera coverage and render fidelity.
 
-## Japanese interface and text watermarks
+## Chinese and Japanese interfaces, and text watermarks
 
-English/Japanese interface language is persisted in UI state. Core menus have Japanese
-translations; untranslated panels and dialogs retain English. Japanese glyphs (UI: BIZ UDPGothic;
-watermarks: BIZ UDMincho) come from storytold/craft-fonts, embedded by builds made with the
-optional `CRAFT_FONTS_DIR` input (all releases), so no system fonts are needed. Text watermarks now accept
+English, Simplified Chinese and Japanese interface languages are persisted in UI state, and the
+language table (`crates/ui-egui/src/i18n.rs`) drives the menus, settings and fonts, so another
+language is a table entry plus two catalogs (docs/localization.md). Core menus and panels are
+translated; untranslated text retains English. CJK glyphs (Chinese: Noto Sans CJK SC; Japanese UI:
+BIZ UDPGothic; watermarks: BIZ UDMincho) come from storytold/craft-fonts, embedded by builds made
+with the optional `CRAFT_FONTS_DIR` input (all releases), so no system fonts are needed. Text watermarks now accept
 `vertical: true` in export JSON/presets and expose an orientation selector. Japanese
 characters stay upright in top-to-bottom columns, with newlines starting columns to the
 left. This is basic lettering, without tate-chu-yoko, ruby, kinsoku, or general vertical

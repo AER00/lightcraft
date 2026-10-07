@@ -89,7 +89,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     let mut aliased: Vec<(&str, serde_json::Value)> = Vec::new();
     ctx.input(|i| {
         let mut ui_keys = Vec::new();
-        for (id, _, sc, _) in crate::menus::UI_COMMANDS {
+        for (id, _, sc, _) in crate::menus::ui_commands() {
             if let Some((m, k)) = sc.and_then(parse) {
                 ui_keys.push((m, k));
                 if !native(sc.unwrap_or_default()) && matches(i, m, k) {
@@ -286,7 +286,7 @@ mod tests {
         assert_eq!(parse("Right").unwrap().1, Key::ArrowRight);
         assert_eq!(parse("\\").unwrap().1, Key::Backslash);
         // every declared shortcut parses
-        for (id, _, sc, _) in crate::menus::UI_COMMANDS {
+        for (id, _, sc, _) in crate::menus::ui_commands() {
             if let Some(sc) = sc {
                 assert!(parse(sc).is_some(), "{id}: {sc}");
             }
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn aliases_parse_and_target_existing_commands() {
-        let ui: Vec<&str> = crate::menus::UI_COMMANDS.iter().map(|c| c.0).collect();
+        let ui: Vec<&str> = crate::menus::ui_commands().map(|c| c.0).collect();
         for (sc, id, params) in ALIASES {
             assert!(parse(sc).is_some(), "{id}: {sc}");
             assert!(ui.contains(id) || lightcraft_engine::find_command(id).is_some(), "alias {sc} → unknown command {id}");
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn no_conflicting_bindings() {
         let mut ui: Vec<((Modifiers, Key), String)> = Vec::new();
-        for (id, _, sc, _) in crate::menus::UI_COMMANDS {
+        for (id, _, sc, _) in crate::menus::ui_commands() {
             if let Some(k) = sc.and_then(parse) {
                 ui.push((k, id.to_string()));
             }

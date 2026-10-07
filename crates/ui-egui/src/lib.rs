@@ -1,7 +1,7 @@
 //! LightCraft's egui frontend: a Lightroom-style UI over `lightcraft-engine`.
 //!
 //! The UI is thin: every action goes through [`LightcraftApp::run`], which handles UI commands
-//! (views, panels, zoom — see [`menus::UI_COMMANDS`]) and forwards everything else to the engine.
+//! (views, panels, zoom — see [`menus::ui_commands`]) and forwards everything else to the engine.
 //! The same entry point serves menus, shortcuts, buttons and the control channel ([`control`]).
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]

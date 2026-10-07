@@ -1,18 +1,89 @@
-//! Compile translated format strings so Rust checks both languages' placeholders.
+//! Compile the translated format strings into the `tr_format!` macro.
+//!
+//! `locales/<code>-formats.json` maps an English format string to its translation for one language.
+//! Each catalog becomes a `translated_format` match arm, so every language's placeholders are
+//! checked by Rust's `format!` — a wrong placeholder is a compile error, not a runtime `{}`.
+//! Adding a language means adding its file; this script picks it up by name.
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("cargo:rerun-if-changed=locales/ja-formats.json");
-    let messages: BTreeMap<String, String> = serde_json::from_str(&fs::read_to_string("locales/ja-formats.json")?)?;
-    let mut source = String::from("macro_rules! tr_format {\n");
-    for (english, japanese) in messages {
-        let en = serde_json::to_string(&english)?;
-        let ja = serde_json::to_string(&japanese)?;
-        source.push_str(&format!(
-            "({en} $(, $($args:tt)*)?) => {{ if $crate::i18n::is_japanese() {{ format!({ja} $(, $($args)*)?) }} else {{ format!({en} $(, $($args)*)?) }} }};\n"
+    println!("cargo:rerun-if-changed=build.rs");
+    let out = PathBuf::from(env::var("OUT_DIR")?);
+    fs::write(out.join("tr-formats.rs"), generate()?)?;
+    Ok(())
+}
+
+fn generate() -> Result<String, Box<dyn std::error::Error>> {
+    let mut catalogs = Vec::new();
+    for entry in fs::read_dir("locales")? {
+        let path = entry?.path();
+        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_string();
+        // `en` is the source language: it has no catalog, its formats are the source themselves.
+        let Some(code) = name.strip_suffix("-formats.json").filter(|code| *code != "en") else { continue };
+        println!("cargo:rerun-if-changed=locales/{name}");
+        let messages: BTreeMap<String, String> = serde_json::from_str(&fs::read_to_string(&path)?)?;
+        let variant = code.split(['-', '_']).filter(|part| !part.is_empty()).map(capitalize).collect::<String>();
+        catalogs.push((variant, messages));
+    }
+    catalogs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // `tr_format!` formats the English source at the call site (where `format!` can check it) and
+    // also names every value, which is what lets a translation place them. Positional values are
+    // addressed as `_1`, `_2`, … in call-site order; `macro_rules!` cannot count, so the slot
+    // numbering is spelled out here and grows with `POSITIONAL_SLOTS` if a call site ever needs more.
+    const POSITIONAL_SLOTS: usize = 12;
+    let mut macro_source = String::from(concat!(
+        "/// Translate a format string with runtime values, keeping the English source's placeholders\n",
+        "/// checked by `format!` at the call site. `build.rs` writes this macro from `locales/`.\n",
+        "macro_rules! tr_format {\n",
+        "    ($format:literal $(, $($args:tt)*)?) => {\n",
+        "        $crate::i18n::tr_format!(@scan () () (_positional) ; $format; $($($args)*)?)\n",
+        "    };\n",
+        "    (@scan ($($raw:tt)*) ($($values:tt)*) $position:tt ; $format:literal; $name:ident = $value:expr $(, $($rest:tt)*)?) => {\n",
+        "        $crate::i18n::tr_format!(@scan ($($raw)* $name = $value,) ($($values)* (stringify!($name), format!(\"{}\", $value)),)\n",
+        "            $position ; $format; $($($rest)*)?)\n",
+        "    };\n",
+    ));
+    for slot in 1..=POSITIONAL_SLOTS {
+        macro_source.push_str(&format!(
+            "    (@scan ($($raw:tt)*) ($($values:tt)*) (_positional) ; $format:literal; $value:expr $(, $($rest:tt)*)?) => {{\n        $crate::i18n::tr_format!(@scan ($($raw)* $value,) ($($values)* (\"_{slot}\", format!(\"{{}}\", $value)),)\n            (_positional) ; $format; $($($rest)*)?)\n    }};\n    (@scan ($($raw:tt)*) ($($values:tt)*) (_{slot}) ; $format:literal; $value:expr $(, $($rest:tt)*)?) => {{\n        $crate::i18n::tr_format!(@scan ($($raw)* $value,) ($($values)* (\"_{next}\", format!(\"{{}}\", $value)),)\n            (_positional) ; $format; $($($rest)*)?)\n    }};\n",
+            next = slot + 1
         ));
     }
-    source.push_str("}\npub(crate) use tr_format;\n");
-    fs::write(PathBuf::from(env::var("OUT_DIR")?).join("ja-formats.rs"), source)?;
-    Ok(())
+    macro_source.push_str(concat!(
+        "    (@scan ($($raw:tt)*) ($($values:tt)*) $position:tt ; $format:literal;) => {\n",
+        "        $crate::i18n::format_message($format, format!($format, $($raw)*), &[$($values)*])\n",
+        "    };\n",
+        "}\n",
+        "\n",
+        "// `macro_rules!` is textual: the module re-export is what lets call sites keep saying\n",
+        "// `crate::i18n::tr_format!`.\n",
+        "pub(crate) use tr_format;\n",
+        "\n",
+        "impl Locale {\n",
+        "    /// The translated format string for `source`, or `None` when this language has none.\n",
+        "    ///\n",
+        "    /// Generated by `build.rs` from `locales/<code>-formats.json`.\n",
+        "    pub fn translated_format(self, source: &str) -> Option<&'static str> {\n",
+        "        match self {\n",
+    ));
+    let mut source = macro_source;
+    for (variant, messages) in &catalogs {
+        source.push_str(&format!("            Locale::{variant} => match source {{\n"));
+        for (english, translated) in messages {
+            source.push_str(&format!("                {} => Some({}),\n", serde_json::to_string(english)?, serde_json::to_string(translated)?));
+        }
+        source.push_str("                _ => None,\n            },\n");
+    }
+    source.push_str("            _ => None,\n        }\n    }\n}\n");
+    Ok(source)
+}
+
+/// `zh-hans` → `ZhHans`, the enum variant the `language_table!` entry declares.
+fn capitalize(part: &str) -> String {
+    let mut chars = part.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
 }
