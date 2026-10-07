@@ -26,7 +26,7 @@ use lightcraft_raster::{Histogram, Rgb32f, Rgba8};
 use serde::{Deserialize, Serialize};
 
 /// Bump when the pipeline's output changes, to invalidate cached thumbnails.
-pub const RENDER_CACHE_VERSION: u64 = 9;
+pub const RENDER_CACHE_VERSION: u64 = 11;
 
 /// Thumbnails render at one of these long edges (so window/cell size changes reuse the cache).
 pub const THUMB_SIZES: [usize; 4] = [128, 256, 384, 512];
@@ -647,7 +647,13 @@ impl crate::Session {
             ^ id.0.wrapping_mul(0x9e37_79b9_7f4a_7c15)
             ^ content.rotate_left(17);
         let cache = thumb_bucket.map(|b| {
-            let k = Hasher128::new().str(&content_key(&p)).u64(settings.hash64()).u64(b as u64).u64(RENDER_CACHE_VERSION).finish();
+            let k = Hasher128::new()
+                .str(&content_key(&p))
+                .u64(settings.hash64())
+                .u64(b as u64)
+                .u64(RENDER_CACHE_VERSION)
+                .u64(crate::camera_profiles::cache_key())
+                .finish();
             (self.media.rendered.clone(), k)
         });
         Some(RenderJob {
@@ -676,7 +682,14 @@ impl crate::Session {
 
     /// Cache key of a variant thumbnail ([`Self::variant_job`]).
     pub fn variant_key(p: &Photo, settings: &DevelopSettings, edge: usize) -> Hash128 {
-        Hasher128::new().str(&content_key(p)).str("variant").u64(settings.hash64()).u64(edge as u64).u64(RENDER_CACHE_VERSION).finish()
+        Hasher128::new()
+            .str(&content_key(p))
+            .str("variant")
+            .u64(settings.hash64())
+            .u64(edge as u64)
+            .u64(RENDER_CACHE_VERSION)
+            .u64(crate::camera_profiles::cache_key())
+            .finish()
     }
 
     /// A thumbnail of `id` rendered with `settings` instead of its own (profile and preset
@@ -749,7 +762,14 @@ impl crate::Session {
 
     /// Size-independent cache key of a photo's view render (loupe) for its current settings.
     fn view_key(p: &Photo, apply_crop: bool) -> Hash128 {
-        Hasher128::new().str(&content_key(p)).str("view").u64(p.develop.hash64()).u64(apply_crop as u64).u64(RENDER_CACHE_VERSION).finish()
+        Hasher128::new()
+            .str(&content_key(p))
+            .str("view")
+            .u64(p.develop.hash64())
+            .u64(apply_crop as u64)
+            .u64(RENDER_CACHE_VERSION)
+            .u64(crate::camera_profiles::cache_key())
+            .finish()
     }
 
     /// The loupe's render job: like [`Self::render_job`], and a full-quality result is kept as the

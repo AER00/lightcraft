@@ -251,7 +251,8 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
         stages.push(("transform", t0.elapsed()));
         lightcraft_raw::highlight::reconstruct(&mut img, t.wb, HIGHLIGHT_CLIP);
         stages.push(("highlights", t0.elapsed()));
-        let m = camera_look.map(|p| p.matrix.mul(&t.matrix)).unwrap_or(t.matrix).to_f32();
+        let m = camera_look.as_ref().map(|p| p.matrix.mul(&t.matrix)).unwrap_or(t.matrix).to_f32();
+        let hue_sat = camera_look.as_ref().and_then(|p| p.hue_sat.as_ref()).and_then(crate::camera_preview::HueSat::new);
         let gain = 2f32.powf(t.baseline_exposure as f32);
         let wb = t.wb;
         // A DNG's own profile look (hue/saturation map, look table), DNG spec chapter 6.
@@ -263,10 +264,12 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
                 m[1][0] * c[0] + m[1][1] * c[1] + m[1][2] * c[2],
                 m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2],
             ];
-            match &tables {
-                Some(tables) => tables.apply(rgb, gain).map(|v| v.max(0.0)),
-                None => rgb.map(|v| (v * gain).max(0.0)),
-            }
+            let rgb = match &tables {
+                Some(tables) => tables.apply(rgb, gain),
+                None => rgb.map(|v| v * gain),
+            };
+            // after the baseline exposure, as when it was fitted
+            hue_sat.as_ref().map_or(rgb, |h| h.apply(rgb)).map(|v| v.max(0.0))
         });
         stages.push(("colour", t0.elapsed()));
         let img = fit(&img, max_edge, max_edge, Filter::Box);
@@ -287,7 +290,7 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
         }
         let (temp, tint) = xy_to_temp_tint(xy);
         let relative = crate::camera_preview::file_local_look(raw.format) && t.matrix_is_fallback;
-        let camera_tone = camera_look.map(|p| p.tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));
+        let camera_tone = camera_look.as_ref().map(|p| p.tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));
         let (temp, tint) = if relative { (6500.0, 0.0) } else { (temp.round(), tint.round()) };
         return Ok((img, SourceInfo { raw: true, as_shot_temp: temp, as_shot_tint: tint, lens, relative_wb: relative, camera_tone }));
     }

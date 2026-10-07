@@ -1,7 +1,7 @@
 // The per-pixel stage: a straight port of `lightcraft_pipeline::finish` (keep in step with it).
 // Bindings: img (rgb, pre-exposure), log_l, base, clar, tex, dark, masks (NMASK planes, then the
 // blurred chromaticity when HAS_CHROMA), aux
-// (tone LUT | sRGB LUT | curve LUTs | mask terms), out (packed RGBA8).
+// (tone LUT | chroma curve | sRGB LUT | curve LUTs | mask terms), out (packed RGBA8).
 
 fn tone_apply(y: f32) -> f32 {
     if (y <= 0.0) {
@@ -16,6 +16,19 @@ fn tone_apply(y: f32) -> f32 {
         return v * (y / (GREY * TONE_MIN_GAIN));
     }
     return v;
+}
+
+// The camera chroma curve follows the tone LUT in `aux` (`ToneMap::chroma_scale`).
+fn chroma_scale(o: f32) -> f32 {
+    let f = clamp(o, 0.0, 1.0) * f32(CHROMA_N - 1u);
+    let i = min(u32(f), CHROMA_N - 2u);
+    let t = f - f32(i);
+    let a = aux[TONE_N + i];
+    let b = aux[TONE_N + i + 1u];
+    if (a == b) {
+        return a;
+    }
+    return a + (b - a) * t;
 }
 
 fn encode_srgb(v: f32) -> f32 {
@@ -399,6 +412,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var d = vec3<f32>(0.0);
     if (yl > 1e-9) {
         d = c * o / yl;
+    }
+    let k = chroma_scale(o);
+    if (k != 1.0) {
+        d = vec3<f32>(o) + (d - vec3<f32>(o)) * k;
     }
     let mx = max(d.x, max(d.y, d.z));
     if (mx > 1.0) {
