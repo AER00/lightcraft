@@ -334,6 +334,20 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let map = CanvasMap::new(&frame, img_rect);
     let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
     info_overlay(app, &p, canvas, &photo);
+    if !fullscreen {
+        filter_pill(app, ui, canvas);
+    }
+    if app.ui.face_boxes {
+        match region_overlay(ui, &p, &map, &photo, d.orientation) {
+            Some(RegionEdit::Remove(index)) => {
+                let _ = app.run("photo.removeRegion", json!({"id": id.0, "index": index}));
+            }
+            Some(RegionEdit::Resize(index, r)) => {
+                let _ = app.run("photo.setRegion", json!({"id": id.0, "index": index, "rect": {"x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1}}));
+            }
+            None => {}
+        }
+    }
     // a fine grid while a transform (geometry) slider is dragged, to judge verticals
     if app.ui.dragging_control.as_deref().is_some_and(|c| c.starts_with("geometry.")) {
         let n = 12;
@@ -419,6 +433,163 @@ fn info_overlay(app: &LightcraftApp, p: &egui::Painter, canvas: Rect, photo: &li
         y += g.size().y + 3.0;
     }
     register(p.ctx(), "canvas:infoOverlay", Rect::from_min_max(canvas.min, pos2(canvas.left() + 320.0, y)));
+}
+
+/// What the user did to a face box this frame.
+enum RegionEdit {
+    /// The × was clicked.
+    Remove(usize),
+    /// A handle drag ended: the region's new box (normalized, upright frame).
+    Resize(usize, lightcraft_geom::Rect),
+}
+
+/// Handles of a box: (x, y) as fractions of its width and height, and the cursor they show.
+const REGION_HANDLES: [(f32, f32, egui::CursorIcon); 8] = [
+    (0.0, 0.0, egui::CursorIcon::ResizeNwSe),
+    (0.5, 0.0, egui::CursorIcon::ResizeVertical),
+    (1.0, 0.0, egui::CursorIcon::ResizeNeSw),
+    (1.0, 0.5, egui::CursorIcon::ResizeHorizontal),
+    (1.0, 1.0, egui::CursorIcon::ResizeNwSe),
+    (0.5, 1.0, egui::CursorIcon::ResizeVertical),
+    (0.0, 1.0, egui::CursorIcon::ResizeNeSw),
+    (0.0, 0.5, egui::CursorIcon::ResizeHorizontal),
+];
+
+/// Face/pet/focus regions read from XMP (MWG-RS), drawn as boxes over the photo. Hovering a box shows
+/// a × in its corner and eight resize handles. A drag previews the new box live and is reported once,
+/// on release (one undo step); the × reports the region to remove. Both are catalog-only edits:
+/// LightCraft doesn't write regions to XMP. Regions are stored on the upright (EXIF-oriented) photo;
+/// `orient` is the user's Rotate / Flip on top of it, which the loupe's normalized frame includes.
+fn region_overlay(
+    ui: &egui::Ui,
+    p: &egui::Painter,
+    map: &CanvasMap,
+    photo: &lightcraft_catalog::Photo,
+    orient: lightcraft_geom::Orientation,
+) -> Option<RegionEdit> {
+    let t = Tokens::get(p.ctx());
+    let clip = p.clip_rect();
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    // the box being dragged: (region index, its box so far)
+    let drag_key = egui::Id::new("region-drag");
+    let live: Option<(usize, lightcraft_geom::Rect)> = ui.data(|d| d.get_temp(drag_key));
+    let mut edit = None;
+    for (index, r) in photo.meta.regions.iter().enumerate() {
+        let dragging = live.filter(|(i, _)| *i == index);
+        let norm = orient.map_norm_rect(dragging.map_or(r.rect, |(_, n)| n));
+        let rect = Rect::from_two_pos(map.screen(Point::new(norm.x0, norm.y0)), map.screen(Point::new(norm.x1, norm.y1)));
+        // white with a black keyline just outside it, so the box shows on any background
+        p.rect_stroke(rect.expand(1.0), 0.0, Stroke::new(1.0, Color32::from_black_alpha(190)), StrokeKind::Outside);
+        p.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::WHITE), StrokeKind::Outside);
+        if dragging.is_some() || (live.is_none() && pointer.is_some_and(|h| rect.expand(8.0).contains(h))) {
+            for (h, (fx, fy, cursor)) in REGION_HANDLES.iter().enumerate() {
+                let c = pos2(rect.left() + fx * rect.width(), rect.top() + fy * rect.height());
+                let resp = ui.interact(Rect::from_center_size(c, vec2(14.0, 14.0)), egui::Id::new(("region-handle", index, h)), Sense::drag());
+                if resp.hovered() || resp.dragged() {
+                    ui.ctx().set_cursor_icon(*cursor);
+                }
+                let sq = Rect::from_center_size(c, vec2(7.0, 7.0));
+                p.rect_filled(sq, 0.0, if resp.hovered() || resp.dragged() { Color32::from_rgb(120, 190, 255) } else { Color32::WHITE });
+                p.rect_stroke(sq, 0.0, Stroke::new(1.0, Color32::from_black_alpha(220)), StrokeKind::Outside);
+                if resp.dragged()
+                    && let Some(pp) = resp.interact_pointer_pos()
+                {
+                    // move the dragged edge(s) to the pointer, never closer than 12 px to the opposite one
+                    let mut n = rect;
+                    if *fx == 0.0 {
+                        n.min.x = pp.x.min(n.max.x - 12.0);
+                    } else if *fx == 1.0 {
+                        n.max.x = pp.x.max(n.min.x + 12.0);
+                    }
+                    if *fy == 0.0 {
+                        n.min.y = pp.y.min(n.max.y - 12.0);
+                    } else if *fy == 1.0 {
+                        n.max.y = pp.y.max(n.min.y + 12.0);
+                    }
+                    let (a, b) = (map.norm(n.min), map.norm(n.max));
+                    let shown = lightcraft_geom::Rect {
+                        x0: a.x.min(b.x).clamp(0.0, 1.0),
+                        y0: a.y.min(b.y).clamp(0.0, 1.0),
+                        x1: a.x.max(b.x).clamp(0.0, 1.0),
+                        y1: a.y.max(b.y).clamp(0.0, 1.0),
+                    };
+                    // back to the upright frame the region is stored in
+                    let new = orient.inverse().map_norm_rect(shown);
+                    ui.data_mut(|d| d.insert_temp(drag_key, (index, new)));
+                    ui.ctx().request_repaint();
+                }
+                if resp.drag_stopped() {
+                    if let Some((i, new)) = ui.data(|d| d.get_temp::<(usize, lightcraft_geom::Rect)>(drag_key)) {
+                        edit = Some(RegionEdit::Resize(i, new));
+                    }
+                    ui.data_mut(|d| d.remove_temp::<(usize, lightcraft_geom::Rect)>(drag_key));
+                }
+            }
+        }
+        if dragging.is_none() && live.is_none() && pointer.is_some_and(|h| rect.expand(3.0).contains(h)) {
+            let xr = Rect::from_center_size(pos2(rect.right() - 13.0, rect.top() + 13.0), vec2(16.0, 16.0));
+            let resp = ui.interact(xr, egui::Id::new(("region-x", index)), Sense::click());
+            register(ui.ctx(), format!("regionRemove:{index}"), xr);
+            let fill = Color32::from_black_alpha(if resp.hovered() { 235 } else { 190 });
+            p.rect_filled(xr, 2.0, fill);
+            p.rect_stroke(xr, 2.0, Stroke::new(1.0, Color32::from_white_alpha(120)), StrokeKind::Inside);
+            let (c, m) = (xr.center(), 3.5);
+            let cross = Stroke::new(1.4, if resp.hovered() { Color32::WHITE } else { Color32::from_gray(210) });
+            p.line_segment([c - vec2(m, m), c + vec2(m, m)], cross);
+            p.line_segment([c - vec2(m, -m), c + vec2(m, -m)], cross);
+            if resp.on_hover_text("Remove this face box (undo with Edit ▸ Undo)").clicked() {
+                edit = Some(RegionEdit::Remove(index));
+            }
+        }
+        let Some(name) = &r.name else { continue };
+        // the name in a dark label with a caret, centred above the box (below it when there is no room)
+        let g = p.layout_no_wrap(name.clone(), t.font(13.0), Color32::from_gray(225));
+        let (pad, caret) = (vec2(14.0, 7.0), 5.0);
+        let size = g.size() + pad * 2.0;
+        let above = rect.top() - caret - size.y >= clip.top();
+        let (top, tip, base) = if above {
+            (rect.top() - caret - size.y, rect.top() - 1.0, rect.top() - caret - 1.0)
+        } else {
+            (rect.bottom() + caret, rect.bottom() + 1.0, rect.bottom() + caret + 1.0)
+        };
+        let left = (rect.center().x - size.x / 2.0).clamp(clip.left(), (clip.right() - size.x).max(clip.left()));
+        let label = Rect::from_min_size(pos2(left, top), size);
+        let fill = Color32::from_rgba_unmultiplied(56, 56, 56, 235);
+        p.rect_filled(label, 3.0, fill);
+        p.rect_stroke(label, 3.0, Stroke::new(1.0, Color32::from_black_alpha(160)), StrokeKind::Inside);
+        let cx = rect.center().x.clamp(label.left() + caret + 4.0, label.right() - caret - 4.0);
+        p.add(egui::Shape::convex_polygon(vec![pos2(cx - caret, base), pos2(cx + caret, base), pos2(cx, tip)], fill, Stroke::NONE));
+        p.galley(label.min + pad, g, Color32::from_gray(225));
+    }
+    edit
+}
+
+/// A small pill at the loupe's top left naming the active filters: the filmstrip and Next / Previous
+/// follow them, so a filter must never be invisible here. A click clears them all. It sits in the
+/// canvas margin, so the photo does not move.
+fn filter_pill(app: &mut LightcraftApp, ui: &mut egui::Ui, canvas: Rect) {
+    let chips = lightcraft_engine::filter_chips(&app.session.filter, &app.session.catalog);
+    if chips.is_empty() {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    let p = ui.painter_at(canvas);
+    let label = chips.iter().map(|c| c.label.as_str()).collect::<Vec<_>>().join("  ·  ");
+    let g = p.layout_no_wrap(format!("Filtered: {label}"), t.font(12.0), Color32::from_gray(225));
+    let w = (g.size().x + 40.0).min((canvas.width() - 24.0).max(60.0));
+    let r = Rect::from_min_size(canvas.min + vec2(12.0, 3.0), vec2(w, 20.0));
+    let resp = ui.interact(r, egui::Id::new("loupe-filter-pill"), Sense::click());
+    register(ui.ctx(), "loupe:filters", r);
+    p.rect_filled(r, 10.0, Color32::from_black_alpha(if resp.hovered() { 225 } else { 185 }));
+    let text_clip = Rect::from_min_max(r.min, pos2(r.right() - 24.0, r.max.y));
+    p.with_clip_rect(text_clip).galley(pos2(r.left() + 10.0, r.center().y - g.size().y / 2.0), g, Color32::from_gray(225));
+    let (c, m) = (pos2(r.right() - 13.0, r.center().y), 3.0);
+    let cross = Stroke::new(1.3, if resp.hovered() { Color32::WHITE } else { Color32::from_gray(190) });
+    p.line_segment([c - vec2(m, m), c + vec2(m, m)], cross);
+    p.line_segment([c - vec2(m, -m), c + vec2(m, -m)], cross);
+    if resp.on_hover_text("Click to clear these filters").clicked() {
+        let _ = app.run("library.clearFilter", json!({}));
+    }
 }
 
 /// A raw shown from its embedded JPEG (issue #10): a pill at the canvas' top centre saying so;

@@ -38,6 +38,7 @@ fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
         copyright_url: m.copyright_url.clone().unwrap_or_default(),
         creator: m.artist.clone().unwrap_or_default(),
         keywords: m.keywords.clone(),
+        regions: m.regions.clone(),
     };
     (meta, m.capture_time.as_ref().map(|d| d.to_iso()))
 }
