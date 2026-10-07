@@ -38,6 +38,7 @@ fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
         copyright_url: m.copyright_url.clone().unwrap_or_default(),
         creator: m.artist.clone().unwrap_or_default(),
         keywords: m.keywords.clone(),
+        regions: m.regions.clone(),
     };
     (meta, m.capture_time.as_ref().map(|d| d.to_iso()))
 }
@@ -132,7 +133,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         }
         let (t, tint) = xy_to_temp_tint(lightcraft_raw::color::as_shot_white_xy_of(&raw));
         // Vendor RGB multipliers do not identify an absolute illuminant without camera calibration.
-        let relative = raw.format == lightcraft_raw::RawFormat::Arw && !lightcraft_raw::color::has_matrix(&raw.color);
+        let relative = crate::camera_preview::file_local_look(raw.format) && !lightcraft_raw::color::has_matrix(&raw.color);
         let as_shot_wb = Some(if relative { (6500.0, 0.0) } else { (t.round(), tint.round()) });
         let embedded_lens = embedded_lens(&raw);
         return Ok(ProbeInfo {
@@ -250,7 +251,8 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
         stages.push(("transform", t0.elapsed()));
         lightcraft_raw::highlight::reconstruct(&mut img, t.wb, HIGHLIGHT_CLIP);
         stages.push(("highlights", t0.elapsed()));
-        let m = camera_look.map(|p| p.matrix.mul(&t.matrix)).unwrap_or(t.matrix).to_f32();
+        let m = camera_look.as_ref().map(|p| p.matrix.mul(&t.matrix)).unwrap_or(t.matrix).to_f32();
+        let hue_sat = camera_look.as_ref().and_then(|p| p.hue_sat.as_ref()).and_then(crate::camera_preview::HueSat::new);
         let gain = 2f32.powf(t.baseline_exposure as f32);
         let wb = t.wb;
         // A DNG's own profile look (hue/saturation map, look table), DNG spec chapter 6.
@@ -262,10 +264,12 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
                 m[1][0] * c[0] + m[1][1] * c[1] + m[1][2] * c[2],
                 m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2],
             ];
-            match &tables {
-                Some(tables) => tables.apply(rgb, gain).map(|v| v.max(0.0)),
-                None => rgb.map(|v| (v * gain).max(0.0)),
-            }
+            let rgb = match &tables {
+                Some(tables) => tables.apply(rgb, gain),
+                None => rgb.map(|v| v * gain),
+            };
+            // after the baseline exposure, as when it was fitted
+            hue_sat.as_ref().map_or(rgb, |h| h.apply(rgb)).map(|v| v.max(0.0))
         });
         stages.push(("colour", t0.elapsed()));
         let img = fit(&img, max_edge, max_edge, Filter::Box);
@@ -285,8 +289,8 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
             eprintln!("[profile] raw source {}×{} (max {max_edge}, ms after decode): {}", img.width, img.height, parts.join(", "));
         }
         let (temp, tint) = xy_to_temp_tint(xy);
-        let relative = raw.format == lightcraft_raw::RawFormat::Arw && t.matrix_is_fallback;
-        let camera_tone = camera_look.map(|p| p.tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));
+        let relative = crate::camera_preview::file_local_look(raw.format) && t.matrix_is_fallback;
+        let camera_tone = camera_look.as_ref().map(|p| p.tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));
         let (temp, tint) = if relative { (6500.0, 0.0) } else { (temp.round(), tint.round()) };
         return Ok((img, SourceInfo { raw: true, as_shot_temp: temp, as_shot_tint: tint, lens, relative_wb: relative, camera_tone }));
     }

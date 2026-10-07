@@ -55,7 +55,7 @@ fn wrap(r: Result<Value, String>) -> Outcome {
 
 pub fn all_commands(app: &LightcraftApp) -> Value {
     let mut v: Vec<Value> = app.session.commands().into_iter().map(|c| serde_json::to_value(c).unwrap_or_default()).collect();
-    for (id, label, sc, menu) in crate::menus::UI_COMMANDS {
+    for (id, label, sc, menu) in crate::menus::ui_commands() {
         v.push(json!({"id": id, "label": label, "shortcut": sc, "menu": [menu], "enabled": crate::menus::ui_enabled(app, id), "ui": true}));
     }
     Value::Array(v)
@@ -267,6 +267,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
                     u.dialog = app.ui.dialog.clone();
                     u.status = app.ui.status.clone();
                     app.ui = u;
+                    crate::i18n::set_language(app.ui.language);
                     ctx.request_repaint();
                     ok(serde_json::to_value(&app.ui).unwrap_or_default())
                 }

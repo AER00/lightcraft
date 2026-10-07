@@ -2466,6 +2466,7 @@ version = "0.2.1"
 dependencies = [
  "crc32fast",
  "lightcraft-develop",
+ "lightcraft-meta",
  "log",
  "proptest",
  "serde",
@@ -2733,6 +2734,7 @@ dependencies = [
  "lightcraft-develop",
  "lightcraft-engine",
  "lightcraft-geom",
+ "lightcraft-meta",
  "lightcraft-pipeline",
  "lightcraft-preview",
  "lightcraft-raster",

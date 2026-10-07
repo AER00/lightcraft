@@ -16,6 +16,8 @@ pub enum ViewMode {
     Survey,
     /// A reference photo (left, fixed) beside the active photo (right, being edited).
     Reference,
+    /// A card per person named on faces (close-up, name, photo count).
+    People,
 }
 
 /// The right-hand tool/panel shown next to the tool strip.
@@ -201,7 +203,7 @@ pub const MIN_PHOTO_WIDTH: f32 = 360.0;
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
     #[serde(default = "crate::i18n::default_language")]
-    pub language: crate::i18n::Language,
+    pub language: crate::i18n::Locale,
     /// The Build Previews run last announced (its identity, finished?).
     #[serde(skip)]
     pub preview_build_seen: Option<(usize, bool)>,
@@ -262,6 +264,8 @@ pub struct UiState {
     pub grid_info: String,
     /// Photo counts next to sources and albums in the left panel.
     pub show_counts: bool,
+    /// Face / pet boxes (read from XMP) over the photo in the loupe.
+    pub face_boxes: bool,
     /// Local sidebar locations hidden with “Remove from Local” (folders on disk are untouched).
     pub hidden_locations: Vec<String>,
     /// Copies opened in an external editor this session (reloaded when the window is focused
@@ -559,6 +563,7 @@ impl Default for UiState {
             show_filenames: true,
             grid_info: "filename".into(),
             show_counts: true,
+            face_boxes: true,
             hidden_locations: Vec::new(),
             dragging_control: None,
             external_edits: Vec::new(),
