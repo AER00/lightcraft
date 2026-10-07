@@ -249,6 +249,16 @@ impl MediaCache {
         self.rendered = Arc::new(PreviewCache::with_disk(rendered_budget(self.budget), dir, disk_bytes));
     }
 
+    /// Change the disk budget of the cache in `dir`: in place when that cache is attached (its
+    /// thumbnails are keyed by content, so they and the textures shown from them stay valid,
+    /// and the same cache object keeps its generation), else attach it.
+    pub fn set_disk_cache_bytes(&mut self, dir: &std::path::Path, disk_bytes: u64) {
+        match self.rendered.disk().filter(|d| d.dir() == dir) {
+            Some(d) => d.set_budget(disk_bytes),
+            None => self.attach_disk_cache(dir, disk_bytes),
+        }
+    }
+
     /// Forget every decoded source (photo ids changed meaning, e.g. another library was opened).
     pub fn clear_sources(&mut self) {
         self.settings_hashes = SettingsHashes::default();

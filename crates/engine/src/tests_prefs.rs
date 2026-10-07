@@ -2,6 +2,7 @@
 //! persistence in prefs.json.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use lightcraft_catalog::MediaKind;
 use lightcraft_develop::Preset;
@@ -261,5 +262,29 @@ fn curve_presets_save_apply_export_import_and_persist() {
     s.open_library(&lib, false).unwrap();
     let names: Vec<String> = s.curve_presets.iter().map(|p| p.name.clone()).collect();
     assert_eq!(names, ["Faded Red", "Linear (imported)"]);
+    let _ = std::fs::remove_dir_all(&lib);
+}
+
+#[test]
+fn resizing_the_disk_cache_keeps_the_cache_and_its_thumbnails() {
+    let lib = temp_dir("resize");
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    let cache = s.media.rendered.clone();
+    let key = lightcraft_preview::hash_bytes(b"thumbnail");
+    let img = lightcraft_raster::Rgba8 { width: 4, height: 4, data: vec![[10, 20, 30, 255]; 16] };
+    cache.put(key, Arc::new(img));
+    let generation = cache.generation();
+    s.execute("library.preferences", &json!({"cacheMb": 300})).unwrap();
+    // the same cache object (the UI keeps its textures), the same generation, the new budget
+    assert!(Arc::ptr_eq(&cache, &s.media.rendered));
+    assert_eq!(s.media.rendered.generation(), generation);
+    assert_eq!(s.media.rendered.disk().unwrap().budget(), 300 << 20);
+    assert!(s.media.rendered.get(key).is_some());
+    // an explicit clear still invalidates
+    s.execute("library.clearPreviews", &json!({})).unwrap();
+    assert_ne!(s.media.rendered.generation(), generation);
+    assert!(s.media.rendered.get(key).is_none());
+    drop(s);
     let _ = std::fs::remove_dir_all(&lib);
 }

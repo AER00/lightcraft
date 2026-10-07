@@ -692,7 +692,9 @@ mod thumbnail_tests {
         }
     }
     fn fixture() -> (crate::LightcraftApp, std::rc::Rc<std::cell::RefCell<Work>>, egui::Context) {
-        let mut s = Session::new();
+        fixture_with(Session::new())
+    }
+    fn fixture_with(mut s: Session) -> (crate::LightcraftApp, std::rc::Rc<std::cell::RefCell<Work>>, egui::Context) {
         s.media.file_loader = Some(Arc::new(|_, _| {
             let mut image = lightcraft_raster::Rgb32f::new(8, 8);
             image.data.fill([0.3, 0.2, 0.1]);
@@ -746,6 +748,36 @@ mod thumbnail_tests {
         }
         assert_eq!(app.renderer.thumb_jobs_built, 1);
         assert_eq!(app.renderer.queue.len(), 1);
+    }
+
+    #[test]
+    fn resizing_the_disk_cache_keeps_textures_and_skips_rebuilds() {
+        let lib = std::env::temp_dir().join(format!("lc-ui-thumb-resize-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&lib);
+        let mut s = Session::new().with_fs();
+        s.open_library(&lib, false).unwrap();
+        let (mut app, work, ctx) = fixture_with(s);
+        request(&mut app);
+        let (slot, job) = take_job(&work);
+        finish(&mut app, &work, &ctx, slot, job.run());
+        assert!(app.renderer.thumb(PhotoId(1)).is_some());
+        let cache = app.session.media.rendered.clone();
+        app.session.execute("library.preferences", &serde_json::json!({"cacheMb": 300})).unwrap();
+        app.renderer.poll(&ctx, &mut app.session);
+        // thumbnails are keyed by content: a new budget leaves them (and the cache) valid
+        assert!(app.renderer.thumb(PhotoId(1)).is_some());
+        assert!(Arc::ptr_eq(&cache, &app.session.media.rendered));
+        for _ in 0..30 {
+            request(&mut app);
+        }
+        assert_eq!(app.renderer.thumb_jobs_built, 1);
+        assert!(work.borrow().jobs.is_empty());
+        // an explicit clear still drops them
+        app.session.execute("library.clearPreviews", &serde_json::json!({})).unwrap();
+        app.renderer.poll(&ctx, &mut app.session);
+        assert!(app.renderer.thumb(PhotoId(1)).is_none());
+        drop(app);
+        let _ = std::fs::remove_dir_all(&lib);
     }
 
     #[test]
