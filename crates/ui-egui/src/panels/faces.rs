@@ -145,13 +145,11 @@ fn model_row(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &Value) 
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if installed {
-                    if m["bundled"] != true {
-                        let r = ui.button("Remove");
-                        register(ui.ctx(), format!("faces:remove:{id}"), r.rect);
-                        if r.clicked() {
-                            let _ = app.run("faces.models.remove", json!({"id": id}));
-                            app.caches.faces_epoch += 1;
-                        }
+                    let r = ui.button("Remove");
+                    register(ui.ctx(), format!("faces:remove:{id}"), r.rect);
+                    if r.clicked() {
+                        let _ = app.run("faces.models.remove", json!({"id": id}));
+                        app.caches.faces_epoch += 1;
                     }
                     if !selected {
                         let r = ui.button("Use");

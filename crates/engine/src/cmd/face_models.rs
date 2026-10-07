@@ -88,7 +88,6 @@ fn installed_models(dir: &Path) -> Vec<Installed> {
 }
 
 fn row(m: &ModelManifest, installed: bool, selected: bool, accepted: &Value) -> Value {
-    let bundled = known::BUNDLED.contains(&m.id.as_str());
     json!({
         "id": m.id,
         "name": m.name,
@@ -99,8 +98,7 @@ fn row(m: &ModelManifest, installed: bool, selected: bool, accepted: &Value) -> 
         "sizeBytes": m.size_bytes,
         "sha256": m.sha256,
         "known": known::all().iter().any(|k| k.id == m.id),
-        "bundled": bundled,
-        "installed": installed || bundled,
+        "installed": installed,
         "selected": selected,
         "accepted": accepted,
     })
@@ -192,9 +190,6 @@ fn install(s: &mut Session, p: &Value) -> Result<Value> {
         Suggestion::Known(m) | Suggestion::Draft { manifest: m, .. } => m,
         Suggestion::Unsupported(why) => return Err(bad(C, format!("this model cannot be used yet: {why}"))),
     };
-    if known::BUNDLED.contains(&m.id.as_str()) {
-        return Err(bad(C, "this model is already included with LightCraft"));
-    }
     if m.role != Role::Embedder {
         return Err(bad(C, "only face recognition models can be installed for now"));
     }
@@ -227,9 +222,6 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
     let dir = models_dir(s, C)?;
     if !manifest::valid_id(id) {
         return Err(bad(C, "not a model id"));
-    }
-    if known::BUNDLED.contains(&id) {
-        return Err(bad(C, "this model is part of LightCraft and cannot be removed"));
     }
     let home = dir.join(id);
     // only a folder that is a model (it has a manifest) is ever deleted
@@ -274,7 +266,7 @@ fn enable(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(query "faces.models.list", "Face Models", [], None, "{} → {dir, enabled, embedder, runtime, models: [{id, name, role, licence{name, commercial, url, notice}, provenance, source, sizeBytes, known, bundled, installed, selected}]}", always, list),
+        cmd!(query "faces.models.list", "Face Models", [], None, "{} → {dir, enabled, embedder, runtime, models: [{id, name, role, licence{name, commercial, url, notice}, provenance, source, sizeBytes, known, installed, selected}]}", always, list),
         cmd!(query "faces.models.inspect", "Inspect Face Model File", [], None, "{path} → what a .onnx file is: {kind: known | draft | unsupported, model, assumptions, reason, alreadyInstalled}; installs nothing", always, inspect),
         cmd!(query "faces.models.install", "Install Face Model", [], None, "{path, acknowledged: true} — copy a .onnx face recognition model into the models folder. `acknowledged` must be true: the user has been shown its licence (see inspect) and accepted it", always, install),
         cmd!(query "faces.models.remove", "Remove Face Model", [], None, "{id} — delete an installed model", always, remove),

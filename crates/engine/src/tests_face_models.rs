@@ -37,8 +37,7 @@ fn the_list_knows_the_known_models_and_is_honest_about_the_runtime() {
     let l = s.execute("faces.models.list", &json!({})).unwrap();
     assert_eq!(l["enabled"], false);
     assert_eq!(l["runtime"], false);
-    assert_eq!(find(&l, "yunet-2023mar")["bundled"], true);
-    assert_eq!(find(&l, "yunet-2023mar")["installed"], true);
+    assert_eq!(find(&l, "yunet-2023mar")["installed"], false, "nothing ships with LightCraft");
     assert_eq!(find(&l, "auraface-v1")["installed"], false);
     assert_eq!(find(&l, "auraface-v1")["licence"]["commercial"], "yes");
     assert_eq!(find(&l, "sface-2021dec")["licence"]["commercial"], "unknown");
