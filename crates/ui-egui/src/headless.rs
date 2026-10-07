@@ -204,6 +204,20 @@ impl Headless {
         }
     }
 
+    /// Run frames until `done` holds or `timeout` passes (a render that finishes on a busy machine
+    /// after a quiet spell, where [`Self::settle`] alone would stop too early). Returns `done`.
+    pub fn step_until(&mut self, timeout: Duration, done: impl Fn(&Self) -> bool) -> bool {
+        let t0 = Instant::now();
+        while !done(self) {
+            if t0.elapsed() > timeout {
+                return false;
+            }
+            self.step();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        true
+    }
+
     /// Rasterize the last frame (with the photo textures).
     pub fn paint(&self) -> ColorImage {
         self.view.paint(&HashMap::new())
@@ -373,7 +387,8 @@ mod tests {
         let r = h.request("ui.hoverWidget", json!({"id": "profileCell:lc.vivid"}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
-        h.step();
+        // the hover render can land after a quiet spell on a loaded machine (FreeBSD CI): wait for it
+        h.step_until(SETTLE, |h| h.app.loupe_shown.map(|l| l.1) == Some("hover"));
         assert_eq!(h.app.hover_preview.as_ref().map(|p| p.label.as_str()), Some("Profile: Vivid"));
         assert_eq!(h.app.loupe_shown.map(|l| l.1), Some("hover"));
         let hover = h.app.renderer.textures.get(&crate::render::Slot::Hover).expect("hover render");
@@ -409,7 +424,7 @@ mod tests {
         let before = photo(&h);
         h.request("ui.hoverWidget", json!({"id": "preset:lc.bw-high-contrast"}), t);
         h.settle(SETTLE);
-        h.step();
+        h.step_until(SETTLE, |h| h.app.loupe_shown.map(|l| l.1) == Some("hover"));
         assert_eq!(h.app.hover_preview.as_ref().map(|p| p.label.as_str()), Some("Preset: High Contrast B&W"));
         assert_eq!(h.app.loupe_shown.map(|l| l.1), Some("hover"));
         let after = photo(&h);
