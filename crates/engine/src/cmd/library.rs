@@ -513,11 +513,11 @@ pub fn specs() -> Vec<CommandSpec> {
             s.selection = vis.first().map(|f| Selection::single(*f)).unwrap_or_default();
             Ok(v)
         }),
-        cmd!("photo.restore", "Restore", [], None, "{ids?}", has_selection, |s, p| for_targets(s, p, "Restore", |id| Some(Op::SetDeleted {
+        cmd!("photo.restore", "Restore", ["Photo"], None, "{ids?}", has_selection, |s, p| for_targets(s, p, "Restore", |id| Some(Op::SetDeleted {
             id,
             deleted: false
         }))),
-        cmd!("photo.deletePermanently", "Delete Permanently", [], None, "{ids?}", has_selection, |s, p| {
+        cmd!("photo.deletePermanently", "Delete Permanently", ["Photo"], None, "{ids?}", has_selection, |s, p| {
             let t = s.targets(p);
             let ops = t.iter().map(|id| s.catalog.delete_permanently_ops(*id)).collect::<Vec<_>>();
             s.commit("Delete Permanently", Op::Batch { ops })?;

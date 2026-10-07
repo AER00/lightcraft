@@ -344,8 +344,13 @@ impl LightcraftApp {
     }
 
     pub fn toast(&mut self, ctx: &egui::Context, text: impl Into<String>) {
+        self.toast_for(ctx, text, 1.4);
+    }
+
+    /// A toast that stays `secs` seconds (messages that say where to look or what to do next).
+    pub fn toast_for(&mut self, ctx: &egui::Context, text: impl Into<String>, secs: f64) {
         let t = ctx.input(|i| i.time);
-        self.ui.toast = Some((text.into(), t + 1.4));
+        self.ui.toast = Some((text.into(), t + secs));
     }
 
     fn drain_control(&mut self, ctx: &egui::Context) {

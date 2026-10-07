@@ -1,12 +1,13 @@
-//! Estimate an ARW starting look from its own JPEG. Colour and luminance are fitted separately;
-//! the JPEG supplies correspondences only, never output pixels or a replacement for RAW editing.
+//! Estimate the starting look of a raw without a camera colour matrix (Sony ARW, Nikon NEF) from its
+//! own JPEG. Colour and luminance are fitted separately; the JPEG supplies correspondences only,
+//! never output pixels or a replacement for RAW editing.
 use lightcraft_color::{Mat3, luminance_2020};
 use lightcraft_pipeline::tone::{CameraTone, ToneMap};
 use lightcraft_raster::{
     Rgb32f,
     resample::{Filter, fit},
 };
-use lightcraft_raw::{RawImage, color::CameraTransform};
+use lightcraft_raw::{RawFormat, RawImage, color::CameraTransform};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CameraLook {
@@ -14,8 +15,16 @@ pub(crate) struct CameraLook {
     pub tone: CameraTone,
 }
 
+/// Raw formats whose decoder supplies vendor white-balance multipliers but no camera colour matrix:
+/// their starting look is fitted to the file's own JPEG, and white balance is relative to the
+/// as-shot look (`docs/camera-preview-colour.md`). The catalog's `Photo::relative_wb` matches the
+/// same formats by file extension.
+pub(crate) fn file_local_look(format: RawFormat) -> bool {
+    matches!(format, RawFormat::Arw | RawFormat::Nef | RawFormat::Nrw)
+}
+
 pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransform) -> Option<CameraLook> {
-    if !transform.matrix_is_fallback || raw.format != lightcraft_raw::RawFormat::Arw {
+    if !transform.matrix_is_fallback || !file_local_look(raw.format) {
         return None;
     }
     let jpeg = lightcraft_raw::embedded_preview(bytes)?;
@@ -38,7 +47,7 @@ pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransf
     sensor.map_in_place(|p| transform.matrix.apply_f32(std::array::from_fn(|i| p[i] * transform.wb[i] * gain)));
     let look = fit_pairs(&sensor, &reference)?;
     if lightcraft_pipeline::profiling() {
-        eprintln!("[profile] ARW camera look: {:?}, {:?}", look.matrix.0, look.tone);
+        eprintln!("[profile] {:?} camera look: {:?}, {:?}", raw.format, look.matrix.0, look.tone);
     }
     Some(look)
 }
@@ -137,7 +146,11 @@ fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
         }
     }
     if lightcraft_pipeline::profiling() {
-        eprintln!("[profile] ARW holdout RMS {:.5} -> {:.5} ({samples} channels)", (before / samples as f64).sqrt(), (after / samples as f64).sqrt());
+        eprintln!(
+            "[profile] camera look holdout RMS {:.5} -> {:.5} ({samples} channels)",
+            (before / samples as f64).sqrt(),
+            (after / samples as f64).sqrt()
+        );
     }
     if !after.is_finite() || samples == 0 || after >= before * MIN_IMPROVEMENT || after / samples as f64 > MAX_HOLDOUT_RMS.powi(2) {
         return None;
@@ -246,6 +259,29 @@ mod tests {
             });
         }
         assert!(fit_pairs(&sensor, &reference).is_some());
+    }
+
+    #[test]
+    fn sony_and_nikon_raws_get_a_file_local_look() {
+        assert!([RawFormat::Arw, RawFormat::Nef, RawFormat::Nrw].into_iter().all(file_local_look));
+        assert!(![RawFormat::Dng, RawFormat::Cr2, RawFormat::Raf].into_iter().any(file_local_look));
+    }
+
+    /// A public D7500 NEF (skipped without the corpus): its look is fitted to its own JPEG and white
+    /// balance is relative to the as-shot look.
+    #[test]
+    fn corpus_nef_gets_a_camera_look() {
+        let path = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+            .join("raw/nef-nikon-d7500-lossless14.nef");
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!("skip: {} absent", path.display());
+            return;
+        };
+        let (_, info) = crate::files::load_bytes(&bytes, 400).unwrap();
+        assert!(info.camera_tone.is_some(), "no camera look fitted");
+        assert!(info.relative_wb && info.as_shot_temp == 6500.0 && info.as_shot_tint == 0.0);
     }
 
     #[test]
