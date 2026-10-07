@@ -85,13 +85,48 @@ pub fn cargo() -> Command {
     // tests run. Scope these overridable defaults to CI, including parity/WASM
     // subprocesses, without changing ordinary developer builds or GPU coverage.
     if std::env::args().nth(1).as_deref() == Some("ci") {
-        for (key, value) in [("CARGO_PROFILE_DEV_DEBUG", "line-tables-only"), ("CARGO_BUILD_JOBS", "4"), ("RUST_TEST_THREADS", "4")] {
+        static JOBS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+        let (build, threads) = JOBS.get_or_init(|| {
+            let jobs = ci_jobs(total_ram_gb(), std::thread::available_parallelism().map_or(4, |n| n.get()));
+            // More test threads barely shorten CI (a few heavy tests dominate) but make the
+            // wall-clock frame-budget tests flaky on a loaded machine.
+            (jobs.to_string(), jobs.min(4).to_string())
+        });
+        for (key, value) in
+            [("CARGO_PROFILE_DEV_DEBUG", "line-tables-only"), ("CARGO_BUILD_JOBS", build.as_str()), ("RUST_TEST_THREADS", threads.as_str())]
+        {
             if std::env::var_os(key).is_none() {
                 c.env(key, value);
             }
         }
     }
     c
+}
+
+/// CI build jobs: one per 2 GB of RAM, at most one per CPU, 4 when the RAM is unknown. With
+/// line-table debuginfo, 4 jobs measured about 3 GB of RAM in use and 2 jobs about 1.5 GB, so
+/// 8 GB machines get 4 and 4 GB machines get 2. Test threads are this, capped at 4.
+fn ci_jobs(ram_gb: Option<u64>, cpus: usize) -> usize {
+    ram_gb.map_or(4, |gb| usize::try_from(gb / 2).unwrap_or(usize::MAX)).clamp(1, cpus.max(1))
+}
+
+/// Installed physical memory in whole GB, if the OS reports it.
+fn total_ram_gb() -> Option<u64> {
+    let bytes: u64 = if cfg!(target_os = "linux") {
+        let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+        let kb = info.lines().find_map(|l| l.strip_prefix("MemTotal:"))?.trim().trim_end_matches("kB").trim();
+        kb.parse::<u64>().ok()?.checked_mul(1024)?
+    } else {
+        let (program, args): (&str, &[&str]) = if cfg!(windows) {
+            ("powershell", &["-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"])
+        } else {
+            ("sysctl", &["-n", "hw.memsize"])
+        };
+        let out = Command::new(program).args(args).output().ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok()?
+    };
+    // round to the nearest GB: "8 GB" machines report slightly less
+    Some((bytes + (1 << 29)) >> 30)
 }
 
 pub fn run(mut cmd: Command, what: &str) -> Result<(), String> {
@@ -358,4 +393,20 @@ Tests that use a corpus skip cleanly when it is absent.
         run(curl, &format!("curl {url}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod ci_jobs_tests {
+    use super::ci_jobs;
+
+    #[test]
+    fn jobs_follow_ram_and_never_exceed_the_cpus() {
+        assert_eq!(ci_jobs(Some(4), 8), 2);
+        assert_eq!(ci_jobs(Some(8), 8), 4);
+        assert_eq!(ci_jobs(Some(32), 32), 16);
+        assert_eq!(ci_jobs(Some(64), 8), 8, "capped at the CPU count");
+        assert_eq!(ci_jobs(Some(1), 8), 1, "at least one");
+        assert_eq!(ci_jobs(None, 32), 4, "unknown RAM keeps the old default");
+        assert_eq!(ci_jobs(None, 2), 2);
+    }
 }
