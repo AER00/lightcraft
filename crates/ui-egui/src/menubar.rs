@@ -186,6 +186,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "---",
             "photo.saveMetadataToFile",
             "photo.readMetadataFromFile",
+            "photo.reload",
             "app.showInFinder",
             "dialog.rename",
             "dialog.captureTime",
