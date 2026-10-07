@@ -826,38 +826,55 @@ mod tests {
     }
 
     /// Local: Remove from Local hides a sidebar location (nothing on disk changes) and the
-    /// "Show hidden locations" row puts it back.
+    /// "Show hidden locations" row puts it back. The folder is browsed and kept the way Browse
+    /// Folder… does it, in the temporary folder — on Windows beneath Home, whose tree must not
+    /// open down to the hidden folder and push the restore row out of view.
     #[test]
     fn local_location_can_be_hidden_and_restored() {
-        let mut h = demo([1300.0, 900.0]);
+        let size = [1300.0, 900.0];
+        let mut h = demo(size);
         let t = Duration::from_secs(10);
         let dir = std::env::temp_dir().join(format!("lc-ui-hide-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.to_string_lossy().to_string();
-        let ids = |h: &mut Headless| -> Vec<String> {
+        let rects = |h: &mut Headless| -> Vec<(String, Vec<f64>)> {
             let w = h.request("ui.widgets", json!({"filter": "source:local:"}), t);
-            w["result"].as_array().unwrap().iter().filter_map(|x| x["id"].as_str().map(String::from)).collect()
+            w["result"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| (x["id"].as_str().unwrap().to_string(), x["rect"].as_array().unwrap().iter().filter_map(|v| v.as_f64()).collect()))
+                .collect()
         };
+        let ids = |h: &mut Headless| -> Vec<String> { rects(h).into_iter().map(|(id, _)| id).collect() };
         h.request("ui.set", json!({"leftPanel": true}), t);
-        // Keep the fixture as a root rather than depending on its location
-        // relative to the machine's built-in Home folder.
-        h.request("engine.execute", json!({"command": "local.addRoot", "params": {"path": path}}), t);
-        h.request("engine.execute", json!({"command": "library.browse", "params": {"path": path}}), t);
+        // Browse Folder… browses the picked folder and keeps it in Local within one frame; a
+        // request runs frames, so keep it first (no frame sees it browsed but not yet kept)
+        let r = h.request("engine.execute", json!({"command": "local.addRoot", "params": {"path": path}}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        let r = h.request("engine.execute", json!({"command": "library.browse", "params": {"path": path}}), t);
+        assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
-        assert!(ids(&mut h).contains(&format!("source:local:{path}")));
+        assert!(h.wait_for_widget(&format!("source:local:{path}"), t), "the browsed folder is listed: {:?}", ids(&mut h));
         assert!(!ids(&mut h).iter().any(|i| i == "source:local:restoreHidden"));
-        // Test sidebar visibility independently of browsing: hiding a folder
-        // beneath Home otherwise expands the user's entire parent tree and
-        // pushes the restore button outside the viewport.
-        assert_eq!(h.request("ui.clickWidget", json!({"id": "source:all"}), t)["ok"], true);
-        h.settle(SETTLE);
+        // hide it while it is still being browsed
         let r = h.request("engine.execute", json!({"command": "local.hide", "params": {"path": path}}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
-        let after = ids(&mut h);
-        assert!(!after.contains(&format!("source:local:{path}")), "{after:?}");
-        assert!(after.iter().any(|i| i == "source:local:restoreHidden"), "{after:?}");
+        // give any listing a reveal would wait for time to arrive
+        for _ in 0..20 {
+            h.step();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        h.settle(SETTLE);
+        let after = rects(&mut h);
+        let after_ids: Vec<&str> = after.iter().map(|(id, _)| id.as_str()).collect();
+        assert!(!after_ids.contains(&format!("source:local:{path}").as_str()), "{after_ids:?}");
+        let restore = after.iter().find(|(id, _)| id == "source:local:restoreHidden").map(|(_, r)| r.clone());
+        let restore = restore.unwrap_or_else(|| panic!("no restore row: {after_ids:?}"));
+        assert!(restore[1] >= 0.0 && restore[1] + restore[3] <= f64::from(size[1]), "the restore row is in view: {restore:?} {after_ids:?}");
+        assert!(h.app.session.browse.is_some(), "hiding does not stop browsing");
         assert!(dir.is_dir(), "the folder itself is untouched");
         assert_eq!(h.request("ui.clickWidget", json!({"id": "source:local:restoreHidden"}), t)["ok"], true);
         h.settle(SETTLE);
