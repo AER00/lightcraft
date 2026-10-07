@@ -60,13 +60,16 @@ fn luma(p: [f64; 3]) -> f64 {
     p[0] * 0.2627 + p[1] * 0.6780 + p[2] * 0.0593
 }
 
+/// The finish stage's tone map and chroma curve (`lightcraft_pipeline::finish`).
 fn displayed(scene: [f64; 3], tone: &ToneMap) -> [f64; 3] {
     let scene = scene.map(|v| v.max(0.0));
     let y = luma(scene);
     if y <= 0.0 {
         return [0.0; 3];
     }
-    scene.map(|v| v * f64::from(tone.apply(y as f32)) / y)
+    let o = f64::from(tone.apply(y as f32));
+    let k = f64::from(tone.chroma_scale(o as f32));
+    scene.map(|v| o + (v * o / y - o) * k)
 }
 
 fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
@@ -74,13 +77,18 @@ fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
         return None;
     }
     let mut pairs = Vec::new();
+    // Highlights too (camera JPEGs bleach colours toward white there), for the chroma curve only.
+    let mut bright = Vec::new();
     let mut colour = 0;
     for (input, output) in sensor.data.iter().zip(&reference.data) {
         let y = luminance_2020(*output);
-        if !input.iter().all(|v| v.is_finite() && *v > 0.001 && *v < 1.5)
-            || !output.iter().all(|v| v.is_finite() && *v > 0.004 && *v < 0.98)
-            || !(0.015..0.85).contains(&y)
-        {
+        if !input.iter().all(|v| v.is_finite() && *v > 0.001 && *v < 1.5) || !output.iter().all(|v| v.is_finite() && *v >= 0.0) {
+            continue;
+        }
+        if (0.015..=1.0).contains(&y) {
+            bright.push((input.map(f64::from), output.map(f64::from)));
+        }
+        if !output.iter().all(|v| *v > 0.004 && *v < 0.98) || !(0.015..0.85).contains(&y) {
             continue;
         }
         let min = output.iter().copied().fold(f32::INFINITY, f32::min);
@@ -121,8 +129,10 @@ fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
     if !matrix.0.iter().flatten().all(|v| v.is_finite() && v.abs() < 8.0) {
         return None;
     }
-    // Matrix + table when the table helps the held-out pixels, else the matrix alone.
-    let mut best: Option<(f64, usize, CameraLook)> = None;
+    // Matrix + table when the table helps the held-out pixels, else the matrix alone. Chosen by
+    // error in gamma-encoded display values (closer to what is seen: in linear values a slightly
+    // missed bright rock outweighs a clearly wrong dark shirt); the acceptance gates below stay linear.
+    let mut best: Option<(f64, f64, usize, CameraLook)> = None;
     for hue_sat in [fit_hue_sat(&pairs, &matrix), None] {
         let correction = hue_sat.as_ref().and_then(HueSat::new);
         let colour = |x: [f64; 3]| {
@@ -132,21 +142,25 @@ fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
         let tone_pairs: Vec<_> =
             pairs.iter().enumerate().filter(|(i, _)| i % 3 != 0).map(|(_, (x, y))| (luma(colour(*x).map(|v| v.max(0.0))), luma(*y))).collect();
         let Some(curve) = fit_tone(tone_pairs) else { continue };
-        let tone = ToneMap::camera(&curve, 0.0, 0.0, 0.0);
-        let mut after = 0.0;
-        let mut samples = 0;
+        let mut look = CameraLook { matrix, tone: curve, hue_sat: hue_sat.clone() };
+        if let Some(tone) = fit_chroma(&bright, &look) {
+            look.tone = tone;
+        }
+        let tone = ToneMap::camera(&look.tone, 0.0, 0.0, 0.0);
+        let (mut linear, mut perceptual, mut samples) = (0.0, 0.0, 0);
         for (x, target) in pairs.iter().step_by(3) {
             let corrected = displayed(colour(*x), &tone);
             for c in 0..3 {
-                after += (corrected[c] - target[c]).powi(2);
+                linear += (corrected[c] - target[c]).powi(2);
+                perceptual += (corrected[c].max(0.0).powf(1.0 / 2.2) - target[c].max(0.0).powf(1.0 / 2.2)).powi(2);
                 samples += 1;
             }
         }
-        if after.is_finite() && best.as_ref().is_none_or(|b| after < b.0) {
-            best = Some((after, samples, CameraLook { matrix, tone: curve, hue_sat }));
+        if linear.is_finite() && perceptual.is_finite() && best.as_ref().is_none_or(|b| perceptual < b.0) {
+            best = Some((perceptual, linear, samples, look));
         }
     }
-    let (after, samples, look) = best?;
+    let (_, after, samples, look) = best?;
     let original_tone = ToneMap::new(0.0, 0.0, 0.0);
     let before: f64 = pairs
         .iter()
@@ -218,9 +232,13 @@ fn hue_saturation(p: [f64; 3]) -> Option<(f64, f64)> {
 /// that want the opposite shift), saturation 0, 0.25 … 1. Value is not an axis: tone is fitted separately.
 const TABLE_HUES: usize = 72;
 const TABLE_SATS: usize = 5;
-/// Kernel widths around each table node (hue in degrees, saturation).
+/// Value levels (sRGB-encoded, as DNG tables with encoding 1): cameras turn dark yellows toward
+/// orange but bright yellow-greens toward green, which one shift per hue averages away.
+const TABLE_VALS: usize = 5;
+/// Kernel widths around each table node (hue in degrees, saturation, encoded value).
 const KERNEL_HUE: f64 = 2.5;
 const KERNEL_SAT: f64 = 0.15;
+const KERNEL_VAL: f64 = 0.12;
 /// Kernel weight at which a node keeps half of its estimate; sparse nodes shrink to identity.
 const SHRINK_WEIGHT: f64 = 5.0;
 
@@ -229,12 +247,14 @@ const SHRINK_WEIGHT: f64 = 5.0;
 /// Saturation 0 stays identity, so neutrals are never tinted.
 fn fit_hue_sat(pairs: &[([f64; 3], [f64; 3])], matrix: &Mat3) -> Option<HsvTable> {
     let to = to_prophoto();
-    let samples: Vec<(f64, f64, f64, f64)> = pairs
+    let samples: Vec<(f64, f64, f64, f64, f64)> = pairs
         .iter()
         .enumerate()
         .filter(|(i, _)| i % 3 != 0)
         .filter_map(|(_, (x, y))| {
-            let (hp, sp) = hue_saturation(to.apply(matrix.apply(*x)))?;
+            let p = to.apply(matrix.apply(*x));
+            let (hp, sp) = hue_saturation(p)?;
+            let value = f64::from(lightcraft_color::transfer::linear_to_srgb(p[0].max(p[1]).max(p[2]).min(1.0) as f32));
             let (ht, st) = hue_saturation(to.apply(*y))?;
             // hue is meaningless near neutral
             if sp < 0.08 || st < 0.02 {
@@ -242,43 +262,110 @@ fn fit_hue_sat(pairs: &[([f64; 3], [f64; 3])], matrix: &Mat3) -> Option<HsvTable
             }
             let shift = ((ht - hp + 180.0).rem_euclid(360.0) - 180.0).clamp(-30.0, 30.0);
             let log_scale = (st / sp).ln().clamp(-0.7, 0.7);
-            Some((hp, sp.min(1.0), shift, log_scale))
+            Some((hp, sp.min(1.0), value, shift, log_scale))
         })
         .collect();
     if samples.len() < 64 {
         return None;
     }
-    let mut data = vec![[0.0f32, 1.0, 1.0]; TABLE_HUES * TABLE_SATS];
-    for h in 0..TABLE_HUES {
-        let hue = h as f64 * 360.0 / TABLE_HUES as f64;
-        for s in 1..TABLE_SATS {
-            let sat = s as f64 / (TABLE_SATS - 1) as f64;
-            let (mut weight, mut shift, mut log_scale) = (0.0, 0.0, 0.0);
-            for &(hp, sp, dh, ls) in &samples {
-                let dhue = (hp - hue + 180.0).rem_euclid(360.0) - 180.0;
-                if dhue.abs() > 4.0 * KERNEL_HUE {
-                    continue;
+    let mut data = vec![[0.0f32, 1.0, 1.0]; TABLE_VALS * TABLE_HUES * TABLE_SATS];
+    for v in 0..TABLE_VALS {
+        let val = v as f64 / (TABLE_VALS - 1) as f64;
+        for h in 0..TABLE_HUES {
+            let hue = h as f64 * 360.0 / TABLE_HUES as f64;
+            for s in 1..TABLE_SATS {
+                let sat = s as f64 / (TABLE_SATS - 1) as f64;
+                let (mut weight, mut shift, mut log_scale) = (0.0, 0.0, 0.0);
+                for &(hp, sp, vp, dh, ls) in &samples {
+                    let dhue = (hp - hue + 180.0).rem_euclid(360.0) - 180.0;
+                    if dhue.abs() > 4.0 * KERNEL_HUE {
+                        continue;
+                    }
+                    let d2 = (dhue / KERNEL_HUE).powi(2) + ((sp - sat) / KERNEL_SAT).powi(2) + ((vp - val) / KERNEL_VAL).powi(2);
+                    let k = (-0.5 * d2).exp() * sp;
+                    weight += k;
+                    shift += k * dh;
+                    log_scale += k * ls;
                 }
-                let k = (-0.5 * ((dhue / KERNEL_HUE).powi(2) + ((sp - sat) / KERNEL_SAT).powi(2))).exp() * sp;
-                weight += k;
-                shift += k * dh;
-                log_scale += k * ls;
-            }
-            if weight > 0.0
-                && let Some(entry) = data.get_mut(h * TABLE_SATS + s)
-            {
-                let shrink = 1.0 / (weight + SHRINK_WEIGHT);
-                *entry = [(shift * shrink) as f32, (log_scale * shrink).exp() as f32, 1.0];
+                if weight > 0.0
+                    && let Some(entry) = data.get_mut((v * TABLE_HUES + h) * TABLE_SATS + s)
+                {
+                    let shrink = 1.0 / (weight + SHRINK_WEIGHT);
+                    *entry = [(shift * shrink) as f32, (log_scale * shrink).exp() as f32, 1.0];
+                }
             }
         }
     }
     data.iter().all(|e| e.iter().all(|v| v.is_finite())).then_some(HsvTable {
         hue_divisions: TABLE_HUES,
         sat_divisions: TABLE_SATS,
-        val_divisions: 1,
+        val_divisions: TABLE_VALS,
         data,
-        srgb_value: false,
+        srgb_value: true,
     })
+}
+
+/// Kernel width of the chroma curve's nodes (display luminance) and the weight at which a node
+/// keeps half of its estimate.
+const CHROMA_KERNEL: f64 = 0.08;
+const CHROMA_SHRINK: f64 = 2.0;
+
+/// The look's tone curve with a chroma-by-display-luminance curve fitted to `pairs` (two thirds
+/// train, one third held out), when that lowers the held-out error. Colourfulness is compared as
+/// the distance from neutral of luminance-normalised RGB.
+fn fit_chroma(pairs: &[([f64; 3], [f64; 3])], look: &CameraLook) -> Option<CameraTone> {
+    let correction = look.hue_sat.as_ref().and_then(HueSat::new);
+    let scene = |x: &[f64; 3]| {
+        let p = look.matrix.apply(*x);
+        correction.as_ref().map_or(p, |c| c.apply(p.map(|v| v as f32)).map(f64::from))
+    };
+    let tone = ToneMap::camera(&look.tone, 0.0, 0.0, 0.0);
+    let predict = |x: &[f64; 3]| displayed(scene(x), &tone);
+    let chroma = |p: [f64; 3]| {
+        let y = luma(p);
+        (y > 0.0).then(|| p.iter().map(|v| (v / y - 1.0).powi(2)).sum::<f64>().sqrt())
+    };
+    let samples: Vec<(f64, f64, f64)> = pairs
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % 3 != 0)
+        .filter_map(|(_, (x, y))| {
+            let p = predict(x);
+            let (cp, cy) = (chroma(p)?, chroma(*y)?);
+            (cp > 0.05).then(|| (luma(p), cp, (cy.max(1e-3) / cp).ln().clamp(0.05f64.ln(), 2.5f64.ln())))
+        })
+        .collect();
+    if samples.len() < 64 {
+        return None;
+    }
+    let mut curve = [1.0f32; lightcraft_pipeline::tone::CHROMA_N];
+    for (j, node) in curve.iter_mut().enumerate() {
+        let at = j as f64 / (lightcraft_pipeline::tone::CHROMA_N - 1) as f64;
+        let (mut weight, mut sum) = (0.0, 0.0);
+        for &(o, cp, log_ratio) in &samples {
+            let k = (-0.5 * ((o - at) / CHROMA_KERNEL).powi(2)).exp() * cp;
+            weight += k;
+            sum += k * log_ratio;
+        }
+        *node = (sum / (weight + CHROMA_SHRINK)).exp() as f32;
+    }
+    let fitted = look.tone.with_chroma(curve)?;
+    let with = ToneMap::camera(&fitted, 0.0, 0.0, 0.0);
+    let error = |map: &ToneMap| -> f64 {
+        pairs
+            .iter()
+            .step_by(3)
+            .map(|(x, y)| {
+                let p = displayed(scene(x), map);
+                (0..3).map(|c| (p[c] - y[c]).powi(2)).sum::<f64>()
+            })
+            .sum()
+    };
+    let (before, after) = (error(&tone), error(&with));
+    if lightcraft_pipeline::profiling() {
+        eprintln!("[profile] ARW chroma curve {curve:?}: held-out error {before:.4} -> {after:.4}");
+    }
+    (after.is_finite() && after < before).then_some(fitted)
 }
 
 fn median(values: &mut [f64]) -> Option<f64> {
@@ -445,6 +532,47 @@ mod tests {
         assert!(hue_sat.apply(grey).iter().all(|v| (v - 0.3).abs() < 1e-4), "{:?}", hue_sat.apply(grey));
         let green = [0.2, 0.4, 0.05];
         assert!((luminance_2020(hue_sat.apply(green)) - luminance_2020(green)).abs() < 1e-5);
+    }
+
+    /// A camera that saturates shadows and bleaches highlights toward white (a per-channel curve),
+    /// which a luminance tone curve can't: the fitted chroma curve must follow it, so bright
+    /// warm-tinted rock renders white instead of cream.
+    #[test]
+    fn chroma_curve_follows_highlight_bleaching() {
+        let known = Mat3([[1.8, -0.4, -0.1], [-0.2, 1.5, -0.1], [-0.05, -0.3, 1.7]]);
+        let camera_chroma = |o: f32| 1.3 - 1.1 * o;
+        let mut sensor = Rgb32f::new(96, 64);
+        let mut reference = sensor.clone();
+        for (i, (src, dst)) in sensor.data.iter_mut().zip(&mut reference.data).enumerate() {
+            let ev = 0.02 + (i % 37) as f32 * 0.03;
+            *src = [ev * (0.75 + (i % 11) as f32 * 0.05), ev, ev * (0.7 + (i % 13) as f32 * 0.05)];
+            let p = known.apply_f32(*src);
+            let y = luminance_2020(p);
+            let o = 1.0 - (-2.5 * y).exp();
+            let k = camera_chroma(o);
+            *dst = p.map(|v| (o + (v * o / y - o) * k).clamp(0.0, 0.999));
+        }
+        let fit = fit_pairs(&sensor, &reference).unwrap();
+        // relative to the matrix, which already carries the average colourfulness
+        let chroma = fit.tone.chroma();
+        assert!(chroma[6] < 0.5 * chroma[1], "highlights bleach relative to shadows: {chroma:?}");
+        // and the rendered highlights land on the camera's, far closer than without the curve
+        let with = ToneMap::camera(&fit.tone, 0.0, 0.0, 0.0);
+        let without = ToneMap::camera(&fit.tone.with_chroma([1.0; lightcraft_pipeline::tone::CHROMA_N]).unwrap(), 0.0, 0.0, 0.0);
+        let highlight_error = |map: &ToneMap| -> f64 {
+            sensor
+                .data
+                .iter()
+                .zip(&reference.data)
+                .filter(|(_, y)| luminance_2020(**y) > 0.7)
+                .map(|(x, y)| {
+                    let p = displayed(fit.matrix.apply(x.map(f64::from)), map);
+                    (0..3).map(|c| (p[c] - f64::from(y[c])).powi(2)).sum::<f64>()
+                })
+                .sum()
+        };
+        let (a, b) = (highlight_error(&without), highlight_error(&with));
+        assert!(b < 0.5 * a, "highlight error {a:.4} -> {b:.4}");
     }
 
     #[test]

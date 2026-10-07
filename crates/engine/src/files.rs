@@ -263,11 +263,12 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
                 m[1][0] * c[0] + m[1][1] * c[1] + m[1][2] * c[2],
                 m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2],
             ];
-            let rgb = hue_sat.as_ref().map_or(rgb, |h| h.apply(rgb));
-            match &tables {
-                Some(tables) => tables.apply(rgb, gain).map(|v| v.max(0.0)),
-                None => rgb.map(|v| (v * gain).max(0.0)),
-            }
+            let rgb = match &tables {
+                Some(tables) => tables.apply(rgb, gain),
+                None => rgb.map(|v| v * gain),
+            };
+            // after the baseline exposure, as when it was fitted
+            hue_sat.as_ref().map_or(rgb, |h| h.apply(rgb)).map(|v| v.max(0.0))
         });
         stages.push(("colour", t0.elapsed()));
         let img = fit(&img, max_edge, max_edge, Filter::Box);
