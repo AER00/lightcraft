@@ -1,7 +1,7 @@
 //! LightCraft's egui frontend: a Lightroom-style UI over `lightcraft-engine`.
 //!
 //! The UI is thin: every action goes through [`LightcraftApp::run`], which handles UI commands
-//! (views, panels, zoom — see [`menus::UI_COMMANDS`]) and forwards everything else to the engine.
+//! (views, panels, zoom — see [`menus::ui_commands`]) and forwards everything else to the engine.
 //! The same entry point serves menus, shortcuts, buttons and the control channel ([`control`]).
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -157,6 +157,9 @@ pub struct LightcraftApp {
     /// Clear `synthetic_mods` on the next frame.
     synthetic_mods_release: bool,
     styled: bool,
+    /// The language the installed fonts were built for: the CJK fallback order follows the UI
+    /// language's script, so switching language reinstalls them.
+    font_language: i18n::Locale,
     fonts_ready: bool,
     last_time: f64,
     /// Rect of the photo canvas and the displayed image (screen points) from the last frame.
@@ -223,6 +226,7 @@ impl LightcraftApp {
             synthetic_mods: egui::Modifiers::NONE,
             synthetic_mods_release: false,
             styled: false,
+            font_language: i18n::Locale::En,
             fonts_ready: false,
             last_time: 0.0,
             canvas_rect: None,
@@ -344,8 +348,13 @@ impl LightcraftApp {
     }
 
     pub fn toast(&mut self, ctx: &egui::Context, text: impl Into<String>) {
+        self.toast_for(ctx, text, 1.4);
+    }
+
+    /// A toast that stays `secs` seconds (messages that say where to look or what to do next).
+    pub fn toast_for(&mut self, ctx: &egui::Context, text: impl Into<String>, secs: f64) {
         let t = ctx.input(|i| i.time);
-        self.ui.toast = Some((text.into(), t + 1.4));
+        self.ui.toast = Some((text.into(), t + secs));
     }
 
     fn drain_control(&mut self, ctx: &egui::Context) {
@@ -497,6 +506,12 @@ impl LightcraftApp {
             let repaint = ctx.clone();
             self.session.media.availability.run_in_background(std::sync::Arc::new(move || repaint.request_repaint()));
             self.styled = true;
+            self.font_language = self.ui.language;
+        } else if self.font_language != self.ui.language {
+            // Shared Han characters take the active language's forms (Japanese faces for 日本語,
+            // the Simplified Chinese face for 简体中文): rebuild the fallback order.
+            theme::install_fonts(ctx);
+            self.font_language = self.ui.language;
         } else {
             self.fonts_ready = true;
         }
@@ -713,6 +728,7 @@ impl LightcraftApp {
             state::ViewMode::Compare => panels::compare::show_compare(self, ui),
             state::ViewMode::Survey => panels::compare::show_survey(self, ui),
             state::ViewMode::Reference => panels::compare::show_reference(self, ui),
+            state::ViewMode::People => panels::people::show(self, ui),
         });
         panels::second::show(self, &ctx);
         panels::notices::show(self, &ctx);
@@ -789,6 +805,7 @@ mod drop_tests {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
+    people: Option<(u64, lightcraft_catalog::Filter, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
@@ -831,6 +848,23 @@ impl Caches {
             _ => {
                 let t = std::sync::Arc::new(cat.keyword_tree());
                 self.keyword_tree = Some((cat.revision, t.clone()));
+                t
+            }
+        }
+    }
+    /// The people named on faces among the photos the filter lets through (its own `person` aside),
+    /// with photo counts.
+    pub fn people(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+        filter: &lightcraft_catalog::Filter,
+    ) -> std::sync::Arc<Vec<lightcraft_catalog::Person>> {
+        let key = lightcraft_catalog::Filter { person: None, ..filter.clone() };
+        match &self.people {
+            Some((r, f, t)) if *r == cat.revision && *f == key => t.clone(),
+            _ => {
+                let t = std::sync::Arc::new(cat.people_in(&key));
+                self.people = Some((cat.revision, key, t.clone()));
                 t
             }
         }

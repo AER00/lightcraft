@@ -1,5 +1,5 @@
 //! The menu bar model: File, Edit, View, Photo, Window, Help, generated from the command registry
-//! (engine commands with menu paths + [`crate::menus::UI_COMMANDS`]) with live labels, shortcuts,
+//! (engine commands with menu paths + [`crate::menus::ui_commands`]) with live labels, shortcuts,
 //! enabled and checked state.
 //!
 //! One model drives every menu surface: the native macOS menu bar (built by the desktop host), the
@@ -119,9 +119,11 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "view.detail",
             "view.compare",
             "view.survey",
+            "view.people",
             "---",
             "view.leftPanel",
             "view.photoCounts",
+            "view.faceBoxes",
             "view.filmstrip",
             "view.histogram",
             "view.navigator",
@@ -186,12 +188,15 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "---",
             "photo.saveMetadataToFile",
             "photo.readMetadataFromFile",
+            "photo.reload",
             "app.showInFinder",
             "dialog.rename",
             "dialog.captureTime",
             "photo.tagFromTracklog",
             "---",
             "photo.delete",
+            "photo.restore",
+            "photo.deletePermanently",
         ],
     ),
     (
@@ -252,11 +257,20 @@ const HIDDEN: &[&str] = &[
     "preset.create",
 ];
 
-/// Items only some hosts have are left out of the others' menus (the web build's library backup).
+/// The selection includes a photo in Recently Deleted.
+pub(crate) fn selection_deleted(app: &LightcraftApp) -> bool {
+    let s = &app.session;
+    s.selection.ids.iter().copied().chain(s.selection.active).any(|id| s.catalog.photo(id).is_some_and(|p| p.deleted))
+}
+
+/// Items only some hosts have are left out of the others' menus (the web build's library backup);
+/// Restore and Delete Permanently replace Delete for photos in Recently Deleted.
 fn host_supports(app: &LightcraftApp, id: &str) -> bool {
     match id {
         "file.backupLibrary" => app.services.backup_library.is_some(),
         "file.restoreLibrary" => app.services.restore_library.is_some(),
+        "photo.restore" | "photo.deletePermanently" => selection_deleted(app),
+        "photo.delete" => !selection_deleted(app),
         _ => true,
     }
 }
@@ -270,8 +284,8 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
     let u = &app.ui;
     let panel = |p: RightPanel| Some(u.right == p);
     match id {
-        "app.language.english" => Some(u.language == crate::i18n::Language::En),
-        "app.language.japanese" => Some(u.language == crate::i18n::Language::Ja),
+        // Every language's command is checked when it is the active one.
+        _ if crate::menus::language_from_command(id).is_some() => Some(crate::menus::language_from_command(id) == Some(u.language)),
         "develop.autoSync" => Some(app.session.auto_sync),
         "view.photoCounts" => Some(u.show_counts),
         "view.secondWindow" => Some(u.second_window),
@@ -280,8 +294,10 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
         "view.detail" => Some(u.view == ViewMode::Detail),
         "view.compare" => Some(u.view == ViewMode::Compare),
         "view.survey" => Some(u.view == ViewMode::Survey),
+        "view.people" => Some(u.view == ViewMode::People),
         "view.reference" => Some(u.view == ViewMode::Reference),
         "view.leftPanel" => Some(u.left_panel),
+        "view.faceBoxes" => Some(u.face_boxes),
         "view.filmstrip" => Some(u.filmstrip),
         "view.histogram" => Some(u.histogram),
         "view.clipping" => Some(u.show_clipping),
@@ -828,8 +844,9 @@ mod tests {
         let titles: Vec<&str> = bar.iter().map(|(t, _)| t.as_str()).collect();
         assert_eq!(titles, MENUS);
         let all: Vec<MenuNode> = bar.iter().flat_map(|(_, v)| v.clone()).collect();
-        // every engine command with a menu path is reachable (parameterized ones via submenus)
-        for c in lightcraft_engine::command_specs().iter().filter(|c| !c.menu.is_empty() && !HIDDEN.contains(&c.id)) {
+        // every engine command with a menu path is reachable (parameterized ones via submenus; items
+        // that follow the state, like Restore for deleted photos, when it applies)
+        for c in lightcraft_engine::command_specs().iter().filter(|c| !c.menu.is_empty() && !HIDDEN.contains(&c.id) && host_supports(&app, c.id)) {
             assert!(find(&all, c.id).is_some(), "{} missing from the menu bar", c.id);
         }
         for id in ["photo.rate", "photo.flag", "photo.label", "library.sort", "album.addPhotos", "view.compare", "stack.group", "photo.virtualCopy"] {

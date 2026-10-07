@@ -1,6 +1,6 @@
 //! Camera colour profiles of our own, pooled from many photos of one camera model.
 //!
-//! A raw file without colour matrices (Sony ARW) gets its look fitted to its own embedded camera
+//! A raw file without colour matrices (Sony ARW, Nikon NEF) gets its look fitted to its own embedded camera
 //! JPEG (`camera_preview`), but one photo shows too little of some colours: a lime shirt covering a
 //! few dozen proxy pixels next to a hillside of foliage at the same hue. `lightcraft-cli calibrate`
 //! pools the colour pairs of many photos per model and fits one matrix and hue/saturation/value
@@ -174,8 +174,8 @@ pub struct Pool {
 const PAIRS_PER_FILE: usize = 4000;
 
 impl Pool {
-    /// Add one raw file's colour pairs. `Ok(None)` when the file can't contribute (not an ARW
-    /// without colour matrices, no usable camera JPEG, too little colour).
+    /// Add one raw file's colour pairs. `Ok(None)` when the file can't contribute (not an ARW or
+    /// NEF without colour matrices, no usable camera JPEG, too little colour).
     pub fn add(&mut self, bytes: &[u8]) -> Result<Option<String>, String> {
         let raw = lightcraft_raw::decode(bytes).map_err(|e| e.to_string())?;
         let Some(model) = raw.metadata.model.as_deref().map(str::trim).filter(|m| !m.is_empty()) else { return Ok(None) };

@@ -126,6 +126,9 @@ pub struct Session {
     pub undo: Vec<UndoEntry>,
     pub redo: Vec<UndoEntry>,
     pub interaction: Option<Interaction>,
+    /// Set by a command whose change must not rewrite the photo's XMP sidecar even with auto-write on
+    /// (a catalog-only edit of data the sidecar writer does not emit); consumed when the command ends.
+    pub(crate) skip_auto_write: bool,
     /// Copied develop settings (partial JSON) for Paste.
     pub clipboard: Option<Value>,
     /// The folder on disk the [`LibrarySource::Folder`] view browses.
@@ -224,6 +227,7 @@ impl Session {
             undo: Vec::new(),
             redo: Vec::new(),
             interaction: None,
+            skip_auto_write: false,
             clipboard: None,
             meta_clipboard: None,
             browse: None,
@@ -309,8 +313,11 @@ impl Session {
                 self.journal.drain(..1000);
             }
         }
-        if r.is_ok() && self.depth == 0 && self.xmp.auto_write && self.interaction.is_none() && self.pending_log.len() > log_start {
-            self.auto_write_sidecars(&self.pending_log[log_start..]);
+        if self.depth == 0 {
+            let skip = std::mem::take(&mut self.skip_auto_write);
+            if r.is_ok() && !skip && self.xmp.auto_write && self.interaction.is_none() && self.pending_log.len() > log_start {
+                self.auto_write_sidecars(&self.pending_log[log_start..]);
+            }
         }
         if self.depth == 0 && self.library.is_some() {
             // Make the command durable before reporting success. When the command's own records

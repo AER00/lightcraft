@@ -194,6 +194,35 @@ fn corpus_nef_compressed_matches_uncompressed() {
     }
 }
 
+/// raw.pixls.us has the same D7500 scene as 12- and 14-bit lossless compressed NEF. Both store black level 400 in
+/// maker note 0x003d (14-bit units): after subtracting the black level and scaling to white, the two must agree.
+#[test]
+fn corpus_nef_12_bit_black_level_matches_14_bit() {
+    let dir = corpus_root().join("raw");
+    let (Ok(a), Ok(b)) = (std::fs::read(dir.join("nef-nikon-d7500-lossless12.nef")), std::fs::read(dir.join("nef-nikon-d7500-lossless14.nef")))
+    else {
+        eprintln!("skip: D7500 NEF pair absent");
+        return;
+    };
+    let (a, b) = (decode(&a).unwrap(), decode(&b).unwrap());
+    assert_eq!((a.bits, b.bits), (12, 14));
+    assert!((a.black.values[0] - 100.0).abs() < 1.0 && (b.black.values[0] - 400.0).abs() < 1.0, "{:?} {:?}", a.black, b.black);
+    let normalized = |img: &lightcraft_raw::RawImage| {
+        let (black, white) = (img.black.values[0] as f64, img.white[0] as f64);
+        block_means(img).into_iter().map(|v| (v - black) / (white - black)).collect::<Vec<_>>()
+    };
+    // the two shots aren't pixel-aligned (handheld): compare the distributions, not block by block
+    let (mut na, mut nb) = (normalized(&a), normalized(&b));
+    na.sort_by(f64::total_cmp);
+    nb.sort_by(f64::total_cmp);
+    for q in [0.1, 0.5, 0.9] {
+        let (x, y) = (na[(na.len() as f64 * q) as usize], nb[(nb.len() as f64 * q) as usize]);
+        eprintln!("D7500 12- vs 14-bit: normalized quantile {q}: {x:.4} vs {y:.4}");
+        // with the tag read as 12-bit units, the 12-bit values would sit below black (negative)
+        assert!(x > 0.0 && (0.8..1.25).contains(&(x / y)), "quantile {q}: {x} vs {y}");
+    }
+}
+
 /// Issue #138: DNGs converted by Adobe software carry their camera profile's hue/saturation map and
 /// look table; we read them (and render with them). Camera-written DNGs here carry none.
 #[test]

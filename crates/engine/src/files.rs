@@ -38,6 +38,7 @@ fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
         copyright_url: m.copyright_url.clone().unwrap_or_default(),
         creator: m.artist.clone().unwrap_or_default(),
         keywords: m.keywords.clone(),
+        regions: m.regions.clone(),
     };
     (meta, m.capture_time.as_ref().map(|d| d.to_iso()))
 }
@@ -132,7 +133,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         }
         let (t, tint) = xy_to_temp_tint(lightcraft_raw::color::as_shot_white_xy_of(&raw));
         // Vendor RGB multipliers do not identify an absolute illuminant without camera calibration.
-        let relative = raw.format == lightcraft_raw::RawFormat::Arw && !lightcraft_raw::color::has_matrix(&raw.color);
+        let relative = crate::camera_preview::file_local_look(raw.format) && !lightcraft_raw::color::has_matrix(&raw.color);
         let as_shot_wb = Some(if relative { (6500.0, 0.0) } else { (t.round(), tint.round()) });
         let embedded_lens = embedded_lens(&raw);
         return Ok(ProbeInfo {
@@ -288,7 +289,7 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
             eprintln!("[profile] raw source {}×{} (max {max_edge}, ms after decode): {}", img.width, img.height, parts.join(", "));
         }
         let (temp, tint) = xy_to_temp_tint(xy);
-        let relative = raw.format == lightcraft_raw::RawFormat::Arw && t.matrix_is_fallback;
+        let relative = crate::camera_preview::file_local_look(raw.format) && t.matrix_is_fallback;
         let camera_tone = camera_look.as_ref().map(|p| p.tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));
         let (temp, tint) = if relative { (6500.0, 0.0) } else { (temp.round(), tint.round()) };
         return Ok((img, SourceInfo { raw: true, as_shot_temp: temp, as_shot_tint: tint, lens, relative_wb: relative, camera_tone }));
