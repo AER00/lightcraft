@@ -338,7 +338,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         filter_pill(app, ui, canvas);
     }
     if app.ui.face_boxes {
-        match region_overlay(ui, &p, &map, &photo) {
+        match region_overlay(ui, &p, &map, &photo, d.orientation) {
             Some(RegionEdit::Remove(index)) => {
                 let _ = app.run("photo.removeRegion", json!({"id": id.0, "index": index}));
             }
@@ -458,8 +458,15 @@ const REGION_HANDLES: [(f32, f32, egui::CursorIcon); 8] = [
 /// Face/pet/focus regions read from XMP (MWG-RS), drawn as boxes over the photo. Hovering a box shows
 /// a × in its corner and eight resize handles. A drag previews the new box live and is reported once,
 /// on release (one undo step); the × reports the region to remove. Both are catalog-only edits:
-/// LightCraft doesn't write regions to XMP.
-fn region_overlay(ui: &egui::Ui, p: &egui::Painter, map: &CanvasMap, photo: &lightcraft_catalog::Photo) -> Option<RegionEdit> {
+/// LightCraft doesn't write regions to XMP. Regions are stored on the upright (EXIF-oriented) photo;
+/// `orient` is the user's Rotate / Flip on top of it, which the loupe's normalized frame includes.
+fn region_overlay(
+    ui: &egui::Ui,
+    p: &egui::Painter,
+    map: &CanvasMap,
+    photo: &lightcraft_catalog::Photo,
+    orient: lightcraft_geom::Orientation,
+) -> Option<RegionEdit> {
     let t = Tokens::get(p.ctx());
     let clip = p.clip_rect();
     let pointer = ui.input(|i| i.pointer.hover_pos());
@@ -469,7 +476,7 @@ fn region_overlay(ui: &egui::Ui, p: &egui::Painter, map: &CanvasMap, photo: &lig
     let mut edit = None;
     for (index, r) in photo.meta.regions.iter().enumerate() {
         let dragging = live.filter(|(i, _)| *i == index);
-        let norm = dragging.map_or(r.rect, |(_, n)| n);
+        let norm = orient.map_norm_rect(dragging.map_or(r.rect, |(_, n)| n));
         let rect = Rect::from_two_pos(map.screen(Point::new(norm.x0, norm.y0)), map.screen(Point::new(norm.x1, norm.y1)));
         // white with a black keyline just outside it, so the box shows on any background
         p.rect_stroke(rect.expand(1.0), 0.0, Stroke::new(1.0, Color32::from_black_alpha(190)), StrokeKind::Outside);
@@ -500,12 +507,14 @@ fn region_overlay(ui: &egui::Ui, p: &egui::Painter, map: &CanvasMap, photo: &lig
                         n.max.y = pp.y.max(n.min.y + 12.0);
                     }
                     let (a, b) = (map.norm(n.min), map.norm(n.max));
-                    let new = lightcraft_geom::Rect {
+                    let shown = lightcraft_geom::Rect {
                         x0: a.x.min(b.x).clamp(0.0, 1.0),
                         y0: a.y.min(b.y).clamp(0.0, 1.0),
                         x1: a.x.max(b.x).clamp(0.0, 1.0),
                         y1: a.y.max(b.y).clamp(0.0, 1.0),
                     };
+                    // back to the upright frame the region is stored in
+                    let new = orient.inverse().map_norm_rect(shown);
                     ui.data_mut(|d| d.insert_temp(drag_key, (index, new)));
                     ui.ctx().request_repaint();
                 }

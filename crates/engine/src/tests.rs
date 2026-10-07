@@ -761,3 +761,25 @@ fn face_job_crops_a_square_inside_the_photo() {
     assert!((((r.x0 + r.x1) / 2.0) - 0.45).abs() < 1e-9 && (((r.y0 + r.y1) / 2.0) - 0.375).abs() < 1e-9, "{r:?}");
     assert!(s.face_job(lightcraft_catalog::PhotoId(u64::MAX), faces[0], 256).is_none());
 }
+
+/// Regions are on the upright photo; after Rotate Right the close-up still frames the face: the box
+/// is carried into the rotated frame the crop lives in, and the crop stays square in rotated pixels.
+#[test]
+fn face_job_follows_rotate_right() {
+    use lightcraft_geom::Rect;
+    let mut s = demo();
+    let id = s.active().unwrap();
+    let (w, h) = {
+        let p = s.catalog.photo(id).unwrap();
+        (f64::from(p.width), f64::from(p.height))
+    };
+    // a small face left of centre on the upright photo
+    let face = Rect { x0: 0.30, y0: 0.45, x1: 0.35, y1: 0.50 };
+    s.execute("photo.rotateRight", &json!({})).unwrap();
+    let r = s.face_job(id, face, 256).unwrap().settings.crop.geometry.rect;
+    // a quarter turn clockwise puts the left of the photo at the top: centre (0.325, 0.475) → (0.525, 0.325)
+    assert!((((r.x0 + r.x1) / 2.0) - 0.525).abs() < 1e-9 && (((r.y0 + r.y1) / 2.0) - 0.325).abs() < 1e-9, "{r:?}");
+    // the rotated photo is h × w pixels
+    let (pw, ph) = ((r.x1 - r.x0) * h, (r.y1 - r.y0) * w);
+    assert!((pw - ph).abs() < 1e-6 * w.max(h), "square in rotated pixels: {pw} × {ph}");
+}

@@ -711,7 +711,12 @@ impl crate::Session {
     /// to the preview. Cached like [`Self::variant_job`], and `key` likewise follows the content.
     pub fn face_job(&mut self, id: PhotoId, face: lightcraft_geom::Rect, edge: usize) -> Option<RenderJob> {
         let p = self.catalog.photo(id)?.clone();
+        // `face` is on the upright (EXIF-oriented) photo; the crop below is in the frame after the
+        // user's Rotate Left/Right, so carry the box (and the photo's size) over to it.
+        let orient = p.develop.orientation;
+        let face = orient.map_norm_rect(face);
         let (w, h) = (f64::from(p.width.max(1)), f64::from(p.height.max(1)));
+        let (w, h) = if orient.swaps_axes() { (h, w) } else { (w, h) };
         let side = ((face.x1 - face.x0) * w).max((face.y1 - face.y0) * h) * 1.7;
         // finite, within the photo, and never wider than its short side (so the clamps below are valid)
         let side = if side.is_finite() { side.clamp(1.0, w.min(h)) } else { w.min(h) };
