@@ -83,7 +83,13 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, b: &Bindable, sc:
     if changed {
         name = name.strong();
     }
-    ui.label(name).on_hover_text(b.id);
+    // keys whose command changes in the Library grids (see `shortcuts::handle`)
+    let hover = match b.id {
+        "panel.presets" => format!("{} — {}", b.id, crate::i18n::tr("In Photo Grid and Square Grid: Flag as Pick and advance")),
+        "view.softProof" => format!("{} — {}", b.id, crate::i18n::tr("In Photo Grid and Square Grid: expand or collapse the stack")),
+        _ => b.id.to_string(),
+    };
+    ui.label(name).on_hover_text(hover);
     let recording = app.recording_shortcut.as_deref() == Some(b.id);
     let text = if recording {
         RichText::new(crate::i18n::tr("Press keys…")).color(egui::Color32::WHITE)
@@ -106,7 +112,7 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, b: &Bindable, sc:
             apply(app, ui.ctx(), serde_json::json!({"id": b.id, "shortcut": null}));
         }
         let r = ui.add_enabled(changed, egui::Button::new("↺").small()).on_hover_text(match b.default {
-            Some(d) => format!("Restore {}", menu_text(d, mac)),
+            Some(d) => crate::i18n::tr_format!("Restore {}", menu_text(d, mac)),
             None => crate::i18n::tr("Restore (no shortcut)").to_string(),
         });
         register(ui.ctx(), format!("button:shortcutReset-{}", b.id), r.rect);
@@ -180,7 +186,7 @@ fn apply(app: &mut LightcraftApp, ctx: &egui::Context, params: serde_json::Value
                 .map(|id| shortcuts::find_bindable(id).map_or(id, |b| crate::i18n::tr(b.label)).to_string())
                 .collect();
             if !lost.is_empty() {
-                app.toast_for(ctx, format!("Removed from {}", lost.join(", ")), 3.0);
+                app.toast_for(ctx, crate::i18n::tr_format!("Removed from {}", lost.join(", ")), 3.0);
             }
         }
         Err(e) => app.toast_for(ctx, e, 3.0),
