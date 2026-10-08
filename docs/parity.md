@@ -26,8 +26,8 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | C. Views & navigation (VIEW) | 15 | 1 | 1 | 0 | 8/9 (89%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 11 | 1 | 1 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
-| F. Edit panel — global adjustments (EDIT) | 41 | 2 | 5 | 1 | 27/28 (96%) | 13/14 (93%) |
-| G. Profiles (PROF) | 6 | 2 | 3 | 0 | 3/4 (75%) | 2/3 (67%) |
+| F. Edit panel — global adjustments (EDIT) | 42 | 1 | 5 | 1 | 28/28 (100%) | 13/14 (93%) |
+| G. Profiles (PROF) | 7 | 1 | 3 | 0 | 3/4 (75%) | 3/3 (100%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 7 | 1 | 2 | 2 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
@@ -46,14 +46,11 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 17 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
-| Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
-| **Total** | 388 | 35 | 86 | 37 | 193/200 (97%) | 139/149 (93%) |
+| Z. Keyboard shortcuts (desktop) | 75 | 3 | 3 | 1 | 49/52 (94%) | 23/24 (96%) |
+| Lightroom Classic extras | 32 | 11 | 39 | 9 | — | 22/24 (92%) |
+| **Total** | 392 | 35 | 86 | 36 | 193/200 (97%) | 142/152 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.7%** of 509 in-scope rows — P0 98.2% of 200 · P1 95.6% of 149 · P2 41.6% of 160.
-| Lightroom Classic extras | 32 | 10 | 39 | 9 | — | 22/23 (96%) |
-| **Total** | 390 | 34 | 86 | 37 | 194/200 (97%) | 140/150 (93%) |
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.8%** of 510 in-scope rows — P0 98.5% of 200 · P1 95.7% of 150 · P2 41.6% of 160.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.8%** of 513 in-scope rows — P0 98.2% of 200 · P1 95.7% of 152 · P2 41.6% of 160.
 <!-- /parity:summary -->
 
 ## Top gaps
