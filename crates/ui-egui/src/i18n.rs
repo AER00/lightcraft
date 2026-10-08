@@ -467,6 +467,7 @@ mod tests {
             ("app.language.simplifiedChinese", Locale::ZhHans),
             ("app.language.japanese", Locale::Ja),
             ("app.language.portuguese", Locale::PtBr),
+            ("app.language.russian", Locale::Ru),
         ];
         // One command per language, and every command reachable from the menu table.
         assert_eq!(commands.len(), Locale::ALL.len());
