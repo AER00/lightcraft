@@ -47,6 +47,8 @@
   (with their edits) or import them as new; the trash view's Photo menu has Empty Recently Deleted.
 - The Import Photos review opens bigger and can be resized; its photo grid fills it (issue #337). Shift-click checks
   or unchecks a range of photos (issue #338).
+- When a folder holds several file types, the Import Photos review has a toggle per type (`ARW · 120`, `JPG · 120`):
+  import only the raws and leave the JPEGs beside them (issue #344).
 
 ### Languages
 - The interface is available in Spanish (issue #371), German and Russian (Edit ▸ Language), alongside English,
