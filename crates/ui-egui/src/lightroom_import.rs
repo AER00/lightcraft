@@ -23,7 +23,7 @@ enum Kind {
 
 enum Message {
     Inspected(Result<Value, String>),
-    Prepared(Result<lightcraft_engine::lightroom_job::PreparedLightroom, String>),
+    Prepared(Result<Box<lightcraft_engine::lightroom_job::PreparedLightroom>, String>),
     Finalized(Result<(), String>),
 }
 
@@ -135,7 +135,8 @@ fn spawn_prepare(
     std::thread::Builder::new()
         .name("lc-lightroom-import".into())
         .spawn(move || {
-            let result = lightcraft_engine::guard::catch("Lightroom import", || job.prepare(&cancel)).and_then(|r| r.map_err(|e| e.to_string()));
+            let result =
+                lightcraft_engine::guard::catch("Lightroom import", || job.prepare(&cancel)).and_then(|r| r.map(Box::new).map_err(|e| e.to_string()));
             if let Err(mpsc::SendError(Message::Prepared(Ok(prepared)))) = tx.send(Message::Prepared(result)) {
                 // The owner dropped the task (for example while closing): staged copies/moves
                 // must be put back even though no UI receiver remains to accept the result.
@@ -253,10 +254,10 @@ pub fn command(app: &mut LightcraftApp, id: &str, p: &Value, ctx: &egui::Context
         let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);
         let status = p.get("status").and_then(Value::as_bool).unwrap_or(false) || path.is_none();
         if status {
-            if p.get("cancel").and_then(Value::as_bool).unwrap_or(false) {
-                if let Some(task) = app.lightroom.as_mut() {
-                    task.cancel();
-                }
+            if p.get("cancel").and_then(Value::as_bool).unwrap_or(false)
+                && let Some(task) = app.lightroom.as_mut()
+            {
+                task.cancel();
             }
             if wait && app.lightroom.is_some() {
                 return wait_for(app, ctx, std::time::Duration::from_secs(600));
@@ -327,7 +328,7 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
             let mut finalization = None;
             let mut report = None;
             let committed = app.session.execute_fn("library.importLightroom", |s| {
-                let completion = lightcraft_engine::lightroom_job::commit_prepared(s, prepared)?;
+                let completion = lightcraft_engine::lightroom_job::commit_prepared(s, *prepared)?;
                 report = Some(completion.report.clone());
                 finalization = Some(completion.finalization);
                 Ok(completion.report)
