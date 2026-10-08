@@ -99,6 +99,31 @@ pub struct RenderRequest {
     pub depth: OutputDepth,
     /// Soft proofing (CPU only; see [`Proof`]).
     pub proof: Option<Proof>,
+    /// Render only this window of the output that `max_w × max_h` describes (a zoomed view):
+    /// the result is that window's pixels, as in the whole render. See [`PixelWindow`].
+    pub window: Option<PixelWindow>,
+}
+
+/// A window of the (virtual) full output, in its pixels: what a zoomed view needs, rendered
+/// without materializing the whole frame. The output frame is the one `max_w × max_h` fits, after
+/// crop, straighten and flips, as drawn. Out-of-range windows are clamped into it. Spatial stages
+/// (clarity, dehaze, sharpening…) read their neighbours, so ask for a margin around what is kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PixelWindow {
+    pub x: usize,
+    pub y: usize,
+    pub w: usize,
+    pub h: usize,
+}
+
+impl PixelWindow {
+    /// This window inside a `full_w × full_h` frame: at least one pixel, wholly inside.
+    pub fn clamped(self, full_w: usize, full_h: usize) -> PixelWindow {
+        let (fw, fh) = (full_w.max(1), full_h.max(1));
+        let x = self.x.min(fw - 1);
+        let y = self.y.min(fh - 1);
+        PixelWindow { x, y, w: self.w.clamp(1, fw - x), h: self.h.clamp(1, fh - y) }
+    }
 }
 
 impl RenderRequest {
@@ -112,6 +137,7 @@ impl RenderRequest {
             space: OutputSpace::Srgb,
             depth: OutputDepth::U8,
             proof: None,
+            window: None,
         }
     }
 }
@@ -300,7 +326,12 @@ pub struct Plan<'a> {
     pub lin_key: u64,
     /// Red eye / pet eye corrections with their detected pupils, in output pixels.
     pub eyes: Vec<redeye::EyeK>,
+    /// The whole frame's dehaze airlight, for a windowed render (which can't see the whole frame).
+    pub fixed_air: Option<f32>,
 }
+
+/// Long edge of the small render a windowed render estimates the whole frame's airlight from.
+const AIRLIGHT_PROXY_EDGE: usize = 384;
 
 /// Resolve `s` against `src` for `req` (see [`Plan`]).
 pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &RenderRequest) -> Plan<'a> {
@@ -311,8 +342,22 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     visualize::adjust_settings(req.overlay, &mut settings);
     let s = &*settings;
     let frame = frame_for(src, info, s, req.apply_crop);
-    let (w, h) = frame.fit(req.max_w, req.max_h);
-    let px_per_long = frame.px_per_long(w);
+    let (full_w, full_h) = frame.fit(req.max_w, req.max_h);
+    // sizes and scale are those of the whole output; a window only narrows what is drawn
+    let px_per_long = frame.px_per_long(full_w);
+    let mut fixed_air = None;
+    let (frame, w, h) = match req.window {
+        Some(win) => {
+            let win = win.clamped(full_w, full_h);
+            if s.section_enabled("effects") && (s.effects.dehaze != 0.0 || s.masks.iter().any(|m| m.adjust.dehaze != 0.0)) {
+                let k = (AIRLIGHT_PROXY_EDGE as f64 / full_w.max(full_h) as f64).min(1.0);
+                let (pw, ph) = (((full_w as f64 * k).round() as usize).max(1), ((full_h as f64 * k).round() as usize).max(1));
+                fixed_air = Some(local::frame_airlight(src, info, s, &frame, pw, ph));
+            }
+            (frame.window(full_w, full_h, win), win.w, win.h)
+        }
+        None => (frame, full_w, full_h),
+    };
     let src_long = src.width.max(src.height);
     let geo = hash_of((format!("{frame:?}"), w, h));
     let (wb_t, wb_tint) = local::effective_wb(info, s);
@@ -328,7 +373,7 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         [d.nr_luminance, d.nr_detail, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits),
         src_long,
     ));
-    Plan { settings, frame, w, h, px_per_long, src_long, geo, lin_key, eyes }
+    Plan { settings, frame, w, h, px_per_long, src_long, geo, lin_key, eyes, fixed_air }
 }
 
 /// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal).
@@ -410,7 +455,10 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         Some(p) if p.key == lin_key => p,
         _ => local::Planes { key: lin_key, ..Default::default() },
     };
-    let prep = local::prepare(lin.clone(), s, frame, px_per_long, req.quality, &mut planes);
+    let mut prep = local::prepare(lin.clone(), s, frame, px_per_long, req.quality, &mut planes);
+    if let Some(a) = plan.fixed_air {
+        prep.air = a;
+    }
     lap("prepare", &mut t);
     if let Some((a, c)) = shared {
         c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((lin_key, lin)), planes });
@@ -510,3 +558,5 @@ mod tests;
 mod tests_geometry;
 #[cfg(test)]
 mod tests_local;
+#[cfg(test)]
+mod tests_window;

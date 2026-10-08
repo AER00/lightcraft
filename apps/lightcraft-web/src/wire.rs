@@ -108,6 +108,7 @@ impl WireJob {
             space: lightcraft_engine::pipeline::OutputSpace::Srgb,
             depth: lightcraft_engine::pipeline::OutputDepth::U8,
             proof: None,
+            window: None,
         }
     }
 
