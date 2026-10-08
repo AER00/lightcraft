@@ -54,6 +54,10 @@
 - Type an exact value into any slider (issue #322): click the number next to its name, type (`1.5`, `-20`, `5600`)
   and press Return; Esc keeps the old value.
 
+### Editing
+- The eye on the Light, Color and Detail section headers now hides their adjustments, as it already did for Effects,
+  Optics, Geometry and Calibration (issue #316).
+
 ### Reliability
 - On macOS, single-key shortcuts that appear in the menu bar now work: E, C, H, M, ⇧P, I, K, D, ratings 0–5,
   labels 6–9, P / U and the rest did nothing, because macOS only passes ⌘ / ⌃ combinations and function keys

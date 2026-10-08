@@ -1084,6 +1084,24 @@ mod tests {
         assert_eq!(h.app.session.undo.len(), undo0 + 1);
     }
 
+    /// The eye on a section header switches the section off and on again, one undo step each
+    /// (issue #316).
+    #[test]
+    fn section_eye_switches_a_section_off() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "edit"}), t);
+        h.settle(SETTLE);
+        let light_on = |h: &Headless| h.app.session.develop_of(h.app.session.active().unwrap()).unwrap().section_enabled("light");
+        for expected in [false, true] {
+            // the eye shows while the pointer is on the header
+            assert_eq!(h.request("ui.hoverWidget", json!({"id": "section:light"}), t)["ok"], true);
+            assert_eq!(h.request("ui.clickWidget", json!({"id": "sectionEye:light"}), t)["ok"], true);
+            assert_eq!(light_on(&h), expected);
+        }
+        assert!(h.app.ui.section_open("light"), "the click didn't fold the section");
+    }
+
     /// Return commits a tool panel back to Edit; elsewhere it does nothing.
     #[test]
     fn return_commits_the_crop_tool() {
