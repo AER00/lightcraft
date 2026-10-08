@@ -43,7 +43,9 @@ fn corpus_raw_decodes() {
         // DNG previews are optional (and some carry only an uncompressed RGB thumbnail); vendor raws embed a JPEG,
         // except the Panasonic `.RAW` files of 2005–2007 and Canon's explicit HEVC preview tracks.
         if let Some(p) = &preview {
-            assert!(p.starts_with(&[0xff, 0xd8]) && p.ends_with(&[0xff, 0xd9]), "{name}: preview is not a JPEG");
+            let jpeg = p.starts_with(&[0xff, 0xd8]) && p.ends_with(&[0xff, 0xd9]);
+            let jxl = p.starts_with(&[0xff, 0x0a]) || p.starts_with(b"\0\0\0\x0cJXL ");
+            assert!(jpeg || jxl, "{name}: preview is neither a JPEG nor a JPEG XL file");
         } else {
             let hevc_preview = fmt == RawFormat::Cr3
                 && lightcraft_meta::cr3::parse_cr3(&bytes)
