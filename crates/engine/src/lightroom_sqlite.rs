@@ -901,7 +901,7 @@ mod tests {
         for (index, (rowid, payload)) in rows.iter().enumerate() {
             let mut cell = varint(payload.len() as u64);
             cell.extend(varint(*rowid));
-            cell.extend(payload);
+            cell.extend(*payload);
             end -= cell.len();
             page[end..end + cell.len()].copy_from_slice(&cell);
             let pointer = base + 8 + index * 2;
