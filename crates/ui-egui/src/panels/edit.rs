@@ -99,7 +99,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ui.spacing_mut().item_spacing.x = 8.0;
             if text_button(ui, "auto", crate::i18n::tr("Auto"), false).clicked() {
                 let _ = app.run("develop.auto", json!({}));
-                app.toast(ui.ctx(), "Auto settings applied");
+                app.toast(ui.ctx(), crate::i18n::tr("Auto settings applied"));
             }
             let bw = crate::is_bw(&d);
             if text_button(ui, "bw", crate::i18n::tr("B&W"), bw).clicked() {
@@ -588,7 +588,7 @@ fn soft_proofing(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         if r.clicked() {
             let name = crate::i18n::tr_format!("Proof Copy ({})", app.ui.proof.space.label());
             if app.run("photo.virtualCopy", json!({"ids": [id.0], "name": name})).is_ok() {
-                app.toast(ui.ctx(), "Proof copy created");
+                app.toast(ui.ctx(), crate::i18n::tr("Proof copy created"));
             }
         }
     });
@@ -1144,7 +1144,9 @@ fn quick_develop(app: &mut LightcraftApp, ui: &mut egui::Ui, n: usize) {
                 for (txt, d) in [("◀◀", -big), ("◀", -small), ("▶", small), ("▶▶", big)] {
                     let r = ui.add(egui::Button::new(egui::RichText::new(txt).size(10.0)).min_size(egui::vec2(28.0, 18.0)));
                     crate::widgets::register(ui.ctx(), format!("button:quick-{ctl}-{txt}"), r.rect);
-                    if r.on_hover_text(crate::i18n::tr_format!("{label} {d:+} on every selected photo", d = d, label = label)).clicked() {
+                    if r.on_hover_text(crate::i18n::tr_format!("{label} {d:+} on every selected photo", d = d, label = crate::i18n::tr(label)))
+                        .clicked()
+                    {
                         let _ = app.run("develop.quickAdjust", json!({"control": ctl, "delta": d}));
                     }
                 }

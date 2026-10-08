@@ -103,7 +103,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                             // an empty colour range; clicking the photo samples it
                             let _ = app.run("mask.add", json!({"kind": "colorRange"}));
                             app.ui.tool = "colorRange".into();
-                            app.toast(ui.ctx(), "Click the photo to pick a colour · ⇧-click adds more");
+                            app.toast(ui.ctx(), crate::i18n::tr("Click the photo to pick a colour · ⇧-click adds more"));
                         }
                         "object" => start_object(app, ui.ctx(), "new"),
                         "prompt" => start_describe(app, "new"),
@@ -292,7 +292,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     return;
                 }
                 // a long name is cut short (with …) before the options button, not past the panel
-                let text = format!("{op}{label}{}", if c.invert { " (inverted)" } else { "" });
+                let text = format!("{op}{label}{}", if c.invert { crate::i18n::tr(" (inverted)") } else { "" });
                 let room = (ui.available_width() - 30.0).max(0.0);
                 let resp = ui.scope(|ui| {
                     ui.set_max_width(room);
@@ -564,7 +564,7 @@ fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: usize, shape
         MaskShape::ColorRange { samples, refine } => {
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new(format!("{} sample{}", samples.len(), if samples.len() == 1 { "" } else { "s" }))
+                    egui::RichText::new(crate::i18n::tr_format!("{} sample{}", samples.len(), if samples.len() == 1 { "" } else { "s" }))
                         .color(t.text_dim)
                         .size(11.5),
                 );
@@ -657,7 +657,7 @@ pub(crate) fn start_object(app: &mut LightcraftApp, ctx: &egui::Context, op: &st
     match r {
         Ok(_) => {
             app.ui.tool = "object".into();
-            app.toast(ctx, "Click the object to select it · ⌥-click leaves a part out");
+            app.toast(ctx, crate::i18n::tr("Click the object to select it · ⌥-click leaves a part out"));
         }
         Err(e) => app.ai_error(ctx, e, Some(("object", op))),
     }
@@ -707,8 +707,11 @@ fn describe_field(app: &mut LightcraftApp, ui: &mut egui::Ui, new_mask: bool) {
     ui.label(crate::i18n::tr(prompt));
     let mut submit = false;
     ui.horizontal(|ui| {
-        let r =
-            ui.add(egui::TextEdit::singleline(&mut text).hint_text("e.g. sky · the red car · car, road").desired_width(ui.available_width() - 64.0));
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .hint_text(crate::i18n::tr("e.g. sky · the red car · car, road"))
+                .desired_width(ui.available_width() - 64.0),
+        );
         register(ui.ctx(), "maskDescribe", r.rect);
         if !r.has_focus() && !r.lost_focus() && text.is_empty() {
             r.request_focus();

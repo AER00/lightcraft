@@ -24,3 +24,5 @@ zune-core = { workspace = true }
 [dev-dependencies]
 jpeg-encoder = { workspace = true }
 proptest = { workspace = true }
+# Pinned CC0 corpus identities; not a product dependency.
+sha2 = { version = "0.10", default-features = false, features = ["std"] }

@@ -361,19 +361,26 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 item(
                     "library.buildPreviews",
                     json!({"size": "standard", "edge": app.ui.settings.preview_edge}),
-                    format!("Build Standard-Sized Previews ({scope})"),
+                    crate::i18n::tr_format!("Build Standard-Sized Previews ({scope})", scope = crate::i18n::tr(scope)),
                     None,
                     !running,
                     None,
                 ),
-                item("library.buildPreviews", json!({"size": "full"}), format!("Build 1:1 Previews ({scope})"), None, !running, None),
+                item(
+                    "library.buildPreviews",
+                    json!({"size": "full"}),
+                    crate::i18n::tr_format!("Build 1:1 Previews ({scope})", scope = crate::i18n::tr(scope)),
+                    None,
+                    !running,
+                    None,
+                ),
                 item("library.cancelPreviews", Value::Null, "Stop Building Previews", None, running, None),
                 MenuNode::Separator,
                 // (read and written on a worker thread: the originals may be on a slow drive)
                 item(
                     "library.smartPreviews",
                     json!({"background": true}),
-                    format!("Build Smart Previews ({scope})"),
+                    crate::i18n::tr_format!("Build Smart Previews ({scope})", scope = crate::i18n::tr(scope)),
                     None,
                     app.session.media.smart_dir.is_some() && !running,
                     None,
@@ -381,7 +388,7 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 item(
                     "library.smartPreviews",
                     json!({"discard": true, "background": true}),
-                    format!("Discard Smart Previews ({scope})"),
+                    crate::i18n::tr_format!("Discard Smart Previews ({scope})", scope = crate::i18n::tr(scope)),
                     None,
                     app.session.media.smart_dir.is_some() && !running,
                     None,
@@ -414,7 +421,7 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 .map(|(l, sc)| {
                     let name = format!("{l:?}");
                     let label = match app.session.catalog.custom_label_name(*l) {
-                        Some(custom) => format!("{custom} ({name})"),
+                        Some(custom) => format!("{custom} ({})", crate::i18n::tr(&name)),
                         None => name.clone(),
                     };
                     item(
@@ -438,7 +445,7 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 v.push(item(
                     "label.applySet",
                     json!({"name": name}),
-                    format!("Label Set: {name}"),
+                    format!("{}: {name}", crate::i18n::tr("Label Set")),
                     None,
                     true,
                     Some(current.as_deref() == Some(name)),

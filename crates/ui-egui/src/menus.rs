@@ -18,6 +18,8 @@ pub const LANGUAGE_COMMANDS: &[UiCommand] = &[
     ("app.language.traditionalChinese", crate::i18n::Locale::ZhHant.name(), None, "Edit>Language"),
     ("app.language.japanese", crate::i18n::Locale::Ja.name(), None, "Edit>Language"),
     ("app.language.portuguese", crate::i18n::Locale::PtBr.name(), None, "Edit>Language"),
+    ("app.language.german", crate::i18n::Locale::De.name(), None, "Edit>Language"),
+    ("app.language.russian", crate::i18n::Locale::Ru.name(), None, "Edit>Language"),
 ];
 
 /// Every UI command: the languages, then everything else. `xtask parity` reads both tables from
@@ -35,6 +37,8 @@ pub fn language_from_command(id: &str) -> Option<crate::i18n::Locale> {
         "app.language.traditionalChinese" => Some(crate::i18n::Locale::ZhHant),
         "app.language.japanese" => Some(crate::i18n::Locale::Ja),
         "app.language.portuguese" => Some(crate::i18n::Locale::PtBr),
+        "app.language.german" => Some(crate::i18n::Locale::De),
+        "app.language.russian" => Some(crate::i18n::Locale::Ru),
         _ => None,
     }
 }
@@ -181,10 +185,10 @@ pub const UI_COMMANDS: &[UiCommand] = &[
 fn panel(app: &mut LightcraftApp, ctx: &egui::Context, p: RightPanel, name: &str) {
     if app.ui.right == p {
         app.ui.right = RightPanel::None;
-        app.toast(ctx, crate::i18n::tr_format!("{name} Off", name = name));
+        app.toast(ctx, crate::i18n::tr_format!("{name} Off", name = crate::i18n::tr(name)));
     } else {
         app.ui.right = p;
-        app.toast(ctx, crate::i18n::tr_format!("{name} On", name = name));
+        app.toast(ctx, crate::i18n::tr_format!("{name} On", name = crate::i18n::tr(name)));
         if p.is_edit_tool() && !matches!(app.ui.view, ViewMode::Detail) {
             app.ui.view = ViewMode::Detail;
         }
@@ -275,7 +279,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 app.ui.view = ViewMode::PhotoGrid;
             }
             if let Some(k) = app.ui.keyword_painter.clone() {
-                app.toast(&ctx, format!("Painting “{k}”: click photos to add or remove it · Esc stops"));
+                app.toast(&ctx, crate::i18n::tr_format!("Painting “{k}”: click photos to add or remove it · Esc stops", k = k));
             }
             Ok(json!({"keyword": app.ui.keyword_painter}))
         }
@@ -374,7 +378,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.zoom = Zoom::Fit;
             app.ui.tool.clear();
             let _ = app.session.end_interaction();
-            app.toast(&ctx, "Slideshow · Space pauses · Esc ends");
+            app.toast(&ctx, crate::i18n::tr("Slideshow · Space pauses · Esc ends"));
             Ok(json!({"interval": interval}))
         }
         "view.fullScreenPreview" => {
@@ -915,10 +919,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             if let Some(f) = app.services.open_with.as_mut()
                 && let Err(e) = f(&path, &editor)
             {
-                app.toast(&ctx, format!("Couldn't open the editor: {e}"));
+                app.toast(&ctx, crate::i18n::tr_format!("Couldn't open the editor: {e}", e = e));
             }
             let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            app.toast(&ctx, format!("{name} opened for editing; it is stacked with the original"));
+            app.toast(&ctx, crate::i18n::tr_format!("{name} opened for editing; it is stacked with the original", name = name));
             Ok(r)
         }
         "dialog.cull" => {
@@ -1020,8 +1024,21 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                         let n = v["found"].as_array().map_or(0, Vec::len);
                         let left = v["missing"].as_u64().unwrap_or(0);
                         let unsure = v["ambiguous"].as_array().map_or(0, Vec::len);
-                        let unsure = if unsure > 0 { format!(" ({unsure} with several look-alike files: use Locate)") } else { String::new() };
-                        app.toast(ctx, format!("Found {n} missing photo{}; {left} still missing{unsure}", if n == 1 { "" } else { "s" }));
+                        let unsure = if unsure > 0 {
+                            crate::i18n::tr_format!(" ({unsure} with several look-alike files: use Locate)", unsure = unsure)
+                        } else {
+                            String::new()
+                        };
+                        app.toast(
+                            ctx,
+                            crate::i18n::tr_format!(
+                                "Found {n} missing photo{}; {left} still missing{unsure}",
+                                if n == 1 { "" } else { "s" },
+                                left = left,
+                                n = n,
+                                unsure = unsure
+                            ),
+                        );
                         app.ui.last_find_missing = Some(v);
                     }
                     Err(e) => app.toast(ctx, e),
@@ -1066,14 +1083,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             if let Ok(v) = &r {
                 let n = v["tagged"].as_u64().unwrap_or(0);
                 let sk = &v["skipped"];
-                let mut msg = format!("Tagged {n} photo{} from the tracklog", if n == 1 { "" } else { "s" });
+                let mut msg = crate::i18n::tr_format!("Tagged {n} photo{} from the tracklog", if n == 1 { "" } else { "s" }, n = n);
                 let outside = sk["outside"].as_u64().unwrap_or(0);
                 if outside > 0 {
-                    msg += &format!("; {outside} outside its time range");
+                    msg += &crate::i18n::tr_format!("; {outside} outside its time range", outside = outside);
                 }
                 let kept = sk["hasGps"].as_u64().unwrap_or(0);
                 if kept > 0 {
-                    msg += &format!("; {kept} already had a location");
+                    msg += &crate::i18n::tr_format!("; {kept} already had a location", kept = kept);
                 }
                 app.toast(&egui::Context::default(), msg);
             }
@@ -1154,7 +1171,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 app.session.execute("preset.import", &json!({"paths": preset_paths})).map_err(|e| e.to_string())
             };
             if profiles > 0 {
-                app.toast(&ctx, format!("Imported {profiles} profile{} (Profile browser ▸ their groups)", if profiles == 1 { "" } else { "s" }));
+                app.toast(
+                    &ctx,
+                    crate::i18n::tr_format!(
+                        "Imported {profiles} profile{} (Profile browser ▸ their groups)",
+                        if profiles == 1 { "" } else { "s" },
+                        profiles = profiles
+                    ),
+                );
             }
             if let Ok(v) = &r {
                 let n = v["imported"].as_array().map_or(0, Vec::len);
@@ -1182,7 +1206,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 skipped.dedup();
                 if !skipped.is_empty() {
                     let names: Vec<&str> = skipped.iter().take(3).copied().collect();
-                    msg += &format!(" — not carried over: {}{}", names.join(", "), if skipped.len() > 3 { "…" } else { "" });
+                    msg += &crate::i18n::tr_format!(" — not carried over: {}{}", names.join(", "), if skipped.len() > 3 { "…" } else { "" });
                 }
                 app.toast(&ctx, msg);
                 if n > 0 {

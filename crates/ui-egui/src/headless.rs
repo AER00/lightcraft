@@ -1107,6 +1107,26 @@ mod tests {
         let r = h.request("ui.widgets", json!({}), t);
         assert!(r.to_string().contains("label:importSource"), "source shown");
         assert!(h.app.ui.local_roots.is_empty(), "no Local shortcut saved");
+        // The source facts were cached by a worker with the source-language default. They must
+        // still be rendered in German after switching, with the folder name kept verbatim.
+        assert_eq!(h.request("engine.execute", json!({"command": "app.language.german"}), t)["ok"], true);
+        h.settle(SETTLE);
+        fn texts(shape: &egui::epaint::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::epaint::Shape::Text(shape) => out.push(shape.galley.job.text.clone()),
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+        let mut painted = Vec::new();
+        for shape in &h.view.shapes {
+            texts(&shape.shape, &mut painted);
+        }
+        assert!(painted.iter().any(|text| text == &format!("Ordner „{name}“ (und seine Unterordner)")), "{painted:?}");
+        for label in ["Quelle", "Übertragen", "Stichwörter", "Vorgabe"] {
+            assert!(painted.iter().any(|text| text == label), "{label}: {painted:?}");
+        }
+        assert_eq!(h.request("engine.execute", json!({"command": "app.language.english"}), t)["ok"], true);
         // a camera / card folder: copied into the library by default
         h.app.ui.dialog = None;
         let r = h.request("engine.execute", json!({"command": "file.addFromDevice", "params": {"path": sub.to_string_lossy()}}), t);
