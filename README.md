@@ -356,6 +356,19 @@ repo; see [craftrules `standards/fonts.md`](https://github.com/storytold/craftru
 **Interface language:** **Edit → Language** (English, 简体中文, 繁體中文（台灣）, 日本語) or **Settings → General →
 Language**; the choice applies immediately and persists. See [docs/localization.md](docs/localization.md).
 
+**Logs:** the desktop app writes its log to standard error and to `logs/lightcraft.log` in its settings folder
+(Linux `$XDG_CONFIG_HOME/lightcraft/logs/`, by default `~/.config/lightcraft/logs/`; macOS
+`~/Library/Application Support/LightCraft/logs/`; Windows `%APPDATA%\LightCraft\logs\`), never in the library. A
+launch from a desktop menu or the Dock has no terminal, so attach this file to a bug report. Each start moves the
+previous log to `lightcraft.1.log` and that one to `lightcraft.2.log`, so the log of a run that crashed survives the
+next start; the file stops growing at 16 MiB, `--version` and `--help` write none, and runs with
+`LIGHTCRAFT_NO_PREFS` log to standard error only. By default LightCraft's own crates log at `info` and everything else
+at `warn`. `LIGHTCRAFT_LOG=info` or `debug` works as before (that level for LightCraft's own crates, warnings and
+errors from the rest; any other value: warnings and errors only) and wins over `RUST_LOG`, which otherwise replaces
+the default with env_logger-style directives such as `RUST_LOG=debug` or `RUST_LOG=warn,lightcraft_pipeline=trace` (a
+directive ending in `*` covers every target starting with it, as in `lightcraft*=debug`). Panics are recorded there
+too, and still in `lightcraft-panics.log` in the temp folder. The logger is `apps/lightcraft/src/logging.rs`.
+
 The web build needs the `wasm32-unknown-unknown` target and the matching `wasm-bindgen` CLI
 (`cargo xtask web` prints the exact install command); see [docs/web.md](docs/web.md).
 
