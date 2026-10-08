@@ -1,5 +1,5 @@
 //! Estimate the starting look of a raw without a camera colour matrix (Sony ARW, Nikon NEF, Panasonic
-//! RW2) from its own JPEG. Colour and luminance are fitted separately; the JPEG supplies correspondences only,
+//! RW2, Fujifilm RAF) from its own JPEG. Colour and luminance are fitted separately; the JPEG supplies correspondences only,
 //! never output pixels or a replacement for RAW editing.
 //! A global matrix can't follow the camera's hue-dependent rendering (the best matrix rendered a
 //! lime shirt olive that the camera kept lime): a hue/saturation table fitted to the residuals
@@ -31,7 +31,7 @@ pub(crate) const PROFILE_PROXY: usize = 192;
 /// as-shot look (`docs/camera-preview-colour.md`). The catalog's `Photo::relative_wb` matches the
 /// same formats by file extension.
 pub(crate) fn file_local_look(format: RawFormat) -> bool {
-    matches!(format, RawFormat::Arw | RawFormat::Nef | RawFormat::Nrw | RawFormat::Rw2)
+    matches!(format, RawFormat::Arw | RawFormat::Nef | RawFormat::Nrw | RawFormat::Rw2 | RawFormat::Raf)
 }
 
 pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransform) -> Option<CameraLook> {
@@ -102,7 +102,7 @@ pub(crate) fn profile_pairs(raw: &RawImage, bytes: &[u8]) -> Option<Vec<([f64; 3
     let transform = lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
     let (sensor, reference) = proxies(raw, bytes, &transform, PROFILE_PROXY)?;
     let to_camera = transform.matrix.inverse()?;
-    let (pairs, _) = collect_pairs(&sensor, &reference)?;
+    let (pairs, _) = collect_pairs(&sensor, &reference, 0.05)?;
     Some(pairs.into_iter().map(|(x, y)| (to_camera.apply(x), y)).collect())
 }
 
@@ -153,7 +153,7 @@ fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
 /// Training pairs (sensor → JPEG, unclipped midtones) and the wider set including highlights
 /// (for the chroma curve); `None` when too few, or the photo has too little colour.
 type Pairs = Vec<([f64; 3], [f64; 3])>;
-fn collect_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<(Pairs, Pairs)> {
+fn collect_pairs(sensor: &Rgb32f, reference: &Rgb32f, min_chroma: f32) -> Option<(Pairs, Pairs)> {
     if (sensor.width, sensor.height) != (reference.width, reference.height) || sensor.data.len() != reference.data.len() {
         return None;
     }
@@ -174,7 +174,7 @@ fn collect_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<(Pairs, Pairs)> 
         }
         let min = output.iter().copied().fold(f32::INFINITY, f32::min);
         let max = output.iter().copied().fold(0.0, f32::max);
-        colour += usize::from(max - min > 0.05);
+        colour += usize::from(max - min > min_chroma);
         pairs.push((input.map(f64::from), output.map(f64::from)));
     }
     (pairs.len() >= 256 && colour >= pairs.len() / 20).then_some((pairs, bright))
@@ -219,7 +219,9 @@ fn fit_matrix(pairs: &[([f64; 3], [f64; 3])]) -> Option<Mat3> {
 /// colour model (a camera profile's, in the sensor proxy's space), each completed with a tone
 /// and chroma curve fitted to this photo.
 fn fit_pairs_with(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>) -> Option<CameraLook> {
-    let (pairs, bright) = collect_pairs(sensor, reference)?;
+    // A known colour model needs enough signal for tone fitting, not a scene rich enough to
+    // learn a new colour matrix. Still reject monochrome references.
+    let (pairs, bright) = collect_pairs(sensor, reference, if colour.is_some() { 0.005 } else { 0.05 })?;
     let candidates = match colour {
         Some(given) => vec![given],
         None => {
@@ -740,7 +742,7 @@ mod tests {
         let mut pool = Vec::new();
         for seed in 0..4 {
             let (sensor, reference) = photo(seed, 2.0 + seed as f32 * 0.5);
-            pool.extend(collect_pairs(&sensor, &reference).unwrap().0);
+            pool.extend(collect_pairs(&sensor, &reference, 0.05).unwrap().0);
         }
         let (matrix, _) = fit_profile(&pool).unwrap();
         // the camera's colours (luminance-normalised: the tone curve sets brightness)
@@ -768,6 +770,24 @@ mod tests {
     }
 
     #[test]
+    fn profile_fits_tone_without_learning_colour_from_a_dull_scene() {
+        let matrix = Mat3([[2.0, -0.02, 0.0], [0.0, 2.0, 0.0], [0.0, -0.03, 2.0]]);
+        let mut sensor = Rgb32f::new(64, 48);
+        let mut reference = sensor.clone();
+        for (i, (src, dst)) in sensor.data.iter_mut().zip(&mut reference.data).enumerate() {
+            *src = [0.02 + (i % 997) as f32 * 0.00045; 3];
+            let p = matrix.apply_f32(*src);
+            let y = luminance_2020(p);
+            *dst = p.map(|v| v * (1.0 - (-2.5 * y).exp()) / y);
+        }
+        assert!(fit_pairs(&sensor, &reference).is_none(), "not enough colour to learn a matrix");
+        let look = fit_pairs_with(&sensor, &reference, Some((matrix, None))).unwrap();
+        assert_eq!(look.matrix, matrix);
+        reference.map_in_place(|p| [luminance_2020(p); 3]);
+        assert!(fit_pairs_with(&sensor, &reference, Some((matrix, None))).is_none(), "monochrome JPEGs remain rejected");
+    }
+
+    #[test]
     fn hue_sat_passes_black_and_non_finite_pixels_through() {
         let table = HsvTable { hue_divisions: 4, sat_divisions: 2, val_divisions: 1, data: vec![[10.0, 1.5, 1.0]; 8], srgb_value: false };
         let hue_sat = HueSat::new(&table).unwrap();
@@ -778,9 +798,9 @@ mod tests {
     }
 
     #[test]
-    fn sony_nikon_and_panasonic_raws_get_a_file_local_look() {
-        assert!([RawFormat::Arw, RawFormat::Nef, RawFormat::Nrw, RawFormat::Rw2].into_iter().all(file_local_look));
-        assert!(![RawFormat::Dng, RawFormat::Cr2, RawFormat::Raf].into_iter().any(file_local_look));
+    fn supported_raws_get_a_file_local_look() {
+        assert!([RawFormat::Arw, RawFormat::Nef, RawFormat::Nrw, RawFormat::Rw2, RawFormat::Raf].into_iter().all(file_local_look));
+        assert!(![RawFormat::Dng, RawFormat::Cr2].into_iter().any(file_local_look));
     }
 
     /// A public D7500 NEF (skipped without the corpus): its look is fitted to its own JPEG and white
@@ -816,6 +836,26 @@ mod tests {
         assert_eq!((img.width, img.height), (400, 300), "framed in the in-camera aspect ratio");
         assert!(info.camera_tone.is_some(), "no camera look fitted");
         assert!(info.relative_wb && info.as_shot_temp == 6500.0 && info.as_shot_tint == 0.0);
+    }
+
+    /// X-Trans and 16-bit Bayer RAFs use the same fixed fit at thumbnail and export sizes;
+    /// a poor reference keeps the fallback. Skips cleanly without these CC0 corpus files.
+    #[test]
+    fn corpus_raf_colour_and_white_balance() {
+        let dir = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+            .join("raw");
+        for (name, accepted) in [("raf-fuji-xt2-865.raf", true), ("raf-fuji-gfx100s-4503.raf", true), ("raf-fuji-xt20-compressed.raf", false)] {
+            let Ok(bytes) = std::fs::read(dir.join(name)) else { continue };
+            let header = crate::files::probe_bytes(name, &bytes).unwrap();
+            assert_eq!(header.as_shot_wb, Some((6500.0, 0.0)), "{name}");
+            let (_, small) = crate::files::load_bytes(&bytes, 400).unwrap();
+            let (_, large) = crate::files::load_bytes(&bytes, 1200).unwrap();
+            assert_eq!(small.camera_tone.is_some(), accepted, "{name}");
+            assert_eq!(small.camera_tone, large.camera_tone, "{name}: resolution changed the fit");
+            assert!(small.raw && small.relative_wb && small.as_shot_temp == 6500.0 && small.as_shot_tint == 0.0, "{name}");
+        }
     }
 
     #[test]

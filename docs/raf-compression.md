@@ -2,7 +2,7 @@
 
 LightCraft decodes uncompressed, lossless compressed and lossy compressed RAF sensor data in pure Rust. The shared RAW decoder serves import, desktop previews, editing, CLI rendering, web and export. These files no longer enter the embedded-JPEG-only fallback. After restarting with the updated build, existing imported preview-only photos need **Photo → Reload from Disk** to refresh their status; edits are retained.
 
-Compression support does not supply camera colour calibration. Fujifilm currently uses the existing neutral camera-colour fallback; rendering can differ from the camera JPEG and Lightroom.
+Fujifilm now uses a guarded colour/tone estimate from each file’s own embedded JPEG when the reference is usable, plus relative as-shot WB and optional pooled per-model profiles. Output pixels still come from the sensor. Rejected fits retain the neutral fallback; measured sensor calibration and Lightroom fidelity remain separate gaps. See [camera colour verification](camera-preview-colour.md#fujifilm-raf).
 
 ## Format and implementation
 
