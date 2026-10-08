@@ -2876,6 +2876,7 @@ name = "lightcraft-engine"
 version = "0.4.0"
 dependencies = [
  "ab_glyph",
+ "harfrust",
  "libc",
  "lightcraft-catalog",
  "lightcraft-codecs",

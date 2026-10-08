@@ -258,6 +258,35 @@ fn watermark_fonts(craft: &'static [crate::fonts::CraftFont]) -> Vec<ab_glyph::F
         .collect()
 }
 
+/// The font's vertical form, positioned from its vertical origin within the watermark cell.
+/// Unlike Unicode presentation-form characters, GSUB works with BIZ UD fonts too.
+fn vertical_watermark_glyph(
+    font: &ab_glyph::FontRef<'_>,
+    data: &harfrust::ShaperData,
+    ch: char,
+    px: f32,
+    left: f32,
+    top: f32,
+) -> Option<ab_glyph::Glyph> {
+    use ab_glyph::{Font, ScaleFont};
+    let face = harfrust::FontRef::new(font.font_data()).ok()?;
+    let mut buf = harfrust::UnicodeBuffer::new();
+    buf.add(ch, 0);
+    buf.set_direction(harfrust::Direction::TopToBottom);
+    buf.guess_segment_properties();
+    let shaped = data.shaper(&face).build().shape(buf, harfrust::ShapeOptions::new());
+    if shaped.glyph_infos().len() != 1 {
+        return None;
+    }
+    let gid = u16::try_from(shaped.glyph_infos().first()?.glyph_id).ok().filter(|g| *g != 0)?;
+    let pos = shaped.glyph_positions().first()?;
+    let sf = font.as_scaled(px);
+    let (sx, sy) = (sf.h_scale_factor(), sf.v_scale_factor());
+    let height = -(pos.y_advance as f32) * sy;
+    let pen = ab_glyph::point(left + px / 2.0 + pos.x_offset as f32 * sx, top + (px - height) / 2.0 - pos.y_offset as f32 * sy);
+    Some(ab_glyph::GlyphId(gid).with_scale_and_position(px, pen))
+}
+
 /// Draw `wm` onto `img` (straight alpha blending of the encoded values).
 pub fn draw_watermark(img: &mut Rgba8, wm: &Watermark) {
     let width = img.width;
@@ -312,6 +341,11 @@ fn watermark_coverage(
     }
     let fonts = watermark_fonts(craft);
     let Some(latin) = fonts.first() else { return };
+    let vertical_data: Vec<_> = if wm.vertical {
+        fonts.iter().map(|font| harfrust::FontRef::new(font.font_data()).ok().map(|face| harfrust::ShaperData::new(&face))).collect()
+    } else {
+        Vec::new()
+    };
     let short = width.min(height) as f32;
     let px = (wm.size.clamp(0.005, 0.5) * short).max(6.0);
     let mut glyphs = Vec::new();
@@ -334,6 +368,21 @@ fn watermark_coverage(
             }
             prev = None;
             continue;
+        }
+        if wm.vertical
+            && matches!(original as u32, 0x3000..=0x30FF | 0x3400..=0x9FFF | 0xFF01..=0xFF60)
+            && let Some(face) = fonts.iter().position(|font| font.glyph_id(original).0 != 0)
+            && let (Some(font), Some(Some(data))) = (fonts.get(face), vertical_data.get(face))
+        {
+            let left = columns.saturating_sub(column.saturating_add(1)) as f32 * px;
+            if let Some(glyph) = vertical_watermark_glyph(font, data, original, px, left, y)
+                && (glyph.id != font.glyph_id(original)
+                    || !matches!(original, '、' | '。' | 'ー' | '（' | '）' | '「' | '」' | '『' | '』' | '【' | '】'))
+            {
+                glyphs.push((face, glyph, None));
+                y += px;
+                continue;
+            }
         }
         let vertical_form = match original {
             '、' => '︑',
@@ -1389,6 +1438,49 @@ mod tests {
             let mut covered = 0usize;
             watermark_coverage(400, 300, &wm, &[], |_, _, k, _| covered += usize::from(k > 0.0));
             assert!(covered > 0, "{:?} draws something", wm.text);
+        }
+    }
+
+    #[test]
+    fn biz_ud_vertical_watermarks_place_punctuation_at_the_top_right() {
+        use ab_glyph::Font;
+        let Some(entry) = crate::fonts::CRAFT_FONTS.iter().find(|f| f.family == "BIZ UDMincho") else {
+            eprintln!("skipped: built without BIZ UDMincho from craft-fonts");
+            return;
+        };
+        let font = ab_glyph::FontRef::try_from_slice(entry.bytes).unwrap();
+        // BIZ UDMincho has no Unicode presentation-form characters: the old fallback drew 、。.
+        assert_eq!(font.glyph_id('︑').0, 0);
+        assert_eq!(font.glyph_id('︒').0, 0);
+        let data = harfrust::ShaperData::new(&harfrust::FontRef::new(entry.bytes).unwrap());
+        for ch in ['、', '。'] {
+            let glyph = vertical_watermark_glyph(&font, &data, ch, 100.0, 0.0, 0.0).unwrap();
+            assert_ne!(glyph.id, font.glyph_id(ch), "the font's vertical alternate for {ch}");
+            let rect = font.outline_glyph(glyph).unwrap().px_bounds();
+            assert!(rect.min.x > 50.0 && rect.max.y < 50.0, "{ch} in the upper right: {rect:?}");
+        }
+        let craft = Box::leak(
+            vec![crate::fonts::CraftFont { family: entry.family, style: entry.style, scripts: entry.scripts, bytes: entry.bytes }].into_boxed_slice(),
+        );
+        let wm = Watermark {
+            text: "、。".into(),
+            vertical: true,
+            size: 0.1,
+            anchor: Anchor::TopLeft,
+            inset: 0.0,
+            shadow: false,
+            opacity: 1.0,
+            ..Default::default()
+        };
+        let mut pixels = Vec::new();
+        watermark_coverage(400, 300, &wm, craft, |x, y, k, _| {
+            if k > 0.5 {
+                pixels.push((x, y));
+            }
+        });
+        assert!(!pixels.is_empty());
+        for (x, y) in pixels {
+            assert!(x > 15 && y % 30 < 15, "actual export coverage at the upper right of the 30 px cell: {x}, {y}");
         }
     }
 
