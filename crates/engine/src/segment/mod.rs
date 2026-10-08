@@ -262,7 +262,7 @@ impl Segmenter {
             if mirrors.is_empty() {
                 return Err(lightcraft_segment::fetch::no_mirrors_message());
             }
-            self.download.start(lightcraft_segment::fetch::SAM3_FILES, mirrors, dir, lightcraft_segment::fetch::Options::default())
+            self.download.start(lightcraft_segment::fetch::SAM3_FILES, mirrors, dir, lightcraft_segment::fetch::options())
         }
         #[cfg(not(feature = "sam"))]
         {

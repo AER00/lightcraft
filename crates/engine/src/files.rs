@@ -43,8 +43,9 @@ fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
     (meta, m.capture_time.as_ref().map(|d| d.to_iso()))
 }
 
-/// Lens corrections embedded in a DNG's `OpcodeList3` (`WarpRectilinear`, `FixVignetteRadial`), re-expressed for
-/// the default-cropped, EXIF-oriented image. These are the only "profile" corrections LightCraft applies.
+/// Lens corrections embedded in a raw's `OpcodeList3` (`WarpRectilinear`, `FixVignetteRadial`: a DNG's own, or the
+/// raw reader's equivalent of the camera's correction, e.g. Panasonic / Leica RW2 distortion), re-expressed for the
+/// default-cropped, EXIF-oriented image. These are the only "profile" corrections LightCraft applies.
 pub fn embedded_lens(raw: &lightcraft_raw::RawInfo) -> Option<lightcraft_develop::EmbeddedLens> {
     use lightcraft_develop::{EmbeddedLens, EmbeddedVignette, EmbeddedWarp};
     use lightcraft_geom::Point;
@@ -85,10 +86,6 @@ pub fn embedded_lens(raw: &lightcraft_raw::RawInfo) -> Option<lightcraft_develop
         return None;
     }
     Some(lightcraft_pipeline::optics::reorient_lens(&lens, raw.orientation, cw, ch))
-}
-
-fn is_lens_opcode(op: &lightcraft_raw::Opcode) -> bool {
-    matches!(op, lightcraft_raw::Opcode::WarpRectilinear { .. } | lightcraft_raw::Opcode::FixVignetteRadial { .. })
 }
 
 fn ext_upper(name: &str) -> String {
@@ -224,13 +221,14 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
             }
             Err(e) => return Err(e.to_string()),
         };
+        // Embedded lens corrections are applied by the pipeline ("Enable Profile Corrections"), not baked in
+        // (removed before the camera look's binned sensor proxy too, which needs an empty `OpcodeList3`).
+        let lens = embedded_lens(&raw.info());
+        raw.opcodes.list3.retain(|op| !op.is_lens_correction());
         let xy = lightcraft_raw::color::as_shot_white_xy(&raw);
         let t = lightcraft_raw::color::camera_transform(&raw, xy);
         let camera_look = crate::camera_preview::fit_preview(&raw, &bytes, &t);
         drop(bytes);
-        // Embedded lens corrections are applied by the pipeline ("Enable Profile Corrections"), not baked in.
-        let lens = embedded_lens(&raw.info());
-        raw.opcodes.list3.retain(|op| !is_lens_opcode(op));
         // Previews and thumbnails bin the mosaic straight to (about) the size they need; only
         // larger levels (exports, 1:1) demosaic the whole sensor.
         let t0 = web_time::Instant::now();
@@ -320,6 +318,21 @@ fn preview_orientation(raw_bytes: &[u8], jpeg_orientation: u16) -> Orientation {
     lightcraft_meta::extract(raw_bytes).orientation.unwrap_or(Orientation::Normal)
 }
 
+/// Shared colour interpretation for quick previews, unsupported RAW fallback and camera-look fitting.
+pub(crate) fn decode_raw_preview(bytes: &[u8], opts: lightcraft_codecs::DecodeOptions) -> Option<lightcraft_codecs::Decoded> {
+    let jpeg = lightcraft_raw::embedded_preview(bytes)?;
+    match lightcraft_raw::embedded_preview_color_space(bytes) {
+        Some(space) => {
+            let space = match space {
+                lightcraft_raw::PreviewColorSpace::Srgb => lightcraft_codecs::NamedSpace::Srgb,
+                lightcraft_raw::PreviewColorSpace::AdobeRgb => lightcraft_codecs::NamedSpace::AdobeRgb,
+            };
+            lightcraft_codecs::decode_jpeg_with_fallback(&jpeg, opts, space).ok()
+        }
+        None => lightcraft_codecs::decode(&jpeg, opts).ok(),
+    }
+}
+
 /// Oriented size of the embedded preview of a raw file.
 fn embedded_preview_size(bytes: &[u8]) -> Option<(u32, u32)> {
     let jpeg = lightcraft_raw::embedded_preview(bytes)?;
@@ -333,8 +346,7 @@ fn embedded_preview_size(bytes: &[u8]) -> Option<(u32, u32)> {
 
 /// The embedded preview of a raw file as a working-space image no larger than `max_edge`, oriented.
 pub fn load_embedded_preview(bytes: &[u8], max_edge: usize) -> Option<(Rgb32f, SourceInfo)> {
-    let jpeg = lightcraft_raw::embedded_preview(bytes)?;
-    let d = lightcraft_codecs::decode(&jpeg, lightcraft_codecs::DecodeOptions::fit(max_edge as u32, max_edge as u32)).ok()?;
+    let d = decode_raw_preview(bytes, lightcraft_codecs::DecodeOptions::fit(max_edge as u32, max_edge as u32))?;
     let img = d.to_working();
     let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
     Some((img.oriented(preview_orientation(bytes, d.orientation)), SourceInfo::default()))
@@ -343,8 +355,7 @@ pub fn load_embedded_preview(bytes: &[u8], max_edge: usize) -> Option<(Rgb32f, S
 /// The embedded preview of a raw file for display (sRGB, oriented, no larger than `max_edge`): the
 /// loupe and grid show it until the raw itself has been developed ([`crate::media::QuickJob`]).
 pub fn embedded_preview_srgb(bytes: &[u8], max_edge: usize) -> Option<lightcraft_raster::Rgba8> {
-    let jpeg = lightcraft_raw::embedded_preview(bytes)?;
-    let mut d = lightcraft_codecs::decode(&jpeg, lightcraft_codecs::DecodeOptions::fit(max_edge as u32, max_edge as u32)).ok()?;
+    let mut d = decode_raw_preview(bytes, lightcraft_codecs::DecodeOptions::fit(max_edge as u32, max_edge as u32))?;
     if d.image.width.max(d.image.height) > max_edge {
         d.image = fit(&d.image, max_edge, max_edge, Filter::Box);
         d.alpha = None;
@@ -401,6 +412,131 @@ impl crate::Session {
 mod tests {
     use super::*;
     use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};
+
+    /// Luminance (from linear RGB) minus its 9 × 9 local mean: tone differences between a render and a camera JPEG
+    /// mostly cancel, edges remain.
+    fn detail(w: usize, h: usize, lum: impl Fn(usize, usize) -> f32) -> Vec<f32> {
+        let l: Vec<f32> = (0..w * h).map(|i| lum(i % w, i / w)).collect();
+        let mut out = vec![0.0; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let (x0, x1, y0, y1) = (x.saturating_sub(4), (x + 5).min(w), y.saturating_sub(4), (y + 5).min(h));
+                let m = (y0..y1).flat_map(|yy| (x0..x1).map(move |xx| (xx, yy))).map(|(xx, yy)| l[yy * w + xx]).sum::<f32>();
+                out[y * w + x] = l[y * w + x] - m / ((x1 - x0) * (y1 - y0)) as f32;
+            }
+        }
+        out
+    }
+
+    /// The integer shift (within ±`r` px) of the `p × p` patch of `a` at `(x, y)` that best matches `b`, with its
+    /// normalised cross-correlation, or `None` when the patch has too little detail to tell.
+    fn patch_shift(a: &[f32], b: &[f32], w: usize, (x, y): (usize, usize), p: usize, r: i64) -> Option<((i64, i64), f32)> {
+        let pa: Vec<f32> = (0..p * p).map(|i| a[(y + i / p) * w + x + i % p]).collect();
+        let na = pa.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if na < 1e-3 * p as f32 {
+            return None;
+        }
+        let mut best = (f32::MIN, (0, 0));
+        for dy in -r..=r {
+            for dx in -r..=r {
+                let (bx, by) = (x as i64 + dx, y as i64 + dy);
+                let (mut dot, mut nb) = (0.0f32, 0.0f32);
+                for i in 0..p {
+                    for j in 0..p {
+                        let v = b[(by as usize + i) * w + bx as usize + j];
+                        dot += pa[i * p + j] * v;
+                        nb += v * v;
+                    }
+                }
+                let c = dot / (na * nb.sqrt()).max(1e-12);
+                if c > best.0 {
+                    best = (c, (dx, dy));
+                }
+            }
+        }
+        Some((best.1, best.0))
+    }
+
+    /// Issue #256: public Panasonic / Leica raws (skipped without the corpus) are corrected for distortion the way the
+    /// camera corrected its own JPEG (tag 0x0119): at the corners of the frame, the render with "Enable Profile
+    /// Corrections" lines up with the embedded JPEG within 2 px at 640 px, while the uncorrected render of the wide
+    /// lenses is far off. A file shot with the camera's correction off (DMC-GH1) carries no correction.
+    #[test]
+    fn corpus_rw2_distortion_matches_the_camera_jpeg() {
+        let dir = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+            .join("raw");
+        let Ok(gh1) = std::fs::read(dir.join("rw2-panasonic-gh1.rw2")) else {
+            eprintln!("skip: {} absent", dir.display());
+            return;
+        };
+        assert_eq!(probe_bytes("gh1.rw2", &gh1).unwrap().embedded_lens, None, "correction off: nothing to apply");
+        assert_eq!(load_bytes(&gh1, 320).unwrap().1.lens, None);
+
+        // (file, how far off (px) the uncorrected corners are at the least, if they match within ±R at all)
+        let files = [
+            ("rw2-panasonic-fz1000m2-4x3.rw2", 8), // 9.1 mm, ~13 % at the corners
+            ("rwl-leica-dlux7.rwl", 8),            // 10.9 mm, ~13 %
+            ("rw2-panasonic-gx80.rw2", 8),         // 14 mm, ~8 %
+            ("rw2-panasonic-gh6.rw2", 3),          // 20 mm, ~1.6 %
+            ("rw2-panasonic-s9.rw2", 3),           // 45 mm, 3 % zoom after the correction
+            ("rw2-panasonic-g9.rw2", 0),           // 40 mm, ~0.5 %
+        ];
+        const EDGE: usize = 640;
+        const P: usize = 64;
+        const R: i64 = 12;
+        for (name, off_at_least) in files {
+            let bytes = std::fs::read(dir.join(name)).unwrap();
+            let probed = probe_bytes(name, &bytes).unwrap();
+            assert!(probed.embedded_lens.is_some_and(|l| l.warp.is_some()), "{name}: no distortion correction read");
+            let (src, info) = load_bytes(&bytes, 2 * EDGE).unwrap();
+            assert_eq!(info.lens, probed.embedded_lens, "{name}: probe and decode disagree");
+            // Convert to DNG keeps it: the same correction, as the DNG's own `WarpRectilinear`
+            let dng = lightcraft_raw::write_dng(&lightcraft_raw::decode(&bytes).unwrap(), &Default::default()).unwrap();
+            assert_eq!(probe_bytes("x.dng", &dng).unwrap().embedded_lens, probed.embedded_lens, "{name}: lost in the DNG");
+            let mut s = lightcraft_develop::DevelopSettings::default();
+            let render = |s: &lightcraft_develop::DevelopSettings| {
+                lightcraft_pipeline::render(&src, &info, s, &lightcraft_pipeline::RenderRequest::fit(EDGE, EDGE)).image
+            };
+            let before = render(&s);
+            s.optics.lens_profile = true;
+            let after = render(&s);
+            let (w, h) = (after.width, after.height);
+            assert_eq!((before.width, before.height), (w, h));
+            // the camera JPEG shows the whole sensor; a render in an in-camera aspect ratio is its centre
+            let (cam, _) = load_embedded_preview(&bytes, 4 * EDGE).unwrap();
+            let (cw, ch) = (cam.width as f64, cam.height as f64);
+            let (sw, sh) = if cw / ch > w as f64 / h as f64 { (ch * w as f64 / h as f64, ch) } else { (cw, cw * h as f64 / w as f64) };
+            let cam = cam.crop(((cw - sw) / 2.0).round() as usize, ((ch - sh) / 2.0).round() as usize, sw.round() as usize, sh.round() as usize);
+            let cam = lightcraft_raster::resample::resize(&cam, w, h, Filter::Mitchell);
+            let lin = |v: u8| (v as f32 / 255.0).powf(2.2);
+            let lum8 = |im: &lightcraft_raster::Rgba8, x: usize, y: usize| {
+                let p = im.data[y * im.width + x];
+                0.3 * lin(p[0]) + 0.6 * lin(p[1]) + 0.1 * lin(p[2])
+            };
+            let reference = detail(w, h, |x, y| {
+                let p = cam.data[y * w + x];
+                0.3 * p[0] + 0.6 * p[1] + 0.1 * p[2]
+            });
+            let (db, da) = (detail(w, h, |x, y| lum8(&before, x, y)), detail(w, h, |x, y| lum8(&after, x, y)));
+            let m = R as usize + 4;
+            let corners = [(m, m), (w - m - P, m), (m, h - m - P), (w - m - P, h - m - P)];
+            let mut measured = 0;
+            for c in corners {
+                let Some(((dx, dy), ca)) = patch_shift(&da, &reference, w, c, P, R) else { continue };
+                measured += 1;
+                assert!(dx.abs() <= 2 && dy.abs() <= 2 && ca >= 0.5, "{name}: corrected corner {c:?} off by ({dx}, {dy}) px, ncc {ca}");
+                if off_at_least > 0
+                    && let Some(((bx, by), cb)) = patch_shift(&db, &reference, w, c, P, R)
+                {
+                    let off = bx.abs().max(by.abs()) >= off_at_least || cb < 0.3;
+                    assert!(off, "{name}: uncorrected corner {c:?} already within ({bx}, {by}) px, ncc {cb}");
+                }
+            }
+            assert!(measured >= 2, "{name}: only {measured} corners with detail");
+        }
+    }
 
     /// A CR3-shaped file (not decodable yet) whose only content is a `PRVW` preview box.
     fn cr3_with_preview(w: u32, h: u32) -> Vec<u8> {

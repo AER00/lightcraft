@@ -365,6 +365,9 @@ enum Src<'a> {
 }
 
 fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, cache: Option<&StageCache>) -> Rendered {
+    // sections switched off with their eye render as if at their defaults (issue #316)
+    let effective = s.effective();
+    let s: &DevelopSettings = &effective;
     // `Instant::now()` panics on wasm32-unknown-unknown: only read the clock when profiling.
     let lap = |what: &str, t: &mut Option<std::time::Instant>| {
         if let Some(t) = t {

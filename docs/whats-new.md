@@ -2,9 +2,23 @@
 
 ## October 2026
 
+### Library keyboard culling
+- Colour labels tint thumbnail surrounds in Square Grid and the Detail filmstrip, and a translucent footer along the bottom of the photo in Photo Grid. Label confirmations use a matching pale colour.
+- Setting or clearing a colour label shows a brief bottom confirmation, like rating a photo; custom label names appear in the message too.
+- On macOS, ratings `0–5`, labels `6–9` and pick/unflag `P/U` now reach the app even when shown in the native menu (issue #283; adapted from PR #261).
+- `Shift+6–9` labels and advances. `Shift+P` picks and advances in Photo Grid and Square Grid; it opens Presets in other views. With Auto Advance on, Shift still moves only once.
+- Help → Keyboard Shortcuts includes the number-key bindings. See [library shortcuts](library-shortcuts.md).
+
 ### RAW decoding
+- Panasonic and Leica raws (RW2, RWL) are now corrected for lens distortion the way the camera corrects its own JPEG
+  (issue #256): the correction the camera records in the file is applied under Lens Corrections ▸ Enable Profile
+  Corrections, on by default for newly imported photos, with the same framing as the camera's JPEG. At 12 mm the
+  12–32 mm kit zoom was off by about 5 % of the image width at the corners before. Files shot with the correction off
+  are unchanged; photos imported before this change get it when imported again.
 - Sony ILCE-7M4 downsized lossless ARWs now decode subsampled YCbCr tiles into linear RGB,
   preserving RAW editing & full-resolution export instead of using embedded JPEG previews.
+- Sony A7R II (and other) raws whose camera JPEG is lens-corrected no longer open grey and too dark (issue #232): the
+  starting look is fitted to the camera JPEG away from edges when the misaligned edges spoil the fit on all pixels.
 
 ### Presets and profiles
 - Import presets from other editors: XMP presets, classic `.lrtemplate` files, "DNG presets" from mobile apps and `.zip`
@@ -12,8 +26,55 @@
 - Luminar looks: `.lmp` files and `.mplumpack` collections import as presets (grouped by collection); the sliders
   with a counterpart here come along, the rest is listed.
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
+- Imported `.cube` LUT profiles appear in the Profile menu and the profile browser, grouped by their folder, and stay
+  favourites across restarts (issue #328).
+
+### Editing
+- The Tint slider works the right way round (issues #188, #321): left adds green, right adds magenta, as its track
+  shows and as in Lightroom, and Tint values in Lightroom XMP sidecars now render as they do there. A custom Tint
+  saved in an earlier version now shifts the other way; set it again (or re-run Auto / the white-balance picker).
+- Crop (issue #295): a Lock toggle keeps the aspect ratio on every handle, Custom takes your own ratio (Apply), and
+  dragging a handle into the image edge stops there instead of pushing the crop out of shape.
+
+### Library and views
+- Trackpads: pinch to zoom around the pointer and scroll with two fingers to pan the photo; panning keeps the photo
+  inside the view. A plain mouse wheel over a zoomed photo pans it too.
+- A Folders section in the sidebar lists the folders your photos were imported from; choose one to see its photos.
+- Select All and multi-selection show every selected photo in the grid and filmstrip, not only the active one
+  (issues #187, #298). Importing files that are in Recently Deleted asks whether to leave them there, restore them
+  (with their edits) or import them as new; the trash view's Photo menu has Empty Recently Deleted.
+- The Import Photos review opens bigger and can be resized; its photo grid fills it (issue #337). Shift-click checks
+  or unchecks a range of photos (issue #338).
+
+### Languages
+- The interface is available in German and Russian (Edit ▸ Language), alongside English, Chinese (Simplified and
+  Traditional), Japanese and Brazilian Portuguese.
+
+### Editing
+- Type an exact value into any slider (issue #322): click the number next to its name, type (`1.5`, `-20`, `5600`)
+  and press Return; Esc keeps the old value.
+
+### Editing
+- The eye on the Light, Color and Detail section headers now hides their adjustments, as it already did for Effects,
+  Optics, Geometry and Calibration (issue #316).
+
+### Library
+- Choosing a date under By Date or a keyword under Keywords shows those photos from All Photos, as their counts
+  promise, instead of filtering whatever album or folder was open, which often showed nothing (issue #341).
 
 ### Reliability
+- On macOS, single-key shortcuts that appear in the menu bar now work: E, C, H, M, ⇧P, I, K, D, ratings 0–5,
+  labels 6–9, P / U and the rest did nothing, because macOS only passes ⌘ / ⌃ combinations and function keys
+  to the menu bar and the app ignored those keys, assuming the menu bar would handle them. Keys outside the menus
+  (Space, G, X, ⌫) and ⌘ shortcuts were not affected.
+- `--memory` sessions keep their promise to save nothing (issues #164, #169): UI changes made in one no longer
+  land in `ui.json` (where they replaced the saved settings), and the GPU crash sentinel no longer creates the
+  settings folder there. The same goes for the temporary session offered when the library can't be opened.
+- The desktop app keeps a log file: `logs/lightcraft.log` in its settings folder (Linux `~/.config/lightcraft/logs/`),
+  with the logs of the two previous runs beside it, so warnings and crashes of a run started from a desktop menu or the
+  Dock can be attached to a bug report. `LIGHTCRAFT_LOG` works as before; `RUST_LOG` takes env_logger-style
+  directives. See README → Quick start → Logs.
+- `lightcraft-cli` logs warnings on stderr too (issue #168); `LIGHTCRAFT_LOG` or `RUST_LOG` picks another level.
 - LightCraft no longer crashes at launch on Windows PCs whose Vulkan driver is broken (issue #136, e.g. some Intel UHD
   630 drivers): on Windows the window and GPU rendering use DirectX 12 only and never load the Vulkan driver unless
   asked to. `LIGHTCRAFT_GPU_BACKEND=dx12 | vulkan | metal | off` (or wgpu's `WGPU_BACKEND`, which GPU rendering

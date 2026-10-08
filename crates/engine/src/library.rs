@@ -102,6 +102,8 @@ struct PresetsFile {
 struct ViewFile {
     source: LibrarySource,
     browse: Option<crate::Browse>,
+    /// The folder a `libraryFolder` source shows.
+    library_folder: Option<String>,
     // No filter: a library opens unfiltered. A date, keyword or person left over from the last session
     // would silently hide photos, with only a small badge to say so.
     sort: lightcraft_catalog::Sort,
@@ -309,25 +311,12 @@ impl Session {
         self.pending_log.clear();
         self.selection = Selection::default();
         self.source = LibrarySource::All;
+        self.library_folder = None;
         if report.created && seed_demo {
             crate::demo::load(self);
             journal.snapshot(&self.catalog)?;
         }
         let mut settings = SettingsLoad::default();
-        // presets
-        if let Some(f) = settings.read::<PresetsFile>(files.as_mut(), "presets.json") {
-            for p in &mut self.presets {
-                p.favorite = p.builtin && f.favorites.contains(&p.id) || (!p.builtin && p.favorite);
-            }
-            for u in f.user {
-                if !self.presets.iter().any(|p| p.id == u.id) {
-                    self.presets.push(u);
-                }
-            }
-            let known = |id: &String| crate::presets::profile(id).is_some();
-            self.profile_favorites = f.profile_favorites.into_iter().filter(known).collect();
-            self.profile_recent = f.profile_recent.into_iter().filter(known).take(crate::presets::RECENT_PROFILES).collect();
-        }
         // preferences
         let prefs = settings.read::<PrefsFile>(files.as_mut(), "prefs.json").unwrap_or_default();
         self.xmp = prefs.xmp;
@@ -349,10 +338,34 @@ impl Session {
         if let Some(d) = &self.smart_previews_dir {
             self.media.smart_dir = Some(d.clone());
         }
+        // presets
+        if let Some(f) = settings.read::<PresetsFile>(files.as_mut(), "presets.json") {
+            for p in &mut self.presets {
+                p.favorite = p.builtin && f.favorites.contains(&p.id) || (!p.builtin && p.favorite);
+            }
+            for u in f.user {
+                if !self.presets.iter().any(|p| p.id == u.id) {
+                    self.presets.push(u);
+                }
+            }
+            let known = |id: &String| crate::presets::profile(id).is_some() || self.lut_profiles.iter().any(|p| &p.id == id);
+            self.profile_favorites = f.profile_favorites.into_iter().filter(known).collect();
+            self.profile_recent = f.profile_recent.into_iter().filter(known).take(crate::presets::RECENT_PROFILES).collect();
+        }
         // view state
         if let Some(v) = settings.read::<ViewFile>(files.as_mut(), "view.json") {
             self.source = v.source;
             self.browse = v.browse;
+            self.library_folder = v.library_folder.filter(|f| !f.trim().is_empty());
+            if self.source == LibrarySource::LibraryFolder {
+                // a folder that is gone (or none): everything, not an empty grid
+                let f = lightcraft_catalog::Filter { library_folder: self.library_folder.clone(), ..Default::default() };
+                let any = self.library_folder.is_some() && !self.catalog.query(&f, &lightcraft_catalog::Sort::default()).is_empty();
+                if !any {
+                    self.source = LibrarySource::All;
+                    self.library_folder = None;
+                }
+            }
             self.sort = v.sort;
             self.selection = v.selection;
             self.selection.ids.retain(|id| self.catalog.photo(*id).is_some());
@@ -500,7 +513,14 @@ impl Session {
     }
 
     fn view_json(&self) -> Vec<u8> {
-        let view = ViewFile { source: self.source, browse: self.browse.clone(), sort: self.sort, selection: self.selection.clone() };
+        let view = ViewFile {
+            source: self.source,
+            browse: self.browse.clone(),
+            // only while it is shown: a leftover would be a stale choice nobody made
+            library_folder: self.library_folder.clone().filter(|_| self.source == LibrarySource::LibraryFolder),
+            sort: self.sort,
+            selection: self.selection.clone(),
+        };
         serde_json::to_vec_pretty(&view).unwrap_or_default()
     }
 
