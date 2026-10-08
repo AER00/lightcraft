@@ -14,6 +14,10 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- The desktop app keeps a log file: `logs/lightcraft.log` in its settings folder (Linux `~/.config/lightcraft/logs/`),
+  with the logs of the two previous runs beside it, so warnings and crashes of a run started from a desktop menu or the
+  Dock can be attached to a bug report. `LIGHTCRAFT_LOG` works as before; `RUST_LOG` takes env_logger-style
+  directives. See README → Quick start → Logs.
 - LightCraft no longer crashes at launch on Windows PCs whose Vulkan driver is broken (issue #136, e.g. some Intel UHD
   630 drivers): on Windows the window and GPU rendering use DirectX 12 only and never load the Vulkan driver unless
   asked to. `LIGHTCRAFT_GPU_BACKEND=dx12 | vulkan | metal | off` (or wgpu's `WGPU_BACKEND`, which GPU rendering
