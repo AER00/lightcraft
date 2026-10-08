@@ -14,6 +14,10 @@
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
 ### Reliability
+- On macOS, single-key shortcuts that appear in the menu bar now work: E, C, H, M, ⇧P, I, K, D, ratings 0–5,
+  labels 6–9, P / U and the rest did nothing, because macOS only passes ⌘ / ⌃ combinations and function keys
+  to the menu bar and the app ignored those keys, assuming the menu bar would handle them. Keys outside the menus
+  (Space, G, X, ⌫) and ⌘ shortcuts were not affected.
 - LightCraft no longer crashes at launch on Windows PCs whose Vulkan driver is broken (issue #136, e.g. some Intel UHD
   630 drivers): on Windows the window and GPU rendering use DirectX 12 only and never load the Vulkan driver unless
   asked to. `LIGHTCRAFT_GPU_BACKEND=dx12 | vulkan | metal | off` (or wgpu's `WGPU_BACKEND`, which GPU rendering
