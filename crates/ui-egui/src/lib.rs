@@ -20,6 +20,7 @@ pub mod menubar;
 pub mod menus;
 pub mod merge;
 pub mod panels;
+pub mod pick;
 pub mod render;
 pub mod shortcuts;
 pub mod softpaint;
@@ -91,6 +92,10 @@ pub type HostAction = Box<dyn FnMut(&mut Session) -> Result<Value, String>>;
 /// Platform services injected by the host app (desktop or web).
 #[derive(Default)]
 pub struct Services {
+    /// Native file dialogs for commands, shown off the UI thread and answered later
+    /// (`pick`; #191). With it, the synchronous pickers below serve only the buttons inside
+    /// dialogs; without it (the web, tests) they answer the commands too.
+    pub picker: Option<pick::Picker>,
     /// Show an open dialog for photos; returns paths.
     pub pick_files: Option<PickFiles>,
     /// Open dialog for preset files (`.lcpreset`, `.xmp`, `.lrtemplate`, `.zip`, `.dng`, Luminar `.lmp` / `.mplumpack`).
@@ -174,6 +179,8 @@ pub struct LightcraftApp {
     shadow: Option<headless::HeadlessView>,
     /// Synthetic input events (from the control channel) injected one step per frame.
     pub synthetic: Vec<egui::Event>,
+    /// Native file dialogs up for commands (`pick`): each command runs again when its closes.
+    pub(crate) pending_picks: Vec<pick::Pending>,
     /// Modifiers announced for synthetic input (held from a button down to its release).
     synthetic_mods: egui::Modifiers,
     /// Clear `synthetic_mods` on the next frame.
@@ -252,6 +259,7 @@ impl LightcraftApp {
             screenshot_token: 0,
             shadow: None,
             synthetic: vec![],
+            pending_picks: vec![],
             synthetic_mods: egui::Modifiers::NONE,
             synthetic_mods_release: false,
             styled: false,
@@ -876,6 +884,7 @@ impl LightcraftApp {
         import::scan_progress(self, &ctx);
         lightroom_import::progress(self, &ctx);
         export_task::poll(self, &ctx);
+        pick::poll(self, &ctx);
         panels::grid::drag_feedback(self, &ctx);
         panels::toast(self, &ctx);
         self.widgets = widgets::take_registry(&ctx);
