@@ -91,8 +91,12 @@ pub fn embedded_preview(bytes: &[u8]) -> Option<Vec<u8>> {
         let j = crate::vendor::raf::header(bytes).ok()?.jpeg?;
         return is_dct_jpeg(j).then(|| trim_eoi(j).to_vec());
     }
-    if crate::probe(bytes) == Some(crate::RawFormat::Cr3) {
+    let format = crate::probe(bytes);
+    if format == Some(crate::RawFormat::Cr3) {
         return cr3_preview(bytes).map(|j| trim_eoi(j).to_vec());
+    }
+    if matches!(format, Some(crate::RawFormat::Crw | crate::RawFormat::Mrw | crate::RawFormat::X3f)) {
+        return scan_for_jpeg(bytes);
     }
     let tiff = Tiff::parse(bytes).ok()?;
     let mut found: Vec<&[u8]> = Vec::new();
@@ -117,7 +121,112 @@ pub fn embedded_preview(bytes: &[u8]) -> Option<Vec<u8>> {
     if let Some(p) = crate::vendor::orf::preview(bytes) {
         found.push(p);
     }
-    found.into_iter().filter(|s| is_dct_jpeg(s)).max_by_key(|s| s.len()).map(|s| trim_eoi(s).to_vec())
+    let best = found.into_iter().filter(|s| is_dct_jpeg(s)).max_by_key(|s| s.len()).map(|s| trim_eoi(s).to_vec());
+    // a TIFF raw we can't decode whose preview no tag points to (Leaf MOS, Epson ERF)
+    best.or_else(|| format.filter(|f| !f.is_supported()).and_then(|_| scan_for_jpeg(bytes)))
+}
+
+/// The end of the DCT JPEG whose SOI is at `soi` (exclusive index after its EOI) and its component count,
+/// walking the marker segments and the entropy-coded data. `None` when it is not a complete, displayable
+/// (baseline or progressive) JPEG, so a stray `D8 FF` in other data is rejected. `*reach` is left at
+/// the furthest byte looked at (what the walk cost; see [`scan_for_jpeg`]).
+fn jpeg_extent(b: &[u8], soi: usize, reach: &mut usize) -> Option<(usize, u8)> {
+    let mut i = soi + 2;
+    let r = walk_jpeg(b, &mut i);
+    *reach = i;
+    r
+}
+
+fn walk_jpeg(b: &[u8], i: &mut usize) -> Option<(usize, u8)> {
+    let mut components = None;
+    for _ in 0..4096 {
+        if *b.get(*i)? != 0xff {
+            return None;
+        }
+        while *b.get(*i)? == 0xff {
+            *i += 1;
+        }
+        let m = *b.get(*i)?;
+        *i += 1;
+        match m {
+            0xd9 => return components.map(|c| (*i, c)),
+            0x01 | 0xd0..=0xd8 => continue,
+            _ => {}
+        }
+        let len = usize::from(u16::from_be_bytes([*b.get(*i)?, *b.get(*i + 1)?]));
+        if len < 2 {
+            return None;
+        }
+        match m {
+            0xc0..=0xc2 => {
+                // precision, height, width, component count
+                let h = u16::from_be_bytes([*b.get(*i + 3)?, *b.get(*i + 4)?]);
+                let w = u16::from_be_bytes([*b.get(*i + 5)?, *b.get(*i + 6)?]);
+                if h == 0 || w == 0 || components.is_some() {
+                    return None;
+                }
+                components = Some(*b.get(*i + 7)?);
+            }
+            0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf => return None, // lossless, arithmetic, hierarchical
+            _ => {}
+        }
+        *i += len;
+        if m == 0xda {
+            // entropy-coded data up to the next marker that is not a stuffed 0xff or a restart
+            loop {
+                *i += b.get(*i..)?.iter().position(|&x| x == 0xff)?;
+                match *b.get(*i + 1)? {
+                    0x00 | 0xd0..=0xd7 => *i += 2,
+                    0xff => *i += 1,
+                    _ => break,
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Last resort for the containers whose structure is not walked (Canon CRW, Minolta MRW, Sigma X3F, TIFF raws
+/// with private blocks such as Leaf MOS or Epson ERF): the largest complete colour DCT JPEG stored as a plain
+/// byte run in the file. A one-component JPEG is skipped (a Canon PowerShot CRW stores its sensor mosaic as one).
+///
+/// Evidence: in the Minolta and Epson files the first byte of the stored preview is not `ff` (it is `00`, `02` or
+/// `ee`) while the rest is a regular JPEG, so a run is found by its `d8 ff` and starts one byte earlier,
+/// with that byte restored to `ff`.
+///
+/// A crafted file can hold millions of JPEG-like starts whose walks each run to its end: the walks
+/// share a budget of eight times the file's size, so the scan stays linear (a real file's candidates
+/// fail within a few bytes, or are the preview itself).
+fn scan_for_jpeg(data: &[u8]) -> Option<Vec<u8>> {
+    let mut best: Option<(usize, usize)> = None;
+    let mut at = 1;
+    let mut budget = data.len().saturating_mul(8).max(1 << 20);
+    while let Some(off) = data.get(at..).and_then(|s| s.iter().position(|&b| b == 0xd8)) {
+        let d8 = at + off;
+        at = d8 + 1;
+        if data.get(d8 + 1) != Some(&0xff) || !matches!(data.get(d8 + 2), Some(0xc0..=0xc4 | 0xdb | 0xe0..=0xef | 0xfe)) {
+            continue;
+        }
+        let start = d8 - 1; // `at` starts at 1, so d8 >= 1
+        let mut reach = start;
+        let found = jpeg_extent(data, start, &mut reach);
+        budget = budget.saturating_sub(reach.saturating_sub(start));
+        if budget == 0 {
+            break;
+        }
+        if let Some((end, 3)) = found {
+            if best.is_none_or(|(s, e)| end - start > e - s) {
+                best = Some((start, end));
+            }
+            at = end;
+        }
+    }
+    let (start, end) = best?;
+    let mut jpeg = data.get(start..end)?.to_vec();
+    if let Some(first) = jpeg.first_mut() {
+        *first = 0xff;
+    }
+    Some(jpeg)
 }
 
 /// Canon CR3: the full-size JPEG track (see [`lightcraft_meta::cr3`]), else the `PRVW` / `THMB` boxes.
@@ -241,5 +350,67 @@ mod tests {
         // a track pointing past the end falls back to PRVW
         file.truncate(at as usize + 100);
         assert_eq!(embedded_preview(&file).unwrap(), small);
+    }
+
+    /// A structurally complete DCT JPEG (no real image data): `nc` components, `n` entropy bytes.
+    fn scan_jpeg(nc: u8, n: usize) -> Vec<u8> {
+        let mut j = vec![0xff, 0xd8, 0xff, 0xdb, 0x00, 0x43, 0x00];
+        j.extend(std::iter::repeat_n(8u8, 64));
+        j.extend_from_slice(&[0xff, 0xc0, 0x00, 8 + 3 * nc, 8, 0, 16, 0, 24, nc]);
+        for c in 0..nc {
+            j.extend_from_slice(&[c + 1, 0x11, 0]);
+        }
+        j.extend_from_slice(&[0xff, 0xda, 0x00, 6 + 2 * nc, nc]);
+        for c in 0..nc {
+            j.extend_from_slice(&[c + 1, 0]);
+        }
+        j.extend_from_slice(&[0, 63, 0]);
+        j.extend(std::iter::repeat_n(0x55u8, n));
+        j.extend_from_slice(&[0xff, 0x00, 0x12, 0xff, 0xd0, 0x34, 0xff, 0xd9]);
+        j
+    }
+
+    /// A crafted container full of JPEG-like starts (each walk running on through the ones after it)
+    /// is scanned in linear time: the walks share a budget (without it this 40 MB file takes about a minute).
+    #[test]
+    fn a_scan_through_many_fake_jpegs_stays_linear() {
+        let mut unit = vec![0u8, 0xd8, 0xff, 0xdb, 0x00, 0x02, 0xff, 0xda, 0x00, 0x02];
+        unit.extend(std::iter::repeat_n(0x55u8, 190));
+        let mut f = b"\0MRM\0\x01\0\0".to_vec();
+        for _ in 0..200_000 {
+            f.extend_from_slice(&unit);
+        }
+        let t = std::time::Instant::now();
+        assert_eq!(scan_for_jpeg(&f), None);
+        assert!(t.elapsed() < std::time::Duration::from_secs(10), "{:?}", t.elapsed());
+    }
+
+    /// Containers whose structure we do not walk give up their largest colour JPEG, found by scanning.
+    #[test]
+    fn scanned_containers_give_the_largest_colour_jpeg() {
+        let (small, big, mosaic) = (scan_jpeg(3, 100), scan_jpeg(3, 900), scan_jpeg(1, 5000));
+        let heads: [&[u8]; 3] = [b"II\x1a\0\0\0HEAPCCDR", b"\0MRM\0\x01\0\0", b"FOVb\x02\0\x02\0"];
+        for head in heads {
+            let mut f = head.to_vec();
+            for part in [&small, &mosaic, &big] {
+                f.extend_from_slice(&[0xff, 0xd8, 0xff, 0x00, 0x00]); // a stray SOI-like run: not a JPEG
+                f.extend_from_slice(part);
+                f.extend_from_slice(&[0u8; 7]);
+            }
+            assert!(crate::probe(&f).is_some_and(|p| !p.is_supported()), "{head:?}");
+            assert_eq!(embedded_preview(&f).as_deref(), Some(&big[..]), "{head:?}");
+            for n in (0..f.len()).step_by(11) {
+                let _ = embedded_preview(&f[..n]);
+            }
+        }
+        // a preview whose first byte was overwritten (Minolta and Epson files store 00, 02 or ee there) is restored
+        let mut f = b"\0MRM\0\x01\0\0".to_vec();
+        f.push(0x02);
+        f.extend_from_slice(&big[1..]);
+        assert_eq!(embedded_preview(&f).as_deref(), Some(&big[..]));
+        // only a one-component JPEG, or none: nothing
+        let mut f = b"FOVb\x02\0\x02\0".to_vec();
+        f.extend_from_slice(&mosaic);
+        assert_eq!(embedded_preview(&f), None);
     }
 }
