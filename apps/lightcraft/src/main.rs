@@ -514,7 +514,8 @@ fn main() -> eframe::Result {
     // The log file: opened after the arguments, so `--version`, `--help` and a usage error leave
     // no file behind. Records logged until now are written to it first.
     if let Some(logger) = logger {
-        match log_dir() {
+        // a --memory session writes nothing (issue #164), a log file included
+        match log_dir().filter(|_| !in_memory) {
             Some(dir) => match logger.attach_dir(&dir) {
                 Ok(path) => log::info!("LightCraft {}, log file {}", env!("CARGO_PKG_VERSION"), path.display()),
                 // The file sink has given up by now, so this goes to standard error only.
