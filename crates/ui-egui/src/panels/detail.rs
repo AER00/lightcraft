@@ -1172,6 +1172,47 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
             }
         }
     }
+    // Object selections (SAM 3) of the selected mask: each click, green to include, red to exclude
+    // (clicks still on their way to the model included)
+    let pending = app.session.segmenter.pending_clicks().cloned();
+    for m in d.masks.iter().filter(|m| Some(m.id) == active) {
+        for (k, c) in m.components.iter().enumerate() {
+            if let MaskShape::Object { hint, exclude, .. } = &c.shape {
+                let (hint, exclude) = match pending.as_ref().filter(|q| (q.mask, q.comp) == (m.id, k)) {
+                    Some(q) => (&q.hint, &q.exclude),
+                    None => (hint, exclude),
+                };
+                for (pts, col) in [(hint, Color32::from_rgb(40, 200, 90)), (exclude, Color32::from_rgb(230, 60, 60))] {
+                    for q in pts {
+                        let q = map.screen(*q);
+                        p.circle_filled(q, 5.0, col);
+                        p.circle_stroke(q, 5.0, Stroke::new(1.5, Color32::WHITE));
+                    }
+                }
+            }
+        }
+    }
+    // Object tool: a click includes what's under it, ⌥-click leaves it out
+    if app.ui.tool == "object" {
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
+        if resp.clicked()
+            && let Some(q) = resp.interact_pointer_pos()
+        {
+            let n = map.norm(q);
+            let exclude = ui.input(|i| i.modifiers.alt);
+            match app.run("mask.objectPoint", json!({"x": n.x, "y": n.y, "exclude": exclude})) {
+                Ok(_) => {
+                    if let Some(mid) = app.session.active_mask {
+                        app.ui.detail_due = Some((ui.input(|i| i.time) + 1.0, mid));
+                    }
+                }
+                Err(e) => app.ai_error(ui.ctx(), e, Some(("object", "new"))),
+            }
+        }
+        return;
+    }
     // brush tool
     if app.ui.tool == "brush" {
         let r = (app.ui.brush_size as f64 * long) as f32;

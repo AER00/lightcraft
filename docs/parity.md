@@ -31,7 +31,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 7 | 1 | 2 | 2 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
-| K. Masking (MASK) | 14 | 3 | 6 | 0 | 8/8 (100%) | 5/5 (100%) |
+| K. Masking (MASK) | 14 | 4 | 5 | 0 | 8/8 (100%) | 5/5 (100%) |
 | L. Presets (PRE) | 6 | 0 | 1 | 1 | 2/2 (100%) | 2/2 (100%) |
 | M. Versions & history (VER) | 5 | 0 | 0 | 0 | 1/1 (100%) | 3/3 (100%) |
 | N. Copy / paste / sync (SYNC) | 5 | 0 | 0 | 0 | 3/3 (100%) | 1/1 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
-| **Total** | 388 | 33 | 87 | 37 | 194/200 (97%) | 139/149 (93%) |
+| **Total** | 388 | 34 | 86 | 37 | 194/200 (97%) | 139/149 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.6%** of 508 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 40.9% of 159.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.7%** of 508 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 41.2% of 159.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -59,7 +59,7 @@ Ordered by user impact, then tier, then effort. The checklist above counts featu
 that decide whether a photographer can switch (see the honest assessment in [ROADMAP.md](../ROADMAP.md#where-we-stand)).
 Take the first one nobody is working on.
 
-1. **LR-PROF-CAMERACOLOR** (P0): our own camera colour calibration. Sony ARW and Nikon NEF now get a guarded file-local fit to their own embedded JPEG (colour matrix + tone curve, relative WB; ARW: 7 of 10 public samples accepted, mean ΔE vs the camera JPEG 17–26 → 3–10; NEF: 13 of 13 decodable samples from 6 bodies accepted, ΔE 13–46 → 3–8, one mixed-light scene 13 → 12); measured calibration and fidelity remain missing. Other non-DNG raws and rejected fits still use a neutral matrix. Expand validated preview fitting and use matrices the files carry themselves; never Adobe data.
+1. **LR-PROF-CAMERACOLOR** (P0): our own camera colour calibration. Sony ARW and Nikon NEF now get a guarded file-local fit to their own embedded JPEG (colour matrix + hue/saturation/value table + tone and chroma curves, relative WB; per-model profiles pooled from many photos via `lightcraft-cli calibrate`; ARW: 7 of 10 public samples accepted, mean ΔE vs the camera JPEG 17–26 → 3–10; NEF: 13 of 13 decodable samples from 6 bodies accepted, ΔE 13–46 → 3–8, one mixed-light scene 13 → 12); measured calibration and fidelity remain missing. Other non-DNG raws and rejected fits still use a neutral matrix. Expand validated preview fitting and use matrices the files carry themselves; never Adobe data.
 2. **LR-IMP-FORMATS** (P0): **CR3** first (every Canon body since ~2018), then compressed RAF / ORF, RW2 v4, Nikon
    "lossy after split" NEF, Canon sRAW; HEIC/AVIF decode. Clean-room, from prose descriptions only (see
    `crates/raw/src/vendor/nefc.rs` for how compressed NEF was done). Until decoded, such photos are `preview_only`.
@@ -69,8 +69,10 @@ Take the first one nobody is working on.
    then tune tone, highlights, texture/clarity/dehaze, NR and sharpening against it.
 5. **LR-EDIT-OPTICS-PROFILE** (P1): a lens-profile database of our own (embedded DNG/maker corrections work today).
 6. **AI masks and Enhance** (LR-MASK-SUBJECT / SKY / PEOPLE / OBJECTS, LR-EDIT-DETAIL-DENOISE, SUPERRES, LENSBLUR):
-   blocked on a model strategy (permissively licensed weights or our own training, pure-Rust inference). A maintainer
-   decision, not just engineering.
+   Object and Describe masks run SAM 3 in pure Rust (`crates/segment`); the weights (SAM License) are never bundled:
+   the app offers a consented, verified download, but **LightCraft's CDN mirrors are not configured yet** (the
+   built-in list is empty, so today users need their own mirror or a manual install). Subject / Sky / People could
+   use the same model with fixed prompts; denoise / super-resolution models remain a maintainer decision.
 7. **HDR** (Q. HDR, LR-EXP-HDR), **video** (R. Video), **Classic output modules** (Map view, Book, Slideshow module,
    Print, publish): large, well understood, lower priority than 1–5.
 
@@ -274,7 +276,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-PROF-ADOBE | Standard raw looks (own equivalents) | P0 | ✅ | `crates/engine/src/presets.rs` (`PROFILES`), `crates/pipeline/src/profiles.rs` | six own looks: Color, Neutral, Vivid, Landscape, Portrait, Monochrome |
 | LR-PROF-ADAPTIVE | Adaptive profiles | P2 | ⬜ | | |
 | LR-PROF-CAMERA | Camera-matching looks | P2 | ⬜ | | |
-| LR-PROF-CAMERACOLOR | Camera colour calibration (own) | P0 | 🟡 | `crates/raw/src/color.rs`, `crates/raw/src/profile.rs`, `crates/engine/src/camera_preview.rs` | DNG files use the colour matrices and the camera-profile look they carry (`ProfileHueSatMap`, `ProfileLookTable`, `ProfileToneCurve`, read from the file at run time per DNG spec ch. 6 — Lightroom-converted DNGs rendered flat and muted without them, issue #138); Sony ARW and Nikon NEF get a guarded file-local fit to their own embedded JPEG — chromaticity matrix + tone curve, relative WB, kept with smart previews (see docs/camera-preview-colour.md); ARW: on 10 public raw.pixls.us samples from 8 bodies 7 fits were accepted, mean ΔE vs the camera JPEG 17–26 → 3–10; NEF: 13 of 13 decodable samples (D750, D780, D850, D7500, Z 50 and local D7500 shots) accepted, ΔE 13–46 → 3–8 (issue #150); this is not measured camera calibration; other raws and rejected fits use a neutral fallback (camera RGB ≈ linear sRGB, `matrix_is_fallback`) with as-shot white balance, so colours are muted and not accurate. Needs our own per-camera calibration: matrices the files carry themselves (e.g. Olympus `ColorMatrix`), fitting each camera to its own embedded JPEG, then chart shots. Adobe matrices / DCPs are never used. Biggest image-quality gap today |
+| LR-PROF-CAMERACOLOR | Camera colour calibration (own) | P0 | 🟡 | `crates/raw/src/color.rs`, `crates/raw/src/profile.rs`, `crates/engine/src/camera_preview.rs` | DNG files use the colour matrices and the camera-profile look they carry (`ProfileHueSatMap`, `ProfileLookTable`, `ProfileToneCurve`, read from the file at run time per DNG spec ch. 6 — Lightroom-converted DNGs rendered flat and muted without them, issue #138); Sony ARW and Nikon NEF get a guarded file-local fit to their own embedded JPEG — chromaticity matrix + hue/saturation/value table + tone and chroma curves, relative WB — or, with a local per-model profile pooled from many photos (`lightcraft-cli calibrate`, `crates/engine/src/camera_profiles.rs`), the profile's colour and only their own tone/chroma curves (on 29 held-out ILCE-7M4 photos mean ΔE vs the camera JPEG 3.54 → 3.10), kept with smart previews (see docs/camera-preview-colour.md); ARW: on 10 public raw.pixls.us samples from 8 bodies 7 fits were accepted, mean ΔE vs the camera JPEG 17–26 → 3–10; NEF: 13 of 13 decodable samples (D750, D780, D850, D7500, Z 50 and local D7500 shots) accepted, ΔE 13–46 → 3–8 (issue #150); this is not measured camera calibration; other raws and rejected fits use a neutral fallback (camera RGB ≈ linear sRGB, `matrix_is_fallback`) with as-shot white balance, so colours are muted and not accurate. Needs our own per-camera calibration: matrices the files carry themselves (e.g. Olympus `ColorMatrix`), fitting each camera to its own embedded JPEG, then chart shots. Adobe matrices / DCPs are never used. Biggest image-quality gap today |
 | LR-PROF-CREATIVE | Creative profiles (own) | P2 | ✅ | `cmd:develop.profile`, `crates/pipeline/src/profiles.rs` | 16 own looks in Film / Cinematic / Muted / B&W (tone + point-curve fades, colour grading, mixer / B&W mix); scale with `ctl:profile.amount`; sliders untouched |
 | LR-PROF-LEGACY | Legacy profiles | P2 | ⬜ | | |
 | LR-PROF-NONRAW | Profiles for non-raw files | P0 | ✅ | `cmd:develop.profile` | same looks apply to JPEG/TIFF |
@@ -328,7 +330,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-MASK-SUBJECT | Select subject | P2 | 🟡 | `cmd:mask.add` (`subject`), `crates/pipeline/src/masks.rs` | saliency heuristic, no segmentation model |
 | LR-MASK-SKY | Select sky | P2 | 🟡 | `cmd:mask.add` (`sky`) | heuristic |
 | LR-MASK-BACKGROUND | Select background | P2 | 🟡 | `cmd:mask.add` (`background`) | inverse of the subject heuristic |
-| LR-MASK-OBJECTS | Object selection | P2 | ⬜ | | shape exists (falls back to the subject heuristic); no UI |
+| LR-MASK-OBJECTS | Object selection | P2 | 🟡 | `cmd:mask.add` (`object`, `prompt`), `cmd:mask.objectPoint`, `cmd:mask.refineDetail`, `cmd:segment.prepare`, `cmd:segment.model.status`, `cmd:segment.model.download`, `cmd:segment.model.cancel`, `crates/segment`, `crates/engine/src/segment/mod.rs` | SAM 3 in pure Rust (candle; Metal on macOS, CPU elsewhere): Object tile → click to include, ⌥-click to leave out; Describe tile → a text prompt selects every instance ("sky", "the red car"); both also as Add/Subtract/Intersect components; + / − under the selected mask; comma lists (`car, road`); a zoomed-in detail pass for 5–10× finer edges on small objects; per-selection Edge (hard ↔ soft). The model runs on its own worker thread (the UI never waits; panics become errors), is unloaded after 10 min idle, and is optional: the segmentation is stored with the mask (288² logits), so renders and exports never need it. Weights are never bundled (SAM License): without them the app offers a consented background download (mirrors, resume, timeouts, SHA-256) — **but no default download location is configured yet** (users set `LIGHTCRAFT_SAM3_MIRRORS` or install by hand; see docs/ai-masks.md). Not verified against Lightroom's Select Object; no brush/box object mode; the first click on a photo waits for its analysis (~4 s on an M4 Pro, much longer on CPU) |
 | LR-MASK-PEOPLE | People parts | P2 | ⬜ | | |
 | LR-MASK-LANDSCAPE | Landscape classes | P2 | ⬜ | | shape exists, evaluates empty |
 | LR-MASK-BRUSH | Brush mask | P0 | ✅ | `cmd:tool.brush`, `cmd:mask.brushStroke` (`autoMask`), `crates/pipeline/src/masks.rs` | size/feather/flow/density/erase; Auto Mask: dabs weighted by similarity to the colour under the dab centre, refined by a guided filter on luminance (CPU + GPU); no A/B brushes, no pressure |
