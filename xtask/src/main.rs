@@ -87,7 +87,8 @@ pub fn cargo() -> Command {
     if std::env::args().nth(1).as_deref() == Some("ci") {
         static JOBS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
         let (build, threads) = JOBS.get_or_init(|| {
-            let jobs = ci_jobs(total_ram_gb(), std::thread::available_parallelism().map_or(4, |n| n.get()));
+            let ram_mb = available_ram_mb().or_else(|| total_ram_gb().map(|gb| gb.saturating_mul(1024) / 2));
+            let jobs = ci_jobs(ram_mb, std::thread::available_parallelism().map_or(4, |n| n.get()));
             // More test threads barely shorten CI (a few heavy tests dominate) but make the
             // wall-clock frame-budget tests flaky on a loaded machine.
             (jobs.to_string(), jobs.min(4).to_string())
@@ -103,14 +104,43 @@ pub fn cargo() -> Command {
     c
 }
 
-/// CI build jobs: one per 2 GB of RAM, at most one per CPU, 4 when the RAM is unknown. With
-/// line-table debuginfo, 4 jobs measured about 3 GB of RAM in use and 2 jobs about 1.5 GB, so
-/// 8 GB machines get 4 and 4 GB machines get 2. Test threads are this, capped at 4.
-fn ci_jobs(ram_gb: Option<u64>, cpus: usize) -> usize {
-    ram_gb.map_or(4, |gb| usize::try_from(gb / 2).unwrap_or(usize::MAX)).clamp(1, cpus.max(1))
+/// CI build jobs: one per 1.5 GB of RAM available when CI starts, at most one per CPU, 4 when it
+/// is unknown. With line-table debuginfo, 4 jobs measured about 3 GB of RAM in use and 2 jobs
+/// about 1.5 GB, so this leaves about half the available RAM to spare. Counting available rather
+/// than installed RAM keeps a busy machine (browsers, VMs, editors) from being overcommitted.
+/// Test threads are this, capped at 4.
+fn ci_jobs(available_mb: Option<u64>, cpus: usize) -> usize {
+    available_mb.map_or(4, |mb| usize::try_from(mb / 1536).unwrap_or(usize::MAX)).clamp(1, cpus.max(1))
 }
 
-/// Installed physical memory in whole GB, if the OS reports it.
+/// RAM the OS could hand out now (free plus reclaimable cache) in MB, if it reports it.
+fn available_ram_mb() -> Option<u64> {
+    let output = |program: &str, args: &[&str]| {
+        let out = Command::new(program).args(args).output().ok()?;
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    if cfg!(target_os = "linux") {
+        let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+        let kb = info.lines().find_map(|l| l.strip_prefix("MemAvailable:"))?.trim().trim_end_matches("kB").trim();
+        Some(kb.parse::<u64>().ok()? / 1024)
+    } else if cfg!(windows) {
+        let cmd = "(Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory).AvailableMBytes";
+        output("powershell", &["-NoProfile", "-Command", cmd])?.trim().parse().ok()
+    } else {
+        // macOS: free + inactive + speculative pages
+        let stat = output("vm_stat", &[])?;
+        let page: u64 = stat.split("page size of ").nth(1)?.split_whitespace().next()?.parse().ok()?;
+        let pages = |name: &str| -> Option<u64> {
+            let line = stat.lines().find(|l| l.starts_with(name))?;
+            line.rsplit(':').next()?.trim().trim_end_matches('.').parse().ok()
+        };
+        let free = pages("Pages free")?.saturating_add(pages("Pages inactive")?).saturating_add(pages("Pages speculative").unwrap_or(0));
+        Some(free.saturating_mul(page) >> 20)
+    }
+}
+
+/// Installed physical memory in whole GB, if the OS reports it (the fallback when available RAM
+/// can't be read: half of it is assumed available).
 fn total_ram_gb() -> Option<u64> {
     let bytes: u64 = if cfg!(target_os = "linux") {
         let info = std::fs::read_to_string("/proc/meminfo").ok()?;
@@ -411,12 +441,13 @@ mod ci_jobs_tests {
     use super::ci_jobs;
 
     #[test]
-    fn jobs_follow_ram_and_never_exceed_the_cpus() {
-        assert_eq!(ci_jobs(Some(4), 8), 2);
-        assert_eq!(ci_jobs(Some(8), 8), 4);
-        assert_eq!(ci_jobs(Some(32), 32), 16);
-        assert_eq!(ci_jobs(Some(64), 8), 8, "capped at the CPU count");
-        assert_eq!(ci_jobs(Some(1), 8), 1, "at least one");
+    fn jobs_follow_available_ram_and_never_exceed_the_cpus() {
+        assert_eq!(ci_jobs(Some(3 * 1024), 8), 2, "a 4 GB machine with 3 GB free");
+        assert_eq!(ci_jobs(Some(6 * 1024), 8), 4, "an 8 GB machine with 6 GB free");
+        assert_eq!(ci_jobs(Some(7 * 1024), 32), 4, "a busy 32 GB machine: what is free counts");
+        assert_eq!(ci_jobs(Some(24 * 1024), 32), 16);
+        assert_eq!(ci_jobs(Some(64 * 1024), 8), 8, "capped at the CPU count");
+        assert_eq!(ci_jobs(Some(500), 8), 1, "at least one");
         assert_eq!(ci_jobs(None, 32), 4, "unknown RAM keeps the old default");
         assert_eq!(ci_jobs(None, 2), 2);
     }
