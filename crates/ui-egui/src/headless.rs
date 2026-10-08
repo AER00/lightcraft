@@ -1053,6 +1053,37 @@ mod tests {
         assert_ne!(h.app.session.active(), Some(first), "advanced");
     }
 
+    /// Click a slider's value and type one (issue #322): Return sets it as one undo step, Esc
+    /// keeps the old value, and the keys typed don't reach the shortcuts (1 = one star).
+    #[test]
+    fn slider_values_can_be_typed() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "edit"}), t);
+        h.settle(SETTLE);
+        let active = h.app.session.active().unwrap();
+        let exposure = |h: &Headless| h.app.session.develop_of(h.app.session.active().unwrap()).unwrap().light.exposure;
+        let rating = |h: &Headless| h.app.session.catalog.photo(active).unwrap().rating;
+        let (undo0, rating0) = (h.app.session.undo.len(), rating(&h));
+        assert_eq!(h.request("ui.clickWidget", json!({"id": "sliderValue:light.exposure"}), t)["ok"], true);
+        h.request("ui.text", json!({"text": "1,5"}), t);
+        h.request("ui.key", json!({"key": "Enter"}), t);
+        assert!((exposure(&h) - 1.5).abs() < 1e-9, "{}", exposure(&h));
+        assert_eq!(h.app.session.undo.len(), undo0 + 1, "one undo step");
+        assert_eq!(rating(&h), rating0, "typing 1 set no rating");
+        // Esc keeps the value
+        assert_eq!(h.request("ui.clickWidget", json!({"id": "sliderValue:light.exposure"}), t)["ok"], true);
+        h.request("ui.text", json!({"text": "-2"}), t);
+        h.request("ui.key", json!({"key": "Escape"}), t);
+        assert!((exposure(&h) - 1.5).abs() < 1e-9, "{}", exposure(&h));
+        // something that isn't a number changes nothing
+        assert_eq!(h.request("ui.clickWidget", json!({"id": "sliderValue:light.exposure"}), t)["ok"], true);
+        h.request("ui.text", json!({"text": "bright"}), t);
+        h.request("ui.key", json!({"key": "Enter"}), t);
+        assert!((exposure(&h) - 1.5).abs() < 1e-9, "{}", exposure(&h));
+        assert_eq!(h.app.session.undo.len(), undo0 + 1);
+    }
+
     /// Return commits a tool panel back to Edit; elsewhere it does nothing.
     #[test]
     fn return_commits_the_crop_tool() {

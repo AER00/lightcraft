@@ -50,6 +50,10 @@
 - The interface is available in German and Russian (Edit ▸ Language), alongside English, Chinese (Simplified and
   Traditional), Japanese and Brazilian Portuguese.
 
+### Editing
+- Type an exact value into any slider (issue #322): click the number next to its name, type (`1.5`, `-20`, `5600`)
+  and press Return; Esc keeps the old value.
+
 ### Reliability
 - On macOS, single-key shortcuts that appear in the menu bar now work: E, C, H, M, ⇧P, I, K, D, ratings 0–5,
   labels 6–9, P / U and the rest did nothing, because macOS only passes ⌘ / ⌃ combinations and function keys
