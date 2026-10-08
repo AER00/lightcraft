@@ -94,6 +94,10 @@ impl CanvasMap {
 }
 
 pub(crate) fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], ppp: f32, pan: (f32, f32)) -> Rect {
+    let zoom = match zoom {
+        Zoom::Percent(p) if !p.is_finite() || p <= 0.0 => Zoom::Fit,
+        _ => zoom,
+    };
     let (aw, ah) = (area.width(), area.height());
     let (w, h) = match zoom {
         Zoom::Fit => {
@@ -112,17 +116,67 @@ pub(crate) fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], 
         }
         Zoom::Percent(p) => {
             // full-resolution pixels at p% (the photo's native width)
-            let w = img_px[0] as f32 * p as f32 / 100.0 / ppp;
+            let w = img_px[0] as f32 * p / 100.0 / ppp;
             (w, w / aspect)
         }
     };
-    let c = if w <= aw && h <= ah {
-        area.center()
-    } else {
-        // pan: which normalized point of the image sits at the area centre
-        pos2(area.center().x - (pan.0 - 0.5) * w, area.center().y - (pan.1 - 0.5) * h)
-    };
+    let pan = bounded_pan(area, vec2(w, h), pan);
+    let c = pos2(area.center().x - (pan.0 - 0.5) * w, area.center().y - (pan.1 - 0.5) * h);
     Rect::from_center_size(c, vec2(w, h))
+}
+
+/// Keep the viewport inside the photo; axes smaller than the viewport stay centred.
+fn bounded_pan(area: Rect, size: egui::Vec2, pan: (f32, f32)) -> (f32, f32) {
+    let bound = |visible: f32, image: f32, centre: f32| {
+        let centre = if centre.is_finite() { centre } else { 0.5 };
+        if image > visible.max(0.0) {
+            let half = visible.max(0.0) / image / 2.0;
+            centre.clamp(half, 1.0 - half)
+        } else {
+            0.5
+        }
+    };
+    (bound(area.width(), size.x, pan.0), bound(area.height(), size.y, pan.1))
+}
+
+pub(crate) fn pan_image(app: &mut LightcraftApp, area: Rect, img: Rect, delta: egui::Vec2) {
+    let centre = area.center() - img.min - delta;
+    let pan = bounded_pan(area, img.size(), (centre.x / img.width().max(1.0), centre.y / img.height().max(1.0)));
+    let _ = app.run("view.navigate", json!({"pan": pan}));
+}
+
+/// Native pinch (also modifier-wheel zoom) and two-finger scroll, scoped to this image view.
+pub(crate) fn navigate_gesture(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, area: Rect, img: Rect, native: [usize; 2]) -> bool {
+    if !resp.hovered() {
+        return false;
+    }
+    let (factor, delta, anchor) =
+        ui.input(|i| (i.zoom_delta(), i.translation_delta(), i.multi_touch().map(|t| t.center_pos).or(i.pointer.hover_pos())));
+    if !factor.is_finite() || factor <= 0.0 || !delta.is_finite() || (factor == 1.0 && delta == egui::Vec2::ZERO) {
+        return false;
+    }
+    let Some(anchor) = anchor.filter(|p| area.contains(*p)) else { return false };
+    let ppp = ui.ctx().pixels_per_point();
+    let aspect = img.width() / img.height().max(1.0);
+    let fit = fit_rect(area, aspect, Zoom::Fit, native, ppp, (0.5, 0.5));
+    let fit_pct = fit.width() * ppp * 100.0 / native[0].max(1) as f32;
+    let mut zoom = app.ui.zoom;
+    let size = if factor != 1.0 {
+        // Start at the displayed scale (including Fit/Fill and an interrupted click animation).
+        let pct = (img.width() * ppp * 100.0 / native[0].max(1) as f32 * factor).clamp(fit_pct.min(800.0), 800.0);
+        zoom = if pct <= fit_pct { Zoom::Fit } else { Zoom::Percent(pct) };
+        fit_rect(area, aspect, zoom, native, ppp, (0.5, 0.5)).size()
+    } else {
+        img.size()
+    };
+    // The image point under the pointer remains there as its size changes, then follows the pan.
+    let point = (anchor - img.min) / img.size();
+    let offset = area.center() - anchor - delta;
+    let pan = bounded_pan(area, size, (point.x + offset.x / size.x.max(1.0), point.y + offset.y / size.y.max(1.0)));
+    let _ = app.run("view.navigate", json!({"zoom": zoom, "pan": pan}));
+    ui.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+    ui.ctx().request_repaint();
+    true
 }
 
 /// Ease the loupe rect toward `target` while a click-zoom animation runs; otherwise follow it exactly.
@@ -191,8 +245,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         _ => vec![area],
     };
     let main_area = *areas.last().unwrap_or(&area);
-    let target_rect = fit_rect(main_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
-    let img_rect = animated_rect(ui.ctx(), &mut app.ui.zoom_anim, target_rect);
+    let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
+    let mut target_rect = fit_rect(main_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
+    let mut img_rect = animated_rect(ui.ctx(), &mut app.ui.zoom_anim, target_rect);
+    let mut navigating = false;
+    for &view_area in &areas {
+        let view_img = if view_area == main_area { img_rect } else { fit_rect(view_area, aspect, app.ui.zoom, native, ppp, app.ui.pan) };
+        if navigate_gesture(app, ui, &resp, view_area, view_img, native) {
+            navigating = true;
+            target_rect = fit_rect(main_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
+            img_rect = target_rect;
+            break;
+        }
+    }
     app.image_rect = Some(img_rect);
     // request renders: the loupe at display resolution (drafts during drags)
     let interacting = app.session.interaction.is_some();
@@ -332,7 +397,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     register(ui.ctx(), "canvas:image", img_rect);
     let map = CanvasMap::new(&frame, img_rect);
-    let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
     info_overlay(app, &p, canvas, &photo);
     if !fullscreen {
         filter_pill(app, ui, canvas);
@@ -362,12 +426,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             p.line_segment([pos2(img_rect.left(), fy), pos2(img_rect.right(), fy)], stroke);
         }
     }
-    match right {
-        RightPanel::Crop => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
-        RightPanel::Masking => mask_overlay(app, ui, &resp, &map, &d),
-        RightPanel::Remove => remove_overlay(app, ui, &resp, &map, &d),
-        RightPanel::RedEye => eye_overlay(app, ui, &resp, &map, &d),
-        _ => general_interaction(app, ui, &resp, &map, img_rect, canvas, native, aspect),
+    // Cursor selection must also run on gesture frames, when tool input is suppressed.
+    if !matches!(right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye) {
+        general_cursor(app, ui, &resp, img_rect, main_area);
+    }
+    if !navigating {
+        match right {
+            RightPanel::Crop => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
+            RightPanel::Masking => mask_overlay(app, ui, &resp, &map, &d),
+            RightPanel::Remove => remove_overlay(app, ui, &resp, &map, &d),
+            RightPanel::RedEye => eye_overlay(app, ui, &resp, &map, &d),
+            _ => general_interaction(app, ui, &resp, &map, img_rect, main_area, native, aspect),
+        }
     }
     // drawn and hit-tested above the loupe and its tools: clicks on it pan
     navigator(app, ui, canvas, img_rect, id);
@@ -669,8 +739,7 @@ fn quick_name(q: lightcraft_engine::media::QuickSource) -> &'static str {
 /// Targeted adjustment tool: dragging up/down on the photo raises/lowers the tone-curve region or
 /// the colour-mixer bands under the press point (`develop.targeted`, one call per whole step, all
 /// in one interaction = one undo step).
-fn targeted_drag(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, target: &str) {
-    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+fn targeted_drag(app: &mut LightcraftApp, resp: &egui::Response, map: &CanvasMap, target: &str) {
     if resp.drag_started()
         && let Some(q) = resp.interact_pointer_pos()
     {
@@ -740,6 +809,26 @@ fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
     }
 }
 
+fn general_cursor(app: &LightcraftApp, ui: &egui::Ui, resp: &egui::Response, img: Rect, canvas: Rect) {
+    // A panel or overlay under the pointer keeps its own cursor.
+    if !resp.dragged() && !resp.hovered() {
+        return;
+    }
+    let cursor = match app.ui.tool.as_str() {
+        "wbPicker" | "colorRange" | "pointColor" => egui::CursorIcon::Crosshair,
+        tool if tool.starts_with("tat:") => egui::CursorIcon::ResizeVertical,
+        _ if img.width() > canvas.width() + 1.0 || img.height() > canvas.height() + 1.0 => {
+            if resp.dragged() {
+                egui::CursorIcon::Grabbing
+            } else {
+                egui::CursorIcon::Grab
+            }
+        }
+        _ => return,
+    };
+    ui.ctx().set_cursor_icon(cursor);
+}
+
 fn general_interaction(
     app: &mut LightcraftApp,
     ui: &mut egui::Ui,
@@ -751,7 +840,6 @@ fn general_interaction(
     aspect: f32,
 ) {
     if app.ui.tool == "wbPicker" {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         if resp.clicked()
             && let Some(q) = resp.interact_pointer_pos()
         {
@@ -762,12 +850,11 @@ fn general_interaction(
         return;
     }
     if let Some(target) = app.ui.tool.strip_prefix("tat:").map(str::to_string) {
-        targeted_drag(app, ui, resp, map, &target);
+        targeted_drag(app, resp, map, &target);
         return;
     }
     if app.ui.tool == "colorRange" {
         // click: sample the colour for the selected mask's colour range; ⇧-click adds (up to 5)
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         if resp.clicked()
             && let Some(q) = resp.interact_pointer_pos()
         {
@@ -780,7 +867,6 @@ fn general_interaction(
         return;
     }
     if app.ui.tool == "pointColor" {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         if resp.clicked()
             && let Some(q) = resp.interact_pointer_pos()
         {
@@ -792,7 +878,7 @@ fn general_interaction(
         }
         return;
     }
-    // click toggles Fit ↔ the click-zoom ratio (2:1/3:1/5:1) at the clicked point; drag pans when zoomed
+    // click toggles Fit ↔ the chosen click-zoom ratio at the clicked point; drag pans when zoomed
     let zoomed = img.width() > canvas.width() + 1.0 || img.height() > canvas.height() + 1.0;
     if resp.double_clicked() || (resp.clicked() && !zoomed) {
         if let Some(q) = resp.interact_pointer_pos() {
@@ -800,22 +886,14 @@ fn general_interaction(
             let v = ((q.y - img.top()) / img.height()).clamp(0.0, 1.0);
             app.ui.pan = (u, v);
         }
-        app.ui.zoom = if matches!(app.ui.zoom, Zoom::Fit) { Zoom::Percent(app.ui.click_zoom) } else { Zoom::Fit };
+        app.ui.zoom = if matches!(app.ui.zoom, Zoom::Fit) { Zoom::Percent(app.ui.click_zoom as f32) } else { Zoom::Fit };
         app.ui.zoom_anim = true;
     } else if resp.clicked() && zoomed {
         app.ui.zoom = Zoom::Fit;
         app.ui.zoom_anim = true;
     }
-    if zoomed {
-        // only over the photo: a panel drawn earlier (sliders) must keep its own cursor
-        if resp.dragged() || resp.hovered() {
-            ui.ctx().set_cursor_icon(if resp.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
-        }
-        if resp.dragged() {
-            let dlt = resp.drag_delta();
-            app.ui.pan.0 = (app.ui.pan.0 - dlt.x / img.width()).clamp(0.0, 1.0);
-            app.ui.pan.1 = (app.ui.pan.1 - dlt.y / img.height()).clamp(0.0, 1.0);
-        }
+    if zoomed && resp.dragged() {
+        pan_image(app, canvas, img, resp.drag_delta());
     }
     let _ = (native, aspect);
 }

@@ -178,17 +178,17 @@ fn right_side(app: &mut LightcraftApp, ui: &mut egui::Ui, full: Rect) -> f32 {
         let zoom_label = match app.ui.zoom {
             Zoom::Fit => "Fit".to_string(),
             Zoom::Fill => "Fill".to_string(),
-            Zoom::Percent(p) => format!("{p}%"),
+            Zoom::Percent(p) => format!("{p:.0}%"),
         };
         let zr = crate::widgets::dropdown(&mut child, "zoom", crate::i18n::tr(&zoom_label), t.font(13.0), t.text_label);
         egui::Popup::menu(&zr).show(|ui| {
             for (label, z) in [
                 ("Fit", Zoom::Fit),
                 ("Fill", Zoom::Fill),
-                ("50%", Zoom::Percent(50)),
-                ("100%", Zoom::Percent(100)),
-                ("200%", Zoom::Percent(200)),
-                ("400%", Zoom::Percent(400)),
+                ("50%", Zoom::Percent(50.0)),
+                ("100%", Zoom::Percent(100.0)),
+                ("200%", Zoom::Percent(200.0)),
+                ("400%", Zoom::Percent(400.0)),
             ] {
                 if ui.selectable_label(app.ui.zoom == z, label).clicked() {
                     app.ui.zoom = z;

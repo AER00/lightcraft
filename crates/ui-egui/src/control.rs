@@ -258,6 +258,14 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
             ctx.request_repaint();
             ok(Value::Null)
         }
+        "ui.zoom" => {
+            let Some(factor) = f("factor").map(|v| v as f32).filter(|v| v.is_finite() && *v > 0.0) else {
+                return err("ui.zoom: factor must be a finite positive number (1 = unchanged)");
+            };
+            app.synthetic.push(egui::Event::Zoom(factor));
+            ctx.request_repaint();
+            ok(Value::Null)
+        }
         "ui.set" => {
             let mut v = serde_json::to_value(&app.ui).unwrap_or_default();
             lightcraft_develop::presets::deep_merge(&mut v, p);
