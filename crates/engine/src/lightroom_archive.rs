@@ -126,6 +126,16 @@ pub fn store(directory: &Path, data: &CatalogImport) -> Result<PathBuf, String> 
     Ok(destination)
 }
 
+/// Store source data when possible. An archive that reaches its bounded size is
+/// omitted with a warning so catalog import can still complete.
+pub fn store_best_effort(directory: &Path, data: &CatalogImport) -> Result<Option<PathBuf>, String> {
+    match store(directory, data) {
+        Ok(path) => Ok(Some(path)),
+        Err(error) if error.contains("Lightroom archive exceeds 32 MiB") => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Managed {
     index: u64,
@@ -592,6 +602,28 @@ mod tests {
         let path = tempdir();
         let input = data("x".repeat((MAX_ARCHIVE_BYTES as usize) + 1));
         assert!(store(&path, &input).is_err());
+        assert_eq!(managed_count(&path), 0);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn large_catalog_history_is_best_effort_and_does_not_abort_import() {
+        let path = tempdir();
+        let mut input = data("catalog.lrcat".into());
+        input.photos = (0..5_000)
+            .map(|index| CatalogPhoto {
+                source_id: index,
+                uuid: format!("photo-{index}"),
+                path: format!("/photos/{index}.raw"),
+                image: BTreeMap::new(),
+                settings: String::new(),
+                xmp: String::new(),
+                keywords: Vec::new(),
+                history: vec![BTreeMap::from([("text".into(), serde_json::json!(format!("history-{index}-{}", "x".repeat(8 * 1024))))])],
+                snapshots: Vec::new(),
+            })
+            .collect();
+        assert_eq!(store_best_effort(&path, &input).unwrap(), None);
         assert_eq!(managed_count(&path), 0);
         fs::remove_dir_all(path).unwrap();
     }

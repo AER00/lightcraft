@@ -188,25 +188,28 @@ fn inspect_report(data: lightcraft_engine::lightroom_catalog::CatalogImport) -> 
 fn terminal(app: &mut LightcraftApp, ctx: &egui::Context, kind: Kind, value: Value) {
     let message = if let Some(e) = value.get("error").and_then(Value::as_str) {
         let warning = value.get("indexWarning").and_then(Value::as_str).map_or(String::new(), |w| format!("; index warning: {w}"));
-        format!("Lightroom {} failed: {e}{warning}", if matches!(kind, Kind::Inspect) { "inspection" } else { "import" })
+        format!(
+            "{}: {e}{warning}",
+            crate::i18n::tr(if matches!(kind, Kind::Inspect) { "Lightroom inspection failed" } else { "Lightroom import failed" })
+        )
     } else if value.get("cancelled").and_then(Value::as_bool).unwrap_or(false) {
-        format!("Lightroom {} cancelled", if matches!(kind, Kind::Inspect) { "inspection" } else { "import" })
+        crate::i18n::tr(if matches!(kind, Kind::Inspect) { "Lightroom inspection cancelled" } else { "Lightroom import cancelled" }).into()
     } else if matches!(kind, Kind::Inspect) {
         let photos = value["photos"].as_u64().unwrap_or(0);
         let collections = value["collections"].as_u64().unwrap_or(0);
         let missing = value["missing"].as_array().map_or(0, Vec::len);
-        format!("Lightroom catalog inspected: {photos} photos, {collections} collections, {missing} missing")
+        format!("{}: {photos} photos, {collections} collections, {missing} missing", crate::i18n::tr("Lightroom catalog inspected"))
     } else {
         let report = value.get("report").unwrap_or(&value);
         let imported = report["imported"].as_u64().unwrap_or(0);
         let failed = report["failed"].as_array().map_or(0, Vec::len);
         let warning = value.get("indexWarning").and_then(Value::as_str);
         if let Some(warning) = warning {
-            format!("Lightroom import complete: {imported} photos added; index warning: {warning}")
+            format!("{}: {imported} photos added; index warning: {warning}", crate::i18n::tr("Lightroom import complete"))
         } else if failed == 0 {
-            format!("Lightroom import complete: {imported} photos added")
+            format!("{}: {imported} photos added", crate::i18n::tr("Lightroom import complete"))
         } else {
-            format!("Lightroom import complete: {imported} photos added, {failed} failed")
+            format!("{}: {imported} photos added, {failed} failed", crate::i18n::tr("Lightroom import complete"))
         }
     };
     app.lightroom_last = Some(value);
@@ -402,14 +405,14 @@ pub fn progress(app: &mut LightcraftApp, ctx: &egui::Context) {
     let total = task.total.load(Ordering::Relaxed);
     let done = task.done.load(Ordering::Relaxed);
     let title = match task.kind {
-        Kind::Inspect => "Inspecting Lightroom Catalog",
-        Kind::Import => "Importing Lightroom Catalog",
+        Kind::Inspect => crate::i18n::tr("Inspecting Lightroom Catalog"),
+        Kind::Import => crate::i18n::tr("Importing Lightroom Catalog"),
     };
     let text = match task.phase {
-        Phase::Reading if total == 0 => "Reading Lightroom catalog…".to_string(),
-        Phase::Reading => format!("Reading Lightroom catalog… {done} of {total}"),
-        Phase::Committing => "Adding Lightroom photos…".to_string(),
-        Phase::Finalizing => "Saving Lightroom import index…".to_string(),
+        Phase::Reading if total == 0 => crate::i18n::tr("Reading Lightroom catalog…").into(),
+        Phase::Reading => format!("{} {done} of {total}", crate::i18n::tr("Reading Lightroom catalog…")),
+        Phase::Committing => crate::i18n::tr("Adding Lightroom photos…").into(),
+        Phase::Finalizing => crate::i18n::tr("Saving Lightroom import index…").into(),
     };
     let mut cancel = false;
     let t = Tokens::get(ctx);
@@ -418,7 +421,8 @@ pub fn progress(app: &mut LightcraftApp, ctx: &egui::Context) {
         |ui| {
             ui.label(egui::RichText::new(text).color(t.text));
             ui.add(egui::ProgressBar::new(done as f32 / total.max(1) as f32).desired_width(340.0));
-            let r = ui.add_enabled(task.phase == Phase::Reading && !task.cancel.load(Ordering::Relaxed), egui::Button::new("Cancel"));
+            let r =
+                ui.add_enabled(task.phase == Phase::Reading && !task.cancel.load(Ordering::Relaxed), egui::Button::new(crate::i18n::tr("Cancel")));
             register(ui.ctx(), "button:lightroomCancel", r.rect);
             cancel = r.clicked();
         },

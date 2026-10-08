@@ -273,22 +273,37 @@ impl Database {
         if usable < 8 {
             return Err("SQLite usable page size is too small".into());
         }
-        let max_local = usable.saturating_sub(35);
-        let min_local = ((usable - 12).saturating_mul(32) / 255).saturating_sub(23);
+        let max_local = usable.checked_sub(35).ok_or("SQLite usable page size is too small")?;
+        let min_local = usable
+            .checked_sub(12)
+            .ok_or("SQLite usable page size is too small")?
+            .saturating_mul(32)
+            .checked_div(255)
+            .ok_or("SQLite local payload calculation failed")?
+            .saturating_sub(23);
         let local = if payload_len <= max_local {
             payload_len
         } else {
             let span = usable - 4;
-            let candidate = min_local.saturating_add((payload_len - min_local) % span);
+            let candidate = min_local.saturating_add(payload_len.checked_sub(min_local).ok_or("SQLite payload length is too small")? % span);
             if candidate > max_local { min_local } else { candidate }
         };
         let local_end = cell_at.checked_add(local).ok_or("SQLite cell payload overflow")?;
         if local_end > usable {
             return Err("truncated SQLite cell payload".into());
         }
-        let mut out = Vec::with_capacity(payload_len);
+        let overflow_bytes = self
+            .page_count
+            .saturating_sub(1)
+            .try_into()
+            .unwrap_or(usize::MAX)
+            .min(MAX_OVERFLOW_PAGES)
+            .checked_mul(usable.checked_sub(4).ok_or("SQLite usable page size is too small")?)
+            .ok_or("SQLite overflow capacity overflow")?;
+        let capacity = local.checked_add(overflow_bytes).ok_or("SQLite payload capacity overflow")?.min(payload_len);
+        let mut out = Vec::with_capacity(capacity);
         out.extend_from_slice(page.get(cell_at..local_end).ok_or("truncated SQLite cell payload")?);
-        let mut remaining = payload_len.saturating_sub(local);
+        let mut remaining = payload_len.checked_sub(local).ok_or("SQLite payload length is too small")?;
         if remaining == 0 {
             return Ok(out);
         }
@@ -305,7 +320,7 @@ impl Database {
                 return Err("invalid or cyclic SQLite overflow chain".into());
             }
             let overflow = self.page(next)?;
-            let take = remaining.min(usable - 4);
+            let take = remaining.min(usable.checked_sub(4).ok_or("SQLite usable page size is too small")?);
             let end = 4usize.checked_add(take).ok_or("overflow payload offset")?;
             out.extend_from_slice(overflow.get(4..end).ok_or("truncated SQLite overflow page")?);
             remaining -= take;
@@ -334,25 +349,25 @@ impl Database {
                 _ => return Err("sqlite_schema row has invalid name".into()),
             };
             if kind.eq_ignore_ascii_case("virtual") {
-                return Err(format!("virtual table {name} is unsupported"));
+                continue;
             }
             if !kind.eq_ignore_ascii_case("table") {
                 continue;
             }
             let rootpage = match record.values.get(3) {
                 Some(Value::Integer(n)) if *n > 0 => u32::try_from(*n).map_err(|_| "sqlite_schema root page is invalid")?,
-                _ => return Err(format!("table {name} has invalid root page")),
+                _ => continue,
             };
             let sql = match record.values.get(4) {
                 Some(Value::Text(s)) => s,
-                _ => return Err(format!("table {name} has no CREATE TABLE SQL")),
+                _ => continue,
             };
-            let (column_names, alias) = parse_create_table(sql)?;
+            let Ok((column_names, alias)) = parse_create_table(sql) else { continue };
             if column_names.len() > MAX_COLUMNS {
-                return Err(format!("table {name} has too many columns"));
+                continue;
             }
             if tables.iter().any(|table: &LiveTable| table.rootpage == rootpage) {
-                return Err("duplicate SQLite table root page".into());
+                continue;
             }
             if let Some(index) = alias {
                 aliases.insert(rootpage, index);

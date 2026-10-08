@@ -21,278 +21,6 @@ fn error(why: impl Into<String>) -> crate::EngineError {
     crate::EngineError::BadParams { cmd: COMMAND.into(), msg: why.into() }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn row(v: Value) -> Row {
-        serde_json::from_value(v).unwrap()
-    }
-    fn sample() -> CatalogImport {
-        let mut photo = CatalogPhoto {
-            source_id: 1,
-            uuid: "test-master".into(),
-            path: "/missing/test.ARW".into(),
-            image: row(json!({"id_local":1,"rating":5,"pick":1,"fileFormat":"ARW","fileWidth":20,"fileHeight":10})),
-            settings: "s = { Exposure2012 = 1.25, Contrast2012 = 17, CameraProfile = \"Example\" }".into(),
-            xmp: String::new(),
-            keywords: vec!["Travel|Goa".into()],
-            history: vec![row(json!({"text":"s = { Exposure2012 = 0.5 }"}))],
-            snapshots: Vec::new(),
-        };
-        let mut copy = photo.clone();
-        copy.source_id = 2;
-        copy.uuid = "test-copy".into();
-        copy.image = row(json!({"id_local":2,"masterImage":1,"copyName":"Mono","rating":2,"pick":-1}));
-        copy.settings = "s = { ConvertToGrayscale = true, Exposure2012 = -0.5 }".into();
-        photo.image.insert("captureTime".into(), json!("2024-01-16T12:34:56"));
-        CatalogImport {
-            source: "test.lrcat".into(),
-            photos: vec![copy, photo],
-            collections: vec![
-                row(json!({"id_local":9,"name":"Travel","creationId":"collection.group"})),
-                row(json!({"id_local":10,"parent":9,"name":"Keepers","creationId":"collection"})),
-            ],
-            members: vec![
-                row(json!({"collection":10,"image":2,"positionInCollection":"a"})),
-                row(json!({"collection":10,"image":1,"positionInCollection":"b"})),
-            ],
-            collection_content: Vec::new(),
-            warnings: Vec::new(),
-        }
-    }
-    #[test]
-    fn imports_copies_collections_ratings_and_mapped_edits_in_one_undo_step() {
-        let mut s = crate::Session::new();
-        let data = sample();
-        let r = apply(&mut s, data.clone(), false).unwrap();
-        assert_eq!(r["photos"], 2);
-        assert_eq!(r["missing"].as_array().unwrap().len(), 1);
-        let master = s.catalog.photo(PhotoId(r["mapping"]["1"].as_u64().unwrap())).unwrap();
-        assert_eq!(master.rating, 5);
-        assert_eq!(master.flag, Flag::Pick);
-        assert_eq!(master.meta.keywords, vec!["Travel|Goa"]);
-        assert_eq!(master.develop.light.exposure, 1.25);
-        let copy = s.catalog.photos().find(|p| p.copy_of.is_some()).unwrap();
-        assert_eq!(copy.copy_of, Some(master.id));
-        assert_eq!(copy.rating, 2);
-        assert_eq!(copy.flag, Flag::Reject);
-        assert_eq!(copy.develop.light.exposure, -0.5);
-        let album = s.catalog.albums().find(|a| a.name == "Keepers").unwrap();
-        assert_eq!(album.photos, vec![copy.id, master.id]);
-        assert!(album.parent.is_some());
-        assert!(r["unmapped"]["1"].as_array().unwrap().iter().any(|v| v.as_str() == Some("CameraProfile")));
-        assert_eq!(s.undo.len(), 1);
-        s.undo_step().unwrap();
-        assert!(s.catalog.is_empty());
-        assert!(s.catalog.albums().next().is_none());
-        assert!(data.photos[1].settings.contains("CameraProfile")); // unmapped source stays intact
-    }
-    #[test]
-    fn preserves_existing_edits_and_rejects_invalid_structure_before_mutation() {
-        let mut s = crate::Session::new();
-        let data = sample();
-        apply(&mut s, data.clone(), false).unwrap();
-        let id = s.catalog.photos().find(|p| p.copy_of.is_none()).unwrap().id;
-        s.set_develop(id, lightcraft_develop::DevelopSettings::default(), "Personal edit").unwrap();
-        let r = apply(&mut s, data.clone(), false).unwrap();
-        assert!(r["preservedExistingEdits"].as_u64().unwrap() > 0);
-        assert_eq!(s.catalog.photo(id).unwrap().develop.light.exposure, 0.0);
-        let before = s.catalog.to_snapshot();
-        let mut cyclic = data;
-        cyclic.collections[0].insert("parent".into(), json!(10));
-        assert!(apply(&mut s, cyclic, false).is_err());
-        assert_eq!(s.catalog.to_snapshot(), before);
-        assert!(mapped_settings(&format!("{}0{}", "{".repeat(1000), "}".repeat(1000)), true, 1.0).is_err());
-    }
-    #[test]
-    fn compressed_xmp_is_bounded_and_settings_are_data_only() {
-        let packet = b"<x:xmpmeta>example</x:xmpmeta>";
-        let mut encoded = (packet.len() as u32).to_be_bytes().to_vec();
-        encoded.extend(miniz_oxide::deflate::compress_to_vec_zlib(packet, 6));
-        assert_eq!(xmp(Some(&json!(encoded))).unwrap(), String::from_utf8_lossy(packet));
-        encoded[0] = 0xff;
-        assert!(xmp(Some(&json!(encoded))).is_err());
-        let (partial, _) = mapped_settings("s = { Exposure2012 = 0.75, ToneCurvePV2012 = {0,0,128,150,255,255} }", true, 1.5).unwrap();
-        assert_eq!(partial["light"]["exposure"], 0.75);
-    }
-
-    #[test]
-    fn deferred_auto_tone_sentinels_never_become_real_slider_values() {
-        let mut data = sample();
-        data.photos.truncate(1);
-        data.photos[0].image.remove("masterImage");
-        data.photos[0].settings =
-            "s = { AutoTone = true, Exposure2012 = -999999, Contrast2012 = -999999, Shadows2012 = 65, Temperature = 6150 }".into();
-        data.photos[0].xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="-999999" crs:Contrast2012="-999999" crs:Blacks2012="-22"/></rdf:RDF></x:xmpmeta>"#.into();
-        let mut s = crate::Session::new();
-        let report = apply(&mut s, data, false).unwrap();
-        let p = s.catalog.photos().next().unwrap();
-        assert_eq!(p.develop.light.exposure, 0.0);
-        assert_eq!(p.develop.light.contrast, 0.0);
-        assert_eq!(p.develop.light.shadows, 65.0);
-        assert_eq!(p.develop.light.blacks, -22.0);
-        assert!(report["unmapped"]["2"].as_array().unwrap().iter().any(|v| v.as_str().is_some_and(|v| v.contains("Deferred"))));
-        let (partial, _) = mapped_settings("s = { Exposure2012 = -5, Contrast2012 = -100 }", true, 1.0).unwrap();
-        assert_eq!(partial["light"]["exposure"], -5.0);
-        assert_eq!(partial["light"]["contrast"], -100.0);
-    }
-
-    #[test]
-    fn wal_checksums_cover_commits_without_materializing_historical_databases() {
-        let mut main = vec![0; 512];
-        main[16..18].copy_from_slice(&512u16.to_be_bytes());
-        assert_eq!(wal_checksum(&[1, 0, 0, 0, 2, 0, 0, 0], false, (0, 0)), (1, 3));
-        for big in [false, true] {
-            let mut wal = vec![0; 32];
-            wal[0..4].copy_from_slice(&(if big { 0x377f0683u32 } else { 0x377f0682u32 }).to_be_bytes());
-            wal[4..8].copy_from_slice(&3_007_000u32.to_be_bytes());
-            wal[8..12].copy_from_slice(&512u32.to_be_bytes());
-            wal[16..20].copy_from_slice(&123u32.to_be_bytes());
-            let mut sum = wal_checksum(&wal[..24], big, (0, 0));
-            wal[24..28].copy_from_slice(&sum.0.to_be_bytes());
-            wal[28..32].copy_from_slice(&sum.1.to_be_bytes());
-            for _ in 0..128 {
-                let mut frame = vec![0; 536];
-                frame[0..4].copy_from_slice(&1u32.to_be_bytes());
-                frame[4..8].copy_from_slice(&1u32.to_be_bytes());
-                frame[8..12].copy_from_slice(&123u32.to_be_bytes());
-                sum = wal_checksum(&frame[..8], big, sum);
-                sum = wal_checksum(&frame[24..], big, sum);
-                frame[16..20].copy_from_slice(&sum.0.to_be_bytes());
-                frame[20..24].copy_from_slice(&sum.1.to_be_bytes());
-                wal.extend(frame);
-            }
-            assert_eq!(committed_wal_len(&main, &wal).unwrap(), wal.len());
-            let end = wal.len();
-            wal[end - 1] ^= 1;
-            assert_eq!(committed_wal_len(&main, &wal).unwrap(), end - 536);
-            wal[24] ^= 1;
-            assert!(committed_wal_len(&main, &wal).is_err());
-            main[17] = 0;
-            assert!(committed_wal_len(&main, &wal).is_err());
-            main[16..18].copy_from_slice(&512u16.to_be_bytes());
-        }
-    }
-
-    #[test]
-    fn persistent_reimport_keeps_copy_and_collection_ids_and_capture_time() {
-        let dir = std::env::temp_dir().join(format!("lightcraft-lrcat-reimport-{}", std::process::id()));
-        let mut s = crate::Session::new();
-        s.open_library(&dir, false).unwrap();
-        let mut data = sample();
-        data.collections.reverse(); // Parent must be committed before its child regardless of row order.
-        let first = apply(&mut s, data.clone(), false).unwrap();
-        s.close_library().unwrap();
-        s.open_library(&dir, false).unwrap();
-        let id = PhotoId(first["mapping"]["1"].as_u64().unwrap());
-        s.commit("Changed time", Op::SetCaptured { id, captured: None }).unwrap();
-        let second = apply(&mut s, data, true).unwrap();
-        assert_eq!(first["mapping"], second["mapping"]);
-        assert_eq!(s.catalog.len(), 2);
-        assert_eq!(s.catalog.albums().count(), 2);
-        assert_eq!(s.catalog.photo(id).unwrap().captured.as_deref(), Some("2024-01-16T12:34:56"));
-        s.close_library().unwrap();
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    // Construct a small SQLite fixture from public file-format records, never private media.
-    fn varint(mut n: u64) -> Vec<u8> {
-        let mut out = vec![(n & 127) as u8];
-        n >>= 7;
-        while n > 0 {
-            out.push((n & 127) as u8 | 128);
-            n >>= 7;
-        }
-        out.reverse();
-        out
-    }
-    fn record(values: &[SqlValue]) -> Vec<u8> {
-        let mut header = Vec::new();
-        let mut body = Vec::new();
-        for value in values {
-            let serial = match value {
-                SqlValue::Null => 0,
-                SqlValue::Integer(n) => {
-                    body.extend(n.to_be_bytes());
-                    6
-                }
-                SqlValue::Text(s) => {
-                    body.extend(s.as_bytes());
-                    13 + 2 * s.len() as u64
-                }
-                _ => unreachable!(),
-            };
-            header.extend(varint(serial));
-        }
-        let mut out = varint(1 + header.len() as u64);
-        out.extend(header);
-        out.extend(body);
-        out
-    }
-    fn leaf(page: &mut [u8], offset: usize, rows: &[Vec<SqlValue>]) {
-        page[offset] = 13;
-        page[offset + 3..offset + 5].copy_from_slice(&(rows.len() as u16).to_be_bytes());
-        let mut end = page.len();
-        for (i, values) in rows.iter().enumerate() {
-            let payload = record(values);
-            let mut cell = varint(payload.len() as u64);
-            cell.extend(varint(i as u64 + 1));
-            cell.extend(payload);
-            end -= cell.len();
-            page[end..end + cell.len()].copy_from_slice(&cell);
-            page[offset + 8 + i * 2..offset + 10 + i * 2].copy_from_slice(&(end as u16).to_be_bytes());
-        }
-        page[offset + 5..offset + 7].copy_from_slice(&(end as u16).to_be_bytes());
-    }
-    #[test]
-    fn reads_native_sqlite_tables_without_lightroom_or_external_processes() {
-        use SqlValue::{Integer as I, Null as N, Text as T};
-        let tables = [
-            ("AgLibraryRootFolder", "id_local INTEGER PRIMARY KEY, absolutePath", vec![N, T("/catalog/".into())]),
-            ("AgLibraryFolder", "id_local INTEGER PRIMARY KEY, rootFolder, pathFromRoot", vec![N, I(1), T("Photos/".into())]),
-            ("AgLibraryFile", "id_local INTEGER PRIMARY KEY, folder, idx_filename", vec![N, I(1), T("test.ARW".into())]),
-            (
-                "Adobe_images",
-                "id_local INTEGER PRIMARY KEY, id_global, rootFile, fileFormat, fileWidth, fileHeight, rating, pick",
-                vec![N, T("fixture-image".into()), I(1), T("ARW".into()), I(20), I(10), I(5), I(1)],
-            ),
-        ];
-        let mut bytes = vec![0u8; 5 * 2048];
-        bytes[..16].copy_from_slice(b"SQLite format 3\0");
-        bytes[16..18].copy_from_slice(&2048u16.to_be_bytes());
-        bytes[18] = 1;
-        bytes[19] = 1;
-        bytes[21] = 64;
-        bytes[22] = 32;
-        bytes[23] = 32;
-        bytes[28..32].copy_from_slice(&5u32.to_be_bytes());
-        bytes[44..48].copy_from_slice(&4u32.to_be_bytes());
-        bytes[56..60].copy_from_slice(&1u32.to_be_bytes());
-        let mut schema = Vec::new();
-        for (i, (name, columns, row)) in tables.iter().enumerate() {
-            schema.push(vec![
-                T("table".into()),
-                T((*name).into()),
-                T((*name).into()),
-                I(i as i64 + 2),
-                T(format!("CREATE TABLE {name} ({columns})")),
-            ]);
-            leaf(&mut bytes[(i + 1) * 2048..(i + 2) * 2048], 0, std::slice::from_ref(row));
-        }
-        leaf(&mut bytes[..2048], 100, &schema);
-        let path = std::env::temp_dir().join(format!("lightcraft-native-catalog-{}.lrcat", std::process::id()));
-        std::fs::write(&path, &bytes).unwrap();
-        let catalog = read(&path).unwrap();
-        assert_eq!(catalog.photos.len(), 1);
-        assert_eq!(catalog.photos[0].uuid, "fixture-image");
-        assert_eq!(number(&catalog.photos[0].image, "rating"), 5);
-        assert!(catalog.photos[0].path.ends_with("test.ARW"));
-        std::fs::write(&path, b"bad catalog").unwrap();
-        assert!(read(&path).is_err());
-        std::fs::remove_file(path).unwrap();
-    }
-}
-
 fn text<'a>(r: &'a Row, k: &str) -> &'a str {
     r.get(k).and_then(Value::as_str).unwrap_or("")
 }
@@ -346,6 +74,16 @@ impl Reader {
                     .collect()
             })
             .collect())
+    }
+
+    fn optional_table(&self, name: &str, warnings: &mut Vec<String>) -> Result<Vec<Row>, String> {
+        match self.table(name, false) {
+            Ok(rows) => Ok(rows),
+            Err(error) => {
+                warnings.push(format!("skipping optional Lightroom table {name}: {error}"));
+                Ok(Vec::new())
+            }
+        }
     }
 
     fn xmp_table(&self) -> Result<(Vec<Row>, Vec<String>), String> {
@@ -628,24 +366,40 @@ pub fn read_with_progress(path: &Path, cancel: &AtomicBool, total: &AtomicUsize,
         return Err("catalog changed during reading; close Lightroom and retry".into());
     }
     let reader = Reader { tables: db.live_tables()?, db };
+    let mut warnings = Vec::new();
     let table = |name: &str, required: bool| -> Result<Vec<Row>, String> {
         ensure_read_active(cancel)?;
         let rows = reader.table(name, required)?;
         done.fetch_add(1, Ordering::Relaxed);
         Ok(rows)
     };
+    let optional_table = |name: &str, warnings: &mut Vec<String>| -> Result<Vec<Row>, String> {
+        ensure_read_active(cancel)?;
+        let rows = reader.optional_table(name, warnings)?;
+        done.fetch_add(1, Ordering::Relaxed);
+        Ok(rows)
+    };
     let roots: HashMap<_, _> = table("AgLibraryRootFolder", true)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
     let folders: HashMap<_, _> = table("AgLibraryFolder", true)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
     let files: HashMap<_, _> = table("AgLibraryFile", true)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
-    let develops: HashMap<_, _> =
-        table("Adobe_imageDevelopSettings", false)?.into_iter().map(|r| (number(&r, "image"), text(&r, "text").to_string())).collect();
+    let develops: HashMap<_, _> = optional_table("Adobe_imageDevelopSettings", &mut warnings)?
+        .into_iter()
+        .map(|r| (number(&r, "image"), text(&r, "text").to_string()))
+        .collect();
     ensure_read_active(cancel)?;
-    let (metadata_rows, mut metadata_warnings) = reader.xmp_table()?;
+    let (metadata_rows, metadata_warnings) = match reader.xmp_table() {
+        Ok(result) => result,
+        Err(error) => {
+            warnings.push(format!("skipping optional Lightroom table Adobe_AdditionalMetadata: {error}"));
+            (Vec::new(), Vec::new())
+        }
+    };
+    warnings.extend(metadata_warnings);
     done.fetch_add(1, Ordering::Relaxed);
     let metadata: HashMap<_, _> = metadata_rows.into_iter().map(|r| (number(&r, "image"), r)).collect();
-    let keyword_rows: HashMap<_, _> = table("AgLibraryKeyword", false)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
+    let keyword_rows: HashMap<_, _> = optional_table("AgLibraryKeyword", &mut warnings)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
     let mut keywords: HashMap<i64, Vec<String>> = HashMap::new();
-    for r in table("AgLibraryKeywordImage", false)? {
+    for r in optional_table("AgLibraryKeywordImage", &mut warnings)? {
         ensure_read_active(cancel)?;
         let mut parts = Vec::new();
         let mut at = number(&r, "tag");
@@ -673,15 +427,15 @@ pub fn read_with_progress(path: &Path, cancel: &AtomicBool, total: &AtomicUsize,
         }
         out
     };
-    let mut history = group(table("Adobe_libraryImageDevelopHistoryStep", false)?);
-    let mut snapshots = group(table("Adobe_libraryImageDevelopSnapshot", false)?);
+    let mut history = group(optional_table("Adobe_libraryImageDevelopHistoryStep", &mut warnings)?);
+    let mut snapshots = group(optional_table("Adobe_libraryImageDevelopSnapshot", &mut warnings)?);
     let mut out = CatalogImport {
         source: path.to_string_lossy().into(),
         photos: Vec::new(),
-        collections: table("AgLibraryCollection", false)?,
-        members: table("AgLibraryCollectionImage", false)?,
-        collection_content: table("AgLibraryCollectionContent", false)?,
-        warnings: std::mem::take(&mut metadata_warnings),
+        collections: optional_table("AgLibraryCollection", &mut warnings)?,
+        members: optional_table("AgLibraryCollectionImage", &mut warnings)?,
+        collection_content: optional_table("AgLibraryCollectionContent", &mut warnings)?,
+        warnings,
     };
     for image in table("Adobe_images", true)? {
         ensure_read_active(cancel)?;
@@ -889,7 +643,7 @@ pub(crate) fn apply_prepared(s: &mut crate::Session, data: CatalogImport, contex
                 number(&src.image, "fileHeight").max(0) as u32,
                 &now,
             );
-            if ["DNG", "ARW", "CR2", "CR3", "NEF", "NRW", "RAF", "ORF", "RW2", "PEF"].contains(&p.format.to_uppercase().as_str()) {
+            if ["RAW", "DNG", "ARW", "CR2", "CR3", "NEF", "NRW", "RAF", "ORF", "RW2", "PEF"].contains(&p.format.to_uppercase().as_str()) {
                 p.kind = lightcraft_catalog::MediaKind::Raw;
             }
             p
@@ -972,6 +726,13 @@ pub(crate) fn apply_prepared(s: &mut crate::Session, data: CatalogImport, contex
         albums.insert(number(collection, "id_local"), id);
     }
     let parents: HashMap<_, _> = data.collections.iter().map(|r| (number(r, "id_local"), number(r, "parent"))).collect();
+    let mut grouped_members: HashMap<i64, Vec<&Row>> = HashMap::new();
+    for member in &data.members {
+        grouped_members.entry(number(member, "collection")).or_default().push(member);
+    }
+    for members in grouped_members.values_mut() {
+        members.sort_by(|a, b| text(a, "positionInCollection").cmp(text(b, "positionInCollection")));
+    }
     let mut ordered: Vec<_> = data.collections.iter().collect();
     ordered.sort_by_key(|r| {
         let mut depth = 0;
@@ -991,16 +752,20 @@ pub(crate) fn apply_prepared(s: &mut crate::Session, data: CatalogImport, contex
             warnings.push(format!("{}: smart rules preserved in archive; imported current membership", album.name));
         }
         if !album.folder {
-            let mut members: Vec<_> = data.members.iter().filter(|r| number(r, "collection") == number(collection, "id_local")).collect();
-            members.sort_by(|a, b| text(a, "positionInCollection").cmp(text(b, "positionInCollection")));
-            album.photos = members.into_iter().filter_map(|r| ids.get(&number(r, "image")).copied()).collect();
+            album.photos = grouped_members
+                .get(&number(collection, "id_local"))
+                .into_iter()
+                .flatten()
+                .filter_map(|r| ids.get(&number(r, "image")).copied())
+                .collect();
         }
         if s.catalog.album(id).is_some() {
             // Reimport preserves the user's album name/hierarchy, merges only new membership.
             if let Some(old) = s.catalog.album(id).filter(|a| !a.folder && !a.is_smart()) {
                 let mut photos = old.photos.clone();
+                let mut seen: HashSet<_> = photos.iter().copied().collect();
                 for photo in album.photos {
-                    if !photos.contains(&photo) {
+                    if seen.insert(photo) {
                         photos.push(photo);
                     }
                 }
@@ -1018,4 +783,276 @@ pub(crate) fn apply_prepared(s: &mut crate::Session, data: CatalogImport, contex
         report: json!({"source":data.source,"photos":ids.len(),"imported":files.imported.len(),"collections":albums.len(),"preservedExistingEdits":preserved,"missing":missing,"failed":files.failed,"warnings":warnings,"unmapped":unmapped,"archive":archive_path,"mapping":ids}),
         index: index.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn row(v: Value) -> Row {
+        serde_json::from_value(v).unwrap()
+    }
+    fn sample() -> CatalogImport {
+        let mut photo = CatalogPhoto {
+            source_id: 1,
+            uuid: "test-master".into(),
+            path: "/missing/test.ARW".into(),
+            image: row(json!({"id_local":1,"rating":5,"pick":1,"fileFormat":"ARW","fileWidth":20,"fileHeight":10})),
+            settings: "s = { Exposure2012 = 1.25, Contrast2012 = 17, CameraProfile = \"Example\" }".into(),
+            xmp: String::new(),
+            keywords: vec!["Travel|Goa".into()],
+            history: vec![row(json!({"text":"s = { Exposure2012 = 0.5 }"}))],
+            snapshots: Vec::new(),
+        };
+        let mut copy = photo.clone();
+        copy.source_id = 2;
+        copy.uuid = "test-copy".into();
+        copy.image = row(json!({"id_local":2,"masterImage":1,"copyName":"Mono","rating":2,"pick":-1}));
+        copy.settings = "s = { ConvertToGrayscale = true, Exposure2012 = -0.5 }".into();
+        photo.image.insert("captureTime".into(), json!("2024-01-16T12:34:56"));
+        CatalogImport {
+            source: "test.lrcat".into(),
+            photos: vec![copy, photo],
+            collections: vec![
+                row(json!({"id_local":9,"name":"Travel","creationId":"collection.group"})),
+                row(json!({"id_local":10,"parent":9,"name":"Keepers","creationId":"collection"})),
+            ],
+            members: vec![
+                row(json!({"collection":10,"image":2,"positionInCollection":"a"})),
+                row(json!({"collection":10,"image":1,"positionInCollection":"b"})),
+            ],
+            collection_content: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+    #[test]
+    fn imports_copies_collections_ratings_and_mapped_edits_in_one_undo_step() {
+        let mut s = crate::Session::new();
+        let data = sample();
+        let r = apply(&mut s, data.clone(), false).unwrap();
+        assert_eq!(r["photos"], 2);
+        assert_eq!(r["missing"].as_array().unwrap().len(), 1);
+        let master = s.catalog.photo(PhotoId(r["mapping"]["1"].as_u64().unwrap())).unwrap();
+        assert_eq!(master.rating, 5);
+        assert_eq!(master.flag, Flag::Pick);
+        assert_eq!(master.meta.keywords, vec!["Travel|Goa"]);
+        assert_eq!(master.develop.light.exposure, 1.25);
+        let copy = s.catalog.photos().find(|p| p.copy_of.is_some()).unwrap();
+        assert_eq!(copy.copy_of, Some(master.id));
+        assert_eq!(copy.rating, 2);
+        assert_eq!(copy.flag, Flag::Reject);
+        assert_eq!(copy.develop.light.exposure, -0.5);
+        let album = s.catalog.albums().find(|a| a.name == "Keepers").unwrap();
+        assert_eq!(album.photos, vec![copy.id, master.id]);
+        assert!(album.parent.is_some());
+        assert!(r["unmapped"]["1"].as_array().unwrap().iter().any(|v| v.as_str() == Some("CameraProfile")));
+        assert_eq!(s.undo.len(), 1);
+        s.undo_step().unwrap();
+        assert!(s.catalog.is_empty());
+        assert!(s.catalog.albums().next().is_none());
+        assert!(data.photos[1].settings.contains("CameraProfile")); // unmapped source stays intact
+    }
+    #[test]
+    fn preserves_existing_edits_and_rejects_invalid_structure_before_mutation() {
+        let mut s = crate::Session::new();
+        let data = sample();
+        apply(&mut s, data.clone(), false).unwrap();
+        let id = s.catalog.photos().find(|p| p.copy_of.is_none()).unwrap().id;
+        s.set_develop(id, lightcraft_develop::DevelopSettings::default(), "Personal edit").unwrap();
+        let r = apply(&mut s, data.clone(), false).unwrap();
+        assert!(r["preservedExistingEdits"].as_u64().unwrap() > 0);
+        assert_eq!(s.catalog.photo(id).unwrap().develop.light.exposure, 0.0);
+        let before = s.catalog.to_snapshot();
+        let mut cyclic = data;
+        cyclic.collections[0].insert("parent".into(), json!(10));
+        assert!(apply(&mut s, cyclic, false).is_err());
+        assert_eq!(s.catalog.to_snapshot(), before);
+        assert!(mapped_settings(&format!("{}0{}", "{".repeat(1000), "}".repeat(1000)), true, 1.0).is_err());
+    }
+    #[test]
+    fn compressed_xmp_is_bounded_and_settings_are_data_only() {
+        let packet = b"<x:xmpmeta>example</x:xmpmeta>";
+        let mut encoded = (packet.len() as u32).to_be_bytes().to_vec();
+        encoded.extend(miniz_oxide::deflate::compress_to_vec_zlib(packet, 6));
+        assert_eq!(xmp(Some(&json!(encoded))).unwrap(), String::from_utf8_lossy(packet));
+        encoded[0] = 0xff;
+        assert!(xmp(Some(&json!(encoded))).is_err());
+        let (partial, _) = mapped_settings("s = { Exposure2012 = 0.75, ToneCurvePV2012 = {0,0,128,150,255,255} }", true, 1.5).unwrap();
+        assert_eq!(partial["light"]["exposure"], 0.75);
+    }
+
+    #[test]
+    fn deferred_auto_tone_sentinels_never_become_real_slider_values() {
+        let mut data = sample();
+        data.photos.truncate(1);
+        data.photos[0].image.remove("masterImage");
+        data.photos[0].settings =
+            "s = { AutoTone = true, Exposure2012 = -999999, Contrast2012 = -999999, Shadows2012 = 65, Temperature = 6150 }".into();
+        data.photos[0].xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="-999999" crs:Contrast2012="-999999" crs:Blacks2012="-22"/></rdf:RDF></x:xmpmeta>"#.into();
+        let mut s = crate::Session::new();
+        let report = apply(&mut s, data, false).unwrap();
+        let p = s.catalog.photos().next().unwrap();
+        assert_eq!(p.develop.light.exposure, 0.0);
+        assert_eq!(p.develop.light.contrast, 0.0);
+        assert_eq!(p.develop.light.shadows, 65.0);
+        assert_eq!(p.develop.light.blacks, -22.0);
+        assert!(report["unmapped"]["2"].as_array().unwrap().iter().any(|v| v.as_str().is_some_and(|v| v.contains("Deferred"))));
+        let (partial, _) = mapped_settings("s = { Exposure2012 = -5, Contrast2012 = -100 }", true, 1.0).unwrap();
+        assert_eq!(partial["light"]["exposure"], -5.0);
+        assert_eq!(partial["light"]["contrast"], -100.0);
+    }
+
+    #[test]
+    fn wal_checksums_cover_commits_without_materializing_historical_databases() {
+        let mut main = vec![0; 512];
+        main[16..18].copy_from_slice(&512u16.to_be_bytes());
+        assert_eq!(wal_checksum(&[1, 0, 0, 0, 2, 0, 0, 0], false, (0, 0)), (1, 3));
+        for big in [false, true] {
+            let mut wal = vec![0; 32];
+            wal[0..4].copy_from_slice(&(if big { 0x377f0683u32 } else { 0x377f0682u32 }).to_be_bytes());
+            wal[4..8].copy_from_slice(&3_007_000u32.to_be_bytes());
+            wal[8..12].copy_from_slice(&512u32.to_be_bytes());
+            wal[16..20].copy_from_slice(&123u32.to_be_bytes());
+            let mut sum = wal_checksum(&wal[..24], big, (0, 0));
+            wal[24..28].copy_from_slice(&sum.0.to_be_bytes());
+            wal[28..32].copy_from_slice(&sum.1.to_be_bytes());
+            for _ in 0..128 {
+                let mut frame = vec![0; 536];
+                frame[0..4].copy_from_slice(&1u32.to_be_bytes());
+                frame[4..8].copy_from_slice(&1u32.to_be_bytes());
+                frame[8..12].copy_from_slice(&123u32.to_be_bytes());
+                sum = wal_checksum(&frame[..8], big, sum);
+                sum = wal_checksum(&frame[24..], big, sum);
+                frame[16..20].copy_from_slice(&sum.0.to_be_bytes());
+                frame[20..24].copy_from_slice(&sum.1.to_be_bytes());
+                wal.extend(frame);
+            }
+            assert_eq!(committed_wal_len(&main, &wal).unwrap(), wal.len());
+            let end = wal.len();
+            wal[end - 1] ^= 1;
+            assert_eq!(committed_wal_len(&main, &wal).unwrap(), end - 536);
+            wal[24] ^= 1;
+            assert!(committed_wal_len(&main, &wal).is_err());
+            main[17] = 0;
+            assert!(committed_wal_len(&main, &wal).is_err());
+            main[16..18].copy_from_slice(&512u16.to_be_bytes());
+        }
+    }
+
+    #[test]
+    fn persistent_reimport_keeps_copy_and_collection_ids_and_capture_time() {
+        let dir = std::env::temp_dir().join(format!("lightcraft-lrcat-reimport-{}", std::process::id()));
+        let mut s = crate::Session::new();
+        s.open_library(&dir, false).unwrap();
+        let mut data = sample();
+        data.collections.reverse(); // Parent must be committed before its child regardless of row order.
+        let first = apply(&mut s, data.clone(), false).unwrap();
+        s.close_library().unwrap();
+        s.open_library(&dir, false).unwrap();
+        let id = PhotoId(first["mapping"]["1"].as_u64().unwrap());
+        s.commit("Changed time", Op::SetCaptured { id, captured: None }).unwrap();
+        let second = apply(&mut s, data, true).unwrap();
+        assert_eq!(first["mapping"], second["mapping"]);
+        assert_eq!(s.catalog.len(), 2);
+        assert_eq!(s.catalog.albums().count(), 2);
+        assert_eq!(s.catalog.photo(id).unwrap().captured.as_deref(), Some("2024-01-16T12:34:56"));
+        s.close_library().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Construct a small SQLite fixture from public file-format records, never private media.
+    fn varint(mut n: u64) -> Vec<u8> {
+        let mut out = vec![(n & 127) as u8];
+        n >>= 7;
+        while n > 0 {
+            out.push((n & 127) as u8 | 128);
+            n >>= 7;
+        }
+        out.reverse();
+        out
+    }
+    fn record(values: &[SqlValue]) -> Vec<u8> {
+        let mut header = Vec::new();
+        let mut body = Vec::new();
+        for value in values {
+            let serial = match value {
+                SqlValue::Null => 0,
+                SqlValue::Integer(n) => {
+                    body.extend(n.to_be_bytes());
+                    6
+                }
+                SqlValue::Text(s) => {
+                    body.extend(s.as_bytes());
+                    13 + 2 * s.len() as u64
+                }
+                _ => unreachable!(),
+            };
+            header.extend(varint(serial));
+        }
+        let mut out = varint(1 + header.len() as u64);
+        out.extend(header);
+        out.extend(body);
+        out
+    }
+    fn leaf(page: &mut [u8], offset: usize, rows: &[Vec<SqlValue>]) {
+        page[offset] = 13;
+        page[offset + 3..offset + 5].copy_from_slice(&(rows.len() as u16).to_be_bytes());
+        let mut end = page.len();
+        for (i, values) in rows.iter().enumerate() {
+            let payload = record(values);
+            let mut cell = varint(payload.len() as u64);
+            cell.extend(varint(i as u64 + 1));
+            cell.extend(payload);
+            end -= cell.len();
+            page[end..end + cell.len()].copy_from_slice(&cell);
+            page[offset + 8 + i * 2..offset + 10 + i * 2].copy_from_slice(&(end as u16).to_be_bytes());
+        }
+        page[offset + 5..offset + 7].copy_from_slice(&(end as u16).to_be_bytes());
+    }
+    #[test]
+    fn reads_native_sqlite_tables_without_lightroom_or_external_processes() {
+        use SqlValue::{Integer as I, Null as N, Text as T};
+        let tables = [
+            ("AgLibraryRootFolder", "id_local INTEGER PRIMARY KEY, absolutePath", vec![N, T("/catalog/".into())]),
+            ("AgLibraryFolder", "id_local INTEGER PRIMARY KEY, rootFolder, pathFromRoot", vec![N, I(1), T("Photos/".into())]),
+            ("AgLibraryFile", "id_local INTEGER PRIMARY KEY, folder, idx_filename", vec![N, I(1), T("test.ARW".into())]),
+            (
+                "Adobe_images",
+                "id_local INTEGER PRIMARY KEY, id_global, rootFile, fileFormat, fileWidth, fileHeight, rating, pick",
+                vec![N, T("fixture-image".into()), I(1), T("ARW".into()), I(20), I(10), I(5), I(1)],
+            ),
+        ];
+        let mut bytes = vec![0u8; 5 * 2048];
+        bytes[..16].copy_from_slice(b"SQLite format 3\0");
+        bytes[16..18].copy_from_slice(&2048u16.to_be_bytes());
+        bytes[18] = 1;
+        bytes[19] = 1;
+        bytes[21] = 64;
+        bytes[22] = 32;
+        bytes[23] = 32;
+        bytes[28..32].copy_from_slice(&5u32.to_be_bytes());
+        bytes[44..48].copy_from_slice(&4u32.to_be_bytes());
+        bytes[56..60].copy_from_slice(&1u32.to_be_bytes());
+        let mut schema = Vec::new();
+        for (i, (name, columns, row)) in tables.iter().enumerate() {
+            schema.push(vec![
+                T("table".into()),
+                T((*name).into()),
+                T((*name).into()),
+                I(i as i64 + 2),
+                T(format!("CREATE TABLE {name} ({columns})")),
+            ]);
+            leaf(&mut bytes[(i + 1) * 2048..(i + 2) * 2048], 0, std::slice::from_ref(row));
+        }
+        leaf(&mut bytes[..2048], 100, &schema);
+        let path = std::env::temp_dir().join(format!("lightcraft-native-catalog-{}.lrcat", std::process::id()));
+        std::fs::write(&path, &bytes).unwrap();
+        let catalog = read(&path).unwrap();
+        assert_eq!(catalog.photos.len(), 1);
+        assert_eq!(catalog.photos[0].uuid, "fixture-image");
+        assert_eq!(number(&catalog.photos[0].image, "rating"), 5);
+        assert!(catalog.photos[0].path.ends_with("test.ARW"));
+        std::fs::write(&path, b"bad catalog").unwrap();
+        assert!(read(&path).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
 }

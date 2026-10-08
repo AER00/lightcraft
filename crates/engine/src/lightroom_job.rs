@@ -175,7 +175,7 @@ impl LightroomJob {
         }
         self.import.total.store(1, Ordering::Relaxed);
         self.import.done.store(0, Ordering::Relaxed);
-        let data = lightroom_catalog::read_with_progress(&self.path, cancel, &self.import.total, &self.import.done).map_err(error)?;
+        let mut data = lightroom_catalog::read_with_progress(&self.path, cancel, &self.import.total, &self.import.done).map_err(error)?;
         lightroom_catalog::validate_for_job(&data).map_err(error)?;
         if cancel.load(Ordering::Relaxed) {
             return Err(error("Lightroom import cancelled"));
@@ -199,7 +199,11 @@ impl LightroomJob {
             normal.rollback();
             return Err(error("Lightroom import cancelled"));
         }
-        let archive_path = self.archive_dir.as_ref().map(|dir| crate::lightroom_archive::store(dir, &data).map_err(error)).transpose()?;
+        let archive_path =
+            self.archive_dir.as_ref().map(|dir| crate::lightroom_archive::store_best_effort(dir, &data).map_err(error)).transpose()?.flatten();
+        if self.archive_dir.is_some() && archive_path.is_none() {
+            data.warnings.push("Lightroom source archive exceeded 32 MiB; archive skipped".into());
+        }
         let index_path = self.archive_dir.as_ref().map(|dir| dir.join("lightroom-index.json"));
         let index = lightroom_catalog::load_index(index_path.as_deref())?;
         Ok(PreparedLightroom {
