@@ -317,32 +317,96 @@ pub fn is_supported(path: &Path) -> bool {
 }
 
 /// Expand files and folders (recursively) into supported files. `skip` (e.g. the library folder)
-/// is never descended into.
+/// is never descended into. Each folder's walk is bounded ([`crate::walk::Limits::default`]); a
+/// walk that stops at a bound is logged.
 pub fn expand(paths: &[String], skip: Option<&Path>) -> Vec<String> {
-    fn walk(p: &Path, skip: Option<&Path>, out: &mut Vec<String>, top: bool) {
-        let hidden = p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'));
-        if (hidden && !top) || skip.is_some_and(|s| p == s) {
-            return;
+    expand_within(paths, skip, crate::walk::Limits::default()).0
+}
+
+/// [`expand`] with the walk bounded by `limits` → (files, whether a walk stopped at a bound).
+pub fn expand_within(paths: &[String], skip: Option<&Path>, limits: crate::walk::Limits) -> (Vec<String>, bool) {
+    let mut out = Vec::new();
+    let mut truncated = false;
+    for p in paths {
+        let p = Path::new(p);
+        if skip.is_some_and(|s| p == s) {
+            continue;
         }
         if p.is_dir() {
-            let Ok(rd) = std::fs::read_dir(p) else { return };
-            let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
-            v.sort();
-            for c in v {
-                walk(&c, skip, out, false);
+            let w = crate::walk::files_in(p, skip, limits, is_supported);
+            if w.truncated {
+                log::warn!(
+                    "import: stopped looking in {} after {} entries (limits: {} entries, {} folder levels)",
+                    p.display(),
+                    w.entries,
+                    limits.max_entries,
+                    limits.max_depth
+                );
             }
-        } else if top || is_supported(p) {
+            truncated |= w.truncated;
+            out.extend(w.files.into_iter().map(|f| f.to_string_lossy().to_string()));
+        } else {
             // explicitly named files are attempted even with an unknown extension (sniffed)
             out.push(p.to_string_lossy().to_string());
         }
     }
-    let mut out = Vec::new();
-    for p in paths {
-        walk(Path::new(p), skip, &mut out, true);
-    }
     let mut seen = std::collections::HashSet::new();
     out.retain(|p| seen.insert(p.clone()));
-    out
+    (out, truncated)
+}
+
+/// What a path given on the command line at launch becomes ([`launch_path`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LaunchPath {
+    /// Import this (absolute) file or folder, in the background.
+    Import(String),
+    /// Not imported: `path` (absolute) is a whole drive or the whole home folder, which is never
+    /// walked without being chosen in the app (issue #374).
+    Refused { path: String, why: String },
+}
+
+/// Resolve a launch argument for importing (issue #374). An empty argument is ignored (`None`);
+/// a relative one (`.`, `..`, `photos`; `/` or `\` on Windows, the current drive's root) is
+/// resolved against `cwd` — the working folder a launcher picked, often a drive root or
+/// `C:\Windows\System32` — and refused when that leaves no folder (`cwd` unknown). A drive
+/// or file-system root is replaced by its camera folder (`DCIM`, from `dcim`: a memory card) or
+/// refused, and so is the home folder `home`: either would walk most of the disk.
+pub fn launch_path(arg: &str, cwd: Option<&Path>, home: Option<&Path>, dcim: impl Fn(&Path) -> Option<PathBuf>) -> Option<LaunchPath> {
+    if arg.trim().is_empty() {
+        return None;
+    }
+    let given = Path::new(arg);
+    let joined = if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        match cwd {
+            Some(c) => c.join(given),
+            None => return Some(LaunchPath::Refused { path: arg.to_string(), why: "a relative path, and the working folder is unknown".into() }),
+        }
+    };
+    // `.` and `..` resolved by name (no file-system access)
+    let mut abs = PathBuf::new();
+    for c in joined.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                abs.pop();
+            }
+            other => abs.push(other.as_os_str()),
+        }
+    }
+    let shown = abs.to_string_lossy().to_string();
+    if abs.parent().is_none() {
+        return Some(match dcim(&abs) {
+            Some(d) => LaunchPath::Import(d.to_string_lossy().to_string()),
+            None => LaunchPath::Refused { path: shown, why: "a whole drive".into() },
+        });
+    }
+    let key = lightcraft_catalog::query::folder_key;
+    if home.is_some_and(|h| key(&h.to_string_lossy()) == key(&shown)) {
+        return Some(LaunchPath::Refused { path: shown, why: "the whole home folder".into() });
+    }
+    Some(LaunchPath::Import(shown))
 }
 
 /// Probe files (headers + content hash) as an import would.
