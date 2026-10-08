@@ -183,7 +183,9 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     register(ui.ctx(), format!("sliderValue:{}", spec.id), value_rect);
     let typing_id = id.with("typing");
     let field_id = id.with("typingField");
-    let mut typing: Option<String> = ui.data(|m| m.get_temp(typing_id));
+    // the text being typed and how many frames the field has been up: it takes the keyboard on its
+    // first frames (not on the click's own, whose release would take the focus straight back)
+    let mut typing: Option<(String, u8)> = ui.data(|m| m.get_temp(typing_id));
     if enabled && typing.is_none() && value_resp.clicked() {
         let text = shown_value(spec, value).trim_start_matches('+').to_string();
         // the old value starts selected, so typing replaces it
@@ -191,15 +193,14 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
         state.cursor.set_char_range(Some(all));
         state.store(ui.ctx(), field_id);
-        typing = Some(text);
-        ui.memory_mut(|m| m.request_focus(field_id));
+        typing = Some((text, 0));
     }
     let mut out = SliderOut::default();
     let span = (spec.max - spec.min).max(1e-9);
     let to_x = |v: f64| track_rect.left() + ((v - spec.min) / span).clamp(0.0, 1.0) as f32 * track_rect.width();
     let from_x = |x: f32| spec.min + ((x - track_rect.left()) / track_rect.width()).clamp(0.0, 1.0) as f64 * span;
     let mut v = value;
-    if let Some(mut text) = typing.take() {
+    if let Some((mut text, frames)) = typing.take() {
         let field = egui::TextEdit::singleline(&mut text)
             .id(field_id)
             .font(t.font(12.5))
@@ -207,7 +208,11 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
             .desired_width(value_rect.width())
             .margin(egui::Margin::ZERO);
         let te = ui.put(value_rect, field);
-        if te.lost_focus() || !enabled {
+        if frames < 2 {
+            te.request_focus();
+            typing = Some((text.clone(), frames + 1));
+            ui.data_mut(|m| m.insert_temp(typing_id, (text, frames + 1)));
+        } else if !te.has_focus() || !enabled {
             // Esc (or the slider turning off) keeps the old value; Return or clicking away applies
             let cancelled = !enabled || ui.input(|i| i.key_pressed(egui::Key::Escape));
             if let Some(nv) = typed_value(spec, &text).filter(|_| !cancelled) {
@@ -218,10 +223,10 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
                     v = nv;
                 }
             }
-            ui.data_mut(|m| m.remove::<String>(typing_id));
+            ui.data_mut(|m| m.remove::<(String, u8)>(typing_id));
         } else {
-            typing = Some(text.clone());
-            ui.data_mut(|m| m.insert_temp(typing_id, text));
+            typing = Some((text.clone(), frames));
+            ui.data_mut(|m| m.insert_temp(typing_id, (text, frames)));
         }
     } else if resp.double_clicked() || label_resp.double_clicked() {
         out.reset = true;
