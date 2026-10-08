@@ -437,7 +437,15 @@ fn red_eye(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let i = app.ui.eye;
     let eye = d.red_eye[i];
     divider(ui);
-    super::edit::sub_title(ui, &format!("{} {} of {n}", if eye.pet { "Pet Eye" } else { "Red Eye" }, i + 1));
+    super::edit::sub_title(
+        ui,
+        &crate::i18n::tr_format!(
+            "{label} {index} of {n}",
+            label = crate::i18n::tr(if eye.pet { "Pet Eye" } else { "Red Eye" }),
+            index = i + 1,
+            n = n
+        ),
+    );
     for k in ["pupilSize", "darken"] {
         let cid = format!("redEye.{i}.{k}");
         let Some(spec) = lightcraft_develop::controls::find(&cid) else { continue };
@@ -478,8 +486,12 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ui.add_space(6.0);
         }
         if let Some(name) = &p.copy_name {
-            let of = p.copy_of.and_then(|m| app.session.catalog.photo(m)).map(|m| m.file_name.clone()).unwrap_or_else(|| "a removed photo".into());
-            ui.label(egui::RichText::new(format!("Virtual copy “{name}” of {of}")).color(t.text_label));
+            let of = p
+                .copy_of
+                .and_then(|m| app.session.catalog.photo(m))
+                .map(|m| m.file_name.clone())
+                .unwrap_or_else(|| crate::i18n::tr("a removed photo").into());
+            ui.label(egui::RichText::new(crate::i18n::tr_format!("Virtual copy “{name}” of {of}", name = name, of = of)).color(t.text_label));
         }
         ui.add_space(8.0);
         if let Some(r) = ui.horizontal(|ui| crate::widgets::stars(ui, "info", p.rating, 20.0)).inner {
@@ -497,7 +509,7 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 if on {
                     ui.painter().circle_stroke(r.center(), 10.0, egui::Stroke::new(1.5, t.text));
                 }
-                let resp = resp.on_hover_text(app.session.catalog.label_name(l));
+                let resp = resp.on_hover_text(crate::i18n::color_label(&app.session.catalog, l));
                 if resp.clicked() {
                     let _ = app.run("photo.label", json!({"label": if on { "none".to_string() } else { key }}));
                 }
@@ -528,7 +540,7 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             meta_field(app, ui, label, key, value, lines);
         }
         // file: name (rename), path (reveal), capture time (edit)
-        let small = |ui: &mut egui::Ui, text: &str| ui.label(egui::RichText::new(text).size(11.5).color(t.text_dim));
+        let small = |ui: &mut egui::Ui, text: &str| ui.label(egui::RichText::new(crate::i18n::tr(text)).size(11.5).color(t.text_dim));
         small(ui, "File Name");
         ui.allocate_ui_with_layout(vec2(ui.available_width(), 22.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if crate::widgets::icon_button(ui, "infoRename", Icon::Pencil, vec2(20.0, 20.0), false, true, "Rename…").clicked() {
@@ -543,7 +555,7 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.horizontal(|ui| {
             let path = match &p.source {
                 lightcraft_catalog::Source::File { path } => path.clone(),
-                lightcraft_catalog::Source::Demo { .. } => "Generated demo photo".into(),
+                lightcraft_catalog::Source::Demo { .. } => crate::i18n::tr("Generated demo photo").into(),
             };
             ui.add(egui::Label::new(egui::RichText::new(path).size(12.0).color(t.text_label)).truncate());
             if crate::menus::ui_enabled(app, "app.showInFinder") {
@@ -581,7 +593,7 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let gid = egui::Id::new("info-gps");
         ui.label(egui::RichText::new("GPS").size(11.5).color(t.text_dim));
         let mut text: String = ui.data(|d| d.get_temp(gid)).unwrap_or_else(|| gps.clone());
-        let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text("latitude, longitude").desired_width(f32::INFINITY));
+        let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text(crate::i18n::tr("latitude, longitude")).desired_width(f32::INFINITY));
         register(ui.ctx(), "field:gps", r.rect);
         if r.has_focus() {
             ui.data_mut(|d| d.insert_temp(gid, text.clone()));
@@ -610,9 +622,9 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             });
         }
         if let Some(a) = p.analysis {
-            let mut line = format!("Focus {:.0}", a.sharpness);
+            let mut line = crate::i18n::tr_format!("Focus {:.0}", a.sharpness);
             if a.clipped > 0.02 {
-                line.push_str(&format!(" · {:.0}% clipped", a.clipped * 100.0));
+                line.push_str(&crate::i18n::tr_format!(" · {:.0}% clipped", a.clipped * 100.0));
             }
             if a.group.is_some() {
                 line.push_str(if a.best { " · best of its burst" } else { " · in a burst" });
@@ -638,7 +650,7 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     _ => "Smart preview available",
                 };
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new(text).color(if online { t.text_dim } else { t.accent }));
+                ui.label(egui::RichText::new(crate::i18n::tr(text)).color(if online { t.text_dim } else { t.accent }));
             }
         }
         ui.add_space(10.0);
@@ -675,7 +687,7 @@ fn camera_card(ui: &mut egui::Ui, p: &lightcraft_catalog::Photo) {
         });
         let rows = [
             ("Focal length", m.focal_mm.map(|f| format!("{f:.1} mm").replace(".0 mm", " mm"))),
-            ("Shutter speed", (!m.shutter.is_empty()).then(|| format!("{} sec", m.shutter))),
+            ("Shutter speed", (!m.shutter.is_empty()).then(|| crate::i18n::tr_format!("{} sec", m.shutter))),
             ("Aperture", m.aperture.map(|f| format!("f / {f:.1}").replace(".0", ""))),
             ("ISO", m.iso.map(|i| i.to_string())),
         ];
@@ -683,7 +695,7 @@ fn camera_card(ui: &mut egui::Ui, p: &lightcraft_catalog::Photo) {
             ui.add_space(6.0);
             egui::Grid::new("info-capture").num_columns(2).spacing([24.0, 3.0]).show(ui, |ui| {
                 for (k, v) in rows {
-                    ui.label(dim(k));
+                    ui.label(dim(crate::i18n::tr(k)));
                     ui.label(dim(&v.unwrap_or_else(|| "—".into())));
                     ui.end_row();
                 }
@@ -832,30 +844,35 @@ fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui, have: &[String]) {
     let current = sets["current"].as_str().unwrap_or_default().to_string();
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(crate::i18n::tr("Keyword Set")).color(t.text_dim));
-        egui::ComboBox::from_id_salt("kw-set").selected_text(&current).show_ui(ui, |ui| {
-            for set in sets["sets"].as_array().into_iter().flatten() {
-                let name = set["name"].as_str().unwrap_or_default();
-                if ui.selectable_label(name == current, name).clicked() {
-                    let _ = app.run("keyword.useSet", json!({"name": name}));
+        egui::ComboBox::from_id_salt("kw-set")
+            .selected_text(crate::i18n::builtin_label(&current, current == lightcraft_engine::cmd::keywords::RECENT))
+            .show_ui(ui, |ui| {
+                for set in sets["sets"].as_array().into_iter().flatten() {
+                    let name = set["name"].as_str().unwrap_or_default();
+                    if ui
+                        .selectable_label(name == current, crate::i18n::builtin_label(name, name == lightcraft_engine::cmd::keywords::RECENT))
+                        .clicked()
+                    {
+                        let _ = app.run("keyword.useSet", json!({"name": name}));
+                    }
                 }
-            }
-            ui.separator();
-            if ui.button(crate::i18n::tr("Save Current Keywords as Set…")).clicked() {
-                app.ui.dialog = Some(crate::state::Dialog::TextPrompt {
-                    title: "Save Keyword Set".into(),
-                    hint: "Set name".into(),
-                    value: String::new(),
-                    command: "keyword.saveSet".into(),
-                    params: json!({}),
-                    key: "name".into(),
-                });
-            }
-            if current != lightcraft_engine::cmd::keywords::RECENT
-                && ui.button(crate::i18n::tr_format!("Delete “{current}”", current = current)).clicked()
-            {
-                let _ = app.run("keyword.deleteSet", json!({"name": current}));
-            }
-        });
+                ui.separator();
+                if ui.button(crate::i18n::tr("Save Current Keywords as Set…")).clicked() {
+                    app.ui.dialog = Some(crate::state::Dialog::TextPrompt {
+                        title: "Save Keyword Set".into(),
+                        hint: "Set name".into(),
+                        value: String::new(),
+                        command: "keyword.saveSet".into(),
+                        params: json!({}),
+                        key: "name".into(),
+                    });
+                }
+                if current != lightcraft_engine::cmd::keywords::RECENT
+                    && ui.button(crate::i18n::tr_format!("Delete “{current}”", current = current)).clicked()
+                {
+                    let _ = app.run("keyword.deleteSet", json!({"name": current}));
+                }
+            });
     });
     let kws: Vec<String> = sets["keywords"].as_array().into_iter().flatten().filter_map(|k| k.as_str().map(str::to_string)).collect();
     if kws.is_empty() {
@@ -950,8 +967,8 @@ fn versions(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             } else if resp.clicked() && !current {
                 let _ = app.run("version.restore", json!({"index": i}));
             }
-            resp.on_hover_text(if current { "The photo has these settings" } else { "Click to restore · double-click to rename" }).context_menu(
-                |ui| {
+            resp.on_hover_text(crate::i18n::tr(if current { "The photo has these settings" } else { "Click to restore · double-click to rename" }))
+                .context_menu(|ui| {
                     if ui.button(crate::i18n::tr("Restore")).clicked() {
                         let _ = app.run("version.restore", json!({"index": i}));
                     }
@@ -968,8 +985,7 @@ fn versions(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     if ui.button(crate::i18n::tr("Delete")).clicked() {
                         let _ = app.run("version.delete", json!({"index": i}));
                     }
-                },
-            );
+                });
         }
     });
 }

@@ -33,9 +33,8 @@ pub fn preview_only_variant(reason: &str) -> &str {
 
 /// What a preview-only raw means for the user (see `Photo::preview_only`).
 pub fn preview_only_explanation(reason: &str) -> String {
-    format!(
-        "LightCraft can't decode this raw variant yet ({}). You're editing the camera's embedded JPEG preview, \
-         which already includes the camera's picture style (e.g. Monochrome) and white balance.",
+    crate::i18n::tr_format!(
+        "LightCraft can't decode this raw variant yet ({}). You're editing the camera's embedded JPEG preview, which already includes the camera's picture style (e.g. Monochrome) and white balance.",
         preview_only_variant(reason)
     )
 }
@@ -61,7 +60,7 @@ pub fn preview_only_notice(ui: &mut Ui, key: &str, reason: &str) {
         })
         .response;
     let r = r.on_hover_text(crate::i18n::tr_format!("Decoder: {reason}", reason = reason));
-    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Preview only: editing the camera's embedded JPEG"));
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, crate::i18n::tr("Preview only: editing the camera's embedded JPEG")));
     register(ui.ctx(), format!("notice:previewOnly:{key}"), r.rect);
 }
 

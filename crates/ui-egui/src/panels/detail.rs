@@ -631,7 +631,7 @@ fn region_overlay(
             let cross = Stroke::new(1.4, if resp.hovered() { Color32::WHITE } else { Color32::from_gray(210) });
             p.line_segment([c - vec2(m, m), c + vec2(m, m)], cross);
             p.line_segment([c - vec2(m, -m), c + vec2(m, -m)], cross);
-            if resp.on_hover_text("Remove this face box (undo with Edit ▸ Undo)").clicked() {
+            if resp.on_hover_text(crate::i18n::tr("Remove this face box (undo with Edit ▸ Undo)")).clicked() {
                 edit = Some(RegionEdit::Remove(index));
             }
         }
@@ -668,8 +668,9 @@ fn filter_pill(app: &mut LightcraftApp, ui: &mut egui::Ui, canvas: Rect) {
     }
     let t = Tokens::get(ui.ctx());
     let p = ui.painter_at(canvas);
-    let label = chips.iter().map(|c| c.label.as_str()).collect::<Vec<_>>().join("  ·  ");
-    let g = p.layout_no_wrap(format!("Filtered: {label}"), t.font(12.0), Color32::from_gray(225));
+    let label =
+        chips.iter().map(|c| crate::panels::chips::display_label(c, &app.session.filter, &app.session.catalog)).collect::<Vec<_>>().join("  ·  ");
+    let g = p.layout_no_wrap(crate::i18n::tr_format!("Filtered: {label}", label = label), t.font(12.0), Color32::from_gray(225));
     let w = (g.size().x + 40.0).min((canvas.width() - 24.0).max(60.0));
     let r = Rect::from_min_size(canvas.min + vec2(12.0, 3.0), vec2(w, 20.0));
     let resp = ui.interact(r, egui::Id::new("loupe-filter-pill"), Sense::click());
@@ -681,7 +682,7 @@ fn filter_pill(app: &mut LightcraftApp, ui: &mut egui::Ui, canvas: Rect) {
     let cross = Stroke::new(1.3, if resp.hovered() { Color32::WHITE } else { Color32::from_gray(190) });
     p.line_segment([c - vec2(m, m), c + vec2(m, m)], cross);
     p.line_segment([c - vec2(m, -m), c + vec2(m, -m)], cross);
-    if resp.on_hover_text("Click to clear these filters").clicked() {
+    if resp.on_hover_text(crate::i18n::tr("Click to clear these filters")).clicked() {
         let _ = app.run("library.clearFilter", json!({}));
     }
 }
