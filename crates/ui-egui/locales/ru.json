@@ -1103,6 +1103,8 @@
   "Show destination gamut warning": "Показывать предупреждение о выходе за гамму устройства вывода",
   "Show display gamut warning": "Показывать предупреждение о выходе за гамму дисплея",
   "Show file names": "Показывать имена файлов",
+  "Show in Explorer": "Показать в Проводнике",
+  "Show in File Manager": "Показать в файловом менеджере",
   "Show in Finder": "Показать в Finder",
   "Show on Map": "Показать на карте",
   "Show overlay (O)": "Показать наложение (O)",
