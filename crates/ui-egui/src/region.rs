@@ -13,7 +13,7 @@ pub const SNAP: usize = 256;
 /// The most context rendered beyond the visible pixels (a multiple of [`SNAP`]).
 pub const MAX_MARGIN: usize = 768;
 /// The most a window may span on either axis: a bound on its texture whatever the window size.
-pub const MAX_SPAN: usize = 6144;
+pub const MAX_SPAN: usize = if cfg!(target_arch = "wasm32") { 3072 } else { 6144 };
 
 /// A window render the loupe asked for: which photo, the size of the zoomed frame it is a window
 /// of, and the window. The texture that comes back is drawn at this place of the frame.

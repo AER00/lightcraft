@@ -355,7 +355,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         && view_overlay(app, &d) == lightcraft_pipeline::Overlay::None;
     let drawn_long = target_rect.width().max(target_rect.height()) * ppp;
     let settled_edge = app.ui.settings.loupe_edge(drawn_long, native_long);
-    let region_possible = plain_view && app.renderer.can_render_windows() && crate::region::needed(drawn_long, settled_edge);
+    let region_possible = plain_view && crate::region::needed(drawn_long, settled_edge);
     let look = d.hash64();
     let mut region_full = None;
     if region_possible {
