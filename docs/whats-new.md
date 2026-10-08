@@ -17,6 +17,16 @@
 - The Tint slider works the right way round (issues #188, #321): left adds green, right adds magenta, as its track
   shows and as in Lightroom, and Tint values in Lightroom XMP sidecars now render as they do there. A custom Tint
   saved in an earlier version now shifts the other way; set it again (or re-run Auto / the white-balance picker).
+- Crop (issue #295): a Lock toggle keeps the aspect ratio on every handle, Custom takes your own ratio (Apply), and
+  dragging a handle into the image edge stops there instead of pushing the crop out of shape.
+
+### Library and views
+- Trackpads: pinch to zoom around the pointer and scroll with two fingers to pan the photo; panning keeps the photo
+  inside the view. A plain mouse wheel over a zoomed photo pans it too.
+- A Folders section in the sidebar lists the folders your photos were imported from; choose one to see its photos.
+- Select All and multi-selection show every selected photo in the grid and filmstrip, not only the active one
+  (issues #187, #298). Importing files that are in Recently Deleted asks whether to leave them there, restore them
+  (with their edits) or import them as new; the trash view's Photo menu has Empty Recently Deleted.
 
 ### Reliability
 - On macOS, single-key shortcuts that appear in the menu bar now work: E, C, H, M, ⇧P, I, K, D, ratings 0–5,
