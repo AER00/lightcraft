@@ -931,3 +931,74 @@ fn empty_recently_deleted_removes_only_trashed_photos() {
     s.execute("edit.undo", &json!({})).unwrap();
     let _ = std::fs::remove_dir_all(&src);
 }
+
+/// Two trashed photos that share an album and a two-photo stack: emptying (or permanently
+/// deleting) them together must not fail or leave dangling references.
+fn two_trashed_in_album_and_stack(tag: &str) -> (Session, std::path::PathBuf, [u64; 2], u64) {
+    let src = temp_dir(tag);
+    write_png(&src.join("a.png"), 1);
+    write_png(&src.join("b.png"), 2);
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let ids = [r["imported"][0].as_u64().unwrap(), r["imported"][1].as_u64().unwrap()];
+    let al = s.execute("album.create", &json!({"name": "Trip"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.addPhotos", &json!({"id": al, "ids": ids})).unwrap();
+    s.execute("library.select", &json!({"ids": ids})).unwrap();
+    s.execute("stack.group", &json!({"ids": ids})).unwrap();
+    s.execute("photo.delete", &json!({"ids": ids})).unwrap();
+    (s, src, ids, al)
+}
+
+#[test]
+fn emptying_trashed_photos_of_one_album_and_stack_leaves_nothing_dangling() {
+    let (mut s, src, ids, al) = two_trashed_in_album_and_stack("trash-empty-refs");
+    let r = s.execute("library.emptyRecentlyDeleted", &json!({})).unwrap();
+    assert_eq!(r["deleted"], 2, "{r}");
+    assert_eq!(s.catalog.len(), 0);
+    assert!(s.catalog.album(lightcraft_catalog::AlbumId(al)).unwrap().photos.is_empty(), "album still lists a removed photo");
+    assert!(ids.iter().all(|i| s.catalog.stack_of(lightcraft_catalog::PhotoId(*i)).is_none()));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.len(), 2, "one undo step brings both back");
+    assert_eq!(s.catalog.album(lightcraft_catalog::AlbumId(al)).unwrap().photos.len(), 2);
+    assert!(s.catalog.stack_of(lightcraft_catalog::PhotoId(ids[0])).is_some());
+    assert!(s.catalog.photos().all(|p| p.deleted), "back in Recently Deleted");
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn deleting_several_photos_permanently_leaves_nothing_dangling() {
+    let (mut s, src, ids, al) = two_trashed_in_album_and_stack("trash-perm-refs");
+    s.execute("library.select", &json!({"ids": ids})).unwrap();
+    s.execute("photo.deletePermanently", &json!({"ids": ids})).unwrap();
+    assert!(s.catalog.album(lightcraft_catalog::AlbumId(al)).unwrap().photos.is_empty());
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn fresh_import_of_two_trashed_photos_in_one_album_and_stack_works() {
+    let (mut s, src, ids, al) = two_trashed_in_album_and_stack("trash-fresh-refs");
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()], "onDeleted": "fresh"})).unwrap();
+    assert_eq!(ids_len(&r), 2, "{r}");
+    assert!(s.catalog.album(lightcraft_catalog::AlbumId(al)).unwrap().photos.is_empty());
+    assert!(ids.iter().all(|i| s.catalog.photo(lightcraft_catalog::PhotoId(*i)).is_none()));
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+fn ids_len(r: &Value) -> usize {
+    ids(r, "imported")
+}
+
+#[test]
+fn restore_import_applies_the_album_to_restored_photos() {
+    let (mut s, src, ids, _) = trashed_photo_ids("trash-restore-album");
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()], "onDeleted": "restore", "albumName": "Back"})).unwrap();
+    assert_eq!(r["restored"], json!(ids), "{r}");
+    let album = r["album"].as_u64().expect("album created for the restored photos");
+    assert_eq!(s.catalog.album(lightcraft_catalog::AlbumId(album)).unwrap().photos.len(), 1);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+fn trashed_photo_ids(tag: &str) -> (Session, std::path::PathBuf, [u64; 1], u64) {
+    let (s, src, id) = trashed_photo(tag);
+    (s, src, [id], 0)
+}
