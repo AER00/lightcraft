@@ -13,6 +13,10 @@
   with a counterpart here come along, the rest is listed.
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
+### Editing
+- Type an exact value into any slider (issue #322): click the number next to its name, type (`1.5`, `-20`, `5600`)
+  and press Return; Esc keeps the old value.
+
 ### Reliability
 - LightCraft no longer crashes at launch on Windows PCs whose Vulkan driver is broken (issue #136, e.g. some Intel UHD
   630 drivers): on Windows the window and GPU rendering use DirectX 12 only and never load the Vulkan driver unless
