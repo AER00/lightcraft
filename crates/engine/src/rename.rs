@@ -599,7 +599,7 @@ fn plan_rename_core(
                     // this very file, maybe spelled differently (case-insensitive volume)? By
                     // identity: on a case-sensitive volume `img_1.jpg` may be another photo
                     let (from, to) = (Path::new(path), Path::new(&tp));
-                    let same = from == to || (from != to && key == folded_path(path) && exists(to) && same_file(from, to));
+                    let same = from == to || (key == folded_path(path) && exists(to) && same_file(from, to));
                     // free: not claimed in this batch and not on disk (unless it is this very file).
                     // A file this batch moves away still counts as taken: simple and safe.
                     if !taken.contains(&key) && (same || !exists(to)) {
