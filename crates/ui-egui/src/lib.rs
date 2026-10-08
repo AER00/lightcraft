@@ -29,6 +29,8 @@ pub mod widgets;
 #[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
+mod tests_filmstrip;
+#[cfg(test)]
 mod tests_grid;
 #[cfg(test)]
 mod tests_library_problem;
