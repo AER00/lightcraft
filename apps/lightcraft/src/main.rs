@@ -281,8 +281,42 @@ fn windows_open_url_command(url: &str) -> std::process::Command {
     c
 }
 
-fn services() -> Services {
+/// The platform services; `ctx` repaints when a file dialog closes.
+fn services(ctx: egui::Context) -> Services {
     Services {
+        // Commands' file dialogs run on their own thread (#191): a dialog on the UI thread
+        // stopped the window answering the compositor, which then reported the app as hung.
+        picker: Some(Box::new(move |req: lightcraft_ui_egui::pick::PickRequest| {
+            use lightcraft_ui_egui::pick::PickKind;
+            let (tx, rx) = std::sync::mpsc::channel();
+            let repaint = ctx.clone();
+            std::thread::Builder::new()
+                .name("file-dialog".into())
+                .spawn(move || {
+                    let mut d = rfd::FileDialog::new();
+                    if let Some(t) = &req.title {
+                        d = d.set_title(t);
+                    }
+                    if let Some((name, exts)) = &req.filter {
+                        d = d.add_filter_nocase(name.clone(), exts);
+                    }
+                    if let Some(n) = &req.file_name {
+                        d = d.set_file_name(n);
+                    }
+                    let s = |p: std::path::PathBuf| p.to_string_lossy().to_string();
+                    let paths: Vec<String> = match req.kind {
+                        PickKind::Files => d.pick_files().unwrap_or_default().into_iter().map(s).collect(),
+                        PickKind::File => d.pick_file().map(s).into_iter().collect(),
+                        PickKind::Folder => d.pick_folder().map(s).into_iter().collect(),
+                        PickKind::Save => d.save_file().map(s).into_iter().collect(),
+                    };
+                    // the app may have quit meanwhile: nobody to tell
+                    let _ = tx.send(paths);
+                    repaint.request_repaint();
+                })
+                .map_err(|e| format!("could not start the file dialog: {e}"))?;
+            Ok(rx)
+        })),
         pick_lightroom_catalog: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .set_title(lightcraft_ui_egui::i18n::tr("Import Lightroom Catalog"))
@@ -614,7 +648,7 @@ fn main() -> eframe::Result {
                 std::env::var_os("LIGHTCRAFT_SAM3_DIR").map(std::path::PathBuf::from).or_else(|| config_dir().map(|d| d.join("models").join("sam3")));
             // the user's own download locations, one base URL per line (LIGHTCRAFT_SAM3_MIRRORS too)
             session.segmenter.mirrors_file = config_dir().map(|d| d.join("models").join("sam3-mirrors.txt"));
-            let mut app = LightcraftApp::new(session, services());
+            let mut app = LightcraftApp::new(session, services(cc.egui_ctx.clone()));
             if let Some(ui) = prefs {
                 app.ui = ui;
             }

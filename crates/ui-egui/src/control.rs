@@ -103,6 +103,8 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "export": {"running": app.export.as_ref().map(crate::export_task::ExportTask::status), "last": app.last_export_result},
         "import": app.import.as_ref().map(crate::import::ImportTask::status),
         "tasks": app.tasks.labels(),
+        // commands waiting on a native file dialog shown off the UI thread (`pick`)
+        "fileDialogs": app.pending_picks.iter().map(|p| p.command.clone()).collect::<Vec<_>>(),
         "memory": memory(app),
     })
 }
