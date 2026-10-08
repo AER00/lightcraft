@@ -356,36 +356,50 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         // ---- selection
-        cmd!("library.select", "Select Photos", [], None, "{ids: [id], active?: id, mode?: replace|add|toggle|range}", always, |s, p| {
-            let ids = ids_param(p).unwrap_or_default();
-            let mode = str_param(p, "mode").unwrap_or("replace");
-            s.end_interaction()?;
-            match mode {
-                "replace" => {
-                    s.selection =
-                        Selection { ids: ids.clone(), active: p.get("active").and_then(Value::as_u64).map(PhotoId).or(ids.first().copied()) };
+        cmd!(
+            "library.select",
+            "Select Photos",
+            [],
+            None,
+            "{ids: [id], active?: id, mode?: replace|add|toggle|range} — every id must be a photo of the library",
+            always,
+            |s, p| {
+                let ids = ids_param(p).unwrap_or_default();
+                let active = p.get("active").and_then(Value::as_u64).map(PhotoId);
+                let mode = str_param(p, "mode").unwrap_or("replace");
+                // An id that is not in the library is an error, and the selection stays as it was:
+                // selecting it would otherwise report success and leave the session with no usable
+                // active photo (#182).
+                if let Some(id) = ids.iter().chain(active.as_ref()).find(|id| s.catalog.photo(**id).is_none()) {
+                    return Err(bad("library.select", format!("no such photo {}", id.0)));
                 }
-                "add" => {
-                    for id in ids {
-                        if !s.selection.contains(id) {
-                            s.selection.ids.push(id);
+                s.end_interaction()?;
+                match mode {
+                    "replace" => {
+                        s.selection = Selection { ids: ids.clone(), active: active.or(ids.first().copied()) };
+                    }
+                    "add" => {
+                        for id in ids {
+                            if !s.selection.contains(id) {
+                                s.selection.ids.push(id);
+                            }
+                            s.selection.active = Some(id);
                         }
-                        s.selection.active = Some(id);
                     }
-                }
-                "toggle" => ids.into_iter().for_each(|id| s.selection.toggle(id)),
-                "range" => {
-                    let vis = s.visible_cloned();
-                    if let Some(id) = ids.first() {
-                        s.selection.extend_to(*id, &vis);
+                    "toggle" => ids.into_iter().for_each(|id| s.selection.toggle(id)),
+                    "range" => {
+                        let vis = s.visible_cloned();
+                        if let Some(id) = ids.first() {
+                            s.selection.extend_to(*id, &vis);
+                        }
                     }
+                    other => return Err(bad("library.select", format!("unknown mode `{other}`"))),
                 }
-                other => return Err(bad("library.select", format!("unknown mode `{other}`"))),
+                s.active_mask = None;
+                s.active_spot = None;
+                Ok(json!({"selected": s.selection.ids.len()}))
             }
-            s.active_mask = None;
-            s.active_spot = None;
-            Ok(json!({"selected": s.selection.ids.len()}))
-        }),
+        ),
         cmd!("library.selectAll", "Select All", ["Edit"], Some("Cmd+A"), "{}", always, |s, _| {
             let vis = s.visible_cloned();
             s.selection = Selection { active: s.selection.active.filter(|a| vis.contains(a)).or(vis.first().copied()), ids: vis };
