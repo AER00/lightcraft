@@ -9,6 +9,11 @@
 - `Shift+6–9` labels and advances. `Shift+P` picks and advances in Photo Grid and Square Grid; it opens Presets in other views. With Auto Advance on, Shift still moves only once.
 - Help → Keyboard Shortcuts includes the number-key bindings. See [library shortcuts](library-shortcuts.md).
 
+### Keyboard shortcuts
+- Shortcuts are editable: Help ▸ Keyboard Shortcuts (⌘/) lists every command with a search box; click a shortcut and
+  press the new keys (Esc cancels), × removes it, ↺ restores the original, Reset All undoes every change. A key that
+  belonged to another command moves to the new one. Menus show the new keys; agents use `app.setShortcut`.
+
 ### RAW decoding
 - Panasonic and Leica raws (RW2, RWL) are now corrected for lens distortion the way the camera corrects its own JPEG
   (issue #256): the correction the camera records in the file is applied under Lens Corrections ▸ Enable Profile
@@ -21,6 +26,12 @@
   preserving RAW editing & full-resolution export instead of using embedded JPEG previews.
 - Sony A7R II (and other) raws whose camera JPEG is lens-corrected no longer open grey and too dark (issue #232): the
   starting look is fitted to the camera JPEG away from edges when the misaligned edges spoil the fit on all pixels.
+
+### Lightroom Classic catalogs
+- File → Import Lightroom Catalog… opens `.lrcat` directly, with originals referenced in place.
+  Ratings, flags, labels, keywords, collections/sets, virtual copies and supported edits migrate;
+  existing LightCraft edits are preserved by default. Source settings/history are archived, unsupported
+  fields are reported, and the original Lightroom database stays read-only. Rendering is approximate.
 
 ### Presets and profiles
 - Import presets from other editors: XMP presets, classic `.lrtemplate` files, "DNG presets" from mobile apps and `.zip`
@@ -47,6 +58,8 @@
   (with their edits) or import them as new; the trash view's Photo menu has Empty Recently Deleted.
 - The Import Photos review opens bigger and can be resized; its photo grid fills it (issue #337). Shift-click checks
   or unchecks a range of photos (issue #338).
+- When a folder holds several file types, the Import Photos review has a toggle per type (`ARW · 120`, `JPG · 120`):
+  import only the raws and leave the JPEGs beside them (issue #344).
 
 ### Languages
 - The interface is available in Spanish (issue #371), German and Russian (Edit ▸ Language), alongside English,
