@@ -20,6 +20,8 @@ pub const MAX_SPAN: usize = if cfg!(target_arch = "wasm32") { 3072 } else { 6144
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RegionView {
     pub photo: lightcraft_catalog::PhotoId,
+    /// The Before side of a Before/After view (the photo without its edits).
+    pub before: bool,
     pub key: u64,
     pub full: (usize, usize),
     pub window: PixelWindow,
@@ -308,7 +310,14 @@ mod tests {
     #[test]
     fn a_tile_is_drawn_only_while_it_shows_what_the_loupe_shows() {
         use lightcraft_catalog::PhotoId;
-        let v = RegionView { photo: PhotoId(1), key: 7, full: (6000, 4000), window: PixelWindow { x: 0, y: 0, w: 256, h: 256 }, settings: 11 };
+        let v = RegionView {
+            photo: PhotoId(1),
+            before: false,
+            key: 7,
+            full: (6000, 4000),
+            window: PixelWindow { x: 0, y: 0, w: 256, h: 256 },
+            settings: 11,
+        };
         assert!(v.is_current(PhotoId(1), (6000, 4000), 11, false));
         assert!(!v.is_current(PhotoId(2), (6000, 4000), 11, false), "another photo");
         assert!(!v.is_current(PhotoId(1), (6000, 4001), 11, false), "another zoom");

@@ -96,8 +96,10 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
             "photo": p.0,
             "source": src,
             "pending": app.renderer.is_pending(crate::render::Slot::Main),
-            // zoomed past the whole-frame render: the window rendered at the zoom scale (pixels of the zoomed frame)
+            // zoomed past the whole-frame render: the window rendered at no more than 100 % (pixels of its frame)
             "region": app.region_view.map(|r| json!({"full": [r.full.0, r.full.1], "window": [r.window.x, r.window.y, r.window.w, r.window.h], "pending": app.renderer.is_pending(crate::render::Slot::Region)})),
+            // …and the same for the Before side of a Before/After view
+            "regionBefore": app.region_before_view.map(|r| json!({"full": [r.full.0, r.full.1], "window": [r.window.x, r.window.y, r.window.w, r.window.h], "pending": app.renderer.is_pending(crate::render::Slot::RegionBefore)})),
         })),
         "hoverPreview": app.hover_preview.as_ref().map(|h| h.label.clone()),
         "status": app.ui.status,

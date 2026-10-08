@@ -365,4 +365,64 @@ mod in_the_loupe {
         let (w, hh) = region_tile(&h).expect("a window draft");
         assert!(w * hh <= 3_000_000, "{w}×{hh}: the window holds what is on screen, not the frame");
     }
+
+    fn tile(h: &Headless, slot: Slot) -> Option<(usize, usize)> {
+        h.app.renderer.textures.get(&slot).map(|t| (t.size[0], t.size[1]))
+    }
+
+    // Given Before/After side by side at 1:1, both sides are sharp windows of the same frame: the
+    // Before is not a 2560 px stand-in beside a full resolution After
+    #[test]
+    fn side_by_side_at_one_to_one_compares_like_with_like() {
+        let (mut h, native) = detail();
+        h.app.ui.before_after = crate::state::BeforeAfter::SideBySide;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        let (after, before) = (h.app.region_view.expect("After window"), h.app.region_before_view.expect("Before window"));
+        assert_eq!(after.full, before.full, "the same frame");
+        assert_eq!(after.full.0.max(after.full.1), native);
+        let (a, b) = (tile(&h, Slot::Region).expect("After tile"), tile(&h, Slot::RegionBefore).expect("Before tile"));
+        assert_eq!(a, b, "the same window of each");
+        let main = h.app.renderer.textures.get(&Slot::Main).unwrap();
+        let before_main = h.app.renderer.textures.get(&Slot::Before).unwrap();
+        assert_eq!(main.size, before_main.size, "and the same whole-frame size under them");
+    }
+
+    // Given the Before view alone (\), only the Before gets a window
+    #[test]
+    fn the_original_view_windows_only_the_before() {
+        let (mut h, _) = detail();
+        h.app.ui.before_after = crate::state::BeforeAfter::Original;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        assert!(h.app.region_before_view.is_some());
+        assert_eq!(h.app.region_view, None);
+        assert!(tile(&h, Slot::RegionBefore).is_some() && tile(&h, Slot::Region).is_none());
+    }
+
+    // Given a wipe (Split), both sides are windows, drawn over the same rect
+    #[test]
+    fn a_wipe_windows_both_sides() {
+        let (mut h, _) = detail();
+        h.app.ui.before_after = crate::state::BeforeAfter::Split;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        assert_eq!(h.app.region_view.map(|v| v.window), h.app.region_before_view.map(|v| v.window));
+        assert!(tile(&h, Slot::Region).is_some() && tile(&h, Slot::RegionBefore).is_some());
+    }
+
+    // Given the Before view turned off, its window is freed
+    #[test]
+    fn leaving_before_after_frees_the_before_window() {
+        let (mut h, _) = detail();
+        h.app.ui.before_after = crate::state::BeforeAfter::SideBySide;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        assert!(tile(&h, Slot::RegionBefore).is_some());
+        h.app.ui.before_after = crate::state::BeforeAfter::Off;
+        h.settle(SETTLE);
+        assert_eq!(tile(&h, Slot::RegionBefore), None);
+        assert_eq!(h.app.region_before_view, None);
+        assert!(tile(&h, Slot::Region).is_some());
+    }
 }

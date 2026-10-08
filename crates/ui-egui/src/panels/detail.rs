@@ -214,6 +214,80 @@ fn animated_rect(ctx: &egui::Context, anim: &mut bool, target: Rect) -> Rect {
     r
 }
 
+/// What a window render of the loupe needs to know about the view it belongs to.
+struct WindowCtx {
+    id: PhotoId,
+    /// Long edge of the frame the windows are cut from (`None`: no windows).
+    frame_edge: Option<usize>,
+    drawn_long: f32,
+    aspect: f32,
+    ppp: f32,
+    texture_side: usize,
+    crop_tool: bool,
+    interacting: bool,
+}
+
+/// One side of the loupe that gets a window render.
+#[derive(Clone, Copy)]
+struct WindowView {
+    slot: Slot,
+    /// The Before side (the photo without its edits).
+    before: bool,
+    /// The rect the photo is drawn in.
+    img: Rect,
+    /// The rect it is requested for (the drawn rect without a click-zoom animation).
+    target: Rect,
+    /// The area whose pixels are on screen.
+    visible: Rect,
+}
+
+/// Ask for the window of `v` that holds what is on screen; remember it so its texture can be
+/// drawn where it belongs. `None`: no window is wanted (or possible) for this view.
+fn request_window(app: &mut LightcraftApp, c: &WindowCtx, v: &WindowView) -> Option<crate::region::RegionView> {
+    let frame_edge = c.frame_edge?;
+    let (fw, fh) =
+        if c.aspect >= 1.0 { (frame_edge as f32, frame_edge as f32 / c.aspect) } else { (frame_edge as f32 * c.aspect, frame_edge as f32) };
+    let (fw, fh) = (fw.round().max(1.0) as usize, fh.round().max(1.0) as usize);
+    // what is on screen, in pixels of the window's frame (the drawn frame, scaled)
+    let to_px = c.ppp * frame_edge as f32 / c.drawn_long.max(1.0);
+    let visible = (
+        to_px * (v.visible.left() - v.target.left()),
+        to_px * (v.visible.top() - v.target.top()),
+        to_px * (v.visible.right() - v.target.left()),
+        to_px * (v.visible.bottom() - v.target.top()),
+    );
+    let win = crate::region::window_for(fw, fh, visible, crate::region::max_span(c.texture_side))?;
+    let job = if v.before {
+        app.session.region_job_before(c.id, fw, fh, win, !c.crop_tool)?
+    } else {
+        app.session.region_job(c.id, fw, fh, win, !c.crop_tool)?
+    };
+    // a drag renders drafts of the window, as it does of the whole frame
+    let job = if c.interacting { job.draft() } else { job };
+    let look = job.settings.hash64();
+    let view = crate::region::RegionView { photo: c.id, before: v.before, key: job.key, full: (fw, fh), window: win, settings: look };
+    // windows of other photos, looks and zooms of this side can't be drawn any more
+    app.region_tiles.retain(|_, t| t.before != v.before || t.is_current(c.id, (fw, fh), look, c.interacting));
+    app.region_tiles.insert(job.key, view);
+    app.renderer.request(v.slot, job, 99);
+    Some(view)
+}
+
+/// Draw `v`'s window texture over the whole-frame render, if it is the one asked for (or, in a
+/// drag, an earlier draft of it).
+fn draw_window(p: &egui::Painter, app: &LightcraftApp, c: &WindowCtx, v: &WindowView, wanted: &crate::region::RegionView) {
+    let Some(tex) = app.renderer.textures.get(&v.slot).filter(|t| t.photo == c.id) else { return };
+    let Some(tile) =
+        app.region_tiles.get(&tex.key).filter(|t| t.before == v.before && t.is_current(c.id, wanted.full, wanted.settings, c.interacting))
+    else {
+        return;
+    };
+    let (fw, fh) = (tile.full.0 as f32, tile.full.1 as f32);
+    let at = v.img.min + vec2(tile.window.x as f32 / fw * v.img.width(), tile.window.y as f32 / fh * v.img.height());
+    let dst = Rect::from_min_size(at, vec2(tile.window.w as f32 / fw * v.img.width(), tile.window.h as f32 / fh * v.img.height()));
+    p.image(tex.tex.id(), dst, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+}
+
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let full = ui.max_rect();
@@ -365,46 +439,51 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         app.renderer.request(Slot::Before, job, 90);
     }
     // zoomed past what the whole-frame render holds: also render the part on screen, at no more
-    // than 100 % (the GPU magnifies beyond that). Not while comparing, hovering a look or showing
-    // an overlay (those draw one image), nor where the shown picture isn't the frame's own (an
-    // unsupported raw's embedded JPEG with another crop: window coordinates are the frame's).
-    let plain_view = !split
-        && !show_before
-        && !split_view
-        && hover_key.is_none()
+    // than 100 % (the GPU magnifies beyond that), for each side that is shown. Not while hovering a
+    // look or showing an overlay (those draw another image), nor where the shown picture isn't the
+    // frame's own (an unsupported raw's embedded JPEG with another crop: window coordinates are
+    // the frame's).
+    let plain_view = hover_key.is_none()
         && !app.ui.soft_proof
         && view_overlay(app, &d) == lightcraft_pipeline::Overlay::None
         && crate::region::same_aspect(display_aspect, aspect);
-    let look = d.hash64();
-    let mut region_full = None;
-    if let Some(frame_edge) = plan.window_edge.filter(|_| plain_view) {
-        let (fw, fh) = if aspect >= 1.0 { (frame_edge as f32, frame_edge as f32 / aspect) } else { (frame_edge as f32 * aspect, frame_edge as f32) };
-        let (fw, fh) = (fw.round().max(1.0) as usize, fh.round().max(1.0) as usize);
-        region_full = Some((fw, fh));
-        // what is on screen, in pixels of the window's frame (the drawn frame, scaled)
-        let to_px = ppp * frame_edge as f32 / drawn_long.max(1.0);
-        let visible = (
-            to_px * (canvas.left() - target_rect.left()),
-            to_px * (canvas.top() - target_rect.top()),
-            to_px * (canvas.right() - target_rect.left()),
-            to_px * (canvas.bottom() - target_rect.top()),
-        );
-        if let Some(win) = crate::region::window_for(fw, fh, visible, crate::region::max_span(texture_side))
-            && let Some(job) = app.session.region_job(id, fw, fh, win, !crop_tool)
-        {
-            // a drag renders drafts of the window, as it does of the whole frame
-            let job = if interacting { job.draft() } else { job };
-            let view = crate::region::RegionView { photo: id, key: job.key, full: (fw, fh), window: win, settings: look };
-            // windows of other photos, looks and zooms can't be drawn any more
-            app.region_tiles.retain(|_, v| v.is_current(id, (fw, fh), look, interacting));
-            app.region_tiles.insert(job.key, view);
-            app.region_view = Some(view);
-            app.renderer.request(Slot::Region, job, 99);
+    let window_ctx =
+        WindowCtx { id, frame_edge: plan.window_edge.filter(|_| plain_view), drawn_long, aspect, ppp, texture_side, crop_tool, interacting };
+    // (slot, before side?, rect to draw in, rect it is requested for, area whose pixels show)
+    let mut window_views: Vec<WindowView> = Vec::new();
+    if window_ctx.frame_edge.is_some() {
+        let before_rect = |r: Rect, area: Rect| WindowView { slot: Slot::RegionBefore, before: true, img: r, target: r, visible: area };
+        let after = WindowView { slot: Slot::Region, before: false, img: img_rect, target: target_rect, visible: main_area };
+        if split {
+            let br = fit_rect(areas[0], aspect, app.ui.zoom, native, ppp, app.ui.pan);
+            window_views.push(before_rect(br, areas[0]));
+            window_views.push(after);
+        } else if show_before {
+            window_views.push(WindowView { slot: Slot::RegionBefore, before: true, img: img_rect, target: target_rect, visible: canvas });
+        } else if split_view {
+            window_views.push(WindowView { slot: Slot::RegionBefore, before: true, img: img_rect, target: target_rect, visible: canvas });
+            window_views.push(WindowView { visible: canvas, ..after });
+        } else {
+            window_views.push(WindowView { visible: canvas, ..after });
         }
-    } else {
-        app.region_view = None;
-        app.region_tiles.clear();
-        app.renderer.release(Slot::Region);
+    }
+    let mut windows: Vec<(WindowView, crate::region::RegionView)> = Vec::new();
+    for v in window_views {
+        if let Some(view) = request_window(app, &window_ctx, &v) {
+            windows.push((v, view));
+        }
+    }
+    for (slot, before) in [(Slot::Region, false), (Slot::RegionBefore, true)] {
+        let shown = windows.iter().find(|(v, _)| v.before == before).map(|(_, view)| *view);
+        if before {
+            app.region_before_view = shown;
+        } else {
+            app.region_view = shown;
+        }
+        if shown.is_none() {
+            app.region_tiles.retain(|_, v| v.before != before);
+            app.renderer.release(slot);
+        }
     }
     let p = ui.painter_at(canvas);
     // what a view slot shows: its own render of this photo, else the stand-ins (no blank frame
@@ -470,15 +549,17 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             }
         }
     }
-    // the window render, drawn over the whole-frame one where it belongs in the frame
-    if let Some(full) = region_full
-        && let Some(tex) = app.renderer.textures.get(&Slot::Region).filter(|t| t.photo == id)
-        && let Some(v) = app.region_tiles.get(&tex.key).filter(|v| v.is_current(id, full, look, interacting))
-    {
-        let (fw, fh) = (v.full.0 as f32, v.full.1 as f32);
-        let at = img_rect.min + vec2(v.window.x as f32 / fw * img_rect.width(), v.window.y as f32 / fh * img_rect.height());
-        let dst = Rect::from_min_size(at, vec2(v.window.w as f32 / fw * img_rect.width(), v.window.h as f32 / fh * img_rect.height()));
-        p.image(tex.tex.id(), dst, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    // the window renders, drawn over the whole-frame ones where they belong in the frame (the
+    // Before side of a wipe only on its side of the line)
+    for (v, view) in &windows {
+        let clip = match (app.ui.before_after, v.before) {
+            (BeforeAfter::Split, true) => Rect::from_min_max(canvas.min, pos2(img_rect.center().x, canvas.bottom())),
+            (BeforeAfter::SplitTopBottom, true) => Rect::from_min_max(canvas.min, pos2(canvas.right(), img_rect.center().y)),
+            (BeforeAfter::Split, false) => Rect::from_min_max(pos2(img_rect.center().x, canvas.top()), canvas.max),
+            (BeforeAfter::SplitTopBottom, false) => Rect::from_min_max(pos2(canvas.left(), img_rect.center().y), canvas.max),
+            _ => canvas,
+        };
+        draw_window(&p.with_clip_rect(clip.intersect(canvas)), app, &window_ctx, v, view);
     }
     app.loupe_shown = Some((id, shown));
     if app.ui.before_after == BeforeAfter::Split {

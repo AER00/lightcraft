@@ -33,6 +33,8 @@ pub enum Slot {
     /// The loupe zoomed past what `Main` can hold: the window of the frame that is on screen,
     /// rendered at the zoom scale and drawn over `Main` (see [`crate::region`]).
     Region,
+    /// The Before side of a Before/After view zoomed the same way (see [`Slot::Region`]).
+    RegionBefore,
     /// The loupe's stand-in until `Main` has the photo.
     Preview,
     Before,
@@ -88,7 +90,7 @@ struct Queued {
 pub(crate) fn stage_trim_order(sizes: &[(Slot, usize)], budget: usize) -> Vec<Slot> {
     let rank = |s: Slot| match s {
         Slot::Hover => 0,
-        Slot::Before => 1,
+        Slot::Before | Slot::RegionBefore => 1,
         Slot::Compare(_) => 2,
         Slot::Second => 3,
         Slot::Region => 4,
@@ -181,7 +183,7 @@ impl Slot {
     /// An interactive view of the open photo: slider drags redo only the stages they feed, and a
     /// draft that finishes late still replaces older pixels.
     pub fn is_view(self) -> bool {
-        matches!(self, Slot::Main | Slot::Region | Slot::Before | Slot::Hover)
+        matches!(self, Slot::Main | Slot::Region | Slot::RegionBefore | Slot::Before | Slot::Hover)
     }
 }
 

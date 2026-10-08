@@ -203,6 +203,8 @@ pub struct LightcraftApp {
     /// The window render the loupe asked for last, by job key (see [`region`]); kept for the few
     /// windows whose textures can be on screen, and for the inspector.
     pub region_view: Option<region::RegionView>,
+    /// The same for the Before side of a Before/After view.
+    pub region_before_view: Option<region::RegionView>,
     pub(crate) region_tiles: std::collections::HashMap<u64, region::RegionView>,
     /// Photo Merge dialog previews and background merges.
     pub merge: merge::MergeState,
@@ -272,6 +274,7 @@ impl LightcraftApp {
             gesture: None,
             loupe_shown: None,
             region_view: None,
+            region_before_view: None,
             region_tiles: Default::default(),
             merge: merge::MergeState::default(),
             import: None,
