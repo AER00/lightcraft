@@ -58,6 +58,10 @@
 - The eye on the Light, Color and Detail section headers now hides their adjustments, as it already did for Effects,
   Optics, Geometry and Calibration (issue #316).
 
+### Library
+- Choosing a date under By Date or a keyword under Keywords shows those photos from All Photos, as their counts
+  promise, instead of filtering whatever album or folder was open, which often showed nothing (issue #341).
+
 ### Reliability
 - On macOS, single-key shortcuts that appear in the menu bar now work: E, C, H, M, ⇧P, I, K, D, ratings 0–5,
   labels 6–9, P / U and the rest did nothing, because macOS only passes ⌘ / ⌃ combinations and function keys

@@ -563,3 +563,29 @@ fn filmstrip_marks_every_selected_photo() {
     }
     assert!(checked >= 3, "checked {checked} cells");
 }
+
+/// By Date and Keywords count the whole library, so choosing a row shows its photos from All
+/// Photos even when another source (here Recently Deleted, which is empty) was open (issue #341).
+#[test]
+fn date_and_keyword_rows_show_their_photos_from_any_source() {
+    // tall enough that the By Date rows are on screen below the other sections
+    let mut h = demo([1400.0, 2000.0], json!({"view": "photoGrid", "leftPanel": true}));
+    let first = h.app.session.visible_cloned()[0];
+    let year = h.app.session.catalog.photo(first).and_then(|p| p.captured.clone()).expect("demo photo date")[..4].to_string();
+    // (Keywords rows go through the same helper, `browse_all_photos`)
+    let (row, key) = (format!("source:date:{year}"), "date");
+    let r = h.request("engine.execute", json!({"command": "library.source", "params": {"kind": "recentlyDeleted"}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(h.app.session.visible().is_empty(), "nothing deleted in the demo");
+    let r = h.request("ui.clickWidget", json!({"id": row}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::All, "{key}");
+    assert!(!h.app.session.visible().is_empty(), "{key}: its photos are shown");
+    // choosing the row again clears it, and stays in All Photos
+    let r = h.request("ui.clickWidget", json!({"id": row}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    assert_eq!(h.app.session.filter, lightcraft_catalog::Filter::default(), "{key}");
+}
