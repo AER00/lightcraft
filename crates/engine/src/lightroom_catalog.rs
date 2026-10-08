@@ -1069,6 +1069,7 @@ mod tests {
         main[28..32].copy_from_slice(&2u32.to_be_bytes());
         main[44..48].copy_from_slice(&4u32.to_be_bytes());
         main[56..60].copy_from_slice(&1u32.to_be_bytes());
+        main[100] = 0x0d;
         let page = &mut main[512..];
         page[0] = 0x0d;
         page[3..5].copy_from_slice(&1u16.to_be_bytes());

@@ -24,6 +24,14 @@ fn error(message: impl Into<String>) -> crate::EngineError {
     crate::EngineError::BadParams { cmd: COMMAND.into(), msg: message.into() }
 }
 
+fn stage_archive(archive_dir: Option<&Path>, data: &mut CatalogImport) -> crate::Result<Option<PathBuf>> {
+    let archive_path = archive_dir.map(|dir| crate::lightroom_archive::store_best_effort(dir, data).map_err(error)).transpose()?.flatten();
+    if archive_dir.is_some() && archive_path.is_none() {
+        data.warnings.push("Lightroom source archive exceeded 32 MiB; archive skipped".into());
+    }
+    Ok(archive_path)
+}
+
 /// Memory identity of the library which owns a prepared completion.
 ///
 /// Each successful open/close refreshes session identity, including reopening the same path.
@@ -199,11 +207,7 @@ impl LightroomJob {
             normal.rollback();
             return Err(error("Lightroom import cancelled"));
         }
-        let archive_path =
-            self.archive_dir.as_ref().map(|dir| crate::lightroom_archive::store_best_effort(dir, &data).map_err(error)).transpose()?.flatten();
-        if self.archive_dir.is_some() && archive_path.is_none() {
-            data.warnings.push("Lightroom source archive exceeded 32 MiB; archive skipped".into());
-        }
+        let archive_path = stage_archive(self.archive_dir.as_deref(), &mut data)?;
         let index_path = self.archive_dir.as_ref().map(|dir| dir.join("lightroom-index.json"));
         let index = lightroom_catalog::load_index(index_path.as_deref())?;
         Ok(PreparedLightroom {
@@ -397,9 +401,8 @@ mod tests {
                 }
             })
             .collect();
-        let archive_path = crate::lightroom_archive::store_best_effort(&archive_dir, &data).unwrap();
+        let archive_path = stage_archive(Some(&archive_dir), &mut data).unwrap();
         assert!(archive_path.is_none());
-        data.warnings.push("Lightroom source archive exceeded 32 MiB; archive skipped".into());
         let mut session = crate::Session::new();
         let token = LightroomLibraryToken::capture(&session);
         let prepared = PreparedLightroom {
