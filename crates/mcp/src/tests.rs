@@ -120,6 +120,25 @@ fn path_writes_never_replace_an_original() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// Issue #181: a misspelled or unreadable `app.export` param is an error through the headless
+/// backend (what `lightcraft-cli run` and the MCP `export` tool use), not a silent default.
+#[test]
+fn export_refuses_unknown_params_and_bad_values() {
+    let mut b = Headless::demo();
+    let out = "/nonexistent-lc-test/x.jpg";
+    let e = b.call("app.export", json!({"path": out, "longEdgee": 400})).unwrap_err();
+    assert!(e.contains("unknown parameter `longEdgee` (did you mean `longEdge`?)"), "{e}");
+    let e = b.call("app.export", json!({"path": out, "longEdge": "banana"})).unwrap_err();
+    assert!(e.contains("`longEdge` must be a number"), "{e}");
+    let e = b.call("app.export", json!({"path": out, "watermark": {"text": "x", "size": 3}})).unwrap_err();
+    assert!(e.contains("`watermark.size` must be a number 0.005..0.5"), "{e}");
+    // `export` tool and preset expansion go through the same check
+    let r = call_tool(&mut b, "export", &json!({"path": out, "quality": 101}));
+    assert!(r.is_error, "{r:?}");
+    let e = b.session.execute("export.savePreset", &json!({"name": "Typo", "params": {"qualty": 5}})).unwrap_err().to_string();
+    assert!(e.contains("did you mean `quality`"), "{e}");
+}
+
 /// The `import` helper moves: renamed into the folder template, the source removed.
 #[test]
 fn import_tool_moves_with_a_folder_template() {

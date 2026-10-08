@@ -659,7 +659,7 @@ fn render(args: &[String]) -> Result<(), String> {
     for (k, v) in opts {
         p[k] = v;
     }
-    let mut o = ExportOptions::from_json(&p);
+    let mut o = ExportOptions::from_params(&p).map_err(|e| e.to_string())?;
     if p.get("format").is_none() {
         let ext = Path::new(&output).extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
         o.format = ExportFormat::parse(&ext)
