@@ -30,7 +30,7 @@ fn setup(name: &str) -> (LightcraftApp, PathBuf, PhotoId) {
     (LightcraftApp::new(s, Services::default()), dir, id)
 }
 
-fn install_denoise(app: &mut LightcraftApp, dir: &Path) {
+fn denoise_file(dir: &Path) -> PathBuf {
     let source = dir.join("source");
     std::fs::create_dir_all(&source).unwrap();
     let bytes = lightcraft_denoise::synthetic::smoothing_onnx();
@@ -50,7 +50,38 @@ fn install_denoise(app: &mut LightcraftApp, dir: &Path) {
         gain: Gain::None,
     };
     std::fs::write(source.join("denoise-model.json"), serde_json::to_vec(&m).unwrap()).unwrap();
-    app.run("denoise.models.install", json!({"path": source.join("model.onnx").to_string_lossy(), "acknowledged": true})).unwrap();
+    source.join("model.onnx")
+}
+
+fn install_denoise(app: &mut LightcraftApp, dir: &Path) {
+    app.run("denoise.models.install", json!({"path": denoise_file(dir), "acknowledged": true})).unwrap();
+}
+
+#[test]
+fn accepting_a_local_model_installs_in_background_and_resumes_the_pending_action() {
+    let (mut app, dir, raw) = setup("local-install");
+    let path = denoise_file(&dir);
+    app.run("denoise.toggle", json!({"id": raw.0, "enabled": true})).unwrap();
+    let info = app.run("denoise.models.inspect", json!({"path": path})).unwrap();
+    assert!(crate::panels::denoise::install(&mut app, &info, false).is_err());
+    assert!(!dir.join("denoise/test-smoothing/model.onnx").exists());
+    let result = crate::panels::denoise::install(&mut app, &info, true).unwrap();
+    assert_eq!(result["started"], "local-install");
+    assert_eq!(app.ui.dialog, Some(Dialog::Settings { tab: "denoise".into() }));
+    let ctx = egui::Context::default();
+    for _ in 0..600 {
+        crate::panels::denoise::pump(&mut app, &ctx);
+        if app.session.denoise_photo_state(raw) != lightcraft_engine::denoise::PhotoState::NoModel {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    resume(&mut app);
+    assert_eq!(amount(&app, raw), 50.0);
+    assert!(dir.join("denoise/test-smoothing/model.onnx").is_file());
+    assert!(path.is_file(), "a user-supplied original is preserved");
+    drop(app);
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 fn amount(app: &LightcraftApp, id: PhotoId) -> f64 {

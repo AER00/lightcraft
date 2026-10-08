@@ -127,13 +127,21 @@ pub fn extract(archive: &Path, name: &str, dest: &Path, max_bytes: u64) -> Resul
     }
     let skip = u64::from(u16_at(&head, 26).unwrap_or(0)) + u64::from(u16_at(&head, 28).unwrap_or(0));
     f.seek_relative(i64::try_from(skip).map_err(|_| ArchiveError::Format("a header is too long".into()))?)?;
-    let mut packed = vec![0u8; e.compressed as usize];
+    let len = usize::try_from(e.compressed)
+        .ok()
+        .filter(|&n| n <= 256 * 1024 * 1024)
+        .ok_or_else(|| ArchiveError::Format("the compressed model is too large".into()))?;
+    if e.size > 256 * 1024 * 1024 {
+        return format("the extracted model is too large");
+    }
+    let mut packed = Vec::new();
+    packed.try_reserve_exact(len).map_err(|_| ArchiveError::Format("not enough memory for the model archive".into()))?;
+    packed.resize(len, 0u8);
     f.read_exact(&mut packed)?;
     let data = match e.method {
         0 => packed,
-        8 => {
-            miniz_oxide::inflate::decompress_to_vec_with_limit(&packed, max_bytes as usize).map_err(|err| ArchiveError::Format(format!("{err:?}")))?
-        }
+        8 => miniz_oxide::inflate::decompress_to_vec_with_limit(&packed, max_bytes.min(256 * 1024 * 1024) as usize)
+            .map_err(|err| ArchiveError::Format(format!("{err:?}")))?,
         m => return format(&format!("compression method {m} is not supported")),
     };
     if data.len() as u64 != e.size || crc32(&data) != e.crc {

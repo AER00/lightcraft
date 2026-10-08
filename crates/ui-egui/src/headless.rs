@@ -324,7 +324,7 @@ mod tests {
         h.step();
         let w = widgets(&mut h);
         assert!(w.contains("\"denoise:setup\""), "a raw photo with no model is offered the setup: {w}");
-        // one click lands in Settings ▸ AI Denoise, where the model LightCraft knows is listed
+        // One click lands in Settings, with local installation available even without a download offer.
         let r = h.request("ui.clickWidget", json!({"id": "denoise:setup"}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.step();
@@ -332,7 +332,8 @@ mod tests {
         assert_eq!(h.app.ui.dialog, Some(Dialog::Settings { tab: "denoise".into() }));
         h.settle(SETTLE);
         let listed = h.app.session.execute("denoise.models.list", &json!({})).unwrap();
-        assert!(listed["models"].as_array().unwrap().iter().any(|m| m["id"] == "rawnind-bayer" && m["installed"] == false), "{listed}");
+        assert_eq!(listed["models"].as_array().unwrap().len(), lightcraft_denoise::known::all().len(), "{listed}");
+        assert!(widgets(&mut h).contains("\"denoise:installFile\""));
         h.app.ui.dialog = None;
         // a photo that is not raw: no offer
         h.request(

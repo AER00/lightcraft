@@ -3,9 +3,12 @@
 //! None is part of LightCraft. A model with an address here can be downloaded when the user asks and has accepted
 //! its terms; anything else is brought by the user as an `.onnx` file with a `denoise-model.json` beside it.
 
+#[cfg(any(feature = "rawnind-model", test))]
 use crate::licence::{Commercial, Licence};
 
-use crate::manifest::{DenoiserManifest, Domain, Gain};
+use crate::manifest::DenoiserManifest;
+#[cfg(any(feature = "rawnind-model", test))]
+use crate::manifest::{Domain, Gain};
 
 /// A known model, and how to get it.
 pub struct Known {
@@ -18,6 +21,7 @@ pub struct Known {
 
 /// RawNIND's UtNet2 for Bayer sensors, as published for darktable (`rawdenoise-nind.dtmodel`, a zip with a Bayer and a
 /// linear model). Its weights are GPL-3.0; the training pictures are CC BY 4.0 and CC0.
+#[cfg(any(feature = "rawnind-model", test))]
 fn rawnind_bayer() -> Known {
     let manifest = DenoiserManifest {
         id: "rawnind-bayer".into(),
@@ -29,7 +33,7 @@ fn rawnind_bayer() -> Known {
             url: Some("https://www.gnu.org/licenses/gpl-3.0.html".into()),
             notice: "The weights are published under the GNU General Public License v3. LightCraft does not include them: they \
                      are downloaded to your computer at your request and used by it only. If you pass the model file on, the \
-                     GPL applies to that copy."
+                     GPL applies to that copy. Commercial use is subject to the GPL terms, including applicable source, licence and notice obligations on redistribution."
                 .into(),
         },
         source: Some("https://github.com/darktable-org/darktable-ai/tree/master/models/rawdenoise-nind".into()),
@@ -55,7 +59,14 @@ fn rawnind_bayer() -> Known {
 
 /// Every model LightCraft knows.
 pub fn all() -> Vec<Known> {
-    vec![rawnind_bayer()]
+    #[cfg(feature = "rawnind-model")]
+    {
+        vec![rawnind_bayer()]
+    }
+    #[cfg(not(feature = "rawnind-model"))]
+    {
+        Vec::new()
+    }
 }
 
 /// The known model with this id.
@@ -76,7 +87,8 @@ mod tests {
     #[test]
     fn known_models_are_valid_unique_and_downloaded_over_https() {
         let all = all();
-        assert!(!all.is_empty());
+        assert_eq!(all.is_empty(), !cfg!(feature = "rawnind-model"));
+        validate(&rawnind_bayer().manifest).unwrap();
         for (i, k) in all.iter().enumerate() {
             validate(&k.manifest).unwrap();
             assert!(all.iter().skip(i + 1).all(|o| o.manifest.id != k.manifest.id), "unique ids");
@@ -92,8 +104,12 @@ mod tests {
                 assert!(k.download.is_none(), "{}", k.manifest.id);
             }
         }
-        assert!(find("rawnind-bayer").is_some() && find("nothing").is_none());
-        assert_eq!(by_sha256("da27509dab6a2915da67e988acd86cf71f9d5bbc8d1aa0ed32933578a887b901").map(|m| m.id), Some("rawnind-bayer".into()));
+        assert_eq!(find("rawnind-bayer").is_some(), cfg!(feature = "rawnind-model"));
+        assert!(find("nothing").is_none());
+        assert_eq!(
+            by_sha256("da27509dab6a2915da67e988acd86cf71f9d5bbc8d1aa0ed32933578a887b901").map(|m| m.id),
+            if cfg!(feature = "rawnind-model") { Some("rawnind-bayer".into()) } else { None }
+        );
     }
 }
 

@@ -1,5 +1,6 @@
 //! Resume a denoise request after model setup, bound to its original photo and library.
 
+use crate::i18n::tr;
 use crate::{LightcraftApp, state::Dialog};
 use lightcraft_catalog::{PhotoId, Source};
 use lightcraft_engine::denoise::PhotoState;
@@ -43,7 +44,7 @@ pub(crate) fn intercept(app: &mut LightcraftApp, command: &str, params: &Value) 
             return Some(Err("modelSetup.cancel: use kind denoise".into()));
         }
         app.model_setup.denoise = None;
-        app.ui.status = "Pending photo action cancelled".into();
+        app.ui.status = tr("Pending photo action cancelled").into();
         return Some(Ok(json!({"cancelled": true})));
     }
     if command == "denoise.models.downloadCancel" {
@@ -85,7 +86,7 @@ pub(crate) fn intercept(app: &mut LightcraftApp, command: &str, params: &Value) 
         app.model_setup.denoise = Some(request);
         app.model_setup.next_check = 0.0;
         app.ui.dialog = Some(Dialog::Settings { tab: "denoise".into() });
-        app.ui.status = "Install a denoise model to enable AI Denoise on this photo".into();
+        app.ui.status = tr("Install a denoise model to enable AI Denoise on this photo").into();
         json!({"setupRequired": true, "photo": id.0})
     }))
 }
@@ -94,8 +95,8 @@ pub(crate) fn notice(app: &mut LightcraftApp, ui: &mut egui::Ui, kind: &str) {
     if kind != "denoise" || !app.model_setup.denoise.as_ref().is_some_and(|r| r.valid(app)) {
         return;
     }
-    ui.add(egui::Label::new("After installation, AI Denoise will turn on for the requesting photo.").wrap());
-    let r = ui.small_button("Cancel pending action");
+    ui.add(egui::Label::new(tr("After installation, AI Denoise will turn on for the requesting photo.")).wrap());
+    let r = ui.small_button(tr("Cancel pending action"));
     crate::widgets::register(ui.ctx(), "modelSetup:cancel:denoise", r.rect);
     if r.clicked() {
         let _ = app.run("modelSetup.cancel", json!({"kind": "denoise"}));
@@ -118,7 +119,7 @@ pub(crate) fn pump(app: &mut LightcraftApp, ctx: &egui::Context) {
     app.model_setup.next_check = now + 0.25;
     let Some(request) = app.model_setup.denoise.take() else { return };
     if !request.valid(app) {
-        app.ui.status = "Pending photo action cancelled because its library or photo changed".into();
+        app.ui.status = tr("Pending photo action cancelled because its library or photo changed").into();
         return;
     }
     if matches!(app.session.denoise_photo_state(request.photo), PhotoState::NoModel | PhotoState::NotApplicable) {
@@ -127,7 +128,7 @@ pub(crate) fn pump(app: &mut LightcraftApp, ctx: &egui::Context) {
         return;
     }
     match app.run("denoise.toggle", json!({"id": request.photo.0, "enabled": true})) {
-        Ok(_) => app.ui.status = "AI Denoise is enabled on the requesting photo".into(),
+        Ok(_) => app.ui.status = tr("AI Denoise is enabled on the requesting photo").into(),
         Err(error) => app.ui.status = error,
     }
 }

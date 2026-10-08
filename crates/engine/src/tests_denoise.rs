@@ -81,6 +81,65 @@ fn model_files(dir: &Path, id: &str) -> PathBuf {
     src.join("model.onnx")
 }
 
+#[test]
+fn model_installation_keeps_the_frame_pump_responsive_and_reuses_the_loaded_model() {
+    use std::sync::{Mutex, mpsc};
+    use std::time::Duration;
+    let mut x = setup("background-install", false);
+    let path = model_files(&x.dir, "stand-in");
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let runs = x.runs.clone();
+    let loads = Arc::new(AtomicUsize::new(0));
+    let worker_loads = loads.clone();
+    x.s.denoise.loader = Arc::new(move |_, _| {
+        worker_loads.fetch_add(1, Ordering::Relaxed);
+        entered_tx.send(()).map_err(|e| e.to_string())?;
+        release_rx.lock().unwrap().recv_timeout(Duration::from_secs(3)).map_err(|e| e.to_string())?;
+        Ok(Arc::new(Dim { runs: runs.clone() }))
+    });
+    let info = x.s.execute("denoise.models.inspect", &json!({"path": path})).unwrap();
+    assert_eq!(info["model"]["id"], "stand-in");
+    assert_eq!(loads.load(Ordering::Relaxed), 0, "showing terms never executes the model");
+    let r = x.s.execute("denoise.models.install", &json!({"path": path, "acknowledged": true, "background": true})).unwrap();
+    assert_eq!(r["started"], "local-install");
+    entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    // The loader is blocked: the frame pump must still return, reporting installation in progress.
+    let state = x.s.execute("denoise.models.downloads", &json!({})).unwrap();
+    assert_eq!(state["downloads"][0]["state"], "installing");
+    assert_eq!(x.s.execute("denoise.pump", &json!({"pace": "pause"})).unwrap()["active"], false);
+    assert!(x.s.execute("denoise.models.install", &json!({"path": path, "acknowledged": true, "background": true})).is_err());
+    release_tx.send(()).unwrap();
+    for _ in 0..600 {
+        let v = x.s.execute("denoise.models.downloads", &json!({})).unwrap();
+        if v["downloads"][0]["state"] == "installed" {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(x.s.execute("denoise.models.downloads", &json!({})).unwrap()["downloads"][0]["state"], "installed");
+    let a = x.s.denoise.active.as_ref().unwrap();
+    assert!(a.model.lock().unwrap().is_some(), "the worker's tested model is reused");
+    assert_eq!(loads.load(Ordering::Relaxed), 1);
+    drop(x.s);
+    let _ = std::fs::remove_dir_all(x.dir);
+}
+
+#[test]
+fn failed_model_replacement_preserves_the_installed_model() {
+    let mut x = setup("replacement", true);
+    let installed = x.dir.join("denoise-models/stand-in/model.onnx");
+    let original = std::fs::read(&installed).unwrap();
+    let source = model_files(&x.dir, "stand-in");
+    std::fs::write(&source, "a different broken model").unwrap();
+    assert!(x.s.execute("denoise.models.install", &json!({"path": source, "acknowledged": true})).is_err());
+    assert_eq!(std::fs::read(installed).unwrap(), original);
+    assert_eq!(x.s.execute("denoise.models.list", &json!({})).unwrap()["model"], "stand-in");
+    drop(x.s);
+    let _ = std::fs::remove_dir_all(x.dir);
+}
+
 /// A Bayer DNG that is a smooth ramp, big enough for a 64-cell tile and a second one.
 fn ramp_dng(w: usize, h: usize, cfa: &str) -> Vec<u8> {
     let data: Vec<u16> = (0..w * h).map(|i| 600 + ((i % w) * 30 + (i / w) * 35) as u16).collect();
@@ -339,7 +398,8 @@ fn a_model_that_fails_fails_the_export_and_is_not_retried_by_the_queue() {
     let mut x = setup("fails", true);
     let id = photo(&x.s);
     x.s.denoise.loader = Arc::new(|_, _| Err("the model went away".into()));
-    // (the model chosen is read afresh: it was loaded by the install's self-test only)
+    // Simulate loss of the in-memory model; successful installation now retains its tested instance.
+    *x.s.denoise.active.as_ref().unwrap().model.lock().unwrap() = None;
     set_amount(&mut x.s, 80.0);
     let o = ExportOptions::from_json(&json!({"format": "png", "width": 100, "height": 100}));
     let e = export_photo(&mut x.s, id, &o, 1).err().unwrap();

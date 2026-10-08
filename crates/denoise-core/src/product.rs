@@ -52,6 +52,13 @@ pub struct Header {
     pub key: String,
 }
 
+fn allocate<T: Clone>(n: usize, value: T) -> Result<Vec<T>, ProductError> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(n).map_err(|_| ProductError::Format("not enough memory for the denoised picture".into()))?;
+    v.resize(n, value);
+    Ok(v)
+}
+
 /// `f32` as IEEE half-float bits, rounded to nearest even; beyond the range it saturates, NaN becomes 0.
 pub fn to_f16(v: f32) -> u16 {
     if !v.is_finite() {
@@ -120,9 +127,9 @@ fn crc(bytes: &[u8]) -> u32 {
 }
 
 /// One strip as bytes: for each plane (R, G, B) the low bytes of its half floats, then the high bytes.
-fn encode_strip(img: &Rgb32f, y0: usize, y1: usize) -> Vec<u8> {
+fn encode_strip(img: &Rgb32f, y0: usize, y1: usize) -> Result<Vec<u8>, ProductError> {
     let n = (y1 - y0) * img.width;
-    let mut raw = vec![0u8; 6 * n];
+    let mut raw = allocate(6 * n, 0u8)?;
     let rows = img.data.get(y0 * img.width..y1 * img.width).unwrap_or(&[]);
     for (i, px) in rows.iter().enumerate() {
         for (c, &v) in px.iter().enumerate() {
@@ -135,16 +142,17 @@ fn encode_strip(img: &Rgb32f, y0: usize, y1: usize) -> Vec<u8> {
             }
         }
     }
-    miniz_oxide::deflate::compress_to_vec(&raw, 3)
+    Ok(miniz_oxide::deflate::compress_to_vec(&raw, 3))
 }
 
 /// Write `img` to `path` (through a temporary file next to it, so a reader never sees half a product).
 pub fn write(path: &Path, img: &Rgb32f, key: &str) -> Result<(), ProductError> {
-    if img.width == 0 || img.height == 0 || img.width > MAX_SIDE || img.height > MAX_SIDE || img.data.len() != img.width * img.height {
+    let pixels = img.width.checked_mul(img.height).filter(|&n| n <= MAX_PIXELS);
+    if img.width == 0 || img.height == 0 || img.width > MAX_SIDE || img.height > MAX_SIDE || pixels != Some(img.data.len()) {
         return Err(ProductError::Format("the picture has no usable size".into()));
     }
     let strips: Vec<(usize, usize)> = (0..img.height).step_by(STRIP_ROWS).map(|y| (y, (y + STRIP_ROWS).min(img.height))).collect();
-    let packed: Vec<Vec<u8>> = strips.par_iter().map(|&(a, b)| encode_strip(img, a, b)).collect();
+    let packed: Vec<Vec<u8>> = strips.par_iter().map(|&(a, b)| encode_strip(img, a, b)).collect::<Result<_, _>>()?;
     let header = serde_json::to_vec(&Header { width: img.width, height: img.height, strip: STRIP_ROWS, key: key.to_string() })
         .map_err(|e| ProductError::Format(e.to_string()))?;
     let tmp = path.with_extension("tmp");
@@ -193,7 +201,7 @@ fn read_start(r: &mut impl Read) -> Result<Start, ProductError> {
     if len > MAX_HEADER {
         return Err(ProductError::Format("the header is too large".into()));
     }
-    let mut hb = vec![0u8; len];
+    let mut hb = allocate(len, 0u8)?;
     r.read_exact(&mut hb)?;
     let h: Header = serde_json::from_slice(&hb).map_err(|e| ProductError::Format(e.to_string()))?;
     let pixels = h.width.saturating_mul(h.height);
@@ -297,7 +305,7 @@ pub fn read_window(path: &Path, key: &str, window: Option<Window>, factor: usize
     }
     // the picture rows and columns the blocks cover
     let (x_end, y_end) = if whole { (w.x + w.width, w.y + w.height) } else { (w.x + ow * factor, w.y + oh * factor) };
-    let mut out = Rgb32f { width: ow, height: oh, data: vec![[0.0; 3]; ow * oh] };
+    let mut out = Rgb32f { width: ow, height: oh, data: allocate(ow * oh, [0.0; 3])? };
     let lut = f16_table();
     let value = |raw: &[u8], c: usize, n: usize, i: usize| -> f32 {
         let (lo, hi) = (raw.get(2 * c * n + i).copied().unwrap_or(0), raw.get((2 * c + 1) * n + i).copied().unwrap_or(0));
@@ -305,7 +313,7 @@ pub fn read_window(path: &Path, key: &str, window: Option<Window>, factor: usize
     };
     // which strips are needed, and where each starts in the file (after the header and the strip table)
     let wanted = |s: usize| s * h.strip < y_end && (s + 1) * h.strip > w.y;
-    let (mut sum, mut peak) = (vec![[0f32; 3]; ow], vec![[f32::MIN; 3]; ow]);
+    let (mut sum, mut peak) = (allocate(ow, [0f32; 3])?, allocate(ow, [f32::MIN; 3])?);
     let (mut rows_in, mut oy) = (0usize, 0usize);
     let strips: Vec<usize> = (0..table.len()).filter(|&s| wanted(s)).collect();
     // skip the strips before the first one wanted
@@ -315,7 +323,7 @@ pub fn read_window(path: &Path, key: &str, window: Option<Window>, factor: usize
         let mut packed = Vec::with_capacity(group.len());
         for &s in group {
             let Some(&(len, _)) = table.get(s) else { return Err(ProductError::Format("a strip is missing".into())) };
-            let mut p = vec![0u8; len];
+            let mut p = allocate(len, 0u8)?;
             f.read_exact(&mut p)?;
             packed.push(p);
         }
@@ -400,6 +408,19 @@ pub fn blend(base: &mut Rgb32f, denoised: &Rgb32f, amount: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_product_header_is_rejected_before_allocating_pixels() {
+        let p = temp("oversized-header");
+        let header = serde_json::to_vec(&Header { width: 10001, height: 10000, strip: STRIP_ROWS, key: "k".into() }).unwrap();
+        let mut bytes = Vec::from(MAGIC.as_slice());
+        bytes.extend_from_slice(&[VERSION, 0, 0, 0]);
+        bytes.extend_from_slice(&(header.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&header);
+        std::fs::write(&p, bytes).unwrap();
+        assert!(read_header_at(&p).is_err());
+        let _ = std::fs::remove_file(p);
+    }
 
     fn temp(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("lc-denoise-{name}-{}.lcdn", std::process::id()))

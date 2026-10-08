@@ -13,7 +13,7 @@ const BLOCK: usize = 256;
 /// Cap all tensor buffers and convolution scratch for one tile together (512 MiB).
 const MAX_VALUES: usize = 128 * 1024 * 1024;
 const MAX_TILE: usize = 2048;
-const MAX_IDLE: usize = 16;
+const MAX_IDLE: usize = 1;
 
 type Result<T> = std::result::Result<T, NetError>;
 fn bad(why: &str) -> NetError {

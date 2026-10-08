@@ -14,7 +14,7 @@ use crate::manifest::Gain;
 use crate::tiles::{starts, weight};
 
 /// Most pixels one picture may have (guards the allocations that follow from its size).
-pub const MAX_PIXELS: usize = 400_000_000;
+pub const MAX_PIXELS: usize = 100_000_000;
 /// A tile whose mean signal is below this (white = 1) is too dark to measure its scale from.
 const MIN_SIGNAL: f32 = 0.003;
 
@@ -30,6 +30,13 @@ pub enum Error {
     Load(String),
     #[error("cancelled")]
     Cancelled,
+}
+
+fn allocate<T: Clone>(n: usize, value: T) -> Result<Vec<T>, Error> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(n).map_err(|_| Error::Input("not enough memory for denoise".into()))?;
+    v.resize(n, value);
+    Ok(v)
 }
 
 /// Something that runs the model on one tile.
@@ -112,13 +119,13 @@ pub fn denoise_bayer(
         .collect();
     let total = tiles.len();
 
-    let mut acc = vec![[0f32; 3]; pixels];
-    let mut wsum = vec![0f32; nx * ny];
-    let group = p.parallel.clamp(1, 64);
+    let mut acc = allocate(pixels, [0f32; 3])?;
+    let mut wsum = allocate(nx * ny, 0f32)?;
+    let group = p.parallel.clamp(1, 4);
     let mut done = 0;
     // where the time goes, printed under `LIGHTCRAFT_PROFILE`
     let (mut t_wait, mut t_total) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
-    let began = std::time::Instant::now();
+    let began = web_time::Instant::now();
 
     // One group of tiles at a time: pack, run the model, check and bring each to the input's scale, in parallel.
     // Blending (sequential: the tiles add into one picture, in tile order so the result does not depend on timing) of
@@ -128,7 +135,7 @@ pub fn denoise_bayer(
         chunk
             .par_iter()
             .map(|&(x0, y0, bx, ax, by, ay)| {
-                let mut input = vec![0f32; 4 * p.tile * p.tile];
+                let mut input = allocate(4 * p.tile * p.tile, 0f32)?;
                 if !pack_tile(mosaic, width, height, layout, x0 as isize, y0 as isize, p.tile, &mut input) {
                     return Err(Error::Input("a tile could not be packed".into()));
                 }
@@ -164,7 +171,7 @@ pub fn denoise_bayer(
             || compute(chunk),
             || match previous.take() {
                 Some((c, o)) => {
-                    let started = std::time::Instant::now();
+                    let started = web_time::Instant::now();
                     let r = blend(c, o);
                     (r, started.elapsed())
                 }
@@ -176,12 +183,12 @@ pub fn denoise_bayer(
         previous = Some((chunk, outs));
     }
     if let Some((c, o)) = previous.take() {
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         blend(c, o)?;
         t_wait += started.elapsed();
     }
     t_total += began.elapsed();
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     // normalise by the weights
     let (ox, oy) = (layout.position(0, 0).0, layout.position(0, 0).1);
     acc.par_chunks_mut(width).enumerate().for_each(|(y, row)| {

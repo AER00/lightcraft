@@ -156,10 +156,9 @@ impl Twin {
         Twin { image, mix: std::sync::Mutex::new(None) }
     }
 
-    /// Bytes held, the last mix included.
+    /// Bytes reserved for the twin and its lazy mix, before either cache cost can grow.
     fn bytes(&self) -> usize {
-        let mixed = self.mix.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |m| m.1.data.len() * 12);
-        self.image.data.len() * 12 + mixed
+        self.image.data.len().saturating_mul(24)
     }
 }
 
@@ -207,7 +206,7 @@ impl DecodedSource {
         mixed
     }
 
-    /// Bytes held: the picture, its denoised twin and the last mix.
+    /// Cache cost: the picture, its denoised twin and room for the lazy mix.
     pub fn bytes(&self) -> usize {
         self.image.data.len() * 12 + 64 + std::mem::size_of::<SourceInfo>() + self.denoised.as_ref().map_or(0, |t| t.bytes())
     }
@@ -1389,6 +1388,20 @@ mod thumbnail_hash_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn denoise_mix_is_reserved_before_the_source_enters_the_cache() {
+        let mut plain = Rgb32f::new(8, 8);
+        plain.data.fill([1.0; 3]);
+        let mut source = DecodedSource::new(Arc::new(plain), None);
+        source.denoised = Some(Arc::new(Twin::new(Arc::new(Rgb32f::new(8, 8)))));
+        let reserved = source.bytes();
+        assert!(reserved >= 3 * 8 * 8 * 12);
+        assert_eq!(source.image_for(0.5).data[0], [0.5; 3]);
+        assert_eq!(source.bytes(), reserved, "creating a mix cannot evade the LRU's recorded cost");
+        let _ = source.image_for(0.25);
+        assert_eq!(source.bytes(), reserved, "changing Amount replaces the reserved mix");
+    }
 
     #[test]
     fn decoder_info_survives_render_jobs_cache_and_eviction() {

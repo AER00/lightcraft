@@ -107,6 +107,8 @@ pub struct Services {
     pub picker: Option<pick::Picker>,
     /// Show an open dialog for photos; returns paths.
     pub pick_files: Option<PickFiles>,
+    /// Local ONNX model; a manifest must accompany it.
+    pub pick_denoise_model: Option<PickFiles>,
     /// Open dialog for preset files (`.lcpreset`, `.xmp`, `.lrtemplate`, `.zip`, `.dng`, Luminar `.lmp` / `.mplumpack`).
     pub pick_preset_files: Option<PickFiles>,
     /// Open dialog for a GPS track log (`.gpx`; Photo ▸ Auto-Tag from Tracklog…).

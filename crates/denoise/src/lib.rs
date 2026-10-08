@@ -18,25 +18,20 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-pub mod archive;
-pub mod bayer;
+#[cfg(feature = "runtime")]
 pub mod cpu;
-pub mod known;
-pub mod manifest;
+
 pub mod net;
 pub mod onnx;
 mod onnx_proto;
-pub mod product;
+
 pub mod reference;
-pub mod run;
+
+#[cfg(feature = "runtime")]
 pub mod runtime;
 #[doc(hidden)]
 pub mod synthetic;
-pub mod tiles;
 
-pub use manifest::{DenoiserManifest, Domain, Gain, ManifestError};
-pub use run::{Control, Error, Params, TileRunner, denoise_bayer};
+pub use lightcraft_denoise_core::*;
 
-pub mod hash;
-pub mod licence;
 pub mod synthetic_proto;

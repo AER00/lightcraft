@@ -11,7 +11,8 @@ repository = "https://github.com/storytold/lightcraft"
 
 [workspace.dependencies]
 # internal
-lightcraft-denoise = { path = "crates/denoise" }
+lightcraft-denoise-core = { path = "crates/denoise-core" }
+lightcraft-denoise = { path = "crates/denoise", default-features = false }
 lightcraft-geom = { path = "crates/geom" }
 lightcraft-sysmem = { path = "crates/sysmem" }
 lightcraft-color = { path = "crates/color" }

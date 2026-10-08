@@ -309,8 +309,11 @@ fn load_bytes_now(
         let tables = lightcraft_raw::profile::ProfileTables::new(&raw.color.profile, lightcraft_raw::color::illuminant_weight(&raw.color, xy));
         // camera RGB → what the pipeline takes: clipped highlights rebuilt, white balance and the colour model applied,
         // fitted to `max_edge` and upright (the same for the plain and the denoised picture)
-        let finish = |mut img: Rgb32f| -> Rgb32f {
+        let finish = |mut img: Rgb32f| {
+            let mut stages = vec![("develop", t0.elapsed())];
+            stages.push(("transform", t0.elapsed()));
             lightcraft_raw::highlight::reconstruct(&mut img, wb, HIGHLIGHT_CLIP);
+            stages.push(("highlights", t0.elapsed()));
             img.map_in_place(|p| {
                 let c = [p[0] * wb[0], p[1] * wb[1], p[2] * wb[2]];
                 let rgb = [
@@ -324,21 +327,27 @@ fn load_bytes_now(
                 };
                 hue_sat.as_ref().map_or(rgb, |h| h.apply(rgb)).map(|v| v.max(0.0))
             });
+            stages.push(("colour", t0.elapsed()));
             let img = fit(&img, max_edge, max_edge, Filter::Box);
-            img.into_oriented(raw.orientation)
+            stages.push(("fit", t0.elapsed()));
+            let img = img.into_oriented(raw.orientation);
+            stages.push(("orient", t0.elapsed()));
+            (img, stages)
         };
-        let develop_ms = t0.elapsed();
-        let img = finish(img);
-        let twin = twin.map(finish);
+        let (img, stages) = finish(img);
         if lightcraft_pipeline::profiling() {
-            let finish_ms = (t0.elapsed() - develop_ms).as_secs_f64() * 1e3;
-            eprintln!(
-                "[profile] raw source {}×{} (max {max_edge}): develop {:.1} ms, finish {finish_ms:.1} ms (after decode)",
-                img.width,
-                img.height,
-                develop_ms.as_secs_f64() * 1e3
-            );
+            let mut prev = std::time::Duration::ZERO;
+            let parts: Vec<String> = stages
+                .iter()
+                .map(|(n, t)| {
+                    let d = *t - prev;
+                    prev = *t;
+                    format!("{n} {:.1}", d.as_secs_f64() * 1e3)
+                })
+                .collect();
+            eprintln!("[profile] raw source {}×{} (max {max_edge}, ms after decode): {}", img.width, img.height, parts.join(", "));
         }
+        let twin = twin.map(|picture| finish(picture).0);
         let (temp, tint) = xy_to_temp_tint(xy);
         let relative = crate::camera_preview::file_local_look(raw.format) && t.matrix_is_fallback;
         let camera_tone = camera_look.as_ref().map(|p| p.tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));

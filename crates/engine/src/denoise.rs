@@ -98,6 +98,10 @@ pub(crate) trait Model: Send + Sync {
     /// Check it does something sensible: the test's result, or why not. Unless `run_on` is the processor the graphics
     /// card is set up and checked too, and the result says where the work will run.
     fn self_test(&self, run_on: RunOn) -> Result<Value, String>;
+    /// Conservative scratch bound for an unknown runner.
+    fn bytes_per_tile(&self) -> usize {
+        512 * 1024 * 1024
+    }
     /// Where the tiles run: `{kind: "gpu", adapter}`, `{kind: "cpu", reason?}` or `{kind: "pending"}` (the card is not
     /// set up yet), with the card's and the processor's time for the check tile (`cardMs`, `cpuMs`) once both were
     /// timed. Never starts anything.
@@ -215,7 +219,7 @@ fn set_up_card<T: Send + 'static, R>(
         running.push(marker.to_path_buf());
         SetUpEnded(marker.to_path_buf())
     };
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name("denoise-gpu-setup".into())
@@ -241,10 +245,10 @@ fn card_tile_ms(runner: &dyn TileRunner, input: &[f32]) -> f64 {
     if runner.run(input).is_err() {
         return f64::INFINITY;
     }
-    let began = std::time::Instant::now();
+    let began = web_time::Instant::now();
     let mut best = f64::INFINITY;
     for _ in 0..3 {
-        let one = std::time::Instant::now();
+        let one = web_time::Instant::now();
         if runner.run(input).is_err() {
             break;
         }
@@ -268,7 +272,7 @@ fn make_gpu(cpu: &lightcraft_denoise::runtime::CpuRunner, path: &Path, tile: usi
         Ok((runner, got, card_ms))
     };
     let on_cpu = || {
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         (cpu.run(&input), started.elapsed().as_secs_f64() * 1000.0)
     };
     let ((runner, got, card_ms), (want, cpu_ms)) = set_up_card(&path.with_file_name(GPU_SETUP_MARKER), GPU_SETUP_LIMIT, card, on_cpu)?;
@@ -351,6 +355,9 @@ impl TileRunner for Network {
 
 #[cfg(feature = "denoise")]
 impl Model for Network {
+    fn bytes_per_tile(&self) -> usize {
+        self.cpu.bytes_per_tile()
+    }
     fn runner(&self, run_on: RunOn, threads: usize) -> (&dyn TileRunner, usize) {
         let threads = threads.max(1);
         self.last_threads.store(threads, Ordering::Relaxed);
@@ -689,7 +696,7 @@ pub(crate) fn make_product(spec: &JobSpec, progress: Option<&Progress>) -> Resul
     if product::is_current(&spec.product, &spec.key) {
         return Ok(false);
     }
-    let began = std::time::Instant::now();
+    let began = web_time::Instant::now();
     let cancelled = || progress.is_some_and(|p| p.cancel.load(Ordering::Relaxed));
     if cancelled() {
         return Err(MakeError::Cancelled);
@@ -726,7 +733,13 @@ pub(crate) fn make_product(spec: &JobSpec, progress: Option<&Progress>) -> Resul
     }
     let decoded = began.elapsed();
     let model = loaded(spec)?;
-    let (runner, parallel) = model.runner(spec.run_on, spec.parallel.max(1));
+    // Packed input, returned RGB and the preceding group's RGB overlap while tiles run.
+    let scratch =
+        model.bytes_per_tile().saturating_add(128usize.saturating_mul(spec.manifest.tile as usize).saturating_mul(spec.manifest.tile as usize));
+    let (_, budget) = crate::memory::work_gate().usage();
+    let parallel = spec.parallel.clamp(1, 4).min((budget / scratch.max(1)).max(1));
+    let _held = crate::memory::work_gate().acquire(mosaic.data.len().saturating_mul(20).saturating_add(scratch.saturating_mul(parallel)));
+    let (runner, parallel) = model.runner(spec.run_on, parallel);
     let params = Params {
         tile: spec.manifest.tile as usize,
         overlap: spec.manifest.overlap as usize,
@@ -859,6 +872,7 @@ pub(crate) struct State {
     pub models_dir: Option<PathBuf>,
     /// Models being downloaded at the user's request.
     pub downloads: Downloads,
+    pub(crate) install: Option<crate::cmd::denoise::InstallJob>,
     /// How a model is loaded (tests put another in).
     pub loader: Loader,
     pub(crate) active: Option<Active>,
@@ -883,6 +897,7 @@ impl Default for State {
         State {
             models_dir: None,
             downloads: Downloads::default(),
+            install: None,
             loader: default_loader(),
             active: None,
             active_seen: None,
@@ -1604,7 +1619,7 @@ mod gpu_tests {
     fn a_set_up_that_takes_too_long_is_given_up_on() {
         let dir = folder("slowsetup");
         let marker = dir.join(GPU_SETUP_MARKER);
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let slow = || -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(600));
             Ok(())

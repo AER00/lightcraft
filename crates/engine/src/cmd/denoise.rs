@@ -7,7 +7,7 @@
 //! validated before they become folder names, and nothing outside a model's own folder is ever touched.
 
 use std::path::{Path, PathBuf};
-use std::sync::PoisonError;
+use std::sync::{Arc, PoisonError, mpsc};
 
 use lightcraft_catalog::PhotoId;
 use lightcraft_denoise::archive;
@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, str_param};
 use crate::denoise::{Pace, RunOn, Settings, forget_gpu_set_ups, installed_models, read_capped, read_settings, write_atomic, write_settings};
-use crate::model_download::{self, State};
+use crate::model_download::State;
 use crate::{EngineError, Result, Session};
 
 fn fail(what: &str, e: impl std::fmt::Display) -> EngineError {
@@ -129,8 +129,16 @@ fn identify(path: &Path, c: &str, sha_known: Option<&str>) -> Result<Source> {
 
 /// Install the model in `src`. A model that passes its self-test becomes the one in use (`activate`, the default): installing
 /// a model is how someone says they want it. `verified` is for a download whose hash was already checked.
-fn install_file(s: &mut Session, c: &str, src: &Path, acknowledged: bool, activate: bool, verified: bool) -> Result<Value> {
-    let dir = models_dir(s, c)?;
+fn install_file(
+    dir: &Path,
+    loader: &crate::denoise::Loader,
+    run_on: RunOn,
+    accepted_at: String,
+    c: &str,
+    src: &Path,
+    acknowledged: bool,
+    verified: bool,
+) -> Result<(Value, Arc<dyn crate::denoise::Model>)> {
     let ident = identify(src, c, None)?;
     let m = ident.manifest.clone();
     manifest::validate(&m).map_err(|e| bad(c, e.to_string()))?;
@@ -141,7 +149,11 @@ fn install_file(s: &mut Session, c: &str, src: &Path, acknowledged: bool, activa
         ));
     }
     let home = dir.join(&m.id);
+    if home.join("model.onnx").exists() {
+        return Err(bad(c, "that model is already installed; remove it before installing a replacement"));
+    }
     std::fs::create_dir_all(&home).map_err(|e| fail("could not create the model's folder", e))?;
+    let mut cleanup = InstallCleanup { home: home.clone(), armed: true };
     let (part, final_path) = (home.join("model.onnx.part"), home.join("model.onnx"));
     let _ = std::fs::remove_file(&part);
     let placed: Result<()> = match ident.entry {
@@ -162,26 +174,24 @@ fn install_file(s: &mut Session, c: &str, src: &Path, acknowledged: bool, activa
             return Err(e);
         }
     };
-    let _ = std::fs::remove_file(&final_path);
-    if let Err(e) = std::fs::rename(&part, &final_path) {
-        let _ = std::fs::remove_file(&part);
-        return Err(fail("could not finish the copy", e));
-    }
-    // a model that does not work is never left installed
-    let run_on = s.denoise.settings.run_on();
-    let test = (s.denoise.loader)(&final_path, &m).and_then(|model| model.self_test(run_on));
-    let test = match test {
+    // Test the staged file first. A failed replacement preserves the installed model.
+    let model = loader(&part, &m).map_err(|e| bad(c, e))?;
+    let test = match model.self_test(run_on) {
         Ok(t) => t,
         Err(e) => {
-            let _ = std::fs::remove_file(&final_path);
-            let _ = std::fs::remove_file(home.join("denoise-model.json"));
-            let _ = std::fs::remove_dir(&home);
+            let _ = std::fs::remove_file(&part);
             return Err(bad(c, e));
         }
     };
+    // An installed id is immutable: installing again must never destroy a usable model.
+    if final_path.exists() {
+        let _ = std::fs::remove_file(&part);
+        return Err(bad(c, "that model is already installed; remove it before installing a replacement"));
+    }
+    std::fs::rename(&part, &final_path).map_err(|e| fail("could not finish the copy", e))?;
     write_atomic(&home.join("denoise-model.json"), &serde_json::to_vec_pretty(&m).map_err(|e| fail("manifest", e))?).map_err(EngineError::Other)?;
     let accepted = json!({
-        "acceptedAt": (s.clock)(),
+        "acceptedAt": accepted_at,
         "licence": m.licence.name,
         "commercial": m.licence.commercial,
         "fileName": ident.file_name,
@@ -189,26 +199,116 @@ fn install_file(s: &mut Session, c: &str, src: &Path, acknowledged: bool, activa
         "selfTest": test,
     });
     write_atomic(&home.join("installed.json"), &serde_json::to_vec_pretty(&accepted).map_err(|e| fail("record", e))?).map_err(EngineError::Other)?;
-    // a file that was downloaded and waited for the user's acceptance has served: the installed copy is the model now
-    if src.parent() == Some(dir.join(model_download::STAGING).as_path()) {
-        let _ = std::fs::remove_file(src);
-        s.denoise.downloads.staged_file_used(src);
+    cleanup.armed = false;
+    Ok((json!({"installed": row(&m, known::find(&m.id).and_then(|k| host_of(&k)), true, false, &accepted), "model": m.id}), model))
+}
+
+/// Removes only files created for this new installation, including on a worker panic.
+struct InstallCleanup {
+    home: PathBuf,
+    armed: bool,
+}
+impl Drop for InstallCleanup {
+    fn drop(&mut self) {
+        if self.armed {
+            for name in ["model.onnx.part", "model.onnx", "denoise-model.json", "installed.json"] {
+                let _ = std::fs::remove_file(self.home.join(name));
+            }
+            let _ = std::fs::remove_dir(&self.home);
+        }
     }
+}
+
+pub(crate) struct InstallJob {
+    id: String,
+    activate: bool,
+    result: mpsc::Receiver<std::result::Result<(Value, Arc<dyn crate::denoise::Model>), String>>,
+}
+
+fn activate_install(s: &mut Session, result: &Value, model: Arc<dyn crate::denoise::Model>, activate: bool) -> Result<Value> {
+    let dir = models_dir(s, "denoise.models.install")?;
+    let id = result["installed"]["id"].as_str().ok_or_else(|| bad("denoise.models.install", "missing installed id"))?;
     let mut st = read_settings(&dir);
     if activate {
-        st.model = Some(m.id.clone());
+        st.model = Some(id.to_string());
         write_settings(&dir, &st).map_err(EngineError::Other)?;
     }
     s.denoise.touch();
     s.denoise_refresh_active(true);
-    let host = known::find(&m.id).and_then(|k| host_of(&k));
-    Ok(json!({"installed": row(&m, host, true, st.model.as_deref() == Some(m.id.as_str()), &accepted), "model": st.model}))
+    if let Some(a) = &s.denoise.active
+        && a.id == id
+    {
+        *a.model.lock().unwrap_or_else(PoisonError::into_inner) = Some(model);
+    }
+    let mut v = result.clone();
+    v["installed"]["selected"] = json!(st.model.as_deref() == Some(id));
+    v["model"] = json!(st.model);
+    Ok(v)
+}
+
+fn start_install(s: &mut Session, src: PathBuf, id: String, activate: bool, verified: bool) -> Result<Value> {
+    const C: &str = "denoise.models.install";
+    if s.denoise.install.is_some() {
+        return Err(bad(C, "another model is being installed"));
+    }
+    let dir = models_dir(s, C)?;
+    let loader = s.denoise.loader.clone();
+    let run_on = s.denoise.settings.run_on();
+    let at = (s.clock)();
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("denoise-model-install".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _held = crate::memory::work_gate().acquire(512 * 1024 * 1024);
+                install_file(&dir, &loader, run_on, at, C, &src, true, verified).map_err(|e| plain(&e))
+            }))
+            .unwrap_or_else(|_| Err("the model installation stopped unexpectedly".into()));
+            if verified {
+                let _ = std::fs::remove_file(&src);
+            }
+            let _ = tx.send(outcome);
+        })
+        .map_err(|e| bad(C, format!("could not start installation: {e}")))?;
+    s.denoise.install = Some(InstallJob { id: id.clone(), activate, result: rx });
+    s.denoise.downloads.set_outcome(&id, State::Installing);
+    Ok(json!({"started": id}))
 }
 
 fn install(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "denoise.models.install";
     let path = str_param(p, "path").ok_or_else(|| bad(C, "missing `path`"))?;
-    install_file(s, C, Path::new(path), bool_or(p, "acknowledged", false), bool_or(p, "activate", true), false)
+    let acknowledged = bool_or(p, "acknowledged", false);
+    let activate = bool_or(p, "activate", true);
+    if !acknowledged {
+        return Err(bad(C, "the licence has not been accepted: show its terms first"));
+    }
+    if bool_or(p, "background", false) {
+        return start_install(s, PathBuf::from(path), "local-install".into(), activate, false);
+    }
+    if s.denoise.install.is_some() {
+        return Err(bad(C, "another model is being installed"));
+    }
+    let (result, model) =
+        install_file(&models_dir(s, C)?, &s.denoise.loader, s.denoise.settings.run_on(), (s.clock)(), C, Path::new(path), acknowledged, false)?;
+    activate_install(s, &result, model, activate)
+}
+
+/// Read only the small adjacent manifest; hashing and execution happen in the install worker.
+fn inspect(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "denoise.models.inspect";
+    let path = str_param(p, "path").ok_or_else(|| bad(C, "missing `path`"))?;
+    let src = Path::new(path);
+    if !src.extension().is_some_and(|e| e.eq_ignore_ascii_case("onnx")) {
+        return Err(bad(C, "choose an .onnx file with denoise-model.json beside it"));
+    }
+    let bytes = read_capped(&src.with_file_name("denoise-model.json"), MAX_MANIFEST_BYTES)
+        .ok_or_else(|| bad(C, "denoise-model.json is missing or too large"))?;
+    let m = manifest::parse(&bytes).map_err(|e| bad(C, e.to_string()))?;
+    let dir = models_dir(s, C)?;
+    Ok(json!({"kind": "model", "domain": "denoise", "path": path, "fileName": src.file_name().map(|n| n.to_string_lossy()), "model": m,
+        "sizeBytes": std::fs::metadata(src).ok().map(|m| m.len()), "alreadyInstalled": dir.join(&m.id).join("model.onnx").is_file()}))
 }
 
 /// What an error says, without the command it came from (for a line shown to the user).
@@ -222,16 +322,30 @@ fn plain(e: &EngineError) -> String {
 /// Install every download that has arrived: each was accepted when it was started, so it is installed and chosen without
 /// another question. Called by `denoise.models.downloads` and by every frame's `denoise.pump`.
 pub(crate) fn finish_downloads(s: &mut Session) {
-    const C: &str = "denoise.models.download";
-    for (id, path, _sha) in s.denoise.downloads.finished() {
-        match install_file(s, C, &path, true, true, true) {
-            Ok(_) => s.denoise.downloads.set_outcome(&id, State::Installed),
-            Err(e) => {
-                // a file that cannot be installed is of no use to anyone: throw it away, say why
-                let _ = std::fs::remove_file(&path);
-                s.denoise.downloads.set_outcome(&id, State::Failed(plain(&e)));
-            }
+    if let Some(job) = &s.denoise.install {
+        let outcome = match job.result.try_recv() {
+            Ok(v) => Some(v),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err("the installation worker stopped".into())),
+        };
+        if let Some(outcome) = outcome
+            && let Some(job) = s.denoise.install.take()
+        {
+            let state = match outcome {
+                Ok((v, model)) => match activate_install(s, &v, model, job.activate) {
+                    Ok(_) => State::Installed,
+                    Err(e) => State::Failed(plain(&e)),
+                },
+                Err(e) => State::Failed(e),
+            };
+            s.denoise.downloads.set_outcome(&job.id, state);
         }
+    }
+    if s.denoise.install.is_none()
+        && let Some((id, path, _sha)) = s.denoise.downloads.finished().into_iter().next()
+        && let Err(e) = start_install(s, path, id.clone(), true, true)
+    {
+        s.denoise.downloads.set_outcome(&id, State::Failed(plain(&e)));
     }
 }
 
@@ -263,6 +377,7 @@ fn download_row(id: &str, state: &State) -> Value {
     match state {
         State::Running { bytes, total } => json!({"id": id, "state": "running", "bytes": bytes, "total": total, "from": from}),
         State::Done { path, .. } => json!({"id": id, "state": "done", "path": path.display().to_string(), "from": from}),
+        State::Installing => json!({"id": id, "state": "installing", "from": from}),
         State::Installed => json!({"id": id, "state": "installed", "from": from}),
         State::Failed(why) => json!({"id": id, "state": "failed", "error": why, "from": from}),
         State::Cancelled => json!({"id": id, "state": "cancelled", "from": from}),
@@ -517,7 +632,8 @@ fn clear(s: &mut Session, _: &Value) -> Result<Value> {
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "denoise.models.list", "Denoise Models", [], None, "{} → {dir, productsDir, model, runtime, auto, cacheGb, threads, runOn, models: [{id, name, version, licence{name, commercial, url, notice}, provenance, source, sizeBytes, sha256, tile, known, downloadHost, installed, selected, accepted}]}", always, list),
-        cmd!(query "denoise.models.install", "Install Denoise Model", [], None, "{path, acknowledged: true, activate?: true} → {installed, model} — install a denoise model from a file: an .onnx with a denoise-model.json beside it, or an archive LightCraft knows (the darktable `.dtmodel`). `acknowledged` must be true: the user has been shown the model's licence and accepted it. Unless `activate` is false it becomes the model in use", always, install),
+        cmd!(query "denoise.models.inspect", "Inspect Denoise Model", [], None, "{path} → model terms from an adjacent manifest; never executes the file", always, inspect),
+        cmd!(query "denoise.models.install", "Install Denoise Model", [], None, "{path, acknowledged: true, activate?: true, background?: false} → {installed, model} or {started} — install a denoise model from a file: an .onnx with a denoise-model.json beside it, or an archive LightCraft knows (the darktable `.dtmodel`). `acknowledged` must be true: the user has been shown the model's licence and accepted it. Unless `activate` is false it becomes the model in use", always, install),
         cmd!(query "denoise.models.download", "Download Denoise Model", [], None, "{id, acknowledged: true} → {started, from} — fetch a model LightCraft has a pinned address for (see `downloadHost` in the list) in the background over HTTPS with lightcraft-fetch. `acknowledged` must be true: the user has been shown the model's terms and accepted them. It is checked against its size and SHA-256, installed and chosen by itself; `denoise.models.downloads` shows how far it is", always, download),
         cmd!(query "denoise.models.downloads", "Denoise Model Downloads", [], None, "{} → {running, downloads: [{id, state: running | done | installed | failed | cancelled, bytes, total, error, from}]} — also installs any download that has arrived", always, downloads),
         cmd!(query "denoise.models.downloadCancel", "Cancel Denoise Model Download", [], None, "{id} → {discarded} — stop a download, or delete a finished one that was not installed", always, download_cancel),

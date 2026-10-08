@@ -408,10 +408,20 @@ mod cpu_tests {
         }
         let path = std::env::temp_dir().join(format!("lc-cpu-load-{}.onnx", std::process::id()));
         std::fs::write(&path, crate::synthetic::unet_onnx(64, 5, 1, 7)).unwrap();
-        let mut m = crate::known::find("rawnind-bayer").unwrap().manifest;
-        m.tile = 64;
-        m.overlap = 16;
-        m.gain = Gain::None;
+        let mut m = DenoiserManifest {
+            id: "synthetic".into(),
+            name: "Synthetic".into(),
+            version: "1".into(),
+            licence: Default::default(),
+            source: None,
+            sha256: None,
+            size_bytes: None,
+            provenance: "synthetic test".into(),
+            domain: crate::manifest::Domain::BayerToRgb,
+            tile: 64,
+            overlap: 16,
+            gain: Gain::None,
+        };
         let r = CpuRunner::load(&path, &m).unwrap();
         let x = check_tile(64);
         assert_eq!(r.run(&x).unwrap(), r.run(&x).unwrap());

@@ -15,22 +15,29 @@ An active slider gesture finishes before the pending action resumes.
 ## Models and terms
 
 **No model weights are bundled.** Models live in the per-user `denoise-models` folder
-(override with `LIGHTCRAFT_DENOISE_MODELS`). Settings offers a pinned, verified download
-of RawNIND UtNet2 for Bayer sensors, or installation of a user-supplied ONNX file with
-a `denoise-model.json` beside it. Terms must be acknowledged before installation or
+(override with `LIGHTCRAFT_DENOISE_MODELS`). Settings provides **Install from file…**
+for a user-supplied ONNX file with a `denoise-model.json` beside it. The default build
+offers no model downloads. The separate `rawnind-model` Cargo feature enables the
+pinned RawNIND offer only when a release's model policy permits it.
+Terms must be acknowledged before installation or
 download. Downloads use the shared pure-Rust `lightcraft-fetch` client, with resume,
 progress, cancellation, size limits and SHA-256 verification.
 
-RawNIND's offered ONNX weights are **GPL-3.0**, as recorded in the pinned model catalog.
+RawNIND's optional ONNX weights are **GPL-3.0**, as recorded in the pinned model catalog.
 They are downloaded separately after consent and read by our own Rust executor.
 Whether releases should offer this download remains a maintainer policy decision;
 permissively licensed or independently trained weights remain a gap. This is not a
 claim that optional downloading settles licensing questions. No GPL decoder or neural
-runtime code is included. Model metadata is in `crates/denoise/src/known.rs`.
+runtime code is included. Model metadata is in `crates/denoise-core/src/known.rs`.
 
 Installation checks the manifest, model hash and size, then runs a synthetic self-test:
 finite output of the promised shape, repeatability, the declared scale and reduced
 noise. Unsupported operators, malformed files and a failed self-test return errors.
+The UI performs copying, extraction, hashing, parsing and CPU/GPU self-tests on one
+background installation worker. `denoise.models.downloads` and `denoise.pump` report
+`installing`, `installed` or `failed`; an existing model is preserved on a failed replacement.
+Command clients can request the same asynchronous path with `background: true`.
+The synchronous command remains available for scripts that require the result immediately.
 
 The current contract is `bayerToRgb`: normalized, black-subtracted, non-white-balanced
 RGGB planes `[1, 4, tile, tile]` produce camera RGB `[1, 3, 2*tile, 2*tile]`.
@@ -63,10 +70,16 @@ reduction and report their limitation.
 ## Pure-Rust CPU and GPU execution
 
 The CPU executor reads a bounded subset of ONNX into checked network data. Convolutions
-use bounded im2col blocks and `faer-core 0.17.1` with its Rust-intrinsic GEMM kernels,
-without BLAS, generated assembly or an inner thread pool. Tiles share the outer worker
+use bounded im2col blocks and `faer-core 0.17.1` with its pure-Rust GEMM backend,
+without BLAS, C dependencies or an inner thread pool. That backend includes
+architecture-specific assembly in its dependencies. Tiles share the outer worker
 pool. A scalar implementation checks the optimized operators on synthetic networks.
 Tract is not a workspace dependency or a product feature.
+CPU inference and the GPU model module are feature-gated; ordinary engine/web builds
+do not compile the faer/GEMM backend. The engine depends on the inference crate only through `denoise = ["dep:lightcraft-denoise", …]`;
+lightweight `lightcraft-denoise-core` metadata and cache formats remain available without inference. Pictures are capped at 100 megapixels; at most
+four tile calls run together, chosen within the process-wide working-memory budget.
+One idle CPU workspace is retained, and cache costs reserve room for the blended picture.
 
 The GPU executor uses our WGSL kernels through wgpu. It checks a real model's output
 against the CPU and falls back on errors, unsupported networks or a slower device.
@@ -97,8 +110,8 @@ Fresh checks can be run using an already installed model and CC0 raw samples:
 
 ```text
 LC_DENOISE_MODEL=<model.onnx> cargo test --release -p lightcraft-gpu --lib real_model_on_the_gpu_matches_cpu -- --ignored --nocapture
-LC_DENOISE_MODEL=<model.onnx> LC_DENOISE_RAW=<corpus/raw> cargo test --release -p lightcraft-engine --features denoise --test denoise_cpu -- --ignored --nocapture
-LC_DENOISE_MODEL=<model.onnx> LC_DENOISE_RAW=<corpus/raw> cargo test --release -p lightcraft-engine --features denoise --test denoise_real -- --ignored --nocapture
+LC_DENOISE_MODEL=<model.onnx> LC_DENOISE_RAW=<corpus/raw> cargo test --release -p lightcraft-engine --features rawnind-model --test denoise_cpu -- --ignored --nocapture
+LC_DENOISE_MODEL=<model.onnx> LC_DENOISE_RAW=<corpus/raw> cargo test --release -p lightcraft-engine --features rawnind-model --test denoise_real -- --ignored --nocapture
 ```
 
 ## Commands and limits

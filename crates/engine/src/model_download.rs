@@ -35,6 +35,7 @@ pub enum State {
         sha256: String,
     },
     /// Installed and in use: nothing more to do but tell the user.
+    Installing,
     Installed,
     Failed(String),
     Cancelled,
@@ -107,7 +108,7 @@ impl Downloads {
         job.cancel.store(true, Ordering::Relaxed);
         match job.get() {
             // the thread notices, deletes the partial file and marks itself cancelled
-            State::Running { .. } => {}
+            State::Running { .. } | State::Installing => {}
             State::Done { path, .. } => {
                 let _ = std::fs::remove_file(path);
                 self.jobs.remove(id);
@@ -117,11 +118,6 @@ impl Downloads {
             }
         }
         true
-    }
-
-    /// The staged file at `path` has been installed (its copy is the model now) or is no longer wanted.
-    pub fn staged_file_used(&mut self, path: &Path) {
-        self.jobs.retain(|_, j| !matches!(j.get(), State::Done { path: p, .. } if p == path));
     }
 
     /// Downloads that have arrived and been checked, ready to install: (model id, staged file, its SHA-256).
@@ -157,7 +153,7 @@ impl Drop for Downloads {
         for job in self.jobs.values() {
             job.cancel.store(true, Ordering::Relaxed);
         }
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         while self.running() && started.elapsed() < Duration::from_secs(1) {
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -336,7 +332,7 @@ mod tests {
         let mut d = Downloads::default();
         d.jobs.insert("m".into(), shared.clone());
         assert!(d.running());
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         drop(d);
         assert!(started.elapsed() < Duration::from_millis(900), "quitting must not wait for a transfer to finish");
         assert_eq!(shared.get(), State::Cancelled);
