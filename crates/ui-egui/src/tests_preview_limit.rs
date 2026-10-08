@@ -169,15 +169,20 @@ mod in_the_loupe {
         t.size[0].max(t.size[1])
     }
 
-    // Given a photo larger than the old 2560 px cap, when I zoom to 1:1, then the loupe holds its pixels
+    // Given a photo larger than the canvas, when I zoom to 1:1, then the whole frame stays about
+    // canvas-sized (a drag redoes that, not 24 MP) and the pixels on screen come from a window
+    // cut from the photo's own pixels
     #[test]
-    fn one_to_one_is_rendered_at_the_photos_own_size() {
+    fn one_to_one_is_a_canvas_sized_frame_plus_a_native_window() {
         let (mut h, native) = detail();
         h.request("engine.execute", json!({"command": "view.zoom100"}), T);
         h.settle(SETTLE);
-        let want = native.min(crate::state::LOUPE_EDGE_CEILING as usize);
-        let got = rendered_long_edge(&h);
-        assert!(got.abs_diff(want) <= 2, "native {native}: rendered {got}, wanted {want}");
+        let main = rendered_long_edge(&h);
+        assert!(main <= 2560 && main < native, "native {native}: the whole-frame render is {main}");
+        let region = h.app.region_view.expect("a window render");
+        assert_eq!(region.full.0.max(region.full.1), native, "the window is cut from the photo's own pixels");
+        let (w, hh) = region_tile(&h).expect("its texture");
+        assert!(w >= 1300 && hh >= 700, "it covers the canvas: {w}×{hh}");
     }
 
     // Given the user capped the preview at 1600 px, then 1:1 is rendered no larger than that
@@ -195,13 +200,12 @@ mod in_the_loupe {
         h.app.renderer.textures.get(&Slot::Region).map(|t| (t.size[0], t.size[1]))
     }
 
-    // Given a photo that fits the whole-frame render at 1:1, then no second render is made
+    // Given a fit view, the whole-frame render is all there is: no second render, no original decoded
     #[test]
-    fn no_window_render_while_the_whole_frame_render_is_sharp_enough() {
-        let (mut h, _) = detail();
-        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
-        h.settle(SETTLE);
+    fn a_fit_view_makes_no_window_render() {
+        let (h, _) = detail();
         assert_eq!(region_tile(&h), None);
+        assert_eq!(h.app.region_view, None);
     }
 
     // Given the user capped the preview at 1600 px, when I zoom to 1:1, then the visible part is
@@ -342,5 +346,23 @@ mod in_the_loupe {
             let main = h.app.renderer.textures.get(&Slot::Main).expect("loupe");
             assert!(main.size[0].max(main.size[1]) >= 700, "still a real render, not a thumbnail: {:?}", main.size);
         }
+    }
+
+    // Given 400 % on a big photo, when a slider is dragged, then the work per frame follows the
+    // canvas, not the zoom: a draft of the whole frame at canvas scale and a draft of the window
+    #[test]
+    fn a_slider_drag_when_zoomed_in_renders_canvas_sized_drafts() {
+        let (mut h, native) = detail();
+        h.app.ui.zoom = crate::state::Zoom::Percent(400.0);
+        h.settle(SETTLE);
+        h.app.session.begin_interaction("Exposure").unwrap();
+        h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": 0.5}}), T);
+        h.settle(SETTLE);
+        let main = rendered_long_edge(&h);
+        assert!(main <= 1000 && main * 4 < native, "the whole-frame draft is {main} px for a {native} px photo");
+        let region = h.app.region_view.expect("the window is drafted too");
+        assert_eq!(region.full.0.max(region.full.1), native, "at 100 %, magnified by the GPU");
+        let (w, hh) = region_tile(&h).expect("a window draft");
+        assert!(w * hh <= 3_000_000, "{w}×{hh}: the window holds what is on screen, not the frame");
     }
 }

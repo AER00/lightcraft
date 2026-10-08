@@ -298,7 +298,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let scale = if interacting { 0.6 } else { 1.0 };
     // render at the final size: a click-zoom animation only changes how the result is drawn
     let native_long = native[0].max(native[1]);
-    let want = app.ui.settings.loupe_edge(target_rect.width().max(target_rect.height()) * ppp * scale, native_long, texture_side);
+    let drawn_long = target_rect.width().max(target_rect.height()) * ppp;
+    // the whole frame at about canvas size; the zoomed part of it is a window render (below)
+    let plan = crate::region::plan(
+        &app.ui.settings,
+        crate::region::ViewSizes {
+            drawn_long,
+            canvas_long: canvas.width().max(canvas.height()) * ppp,
+            native_long,
+            texture_side,
+            draft_scale: scale,
+        },
+    );
+    let want = plan.main_edge;
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     // hover and before renders are stand-ins: the preview size is plenty and keeps them cheap
     let se = app.ui.settings.stand_in_edge(want, texture_side);
@@ -352,39 +364,39 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     {
         app.renderer.request(Slot::Before, job, 90);
     }
-    // zoomed past what the whole-frame render holds: also render the part on screen at the zoom
-    // scale (not while comparing, hovering a look or showing an overlay: those draw one image; and
-    // not during a drag, whose draft is what shows until it ends)
+    // zoomed past what the whole-frame render holds: also render the part on screen, at no more
+    // than 100 % (the GPU magnifies beyond that). Not while comparing, hovering a look or showing
+    // an overlay (those draw one image), nor where the shown picture isn't the frame's own (an
+    // unsupported raw's embedded JPEG with another crop: window coordinates are the frame's).
     let plain_view = !split
         && !show_before
         && !split_view
         && hover_key.is_none()
         && !app.ui.soft_proof
-        && view_overlay(app, &d) == lightcraft_pipeline::Overlay::None;
-    let drawn_long = target_rect.width().max(target_rect.height()) * ppp;
-    let settled_edge = app.ui.settings.loupe_edge(drawn_long, native_long, texture_side);
-    let region_possible = plain_view && crate::region::needed(drawn_long, settled_edge);
+        && view_overlay(app, &d) == lightcraft_pipeline::Overlay::None
+        && crate::region::same_aspect(display_aspect, aspect);
     let look = d.hash64();
     let mut region_full = None;
-    if region_possible {
-        let (fw, fh) = if aspect >= 1.0 { (drawn_long, drawn_long / aspect) } else { (drawn_long * aspect, drawn_long) };
+    if let Some(frame_edge) = plan.window_edge.filter(|_| plain_view) {
+        let (fw, fh) = if aspect >= 1.0 { (frame_edge as f32, frame_edge as f32 / aspect) } else { (frame_edge as f32 * aspect, frame_edge as f32) };
         let (fw, fh) = (fw.round().max(1.0) as usize, fh.round().max(1.0) as usize);
         region_full = Some((fw, fh));
-        // what is on screen, in pixels of the zoomed frame
-        let to_px = |v: f32| v * ppp;
+        // what is on screen, in pixels of the window's frame (the drawn frame, scaled)
+        let to_px = ppp * frame_edge as f32 / drawn_long.max(1.0);
         let visible = (
-            to_px(canvas.left() - target_rect.left()),
-            to_px(canvas.top() - target_rect.top()),
-            to_px(canvas.right() - target_rect.left()),
-            to_px(canvas.bottom() - target_rect.top()),
+            to_px * (canvas.left() - target_rect.left()),
+            to_px * (canvas.top() - target_rect.top()),
+            to_px * (canvas.right() - target_rect.left()),
+            to_px * (canvas.bottom() - target_rect.top()),
         );
-        if !interacting
-            && let Some(win) = crate::region::window_for(fw, fh, visible, crate::region::max_span(texture_side))
+        if let Some(win) = crate::region::window_for(fw, fh, visible, crate::region::max_span(texture_side))
             && let Some(job) = app.session.region_job(id, fw, fh, win, !crop_tool)
         {
+            // a drag renders drafts of the window, as it does of the whole frame
+            let job = if interacting { job.draft() } else { job };
             let view = crate::region::RegionView { photo: id, key: job.key, full: (fw, fh), window: win, settings: look };
             // windows of other photos, looks and zooms can't be drawn any more
-            app.region_tiles.retain(|_, v| v.is_current(id, (fw, fh), look));
+            app.region_tiles.retain(|_, v| v.is_current(id, (fw, fh), look, interacting));
             app.region_tiles.insert(job.key, view);
             app.region_view = Some(view);
             app.renderer.request(Slot::Region, job, 99);
@@ -461,7 +473,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // the window render, drawn over the whole-frame one where it belongs in the frame
     if let Some(full) = region_full
         && let Some(tex) = app.renderer.textures.get(&Slot::Region).filter(|t| t.photo == id)
-        && let Some(v) = app.region_tiles.get(&tex.key).filter(|v| v.is_current(id, full, look))
+        && let Some(v) = app.region_tiles.get(&tex.key).filter(|v| v.is_current(id, full, look, interacting))
     {
         let (fw, fh) = (v.full.0 as f32, v.full.1 as f32);
         let at = img_rect.min + vec2(v.window.x as f32 / fw * img_rect.width(), v.window.y as f32 / fh * img_rect.height());

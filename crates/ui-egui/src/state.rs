@@ -218,6 +218,15 @@ impl AppSettings {
         loupe_edge.min(lightcraft_engine::SourceLevel::Preview.max_edge()).min(texture_side.max(MIN_TEXTURE_SIDE))
     }
 
+    /// Long edge of the zoomed frame a window render is cut from, for a photo drawn `drawn_long`
+    /// px along its long edge: as drawn, but never above the photo's own pixels (beyond 100 % the
+    /// GPU magnifies the window) or the ceiling. The preview size limit is not applied: it is about
+    /// the whole-frame render (see [`crate::region::plan`]).
+    pub fn window_frame_edge(&self, drawn_long: f32, native_long_edge: usize) -> usize {
+        let wanted = if drawn_long.is_nan() { 8.0 } else { drawn_long.clamp(8.0, LOUPE_EDGE_CEILING as f32) } as usize;
+        wanted.min(native_long_edge.max(8)).min(LOUPE_EDGE_CEILING as usize)
+    }
+
     /// The edge Build Standard-Sized Previews uses.
     pub fn standard_preview_edge(&self) -> u32 {
         if self.preview_limit == 0 { STANDARD_PREVIEW_EDGE } else { self.preview_limit }

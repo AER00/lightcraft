@@ -30,8 +30,11 @@ pub struct RegionView {
 impl RegionView {
     /// Whether this window's pixels still belong in a loupe showing `photo` with `settings` in a
     /// frame of `full` pixels (they are drawn until the next window arrives, if so).
-    pub fn is_current(&self, photo: lightcraft_catalog::PhotoId, full: (usize, usize), settings: u64) -> bool {
-        self.photo == photo && self.full == full && self.settings == settings
+    ///
+    /// While a slider is dragged (`drafting`) a window made for an earlier value of it still
+    /// belongs: drafts follow the drag, and waiting for an exact match would show none.
+    pub fn is_current(&self, photo: lightcraft_catalog::PhotoId, full: (usize, usize), settings: u64, drafting: bool) -> bool {
+        self.photo == photo && self.full == full && (drafting || self.settings == settings)
     }
 }
 
@@ -47,6 +50,61 @@ pub fn margin_for(full_long: usize) -> usize {
 /// browser build) panic. A multiple of [`SNAP`], at least one grid step, at most [`MAX_SPAN`].
 pub fn max_span(texture_side: usize) -> usize {
     (texture_side.min(MAX_SPAN) / SNAP * SNAP).max(SNAP)
+}
+
+/// A window render is worth it only when the whole-frame render is this much smaller than the
+/// zoomed frame: a little softness (a Retina fit view of 2800 px from the 2560 px preview) is not
+/// worth decoding the original for.
+pub const WINDOW_RATIO: f32 = 1.25;
+
+/// How big the loupe's view of the photo is, and what the host allows.
+#[derive(Clone, Copy, Debug)]
+pub struct ViewSizes {
+    /// Long edge of the photo as drawn (physical px): the zoomed frame.
+    pub drawn_long: f32,
+    /// Long edge of the canvas it is drawn in (physical px).
+    pub canvas_long: f32,
+    /// The photo's own long edge as shown (after crop and rotation).
+    pub native_long: usize,
+    /// The largest texture the GPU takes.
+    pub texture_side: usize,
+    /// 1.0, or less while a slider is dragged (a draft of the whole-frame render).
+    pub draft_scale: f32,
+}
+
+/// What the loupe renders for a view: the whole frame at about canvas size, and, once the view is
+/// zoomed past what that holds, the window on screen at no more than 100 %.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoupePlan {
+    /// Long edge of the whole-frame render ([`Slot::Main`](crate::render::Slot::Main)): never more
+    /// than the canvas shows, the user's preview limit, the texture side or the preview source level.
+    pub main_edge: usize,
+    /// Long edge of the zoomed frame the window is cut from (never above the photo's own pixels:
+    /// beyond 100 % the GPU magnifies the window), or `None`: the whole-frame render is enough.
+    pub window_edge: Option<usize>,
+}
+
+/// The loupe's render plan. The cost of a render follows the canvas, not the zoom: the whole-frame
+/// render is canvas-sized, and the window holds only the pixels on screen at no more than 100 %.
+pub fn plan(settings: &crate::state::AppSettings, v: ViewSizes) -> LoupePlan {
+    let canvas_long = if v.canvas_long.is_finite() { v.canvas_long.max(8.0) } else { 8.0 };
+    let drawn_long = if v.drawn_long.is_finite() { v.drawn_long.max(8.0) } else { canvas_long };
+    let scale = if v.draft_scale.is_finite() { v.draft_scale.clamp(0.1, 1.0) } else { 1.0 };
+    let main_edge = settings
+        .loupe_edge(drawn_long.min(canvas_long) * scale, v.native_long, v.texture_side)
+        .min(lightcraft_engine::SourceLevel::Preview.max_edge());
+    let frame_edge = settings.window_frame_edge(drawn_long, v.native_long);
+    // a user who capped the preview size has chosen speed over sharpness at fit
+    let fit = drawn_long <= canvas_long * 1.05;
+    let window_edge = (frame_edge as f32 > main_edge as f32 / scale * WINDOW_RATIO && !(fit && settings.preview_limit != 0)).then_some(frame_edge);
+    LoupePlan { main_edge, window_edge }
+}
+
+/// Whether the picture on screen has the frame's aspect (to the one pixel a texture's whole-pixel
+/// size is off by): a window is a part of the frame, so it can only be placed over a picture that
+/// is the frame (an unsupported raw's embedded JPEG may be cropped differently).
+pub fn same_aspect(shown: f32, frame: f32) -> bool {
+    shown.is_finite() && frame.is_finite() && frame > 0.0 && (shown / frame - 1.0).abs() <= 0.02
 }
 
 /// Whether a view drawn `drawn_long` pixels along its long edge needs a window render on top of
@@ -87,6 +145,110 @@ pub fn window_for(full_w: usize, full_h: usize, visible: (f32, f32, f32, f32), m
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::AppSettings;
+
+    const BIG: usize = 16384;
+
+    fn sizes(drawn: f32, canvas: f32, native: usize) -> ViewSizes {
+        ViewSizes { drawn_long: drawn, canvas_long: canvas, native_long: native, texture_side: BIG, draft_scale: 1.0 }
+    }
+
+    fn auto() -> AppSettings {
+        AppSettings::default()
+    }
+
+    // Given a fit view on a Retina Mac (about 2800 px), the preview is enough: no original decoded
+    #[test]
+    fn a_retina_fit_view_needs_no_window() {
+        let p = plan(&auto(), sizes(2800.0, 2800.0, 6000));
+        assert_eq!(p.main_edge, 2560, "the preview source level");
+        assert_eq!(p.window_edge, None);
+    }
+
+    // Given a 4K display, the fit view is 1.5x the preview: the window makes it sharp
+    #[test]
+    fn a_large_fit_view_gets_a_window() {
+        let p = plan(&auto(), sizes(3840.0, 3840.0, 6000));
+        assert_eq!((p.main_edge, p.window_edge), (2560, Some(3840)));
+    }
+
+    // Given 1:1 on a 24 MP photo in a 2800 px canvas, the whole frame stays canvas-sized and the
+    // window is cut from the photo's own pixels
+    #[test]
+    fn one_to_one_renders_the_canvas_and_a_native_window() {
+        let p = plan(&auto(), sizes(6000.0, 2800.0, 6000));
+        assert_eq!((p.main_edge, p.window_edge), (2560, Some(6000)));
+    }
+
+    // Given 800 %, the window is still at 100 % (the GPU magnifies it): the cost does not grow
+    #[test]
+    fn beyond_one_to_one_the_window_stays_at_native_resolution() {
+        let p = plan(&auto(), sizes(48000.0, 2800.0, 6000));
+        assert_eq!((p.main_edge, p.window_edge), (2560, Some(6000)));
+        let q = plan(&auto(), sizes(480.0 * 100.0, 2800.0, 6000));
+        assert_eq!(q.window_edge, Some(6000));
+    }
+
+    // Given a small photo zoomed in, the whole-frame render already holds all its pixels
+    #[test]
+    fn a_small_photo_needs_no_window() {
+        let p = plan(&auto(), sizes(8000.0, 1400.0, 1000));
+        assert_eq!((p.main_edge, p.window_edge), (1000, None));
+    }
+
+    // Given a slider drag at 400 % (drafts at 0.6 scale), the window plan does not change: it is
+    // the whole-frame draft that gets cheaper
+    #[test]
+    fn a_drag_shrinks_the_whole_frame_draft_not_the_window() {
+        let still = plan(&auto(), sizes(24000.0, 2800.0, 6000));
+        let drag = plan(&auto(), ViewSizes { draft_scale: 0.6, ..sizes(24000.0, 2800.0, 6000) });
+        assert!(drag.main_edge < still.main_edge, "{drag:?} vs {still:?}");
+        assert_eq!(drag.window_edge, still.window_edge);
+    }
+
+    // Given the user capped the preview size, the whole-frame render obeys it, and a fit view
+    // stays on it (no original decoded); a zoomed view still gets its sharp window
+    #[test]
+    fn a_preview_limit_caps_the_whole_frame_render_and_spares_the_fit_view() {
+        let s = AppSettings { preview_limit: 1600, ..Default::default() };
+        let fit = plan(&s, sizes(2800.0, 2800.0, 6000));
+        assert_eq!((fit.main_edge, fit.window_edge), (1600, None));
+        let zoomed = plan(&s, sizes(6000.0, 2800.0, 6000));
+        assert_eq!((zoomed.main_edge, zoomed.window_edge), (1600, Some(6000)));
+    }
+
+    // Given a GPU with 2048 px textures, the whole-frame render obeys it, the window frame need not
+    // (a window is cut to the texture side separately)
+    #[test]
+    fn the_texture_side_caps_the_whole_frame_render_only() {
+        let p = plan(&auto(), ViewSizes { texture_side: 2048, ..sizes(6000.0, 2800.0, 6000) });
+        assert_eq!((p.main_edge, p.window_edge), (2048, Some(6000)));
+    }
+
+    // Given a picture that is not the frame (an embedded JPEG cropped differently), no window
+    #[test]
+    fn a_window_needs_a_picture_with_the_frames_aspect() {
+        assert!(same_aspect(1.5, 1.5) && same_aspect(1.51, 1.5));
+        assert!(!same_aspect(1.5, 1.0) && !same_aspect(f32::NAN, 1.0) && !same_aspect(1.0, 0.0));
+    }
+
+    // Given a drag at fit on a Retina Mac, the window does not switch on (it would flicker with the drag)
+    #[test]
+    fn a_drag_at_fit_does_not_switch_the_window_on() {
+        let p = plan(&auto(), ViewSizes { draft_scale: 0.6, ..sizes(2800.0, 2800.0, 6000) });
+        assert_eq!(p.window_edge, None);
+    }
+
+    // Hostile numbers give a plan, never a panic
+    #[test]
+    fn hostile_sizes_give_a_usable_plan() {
+        for v in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -3.0, 0.0] {
+            let p = plan(&auto(), ViewSizes { drawn_long: v, canvas_long: v, draft_scale: v, ..sizes(1.0, 1.0, 6000) });
+            assert!((8..=2560).contains(&p.main_edge), "{v}: {p:?}");
+        }
+        let p = plan(&auto(), sizes(1000.0, 1000.0, 0));
+        assert!(p.main_edge >= 8);
+    }
 
     // Given a view drawn at 6000 px and a render of 6000, no window is needed; at 6000 vs 2560 it is
     #[test]
@@ -147,10 +309,12 @@ mod tests {
     fn a_tile_is_drawn_only_while_it_shows_what_the_loupe_shows() {
         use lightcraft_catalog::PhotoId;
         let v = RegionView { photo: PhotoId(1), key: 7, full: (6000, 4000), window: PixelWindow { x: 0, y: 0, w: 256, h: 256 }, settings: 11 };
-        assert!(v.is_current(PhotoId(1), (6000, 4000), 11));
-        assert!(!v.is_current(PhotoId(2), (6000, 4000), 11), "another photo");
-        assert!(!v.is_current(PhotoId(1), (6000, 4001), 11), "another zoom");
-        assert!(!v.is_current(PhotoId(1), (6000, 4000), 12), "another look (an edit, an undo)");
+        assert!(v.is_current(PhotoId(1), (6000, 4000), 11, false));
+        assert!(!v.is_current(PhotoId(2), (6000, 4000), 11, false), "another photo");
+        assert!(!v.is_current(PhotoId(1), (6000, 4001), 11, false), "another zoom");
+        assert!(!v.is_current(PhotoId(1), (6000, 4000), 12, false), "another look (an edit, an undo)");
+        assert!(v.is_current(PhotoId(1), (6000, 4000), 12, true), "a drag's drafts follow the value");
+        assert!(!v.is_current(PhotoId(2), (6000, 4000), 12, true), "…of this photo only");
     }
 
     // Given a GPU that allows 2048 px textures, no window is wider than that
