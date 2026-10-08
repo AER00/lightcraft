@@ -23,7 +23,8 @@ impl Session {
             .into_iter()
             .find(|(x, _)| x.name.eq_ignore_ascii_case(name.trim()))
             .ok_or_else(|| format!("unknown export preset `{name}` (see export.presets)"))?;
-        let mut out = preset.params;
+        // a preset saved by another version may hold keys this one doesn't know: not the caller's typo
+        let mut out = crate::export::ExportOptions::known_keys_only(&preset.params);
         if let (Some(o), Some(own)) = (out.as_object_mut(), p.as_object()) {
             for (k, v) in own.iter().filter(|(k, _)| *k != "preset") {
                 o.insert(k.clone(), v.clone());

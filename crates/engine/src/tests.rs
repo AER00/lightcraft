@@ -850,3 +850,20 @@ fn selecting_an_unknown_photo_is_an_error_and_keeps_the_selection() {
     // an empty selection is still allowed
     assert_eq!(s.execute("library.select", &json!({"ids": []})).unwrap()["selected"], 0);
 }
+
+/// A preset saved by another version may hold keys this one doesn't know: exporting with it keeps
+/// working (the stale keys are dropped), while a typo the caller makes is still refused (#181).
+#[test]
+fn saved_presets_with_unknown_keys_still_export() {
+    use crate::export::{ExportOptions, ExportPreset};
+    let mut s = demo();
+    s.export_presets.push(ExportPreset {
+        name: "Old".into(),
+        params: json!({"format": "png", "retiredOption": 3, "watermark": {"text": "©", "retiredKey": true}}),
+    });
+    let p = s.export_params(&json!({"preset": "old", "quality": 80})).unwrap();
+    let o = ExportOptions::from_params(&p).unwrap();
+    assert_eq!(o.format, crate::export::ExportFormat::Png);
+    assert_eq!(o.watermark.map(|w| w.text), Some("©".to_string()));
+    assert!(ExportOptions::from_params(&s.export_params(&json!({"preset": "old", "qualty": 80})).unwrap()).is_err());
+}

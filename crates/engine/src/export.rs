@@ -688,6 +688,22 @@ fn whole(v: &serde_json::Value) -> Option<i64> {
 }
 
 impl ExportOptions {
+    /// Stored export settings (a saved preset, `prefs.json ▸ lastExport`) with the keys an older or
+    /// newer version may have written and this one doesn't know dropped, also inside `watermark`.
+    /// [`ExportOptions::validate`] is strict about what a caller types; settings saved on disk are
+    /// not the caller's typo, and refusing them would make a preset or Export with Previous fail
+    /// for good after an update.
+    pub fn known_keys_only(p: &serde_json::Value) -> serde_json::Value {
+        let mut p = p.clone();
+        if let Some(o) = p.as_object_mut() {
+            o.retain(|k, _| OPTION_PARAMS.contains(&k.as_str()) || TARGET_PARAMS.contains(&k.as_str()));
+            if let Some(w) = o.get_mut("watermark").and_then(serde_json::Value::as_object_mut) {
+                w.retain(|k, _| WATERMARK_PARAMS.contains(&k.as_str()));
+            }
+        }
+        p
+    }
+
     /// Strict [`ExportOptions::from_json`] for a command that is about to export (issue #181): an
     /// unknown parameter or a value that cannot be read as what it is for is an error, never a
     /// silent default. `app.export` targets (`id`, `ids`, `path`, `dir`, `preset`, `background`)
