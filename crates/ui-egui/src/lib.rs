@@ -15,6 +15,7 @@ pub mod icons;
 pub mod import;
 pub mod lightroom_import;
 pub mod links;
+pub mod menu_level;
 pub mod menubar;
 pub mod menus;
 pub mod merge;
@@ -43,6 +44,8 @@ mod tests_library_problem;
 mod tests_masking;
 #[cfg(test)]
 mod tests_masking_layout;
+#[cfg(test)]
+mod tests_menubar;
 #[cfg(test)]
 mod tests_offline;
 #[cfg(test)]
