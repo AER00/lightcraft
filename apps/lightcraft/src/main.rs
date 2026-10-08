@@ -286,7 +286,7 @@ fn services() -> Services {
         pick_lightroom_catalog: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .set_title(lightcraft_ui_egui::i18n::tr("Import Lightroom Catalog"))
-                .add_filter(lightcraft_ui_egui::i18n::tr("Lightroom Classic Catalog"), &["lrcat"])
+                .add_filter_nocase(lightcraft_ui_egui::i18n::tr("Lightroom Classic Catalog"), &["lrcat"])
                 .pick_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
