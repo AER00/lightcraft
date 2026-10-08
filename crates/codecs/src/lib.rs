@@ -6,6 +6,8 @@
 //!   profiles (matrix/TRC exactly, LUT/CMYK via the `moxcms` CMS), 16-bit and float precision are
 //!   preserved. EXIF/XMP/ICC blobs are passed through untouched; orientation is reported, never applied.
 //! - [`to_working`] converts a decode result to linear Rec.2020 D65 (the pipeline working space).
+//! - [`read_header`] reads a file's stored dimensions and orientation from its headers, without
+//!   decoding pixels (import probes).
 //! - [`decode_thumbnail`] is the fast path for grid thumbnails (EXIF thumbnail or DCT-scaled decode).
 //! - [`encode`] writes JPEG, PNG, TIFF, lossless WebP and (native, feature `avif`) AVIF, embedding
 //!   ICC/EXIF/XMP. [`icc::write_matrix_trc`] builds profiles for export.
@@ -154,6 +156,52 @@ pub(crate) fn mat_apply(m: &[[f32; 3]; 3], p: [f32; 3]) -> [f32; 3] {
 pub fn decode(bytes: &[u8], opts: DecodeOptions) -> Result<Decoded> {
     let format = sniff(bytes).ok_or(Error::UnknownFormat)?;
     std::panic::catch_unwind(|| decode_unguarded(bytes, format, &opts)).unwrap_or_else(|_| Err(Error::Malformed(format, "decoder panicked".into())))
+}
+
+/// What a file's headers say about its image: enough to catalogue it without decoding pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Header {
+    pub format: Format,
+    /// Full-resolution stored dimensions, orientation **not** applied ([`Decoded::source_width`]).
+    pub width: u32,
+    pub height: u32,
+    /// EXIF/TIFF orientation 1..=8, 1 when absent ([`Decoded::orientation`]).
+    pub orientation: u16,
+}
+
+/// Read the stored dimensions and orientation of any format [`decode`] supports, agreeing with
+/// what a decode reports, without decoding pixels: JPEG, PNG, TIFF, WebP and PSD are read from
+/// their headers (markers, chunks, IFD, resources). GIF, BMP and JPEG XL fall back to a small
+/// decode.
+///
+/// The header readers also refuse what a decode would refuse before reaching the pixels (an
+/// unsupported layout, compression or frame type) and files whose image data is cut short
+/// (truncated: the data runs past the end of the file, or a JPEG's markers don't reach its
+/// end-of-image marker). Damage *inside* compressed data that is all present is only found by a
+/// decode. Malformed input yields an error, never a panic (as for [`decode`], a panic inside a
+/// third-party parser is caught on unwinding targets).
+pub fn read_header(bytes: &[u8]) -> Result<Header> {
+    let format = sniff(bytes).ok_or(Error::UnknownFormat)?;
+    std::panic::catch_unwind(|| read_header_unguarded(bytes, format))
+        .unwrap_or_else(|_| Err(Error::Malformed(format, "header reader panicked".into())))
+}
+
+/// [`read_header`] without the panic guard (for fuzzing our own code paths).
+#[doc(hidden)]
+pub fn read_header_unguarded(bytes: &[u8], format: Format) -> Result<Header> {
+    let (width, height, orientation) = match format {
+        Format::Jpeg => jpeg::header(bytes)?,
+        Format::Png => png_codec::header(bytes)?,
+        Format::Tiff => tiff_codec::header(bytes)?,
+        Format::WebP => webp::header(bytes)?,
+        Format::Psd => psd::header(bytes)?,
+        // rare here (or, for JPEG XL, without a header reader yet): a small decode, as before
+        _ => {
+            let d = decode_unguarded(bytes, format, &DecodeOptions::fit(64, 64))?;
+            (d.source_width, d.source_height, d.orientation)
+        }
+    };
+    Ok(Header { format, width, height, orientation })
 }
 
 /// Decode a JPEG preview with its enclosing container's colour space as a fallback.

@@ -14,6 +14,7 @@ let d: Decoded = decode(&bytes, DecodeOptions::default())?;
 let working: Rgb32f = to_working(&d);                    // linear Rec.2020 D65 (Bradford)
 let fast = decode(&bytes, DecodeOptions::fit(2048, 2048))?; // JPEG: DCT-domain 1/2..1/8 scaling
 let t: Thumbnail = decode_thumbnail(&bytes, 256)?;       // embedded EXIF/MPF preview or scaled decode
+let h: Header = read_header(&bytes)?;                    // stored width/height + orientation, no pixels decoded
 
 let icc = icc::write_named(NamedSpace::DisplayP3);       // or icc::write_matrix_trc(&space, &Trc::…)
 let meta = EncodeMeta { icc: Some(&icc), exif: Some(&exif), xmp: Some(&xmp) };

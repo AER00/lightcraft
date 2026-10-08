@@ -103,19 +103,31 @@ pub(crate) fn decode(sample: &[u8], config: &Cr3Compression) -> Result<Vec<u16>>
                 output.resize(count, 0);
             }
             for (i, &value) in decoded.iter().enumerate() {
-                let sensor_value =
-                    value.checked_add(midpoint).filter(|&v| v >= 0 && v <= maximum).ok_or_else(|| corrupt("decoded sample outside its bit depth"))?;
+                let sensor_value = sensor_sample(value, midpoint, maximum, config.levels != 0)?;
                 let (x, y) = (tile.x + 2 * (i % (tile.width / 2)) + p % 2, tile.y + 2 * (i / (tile.width / 2)) + p / 2);
                 let slot = y
                     .checked_mul(width)
                     .and_then(|n| n.checked_add(x))
                     .and_then(|n| output.get_mut(n))
                     .ok_or_else(|| corrupt("tile writes outside image"))?;
-                *slot = sensor_value as u16;
+                *slot = sensor_value;
             }
         }
     }
     Ok(output)
+}
+
+/// A decoded plane value as a sensor sample of the CMP1 bit depth.
+///
+/// Lossless planes reproduce the sensor exactly, so a value outside the bit depth is corrupt data.
+/// Wavelet (C-RAW) planes are quantized: next to clipped highlights the reconstruction overshoots
+/// the sensor's range by up to a few quantization steps (measured on 17 CC0 files: at most 36 codes
+/// above 16383 at 14 bits, never below 0), while lossless files of the same bodies clip at exactly
+/// 16383. Those samples are clamped to the range the sensor can record.
+fn sensor_sample(value: i32, midpoint: i32, maximum: i32, quantized: bool) -> Result<u16> {
+    let sample = value.checked_add(midpoint).ok_or_else(|| corrupt("decoded sample outside its bit depth"))?;
+    let sample = if quantized { sample.clamp(0, maximum) } else { sample };
+    u16::try_from(sample).ok().filter(|_| sample <= maximum).ok_or_else(|| corrupt("decoded sample outside its bit depth"))
 }
 
 /// Header-only probing must reject the same unsupported coding variants as full decoding.
@@ -911,6 +923,50 @@ mod tests {
         for end in 0..sample.len() {
             assert!(decode(&sample[..end], &config).is_err());
         }
+    }
+
+    #[test]
+    fn craw_overshoot_at_clipped_highlights_is_clamped_to_the_bit_depth() {
+        // As `three_level_craw_reconstructs_sensor_samples`, but each LL3 coefficient is +8200
+        // (Rice escape: 41 zeros, 1, 21-bit literal 16400 = signed +8200). Flat synthesis gives
+        // 8192 + 8200 = 16392, 9 codes above the 14-bit maximum, as in clipped C-RAW highlights.
+        let mut config = coding();
+        config.width = 16;
+        config.height = 16;
+        config.tile_width = 16;
+        config.tile_height = 16;
+        config.header_size = 540;
+        config.levels = 3;
+        let mut sample = Vec::new();
+        marker(&mut sample, 0xff01, 80, 0);
+        for plane in 0..4 {
+            marker(&mut sample, 0xff02, 20, (plane << 28) | 0x0800_0000);
+            for band in 0..10 {
+                marker(&mut sample, 0xff03, [8, 1, 1, 1, 1, 1, 1, 2, 2, 2][band as usize], (band << 28) | 0x0020_0000);
+            }
+        }
+        for _ in 0..4 {
+            sample.extend([0, 0, 0, 0, 0, 0x40, 0x80, 0x20]); // LL3 = +8200.
+            sample.extend([0x80; 3]); // The three 1×1 HF3 bands.
+            sample.extend([0xf0; 3]); // Three 2×2 all-zero HF2 bands.
+            for _ in 0..3 {
+                sample.extend([0xff, 0xf8]); // Three 4×4 all-zero HF1 bands.
+            }
+        }
+        validate(&sample, &config).unwrap();
+        assert_eq!(decode(&sample, &config).unwrap(), vec![16383; 256]);
+    }
+
+    #[test]
+    fn only_quantized_planes_clamp_out_of_range_samples() {
+        assert_eq!(sensor_sample(8200, 8192, 16383, true).unwrap(), 16383);
+        assert_eq!(sensor_sample(-8300, 8192, 16383, true).unwrap(), 0);
+        assert_eq!(sensor_sample(8191, 8192, 16383, false).unwrap(), 16383);
+        assert_eq!(sensor_sample(-8192, 8192, 16383, false).unwrap(), 0);
+        // Lossless planes reproduce the sensor exactly: outside the bit depth is corrupt data.
+        assert!(matches!(sensor_sample(8192, 8192, 16383, false), Err(RawError::Corrupt(_))));
+        assert!(matches!(sensor_sample(-8193, 8192, 16383, false), Err(RawError::Corrupt(_))));
+        assert!(matches!(sensor_sample(i32::MAX, 8192, 16383, true), Err(RawError::Corrupt(_))));
     }
 
     #[test]
