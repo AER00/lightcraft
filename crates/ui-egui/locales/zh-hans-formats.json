@@ -35,6 +35,8 @@
   "Imported {n} preset{}": "已导入 {n} 个预设{0:.0}",
   "Imported {n} preset{}, {f} file{} not readable": "已导入 {n} 个预设，{f} 个文件无法读取{0:.0}{1:.0}",
   "Imported {} photo{}": "已导入 {0} 张照片{1:.0}",
+  "LightCraft could not open its window: {e}": "LightCraft 无法打开窗口：{e}",
+  "LightCraft could not open its window: {e}\n\nThe log file has the details: {path}": "LightCraft 无法打开窗口：{e}\n\n详细信息见日志文件：{path}",
   "Matches: {}": "匹配项：{0}",
   "Merging… {stage} {:.0}%": "合成中… {stage} {0:.0}%",
   "Move {what} to Recently Deleted?": "将 {what} 移到最近删除？",

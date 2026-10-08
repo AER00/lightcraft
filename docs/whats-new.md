@@ -63,6 +63,8 @@
   promise, instead of filtering whatever album or folder was open, which often showed nothing (issue #341).
 
 ### Reliability
+- If the desktop app can't open its window (for example when no graphics device can be used), it now says so in a
+  message box that names the log file, instead of quitting without a trace (issue #260).
 - On macOS, single-key shortcuts that appear in the menu bar now work: E, C, H, M, ⇧P, I, K, D, ratings 0–5,
   labels 6–9, P / U and the rest did nothing, because macOS only passes ⌘ / ⌃ combinations and function keys
   to the menu bar and the app ignored those keys, assuming the menu bar would handle them. Keys outside the menus

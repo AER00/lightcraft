@@ -67,6 +67,8 @@
   "Imported {} photo{}": "{} Foto{} importiert",
   "Insert at the cursor (also written {})": "An Cursorposition einfügen (auch als {} geschrieben)",
   "Label Set: {name}": "Farbmarkierungssatz: {name}",
+  "LightCraft could not open its window: {e}": "LightCraft konnte sein Fenster nicht öffnen: {e}",
+  "LightCraft could not open its window: {e}\n\nThe log file has the details: {path}": "LightCraft konnte sein Fenster nicht öffnen: {e}\n\nEinzelheiten stehen in der Protokolldatei: {path}",
   "MIT OR Apache-2.0. Fonts: {} (OFL). Icons: original.": "MIT ODER Apache-2.0. Schriften: {} (OFL). Symbole: eigene Gestaltung.",
   "Matches: {}": "Treffer: {}",
   "Merging… {stage} {:.0}%": "Wird zusammengefügt… {stage} {:.0}%",

@@ -46,6 +46,8 @@
   "Imported {n} preset{}, {f} file{} not readable": "Importadas {n} predefinição{:.0}, {f} arquivo{:.0} não legível",
   "Imported {} photo{}": "Importadas {} foto{:.0}",
   "Label Set: {name}": "Conjunto de rótulos: {name}",
+  "LightCraft could not open its window: {e}": "O LightCraft não conseguiu abrir sua janela: {e}",
+  "LightCraft could not open its window: {e}\n\nThe log file has the details: {path}": "O LightCraft não conseguiu abrir sua janela: {e}\n\nO arquivo de log tem os detalhes: {path}",
   "Matches: {}": "Correspondências: {}",
   "Merging… {stage} {:.0}%": "Mesclando… {stage} {:.0}%",
   "Move {what} to Recently Deleted?": "Mover {what} para Excluídos recentemente?",

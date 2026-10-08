@@ -753,6 +753,7 @@
   "LightCraft Preset": "LightCraft-Vorgabe",
   "LightCraft Presets": "LightCraft-Vorgaben",
   "LightCraft Website": "LightCraft-Website",
+  "LightCraft could not start": "LightCraft konnte nicht starten",
   "LightCraft couldn't find where to keep your library.": "LightCraft konnte keinen Speicherort für deine Bibliothek finden.",
   "LightCraft couldn't open the library at": "LightCraft konnte die Bibliothek nicht öffnen unter",
   "LightCraft no longer crashes at launch on Windows PCs whose Vulkan driver is broken (issue #136, e.g. some Intel UHD": "LightCraft stürzt beim Start auf Windows-PCs mit defektem Vulkan-Treiber nicht mehr ab (Issue #136, etwa bestimmte Intel-UHD-630-Treiber).",
