@@ -297,6 +297,9 @@ impl Session {
         {
             log::error!("library: {e}");
         }
+        // Photo ids belong to one library; denoise work must not carry into the next.
+        self.denoise.library_changed();
+        self.media.denoise.clear();
         let (mut journal, mut catalog, report) = Journal::open(catalog)?;
         // A loaded catalog counts revisions from 0, like every other one. Caches (sidebar counts,
         // keyword tree, the grid's list…) are keyed on the revision, so give each library loaded
@@ -305,6 +308,7 @@ impl Session {
         static LOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         catalog.revision = LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(1) << 32;
         self.catalog = catalog;
+        self.library_generation = crate::LIBRARY_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.undo.clear();
         self.redo.clear();
         self.interaction = None;

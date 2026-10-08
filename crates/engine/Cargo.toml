@@ -21,6 +21,7 @@ web-time = { workspace = true }
 lightcraft-preview = { workspace = true }
 lightcraft-codecs = { workspace = true }
 lightcraft-raw = { workspace = true }
+lightcraft-denoise = { workspace = true }
 lightcraft-meta = { workspace = true }
 miniz_oxide = { workspace = true }
 lightcraft-merge = { workspace = true }
@@ -38,6 +39,10 @@ lightcraft-segment = { workspace = true, optional = true }
 [features]
 # AI masks with SAM 3 (Object / Describe). Off for the web and CLI builds.
 sam = ["dep:lightcraft-segment"]
+denoise = []
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lightcraft-fetch = { workspace = true }
 
 [dev-dependencies]
 libc = { workspace = true }

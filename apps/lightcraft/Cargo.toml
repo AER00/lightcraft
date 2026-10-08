@@ -9,6 +9,10 @@ default-run = "lightcraft"
 [lints]
 workspace = true
 
+[features]
+default = ["denoise"]
+denoise = ["lightcraft-engine/denoise"]
+
 [dependencies]
 lightcraft-engine = { workspace = true, features = ["sam"] }
 lightcraft-sysmem = { workspace = true }

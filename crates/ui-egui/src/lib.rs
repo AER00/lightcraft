@@ -19,6 +19,7 @@ pub mod menu_level;
 pub mod menubar;
 pub mod menus;
 pub mod merge;
+mod model_setup;
 pub mod panels;
 pub mod pick;
 pub mod region;
@@ -157,6 +158,7 @@ pub struct Perf {
 }
 
 pub struct LightcraftApp {
+    pub(crate) model_setup: model_setup::Pending,
     /// Per-catalog-revision caches of library-wide results the panels show every frame
     /// (expensive on big libraries).
     pub caches: Caches,
@@ -312,6 +314,7 @@ impl LightcraftApp {
             gpu_applied: None,
             memory_applied: None,
             library_problem: None,
+            model_setup: Default::default(),
         }
     }
 
@@ -324,6 +327,9 @@ impl LightcraftApp {
 
     /// Run a UI or engine command by id. The single entry point for every frontend path.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        if let Some(result) = model_setup::intercept(self, id, &params) {
+            return result;
+        }
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
@@ -751,6 +757,8 @@ impl LightcraftApp {
             ctx.request_repaint_after(std::time::Duration::from_secs(3));
         }
         self.session.persist_if_dirty();
+        panels::denoise::pump(self, ctx);
+        model_setup::pump(self, ctx);
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);
         if self.fonts_ready {
@@ -988,6 +996,11 @@ pub struct Caches {
     album_counts: Option<(u64, std::sync::Arc<std::collections::HashMap<lightcraft_catalog::AlbumId, usize>>)>,
     /// How often the album counts were recomputed (tests check that unchanged frames don't).
     pub album_count_scans: usize,
+    /// AI denoise: what the pump last saw, the model list and the downloads being watched.
+    pub denoise: panels::denoise::Ui,
+    /// When the user last dragged, typed or scrolled, and when they last moved the pointer (egui time).
+    pub last_input: f64,
+    pub last_move: f64,
     /// The grid's date runs, layout and indexes (by the visible list's generation).
     pub grid: panels::grid::GridCache,
     /// What the grid did on its frames (benchmarks and tests check unchanged frames stay cheap).
@@ -1213,3 +1226,6 @@ mod cache_tests {
         assert_eq!(c.album_count_scans, 1);
     }
 }
+
+#[cfg(test)]
+mod tests_model_setup;

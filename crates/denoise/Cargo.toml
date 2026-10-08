@@ -1,0 +1,28 @@
+[package]
+name = "lightcraft-denoise"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LightCraft AI denoise (L1): denoise-model manifests, Bayer packing, tiling and blending, the cache file, and pure-Rust CPU inference"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+# Safe views over Rust-intrinsic gemm kernels. Pin the core-only release: newer backends
+# generate assembly. No BLAS, cc/build scripts, nightly/AMX, or inner thread pool.
+faer = { package = "faer-core", version = "=0.17.1", default-features = false, features = ["std"] }
+lightcraft-raster = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+miniz_oxide = { workspace = true }
+rayon = { workspace = true }
+web-time = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
