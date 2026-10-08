@@ -150,6 +150,14 @@ mod tests {
         assert!(v1 > v0);
     }
 
+    /// Daylight lies above the Planckian locus, so D65 reads as a small positive tint, as
+    /// Lightroom's Daylight preset (5500 K, +10) has it (#188).
+    #[test]
+    fn daylight_has_a_positive_tint() {
+        let (_, tint) = xy_to_temp_tint(crate::D65);
+        assert!((5.0..15.0).contains(&tint), "{tint}");
+    }
+
     #[test]
     fn wb_matrix_maps_src_white_to_white() {
         let sp = crate::REC2020;
