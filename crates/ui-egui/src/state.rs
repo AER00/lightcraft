@@ -182,16 +182,34 @@ pub const PREVIEW_LIMITS: [u32; 5] = [0, 1600, 2560, 3840, 5120];
 /// The most the loupe ever renders in one go (memory and GPU texture size), whatever the setting.
 pub const LOUPE_EDGE_CEILING: u32 = 8192;
 
+/// Loupe render sizes move in steps of this many pixels.
+pub const LOUPE_EDGE_STEP: usize = 64;
+
 /// Long edge of Build Standard-Sized Previews when the limit is Automatic.
 pub const STANDARD_PREVIEW_EDGE: u32 = 2560;
 
 impl AppSettings {
     /// Long edge (pixels) to render the loupe at when it is drawn `wanted_px` wide on screen:
-    /// that size, never above the photo's own `native_long_edge`, the user's limit or the ceiling.
+    /// that size (rounded up to [`LOUPE_EDGE_STEP`], so resizing a window doesn't re-render at
+    /// every pixel), never above the photo's own `native_long_edge`, the user's limit or the ceiling.
     pub fn loupe_edge(&self, wanted_px: f32, native_long_edge: usize) -> usize {
         let ceiling = if self.preview_limit == 0 { LOUPE_EDGE_CEILING } else { self.preview_limit.clamp(512, LOUPE_EDGE_CEILING) } as usize;
         let wanted = if wanted_px.is_nan() { 8.0 } else { wanted_px.clamp(8.0, ceiling as f32) } as usize;
-        wanted.min(native_long_edge.max(8)).min(ceiling)
+        let stepped = wanted.div_ceil(LOUPE_EDGE_STEP) * LOUPE_EDGE_STEP;
+        stepped.min(native_long_edge.max(8)).min(ceiling)
+    }
+
+    /// Long edge for warming a neighbouring photo: its loupe size but never above the preview
+    /// source level. A full-size decode would replace the open photo's single full-resolution
+    /// source in the cache, and nothing is gained by it.
+    pub fn prefetch_edge(&self, wanted_px: f32, native_long_edge: usize) -> usize {
+        self.loupe_edge(wanted_px, native_long_edge).min(lightcraft_engine::SourceLevel::Preview.max_edge())
+    }
+
+    /// Long edge for the hover (preset / profile) and Before renders, which are stand-ins drawn
+    /// over the loupe: capped at the preview source level like the old default.
+    pub fn stand_in_edge(&self, loupe_edge: usize) -> usize {
+        loupe_edge.min(lightcraft_engine::SourceLevel::Preview.max_edge())
     }
 
     /// The edge Build Standard-Sized Previews uses.

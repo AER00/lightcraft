@@ -285,6 +285,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let native_long = native[0].max(native[1]);
     let want = app.ui.settings.loupe_edge(target_rect.width().max(target_rect.height()) * ppp * scale, native_long);
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
+    // hover and before renders are stand-ins: the preview size is plenty and keeps them cheap
+    let se = app.ui.settings.stand_in_edge(want);
+    let (sw, sh) = if aspect >= 1.0 { (se, (se as f32 / aspect) as usize) } else { ((se as f32 * aspect) as usize, se) };
     if let Some(job) = app.session.loupe_job(id, rw.max(8), rh.max(8), !crop_tool) {
         let job = if interacting { job.draft() } else { job };
         let job = job.with_overlay(view_overlay(app, &d)).with_proof(app.ui.soft_proof.then_some(app.ui.proof));
@@ -293,7 +296,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // hovering a preset or profile: the photo with that look, shown instead of the loupe render
     // once it is ready (nothing is committed)
     let hover_key = match app.hover_preview.clone() {
-        Some(h) if !interacting => app.session.preview_job(id, rw.max(8), rh.max(8), !crop_tool, &h.settings).map(|job| {
+        Some(h) if !interacting => app.session.preview_job(id, sw.max(8), sh.max(8), !crop_tool, &h.settings).map(|job| {
             let key = job.key;
             app.renderer.request(Slot::Hover, job, 105);
             (key, h.label)
@@ -313,7 +316,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let nf = Frame::with_lens(np.width.max(1) as usize, np.height.max(1) as usize, &np.develop, !crop_tool, np.embedded_lens.as_ref());
                 let na = nf.aspect() as f32;
                 let nr = fit_rect(main_area, na, app.ui.zoom, [np.width.max(1) as usize, np.height.max(1) as usize], ppp, app.ui.pan);
-                let nw = app.ui.settings.loupe_edge(nr.width().max(nr.height()) * ppp, np.width.max(np.height).max(1) as usize);
+                let nw = app.ui.settings.prefetch_edge(nr.width().max(nr.height()) * ppp, np.width.max(np.height).max(1) as usize);
                 let (w, h) = if na >= 1.0 { (nw, (nw as f32 / na) as usize) } else { ((nw as f32 * na) as usize, nw) };
                 if let Some(job) = app.session.loupe_job(nid, w.max(8), h.max(8), !crop_tool) {
                     app.renderer.prefetch(Slot::Prefetch(n as u8), job, PREFETCH_PRIORITY);
@@ -329,7 +332,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let show_before = app.ui.before_after == BeforeAfter::Original || ui.input(|i| i.key_down(egui::Key::Backslash));
     if (split || show_before || split_view)
-        && let Some(job) = app.session.render_job(id, rw.max(8), rh.max(8), true, !crop_tool)
+        && let Some(job) = app.session.render_job(id, sw.max(8), sh.max(8), true, !crop_tool)
     {
         app.renderer.request(Slot::Before, job, 90);
     }

@@ -24,7 +24,28 @@ fn automatic_renders_a_one_to_one_view_at_native_size() {
 // Given Automatic, a Retina fit view of 3024 px is not held to the old 2560 px cap
 #[test]
 fn automatic_does_not_cap_a_fit_view_at_the_old_default() {
-    assert_eq!(with_limit(0).loupe_edge(3024.0, 6000), 3024);
+    assert_eq!(with_limit(0).loupe_edge(3024.0, 6000), 3072, "rounded up to the next 64 px step");
+}
+
+// Dragging a window edge must not re-render (and re-key the caches) on every pixel
+#[test]
+fn render_sizes_move_in_steps() {
+    let s = with_limit(0);
+    assert_eq!(s.loupe_edge(2945.0, 6000), s.loupe_edge(3008.0, 6000));
+    assert_ne!(s.loupe_edge(3008.0, 6000), s.loupe_edge(3009.0, 6000));
+}
+
+// Neighbour prefetch and hover / before stand-ins stay at the preview level: a full-size decode
+// would evict the open photo's single full-resolution source (review of #323)
+#[test]
+fn prefetch_and_stand_ins_never_ask_for_the_full_source_level() {
+    use lightcraft_engine::SourceLevel;
+    let s = with_limit(0);
+    for wanted in [1000.0, 2560.0, 3024.0, 6000.0, 48000.0] {
+        assert!(s.prefetch_edge(wanted, 6000) <= SourceLevel::Preview.max_edge(), "{wanted}");
+        assert!(s.stand_in_edge(s.loupe_edge(wanted, 6000)) <= SourceLevel::Preview.max_edge());
+    }
+    assert_eq!(s.prefetch_edge(1000.0, 6000), 1024, "a small view is not raised");
 }
 
 // Given Automatic, a small photo zoomed far in is not rendered above its own pixels
@@ -43,7 +64,7 @@ fn automatic_is_bounded_by_the_ceiling() {
 #[test]
 fn an_explicit_limit_caps_the_render() {
     assert_eq!(with_limit(1600).loupe_edge(6000.0, 6000), 1600);
-    assert_eq!(with_limit(1600).loupe_edge(900.0, 6000), 900, "and does not raise a small view");
+    assert_eq!(with_limit(1600).loupe_edge(900.0, 6000), 960, "and does not raise a small view past its step");
 }
 
 // Whatever the inputs (hostile or degenerate), the result is a usable size
@@ -54,7 +75,7 @@ fn degenerate_inputs_give_a_usable_size() {
         let e = s.loupe_edge(wanted, 6000);
         assert!((8..=LOUPE_EDGE_CEILING as usize).contains(&e), "{wanted}: {e}");
     }
-    assert!((8..=LOUPE_EDGE_CEILING as usize).contains(&s.loupe_edge(1000.0, 0)));
+    assert!((8..=LOUPE_EDGE_CEILING as usize).contains(&s.loupe_edge(1000.0, 0)) && s.prefetch_edge(f32::NAN, 0) >= 8);
     assert!(with_limit(7).loupe_edge(1000.0, 6000) >= 8, "a corrupt limit is clamped");
 }
 
