@@ -209,9 +209,6 @@ pub struct LightcraftApp {
     pub(crate) size_hold: region::SizeHold,
     /// (photo, look, window frame size) a window was refused for: it reads more than one render holds.
     pub(crate) window_refused: Option<(lightcraft_catalog::PhotoId, u64, usize)>,
-    /// What the loupe drew last frame, in order (tests check layering).
-    #[cfg(test)]
-    pub(crate) draw_order: Vec<&'static str>,
     pub(crate) region_tiles: std::collections::HashMap<(bool, u64), region::RegionView>,
     /// Photo Merge dialog previews and background merges.
     pub merge: merge::MergeState,
@@ -284,8 +281,6 @@ impl LightcraftApp {
             region_before_view: None,
             size_hold: Default::default(),
             window_refused: None,
-            #[cfg(test)]
-            draw_order: Vec::new(),
             region_tiles: Default::default(),
             merge: merge::MergeState::default(),
             import: None,

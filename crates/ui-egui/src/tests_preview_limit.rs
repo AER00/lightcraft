@@ -536,22 +536,62 @@ mod in_the_loupe {
         assert!(h.app.session.memory_report().full_source.bytes > 0, "the original stayed in the cache while the drag went on");
     }
 
-    // Given a wipe at 1:1, the Before window is drawn after (over) the low-resolution Before
-    // stand-in on its side of the line, never under it
+    /// The meshes the last frame drew with `slot`'s texture: (paint order, clip rect, bounds).
+    fn drawn(h: &Headless, slot: Slot) -> Vec<(usize, egui::Rect, egui::Rect)> {
+        let Some(tex) = h.app.renderer.textures.get(&slot) else { return vec![] };
+        h.view
+            .shapes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| match &c.shape {
+                egui::epaint::Shape::Mesh(m) if m.texture_id == tex.tex.id() => Some((i, c.clip_rect, m.calc_bounds())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // Given a wipe at 1:1, the Before window is painted after (over) the low-resolution Before
+    // stand-in on its side of the line, never under it, and inside its side of the line
     #[test]
-    fn a_wipe_draws_the_before_window_over_its_stand_in() {
+    fn a_wipe_paints_the_before_window_over_its_stand_in() {
         for mode in [crate::state::BeforeAfter::Split, crate::state::BeforeAfter::SplitTopBottom] {
             let (mut h, _) = detail();
             h.app.ui.before_after = mode;
             h.request("engine.execute", json!({"command": "view.zoom100"}), T);
             h.settle(SETTLE);
             h.step();
-            let order = &h.app.draw_order;
-            let pos = |what: &str| order.iter().position(|d| *d == what);
-            let (stand_in, before, after) = (pos("wipe stand-in"), pos("window RegionBefore"), pos("window Region"));
-            assert!(stand_in.is_some() && before.is_some() && after.is_some(), "{mode:?}: {order:?}");
-            assert!(before > stand_in, "{mode:?}: the Before window is under its stand-in: {order:?}");
+            let (stand_in, window) = (drawn(&h, Slot::Before), drawn(&h, Slot::RegionBefore));
+            assert!(!stand_in.is_empty() && !window.is_empty(), "{mode:?}: the stand-in {stand_in:?} and the window {window:?} are both painted");
+            assert!(window[0].0 > stand_in[0].0, "{mode:?}: the Before window is under its stand-in");
+            let mid = h.app.image_rect.unwrap().center();
+            let clip = window[0].1;
+            match mode {
+                crate::state::BeforeAfter::Split => assert!(clip.right() <= mid.x + 0.5, "{clip:?} crosses the line at x = {}", mid.x),
+                _ => assert!(clip.bottom() <= mid.y + 0.5, "{clip:?} crosses the line at y = {}", mid.y),
+            }
+            let after = drawn(&h, Slot::Region);
+            assert!(!after.is_empty());
+            match mode {
+                crate::state::BeforeAfter::Split => assert!(after[0].1.left() >= mid.x - 0.5),
+                _ => assert!(after[0].1.top() >= mid.y - 0.5),
+            }
         }
+    }
+
+    // Given Before and After side by side at 1:1, each window is painted inside its own pane: its
+    // margin (a window is wider than what its pane shows) does not spill into the neighbour
+    #[test]
+    fn side_by_side_windows_stay_in_their_panes() {
+        let (mut h, _) = detail_in([1800.0, 900.0]);
+        h.app.ui.before_after = crate::state::BeforeAfter::SideBySide;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        h.step();
+        let canvas = h.app.canvas_rect.unwrap();
+        let (before, after) = (drawn(&h, Slot::RegionBefore), drawn(&h, Slot::Region));
+        assert!(!before.is_empty() && !after.is_empty());
+        assert!(before.iter().all(|(_, clip, _)| clip.right() <= canvas.center().x), "the Before window spills into the After pane: {before:?}");
+        assert!(after.iter().all(|(_, clip, _)| clip.left() >= canvas.center().x), "the After window spills into the Before pane: {after:?}");
     }
 
     // Given a Before and an After with the same look (an unedited photo), both windows are kept

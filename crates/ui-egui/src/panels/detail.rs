@@ -584,8 +584,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     app.loupe_shown = Some((id, shown));
-    #[cfg(test)]
-    app.draw_order.clear();
     // a wipe shows the Before whole-frame render on its side of the line…
     if app.ui.before_after == BeforeAfter::Split
         && let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id)
@@ -601,17 +599,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let top = Rect::from_min_max(before_rect.min, pos2(before_rect.right(), before_rect.center().y));
         p.image(tex.tex.id(), top, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 0.5)), Color32::WHITE);
     }
-    #[cfg(test)]
-    if matches!(app.ui.before_after, BeforeAfter::Split | BeforeAfter::SplitTopBottom) {
-        app.draw_order.push("wipe stand-in");
-    }
     // …and the window renders go over the whole-frame ones, all of them, where they belong in the
     // frame (clipped to their pane, or their side of the line)
     for (v, view) in &windows {
         let clip = crate::region::window_clip(app.ui.before_after, v.before, v.visible, canvas, img_rect);
         draw_window(&p.with_clip_rect(clip), app, &window_ctx, v, view);
-        #[cfg(test)]
-        app.draw_order.push(if v.before { "window RegionBefore" } else { "window Region" });
     }
     // the line of a wipe over both
     if app.ui.before_after == BeforeAfter::Split {

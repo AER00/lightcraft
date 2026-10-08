@@ -32,7 +32,7 @@ const FRAME_DT: f64 = 1.0 / 60.0;
 pub struct HeadlessView {
     pub ctx: egui::Context,
     pub textures: TextureStore,
-    shapes: Vec<egui::epaint::ClippedShape>,
+    pub(crate) shapes: Vec<egui::epaint::ClippedShape>,
     pixels_per_point: f32,
     size: egui::Vec2,
     frames: u64,
