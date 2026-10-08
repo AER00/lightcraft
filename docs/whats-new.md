@@ -9,6 +9,11 @@
 - `Shift+6–9` labels and advances. `Shift+P` picks and advances in Photo Grid and Square Grid; it opens Presets in other views. With Auto Advance on, Shift still moves only once.
 - Help → Keyboard Shortcuts includes the number-key bindings. See [library shortcuts](library-shortcuts.md).
 
+### Keyboard shortcuts
+- Shortcuts are editable: Help ▸ Keyboard Shortcuts (⌘/) lists every command with a search box; click a shortcut and
+  press the new keys (Esc cancels), × removes it, ↺ restores the original, Reset All undoes every change. A key that
+  belonged to another command moves to the new one. Menus show the new keys; agents use `app.setShortcut`.
+
 ### RAW decoding
 - Panasonic and Leica raws (RW2, RWL) are now corrected for lens distortion the way the camera corrects its own JPEG
   (issue #256): the correction the camera records in the file is applied under Lens Corrections ▸ Enable Profile
