@@ -266,6 +266,9 @@ pub struct UiState {
     pub show_counts: bool,
     /// Face / pet boxes (read from XMP) over the photo in the loupe.
     pub face_boxes: bool,
+    /// Left-sidebar sections folded shut by their header (`albums`, `local`, `byDate`,
+    /// `keywords`); the rest are open.
+    pub collapsed_sidebar: Vec<String>,
     /// Local sidebar locations hidden with “Remove from Local” (folders on disk are untouched).
     pub hidden_locations: Vec<String>,
     /// Copies opened in an external editor this session (reloaded when the window is focused
@@ -573,6 +576,7 @@ impl Default for UiState {
             grid_info: "filename".into(),
             show_counts: true,
             face_boxes: true,
+            collapsed_sidebar: Vec::new(),
             hidden_locations: Vec::new(),
             dragging_control: None,
             external_edits: Vec::new(),
@@ -639,6 +643,16 @@ impl UiState {
                 self.open_sections.clear();
             }
             self.open_sections.push(id.to_string());
+        }
+    }
+    pub fn sidebar_section_collapsed(&self, id: &str) -> bool {
+        self.collapsed_sidebar.iter().any(|s| s == id)
+    }
+    pub fn toggle_sidebar_section(&mut self, id: &str) {
+        if self.sidebar_section_collapsed(id) {
+            self.collapsed_sidebar.retain(|s| s != id);
+        } else {
+            self.collapsed_sidebar.push(id.to_string());
         }
     }
     pub fn flyout_open(&self, id: &str) -> bool {

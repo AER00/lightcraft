@@ -44,13 +44,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 16 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
+| X. Cross-cutting behaviours (BEHAV) | 17 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
-| **Total** | 388 | 34 | 86 | 37 | 194/200 (97%) | 139/149 (93%) |
+| **Total** | 389 | 34 | 86 | 37 | 194/200 (97%) | 139/149 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.7%** of 508 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 41.2% of 159.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.8%** of 509 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 41.6% of 160.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -501,6 +501,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-RENDER-FIDELITY | Rendering matches Lightroom | P1 | 🟡 | `crates/pipeline/src/lib.rs`, `crates/pipeline/src/tone.rs` | every slider exists and works, but the character of the result (tone curve shape, highlight recovery, texture / clarity / dehaze, noise reduction, sharpening, default look) is tuned by eye; there is no systematic side-by-side comparison against Lightroom on the same CC0 raws. Needs a fidelity suite: Lightroom reference renders kept only in the local `plan/` (never committed), compared per slider and preset with a perceptual metric |
 | LR-BEHAV-DRAGDROP | Drag and drop | P1 | ✅ | `crates/ui-egui/src/lib.rs`, `crates/ui-egui/src/panels/grid.rs` (`drag_feedback`), `crates/ui-egui/src/panels/left.rs` (`drop_target`) | files → app (import); grid photos → an album row (adds the selection, with a count badge while dragging) |
 | LR-BEHAV-TOAST | Toast notifications | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` | |
+| LR-BEHAV-SIDEBAR-COLLAPSE | Collapsible left-sidebar sections | P2 | ✅ | `crates/ui-egui/src/panels/left.rs` (`sidebar_section_header`), `crates/ui-egui/src/state.rs` (`collapsed_sidebar`), `crates/ui-egui/src/tests_panels.rs` | click the Albums, Local, By Date or Keywords header (or drive `ui.clickWidget` `sidebarSection:<albums\|local\|byDate\|keywords>`) to fold or unfold the section; a chevron after the title shows the state; the choice is kept across restarts (`collapsedSidebar` in the UI state). UI-only (no command), like the By Date / Keywords disclosure triangles; photos dropped on a folded Albums section have no target |
 | LR-BEHAV-PANEL-RESIZE | Resizable side panels | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`resizable_side`), `crates/ui-egui/src/state.rs` (`LEFT_WIDTH`, `RIGHT_WIDTH`), `crates/ui-egui/src/tests_panels.rs` | drag the left sidebar's right edge (200–480 pt) or the right panel's left edge (250–520 pt); the photo area keeps ≥ 360 pt; widths are kept across panels, views and restarts (`leftWidth` / `rightWidth` in the UI state); the Presets column stays fixed |
 | LR-BEHAV-EMPTY-STATES | Empty states | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`empty_message`) | |
 | LR-BEHAV-TOOLTIPS | Tooltips with shortcuts | P0 | ✅ | `crates/ui-egui/src/panels/bottombar.rs` | |
