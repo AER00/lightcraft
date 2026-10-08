@@ -20,6 +20,7 @@ pub mod crs_masks;
 pub mod demo;
 pub mod devices;
 pub mod export;
+pub mod face_download;
 pub mod files;
 pub mod fonts;
 pub mod guard;
@@ -160,6 +161,8 @@ pub struct Session {
     pub(crate) skip_auto_write: bool,
     /// Where the host keeps face models (one folder each); `None` where there is no file system (the web).
     pub face_models_dir: Option<std::path::PathBuf>,
+    /// Face model downloads started this session (the staged files wait in `<face_models_dir>/.downloads`).
+    pub face_downloads: face_download::Downloads,
     /// Copied develop settings (partial JSON) for Paste.
     pub clipboard: Option<Value>,
     /// The folder on disk the [`LibrarySource::Folder`] view browses.
@@ -267,6 +270,7 @@ impl Session {
             interaction: None,
             skip_auto_write: false,
             face_models_dir: None,
+            face_downloads: Default::default(),
             clipboard: None,
             meta_clipboard: None,
             browse: None,

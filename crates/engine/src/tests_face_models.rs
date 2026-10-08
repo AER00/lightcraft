@@ -170,3 +170,191 @@ fn hostile_ids_unsupported_models_and_odd_folders_are_handled() {
     assert!(s.execute("faces.models.select", &json!({"id": ""})).is_err());
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// A demo session with the real YuNet installed, for the tests that need it: `LC_YUNET_MODEL=<the .onnx file>` (what
+/// Settings > Faces downloads; nothing is committed). Without it those tests say so and pass.
+fn demo_with_yunet() -> Option<Session> {
+    let Some(file) = std::env::var_os("LC_YUNET_MODEL") else {
+        eprintln!("LC_YUNET_MODEL is not set: skipping");
+        return None;
+    };
+    let dir = temp("yunet");
+    let mut s = Session::with_demo();
+    s.face_models_dir = Some(dir.join("models"));
+    let r = s.execute("faces.models.install", &json!({"path": file.to_string_lossy(), "acknowledged": true}));
+    assert!(r.is_ok(), "{r:?}");
+    Some(s)
+}
+
+#[test]
+fn detect_without_the_model_says_where_to_get_it() {
+    let d = temp("nodetector");
+    let mut s = Session::with_demo();
+    // no folder for models at all, then a folder that has none yet
+    assert!(s.execute("faces.detect", &json!({})).is_err());
+    s.face_models_dir = Some(d.join("models"));
+    let e = s.execute("faces.detect", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("Settings > Faces"), "{e}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn the_detector_and_the_recognisers_can_be_downloaded_and_the_download_is_refused_otherwise() {
+    let d = temp("dl-refusals");
+    let mut s = session(&d);
+    let l = s.execute("faces.models.list", &json!({})).unwrap();
+    for (id, host) in [("yunet-2023mar", "github.com"), ("sface-2021dec", "github.com"), ("auraface-v1", "huggingface.co")] {
+        assert_eq!(find(&l, id)["downloadHost"], host, "{id}");
+    }
+    // without the user's acceptance, for an id nobody knows, and without a folder: nothing starts
+    assert!(s.execute("faces.models.download", &json!({"id": "yunet-2023mar"})).is_err());
+    assert!(s.execute("faces.models.download", &json!({"id": "yunet-2023mar", "acknowledged": false})).is_err());
+    for id in ["nope", "", "../yunet-2023mar"] {
+        assert!(s.execute("faces.models.download", &json!({"id": id, "acknowledged": true})).is_err(), "{id}");
+    }
+    assert!(Session::new().execute("faces.models.download", &json!({"id": "yunet-2023mar", "acknowledged": true})).is_err());
+    assert_eq!(s.execute("faces.models.downloads", &json!({})).unwrap()["downloads"], json!([]));
+    assert!(!d.join("models").join(".downloads").exists(), "a refused download touches nothing");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_download_that_has_arrived_is_installed_by_itself_and_its_staged_file_goes() {
+    let d = temp("dl-arrived");
+    let mut s = session(&d);
+    let staging = d.join("models").join(".downloads");
+    std::fs::create_dir_all(&staging).unwrap();
+    let staged = staging.join("model.onnx");
+    std::fs::write(&staged, lightcraft_faces::synthetic::embedder_model(512)).unwrap();
+    let sha = lightcraft_faces::hash::sha256_file(&staged).unwrap();
+    s.face_downloads.arrived("my-model", staged.clone(), &sha);
+
+    let r = s.execute("faces.models.downloads", &json!({})).unwrap();
+    let row = &r["downloads"][0];
+    assert_eq!((row["id"].as_str(), row["state"].as_str()), (Some("my-model"), Some("installed")), "{r}");
+    assert!(!staged.exists(), "the staged file was moved into the model's folder");
+    let l = s.execute("faces.models.list", &json!({})).unwrap();
+    assert_eq!(l["models"].as_array().unwrap().iter().filter(|m| m["installed"] == true).count(), 1);
+    // announced once, cleared on request
+    assert_eq!(s.execute("faces.models.downloadCancel", &json!({"id": "my-model"})).unwrap()["discarded"], true);
+    assert_eq!(s.execute("faces.models.downloads", &json!({})).unwrap()["downloads"], json!([]));
+    assert_eq!(s.execute("faces.models.downloadCancel", &json!({"id": "my-model"})).unwrap()["discarded"], false);
+
+    // a file that cannot be installed is thrown away with a reason
+    std::fs::write(&staged, b"this is not a model").unwrap();
+    let sha = lightcraft_faces::hash::sha256_file(&staged).unwrap();
+    s.face_downloads.arrived("bad", staged.clone(), &sha);
+    let r = s.execute("faces.models.downloads", &json!({})).unwrap();
+    assert_eq!(r["downloads"][0]["state"], "failed", "{r}");
+    assert!(!staged.exists());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// `faces.detect` on photos without faces: it reports nothing, and a new run replaces earlier detections but
+/// never regions that came from XMP or were named; one undo step restores everything.
+#[test]
+fn detect_replaces_only_earlier_detections_and_is_one_undo_step() {
+    use lightcraft_catalog::Op;
+    use lightcraft_meta::{Region, RegionKind};
+    let region = |name: Option<&str>, description: Option<&str>, x: f64| Region {
+        rect: lightcraft_geom::Rect { x0: x, y0: 0.2, x1: x + 0.2, y1: 0.5 },
+        kind: RegionKind::Face,
+        name: name.map(str::to_string),
+        description: description.map(str::to_string),
+    };
+    let Some(mut s) = demo_with_yunet() else { return };
+    let id = s.active().unwrap();
+    let mut meta = s.catalog.photo(id).unwrap().meta.clone();
+    meta.regions =
+        vec![region(Some("Jane Doe"), None, 0.1), region(None, Some("Detected by YuNet 2023mar"), 0.5), region(None, Some("Drawn by hand"), 0.7)];
+    s.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+    let undo_before = s.undo.len();
+
+    // a dry run reports and changes nothing
+    let r = s.execute("faces.detect", &json!({"apply": false})).unwrap();
+    assert_eq!(r["applied"], false);
+    assert_eq!(s.catalog.photo(id).unwrap().meta.regions.len(), 3);
+    assert_eq!(s.undo.len(), undo_before);
+
+    // a real run (the default) drops the earlier detection (the demo has no faces) and keeps the others
+    let r = s.execute("faces.detect", &json!({})).unwrap();
+    assert_eq!(r["applied"], true);
+    assert_eq!(r["detector"], "YuNet 2023mar");
+    let photo = r["photos"].as_array().unwrap().iter().find(|p| p["id"] == id.0).unwrap();
+    assert_eq!(photo["faces"].as_array().unwrap().len(), 0, "the procedural demo photos have no faces");
+    let names: Vec<_> = s.catalog.photo(id).unwrap().meta.regions.iter().map(|r| (r.name.clone(), r.description.clone())).collect();
+    assert_eq!(names, vec![(Some("Jane Doe".to_string()), None), (None, Some("Drawn by hand".to_string()))]);
+    assert_eq!(s.undo.len(), undo_before + 1, "one undo step for the whole run");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.photo(id).unwrap().meta.regions.len(), 3, "undo brings the detection back");
+
+    // odd parameters are tolerated, and nothing is detected without a selection
+    for p in [json!({"score": 5}), json!({"score": -1}), json!({"nmsIou": 99}), json!({"maxFaces": 0}), json!({"score": "x"})] {
+        assert!(s.execute("faces.detect", &p).is_ok(), "{p}");
+    }
+    let mut empty = Session::new();
+    assert!(empty.execute("faces.detect", &json!({})).is_err());
+}
+
+/// Opt-in, needs the internet: `cargo test -p lightcraft-engine real_download -- --ignored --nocapture`. Downloads YuNet
+/// from its pinned address the way the app does, waits for it to be installed, then finds faces with it.
+#[test]
+#[ignore = "downloads from github.com"]
+fn real_download_of_yunet_installs_it_and_detects() {
+    let d = temp("real-download");
+    let mut s = Session::with_demo();
+    s.face_models_dir = Some(d.join("models"));
+    let started = s.execute("faces.models.download", &json!({"id": "yunet-2023mar", "acknowledged": true})).unwrap();
+    assert_eq!(started["from"], "github.com");
+    let t0 = std::time::Instant::now();
+    loop {
+        let r = s.execute("faces.models.downloads", &json!({})).unwrap();
+        let row = r["downloads"][0].clone();
+        match row["state"].as_str() {
+            Some("installed") => break,
+            Some("running") | Some("done") => {}
+            _ => panic!("{r}"),
+        }
+        assert!(t0.elapsed() < std::time::Duration::from_secs(120), "{r}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    println!("downloaded and installed in {:?}", t0.elapsed());
+    let l = s.execute("faces.models.list", &json!({})).unwrap();
+    assert_eq!(find(&l, "yunet-2023mar")["installed"], true);
+    let r = s.execute("faces.detect", &json!({"apply": false})).unwrap();
+    assert_eq!(r["detector"], "YuNet 2023mar");
+    // asking again once installed is refused
+    assert!(s.execute("faces.models.download", &json!({"id": "yunet-2023mar", "acknowledged": true})).is_err());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Opt-in, needs the internet: the recognisers are big, so this only checks that bytes start to arrive (through the
+/// hosts' redirects) and that cancelling leaves nothing behind.
+#[test]
+#[ignore = "downloads from github.com and huggingface.co"]
+fn real_downloads_of_the_recognisers_start_and_can_be_cancelled() {
+    let d = temp("real-start");
+    let mut s = Session::with_demo();
+    s.face_models_dir = Some(d.join("models"));
+    for id in ["sface-2021dec", "auraface-v1"] {
+        s.execute("faces.models.download", &json!({"id": id, "acknowledged": true})).unwrap();
+        let t0 = std::time::Instant::now();
+        loop {
+            let r = s.execute("faces.models.downloads", &json!({})).unwrap();
+            let row = r["downloads"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap().clone();
+            if row["state"] == "running" && row["bytes"].as_u64().unwrap_or(0) > 100_000 {
+                println!("{id}: {} of {} bytes after {:?}", row["bytes"], row["total"], t0.elapsed());
+                break;
+            }
+            assert!(row["state"] == "running", "{r}");
+            assert!(t0.elapsed() < std::time::Duration::from_secs(60), "{r}");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        s.execute("faces.models.downloadCancel", &json!({"id": id})).unwrap();
+    }
+    drop(s);
+    let staging = d.join("models").join(".downloads");
+    let left: Vec<_> = std::fs::read_dir(&staging).map(|r| r.flatten().map(|e| e.file_name()).collect()).unwrap_or_default();
+    println!("left in staging: {left:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}

@@ -2883,6 +2883,7 @@ dependencies = [
  "lightcraft-color",
  "lightcraft-develop",
  "lightcraft-faces",
+ "lightcraft-fetch",
  "lightcraft-geom",
  "lightcraft-gpu",
  "lightcraft-merge",

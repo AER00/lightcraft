@@ -344,9 +344,17 @@ impl LightcraftApp {
             let now = self.tasks.repaint.as_ref().map(|ctx| ctx.input(|i| i.time)).unwrap_or(self.last_time);
             self.ui.toast = Some((text, now + TOAST_SECONDS, label));
         }
-        if let Err(e) = &r {
-            log::warn!("{id}: {e}");
-            self.ui.status = e.clone();
+        match &r {
+            Err(e) => {
+                log::warn!("{id}: {e}");
+                self.ui.status = e.clone();
+                // no detector yet: offer it (its terms first) instead of only saying so
+                if id == "faces.detect" && e.contains("Settings > Faces") {
+                    panels::faces::offer_detector(self);
+                }
+            }
+            Ok(v) if id == "faces.detect" => self.ui.status = detect_summary(v),
+            Ok(_) => {}
         }
         r
     }
@@ -710,6 +718,7 @@ impl LightcraftApp {
         self.preview_build_status(ctx);
         self.save_status(ctx);
         self.slideshow_tick(ctx);
+        panels::faces::pump(self, ctx);
         // back from an external editor: pick up the files it saved
         let focused = ctx.input(|i| i.focused);
         if focused && !self.ui.was_focused && !self.ui.external_edits.is_empty() {
@@ -965,6 +974,20 @@ pub fn is_bw(d: &lightcraft_develop::DevelopSettings) -> bool {
     d.treatment == lightcraft_develop::Treatment::Bw || d.profile.id == "lc.mono" || d.profile.id.starts_with("lc.bw.")
 }
 
+/// "Found 3 faces in 2 photos" for a `faces.detect` result.
+fn detect_summary(v: &Value) -> String {
+    let photos = v["photos"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let counts: Vec<usize> = photos.iter().map(|p| p["faces"].as_array().map_or(0, Vec::len)).collect();
+    let (faces, with) = (counts.iter().sum::<usize>(), counts.iter().filter(|n| **n > 0).count());
+    let plural = |n: usize, w: &str| format!("{n} {w}{}", if n == 1 { "" } else { "s" });
+    match (faces, photos.len()) {
+        (0, 1) => "No faces found".into(),
+        (0, n) => format!("No faces found in {}", plural(n, "photo")),
+        (f, 1) => format!("Found {}", plural(f, "face")),
+        (f, _) => format!("Found {} in {}", plural(f, "face"), plural(with, "photo")),
+    }
+}
+
 /// A dropped face model file (`.onnx`).
 pub fn is_model_file(path: &str) -> bool {
     std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("onnx"))
@@ -978,6 +1001,18 @@ pub fn is_preset_file(path: &str) -> bool {
 
 #[cfg(test)]
 mod drop_tests {
+    #[test]
+    fn detection_results_are_summarised_in_words() {
+        let r =
+            |counts: &[usize]| serde_json::json!({"photos": counts.iter().map(|n| serde_json::json!({"faces": vec![0; *n]})).collect::<Vec<_>>()});
+        assert_eq!(super::detect_summary(&r(&[0])), "No faces found");
+        assert_eq!(super::detect_summary(&r(&[1])), "Found 1 face");
+        assert_eq!(super::detect_summary(&r(&[3])), "Found 3 faces");
+        assert_eq!(super::detect_summary(&r(&[0, 0])), "No faces found in 2 photos");
+        assert_eq!(super::detect_summary(&r(&[2, 0, 1])), "Found 3 faces in 2 photos");
+        assert_eq!(super::detect_summary(&serde_json::json!({})), "No faces found in 0 photos");
+    }
+
     #[test]
     fn dropped_face_models_are_told_apart() {
         for p in ["/a/model.onnx", "/a/dir/M.ONNX"] {
@@ -1014,6 +1049,8 @@ pub struct Caches {
     pub album_count_scans: usize,
     /// Bumped when a face model is installed, removed or chosen, so Settings re-reads the list at once.
     pub faces_epoch: u64,
+    /// Face model downloads the user started, followed until installed (see `panels::faces::pump`).
+    pub faces_dl_watch: Vec<String>,
     /// The grid's date runs, layout and indexes (by the visible list's generation).
     pub grid: panels::grid::GridCache,
     /// What the grid did on its frames (benchmarks and tests check unchanged frames stay cheap).
