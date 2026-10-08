@@ -925,3 +925,29 @@ fn saved_presets_with_unknown_keys_still_export() {
     assert_eq!(o.watermark.map(|w| w.text), Some("©".to_string()));
     assert!(ExportOptions::from_params(&s.export_params(&json!({"preset": "old", "qualty": 80})).unwrap()).is_err());
 }
+
+/// Undo and redo bring the photo they change on screen (issue #293): after editing one photo and
+/// moving on, Undo makes it the active photo again; a step that changes several photos leaves the
+/// selection alone.
+#[test]
+fn undo_and_redo_show_the_photo_they_change() {
+    let mut s = demo();
+    let vis = s.visible_cloned();
+    let (a, b) = (vis[0], vis[1]);
+    s.execute("library.select", &json!({"ids": [a.0]})).unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 1.0})).unwrap();
+    s.execute("library.select", &json!({"ids": [b.0]})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.active(), Some(a), "undo shows the photo it changed");
+    assert_eq!(s.selection.ids, vec![a]);
+    s.execute("library.select", &json!({"ids": [b.0]})).unwrap();
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.active(), Some(a), "so does redo");
+    // rating both selected photos is one step over two photos: undoing it leaves the selection
+    s.execute("library.select", &json!({"ids": [a.0, b.0], "active": b.0})).unwrap();
+    s.execute("photo.rate", &json!({"rating": 3})).unwrap();
+    s.execute("library.select", &json!({"ids": [a.0, b.0], "active": a.0})).unwrap();
+    let before = s.selection.clone();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.selection, before, "a step over several photos keeps the selection");
+}

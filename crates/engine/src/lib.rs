@@ -83,6 +83,27 @@ pub struct UndoEntry {
     pub folder: Option<FolderMove>,
 }
 
+/// The one photo an undo step changes, when it changes exactly one through its edit, rating, flag,
+/// label, metadata or versions (`depth` bounds nested batches).
+fn single_photo(op: &Op, depth: usize) -> Option<PhotoId> {
+    match op {
+        Op::SetDevelop { id, .. }
+        | Op::SetRating { id, .. }
+        | Op::SetFlag { id, .. }
+        | Op::SetLabel { id, .. }
+        | Op::SetMeta { id, .. }
+        | Op::SetVersions { id, .. }
+        | Op::SetHistory { id, .. }
+        | Op::PushHistory { id, .. } => Some(*id),
+        Op::Batch { ops } if depth < 8 => {
+            let mut ids = ops.iter().map(|o| single_photo(o, depth + 1));
+            let first = ids.next()??;
+            ids.all(|id| id == Some(first)).then_some(first)
+        }
+        _ => None,
+    }
+}
+
 /// A folder renamed or moved on disk as part of an undo step.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FolderMove {
@@ -428,6 +449,7 @@ impl Session {
                 return Err(err);
             }
         };
+        self.show_undone(&e.op);
         self.pending_log.push(e.op);
         self.redo.push(UndoEntry { label: e.label.clone(), op: redo, folder: e.folder.as_ref().map(FolderMove::reversed) });
         Ok(e.label)
@@ -442,9 +464,28 @@ impl Session {
                 return Err(err);
             }
         };
+        self.show_undone(&e.op);
         self.pending_log.push(e.op);
         self.undo.push(UndoEntry { label: e.label.clone(), op: undo, folder: e.folder.as_ref().map(FolderMove::reversed) });
         Ok(e.label)
+    }
+
+    /// After an undo or redo that changed one photo (its edit, rating, flag, label, metadata or
+    /// versions), that photo becomes the active one, as in Lightroom Classic, so the change is on
+    /// screen (issue #293). It joins the selection if it isn't in it; nothing changes for steps
+    /// that touch several photos, albums or files, or for a photo not in the current view.
+    fn show_undone(&mut self, op: &Op) {
+        let Some(id) = single_photo(op, 0) else { return };
+        if self.selection.active == Some(id) || !self.visible().contains(&id) {
+            return;
+        }
+        if !self.selection.contains(id) {
+            self.selection = Selection { ids: vec![id], active: Some(id) };
+        } else {
+            self.selection.active = Some(id);
+        }
+        self.active_mask = None;
+        self.active_spot = None;
     }
 
     /// Apply an undo/redo op, first renaming the step's folder and moving the files its renames
