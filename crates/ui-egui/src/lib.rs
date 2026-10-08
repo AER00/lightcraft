@@ -55,6 +55,8 @@ mod tests_scroll;
 #[cfg(test)]
 mod tests_switch_library;
 #[cfg(test)]
+mod tests_titlebar;
+#[cfg(test)]
 mod tests_unsaved;
 
 use std::sync::mpsc::{Receiver, Sender};

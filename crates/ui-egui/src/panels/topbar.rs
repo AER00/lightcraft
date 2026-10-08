@@ -8,6 +8,28 @@ use crate::icons::{Icon, paint};
 use crate::theme::Tokens;
 use crate::widgets::{icon_button, register};
 
+/// The bar doubles as the window's title bar: dragging its empty space moves the window and a
+/// double-click zooms or restores it. Registered before the bar's widgets so they win the click.
+fn window_handle(app: &LightcraftApp, ui: &mut egui::Ui, content: Rect, margin_left: f32, margin_right: f32) {
+    use crate::titlebar::{Gesture, WindowState, command_for};
+    let bar = Rect::from_min_max(pos2(content.left() - margin_left, content.top()), pos2(content.right() + margin_right, content.bottom()));
+    register(ui.ctx(), "region:titlebar", bar);
+    let resp = ui.interact(bar, egui::Id::new("titlebar-handle"), Sense::click_and_drag());
+    let gesture = if resp.double_clicked_by(egui::PointerButton::Primary) {
+        Some(Gesture::DoubleClicked)
+    } else if resp.drag_started_by(egui::PointerButton::Primary) {
+        Some(Gesture::DragStarted)
+    } else {
+        None
+    };
+    if let Some(g) = gesture {
+        let window = WindowState { maximized: ui.input(|i| i.viewport().maximized).unwrap_or(false), fullscreen: app.window_is_fullscreen };
+        if let Some(cmd) = command_for(g, window) {
+            ui.ctx().send_viewport_cmd(cmd);
+        }
+    }
+}
+
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let left = if app.integrated_titlebar { 78 } else { 10 };
@@ -16,6 +38,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin { left, right: 12, top: 0, bottom: 0 }))
         .show(ui, |ui| {
             let full = ui.max_rect();
+            if app.integrated_titlebar {
+                window_handle(app, ui, full, left as f32, 12.0);
+            }
             let mut sw = 640.0f32.min(full.width() - 460.0).max(200.0);
             if !app.native_menu {
                 // leave room for the in-window menus left of the (centred) search field
