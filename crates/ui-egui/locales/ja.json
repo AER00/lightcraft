@@ -1359,7 +1359,6 @@
   "The photo has these settings": "この写真に適用されている設定",
   "They can be restored from Recently Deleted until it is emptied.": "「最近削除した写真」を空にするまでは復元できます",
   "Thirds": "三分割",
-  "This build has no download location for the model yet: put the files in the folder above yourself (see docs/ai-masks.md).": "このビルドにはモデルのダウンロード元がまだありません。上のフォルダにファイルを手動で置いてください（docs/ai-masks.md を参照）",
   "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder.": "このフォルダにアクセスできません。ドライブを接続するか別のフォルダを選ぶまで、スマートプレビューは作成・使用されません",
   "This photo can't be opened": "この写真を開けません",
   "Threshold": "しきい値",
@@ -1634,5 +1633,8 @@
   "≤  at most": "≤  以下",
   "≥  at least": "≥  以上",
   "日本語": "日本語",
-  "繁體中文（台灣）": "繁體中文（台灣）"
+  "繁體中文（台灣）": "繁體中文（台灣）",
+  "How to install the model": "モデルのインストール方法",
+  "Install the SAM 3 Model": "SAM 3モデルのインストール",
+  "This build can't download the model yet. To install it by hand, put model.safetensors, vocab.json and merges.txt from Meta's facebook/sam3 in the folder above: Object and Describe work as soon as they are there.": "このビルドではまだモデルをダウンロードできません。手動でインストールするには、Meta の facebook/sam3 の model.safetensors、vocab.json、merges.txt を上のフォルダに置いてください。置いた時点で「オブジェクト」と「説明で選択」が使えるようになります。"
 }
