@@ -67,7 +67,8 @@ Take the first one nobody is working on.
    colour-filter layout, fixed in #85 by reading the file's own tag).
 4. **LR-BEHAV-RENDER-FIDELITY** (P1): a side-by-side fidelity suite against Lightroom renders (kept local in `plan/`),
    then tune tone, highlights, texture/clarity/dehaze, NR and sharpening against it.
-5. **LR-EDIT-OPTICS-PROFILE** (P1): a lens-profile database of our own (embedded DNG/maker corrections work today).
+5. **LR-EDIT-OPTICS-PROFILE** (P1): a lens-profile database of our own (corrections embedded in DNG files and the
+   distortion correction Panasonic / Leica cameras record in RW2 / RWL files work today; issue #256).
 6. **AI masks and Enhance** (LR-MASK-SUBJECT / SKY / PEOPLE / OBJECTS, LR-EDIT-DETAIL-DENOISE, SUPERRES, LENSBLUR):
    Object and Describe masks run SAM 3 in pure Rust (`crates/segment`); the weights (SAM License) are never bundled:
    the app offers a consented, verified download, but **LightCraft's CDN mirrors are not configured yet** (the
@@ -254,7 +255,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-DETAIL-SUPERRES | Super resolution | P2 | ⬜ | | |
 | LR-EDIT-DETAIL-AISHARPEN | AI sharpen | OOS | 🚫 | | |
 | LR-EDIT-OPTICS-CA | Remove chromatic aberration | P1 | ✅ | `crates/ui-egui/src/panels/edit.rs` (checkbox), `ctl:optics.caRed`, `ctl:optics.caBlue` | |
-| LR-EDIT-OPTICS-PROFILE | Lens profile corrections | P1 | 🟡 | `ctl:optics.profileDistortion`, `ctl:optics.profileVignetting`, `crates/pipeline/src/optics.rs` | uses corrections embedded in DNG/raw files; no lens-profile database |
+| LR-EDIT-OPTICS-PROFILE | Lens profile corrections | P1 | 🟡 | `ctl:optics.profileDistortion`, `ctl:optics.profileVignetting`, `crates/pipeline/src/optics.rs`, `crates/raw/src/vendor/rw2.rs` | uses corrections embedded in the file: DNG `WarpRectilinear` / `FixVignetteRadial`, and the camera's own distortion correction in Panasonic / Leica RW2 / RWL files (tag `0x0119`, read as the equivalent `WarpRectilinear`; on 79 photos from 13 bodies and 11 lenses the corrected render lines up with the camera JPEG within 0.75 px at 1440 px at the corners, from up to 13 % of the half diagonal uncorrected; issue #256); vignetting and lateral CA data of other raw formats (Olympus, Fujifilm, Sony) not read yet; no lens-profile database |
 | LR-EDIT-OPTICS-DEFRINGE | Defringe | P1 | ✅ | `ctl:optics.defringe*` | no fringe eyedropper |
 | LR-EDIT-OPTICS-MANUAL | Manual distortion / vignetting | P1 | ✅ | `ctl:optics.distortion`, `ctl:optics.vignetting`, `ctl:optics.vignettingMidpoint` | |
 | LR-EDIT-GEOM-UPRIGHT | Upright | P1 | ✅ | `cmd:geometry.upright`, `cmd:geometry.guides` | |
