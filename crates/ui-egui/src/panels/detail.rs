@@ -267,8 +267,8 @@ fn request_window(app: &mut LightcraftApp, c: &WindowCtx, v: &WindowView) -> Opt
     let look = job.settings.hash64();
     let view = crate::region::RegionView { photo: c.id, before: v.before, key: job.key, full: (fw, fh), window: win, settings: look };
     // windows of other photos, looks and zooms of this side can't be drawn any more
-    app.region_tiles.retain(|_, t| t.before != v.before || t.is_current(c.id, (fw, fh), look, c.interacting));
-    app.region_tiles.insert(job.key, view);
+    app.region_tiles.retain(|(before, _), t| *before != v.before || t.is_current(c.id, (fw, fh), look, c.interacting));
+    app.region_tiles.insert((v.before, job.key), view);
     app.renderer.request(v.slot, job, 99);
     Some(view)
 }
@@ -277,9 +277,7 @@ fn request_window(app: &mut LightcraftApp, c: &WindowCtx, v: &WindowView) -> Opt
 /// drag, an earlier draft of it).
 fn draw_window(p: &egui::Painter, app: &LightcraftApp, c: &WindowCtx, v: &WindowView, wanted: &crate::region::RegionView) {
     let Some(tex) = app.renderer.textures.get(&v.slot).filter(|t| t.photo == c.id) else { return };
-    let Some(tile) =
-        app.region_tiles.get(&tex.key).filter(|t| t.before == v.before && t.is_current(c.id, wanted.full, wanted.settings, c.interacting))
-    else {
+    let Some(tile) = app.region_tiles.get(&(v.before, tex.key)).filter(|t| t.is_current(c.id, wanted.full, wanted.settings, c.interacting)) else {
         return;
     };
     let (fw, fh) = (tile.full.0 as f32, tile.full.1 as f32);
@@ -487,7 +485,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             app.region_view = shown;
         }
         if shown.is_none() {
-            app.region_tiles.retain(|_, v| v.before != before);
+            app.region_tiles.retain(|(b, _), _| *b != before);
             app.renderer.release(slot);
         }
     }
@@ -555,35 +553,43 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             }
         }
     }
-    // the window renders, drawn over the whole-frame ones where they belong in the frame (the
-    // Before side of a wipe only on its side of the line)
-    for (v, view) in &windows {
-        let clip = match (app.ui.before_after, v.before) {
-            (BeforeAfter::Split, true) => Rect::from_min_max(canvas.min, pos2(img_rect.center().x, canvas.bottom())),
-            (BeforeAfter::SplitTopBottom, true) => Rect::from_min_max(canvas.min, pos2(canvas.right(), img_rect.center().y)),
-            (BeforeAfter::Split, false) => Rect::from_min_max(pos2(img_rect.center().x, canvas.top()), canvas.max),
-            (BeforeAfter::SplitTopBottom, false) => Rect::from_min_max(pos2(canvas.left(), img_rect.center().y), canvas.max),
-            _ => canvas,
-        };
-        draw_window(&p.with_clip_rect(clip.intersect(canvas)), app, &window_ctx, v, view);
-    }
     app.loupe_shown = Some((id, shown));
+    #[cfg(test)]
+    app.draw_order.clear();
+    // a wipe shows the Before whole-frame render on its side of the line…
+    if app.ui.before_after == BeforeAfter::Split
+        && let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id)
+    {
+        let before_rect = fit_texture_rect(img_rect, tex.size);
+        let left = Rect::from_min_max(before_rect.min, pos2(before_rect.center().x, before_rect.bottom()));
+        p.image(tex.tex.id(), left, Rect::from_min_max(pos2(0.0, 0.0), pos2(0.5, 1.0)), Color32::WHITE);
+    }
+    if app.ui.before_after == BeforeAfter::SplitTopBottom
+        && let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id)
+    {
+        let before_rect = fit_texture_rect(img_rect, tex.size);
+        let top = Rect::from_min_max(before_rect.min, pos2(before_rect.right(), before_rect.center().y));
+        p.image(tex.tex.id(), top, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 0.5)), Color32::WHITE);
+    }
+    #[cfg(test)]
+    if matches!(app.ui.before_after, BeforeAfter::Split | BeforeAfter::SplitTopBottom) {
+        app.draw_order.push("wipe stand-in");
+    }
+    // …and the window renders go over the whole-frame ones, all of them, where they belong in the
+    // frame (clipped to their pane, or their side of the line)
+    for (v, view) in &windows {
+        let clip = crate::region::window_clip(app.ui.before_after, v.before, v.visible, canvas, img_rect);
+        draw_window(&p.with_clip_rect(clip), app, &window_ctx, v, view);
+        #[cfg(test)]
+        app.draw_order.push(if v.before { "window RegionBefore" } else { "window Region" });
+    }
+    // the line of a wipe over both
     if app.ui.before_after == BeforeAfter::Split {
         let mid = img_rect.center().x;
-        if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
-            let before_rect = fit_texture_rect(img_rect, tex.size);
-            let left = Rect::from_min_max(before_rect.min, pos2(before_rect.center().x, before_rect.bottom()));
-            p.image(tex.tex.id(), left, Rect::from_min_max(pos2(0.0, 0.0), pos2(0.5, 1.0)), Color32::WHITE);
-        }
         p.line_segment([pos2(mid, img_rect.top()), pos2(mid, img_rect.bottom())], Stroke::new(1.5, Color32::WHITE));
     }
     if app.ui.before_after == BeforeAfter::SplitTopBottom {
         let mid = img_rect.center().y;
-        if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
-            let before_rect = fit_texture_rect(img_rect, tex.size);
-            let top = Rect::from_min_max(before_rect.min, pos2(before_rect.right(), before_rect.center().y));
-            p.image(tex.tex.id(), top, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 0.5)), Color32::WHITE);
-        }
         p.line_segment([pos2(img_rect.left(), mid), pos2(img_rect.right(), mid)], Stroke::new(1.5, Color32::WHITE));
     }
     if app.ui.show_clipping && !show_before && !fullscreen {

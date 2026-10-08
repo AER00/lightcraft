@@ -526,4 +526,33 @@ mod in_the_loupe {
         assert!(h.app.renderer.textures.contains_key(&Slot::Region), "a window arrived");
         assert!(h.app.session.memory_report().full_source.bytes > 0, "the original stayed in the cache while the drag went on");
     }
+
+    // Given a wipe at 1:1, the Before window is drawn after (over) the low-resolution Before
+    // stand-in on its side of the line, never under it
+    #[test]
+    fn a_wipe_draws_the_before_window_over_its_stand_in() {
+        for mode in [crate::state::BeforeAfter::Split, crate::state::BeforeAfter::SplitTopBottom] {
+            let (mut h, _) = detail();
+            h.app.ui.before_after = mode;
+            h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+            h.settle(SETTLE);
+            h.step();
+            let order = &h.app.draw_order;
+            let pos = |what: &str| order.iter().position(|d| *d == what);
+            let (stand_in, before, after) = (pos("wipe stand-in"), pos("window RegionBefore"), pos("window Region"));
+            assert!(stand_in.is_some() && before.is_some() && after.is_some(), "{mode:?}: {order:?}");
+            assert!(before > stand_in, "{mode:?}: the Before window is under its stand-in: {order:?}");
+        }
+    }
+
+    // Given a Before and an After with the same look (an unedited photo), both windows are kept
+    // apart: the job key is the same, and one tile must not replace the other
+    #[test]
+    fn identical_before_and_after_keep_a_tile_each() {
+        let (mut h, _) = detail();
+        h.app.ui.before_after = crate::state::BeforeAfter::SideBySide;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        assert_eq!(h.app.region_tiles.len(), 2, "{:?}", h.app.region_tiles.keys().collect::<Vec<_>>());
+    }
 }

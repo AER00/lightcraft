@@ -207,7 +207,10 @@ pub struct LightcraftApp {
     pub region_before_view: Option<region::RegionView>,
     /// The loupe's render sizes while a pinch or two-finger scroll runs.
     pub(crate) size_hold: region::SizeHold,
-    pub(crate) region_tiles: std::collections::HashMap<u64, region::RegionView>,
+    /// What the loupe drew last frame, in order (tests check layering).
+    #[cfg(test)]
+    pub(crate) draw_order: Vec<&'static str>,
+    pub(crate) region_tiles: std::collections::HashMap<(bool, u64), region::RegionView>,
     /// Photo Merge dialog previews and background merges.
     pub merge: merge::MergeState,
     /// An import in progress (the import review dialog's batches).
@@ -278,6 +281,8 @@ impl LightcraftApp {
             region_view: None,
             region_before_view: None,
             size_hold: Default::default(),
+            #[cfg(test)]
+            draw_order: Vec::new(),
             region_tiles: Default::default(),
             merge: merge::MergeState::default(),
             import: None,

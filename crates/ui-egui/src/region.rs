@@ -142,6 +142,23 @@ impl SizeHold {
     }
 }
 
+/// Where a window of one side of a Before/After view may be drawn: its own pane in side by side
+/// and stacked views (a window carries margin beyond what its pane shows, which would otherwise
+/// spill into the neighbour), its side of the line in a wipe, else the canvas.
+pub fn window_clip(mode: crate::state::BeforeAfter, before_side: bool, pane: egui::Rect, canvas: egui::Rect, img: egui::Rect) -> egui::Rect {
+    use crate::state::BeforeAfter;
+    let (min, max) = (canvas.min, canvas.max);
+    let clip = match (mode, before_side) {
+        (BeforeAfter::Split, true) => egui::Rect::from_min_max(min, egui::pos2(img.center().x, max.y)),
+        (BeforeAfter::SplitTopBottom, true) => egui::Rect::from_min_max(min, egui::pos2(max.x, img.center().y)),
+        (BeforeAfter::Split, false) => egui::Rect::from_min_max(egui::pos2(img.center().x, min.y), max),
+        (BeforeAfter::SplitTopBottom, false) => egui::Rect::from_min_max(egui::pos2(min.x, img.center().y), max),
+        (BeforeAfter::SideBySide | BeforeAfter::TopBottom, _) => pane,
+        _ => canvas,
+    };
+    clip.intersect(canvas)
+}
+
 /// Whether the picture on screen has the frame's aspect (to the one pixel a texture's whole-pixel
 /// size is off by): a window is a part of the frame, so it can only be placed over a picture that
 /// is the frame (an unsupported raw's embedded JPEG may be cropped differently).
@@ -311,6 +328,27 @@ mod tests {
         let mut hold = SizeHold::default();
         hold.apply(PhotoId(1), 0.0, false, fit);
         assert_eq!(hold.apply(PhotoId(2), 0.1, true, zoomed), zoomed);
+    }
+
+    // Given side by side, a window is drawn in its pane only; given a wipe, on its side of the line
+    #[test]
+    fn a_window_is_clipped_to_its_pane_or_its_side_of_the_wipe() {
+        use crate::state::BeforeAfter::*;
+        let canvas = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+        let (left, right) = (
+            egui::Rect::from_min_max(egui::pos2(24.0, 24.0), egui::pos2(494.0, 576.0)),
+            egui::Rect::from_min_max(egui::pos2(506.0, 24.0), egui::pos2(976.0, 576.0)),
+        );
+        assert_eq!(window_clip(SideBySide, true, left, canvas, left), left);
+        assert_eq!(window_clip(SideBySide, false, right, canvas, right), right);
+        let img = egui::Rect::from_min_max(egui::pos2(100.0, 50.0), egui::pos2(900.0, 550.0));
+        let before = window_clip(Split, true, canvas, canvas, img);
+        let after = window_clip(Split, false, canvas, canvas, img);
+        assert_eq!((before.max.x, after.min.x), (500.0, 500.0), "the line is the image's middle");
+        assert_eq!(window_clip(SplitTopBottom, true, canvas, canvas, img).max.y, 300.0);
+        assert_eq!(window_clip(SplitTopBottom, false, canvas, canvas, img).min.y, 300.0);
+        assert_eq!(window_clip(Off, false, canvas, canvas, img), canvas);
+        assert_eq!(window_clip(Original, true, canvas, canvas, img), canvas);
     }
 
     // Hostile numbers give a plan, never a panic
