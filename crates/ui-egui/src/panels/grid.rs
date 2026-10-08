@@ -564,8 +564,9 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     };
     let badge_bar = Rect::from_min_max(pos2(img_rect.left(), img_rect.bottom() - 24.0), img_rect.right_bottom());
     if !square && photo.label.is_some() {
-        // Justified photos fill the whole cell: reserve the badge footer as coloured chrome.
-        p.rect_filled(badge_bar, 0.0, crate::theme::label_background(t.cell, photo.label, selected));
+        // Justified photos fill the whole cell, so the label shows as a translucent tinted footer
+        // over the photo's bottom edge (opaque, it would hide 24 px of every labelled photo).
+        p.rect_filled(badge_bar, 0.0, crate::theme::label_background(t.cell, photo.label, selected).gamma_multiply(0.7));
     }
     if show_badges {
         let bar = badge_bar;

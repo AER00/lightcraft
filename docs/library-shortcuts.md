@@ -18,7 +18,7 @@ culling; it does not delete the original or remove it from the library.
 Setting a colour label shows the same brief bottom toast as a rating, using the colour or your
 custom label name. Clearing it shows a confirmation too, whether applied by a key, menu or swatch.
 Labelled thumbnails have a translucent matching colour on the square-grid surround, photo-grid
-footer and Detail filmstrip surround. The photo pixels and white active-photo outline remain clear.
+footer (translucent, over the bottom of the photo) and Detail filmstrip surround. The white active-photo outline remains clear.
 The label confirmation uses a pale matching background with dark text; ratings and errors retain
 their neutral HUD styling. Custom names use the underlying label's colour.
 

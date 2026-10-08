@@ -3,7 +3,7 @@
 ## October 2026
 
 ### Library keyboard culling
-- Colour labels tint thumbnail surrounds in Square Grid and the Detail filmstrip, and the footer in Photo Grid. Label confirmations use a matching pale colour; the photo pixels retain their original appearance.
+- Colour labels tint thumbnail surrounds in Square Grid and the Detail filmstrip, and a translucent footer along the bottom of the photo in Photo Grid. Label confirmations use a matching pale colour.
 - Setting or clearing a colour label shows a brief bottom confirmation, like rating a photo; custom label names appear in the message too.
 - On macOS, ratings `0–5`, labels `6–9` and pick/unflag `P/U` now reach the app even when shown in the native menu (issue #283; adapted from PR #261).
 - `Shift+6–9` labels and advances. `Shift+P` picks and advances in Photo Grid and Square Grid; it opens Presets in other views. With Auto Advance on, Shift still moves only once.
