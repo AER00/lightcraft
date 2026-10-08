@@ -182,11 +182,15 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
 /// Why a raw that failed to decode should show its embedded preview instead (`Ok`), or the error
 /// to report (`Err`). Variants we can't decode yet always fall back. So does any CR3 error: the CRX
 /// decoder is verified on few bodies, and every CR3 opened from its embedded JPEG before it existed.
+/// So does any other failure of a recognised raw (damaged or oversized raw data, unreadable TIFF
+/// structure): its preview may still be intact. Only a file that is not a raw reports an error.
 fn preview_reason(bytes: &[u8], e: lightcraft_raw::RawError) -> Result<String, String> {
+    use lightcraft_raw::RawError;
     match e {
-        lightcraft_raw::RawError::Unsupported(why) => Ok(why),
+        RawError::Unsupported(why) => Ok(why),
         e if lightcraft_raw::probe(bytes) == Some(lightcraft_raw::RawFormat::Cr3) => Ok(format!("CR3 {e}")),
-        e => Err(e.to_string()),
+        RawError::NotRaw => Err(RawError::NotRaw.to_string()),
+        e => Ok(e.to_string()),
     }
 }
 
@@ -759,6 +763,41 @@ mod tests {
         let plain = probe_bytes("small.tif", &tiff_shell(24, 16, false)).unwrap();
         assert_eq!((plain.kind, plain.preview_only, plain.width, plain.height), (MediaKind::Image, None, 24, 16));
         assert!(lightcraft_raw::probe(&tiff_shell(24, 16, false)).is_none());
+    }
+
+    /// Recognised raw containers we don't decode (Minolta MRW here: the preview's first byte is
+    /// overwritten in the file) import as preview only with the JPEG's size, instead of failing.
+    #[test]
+    fn undecodable_container_with_a_preview_imports_as_preview_only() {
+        let px: Vec<u8> = (0..40 * 30).flat_map(|i| [(i % 251) as u8, 128, 200]).collect();
+        let mut jpeg = encode_jpeg(&EncodeImage::new(40, 30, 3, Samples::U8(&px)), 90, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap();
+        jpeg[0] = 0x02;
+        let mut f = b"\0MRM\0\x01\0\0".to_vec();
+        f.extend(std::iter::repeat_n(0x11u8, 300));
+        f.extend_from_slice(&jpeg);
+        f.extend(std::iter::repeat_n(0x22u8, 300));
+        let p = probe_bytes("A.MRW", &f).unwrap();
+        assert_eq!((p.kind, p.format.as_str(), p.width, p.height), (MediaKind::Raw, "MRW", 40, 30));
+        assert!(p.preview_only.is_some_and(|w| w.contains("Mrw")));
+        let (img, src) = load_bytes(&f, 20).unwrap();
+        assert_eq!((img.width, img.height, src.raw), (20, 15, false));
+        // without a JPEG: a clear error
+        let e = probe_bytes("A.MRW", b"\0MRM\0\x01\0\0 nothing here").unwrap_err();
+        assert!(e.contains("without an embedded preview"), "{e}");
+    }
+
+    /// Any failure of a recognised raw (not only an unsupported variant) can fall back to its preview;
+    /// CR3 keeps its own wording.
+    #[test]
+    fn decode_failures_of_recognised_raws_may_fall_back_to_the_preview() {
+        use lightcraft_raw::RawError;
+        let cr3 = b"\0\0\0\x18ftypcrx \0\0\0\x01";
+        assert_eq!(preview_reason(b"x", RawError::Unsupported("x".into())), Ok("x".to_string()));
+        assert!(preview_reason(b"x", RawError::Corrupt("bad strip".into())).is_ok_and(|w| w.contains("bad strip")));
+        assert!(preview_reason(b"x", RawError::Limit("too big")).is_ok());
+        assert!(preview_reason(b"x", RawError::Tiff(lightcraft_tiff::TiffError::MissingTag(256))).is_ok());
+        assert!(preview_reason(b"x", RawError::NotRaw).is_err());
+        assert!(preview_reason(cr3, RawError::Corrupt("bad".into())).is_ok_and(|w| w.starts_with("CR3 ")));
     }
 
     #[test]

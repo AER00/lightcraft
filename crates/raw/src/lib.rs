@@ -83,6 +83,12 @@ pub enum RawFormat {
     Rw2,
     Pef,
     Srw,
+    /// Canon CRW (CIFF heap), the bodies before the CR2 era.
+    Crw,
+    /// Minolta MRW (`\0MRM` block container).
+    Mrw,
+    /// Sigma / Foveon X3F (`FOVb`).
+    X3f,
     /// Another TIFF-based raw (3FR, IIQ, ERF, KDC, DCR, MOS, …).
     OtherTiff,
 }
@@ -119,6 +125,15 @@ pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
     if bytes.starts_with(b"IIU\0") {
         return Some(RawFormat::Rw2);
     }
+    if bytes.starts_with(b"\0MRM") {
+        return Some(RawFormat::Mrw);
+    }
+    if bytes.starts_with(b"FOVb") {
+        return Some(RawFormat::X3f);
+    }
+    if bytes.len() >= 14 && bytes.starts_with(b"II") && &bytes[6..14] == b"HEAPCCDR" {
+        return Some(RawFormat::Crw);
+    }
     if bytes.len() >= 10 && bytes.starts_with(b"II*\0") && &bytes[8..10] == b"CR" {
         return Some(RawFormat::Cr2);
     }
@@ -146,18 +161,27 @@ pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
     if make.starts_with("SAMSUNG") {
         return Some(RawFormat::Srw);
     }
-    if has_cfa || thumbnail_shell(&t, bytes.len()).is_some() {
+    if has_cfa || thumbnail_shell(&t, bytes.len()).is_some() || is_preview_container(ifd0) {
         return Some(RawFormat::OtherTiff);
     }
     None
 }
 
-/// Whether some IFD is marked as raw: CFA photometric, or a raw-only compression value.
+/// Whether some IFD is marked as raw: CFA photometric, or a raw-only compression value (99 is not a
+/// registered TIFF compression; Leaf MOS files use it for their tiled 16-bit lossless-JPEG raw).
 fn has_raw_ifd(t: &Tiff) -> bool {
     t.all_ifds().iter().any(|i| {
         i.u16(lightcraft_tiff::tags::PHOTOMETRIC) == Some(lightcraft_tiff::tags::photometric::CFA)
-            || i.u16(lightcraft_tiff::tags::COMPRESSION).is_some_and(|c| c == 34713 || c == 32767 || c == 32769 || c == 32770)
+            || i.u16(lightcraft_tiff::tags::COMPRESSION).is_some_and(|c| c == 34713 || c == 32767 || c == 32769 || c == 32770 || c == 99)
     })
+}
+
+/// IFD0 that is not an image at all: no `ImageWidth` / `ImageLength`, but a JPEG preview pointer or
+/// `SubIFDs` (the layout of Kodak KDC files, whose pictures sit in private tags). A plain TIFF reader
+/// rejects such a file as malformed even though it carries a preview.
+fn is_preview_container(ifd0: &lightcraft_tiff::Ifd) -> bool {
+    use lightcraft_tiff::tags::{IMAGE_LENGTH, IMAGE_WIDTH, JPEG_INTERCHANGE_FORMAT, SUB_IFDS};
+    !ifd0.contains(IMAGE_WIDTH) && !ifd0.contains(IMAGE_LENGTH) && (ifd0.contains(JPEG_INTERCHANGE_FORMAT) || ifd0.contains(SUB_IFDS))
 }
 
 /// A TIFF whose first image is only a reduced copy of a picture stored somewhere else.
@@ -786,6 +810,51 @@ mod tests {
         assert_eq!(probe(&padded(&[rgb_ifd(16, 12), rgb_ifd(400, 300)])), None);
         // no dimensions at all
         assert_eq!(probe(&padded(&[IfdBuilder::new().with(t::MAKE, Value::Ascii("X".into()))])), None);
+    }
+
+    // --- containers that are recognised but not decoded, with a preview ---
+
+    #[test]
+    fn private_containers_are_recognised_by_their_magic() {
+        assert_eq!(probe(b"II\x1a\0\0\0HEAPCCDR\0\0"), Some(RawFormat::Crw));
+        assert_eq!(probe(b"\0MRM\0\x01\0\0"), Some(RawFormat::Mrw));
+        assert_eq!(probe(b"FOVb\x02\0\x02\0"), Some(RawFormat::X3f));
+        for f in [RawFormat::Crw, RawFormat::Mrw, RawFormat::X3f] {
+            assert!(!f.is_supported());
+        }
+        assert!(matches!(decode(b"\0MRM\0\x01\0\0"), Err(RawError::Unsupported(w)) if w.contains("Mrw")));
+        // too short for the CIFF signature
+        assert_eq!(probe(b"II\x1a\0\0\0HEAP"), None);
+    }
+
+    /// An IFD0 with a JPEG pointer but no `ImageWidth` / `ImageLength` (the Kodak KDC layout) is a raw
+    /// container with a preview; a TIFF reader would call it malformed.
+    #[test]
+    fn ifd0_without_dimensions_but_with_a_jpeg_is_a_preview_container() {
+        let jpeg: Vec<u8> = [&[0xffu8, 0xd8, 0xff, 0xc0, 0, 0x0b, 8, 0, 1, 0, 1, 1, 1, 0x11, 0][..], &[0x55; 40], &[0xff, 0xd9]].concat();
+        let off = 8 + 2 + 24 + 4;
+        let mut f = b"II*\0\x08\0\0\0\x02\0".to_vec();
+        for (tag, v) in [(513u16, off as u32), (514, jpeg.len() as u32)] {
+            f.extend_from_slice(&tag.to_le_bytes());
+            f.extend_from_slice(&[4, 0, 1, 0, 0, 0]);
+            f.extend_from_slice(&v.to_le_bytes());
+        }
+        f.extend_from_slice(&[0, 0, 0, 0]);
+        f.extend_from_slice(&jpeg);
+        assert_eq!(probe(&f), Some(RawFormat::OtherTiff));
+        assert!(matches!(decode(&f), Err(RawError::Unsupported(_))));
+        assert_eq!(embedded_preview(&f), Some(jpeg));
+        // no pointer and no sub-IFDs: just a broken TIFF
+        let g = write(&[IfdBuilder::new().with(t::MAKE, Value::Ascii("KODAK".into()))]);
+        assert_eq!(probe(&g), None);
+    }
+
+    /// Compression 99 (not a registered TIFF value; Leaf MOS tiles) marks a raw even without a CFA tag.
+    #[test]
+    fn private_compression_99_is_a_raw() {
+        let mut ifd = rgb_ifd(16, 12);
+        ifd.set(t::COMPRESSION, Value::Short(vec![99]));
+        assert_eq!(probe(&write(&[ifd])), Some(RawFormat::OtherTiff));
     }
 
     #[test]
