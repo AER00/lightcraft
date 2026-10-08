@@ -82,6 +82,38 @@ struct Queued {
     job: RenderJob,
 }
 
+/// Which stage caches to clear, in order, so that the rest fit `budget` bytes: the cheapest to
+/// rebuild and least reused first (hover, before, compare, second window, the zoom window), the
+/// open photo's own view last. Empty caches are never named. The budget is hard.
+pub(crate) fn stage_trim_order(sizes: &[(Slot, usize)], budget: usize) -> Vec<Slot> {
+    let rank = |s: Slot| match s {
+        Slot::Hover => 0,
+        Slot::Before => 1,
+        Slot::Compare(_) => 2,
+        Slot::Second => 3,
+        Slot::Region => 4,
+        Slot::Main => 6,
+        _ => 5,
+    };
+    let mut held: usize = sizes.iter().map(|(_, b)| *b).fold(0, usize::saturating_add);
+    let mut order: Vec<(Slot, usize)> = sizes.iter().copied().filter(|(_, b)| *b > 0).collect();
+    order.sort_by_key(|(s, _)| rank(*s));
+    let mut out = Vec::new();
+    for (slot, bytes) in order {
+        if held <= budget {
+            break;
+        }
+        held = held.saturating_sub(bytes);
+        out.push(slot);
+    }
+    out
+}
+
+/// The share of the memory budget the per-view stage caches (the loupe's, the zoom window's, the
+/// before / hover renders') may hold together: they are the decoded-image sized buffers that the
+/// engine's own caches do not count.
+const STAGE_BUDGET_SHARE: usize = 4;
+
 /// Variant thumbnails kept as textures (LRU).
 pub const VARIANT_TEXTURES: usize = 96;
 /// Priority of variant thumbnail jobs: below on-screen grid thumbnails and the loupe.
@@ -131,6 +163,11 @@ pub struct Renderer {
     variant_used: HashMap<u64, u64>,
     /// Frames polled so far.
     frame: u64,
+    /// Stage caches cleared to stay in budget (see [`stage_trim_order`]).
+    stages_trimmed: u64,
+    /// A budget other than the memory budget's share (tests).
+    #[cfg(test)]
+    stage_budget_override: Option<usize>,
     /// Since when nothing has been pending, and whether the GPU pool was trimmed since.
     #[cfg(not(target_arch = "wasm32"))]
     idle: Option<(std::time::Instant, bool)>,
@@ -184,6 +221,9 @@ impl Renderer {
             prefetched: HashMap::new(),
             variant_used: HashMap::new(),
             frame: 0,
+            stages_trimmed: 0,
+            #[cfg(test)]
+            stage_budget_override: None,
             #[cfg(not(target_arch = "wasm32"))]
             idle: None,
         }
@@ -445,6 +485,7 @@ impl Renderer {
         self.preview_generation = Some((Arc::downgrade(cache), generation));
         self.catalog_rev = session.catalog.revision;
         self.frame += 1;
+        self.trim_stages();
         // wasm: run one job per frame on this thread, timed with the host clock
         #[cfg(target_arch = "wasm32")]
         let inline_ms = {
@@ -583,6 +624,26 @@ impl Renderer {
         }
     }
 
+    /// Bytes the per-view stage caches (CPU images and GPU buffers) may hold together.
+    pub fn stage_budget(&self) -> usize {
+        #[cfg(test)]
+        if let Some(b) = self.stage_budget_override {
+            return b;
+        }
+        lightcraft_engine::memory::budget() / STAGE_BUDGET_SHARE
+    }
+
+    /// Clear stage caches, least useful first, until what they hold fits [`Self::stage_budget`].
+    fn trim_stages(&mut self) {
+        let sizes: Vec<(Slot, usize)> = self.stages.iter().map(|(slot, c)| (*slot, c.bytes() + lightcraft_engine::gpu::stage_bytes(c))).collect();
+        for slot in stage_trim_order(&sizes, self.stage_budget()) {
+            if let Some(c) = self.stages.get(&slot) {
+                c.clear();
+                self.stages_trimmed += 1;
+            }
+        }
+    }
+
     /// What the renderer holds: per-view stage caches (CPU images and GPU buffers) and textures.
     pub fn memory(&self) -> serde_json::Value {
         let cpu: usize = self.stages.values().map(|s| s.bytes()).sum();
@@ -590,7 +651,7 @@ impl Renderer {
         let tex: usize = self.textures.values().map(|t| t.size[0] * t.size[1] * 4).sum();
         let copies: usize = self.textures.values().filter_map(|t| t.pixels.as_ref()).map(|p| p.pixels.len() * 4).sum();
         serde_json::json!({
-            "stageCaches": {"count": self.stages.len(), "cpuBytes": cpu, "gpuBytes": gpu},
+            "stageCaches": {"count": self.stages.len(), "cpuBytes": cpu, "gpuBytes": gpu, "budgetBytes": self.stage_budget(), "trimmed": self.stages_trimmed},
             "textures": {"count": self.textures.len(), "bytes": tex, "cpuCopyBytes": copies},
         })
     }
@@ -1039,5 +1100,80 @@ mod thumbnail_tests {
             app.renderer.thumb(PhotoId(1)).unwrap().pixels.as_ref().unwrap().pixels.iter().flat_map(|c| c.to_array()).collect::<Vec<_>>(),
             expected.as_bytes()
         );
+    }
+}
+
+#[cfg(test)]
+mod stage_budget_tests {
+    use super::*;
+
+    const MB: usize = 1 << 20;
+
+    // Given stage caches within the budget, nothing is cleared
+    #[test]
+    fn nothing_is_trimmed_within_the_budget() {
+        let sizes = [(Slot::Main, 300 * MB), (Slot::Region, 100 * MB)];
+        assert_eq!(stage_trim_order(&sizes, 512 * MB), vec![]);
+    }
+
+    // Given too much held, the least useful caches go first (a hover or before render is rebuilt
+    // cheaply; the open photo's view is what slider drags reuse) and only as many as needed
+    #[test]
+    fn the_least_useful_caches_go_first_and_only_as_many_as_needed() {
+        let sizes = [(Slot::Main, 300 * MB), (Slot::Before, 200 * MB), (Slot::Hover, 100 * MB), (Slot::Region, 150 * MB)];
+        // 750 held, 500 allowed: hover (100) then before (200) bring it to 450
+        assert_eq!(stage_trim_order(&sizes, 500 * MB), vec![Slot::Hover, Slot::Before]);
+        // 400 allowed: the window's too (450 > 400), which leaves the open photo's 300
+        assert_eq!(stage_trim_order(&sizes, 400 * MB), vec![Slot::Hover, Slot::Before, Slot::Region]);
+        // 250 allowed: and in the end the open photo's own
+        assert_eq!(stage_trim_order(&sizes, 250 * MB), vec![Slot::Hover, Slot::Before, Slot::Region, Slot::Main]);
+    }
+
+    // Given the open photo's own view alone is over the budget, it goes too (the budget is hard)
+    #[test]
+    fn the_budget_is_hard() {
+        assert_eq!(stage_trim_order(&[(Slot::Main, 900 * MB)], 100 * MB), vec![Slot::Main]);
+    }
+
+    // Given caches of slots that hold nothing, they are never "trimmed"
+    #[test]
+    fn empty_caches_are_left_alone() {
+        assert_eq!(stage_trim_order(&[(Slot::Hover, 0), (Slot::Main, 900 * MB)], 100 * MB), vec![Slot::Main]);
+    }
+
+    // Given real stage caches over the budget, the renderer clears them (the open photo's last)
+    #[test]
+    fn the_renderer_trims_real_stage_caches() {
+        use lightcraft_engine::pipeline::{RenderRequest, SourceInfo, render_cached};
+        let src = std::sync::Arc::new(lightcraft_raster::Rgb32f::from_fn(320, 240, |x, y| [x as f32 / 320.0, y as f32 / 240.0, 0.3]));
+        let mut r = Renderer::default();
+        for slot in [Slot::Main, Slot::Hover] {
+            let cache: Arc<StageCache> = Default::default();
+            let mut s = lightcraft_engine::develop::DevelopSettings::default();
+            s.effects.clarity = 50.0;
+            render_cached(&src, &SourceInfo::default(), &s, &RenderRequest::fit(320, 240), &cache);
+            assert!(cache.bytes() > 0);
+            r.stages.insert(slot, cache);
+        }
+        let total: usize = r.stages.values().map(|c| c.bytes()).sum();
+        r.stage_budget_override = Some(total * 3 / 4);
+        r.trim_stages();
+        assert_eq!(r.stages[&Slot::Hover].bytes(), 0, "the hover render's cache went");
+        assert!(r.stages[&Slot::Main].bytes() > 0, "the open photo's stayed");
+        assert_eq!(r.stages_trimmed, 1);
+        r.stage_budget_override = Some(0);
+        r.trim_stages();
+        assert_eq!(r.stages[&Slot::Main].bytes(), 0, "the budget is hard");
+        r.trim_stages();
+        assert_eq!(r.stages_trimmed, 2, "empty caches are not trimmed again");
+    }
+
+    // The renderer counts and trims what it holds, and says so
+    #[test]
+    fn the_renderer_reports_its_stage_budget() {
+        let r = Renderer::default();
+        let m = r.memory();
+        assert!(m["stageCaches"]["budgetBytes"].as_u64().unwrap() > 0, "{m}");
+        assert_eq!(m["stageCaches"]["trimmed"], 0);
     }
 }
