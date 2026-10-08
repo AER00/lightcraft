@@ -55,7 +55,7 @@ use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8, par_rows};
 pub use tone::ToneMap;
 
 /// Facts about the source the settings are interpreted against.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SourceInfo {
     /// Lens corrections embedded in the file (DNG opcodes), relative to the EXIF-oriented source.
     pub lens: Option<lightcraft_develop::EmbeddedLens>,
@@ -67,11 +67,13 @@ pub struct SourceInfo {
     /// No measured camera illuminant: WB adjustments are relative to the camera's rendered look.
     pub relative_wb: bool,
     pub camera_tone: Option<tone::CameraTone>,
+    /// Segmentation mattes stored in the file (DNG semantic masks): AI masks use them.
+    pub mattes: Option<Arc<masks::Mattes>>,
 }
 
 impl Default for SourceInfo {
     fn default() -> Self {
-        Self { raw: false, as_shot_temp: 6500.0, as_shot_tint: 0.0, lens: None, relative_wb: false, camera_tone: None }
+        Self { raw: false, as_shot_temp: 6500.0, as_shot_tint: 0.0, lens: None, relative_wb: false, camera_tone: None, mattes: None }
     }
 }
 
@@ -332,6 +334,8 @@ pub struct Plan<'a> {
     /// [`spots::window_for_reads`]); this is the requested window inside the rendered one, which
     /// the result is cut to.
     pub keep: Option<PixelWindow>,
+    /// The source's segmentation mattes ([`SourceInfo::mattes`]).
+    pub mattes: Option<Arc<masks::Mattes>>,
 }
 
 /// Long edge of the small render a windowed render estimates the whole frame's airlight from.
@@ -392,7 +396,7 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         [d.nr_luminance, d.nr_detail, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits),
         src_long,
     ));
-    Plan { settings, frame, w, h, px_per_long, src_long, geo, lin_key, eyes, fixed_air, keep }
+    Plan { settings, frame, w, h, px_per_long, src_long, geo, lin_key, eyes, fixed_air, keep, mattes: info.mattes.clone() }
 }
 
 /// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal).
@@ -474,7 +478,7 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         Some(p) if p.key == lin_key => p,
         _ => local::Planes { key: lin_key, ..Default::default() },
     };
-    let mut prep = local::prepare(lin.clone(), s, frame, px_per_long, req.quality, &mut planes);
+    let mut prep = local::prepare(lin.clone(), s, frame, px_per_long, req.quality, &mut planes, plan.mattes.as_deref());
     if let Some(a) = plan.fixed_air {
         prep.air = a;
     }
@@ -543,7 +547,7 @@ fn overlay_alpha(o: Overlay, plan: &Plan<'_>, prep: &Prepared) -> Option<Plane> 
         return Some(e.alpha.clone());
     }
     let ev = plan.settings.light.exposure as f32;
-    Some(masks::evaluate_one(m, &plan.frame, plan.w, plan.h, &prep.img, &prep.log_l, ev))
+    Some(masks::evaluate_one(m, &plan.frame, plan.w, plan.h, &prep.img, &prep.log_l, ev, plan.mattes.as_deref()))
 }
 
 /// Convenience: render a before/after pair side by side is up to the UI; this renders "before"

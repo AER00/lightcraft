@@ -22,6 +22,9 @@
   embedded JPEG.
 - Apple ProRAW's gain table map (its local tone mapping, `ProfileGainTableMap`) is now read and kept when a photo is
   exported or converted to DNG. It is not applied to the render: Lightroom Classic renders ProRAW without it.
+- iPhone ProRAW and other DNGs that carry their own segmentation mattes (DNG semantic masks) use them for the Select
+  Sky, Subject and Background masks instead of our heuristics, so the sky is selected where the camera found it
+  (checked on one CC0 iPhone 12 Pro ProRAW). Photos without mattes are unchanged.
 - Panasonic and Leica raws (RW2, RWL) are now corrected for lens distortion the way the camera corrects its own JPEG
   (issue #256): the correction the camera records in the file is applied under Lens Corrections ▸ Enable Profile
   Corrections, on by default for newly imported photos, with the same framing as the camera's JPEG. At 12 mm the
