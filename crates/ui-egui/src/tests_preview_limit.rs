@@ -150,9 +150,13 @@ mod in_the_loupe {
 
     /// The demo library in a 1400×900 window, the first photo open in Detail.
     fn detail() -> (Headless, usize) {
+        detail_in([1400.0, 900.0])
+    }
+
+    fn detail_in(size: [f32; 2]) -> (Headless, usize) {
         let services = Services { png: None, ..Default::default() };
         let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
-        let mut h = Headless::new(app, [1400.0, 900.0], 1.0);
+        let mut h = Headless::new(app, size, 1.0);
         let r = h.request("ui.set", json!({"view": "detail", "right": "none", "filmstrip": false}), T);
         assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
@@ -470,8 +474,10 @@ mod in_the_loupe {
     #[test]
     #[ignore = "a measurement, not a check"]
     fn profile_slider_drag() {
-        for percent in [0.0, 100.0, 400.0] {
-            let (mut h, native) = detail();
+        for (size, percent) in
+            [([1400.0, 900.0], 0.0), ([1400.0, 900.0], 100.0), ([1400.0, 900.0], 400.0), ([2800.0, 1700.0], 100.0), ([2800.0, 1700.0], 400.0)]
+        {
+            let (mut h, native) = detail_in(size);
             h.app.ui.zoom = if percent == 0.0 { crate::state::Zoom::Fit } else { crate::state::Zoom::Percent(percent) };
             h.settle(SETTLE);
             h.app.session.begin_interaction("Exposure").unwrap();
@@ -495,7 +501,9 @@ mod in_the_loupe {
             ms.sort_by(|a, b| a.total_cmp(b));
             let (w, hh) = region_tile(&h).unwrap_or((0, 0));
             eprintln!(
-                "PROFILE {percent:>4}% (0 = fit) of {native} px: tick→shown median {:.1} ms, p90 {:.1} ms, max {:.1} ms; whole-frame render {} px, window tile {w}×{hh}",
+                "PROFILE {}x{} canvas, {percent:>4}% (0 = fit) of {native} px: tick→shown median {:.1} ms, p90 {:.1} ms, max {:.1} ms; whole-frame render {} px, window tile {w}×{hh}",
+                size[0],
+                size[1],
                 ms[ms.len() / 2],
                 ms[ms.len() * 9 / 10],
                 ms[ms.len() - 1],
