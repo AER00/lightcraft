@@ -706,8 +706,12 @@ fn windows_match() {
 /// upload with the view's stages counted it against the stage budget on every tick of a drag and
 /// got the stages cleared, and the upload and resampling redone: the window's stages are its own
 /// pixels, not the photo's.
+// (these two share the process's one big source: a test lock keeps them from replacing each other's)
+static BIG_SOURCE_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn a_window_does_not_keep_the_whole_source_on_the_device() {
+    let _lock = BIG_SOURCE_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     if !gpu() {
         return;
     }
@@ -726,4 +730,32 @@ fn a_window_does_not_keep_the_whole_source_on_the_device() {
     let again = lightcraft_gpu::render(&src, &info, &s2, &req, Some(&stages)).expect("gpu render");
     assert_eq!((again.image.width, again.image.height), (640, 480));
     assert!(lightcraft_gpu::stage_bytes(&stages) < 100 << 20);
+}
+
+/// …but the 288 MB is uploaded once for every window of every view of the photo, not once per
+/// window: panning at 1:1, and the Before and After windows, share one device copy of it, which
+/// goes when the app idles (`trim_pool(0)`).
+#[test]
+fn windows_of_a_big_photo_share_one_uploaded_source() {
+    let _lock = BIG_SOURCE_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    if !gpu() {
+        return;
+    }
+    use lightcraft_pipeline::PixelWindow;
+    let src = scene(1, 6000, 4000);
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let s = DevelopSettings::default();
+    let (after, before) = (StageCache::default(), StageCache::default());
+    let at = |x: usize| RenderRequest { window: Some(PixelWindow { x, y: 1500, w: 640, h: 480 }), ..RenderRequest::fit(6000, 4000) };
+    let start = lightcraft_gpu::source_uploads();
+    for (cache, x) in [(&after, 1000), (&after, 1256), (&after, 1512), (&before, 1512), (&before, 1768)] {
+        lightcraft_gpu::render(&src, &info, &s, &at(x), Some(cache)).expect("gpu render");
+    }
+    assert_eq!(lightcraft_gpu::source_uploads() - start, 1, "one upload for five windows of two views");
+    assert!(lightcraft_gpu::shared_source_bytes() >= 280_000_000, "{}", lightcraft_gpu::shared_source_bytes());
+    assert!(lightcraft_gpu::stage_bytes(&after) < 100 << 20, "and it is not in the views' stages");
+    lightcraft_gpu::trim_pool(0);
+    assert_eq!(lightcraft_gpu::shared_source_bytes(), 0, "an idle app gives it back");
+    lightcraft_gpu::render(&src, &info, &s, &at(1000), Some(&after)).expect("gpu render");
+    assert_eq!(lightcraft_gpu::source_uploads() - start, 2);
 }

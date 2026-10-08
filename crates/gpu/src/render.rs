@@ -417,6 +417,43 @@ const COVER_ROWS: usize = 16;
 /// The largest source (bytes on the device) a view's stages keep uploaded between renders.
 const RETAIN_SOURCE_BYTES: usize = 96 << 20;
 
+/// Big sources uploaded to the shared copy so far (diagnostics and tests).
+static SOURCE_UPLOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The one big source (the original a zoom window is cut from) kept on the device for all the
+/// views of the photo: the Before and After windows and every pan share it, instead of each
+/// view's stages holding (or re-uploading) 288 MB of a 24 MP photo. It does not count as a view's
+/// stages; it is released with the buffer pool when the app idles.
+static SHARED_SOURCE: std::sync::Mutex<Option<(std::sync::Weak<Rgb32f>, Arc<Buf>)>> = std::sync::Mutex::new(None);
+
+fn shared_source(src: &Arc<Rgb32f>, upload: impl FnOnce() -> Buf) -> Arc<Buf> {
+    let mut g = SHARED_SOURCE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((weak, buf)) = &*g
+        && weak.upgrade().is_some_and(|s| Arc::ptr_eq(&s, src))
+    {
+        return buf.clone();
+    }
+    *g = None; // the previous photo's copy goes before the next is made
+    SOURCE_UPLOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let buf = Arc::new(upload());
+    *g = Some((Arc::downgrade(src), buf.clone()));
+    buf
+}
+
+/// Free the shared big source (see [`shared_source`]).
+pub(crate) fn release_shared_source() {
+    *SHARED_SOURCE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Device bytes of the shared big source, 0 when there is none.
+pub(crate) fn shared_source_bytes() -> usize {
+    SHARED_SOURCE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(0, |(_, b)| b.len * 4)
+}
+
+pub(crate) fn source_uploads() -> u64 {
+    SOURCE_UPLOADS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The reference framing decision ([`Warp::covers`](lightcraft_pipeline::optics::Warp::covers)) for every
 /// output pixel, one bit per pixel, rows padded to 32-bit words. Blocks of 32 × [`COVER_ROWS`] pixels whose
 /// interval bounds place them clearly inside or outside the image are filled at once
@@ -555,11 +592,12 @@ pub fn render(
         Some(e) => e.sampled.clone(),
         None if gpu.fits(src.data.len() * 3) => {
             let upload = || gpu.upload(rgb_words(src));
-            // (a source too big to keep is uploaded for this render only: a window is cut from the
-            // photo's own pixels, and what its stages keep is its own sampled pixels)
+            // (a source too big for a view's stages to keep is the one shared copy: a window is
+            // cut from the photo's own pixels, and what its stages keep is its own sampled pixels)
             let src_buf = match stages {
                 Some(c) if src.data.len() * 12 <= RETAIN_SOURCE_BYTES => c.source(src, upload),
-                _ => Arc::new(upload()),
+                Some(_) => shared_source(src, upload),
+                None => Arc::new(upload()),
             };
             sample(&mut cx, src, src_buf, &plan)
         }
