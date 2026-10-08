@@ -753,7 +753,13 @@ pub fn show_in_window(app: &mut LightcraftApp, ui: &mut egui::Ui, max_width: f32
         });
     }
     if let Some((id, params)) = clicked {
-        let _ = run_item(app, &id, params);
+        let r = run_item(app, &id, params);
+        // an export that can't start (e.g. no folder) says why instead of doing nothing
+        if let Err(e) = r
+            && matches!(id.as_str(), "app.export" | "app.exportPrevious")
+        {
+            app.toast(ui.ctx(), e);
+        }
     }
     ui.cursor().left() - start
 }
@@ -999,6 +1005,13 @@ mod tests {
         // remembered (expanded) for Export with Previous, folder included
         let last = app.session.last_export.clone().unwrap();
         assert_eq!((last["format"].as_str(), last["width"].as_u64(), last.get("preset")), (Some("png"), Some(40), None));
+        // a blank folder (the Export dialog's Folder field cleared) is refused with a clear message
+        // instead of writing into the working directory
+        let n = w.len();
+        drop(w);
+        let r = run_item(&mut app, "app.export", json!({"preset": "Tiny PNG", "dir": "  "}));
+        assert_eq!(r.unwrap_err(), crate::control::NO_EXPORT_FOLDER);
+        assert_eq!(written.lock().unwrap().len(), n, "nothing written without a folder");
     }
 
     #[test]
