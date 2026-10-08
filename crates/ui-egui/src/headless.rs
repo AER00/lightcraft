@@ -1358,6 +1358,71 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The import review offers what to do with files that are in Recently Deleted (issue #298):
+    /// they are unchecked until Restore or Import as new is chosen; then confirming restores the
+    /// photo (with its edits) or imports the file afresh.
+    #[test]
+    fn import_review_offers_recently_deleted_files() {
+        for (choice, tag) in [("restore", "r"), ("fresh", "f")] {
+            let dir = std::env::temp_dir().join(format!("lc-ui-import-trash-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            for i in 0..2u8 {
+                let data: Vec<[u8; 4]> = (0..40 * 30).map(|k| [(k % 40 * 6) as u8, i * 90, 7, 255]).collect();
+                let img = lightcraft_raster::Rgba8 { width: 40, height: 30, data };
+                let png =
+                    lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+                std::fs::write(dir.join(format!("img{i}.png")), png).unwrap();
+            }
+            let services = crate::Services { png: None, ..Default::default() };
+            let mut app = LightcraftApp::new(lightcraft_engine::Session::new().with_fs(), services);
+            app.ui.view = crate::state::ViewMode::PhotoGrid;
+            let mut h = Headless::new(app, [1300.0, 900.0], 1.0);
+            let t = Duration::from_secs(10);
+            let r =
+                h.request("engine.execute", json!({"command": "library.import", "params": {"paths": [dir.join("img0.png").to_string_lossy()]}}), t);
+            let id = r["result"]["imported"][0].as_u64().unwrap();
+            h.request("engine.execute", json!({"command": "photo.rate", "params": {"ids": [id], "rating": 3}}), t);
+            h.request("engine.execute", json!({"command": "photo.delete", "params": {"ids": [id]}}), t);
+            h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [dir.to_string_lossy()]}}), t);
+            h.step_until(SETTLE, |h| matches!(h.app.ui.dialog, Some(crate::state::Dialog::Import { .. })));
+            let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog else { panic!("no import review") };
+            assert_eq!(opts.selected_paths().len(), 1, "only the new file: the trashed one waits for a choice");
+            opts.set_on_deleted(choice);
+            assert_eq!(opts.selected_paths().len(), 2, "the trashed file is checked once a choice is made");
+            // a per-cell choice survives switching between the two options, and "Leave them" unchecks
+            let trashed = (0..opts.candidates.len()).find(|i| opts.is_trashed(*i)).unwrap();
+            opts.checked[trashed] = false;
+            opts.set_on_deleted(if choice == "restore" { "fresh" } else { "restore" });
+            assert_eq!(opts.selected_paths().len(), 1, "still unchecked");
+            opts.set_on_deleted("");
+            assert_eq!(opts.selected_paths().len(), 1);
+            opts.set_on_deleted(choice);
+            assert_eq!(opts.selected_paths().len(), 2);
+            let r = h.request("ui.dialog.confirm", json!({}), t);
+            assert_eq!(r["ok"], true, "{r}");
+            // frames until the import has finished, so its (timed) toast is read before it expires
+            let t0 = std::time::Instant::now();
+            while h.app.import.is_some() && t0.elapsed() < Duration::from_secs(30) {
+                h.step();
+            }
+            assert!(h.app.import.is_none(), "finished");
+            let toast = h.app.ui.toast.clone().map(|t| t.0).unwrap_or_default();
+            let photos = &h.app.session.catalog;
+            assert_eq!(photos.photos().filter(|p| !p.deleted).count(), 2, "{choice}");
+            let old = photos.photo(lightcraft_catalog::PhotoId(id));
+            if choice == "restore" {
+                assert!(toast.contains("1 restored"), "{toast}");
+                assert!(old.is_some_and(|p| !p.deleted && p.rating == 3), "restored with its edits");
+                assert_eq!(photos.len(), 2);
+            } else {
+                assert!(old.is_none(), "the trashed record is gone");
+                assert_eq!(photos.len(), 2);
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
     /// Adding a file again that is in Recently Deleted shows it there (side panel opened, photo
     /// selected) instead of only saying "duplicate skipped"; its menus offer Restore, and once
     /// restored a re-add selects it in All Photos.

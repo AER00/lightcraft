@@ -53,6 +53,10 @@ pub struct ImportDialog {
     pub metadata_preset: String,
     /// Copy: raws are copied as DNG.
     pub dng: bool,
+    /// Per candidate: the library already has it in Recently Deleted.
+    pub trashed: Vec<bool>,
+    /// What to do with those: "" (leave them), `restore` or `fresh` (the `onDeleted` param).
+    pub on_deleted: String,
 }
 
 impl ImportDialog {
@@ -61,14 +65,33 @@ impl ImportDialog {
         ImportDialog { candidates, checked, ..Default::default() }
     }
     pub fn importable(&self, i: usize) -> bool {
-        self.candidates.get(i).is_some_and(|c| c.duplicate.is_none() && c.error.is_none())
+        self.candidates.get(i).is_some_and(|c| c.error.is_none() && (c.duplicate.is_none() || self.is_trashed(i) && !self.on_deleted.is_empty()))
+    }
+    /// Candidate `i` is a file whose photo is in Recently Deleted.
+    pub fn is_trashed(&self, i: usize) -> bool {
+        self.trashed.get(i).copied().unwrap_or(false)
+    }
+    /// Choose what happens to the files in Recently Deleted (`""`, `restore` or `fresh`); they are
+    /// checked once there is a choice and unchecked again without one.
+    pub fn set_on_deleted(&mut self, choice: &str) {
+        // switching between restore and fresh keeps the user's per-cell choices
+        let changed = self.on_deleted.is_empty() != choice.is_empty();
+        self.on_deleted = choice.to_string();
+        for i in (0..self.candidates.len()).filter(|_| changed) {
+            if self.is_trashed(i)
+                && let Some(c) = self.checked.get_mut(i)
+            {
+                *c = !choice.is_empty();
+            }
+        }
     }
     pub fn selected_paths(&self) -> Vec<String> {
         self.candidates
             .iter()
             .zip(&self.checked)
-            .filter(|(c, on)| **on && c.duplicate.is_none() && c.error.is_none())
-            .map(|(c, _)| c.path.clone())
+            .enumerate()
+            .filter(|(i, (_, on))| **on && self.importable(*i))
+            .map(|(_, (c, _))| c.path.clone())
             .collect()
     }
     /// The `organize` param of `library.import` (`None` = the default, by day); an unusable
@@ -104,6 +127,8 @@ pub struct ImportTask {
     pub done: usize,
     params: Value,
     pub imported: usize,
+    /// Brought back from Recently Deleted (`onDeleted: restore`).
+    pub restored: usize,
     pub duplicates: usize,
     /// The library photos the skipped duplicates match (shown when nothing new was added).
     existing: Vec<u64>,
@@ -400,6 +425,14 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
     }
     app.renderer.forget_imports();
     let mut d = ImportDialog::new(out.candidates);
+    d.trashed = d
+        .candidates
+        .iter()
+        .map(|c| {
+            c.duplicate.is_some()
+                && c.existing.is_some_and(|id| app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).is_some_and(|p| p.deleted))
+        })
+        .collect();
     d.copy = task.copy;
     d.sources = task.sources;
     app.ui.dialog = Some(crate::state::Dialog::Import { opts: Box::new(d) });
@@ -461,6 +494,9 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
         (true, true) => "move",
     };
     let mut params = json!({"mode": mode, "keywords": d.keywords()});
+    if !d.on_deleted.is_empty() {
+        params["onDeleted"] = json!(d.on_deleted);
+    }
     if let Some(a) = album {
         params["album"] = json!(a);
     }
@@ -564,6 +600,7 @@ fn commit_batch(app: &mut LightcraftApp, task: &mut ImportTask, prepared: lightc
             }
             let len = |k: &str| v[k].as_array().map_or(0, Vec::len);
             task.imported += len("imported");
+            task.restored += len("restored");
             task.duplicates += len("duplicates");
             task.existing.extend(v["duplicates"].as_array().into_iter().flatten().filter_map(|d| d["existing"].as_u64()));
             task.failed += len("failed");
@@ -573,7 +610,7 @@ fn commit_batch(app: &mut LightcraftApp, task: &mut ImportTask, prepared: lightc
                 log::warn!("import: kept {}: {}", k["path"].as_str().unwrap_or(""), k["reason"].as_str().unwrap_or(""));
             }
             if task.first.is_none() {
-                task.first = v["imported"].as_array().and_then(|a| a.first()).and_then(Value::as_u64);
+                task.first = ["imported", "restored"].iter().find_map(|k| v[*k].as_array().and_then(|a| a.first()).and_then(Value::as_u64));
             }
         }
         Err(e) => {
@@ -586,7 +623,14 @@ fn commit_batch(app: &mut LightcraftApp, task: &mut ImportTask, prepared: lightc
 /// The import is done (or cancelled): one undo step, select the first photo, say what happened.
 fn finish(app: &mut LightcraftApp, ctx: &egui::Context, task: ImportTask) {
     let steps = app.session.undo.len().saturating_sub(task.undo0);
-    let label = crate::i18n::tr_format!("Add {} Photo{}", task.imported, if task.imported == 1 { "" } else { "s" });
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    let label = if task.imported == 0 && task.restored > 0 {
+        format!("Restore {} Photo{}", task.restored, plural(task.restored))
+    } else if task.restored > 0 {
+        format!("Add {} Photo{}, restore {}", task.imported, plural(task.imported), task.restored)
+    } else {
+        crate::i18n::tr_format!("Add {} Photo{}", task.imported, if task.imported == 1 { "" } else { "s" })
+    };
     app.session.merge_undo(steps, &label);
     if task.auto {
         if task.imported > 0 {
@@ -606,7 +650,7 @@ fn finish(app: &mut LightcraftApp, ctx: &egui::Context, task: ImportTask) {
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     // nothing new, only files the library already has: show where they are (Recently Deleted is
     // easy to miss, and the side panel that lists it starts collapsed)
-    if task.imported == 0 && task.failed == 0 && !task.cancelled && show_existing(app, ctx, &task.existing) {
+    if task.imported == 0 && task.restored == 0 && task.failed == 0 && !task.cancelled && show_existing(app, ctx, &task.existing) {
         return;
     }
     let mut msg = if task.cancelled {
@@ -614,6 +658,9 @@ fn finish(app: &mut LightcraftApp, ctx: &egui::Context, task: ImportTask) {
     } else {
         crate::i18n::tr_format!("Imported {} photo{}", task.imported, plural(task.imported))
     };
+    if task.restored > 0 {
+        msg.push_str(&format!(" · {} restored from Recently Deleted", task.restored));
+    }
     if task.params["mode"] == "move" {
         msg.push_str(&crate::i18n::tr_format!(" · {} moved", task.moved));
         if task.kept > 0 {
@@ -895,6 +942,32 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             );
         }
     }
+    if d.trashed.iter().any(|t| *t) {
+        field(ui, "In Recently Deleted", |ui| {
+            let cur = match d.on_deleted.as_str() {
+                "restore" => "Restore them",
+                "fresh" => "Import as new",
+                _ => "Leave them",
+            };
+            let mut pick = None;
+            egui::ComboBox::from_id_salt("import-on-deleted").selected_text(crate::i18n::tr(cur)).show_ui(ui, |ui| {
+                for (v, label) in [("", "Leave them"), ("restore", "Restore them"), ("fresh", "Import as new")] {
+                    if ui.selectable_label(d.on_deleted == v, crate::i18n::tr(label)).clicked() {
+                        pick = Some(v);
+                    }
+                }
+            });
+            if let Some(v) = pick {
+                d.set_on_deleted(v);
+            }
+            let t = Tokens::get(ui.ctx());
+            ui.label(
+                egui::RichText::new(crate::i18n::tr("Restore keeps their edits; Import as new deletes the old record first."))
+                    .color(t.text_dim)
+                    .small(),
+            );
+        });
+    }
     let albums: Vec<(u64, String)> = {
         let mut v: Vec<(u64, String)> =
             app.session.catalog.albums().filter(|a| !a.folder && !a.is_smart()).map(|a| (a.id.0, a.name.clone())).collect();
@@ -1000,6 +1073,7 @@ fn candidate_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDial
     }
     let in_trash = c.existing.is_some_and(|id| app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).is_some_and(|p| p.deleted));
     let badge = match (&c.duplicate, &c.error) {
+        (Some(_), _) if in_trash && ok => Some(if d.on_deleted == "restore" { "Will be restored" } else { "Will be replaced" }),
         (Some(_), _) if in_trash => Some("In Recently Deleted"),
         (Some(r), _) if r == "path" => Some("In library"),
         (Some(_), _) => Some("Duplicate"),
@@ -1117,7 +1191,7 @@ pub const DEFAULT_FOLDER_TEMPLATE: &str = "{date:%Y}/{date:%Y%m%d}";
 /// Where the first selected photo would be copied to (destination, folders, name), for the
 /// dialog's example line; `None` without a photo or with an unusable folder template.
 pub fn example_destination(app: &LightcraftApp, d: &ImportDialog) -> Option<String> {
-    let c = d.candidates.iter().zip(&d.checked).find(|(c, on)| **on && c.duplicate.is_none() && c.error.is_none()).map(|(c, _)| c)?;
+    let c = d.candidates.iter().zip(&d.checked).enumerate().find(|(i, (_, on))| **on && d.importable(*i)).map(|(_, (c, _))| c)?;
     let organize = match d.organize_param().ok()? {
         Some(o) => lightcraft_engine::import::Organize::parse(&o)?,
         None => Default::default(),
