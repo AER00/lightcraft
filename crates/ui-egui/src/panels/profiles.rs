@@ -122,8 +122,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             && let Some((p_name, _)) = app.session.profile_info(&saved_profile_id)
         {
             let s = with_profile_id(&d, &saved_profile_id);
-            app.hover_preview =
-                Some(HoverPreview { label: crate::i18n::tr_format!("Profile: {}", crate::i18n::profile_label(&saved_profile_id, p_name)), settings: s });
+            app.hover_preview = Some(HoverPreview {
+                label: crate::i18n::tr_format!("Profile: {}", crate::i18n::profile_label(&saved_profile_id, p_name)),
+                settings: s,
+            });
         }
     } else {
         ui.data_mut(|m| m.remove::<(PhotoId, String)>(last_hover_id));
