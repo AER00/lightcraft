@@ -199,3 +199,29 @@ fn sidebar_sections_collapse_and_remember_it() {
     click(&mut h, "icon:albumNew");
     assert!(!h.app.ui.sidebar_section_collapsed("albums"), "the plus does not fold Albums");
 }
+
+/// By Date and Keywords count the whole library, so choosing a row shows its photos from All
+/// Photos even when another source (here Picks, which is empty) was open (issue #341).
+#[test]
+fn date_and_keyword_rows_show_their_photos_from_any_source() {
+    let mut h = demo([1400.0, 900.0], json!({"view": "photoGrid", "leftPanel": true}));
+    let first = h.app.session.visible_cloned()[0];
+    let year = h.app.session.catalog.photo(first).and_then(|p| p.captured.clone()).expect("demo photo date")[..4].to_string();
+    // (Keywords rows go through the same helper, `browse_all_photos`)
+    for (row, key) in [(format!("date:{year}"), "date")] {
+        let r = h.request("engine.execute", json!({"command": "library.source", "params": {"kind": "picks"}}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert!(h.app.session.visible().is_empty(), "no picks in the demo");
+        let r = h.request("ui.clickWidget", json!({"id": row}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::All, "{key}");
+        assert!(!h.app.session.visible().is_empty(), "{key}: its photos are shown");
+        // choosing the row again clears it, and stays in All Photos
+        let r = h.request("ui.clickWidget", json!({"id": row}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        assert_eq!(h.app.session.filter, lightcraft_catalog::Filter::default(), "{key}");
+    }
+}
