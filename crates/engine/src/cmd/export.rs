@@ -54,6 +54,8 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(o) = params.as_object_mut() {
         o.retain(|k, _| !NOT_SETTINGS.contains(&k.as_str()));
     }
+    // a preset that app.export would refuse is refused here, where the typo is on screen
+    crate::export::ExportOptions::validate(ID, &params)?;
     let preset = ExportPreset { name: name.to_string(), params };
     match s.export_presets.iter_mut().find(|x| x.name.eq_ignore_ascii_case(name)) {
         Some(x) => *x = preset,

@@ -562,12 +562,248 @@ impl Default for ExportOptions {
     }
 }
 
+/// The `app.export` params that are not export options: which photos, where to, a preset to start
+/// from, and the desktop app's background flag.
+pub const TARGET_PARAMS: &[&str] = &["id", "ids", "path", "dir", "preset", "background"];
+
+/// The export option params [`ExportOptions::from_json`] reads (and [`ExportOptions::to_json`] writes).
+pub const OPTION_PARAMS: &[&str] = &[
+    "format",
+    "quality",
+    "resize",
+    "longEdge",
+    "shortEdge",
+    "width",
+    "height",
+    "megapixels",
+    "percent",
+    "dontEnlarge",
+    "ppi",
+    "limitKb",
+    "sharpen",
+    "sharpenAmount",
+    "naming",
+    "startNumber",
+    "subfolder",
+    "conflict",
+    "tiffCompression",
+    "dngCompression",
+    "metadata",
+    "removeLocation",
+    "watermark",
+    "colorSpace",
+    "bitDepth",
+];
+
+/// The keys of a `watermark` object ([`Watermark`], camelCase).
+pub const WATERMARK_PARAMS: &[&str] = &["text", "vertical", "size", "opacity", "anchor", "inset", "color", "shadow", "image", "imageWidth"];
+
+/// Text height as a fraction of the short edge: the range the renderer draws without clamping.
+pub const WATERMARK_SIZE_RANGE: (f32, f32) = (0.005, 0.5);
+/// Margin as a fraction of the short edge.
+pub const WATERMARK_INSET_RANGE: (f32, f32) = (0.0, 0.4);
+/// A graphic's width as a fraction of the photo's width.
+pub const WATERMARK_IMAGE_WIDTH_RANGE: (f32, f32) = (0.01, 1.0);
+
+/// Levenshtein distance, for "did you mean" on a misspelled key (both inputs are short).
+fn edit_distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1; b.len() + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let sub = prev.get(j).copied().unwrap_or(0) + usize::from(ca != cb);
+            let del = prev.get(j + 1).copied().unwrap_or(0) + 1;
+            let ins = cur.get(j).copied().unwrap_or(0) + 1;
+            if let Some(c) = cur.get_mut(j + 1) {
+                *c = sub.min(del).min(ins);
+            }
+        }
+        prev = cur;
+    }
+    prev.last().copied().unwrap_or(0)
+}
+
+/// `unknown parameter \`k\``, naming the closest known key when one is near.
+fn unknown_key(what: &str, k: &str, known: &[&str]) -> String {
+    let near = known.iter().map(|n| (edit_distance(&k.to_ascii_lowercase(), &n.to_ascii_lowercase()), *n)).filter(|(d, _)| *d <= 2).min();
+    match near {
+        Some((_, n)) => format!("unknown {what} `{k}` (did you mean `{n}`?)"),
+        None => format!("unknown {what} `{k}` (one of {})", known.join(", ")),
+    }
+}
+
+/// A JSON integer (`92`; never `92.5` or `"92"`), as [`ExportOptions::from_json`] reads them.
+fn whole(v: &serde_json::Value) -> Option<i64> {
+    v.as_i64()
+}
+
 impl ExportOptions {
+    /// Strict [`ExportOptions::from_json`] for a command that is about to export (issue #181): an
+    /// unknown parameter or a value that cannot be read as what it is for is an error, never a
+    /// silent default. `app.export` targets (`id`, `ids`, `path`, `dir`, `preset`, `background`)
+    /// are accepted and left to the caller.
+    pub fn from_params(p: &serde_json::Value) -> crate::Result<Self> {
+        Self::validate("app.export", p)?;
+        Ok(Self::from_json(p))
+    }
+
+    /// Check `app.export` params for `cmd` (the command named in the error): every key must be an
+    /// export option ([`OPTION_PARAMS`]) or a target ([`TARGET_PARAMS`]), every value must be the
+    /// kind of thing its key takes, and a `watermark` object must hold only [`WATERMARK_PARAMS`]
+    /// with its sizes in range (issue #183). `null` means "not given", as a dropped key does.
+    pub fn validate(cmd: &str, p: &serde_json::Value) -> crate::Result<()> {
+        use serde_json::Value;
+        let bad = |msg: String| crate::cmd::bad(cmd, msg);
+        let Some(obj) = p.as_object() else { return Err(bad("params must be an object".into())) };
+        let known: Vec<&str> = OPTION_PARAMS.iter().chain(TARGET_PARAMS).copied().collect();
+        let int = |k: &str, v: &Value, lo: i64, hi: i64| -> crate::Result<i64> {
+            whole(v).filter(|i| (lo..=hi).contains(i)).ok_or_else(|| bad(format!("`{k}` must be an integer {lo}..{hi}")))
+        };
+        let num = |k: &str, v: &Value, lo: f64, hi: f64| -> crate::Result<f64> {
+            v.as_f64().filter(|f| f.is_finite() && (lo..=hi).contains(f)).ok_or_else(|| bad(format!("`{k}` must be a number {lo}..{hi}")))
+        };
+        fn string<'a>(cmd: &str, k: &str, v: &'a Value) -> crate::Result<&'a str> {
+            v.as_str().ok_or_else(|| crate::cmd::bad(cmd, format!("`{k}` must be a string")))
+        }
+        let boolean = |k: &str, v: &Value| -> crate::Result<bool> { v.as_bool().ok_or_else(|| bad(format!("`{k}` must be true or false"))) };
+        let one_of = |k: &str, v: &Value, options: &[&str]| -> crate::Result<()> {
+            let s = string(cmd, k, v)?;
+            if options.iter().any(|o| o.eq_ignore_ascii_case(s)) { Ok(()) } else { Err(bad(format!("`{k}` must be one of {}", options.join("|")))) }
+        };
+        for (k, v) in obj {
+            if v.is_null() {
+                continue;
+            }
+            match k.as_str() {
+                "format" => {
+                    if ExportFormat::parse(string(cmd, k, v)?).is_none() {
+                        return Err(bad(format!("`{k}` must be one of jpeg|png|tiff|webp|avif|dng|original")));
+                    }
+                }
+                "quality" => {
+                    int(k, v, 1, 100)?;
+                }
+                "ppi" => {
+                    int(k, v, 1, u16::MAX as i64)?;
+                }
+                "limitKb" => {
+                    int(k, v, 0, u32::MAX as i64)?;
+                }
+                "startNumber" => {
+                    int(k, v, 0, 999_999)?;
+                }
+                "bitDepth" => {
+                    if !matches!(whole(v), Some(8 | 10 | 16 | 32)) {
+                        return Err(bad(format!("`{k}` must be 8, 10, 16 or 32")));
+                    }
+                }
+                "longEdge" | "shortEdge" | "width" | "height" | "megapixels" | "percent" => {
+                    num(k, v, 0.0, 1.0e9)?;
+                }
+                "resize" => {
+                    let Some(r) = v.as_object() else { return Err(bad(format!("`{k}` must be an object {{mode, value, height?, dontEnlarge?}}"))) };
+                    if let Some(x) = r.keys().find(|x| !matches!(x.as_str(), "mode" | "value" | "height" | "dontEnlarge")) {
+                        return Err(bad(unknown_key("resize key", x, &["mode", "value", "height", "dontEnlarge"])));
+                    }
+                    serde_json::from_value::<Resize>(v.clone()).map_err(|e| bad(format!("`{k}`: {e}")))?;
+                }
+                "dontEnlarge" | "removeLocation" | "background" => {
+                    boolean(k, v)?;
+                }
+                "naming" | "subfolder" | "path" | "dir" | "preset" => {
+                    string(cmd, k, v)?;
+                }
+                "sharpen" => one_of(k, v, &["none", "screen", "matte", "glossy"])?,
+                "sharpenAmount" => one_of(k, v, &["low", "standard", "high"])?,
+                "conflict" => one_of(k, v, &["unique", "overwrite", "skip"])?,
+                "tiffCompression" => one_of(k, v, &["none", "lzw", "zip", "deflate"])?,
+                "dngCompression" => {
+                    serde_json::from_value::<DngCompression>(v.clone())
+                        .map_err(|_| bad(format!("`{k}` must be one of lossless|deflate|uncompressed")))?;
+                }
+                "metadata" => one_of(k, v, &["all", "allExceptCamera", "copyright", "none"])?,
+                "colorSpace" => {
+                    if OutputSpace::parse(string(cmd, k, v)?).is_none() {
+                        return Err(bad(format!("`{k}` must be one of srgb|displayP3|adobeRgb|proPhoto|rec2020")));
+                    }
+                }
+                "watermark" => Self::validate_watermark(cmd, v)?,
+                "id" => {
+                    int(k, v, 0, i64::MAX)?;
+                }
+                "ids" => {
+                    let ok = v.as_array().is_some_and(|a| a.iter().all(|x| x.is_u64()));
+                    if !ok {
+                        return Err(bad(format!("`{k}` must be an array of photo ids")));
+                    }
+                }
+                _ => return Err(bad(unknown_key("parameter", k, &known))),
+            }
+        }
+        Ok(())
+    }
+
+    /// A `watermark` value: text, or an object of [`WATERMARK_PARAMS`] (issue #183).
+    fn validate_watermark(cmd: &str, v: &serde_json::Value) -> crate::Result<()> {
+        use serde_json::Value;
+        let bad = |msg: String| crate::cmd::bad(cmd, msg);
+        let obj = match v {
+            Value::String(_) => return Ok(()),
+            Value::Object(o) => o,
+            _ => {
+                return Err(bad(
+                    "`watermark` must be text or an object {text, vertical, size, opacity, anchor, inset, color, shadow, image, imageWidth}".into(),
+                ));
+            }
+        };
+        let frac = |k: &str, v: &Value, (lo, hi): (f32, f32), unit: &str| -> crate::Result<()> {
+            match v.as_f64() {
+                Some(f) if f.is_finite() && (f64::from(lo)..=f64::from(hi)).contains(&f) => Ok(()),
+                _ => Err(bad(format!("`watermark.{k}` must be a number {lo}..{hi} ({unit})"))),
+            }
+        };
+        for (k, v) in obj {
+            if v.is_null() {
+                continue;
+            }
+            match k.as_str() {
+                "text" | "image" => {
+                    v.as_str().ok_or_else(|| bad(format!("`watermark.{k}` must be a string")))?;
+                }
+                "vertical" | "shadow" => {
+                    v.as_bool().ok_or_else(|| bad(format!("`watermark.{k}` must be true or false")))?;
+                }
+                "size" => frac(k, v, WATERMARK_SIZE_RANGE, "fraction of the short edge")?,
+                "opacity" => frac(k, v, (0.0, 1.0), "0 = invisible, 1 = solid")?,
+                "inset" => frac(k, v, WATERMARK_INSET_RANGE, "fraction of the short edge")?,
+                "imageWidth" => frac(k, v, WATERMARK_IMAGE_WIDTH_RANGE, "fraction of the photo's width")?,
+                "anchor" => {
+                    serde_json::from_value::<Anchor>(v.clone()).map_err(|_| {
+                        bad("`watermark.anchor` must be one of topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight".into())
+                    })?;
+                }
+                "color" => {
+                    let ok = v.as_array().is_some_and(|a| a.len() == 3 && a.iter().all(|c| matches!(whole(c), Some(0..=255))));
+                    if !ok {
+                        return Err(bad("`watermark.color` must be [r, g, b] with 0..255 each (sRGB)".into()));
+                    }
+                }
+                _ => return Err(bad(unknown_key("watermark key", k, WATERMARK_PARAMS))),
+            }
+        }
+        serde_json::from_value::<Watermark>(v.clone()).map(|_| ()).map_err(|e| bad(format!("`watermark`: {e}")))
+    }
+
     /// Read options from command params (`format`, `quality`, `limitKb`, `sharpen`, `sharpenAmount`,
     /// `naming`, `metadata`, `removeLocation`, `watermark`, `colorSpace`, `bitDepth`, `ppi`) and the
     /// size: one of `longEdge`, `shortEdge`, `width`, `height` (both = fit inside W × H),
     /// `megapixels`, `percent` (absent or 0 = full size), or a [`Resize`] object as `resize`; plus
     /// `dontEnlarge` (default true).
+    ///
+    /// Lenient: anything unknown or unreadable falls back to the default, which suits stored
+    /// prefs and dialog prefill. A command that is about to export uses
+    /// [`ExportOptions::from_params`], which validates first.
     pub fn from_json(p: &serde_json::Value) -> Self {
         use serde_json::Value;
         let d = Self::default();
@@ -1719,5 +1955,100 @@ mod tests {
             Ok(b) => assert_eq!(&b[4..8], b"ftyp"),
             Err(e) => assert!(e.contains("not available"), "{e}"),
         }
+    }
+
+    /// Issue #181: a command about to export refuses what `from_json` would silently default —
+    /// unknown keys (naming the nearest known one) and values of the wrong kind or range.
+    #[test]
+    fn export_params_are_validated() {
+        use serde_json::json;
+        let err = |p: serde_json::Value| ExportOptions::from_params(&p).err().map(|e| e.to_string()).unwrap_or_default();
+        let e = err(json!({"longEdgee": 400}));
+        assert!(e.starts_with("invalid parameters for `app.export`: unknown parameter `longEdgee` (did you mean `longEdge`?)"), "{e}");
+        assert!(err(json!({"qualty": 5})).contains("did you mean `quality`"));
+        assert!(err(json!({"longEdge": "banana"})).contains("`longEdge` must be a number"));
+        assert!(err(json!({"quality": 0})).contains("`quality` must be an integer 1..100"));
+        assert!(err(json!({"quality": "5"})).contains("`quality` must be an integer"));
+        assert!(err(json!({"quality": 92.5})).contains("`quality` must be an integer"));
+        assert!(err(json!({"sharpen": "lots"})).contains("`sharpen` must be one of none|screen|matte|glossy"));
+        assert!(err(json!({"format": "bmp"})).contains("`format` must be one of"));
+        assert!(err(json!({"bitDepth": 12})).contains("`bitDepth` must be 8, 10, 16 or 32"));
+        assert!(err(json!({"colorSpace": "cmyk"})).contains("`colorSpace` must be one of"));
+        assert!(err(json!({"dontEnlarge": "no"})).contains("`dontEnlarge` must be true or false"));
+        assert!(err(json!({"resize": {"mode": "longEdge", "valeu": 10}})).contains("did you mean `value`"));
+        assert!(err(json!({"resize": {"mode": "diagonal", "value": 10}})).contains("`resize`:"));
+        assert!(err(json!({"ids": [1, "x"]})).contains("`ids` must be an array of photo ids"));
+        assert!(err(json!("jpeg")).contains("params must be an object"));
+        assert!(
+            ExportOptions::validate("export.savePreset", &json!({"qualty": 5}))
+                .unwrap_err()
+                .to_string()
+                .starts_with("invalid parameters for `export.savePreset`")
+        );
+        // everything the presets, the dialog, Export with Previous and `render --opt` send passes
+        for p in builtin_presets() {
+            ExportOptions::from_params(&p.params).unwrap_or_else(|e| panic!("{}: {e}", p.name));
+        }
+        let full = ExportOptions {
+            resize: Some(Resize::default()),
+            limit_kb: Some(500),
+            watermark: Some(Watermark { text: "©".into(), ..Default::default() }),
+            bit_depth: Some(16),
+            ..Default::default()
+        };
+        let mut j = full.to_json();
+        for (k, v) in [
+            ("dir", json!("/tmp/out")),
+            ("background", json!(true)),
+            ("preset", json!("x")),
+            ("ids", json!([1, 2])),
+            ("id", json!(1)),
+            ("path", json!("a.jpg")),
+        ] {
+            j[k] = v;
+        }
+        assert_eq!(ExportOptions::from_params(&j).unwrap(), full);
+        assert_eq!(ExportOptions::from_params(&ExportOptions::default().to_json()).unwrap(), ExportOptions::default());
+        // null is "not given", as a dropped key is
+        ExportOptions::from_params(&json!({"quality": 92, "longEdge": null, "watermark": null})).unwrap();
+    }
+
+    /// Issue #183: the `watermark` object's keys, kinds and ranges are checked (and documented in
+    /// the `app.export` param string), instead of unknown keys passing and sizes clamping silently.
+    #[test]
+    fn watermark_params_are_validated() {
+        use serde_json::json;
+        let err = |w: serde_json::Value| ExportOptions::from_params(&json!({"watermark": w})).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(
+            err(json!(5))
+                .contains("`watermark` must be text or an object {text, vertical, size, opacity, anchor, inset, color, shadow, image, imageWidth}")
+        );
+        assert!(
+            err(json!({"text": "x", "bogus": 1}))
+                .contains("unknown watermark key `bogus` (one of text, vertical, size, opacity, anchor, inset, color, shadow, image, imageWidth)")
+        );
+        assert!(err(json!({"text": "x", "sizee": 0.1})).contains("did you mean `size`"));
+        for size in [json!(3), json!(0.5001), json!(0), json!("big")] {
+            let e = err(json!({"text": "x", "size": size}));
+            assert!(e.contains("`watermark.size` must be a number 0.005..0.5 (fraction of the short edge)"), "{size}: {e}");
+        }
+        assert!(err(json!({"text": "x", "opacity": 1.5})).contains("`watermark.opacity` must be a number 0..1"));
+        assert!(err(json!({"text": "x", "inset": -0.1})).contains("`watermark.inset` must be a number 0..0.4"));
+        assert!(err(json!({"image": "logo.png", "imageWidth": 2})).contains("`watermark.imageWidth` must be a number 0.01..1"));
+        assert!(err(json!({"text": "x", "anchor": "middle"})).contains("`watermark.anchor` must be one of"));
+        assert!(err(json!({"text": "x", "color": [255, 255]})).contains("`watermark.color` must be [r, g, b]"));
+        assert!(err(json!({"text": "x", "color": [255, 255, 256]})).contains("`watermark.color`"));
+        assert!(err(json!({"text": "x", "vertical": "yes"})).contains("`watermark.vertical` must be true or false"));
+        assert!(err(json!({"text": 7})).contains("`watermark.text` must be a string"));
+        // the documented shapes pass and read as before
+        let o = ExportOptions::from_params(&json!({"watermark": "© me"})).unwrap();
+        assert_eq!(o.watermark.map(|w| w.text).as_deref(), Some("© me"));
+        let w = json!({"text": "日本語", "vertical": true, "size": 0.1, "opacity": 0.5, "anchor": "topLeft", "inset": 0.05, "color": [0, 0, 0], "shadow": false, "image": "", "imageWidth": 0.3});
+        let wm = ExportOptions::from_params(&json!({"watermark": w})).unwrap().watermark.unwrap();
+        assert!((wm.size - 0.1).abs() < 1e-6 && wm.vertical && wm.anchor == Anchor::TopLeft && wm.color == [0, 0, 0] && !wm.shadow);
+        assert_eq!(ExportOptions::from_params(&json!({"watermark": {"text": "x", "size": 0.5}})).unwrap().watermark.map(|w| w.size), Some(0.5));
+        // the Export dialog's sliders (1–15 % size, 5–100 % opacity, 2–100 % width) stay inside the accepted ranges
+        assert!(WATERMARK_SIZE_RANGE.0 <= 0.01 && WATERMARK_SIZE_RANGE.1 >= 0.15);
+        assert!(WATERMARK_IMAGE_WIDTH_RANGE.0 <= 0.02 && WATERMARK_IMAGE_WIDTH_RANGE.1 >= 1.0);
     }
 }
