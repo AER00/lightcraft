@@ -2,6 +2,11 @@
 
 ## October 2026
 
+### Library keyboard culling
+- On macOS, ratings `0–5`, labels `6–9` and pick/unflag `P/U` now reach the app even when shown in the native menu (issue #283; adapted from PR #261).
+- `Shift+6–9` labels and advances. `Shift+P` picks and advances in Photo Grid and Square Grid; it opens Presets in other views. With Auto Advance on, Shift still moves only once.
+- Help → Keyboard Shortcuts includes the number-key bindings. See [library shortcuts](library-shortcuts.md).
+
 ### Presets and profiles
 - Import presets from other editors: XMP presets, classic `.lrtemplate` files, "DNG presets" from mobile apps and `.zip`
   bundles of any of these — whole folders at once, grouped by pack. Masks inside presets come along.
