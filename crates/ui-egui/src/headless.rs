@@ -231,20 +231,6 @@ impl Headless {
         self.paint()
     }
 
-    /// Wait for a fixture widget whose background directory listing may still be loading.
-    #[cfg(test)]
-    pub(crate) fn wait_for_widget(&mut self, id: &str, timeout: Duration) -> bool {
-        let start = Instant::now();
-        while let Some(remaining) = timeout.checked_sub(start.elapsed()) {
-            let reply = self.request("ui.widgets", json!({"filter": id}), remaining);
-            if reply["result"].as_array().is_some_and(|widgets| widgets.iter().any(|w| w["id"].as_str() == Some(id))) {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        false
-    }
-
     /// Send a control-protocol request (see [`crate::control`]) and run frames until it is
     /// answered, then until its input has been consumed. Returns `{"ok": …, "result"|"error": …}`.
     pub fn request(&mut self, method: &str, params: Value, timeout: Duration) -> Value {
@@ -907,7 +893,8 @@ mod tests {
         let r = h.request("engine.execute", json!({"command": "library.browse", "params": {"path": path}}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
-        assert!(h.wait_for_widget(&format!("source:local:{path}"), t), "the browsed folder is listed: {:?}", ids(&mut h));
+        let row = format!("source:local:{path}");
+        assert!(h.step_until(t, |h| h.app.widgets.iter().any(|(w, _)| *w == row)), "the browsed folder is listed: {:?}", ids(&mut h));
         assert!(!ids(&mut h).iter().any(|i| i == "source:local:restoreHidden"));
         // hide it while it is still being browsed
         let r = h.request("engine.execute", json!({"command": "local.hide", "params": {"path": path}}), t);
@@ -969,7 +956,8 @@ mod tests {
         exec(&mut h, "library.browse", json!({"path": day1}));
         h.settle(SETTLE);
         h.step();
-        assert!(h.wait_for_widget(&format!("source:local:{day2}"), t), "the sibling listing did not arrive");
+        let row = format!("source:local:{day2}");
+        assert!(h.step_until(t, |h| h.app.widgets.iter().any(|(w, _)| *w == row)), "the sibling listing did not arrive");
         let r = rects(&mut h);
         assert!(r.contains_key(&format!("source:local:{photos}")), "the kept root stays: {r:?}");
         assert!(r.contains_key(&format!("source:local:{day2}")), "the sibling stays reachable: {r:?}");
@@ -982,7 +970,8 @@ mod tests {
         assert_eq!(exec(&mut h, "library.browse", json!({"path": other}))["ok"], true);
         h.settle(SETTLE);
         h.step();
-        assert!(h.wait_for_widget(&format!("source:local:{other}"), t), "the other location did not arrive");
+        let row = format!("source:local:{other}");
+        assert!(h.step_until(t, |h| h.app.widgets.iter().any(|(w, _)| *w == row)), "the other location did not arrive");
         let r = rects(&mut h);
         assert!(r.contains_key(&format!("source:local:{photos}")) && r.contains_key(&format!("source:local:{other}")), "{r:?}");
         // restart: the kept roots come back with the saved UI state
