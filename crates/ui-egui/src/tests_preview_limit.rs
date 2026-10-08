@@ -594,6 +594,10 @@ mod in_the_loupe {
             modifiers: egui::Modifiers::NONE,
         });
         h.settle(SETTLE);
+        // (the key's own shortcut switches to the Before view; the wipe is chosen again with the
+        // key still down, which is what holding `\` in a wipe is)
+        h.app.ui.before_after = crate::state::BeforeAfter::Split;
+        h.settle(SETTLE);
         h.step();
         let canvas = h.app.canvas_rect.unwrap();
         let window = drawn(&h, Slot::RegionBefore);
