@@ -21,6 +21,31 @@ use crate::widgets::register;
 /// Files per batch (each batch joins the catalog as it is ready, so the progress window updates).
 pub(crate) const BATCH: usize = 8;
 
+/// The review dialog's first size (points). It can be resized; the photo grid takes the height.
+pub(crate) const DIALOG_SIZE: [f32; 2] = [960.0, 720.0];
+/// Memory keys: where the photo grid ended and where the dialog's content (its buttons) ended, last
+/// frame. Their difference is the room the grid leaves below it.
+const GRID_BOTTOM: &str = "import-grid-bottom";
+const CONTENT_BOTTOM: &str = "import-content-bottom";
+/// Room below the grid before it has been measured (more than the options and buttons take).
+const DEFAULT_BELOW_GRID: f32 = 360.0;
+
+/// Height of the photo grid: what is `available` once `below` (options and buttons) is left free,
+/// in whole points so the window never grows by a fraction each frame, and at least one `row`.
+pub(crate) fn grid_height(available: f32, below: f32, row: f32) -> f32 {
+    let h = (available - below.max(0.0)).floor();
+    if h.is_finite() { h.max(row) } else { (DIALOG_SIZE[1] - DEFAULT_BELOW_GRID).max(row) }
+}
+
+/// Remember where the review dialog's content ends this frame (after its buttons), for
+/// [`grid_height`] on the next.
+pub(crate) fn note_dialog_bottom(ui: &egui::Ui) {
+    if !ui.is_sizing_pass() {
+        let y = ui.min_rect().bottom();
+        ui.ctx().data_mut(|m| m.insert_temp(egui::Id::new(CONTENT_BOTTOM), y));
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ImportDialog {
@@ -778,7 +803,14 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
     let avail = ui.available_width();
     let cols = ((avail + 6.0) / (cell + 6.0)).floor().max(1.0) as usize;
     let rows = n.div_ceil(cols);
-    egui::ScrollArea::vertical().id_salt("import-grid").max_height(330.0).auto_shrink([false, true]).show_viewport(ui, |ui, viewport| {
+    // as tall as the window leaves after the options and buttons below it (measured last frame),
+    // so resizing the dialog resizes the grid
+    let below = ui.ctx().data(|m| {
+        let y = |key: &str| m.get_temp::<f32>(egui::Id::new(key));
+        y(CONTENT_BOTTOM).zip(y(GRID_BOTTOM)).map(|(content, grid)| content - grid)
+    });
+    let grid_h = grid_height(ui.available_height(), below.unwrap_or(DEFAULT_BELOW_GRID), cell + 26.0);
+    let grid = egui::ScrollArea::vertical().id_salt("import-grid").max_height(grid_h).auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
         let (area, _) = ui.allocate_exact_size(vec2(avail, rows as f32 * (cell + 26.0)), Sense::hover());
         for i in 0..n {
             let (c, r) = (i % cols, i / cols);
@@ -790,6 +822,9 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             candidate_cell(app, ui, d, i, rect);
         }
     });
+    if !ui.is_sizing_pass() {
+        ui.ctx().data_mut(|m| m.insert_temp(egui::Id::new(GRID_BOTTOM), grid.inner_rect.bottom()));
+    }
     ui.add_space(4.0);
     // options
     if !d.sources.is_empty() {
@@ -1252,4 +1287,22 @@ fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R
         add(ui)
     })
     .inner
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grid_height_follows_the_window() {
+        // the grid takes what the options and buttons leave, in whole points
+        assert_eq!(grid_height(700.0, 300.0, 142.0), 400.0);
+        assert_eq!(grid_height(1000.5, 300.0, 142.0), 700.0);
+        // never less than one row of thumbnails
+        assert_eq!(grid_height(200.0, 300.0, 142.0), 142.0);
+        // a bad measurement doesn't take the grid away or make it endless
+        assert_eq!(grid_height(700.0, -50.0, 142.0), 700.0);
+        assert_eq!(grid_height(700.0, f32::NAN, 142.0), 700.0);
+        assert_eq!(grid_height(f32::INFINITY, 300.0, 142.0), DIALOG_SIZE[1] - DEFAULT_BELOW_GRID);
+    }
 }
