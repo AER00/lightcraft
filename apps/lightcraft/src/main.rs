@@ -272,7 +272,8 @@ fn services() -> Services {
             let status = if cfg!(target_os = "macos") {
                 std::process::Command::new("open").args(["-R", path]).status()
             } else if cfg!(target_os = "windows") {
-                std::process::Command::new("explorer").arg(format!("/select,{path}")).status()
+                let win_path = path.replace('/', "\\");
+                std::process::Command::new("explorer").arg(format!("/select,{win_path}")).status()
             } else {
                 let dir = std::path::Path::new(path).parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| ".".into());
                 std::process::Command::new("xdg-open").arg(dir).status()

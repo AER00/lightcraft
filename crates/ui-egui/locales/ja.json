@@ -803,6 +803,8 @@
   "Show destination gamut warning": "出力先の色域警告を表示",
   "Show display gamut warning": "ディスプレイの色域警告を表示",
   "Show file names": "ファイル名を表示",
+  "Show in Explorer": "エクスプローラーで表示",
+  "Show in File Manager": "ファイルマネージャーで表示",
   "Show in Finder": "Finderで表示",
   "Show on Map": "地図で表示",
   "Show overlay (O)": "重ね表示（O）",

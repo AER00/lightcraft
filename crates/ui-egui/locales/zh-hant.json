@@ -1045,6 +1045,8 @@
   "Show destination gamut warning": "顯示目標色域警告",
   "Show display gamut warning": "顯示螢幕色域警告",
   "Show file names": "顯示檔案名稱",
+  "Show in Explorer": "在檔案總管中顯示",
+  "Show in File Manager": "在檔案管理員中顯示",
   "Show in Finder": "在 Finder 中顯示",
   "Show on Map": "在地圖上顯示",
   "Show overlay (O)": "顯示疊加（O）",
