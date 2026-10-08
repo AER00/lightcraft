@@ -1,11 +1,11 @@
 //! The import review dialog (File → Import Photos… / Import from Folder… / Import from Device):
 //! the source it scanned (a scanned folder is *not* added to Local), the files found under it as
-//! a grid of thumbnails with checkboxes (duplicates marked and unchecked), the destination (add in
-//! place / copy or move into the library's `Originals/` or a chosen folder, filed by day, by month,
-//! into one folder or by a custom folder template, optionally renamed), an album
-//! (existing or new), a preset and keywords to apply. Importing runs on a worker thread (files are
-//! probed, copied or moved there) and its batches join the catalog between frames, with a progress
-//! window and Cancel; the whole import is one undo step.
+//! a grid of thumbnails with checkboxes (duplicates marked and unchecked; Shift-click sets a
+//! range), the destination (add in place / copy or move into the library's `Originals/` or a
+//! chosen folder, filed by day, by month, into one folder or by a custom folder template,
+//! optionally renamed), an album (existing or new), a preset and keywords to apply. Importing
+//! runs on a worker thread (files are probed, copied or moved there) and its batches join the
+//! catalog between frames, with a progress window and Cancel; the whole import is one undo step.
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use lightcraft_engine::import::{ImportCandidate, ScanInput, ScanOutput, ScanProgress, scan_with};
@@ -53,6 +53,9 @@ pub struct ImportDialog {
     pub metadata_preset: String,
     /// Copy: raws are copied as DNG.
     pub dng: bool,
+    /// The candidate clicked last: where a Shift-click range starts ([`ImportDialog::click`]).
+    #[serde(skip)]
+    pub last_clicked: Option<usize>,
 }
 
 impl ImportDialog {
@@ -62,6 +65,24 @@ impl ImportDialog {
     }
     pub fn importable(&self, i: usize) -> bool {
         self.candidates.get(i).is_some_and(|c| c.duplicate.is_none() && c.error.is_none())
+    }
+    /// A click on candidate `i` toggles its checkbox. With `shift`, every importable candidate
+    /// from the last clicked one to `i` takes `i`'s new state, as in a file manager: click the
+    /// first, Shift-click the last, and the whole range is checked (or unchecked).
+    pub fn click(&mut self, i: usize, shift: bool) {
+        if !self.importable(i) {
+            return;
+        }
+        let Some(on) = self.checked.get(i).map(|c| !c) else { return };
+        let from = if shift { self.last_clicked.filter(|a| *a < self.checked.len()).unwrap_or(i) } else { i };
+        for k in from.min(i)..=from.max(i) {
+            if self.importable(k)
+                && let Some(c) = self.checked.get_mut(k)
+            {
+                *c = on;
+            }
+        }
+        self.last_clicked = Some(i);
     }
     pub fn selected_paths(&self) -> Vec<String> {
         self.candidates
@@ -1025,7 +1046,8 @@ fn candidate_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDial
     );
     let resp = resp.on_hover_text(tip);
     if resp.clicked() && ok {
-        d.checked[i] = !d.checked[i];
+        let shift = ui.input(|input| input.modifiers.shift);
+        d.click(i, shift);
     }
 }
 
@@ -1178,4 +1200,54 @@ fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R
         add(ui)
     })
     .inner
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Six candidates, all checked; candidate 3 is a duplicate (unchecked, not importable).
+    fn dialog() -> ImportDialog {
+        let mut candidates: Vec<ImportCandidate> = (0..6).map(|i| ImportCandidate { path: format!("img{i}.jpg"), ..Default::default() }).collect();
+        candidates[3].duplicate = Some("content".into());
+        ImportDialog::new(candidates)
+    }
+
+    #[test]
+    fn click_toggles_one_candidate() {
+        let mut d = dialog();
+        d.click(1, false);
+        assert_eq!(d.checked, [true, false, true, false, true, true]);
+        d.click(1, false);
+        assert_eq!(d.checked, [true, true, true, false, true, true]);
+        d.click(3, false);
+        assert_eq!(d.checked, [true, true, true, false, true, true], "a duplicate can't be checked");
+    }
+
+    #[test]
+    fn shift_click_sets_the_range_to_the_clicked_state() {
+        let mut d = dialog();
+        d.click(1, false);
+        d.click(4, true);
+        assert_eq!(d.checked, [true, false, false, false, false, true], "1..=4 unchecked, the duplicate left alone");
+        assert_eq!(d.selected_paths(), ["img0.jpg", "img5.jpg"]);
+        // backwards from the new anchor (4) re-checks 2..=4
+        d.click(2, true);
+        assert_eq!(d.checked, [true, false, true, false, true, true]);
+    }
+
+    #[test]
+    fn shift_click_without_an_earlier_click_toggles_one() {
+        let mut d = dialog();
+        d.click(2, true);
+        assert_eq!(d.checked, [true, true, false, false, true, true]);
+    }
+
+    #[test]
+    fn shift_click_with_a_stale_anchor_toggles_one() {
+        let mut d = dialog();
+        d.last_clicked = Some(99);
+        d.click(2, true);
+        assert_eq!(d.checked, [true, true, false, false, true, true]);
+    }
 }
