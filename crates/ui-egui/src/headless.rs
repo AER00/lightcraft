@@ -1417,6 +1417,8 @@ mod tests {
         h.settle(SETTLE);
         assert!(egui::Popup::is_any_open(&h.view.ctx), "filmstrip context menu");
 
+        // Empty Recently Deleted is offered while the trash is the source
+        assert!(photo_items(&h.app).contains(&"library.emptyRecentlyDeleted".to_string()));
         let r = h.request("ui.menu.invoke", json!({"id": "photo.restore"}), t);
         assert_eq!(r["ok"], true, "{r}");
         assert!(!h.app.session.catalog.photo(id).unwrap().deleted, "restored");
@@ -1426,6 +1428,7 @@ mod tests {
         assert_eq!(h.app.session.selection.ids, vec![id]);
         let toast = h.app.ui.toast.clone().expect("toast").0;
         assert!(toast.contains("All Photos"), "{toast}");
+        assert!(!photo_items(&h.app).contains(&"library.emptyRecentlyDeleted".to_string()), "Empty is for the trash view only");
 
         // deleted permanently, the file imports afresh as a new photo
         h.request("engine.execute", json!({"command": "photo.delete", "params": {"ids": [id.0]}}), t);
