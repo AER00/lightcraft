@@ -207,6 +207,8 @@ pub struct LightcraftApp {
     pub region_before_view: Option<region::RegionView>,
     /// The loupe's render sizes while a pinch or two-finger scroll runs.
     pub(crate) size_hold: region::SizeHold,
+    /// (photo, look, window frame size) a window was refused for: it reads more than one render holds.
+    pub(crate) window_refused: Option<(lightcraft_catalog::PhotoId, u64, usize)>,
     /// What the loupe drew last frame, in order (tests check layering).
     #[cfg(test)]
     pub(crate) draw_order: Vec<&'static str>,
@@ -281,6 +283,7 @@ impl LightcraftApp {
             region_view: None,
             region_before_view: None,
             size_hold: Default::default(),
+            window_refused: None,
             #[cfg(test)]
             draw_order: Vec::new(),
             region_tiles: Default::default(),

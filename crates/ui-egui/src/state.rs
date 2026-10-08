@@ -182,6 +182,10 @@ pub const PREVIEW_LIMITS: [u32; 5] = [0, 1600, 2560, 3840, 5120];
 /// The most the loupe ever renders in one go (memory and GPU texture size), whatever the setting.
 pub const LOUPE_EDGE_CEILING: u32 = 8192;
 
+/// The most a zoomed frame (the one a window is cut from) may be along its long edge: far more
+/// than the photos there are (a window holds only what is on screen, so the frame costs nothing).
+pub const WINDOW_FRAME_CEILING: usize = 65536;
+
 /// The smallest GPU texture side the loupe plans for, whatever the host reports.
 pub const MIN_TEXTURE_SIDE: usize = 512;
 
@@ -223,8 +227,8 @@ impl AppSettings {
     /// GPU magnifies the window) or the ceiling. The preview size limit is not applied: it is about
     /// the whole-frame render (see [`crate::region::plan`]).
     pub fn window_frame_edge(&self, drawn_long: f32, native_long_edge: usize) -> usize {
-        let wanted = if drawn_long.is_nan() { 8.0 } else { drawn_long.clamp(8.0, LOUPE_EDGE_CEILING as f32) } as usize;
-        wanted.min(native_long_edge.max(8)).min(LOUPE_EDGE_CEILING as usize)
+        let wanted = if drawn_long.is_nan() { 8.0 } else { drawn_long.clamp(8.0, WINDOW_FRAME_CEILING as f32) } as usize;
+        wanted.min(native_long_edge.max(8)).min(WINDOW_FRAME_CEILING)
     }
 
     /// The edge Build Standard-Sized Previews uses.

@@ -225,6 +225,10 @@ struct WindowCtx {
     texture_side: usize,
     crop_tool: bool,
     interacting: bool,
+    /// Hash of the photo's develop settings.
+    look: u64,
+    /// A pinch or two-finger scroll is running: keep the windows there are.
+    holding: bool,
 }
 
 /// One side of the loupe that gets a window render.
@@ -245,6 +249,11 @@ struct WindowView {
 /// drawn where it belongs. `None`: no window is wanted (or possible) for this view.
 fn request_window(app: &mut LightcraftApp, c: &WindowCtx, v: &WindowView) -> Option<crate::region::RegionView> {
     let frame_edge = c.frame_edge?;
+    // while a pinch or scroll runs the windows there are keep being drawn, magnified: no new one
+    // per frame (zooming out would ask for ever wider ones)
+    if c.holding {
+        return if v.before { app.region_before_view } else { app.region_view }.filter(|w| w.photo == c.id);
+    }
     let (fw, fh) =
         if c.aspect >= 1.0 { (frame_edge as f32, frame_edge as f32 / c.aspect) } else { (frame_edge as f32 * c.aspect, frame_edge as f32) };
     let (fw, fh) = (fw.round().max(1.0) as usize, fh.round().max(1.0) as usize);
@@ -258,9 +267,15 @@ fn request_window(app: &mut LightcraftApp, c: &WindowCtx, v: &WindowView) -> Opt
     );
     let win = crate::region::window_for(fw, fh, visible, crate::region::max_span(c.texture_side))?;
     let job = if v.before {
-        app.session.region_job_before(c.id, fw, fh, win, !c.crop_tool)?
+        app.session.region_job_before(c.id, fw, fh, win, !c.crop_tool)
     } else {
-        app.session.region_job(c.id, fw, fh, win, !c.crop_tool)?
+        app.session.region_job(c.id, fw, fh, win, !c.crop_tool)
+    };
+    // refused: what the window reads (a spot's source, an Auto Mask stroke) is too far for one
+    // render, so the whole frame is rendered at the drawn size instead (see `region::plan`)
+    let Some(job) = job else {
+        app.window_refused = Some((c.id, c.look, frame_edge));
+        return None;
     };
     // a drag renders drafts of the window, as it does of the whole frame
     let job = if c.interacting { job.draft() } else { job };
@@ -372,16 +387,21 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let native_long = native[0].max(native[1]);
     let drawn_long = target_rect.width().max(target_rect.height()) * ppp;
     // the whole frame at about canvas size; the zoomed part of it is a window render (below)
-    let plan = crate::region::plan(
-        &app.ui.settings,
-        crate::region::ViewSizes {
-            drawn_long,
-            canvas_long: canvas.width().max(canvas.height()) * ppp,
-            native_long,
-            texture_side,
-            draft_scale: scale,
-        },
-    );
+    let look = d.hash64();
+    // (modes that draw another picture over the loupe, or reads too far for one window, have the
+    // whole frame rendered at the size it is drawn, as they did before windows)
+    let sizes = crate::region::ViewSizes {
+        drawn_long,
+        canvas_long: canvas.width().max(canvas.height()) * ppp,
+        native_long,
+        texture_side,
+        draft_scale: scale,
+        windows: !app.ui.soft_proof && view_overlay(app, &d) == lightcraft_pipeline::Overlay::None,
+    };
+    let mut plan = crate::region::plan(&app.ui.settings, sizes);
+    if plan.window_edge.is_some_and(|edge| app.window_refused == Some((id, look, edge))) {
+        plan = crate::region::plan(&app.ui.settings, crate::region::ViewSizes { windows: false, ..sizes });
+    }
     // a pinch changes the zoom every frame: keep the sizes of before it until it is quiet
     let now = ui.input(|i| i.time);
     let plan = app.size_hold.apply(id, now, navigating, plan);
@@ -451,8 +471,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         && !app.ui.soft_proof
         && view_overlay(app, &d) == lightcraft_pipeline::Overlay::None
         && crate::region::same_aspect(display_aspect, aspect);
-    let window_ctx =
-        WindowCtx { id, frame_edge: plan.window_edge.filter(|_| plain_view), drawn_long, aspect, ppp, texture_side, crop_tool, interacting };
+    let window_ctx = WindowCtx {
+        id,
+        frame_edge: plan.window_edge.filter(|_| plain_view),
+        drawn_long,
+        aspect,
+        ppp,
+        texture_side,
+        crop_tool,
+        interacting,
+        look,
+        holding: navigating || app.size_hold.holding(now),
+    };
     // (slot, before side?, rect to draw in, rect it is requested for, area whose pixels show)
     let mut window_views: Vec<WindowView> = Vec::new();
     if window_ctx.frame_edge.is_some() {

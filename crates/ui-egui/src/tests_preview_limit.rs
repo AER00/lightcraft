@@ -555,4 +555,51 @@ mod in_the_loupe {
         h.settle(SETTLE);
         assert_eq!(h.app.region_tiles.len(), 2, "{:?}", h.app.region_tiles.keys().collect::<Vec<_>>());
     }
+
+    // Given soft proofing at 1:1 (a mode that draws one image, so no window), the whole-frame
+    // render is as big as the view, not a canvas-sized upscale
+    #[test]
+    fn soft_proofing_at_one_to_one_renders_the_whole_frame_at_full_size() {
+        let (mut h, native) = detail();
+        h.app.ui.soft_proof = true;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        assert_eq!(h.app.region_view, None);
+        assert_eq!(rendered_long_edge(&h), native);
+    }
+
+    // Given a window the photo's spots make too big for one render (refused), the loupe falls back
+    // to the whole frame at the drawn size, and tries windows again when the look changes
+    #[test]
+    fn a_refused_window_falls_back_to_a_full_size_render() {
+        let (mut h, native) = detail();
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        assert!(h.app.region_view.is_some());
+        let id = h.app.session.active().unwrap();
+        let look = h.app.session.develop_of(id).unwrap().hash64();
+        h.app.window_refused = Some((id, look, native));
+        h.settle(SETTLE);
+        assert_eq!(h.app.region_view, None);
+        assert_eq!(rendered_long_edge(&h), native);
+        h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": 0.5}}), T);
+        h.settle(SETTLE);
+        assert!(h.app.region_view.is_some(), "a new look tries a window again");
+    }
+
+    // Given a pinch out from 400 %, the window there is is kept (magnified, then shrunk) until the
+    // pinch stops: a new, ever wider window every frame is not asked for
+    #[test]
+    fn pinching_out_asks_for_no_new_windows() {
+        let (mut h, _) = detail();
+        h.app.ui.zoom = crate::state::Zoom::Percent(400.0);
+        h.settle(SETTLE);
+        let key = h.app.region_view.expect("a window").key;
+        let at = h.app.canvas_rect.unwrap().center();
+        h.request("ui.move", json!({"x": at.x, "y": at.y}), T);
+        for _ in 0..12 {
+            h.request("ui.zoom", json!({"factor": 0.9}), T);
+            assert_eq!(h.app.region_view.map(|v| v.key), Some(key), "the window of before the pinch");
+        }
+    }
 }

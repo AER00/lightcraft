@@ -72,6 +72,10 @@ pub struct ViewSizes {
     pub texture_side: usize,
     /// 1.0, or less while a slider is dragged (a draft of the whole-frame render).
     pub draft_scale: f32,
+    /// Whether a window can be drawn over the whole-frame render (not with an overlay, soft
+    /// proofing, or a read too far for one window): if not, the whole frame is rendered at the
+    /// size it is drawn.
+    pub windows: bool,
 }
 
 /// What the loupe renders for a view: the whole frame at about canvas size, and, once the view is
@@ -92,13 +96,20 @@ pub fn plan(settings: &crate::state::AppSettings, v: ViewSizes) -> LoupePlan {
     let canvas_long = if v.canvas_long.is_finite() { v.canvas_long.max(8.0) } else { 8.0 };
     let drawn_long = if v.drawn_long.is_finite() { v.drawn_long.max(8.0) } else { canvas_long };
     let scale = if v.draft_scale.is_finite() { v.draft_scale.clamp(0.1, 1.0) } else { 1.0 };
-    let main_edge = settings
-        .loupe_edge(drawn_long.min(canvas_long) * scale, v.native_long, v.texture_side)
-        .min(lightcraft_engine::SourceLevel::Preview.max_edge());
+    if !v.windows {
+        let main_edge = settings.loupe_edge(drawn_long * scale, v.native_long, v.texture_side);
+        return LoupePlan { main_edge, window_edge: None };
+    }
+    // a user who chose a size above the preview source level (3840, 5120) means it; otherwise the
+    // original is not decoded for the whole-frame render
+    let source_cap = if settings.preview_limit == 0 { lightcraft_engine::SourceLevel::Preview.max_edge() } else { settings.preview_limit as usize };
+    let edge_at = |scale: f32| settings.loupe_edge(drawn_long.min(canvas_long) * scale, v.native_long, v.texture_side).min(source_cap);
+    let main_edge = edge_at(scale);
     let frame_edge = settings.window_frame_edge(drawn_long, v.native_long);
     // a user who capped the preview size has chosen speed over sharpness at fit
     let fit = drawn_long <= canvas_long * 1.05;
-    let window_edge = (frame_edge as f32 > main_edge as f32 / scale * WINDOW_RATIO && !(fit && settings.preview_limit != 0)).then_some(frame_edge);
+    // (against the undrafted whole-frame render: a drag must not switch the window off and on)
+    let window_edge = (frame_edge as f32 > edge_at(1.0) as f32 * WINDOW_RATIO && !(fit && settings.preview_limit != 0)).then_some(frame_edge);
     LoupePlan { main_edge, window_edge }
 }
 
@@ -166,12 +177,6 @@ pub fn same_aspect(shown: f32, frame: f32) -> bool {
     shown.is_finite() && frame.is_finite() && frame > 0.0 && (shown / frame - 1.0).abs() <= 0.02
 }
 
-/// Whether a view drawn `drawn_long` pixels along its long edge needs a window render on top of
-/// the whole-frame render, which has only `rendered_long` of them.
-pub fn needed(drawn_long: f32, rendered_long: usize) -> bool {
-    drawn_long.is_finite() && drawn_long > rendered_long as f32 * 1.02 + 1.0
-}
-
 /// The window of a `full_w × full_h` frame to render so that `visible` — `(x0, y0, x1, y1)` in the
 /// frame's pixels, as much of the frame as is on screen — is covered: expanded by a margin,
 /// snapped outwards to the [`SNAP`] grid (margin: see [`margin_for`]) and clamped into the frame,
@@ -209,7 +214,7 @@ mod tests {
     const BIG: usize = 16384;
 
     fn sizes(drawn: f32, canvas: f32, native: usize) -> ViewSizes {
-        ViewSizes { drawn_long: drawn, canvas_long: canvas, native_long: native, texture_side: BIG, draft_scale: 1.0 }
+        ViewSizes { drawn_long: drawn, canvas_long: canvas, native_long: native, texture_side: BIG, draft_scale: 1.0, windows: true }
     }
 
     fn auto() -> AppSettings {
@@ -291,6 +296,53 @@ mod tests {
         assert!(!same_aspect(1.5, 1.0) && !same_aspect(f32::NAN, 1.0) && !same_aspect(1.0, 0.0));
     }
 
+    // Given a drag at fit on a 4K or 5K display (where the fit view has a window), the window stays:
+    // it is only the whole-frame draft that gets smaller
+    #[test]
+    fn a_drag_at_fit_on_a_large_display_keeps_the_window() {
+        for drawn in [3300.0, 3840.0, 4096.0, 5120.0] {
+            let still = plan(&auto(), sizes(drawn, drawn, 6000));
+            let drag = plan(&auto(), ViewSizes { draft_scale: 0.6, ..sizes(drawn, drawn, 6000) });
+            assert!(still.window_edge.is_some(), "{drawn}: {still:?}");
+            assert_eq!(drag.window_edge, still.window_edge, "{drawn}");
+        }
+    }
+
+    // Given a mode whose picture can't be a window (a mask overlay, soft proofing, a spot read too
+    // far for one render), the whole-frame render is as big as the view, as it was before windows
+    #[test]
+    fn without_windows_the_whole_frame_is_rendered_at_the_drawn_size() {
+        let p = plan(&auto(), ViewSizes { windows: false, ..sizes(6000.0, 2800.0, 6000) });
+        assert_eq!((p.main_edge, p.window_edge), (6000, None));
+        let fit = plan(&auto(), ViewSizes { windows: false, ..sizes(2800.0, 2800.0, 6000) });
+        assert_eq!((fit.main_edge, fit.window_edge), (2816, None));
+        let deep = plan(&auto(), ViewSizes { windows: false, ..sizes(48000.0, 2800.0, 6000) });
+        assert_eq!(deep.main_edge, 6000, "never above the photo's own pixels");
+        let small = plan(&auto(), ViewSizes { windows: false, texture_side: 2048, ..sizes(6000.0, 2800.0, 6000) });
+        assert_eq!(small.main_edge, 2048);
+    }
+
+    // Given a user who chose a preview size above the preview source level (3840 or 5120 on a big
+    // display), the whole-frame render is that big
+    #[test]
+    fn a_large_preview_limit_is_honoured() {
+        for limit in [3840u32, 5120] {
+            let s = AppSettings { preview_limit: limit, ..Default::default() };
+            let p = plan(&s, sizes(5120.0, 5120.0, 6000));
+            assert_eq!(p.main_edge, limit as usize, "{limit}");
+            assert_eq!(p.window_edge, None, "a fit view at the limit needs no window");
+        }
+        let s = AppSettings { preview_limit: 2560, ..Default::default() };
+        assert_eq!(plan(&s, sizes(5120.0, 5120.0, 6000)).main_edge, 2560);
+    }
+
+    // Given a medium format photo wider than 8192 px, 1:1 is its own pixels
+    #[test]
+    fn a_window_frame_can_be_as_big_as_the_photo() {
+        let p = plan(&auto(), sizes(40000.0, 2800.0, 11648));
+        assert_eq!(p.window_edge, Some(11648));
+    }
+
     // Given a drag at fit on a Retina Mac, the window does not switch on (it would flicker with the drag)
     #[test]
     fn a_drag_at_fit_does_not_switch_the_window_on() {
@@ -360,16 +412,6 @@ mod tests {
         }
         let p = plan(&auto(), sizes(1000.0, 1000.0, 0));
         assert!(p.main_edge >= 8);
-    }
-
-    // Given a view drawn at 6000 px and a render of 6000, no window is needed; at 6000 vs 2560 it is
-    #[test]
-    fn a_window_is_needed_only_when_the_whole_frame_render_is_stretched() {
-        assert!(!needed(6000.0, 6000));
-        assert!(!needed(6100.0, 6000), "a couple of percent is not worth a second render");
-        assert!(needed(6000.0, 2560));
-        assert!(needed(48000.0, 8192));
-        assert!(!needed(f32::NAN, 100) && !needed(f32::INFINITY, 100));
     }
 
     // Given a visible area in the middle of a big frame, the window covers it with a margin, on the grid
