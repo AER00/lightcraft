@@ -131,9 +131,20 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         .ok_or_else(|| RawError::Corrupt("RAF strip outside file".into()))?;
     let cfa = cfa(&h);
     let compression = be32(bytes, 108).unwrap_or(0);
-    let compressed = matches!(compression, 2 | 3);
+    let compressed = match compression {
+        0 => false,
+        2 | 3 => true,
+        _ => return Err(RawError::Unsupported(format!("Fujifilm RAF compression mode {compression}"))),
+    };
     let mut data = Vec::new();
     if compressed {
+        if cfa.width == 6 && cfa != Cfa::xtrans() {
+            return Err(RawError::Unsupported("Fujifilm compressed RAF with an unknown X-Trans layout".into()));
+        }
+        let flag = if compression == 2 { 1 } else { 0 };
+        if src.get(2) != Some(&flag) {
+            return Err(RawError::Corrupt("RAF container and stream compression modes disagree".into()));
+        }
         data = super::rafc::decode(src, w, hgt, bits, cfa.width == 6, mode)?;
     } else {
         // Samples may use 16-bit words (e.g. 14-bit X-T20); otherwise they are packed at `bits`.

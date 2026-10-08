@@ -432,6 +432,8 @@ fn corpus_panasonic_encodings() {
 /// lossy block quantizer changes; the source files are CC0, fetched by `xtask corpus`.
 #[test]
 fn corpus_fujifilm_compressed_samples() {
+    use sha2::{Digest, Sha256};
+    let checksums = include_str!("../../../docs/raf-corpus.sha256");
     let cases: &[(&str, usize, usize, u64, u64)] = &[
         ("raf-fuji-gfx100-3773.raf", 11808, 8754, 483668733090, 6453395759968151080),
         ("raf-fuji-gfx100-3775.raf", 11808, 8754, 120434414850, 6144091676930008551),
@@ -454,7 +456,12 @@ fn corpus_fujifilm_compressed_samples() {
     let dir = corpus_root().join("raw");
     let mut seen = 0;
     for &(name, width, height, sum, weighted) in cases {
+        let path = format!("corpus/raw/{name}");
+        let checksum = checksums.lines().filter_map(|s| s.split_once("  ")).find(|(_, p)| *p == path).unwrap().0;
+        assert_eq!(checksum.len(), 64, "{name}: missing published SHA-256");
         let Ok(bytes) = std::fs::read(dir.join(name)) else { continue };
+        let actual_sha: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(actual_sha, checksum, "{name}: corpus file differs from its pinned identity");
         let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!((img.width, img.height), (width, height), "{name}");
         let lightcraft_raw::RawData::U16(data) = img.data else { panic!("{name}: float data") };

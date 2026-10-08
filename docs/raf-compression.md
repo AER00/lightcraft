@@ -2,7 +2,7 @@
 
 LightCraft decodes uncompressed, lossless compressed and lossy compressed RAF sensor data in pure Rust. The shared RAW decoder serves import, desktop previews, editing, CLI rendering, web and export. These files no longer enter the embedded-JPEG-only fallback. After restarting with the updated build, existing imported preview-only photos need **Photo → Reload from Disk** to refresh their status; edits are retained.
 
-Fujifilm now uses a guarded colour/tone estimate from each file’s own embedded JPEG when the reference is usable, plus relative as-shot WB and optional pooled per-model profiles. Output pixels still come from the sensor. Rejected fits retain the neutral fallback; measured sensor calibration and Lightroom fidelity remain separate gaps. See [camera colour verification](camera-preview-colour.md#fujifilm-raf).
+Fujifilm now uses a guarded colour/tone estimate from each file’s own embedded JPEG when the reference is usable, plus relative as-shot WB and bundled pooled profiles for X-H2S and X-T4. Output pixels still come from the sensor. A rejected profile fit retries the per-file colour fit; if both fail, the neutral fallback remains. Measured sensor calibration and Lightroom fidelity remain separate gaps. See [camera colour verification](camera-preview-colour.md#fujifilm-raf).
 
 ## Format and implementation
 
@@ -17,7 +17,7 @@ Fujifilm now uses a guarded colour/tone estimate from each file’s own embedded
 - Signed prediction errors use adaptive Rice coding: a unary prefix followed by a context-dependent number of bits, with a bounded escape for large errors. Three pair phases have separate even/odd statistics. The 81 signed gradient contexts fold into 41 states.
 - Lossy quantizers change the error range and reconstruction step. Low-gradient sites retain finer precision (0, 1 or 2), with five folded contexts per precision and statistics that survive main-quantizer changes. The main context statistics reset when its quantizer changes. Their initial sum is `max(2, (range + 32) / 64)`; using 16 as the minimum breaks more heavily quantized files.
 
-Stripes decode in parallel using the existing Rayon dependency. Offsets, sizes, dimensions and entropy reads are checked; truncated data, impossible codes and inconsistent headers return errors. Header-only probing validates the tables and stripe ranges without decompressing the image.
+Stripes decode in parallel using the existing Rayon dependency. Offsets, sizes, dimensions and entropy reads are checked; truncated data, impossible codes and inconsistent headers return errors. Unknown container compression modes, disagreements between container and stream modes, and compressed X-Trans layouts other than the supported CFA return errors. Header-only probing validates the tables and stripe ranges without decompressing the image.
 
 ## Verification
 
@@ -32,9 +32,9 @@ Complete sensor arrays were compared sample by sample with an external decoder u
 
 All 24 files matched the reference sensor arrays exactly. This covers 13 camera bodies and both older and current compression variants. Synthetic tests also cover 12-bit streams; a real compressed 12-bit camera file has not been verified. Support is selected from the file's layout, without a camera-name allowlist. Other bodies using this layout should decode, but this is not a claim that every Fujifilm model has been tested. Older FinePix layouts without the supported raw TIFF IFD remain unsupported.
 
-The 17 CC0 files live in the gitignored corpus, with published SHA-256 and licence records. `cargo xtask corpus --download` fetches them. `crates/raw/tests/corpus.rs` records reference sensor sums and position-weighted sums as regression checks; the full-array comparisons were performed locally. No supplied media or large binary fixtures are committed.
+The 17 CC0 files live in the gitignored corpus. Their published SHA-256 identities are pinned in [raf-corpus.sha256](raf-corpus.sha256); their source licence records were checked as CC0 1.0. `cargo xtask corpus --download` fetches them. `cargo test -p lightcraft-raw corpus_fujifilm_compressed_samples -- --nocapture` verifies each available file's checksum before checking its reference sensor sum and position-weighted sum. The test skips absent corpus files; the full-array comparisons were performed locally. No supplied media or large binary fixtures are committed.
 
-Unconditional procedural tests cover Bayer/X-Trans, 12/14/16 bits, partial final stripes, quantizer changes, residual signs and escapes, malformed headers and truncated/random entropy streams. A regression also checks overflowing uncompressed row strides.
+Unconditional procedural tests cover Bayer/X-Trans, 12/14/16 bits, partial final stripes, quantizer changes, residual signs and escapes, malformed headers and truncated/random entropy streams. Regressions also check overflowing uncompressed row strides, unsupported modes and CFA layouts, and container/stream mode mismatches.
 
 Local release decode measurements: about 0.16–0.24 seconds for 24–40 MP X-Trans files, 0.29 seconds for 50 MP Bayer, and 0.5–0.6 seconds for 100 MP Bayer. These measure sensor decoding, not the full develop/export pipeline.
 

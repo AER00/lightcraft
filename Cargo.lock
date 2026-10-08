@@ -3028,6 +3028,7 @@ dependencies = [
  "proptest",
  "rayon",
  "serde",
+ "sha2",
  "thiserror 2.0.21",
  "zune-core",
  "zune-jpeg",

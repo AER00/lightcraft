@@ -337,6 +337,7 @@ fn decode_stripe(stripe: &Stripe<'_>, height: usize, bits: u32, xtrans: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Cfa;
     use proptest::prelude::*;
 
     /// Procedural zero residuals: no camera media or encoder dependency.
@@ -443,6 +444,33 @@ mod tests {
         assert!(decode(&valid, usize::MAX, usize::MAX, 14, true, Mode::Full).is_err());
         let mut reader = Bits::new(&[0; 64]);
         assert!(reader.residual(0, 14, 16384, 41).is_err());
+    }
+
+    #[test]
+    fn unsupported_container_modes_and_cfa_are_not_silently_decoded() {
+        let layout = std::array::from_fn(|i| Cfa::xtrans().pattern[35 - i]);
+        let src = compressed(14, true, None);
+        let raf = super::super::raf::tests::raf(780, 18, 14, src, Some(layout), &[]);
+        let mut mismatched = raf.clone();
+        mismatched[108..112].copy_from_slice(&3u32.to_be_bytes());
+        assert!(crate::decode(&mismatched).is_err(), "declared lossy mode disagrees with lossless stream");
+        let bad_layout = layout.map(|c| {
+            if c == 0 {
+                2
+            } else if c == 2 {
+                0
+            } else {
+                c
+            }
+        });
+        let raf = super::super::raf::tests::raf(780, 18, 14, compressed(14, true, None), Some(bad_layout), &[]);
+        assert!(matches!(crate::decode(&raf), Err(RawError::Unsupported(_))), "compression uses a fixed X-Trans arrangement");
+        let mut raf = super::super::raf::tests::raf(780, 18, 16, vec![0; 780 * 18 * 2], None, &[]);
+        for mode in [1u32, 4, u32::MAX] {
+            raf[108..112].copy_from_slice(&mode.to_be_bytes());
+            assert!(matches!(crate::decode(&raf), Err(RawError::Unsupported(_))), "unknown mode {mode}");
+            assert!(matches!(crate::probe_info(&raf), Err(RawError::Unsupported(_))), "header-only mode {mode}");
+        }
     }
 
     #[test]

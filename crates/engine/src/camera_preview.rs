@@ -40,13 +40,13 @@ pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransf
     }
     let (sensor, reference) = proxies(raw, bytes, transform, PROXY)?;
     // A camera profile pooled from many photos knows colours this photo shows too little of;
-    // only the tone and chroma curves are fitted per photo (DRO and picture styles vary).
+    // try its colour first and fit tone/chroma per photo (DRO and picture styles vary).
     let profile = raw.metadata.model.as_deref().and_then(crate::camera_profiles::get);
     let colour = profile.as_ref().and_then(|p| Some((p.matrix().mul(&transform.matrix.inverse()?), p.hue_sat.clone())));
     let look = fit_pairs_with(&sensor, &reference, colour)?;
     if lightcraft_pipeline::profiling() {
         eprintln!(
-            "[profile] {:?} camera look: {:?}, {:?}, hue/sat table {}, camera profile {}",
+            "[profile] {:?} camera look: {:?}, {:?}, hue/sat table {}, camera profile available {}",
             raw.format,
             look.matrix.0,
             look.tone,
@@ -219,6 +219,13 @@ fn fit_matrix(pairs: &[([f64; 3], [f64; 3])]) -> Option<Mat3> {
 /// colour model (a camera profile's, in the sensor proxy's space), each completed with a tone
 /// and chroma curve fitted to this photo.
 fn fit_pairs_with(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>) -> Option<CameraLook> {
+    let has_profile = colour.is_some();
+    // A different picture style can make a camera profile fail the gates. Preserve the
+    // photo's own colour fit before resorting to the neutral fallback.
+    fit_candidate(sensor, reference, colour).or_else(|| has_profile.then(|| fit_candidate(sensor, reference, None)).flatten())
+}
+
+fn fit_candidate(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>) -> Option<CameraLook> {
     // A known colour model needs enough signal for tone fitting, not a scene rich enough to
     // learn a new colour matrix. Still reject monochrome references.
     let (pairs, bright) = collect_pairs(sensor, reference, if colour.is_some() { 0.005 } else { 0.05 })?;
@@ -785,6 +792,30 @@ mod tests {
         assert_eq!(look.matrix, matrix);
         reference.map_in_place(|p| [luminance_2020(p); 3]);
         assert!(fit_pairs_with(&sensor, &reference, Some((matrix, None))).is_none(), "monochrome JPEGs remain rejected");
+    }
+
+    #[test]
+    fn rejected_profile_preserves_a_usable_per_photo_fit() {
+        let matrix = Mat3([[1.8, -0.4, -0.1], [-0.2, 1.5, -0.1], [-0.05, -0.3, 1.7]]);
+        let wrong = Mat3([[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]);
+        let mut sensor = Rgb32f::new(64, 64);
+        let mut reference = sensor.clone();
+        let mut seed = 0x2545_f491_u32;
+        for (src, dst) in sensor.data.iter_mut().zip(&mut reference.data) {
+            *src = std::array::from_fn(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                0.05 + (seed % 1000) as f32 * 0.0003
+            });
+            let p = matrix.apply_f32(*src);
+            let y = luminance_2020(p);
+            *dst = p.map(|v| (v * (1.0 - (-2.5 * y).exp()) / y).clamp(0.0, 0.999));
+        }
+        let per_photo = fit_pairs(&sensor, &reference).unwrap();
+        let look = fit_pairs_with(&sensor, &reference, Some((wrong, None))).unwrap();
+        assert_eq!(look.matrix, per_photo.matrix, "a rejected camera profile must not suppress the per-photo fit");
+        assert_eq!(look.tone, per_photo.tone);
     }
 
     #[test]
