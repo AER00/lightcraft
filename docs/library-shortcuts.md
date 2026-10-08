@@ -15,6 +15,8 @@ Select photos in Photo Grid or Square Grid, then use:
 Purple and clearing a colour label are available in Photo → Set Color Label and the photo context
 menu. Purple has no default number key, matching Lightroom Classic. Rejection marks a photo for
 culling; it does not delete the original or remove it from the library.
+Setting a colour label shows the same brief bottom toast as a rating, using the colour or your
+custom label name. Clearing it shows a confirmation too, whether applied by a key, menu or swatch.
 
 Grid actions apply to all selected photos and support Undo / Redo. In Compare and Survey, culling
 actions apply to the active photo. Auto Advance moves forward after an action; holding Shift with

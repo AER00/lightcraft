@@ -52,6 +52,8 @@ use serde_json::Value;
 pub use control::{ControlRequest, ControlResponse};
 pub use state::UiState;
 
+const TOAST_SECONDS: f64 = 1.4;
+
 pub type PickFiles = Box<dyn FnMut() -> Vec<String>>;
 /// A save dialog: suggested file name → chosen path (`None` = cancelled).
 pub type SaveFile = Box<dyn FnMut(&str) -> Option<String>>;
@@ -265,6 +267,19 @@ impl LightcraftApp {
             return r;
         }
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
+        if r.is_ok() && id == "photo.label" {
+            let text = match params.get("label").and_then(Value::as_str).and_then(lightcraft_catalog::ColorLabel::parse) {
+                Some(label) => {
+                    let name =
+                        self.session.catalog.custom_label_name(label).map(str::to_owned).unwrap_or_else(|| i18n::tr(&format!("{label:?}")).into());
+                    i18n::tr_format!("{name} Label", name = name)
+                }
+                None => i18n::tr("Color label cleared").into(),
+            };
+            // Native menu clicks can arrive before logic() updates last_time after an idle gap.
+            let now = self.tasks.repaint.as_ref().map(|ctx| ctx.input(|i| i.time)).unwrap_or(self.last_time);
+            self.ui.toast = Some((text, now + TOAST_SECONDS));
+        }
         if let Err(e) = &r {
             log::warn!("{id}: {e}");
             self.ui.status = e.clone();
@@ -351,7 +366,7 @@ impl LightcraftApp {
     }
 
     pub fn toast(&mut self, ctx: &egui::Context, text: impl Into<String>) {
-        self.toast_for(ctx, text, 1.4);
+        self.toast_for(ctx, text, TOAST_SECONDS);
     }
 
     /// A toast that stays `secs` seconds (messages that say where to look or what to do next).

@@ -3,6 +3,7 @@
 ## October 2026
 
 ### Library keyboard culling
+- Setting or clearing a colour label shows a brief bottom confirmation, like rating a photo; custom label names appear in the message too.
 - On macOS, ratings `0–5`, labels `6–9` and pick/unflag `P/U` now reach the app even when shown in the native menu (issue #283; adapted from PR #261).
 - `Shift+6–9` labels and advances. `Shift+P` picks and advances in Photo Grid and Square Grid; it opens Presets in other views. With Auto Advance on, Shift still moves only once.
 - Help → Keyboard Shortcuts includes the number-key bindings. See [library shortcuts](library-shortcuts.md).
