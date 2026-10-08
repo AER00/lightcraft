@@ -199,3 +199,31 @@ fn sidebar_sections_collapse_and_remember_it() {
     click(&mut h, "icon:albumNew");
     assert!(!h.app.ui.sidebar_section_collapsed("albums"), "the plus does not fold Albums");
 }
+
+/// Select All in the loupe: every filmstrip cell of a selected photo is drawn selected, not just
+/// the active one (issue #298).
+#[test]
+fn filmstrip_marks_every_selected_photo() {
+    let mut h = demo([1400.0, 900.0], json!({"view": "detail"}));
+    let r = h.request("ui.key", json!({"key": "a", "cmd": true}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let img = h.snapshot(SETTLE);
+    assert_eq!(h.view.ctx.pixels_per_point(), 1.0, "the test samples pixels at point coordinates");
+    let active = h.app.session.selection.active.expect("active photo");
+    let t = crate::theme::Tokens::get(&h.view.ctx);
+    let ids = h.app.session.visible_cloned();
+    assert!(ids.len() > 3 && h.app.session.selection.ids.len() == ids.len());
+    let mut checked = 0;
+    for id in ids.iter().filter(|id| **id != active) {
+        let Some(r) = h.app.widgets.iter().find(|(w, _)| *w == format!("film:{}", id.0)).map(|(_, r)| *r) else { continue };
+        // cells scrolled under the right panel (default width plus the tool rail) are not visible
+        if r.max.x > 1400.0 - RIGHT_WIDTH.default - 48.0 {
+            continue;
+        }
+        // a pixel in the cell's left margin at mid height, clear of the name text and the thumbnail
+        let (x, y) = ((r.min.x + 4.0) as usize, r.center().y as usize);
+        assert_eq!(img[(x, y)], t.cell_selected, "film cell of selected photo {} is drawn selected", id.0);
+        checked += 1;
+    }
+    assert!(checked >= 3, "checked {checked} cells");
+}
