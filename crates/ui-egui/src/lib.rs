@@ -27,6 +27,7 @@ pub mod softpaint;
 pub mod state;
 pub mod tasks;
 pub mod theme;
+pub mod titlebar;
 pub mod widgets;
 
 #[cfg(test)]
@@ -57,6 +58,8 @@ mod tests_quit_unsaved;
 mod tests_scroll;
 #[cfg(test)]
 mod tests_switch_library;
+#[cfg(test)]
+mod tests_titlebar;
 #[cfg(test)]
 mod tests_unsaved;
 
