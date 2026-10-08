@@ -189,6 +189,12 @@ fn the_folder_filter_takes_only_a_text_path() {
     assert_eq!(s.visible().len(), 0, "a path that names no folder shows nothing, not everything");
 }
 
+/// Folders are compared by identity: a path read back may be spelled with the platform's separator.
+fn same_folder(actual: Option<&str>, expected: &str, why: &str) {
+    let key = lightcraft_catalog::query::folder_key;
+    assert_eq!(actual.map(key), Some(key(expected)), "{why}: {actual:?} vs {expected}");
+}
+
 #[test]
 fn a_renamed_folder_stays_the_chosen_one_and_undo_follows_it_back() {
     let dir = Scratch::new("rename");
@@ -200,10 +206,10 @@ fn a_renamed_folder_stays_the_chosen_one_and_undo_follows_it_back() {
     s.execute("library.filter", &json!({"libraryFolder": trip})).unwrap();
     assert_eq!(s.visible().len(), 2);
     s.execute("folder.rename", &json!({"path": trip, "name": "holiday"})).unwrap();
-    assert_eq!(s.filter.library_folder.as_deref(), Some(renamed.as_str()), "the choice follows the folder");
+    same_folder(s.filter.library_folder.as_deref(), &renamed, "the choice follows the folder");
     assert_eq!(s.visible().len(), 2, "and still shows its photos");
     s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(s.filter.library_folder.as_deref(), Some(trip.as_str()));
+    same_folder(s.filter.library_folder.as_deref(), &trip, "the choice is the same folder");
     assert_eq!(s.visible().len(), 2);
 }
 
@@ -217,10 +223,10 @@ fn a_moved_folder_keeps_a_chosen_subfolder_chosen() {
     add(&mut s, &format!("{day1}/b.jpg"));
     s.execute("library.filter", &json!({"libraryFolder": day1})).unwrap();
     s.execute("folder.move", &json!({"path": dir.path("trip"), "into": dir.path("archive")})).unwrap();
-    assert_eq!(s.filter.library_folder.as_deref(), Some(moved.as_str()), "the subfolder follows its parent");
+    same_folder(s.filter.library_folder.as_deref(), &moved, "the subfolder follows its parent");
     assert_eq!(s.visible().len(), 1);
     s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(s.filter.library_folder.as_deref(), Some(day1.as_str()));
+    same_folder(s.filter.library_folder.as_deref(), &day1, "the choice is the same folder");
 }
 
 #[test]
@@ -229,10 +235,19 @@ fn following_a_folder_reads_both_spellings_the_same_way() {
     let mut s = Session::new();
     s.filter.library_folder = Some("/a/x/../b/sub".into());
     crate::cmd::browse::follow_folder(&mut s, "/a/b", "/a/c");
-    assert_eq!(s.filter.library_folder.as_deref(), Some("/a/c/sub"), "a subfolder stays a subfolder, never widens to its parent");
+    same_folder(s.filter.library_folder.as_deref(), "/a/c/sub", "a subfolder stays a subfolder, never widens to its parent");
     s.filter.library_folder = Some("/elsewhere/b".into());
     crate::cmd::browse::follow_folder(&mut s, "/a/b", "/a/c");
     assert_eq!(s.filter.library_folder.as_deref(), Some("/elsewhere/b"), "other folders are left alone");
+}
+
+#[test]
+fn following_a_folder_keeps_the_case_of_the_subfolder_names() {
+    // Windows compares folders in lower case; the name the user sees must not change with it
+    let mut s = Session::new();
+    s.filter.library_folder = Some("/A/Trip/Day1".into());
+    crate::cmd::browse::follow_folder(&mut s, "/A/Trip", "/B");
+    assert_eq!(s.filter.library_folder.as_deref(), Some(std::path::Path::new("/B").join("Day1").to_str().unwrap()));
 }
 
 #[test]
@@ -296,10 +311,10 @@ fn a_renamed_folder_stays_the_one_shown_and_undo_follows_it_back() {
     add(&mut s, &format!("{day1}/b.jpg"));
     source_folder(&mut s, &day1);
     s.execute("folder.rename", &json!({"path": trip, "name": "holiday"})).unwrap();
-    assert_eq!(s.library_folder.as_deref(), Some(format!("{renamed}/day1").as_str()), "the subfolder follows its parent");
+    same_folder(s.library_folder.as_deref(), &format!("{renamed}/day1"), "the subfolder follows its parent");
     assert_eq!(s.visible().len(), 1);
     s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(s.library_folder.as_deref(), Some(day1.as_str()));
+    same_folder(s.library_folder.as_deref(), &day1, "the choice is the same folder");
     assert_eq!(s.visible().len(), 1);
 }
 
@@ -308,7 +323,7 @@ fn the_shown_folder_follows_reading_both_spellings_the_same_way() {
     let mut s = Session::new();
     s.library_folder = Some("/a/x/../b/sub".into());
     crate::cmd::browse::follow_folder(&mut s, "/a/b", "/a/c");
-    assert_eq!(s.library_folder.as_deref(), Some("/a/c/sub"));
+    same_folder(s.library_folder.as_deref(), "/a/c/sub", "the shown folder reads both spellings alike");
 }
 
 #[test]
