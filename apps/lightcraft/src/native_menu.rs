@@ -51,6 +51,9 @@ pub struct NativeMenu {
     /// Structure of the installed menu (ids, kinds, submenu names); a change rebuilds it.
     structure: String,
     text_focus: bool,
+    /// The keyboard shortcuts editor is recording a key: every accelerator is off so the key
+    /// press reaches it.
+    capturing: bool,
 }
 
 /// `Cmd+Shift+Z` → a muda accelerator (`None` for keys we leave to egui, e.g. Escape).
@@ -196,7 +199,7 @@ impl NativeMenu {
             let _ = tx.send(e.id.0);
             repaint.request_repaint();
         }));
-        let mut m = NativeMenu { menu: Menu::new(), items: HashMap::new(), rx, structure: String::new(), text_focus: false };
+        let mut m = NativeMenu { menu: Menu::new(), items: HashMap::new(), rx, structure: String::new(), text_focus: false, capturing: false };
         m.rebuild(app);
         app.native_menu = true;
         m
@@ -266,6 +269,7 @@ impl NativeMenu {
         }
         self.menu.init_for_nsapp();
         self.text_focus = false;
+        self.capturing = false;
         self.publish_shortcuts(app);
     }
 
@@ -334,7 +338,7 @@ impl NativeMenu {
             .values()
             .filter(|i| i.accel.is_some())
             .filter_map(|i| i.shortcut.clone())
-            .filter(|sc| !(self.text_focus && yields_to_text(sc)))
+            .filter(|sc| !self.capturing && !(self.text_focus && yields_to_text(sc)))
             .collect::<HashSet<_>>();
         app.native_shortcuts.insert(SETTINGS_KEY.to_string());
     }
@@ -397,14 +401,16 @@ impl NativeMenu {
         walk(&bar.iter().flat_map(|(_, v)| v.clone()).collect::<Vec<_>>(), &mut self.items);
 
         let focus = ctx.egui_wants_keyboard_input();
-        if focus != self.text_focus {
+        let capturing = app.recording_shortcut.is_some();
+        if focus != self.text_focus || capturing != self.capturing {
             self.text_focus = focus;
+            self.capturing = capturing;
             for it in self.items.values() {
                 let Some(sc) = it.shortcut.as_deref() else { continue };
-                if it.accel.is_none() || !yields_to_text(sc) {
+                if it.accel.is_none() {
                     continue;
                 }
-                let accel = if focus { None } else { it.accel };
+                let accel = if capturing || (focus && yields_to_text(sc)) { None } else { it.accel };
                 let _ = match &it.handle {
                     Handle::Plain(h) => h.set_accelerator(accel),
                     Handle::Check(h) => h.set_accelerator(accel),

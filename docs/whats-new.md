@@ -2,6 +2,11 @@
 
 ## October 2026
 
+### Keyboard shortcuts
+- Shortcuts are editable: Help ▸ Keyboard Shortcuts (⌘/) lists every command with a search box; click a shortcut and
+  press the new keys (Esc cancels), × removes it, ↺ restores the original, Reset All undoes every change. A key that
+  belonged to another command moves to the new one. Menus show the new keys; agents use `app.setShortcut`.
+
 ### RAW decoding
 - Sony ILCE-7M4 downsized lossless ARWs now decode subsampled YCbCr tiles into linear RGB,
   preserving RAW editing & full-resolution export instead of using embedded JPEG previews.

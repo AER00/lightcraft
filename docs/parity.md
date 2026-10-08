@@ -42,15 +42,15 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | S. Export (EXP) | 15 | 1 | 2 | 0 | 7/7 (100%) | 7/7 (100%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
-| V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
+| V. Preferences (PREF) | 6 | 0 | 3 | 2 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 17 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
-| **Total** | 389 | 34 | 86 | 37 | 194/200 (97%) | 139/149 (93%) |
+| **Total** | 390 | 34 | 86 | 36 | 194/200 (97%) | 139/149 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.8%** of 509 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 41.6% of 160.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.8%** of 510 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 41.6% of 160.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -470,7 +470,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-PREF-PERFORMANCE | GPU / performance | P1 | ✅ | `cmd:app.gpu`, `cmd:app.memoryBudget`, `cmd:app.settings` | GPU on/off, preview size (1600–5120 px), memory budget, thumbnail cache size in Settings |
 | LR-PREF-PEOPLE | Face recognition | P2 | ⬜ | | |
 | LR-PREF-WATERMARK | Watermark settings | P1 | ✅ | `cmd:export.savePreset`, `crates/ui-egui/src/panels/dialogs.rs` | set in the Export dialog; kept with Export with Previous and in saved export presets |
-| LR-PREF-SHORTCUTS | Shortcut customisation | — | 🚫 | | not customisable in the reference app either; a keymap editor would be an extra |
+| LR-PREF-SHORTCUTS | Shortcut customisation | — | ✅ | `cmd:app.setShortcut`, `cmd:app.resetShortcuts`, `crates/ui-egui/src/panels/keymap.rs` | an extra (the reference app has no keymap editor): Help ▸ Keyboard Shortcuts (⌘/) lists every command; click a shortcut and press the new keys (Esc cancels), × removes, ↺ restores, Reset All; a key another command had moves over; saved in `ui.json`; native menu accelerators follow. Rating/label digits and secondary keys are listed read-only and yield to a key given to a command |
 | LR-PREF-TECHPREVIEW | Early-access toggles | P2 | ⬜ | | |
 | LR-PREF-NOTIFICATIONS | Notifications | OOS | 🚫 | | |
 | LR-PREF-DEVICE | Device settings | P2 | ⬜ | | |

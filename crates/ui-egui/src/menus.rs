@@ -168,6 +168,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.github", "LightCraft on GitHub", None, "Help"),
     ("app.artcraft", "ArtCraft Website", None, "Help"),
     ("app.shortcuts", "Keyboard Shortcuts", Some("Cmd+/"), "Help"),
+    ("app.setShortcut", "Set Keyboard Shortcut", None, ""),
+    ("app.resetShortcuts", "Reset All Keyboard Shortcuts", None, ""),
     ("app.export", "Export Now", None, ""),
     ("app.showInFinder", "Show in Finder", Some("Cmd+R"), "Photo"),
     ("dialog.rename", "Rename Photos…", Some("F2"), "Photo"),
@@ -946,6 +948,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.dialog = Some(Dialog::Shortcuts);
             Ok(Value::Null)
         }
+        "app.setShortcut" => crate::shortcuts::set_shortcut(app, p),
+        "app.resetShortcuts" => {
+            app.ui.settings.keymap.clear();
+            Ok(Value::Null)
+        }
         "library.browse" if !cfg!(target_arch = "wasm32") => {
             // listed and read in the background (see `import::browse`)
             let path = p.get("path").and_then(Value::as_str)?;
@@ -1297,7 +1304,7 @@ pub fn menu_entries(app: &LightcraftApp) -> Vec<MenuEntry> {
             id: id.to_string(),
             label: label.to_string(),
             menu: m.split('>').map(str::to_string).collect(),
-            shortcut: sc.map(str::to_string),
+            shortcut: crate::shortcuts::binding(&app.ui.settings.keymap, id, *sc).map(str::to_string),
             enabled: ui_enabled(app, id),
         })
         .collect();
@@ -1307,7 +1314,7 @@ pub fn menu_entries(app: &LightcraftApp) -> Vec<MenuEntry> {
                 id: c.id.into(),
                 label: c.label.into(),
                 menu: c.menu.iter().map(|s| s.to_string()).collect(),
-                shortcut: c.shortcut.map(str::to_string),
+                shortcut: crate::shortcuts::shortcut_of(&app.ui.settings.keymap, c.id).map(str::to_string),
                 enabled: c.enabled,
             });
         }
