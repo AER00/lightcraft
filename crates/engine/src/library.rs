@@ -295,7 +295,13 @@ impl Session {
         {
             log::error!("library: {e}");
         }
-        let (mut journal, catalog, report) = Journal::open(catalog)?;
+        let (mut journal, mut catalog, report) = Journal::open(catalog)?;
+        // A loaded catalog counts revisions from 0, like every other one. Caches (sidebar counts,
+        // keyword tree, the grid's list…) are keyed on the revision, so give each library loaded
+        // in this process its own range: otherwise an empty library opened after one that was
+        // never edited this session would look unchanged and show the old library's numbers.
+        static LOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        catalog.revision = LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(1) << 32;
         self.catalog = catalog;
         self.undo.clear();
         self.redo.clear();

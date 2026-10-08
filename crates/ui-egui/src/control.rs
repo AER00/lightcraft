@@ -334,9 +334,16 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
     }
 }
 
-/// Default export folder: `~/Pictures/LightCraft Exports` (falls back to the working directory).
+/// Shown when an export has nowhere to go (no folder typed or chosen, and no home folder to default to).
+pub const NO_EXPORT_FOLDER: &str = "Choose an export folder first.";
+
+/// Default export folder: `~/Pictures/LightCraft Exports` (`%USERPROFILE%\Pictures\LightCraft Exports`
+/// on Windows, where `HOME` usually isn't set). Empty when no home folder is known.
 pub fn default_export_dir() -> String {
-    std::env::var("HOME").map(|h| format!("{h}/Pictures/LightCraft Exports")).unwrap_or_default()
+    let home = if cfg!(windows) { std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) } else { std::env::var_os("HOME") };
+    home.filter(|h| !h.is_empty())
+        .map(|h| std::path::PathBuf::from(h).join("Pictures").join("LightCraft Exports").to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Export the selected photos (UI command `app.export`). Params: see
@@ -365,10 +372,23 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     if ids.is_empty() {
         return Err("no photo selected".into());
     }
-    // no folder given (e.g. File → Export with Preset): the last export's, else the default
-    let last_dir = app.session.last_export.as_ref().and_then(|l| l.get("dir")).and_then(Value::as_str).map(str::to_string);
-    let dir = p.get("dir").and_then(Value::as_str).map(str::to_string).or(last_dir).filter(|d| !d.is_empty()).unwrap_or_else(default_export_dir);
-    let to = Destination { dir: dir.clone(), exact: p.get("path").and_then(Value::as_str).map(str::to_string) };
+    // An exact output file needs no folder. A folder given but left blank (the Export dialog's Folder
+    // field cleared) is an error, like Lightroom refusing to export to an unspecified folder, rather
+    // than a silent write into the working directory. No folder at all (e.g. File → Export with
+    // Preset): the last export's, else the default.
+    let exact = p.get("path").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).map(str::to_string);
+    let dir = match p.get("dir").and_then(Value::as_str) {
+        Some(d) => d.trim().to_string(),
+        None => {
+            let last_dir =
+                app.session.last_export.as_ref().and_then(|l| l.get("dir")).and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty());
+            last_dir.map(str::to_string).unwrap_or_else(default_export_dir)
+        }
+    };
+    if dir.is_empty() && exact.is_none() {
+        return Err(NO_EXPORT_FOLDER.into());
+    }
+    let to = Destination { dir: dir.clone(), exact };
     let background = p.get("background").and_then(Value::as_bool).unwrap_or(false) && app.services.write_shared.is_some();
     let out = if background {
         let items = lightcraft_engine::export::prepare_batch(&mut app.session, &ids, &opts)?;

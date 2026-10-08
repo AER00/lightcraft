@@ -1,5 +1,6 @@
-# Release pipeline: every push to `release` builds signed installers for every platform and
-# creates or updates the draft GitHub Release "LightCraft v<version>". See docs/releasing.md.
+# Release pipeline: every push to `release` builds platform artifacts (signed where credentials
+# are configured) and creates or updates the draft GitHub Release "LightCraft v<version>".
+# See docs/releasing.md.
 #
 # All jobs run in the `release` environment (restricted to the `release` branch), which holds
 # the signing secrets. Every secret is optional: missing ones produce unsigned artifacts and a
