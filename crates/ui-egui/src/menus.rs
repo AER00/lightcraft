@@ -1329,6 +1329,17 @@ pub fn confirm_delete(app: &mut LightcraftApp) -> bool {
     true
 }
 
+/// Platform-appropriate label for revealing a file in the system file manager.
+pub fn reveal_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Show in Finder"
+    } else if cfg!(target_os = "windows") {
+        "Show in Explorer"
+    } else {
+        "Show in File Manager"
+    }
+}
+
 /// Reveal the active photo's original in the system file manager.
 fn show_in_finder(app: &mut LightcraftApp) -> Result<Value, String> {
     let id = app.session.active().ok_or("no photo selected")?;
