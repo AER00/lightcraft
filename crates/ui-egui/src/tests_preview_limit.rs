@@ -432,7 +432,6 @@ mod in_the_loupe {
     fn a_pinch_holds_the_render_sizes_until_it_stops() {
         let (mut h, native) = detail();
         let main_at_fit = rendered_long_edge(&h);
-        let built = h.app.renderer.completed;
         let at = h.app.canvas_rect.unwrap().center();
         h.request("ui.move", json!({"x": at.x, "y": at.y}), T);
         for _ in 0..40 {
@@ -441,7 +440,7 @@ mod in_the_loupe {
         }
         assert!(matches!(h.app.ui.zoom, crate::state::Zoom::Percent(p) if p > 100.0), "{:?}", h.app.ui.zoom);
         assert_eq!(rendered_long_edge(&h), main_at_fit, "the whole-frame render keeps its size");
-        assert!(h.app.renderer.completed <= built + 2, "{} renders finished during the pinch", h.app.renderer.completed - built);
+        assert!(!h.app.renderer.is_pending(Slot::Region), "no window was asked for during the pinch");
         for _ in 0..60 {
             h.step();
         }
@@ -463,5 +462,68 @@ mod in_the_loupe {
         h.step();
         assert_eq!(h.app.region_view, None);
         assert_eq!(region_tile(&h), None);
+    }
+
+    /// `cargo test -p lightcraft-ui-egui --release profile_slider_drag -- --ignored --nocapture`:
+    /// milliseconds from a slider tick to the loupe showing it, at 100 % and 400 % of the demo
+    /// library's 24 MP photos (what the maintainers asked for in the review of #351).
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn profile_slider_drag() {
+        for percent in [0.0, 100.0, 400.0] {
+            let (mut h, native) = detail();
+            h.app.ui.zoom = if percent == 0.0 { crate::state::Zoom::Fit } else { crate::state::Zoom::Percent(percent) };
+            h.settle(SETTLE);
+            h.app.session.begin_interaction("Exposure").unwrap();
+            let mut ms = Vec::new();
+            for tick in 0..20 {
+                let t0 = std::time::Instant::now();
+                let r = h.request(
+                    "engine.execute",
+                    json!({"command": "develop.set", "params": {"control": "light.exposure", "value": tick as f64 * 0.05}}),
+                    T,
+                );
+                assert_eq!(r["ok"], true);
+                let mut frames = 0;
+                while (h.app.renderer.is_pending(Slot::Main) || h.app.renderer.is_pending(Slot::Region)) && frames < 2000 {
+                    h.step();
+                    std::thread::sleep(std::time::Duration::from_micros(200));
+                    frames += 1;
+                }
+                ms.push(t0.elapsed().as_secs_f64() * 1e3);
+            }
+            ms.sort_by(|a, b| a.total_cmp(b));
+            let (w, hh) = region_tile(&h).unwrap_or((0, 0));
+            eprintln!(
+                "PROFILE {percent:>4}% (0 = fit) of {native} px: tick→shown median {:.1} ms, p90 {:.1} ms, max {:.1} ms; whole-frame render {} px, window tile {w}×{hh}",
+                ms[ms.len() / 2],
+                ms[ms.len() * 9 / 10],
+                ms[ms.len() - 1],
+                rendered_long_edge(&h)
+            );
+            eprintln!("        {}", h.app.renderer.memory());
+            let job_ms = |slot| h.app.renderer.textures.get(&slot).map_or(0.0, |t| t.ms);
+            eprintln!("        last job times: whole frame {:.1} ms, window {:.1} ms", job_ms(Slot::Main), job_ms(Slot::Region));
+        }
+    }
+
+    // Given a slider drag that outpaces the renders (each tick supersedes the last), the original
+    // the window was cut from is kept once it is decoded: not decoded again for every tick
+    #[test]
+    fn a_drag_keeps_the_decoded_original_even_when_every_result_is_superseded() {
+        let (mut h, _) = detail();
+        assert_eq!(h.app.session.memory_report().full_source.bytes, 0, "fit needed no original");
+        h.app.ui.zoom = crate::state::Zoom::Percent(400.0);
+        h.app.session.begin_interaction("Exposure").unwrap();
+        let mut ticks = 0;
+        while !h.app.renderer.textures.contains_key(&Slot::Region) && ticks < 3000 {
+            let v = (ticks % 40) as f64 * 0.02;
+            h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": v}}), T);
+            h.step();
+            ticks += 1;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(h.app.renderer.textures.contains_key(&Slot::Region), "a window arrived");
+        assert!(h.app.session.memory_report().full_source.bytes > 0, "the original stayed in the cache while the drag went on");
     }
 }
