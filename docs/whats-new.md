@@ -13,6 +13,11 @@
   with a counterpart here come along, the rest is listed.
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
 
+### Editing
+- The Tint slider works the right way round (issues #188, #321): left adds green, right adds magenta, as its track
+  shows and as in Lightroom, and Tint values in Lightroom XMP sidecars now render as they do there. A custom Tint
+  saved in an earlier version now shifts the other way; set it again (or re-run Auto / the white-balance picker).
+
 ### Reliability
 - On macOS, single-key shortcuts that appear in the menu bar now work: E, C, H, M, ⇧P, I, K, D, ratings 0–5,
   labels 6–9, P / U and the rest did nothing, because macOS only passes ⌘ / ⌃ combinations and function keys

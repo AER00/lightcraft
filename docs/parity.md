@@ -66,7 +66,7 @@ Take the first one nobody is working on.
 3. **LR-IMP-CAMERA-COVERAGE** (P0): per-model verification; grow the CC0 corpus and fix per-model bugs (like the CR2
    colour-filter layout, fixed in #85 by reading the file's own tag).
 4. **LR-BEHAV-RENDER-FIDELITY** (P1): a side-by-side fidelity suite against Lightroom renders (kept local in `plan/`),
-   then tune tone, highlights, texture/clarity/dehaze, NR and sharpening against it. Global Tint direction has isolated regression coverage; review existing-edit compatibility before landing its corrected sign.
+   then tune tone, highlights, texture/clarity/dehaze, NR and sharpening against it.
 5. **LR-EDIT-OPTICS-PROFILE** (P1): a lens-profile database of our own (embedded DNG/maker corrections work today).
 6. **AI masks and Enhance** (LR-MASK-SUBJECT / SKY / PEOPLE / OBJECTS, LR-EDIT-DETAIL-DENOISE, SUPERRES, LENSBLUR):
    Object and Describe masks run SAM 3 in pure Rust (`crates/segment`); the weights (SAM License) are never bundled:
@@ -234,7 +234,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-COLOR-WB-PRESET | White-balance presets | P0 | ✅ | `cmd:develop.wb` | |
 | LR-EDIT-COLOR-WB-PICKER | White-balance eyedropper | P0 | ✅ | `cmd:tool.wbPicker`, `cmd:develop.wbPick` | no magnified loupe while picking |
 | LR-EDIT-COLOR-TEMP | Temperature | P0 | ✅ | `ctl:wb.temp` | relative scale for non-raw in the UI |
-| LR-EDIT-COLOR-TINT | Tint | P0 | 🟡 | `ctl:wb.tint`, `docs/tint-direction.md` | Negative/left adds green and positive/right magenta; CPU/GPU regression tests. Existing-edit/preset/XMP migration policy needs review before landing |
+| LR-EDIT-COLOR-TINT | Tint | P0 | ✅ | `ctl:wb.tint`, `docs/tint-direction.md` | DNG / Lightroom sign: negative (left) adds green, positive (right) magenta; XMP `crs:Tint` values render as in Lightroom (issue #188); CPU/GPU regression tests |
 | LR-EDIT-COLOR-VIBRANCE | Vibrance | P0 | ✅ | `ctl:color.vibrance` | |
 | LR-EDIT-COLOR-SATURATION | Saturation | P0 | ✅ | `ctl:color.saturation` | |
 | LR-EDIT-COLOR-MIXER-HSL | 8-band colour mixer | P0 | ✅ | `ctl:mixer.*` | no targeted (drag-on-image) mode |
