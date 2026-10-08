@@ -121,6 +121,7 @@ language_table! {
     ZhHant, "zh-hant", "繁體中文（台灣）", "Hant", include_str!("../locales/zh-hant.json");
     Ja, "ja", "日本語", "Jpan", include_str!("../locales/ja.json");
     PtBr, "pt-br", "Português (Brasil)", "Latn", include_str!("../locales/pt-br.json");
+    Ru, "ru", "Русский", "Cyrl", include_str!("../locales/ru.json");
 }
 
 // The settings file stores the BCP-47 code (`"zh-hans"`), never the Rust variant name, so a
