@@ -45,14 +45,14 @@ impl RightPanel {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Zoom {
     #[default]
     Fit,
     Fill,
     /// 100 % = one image pixel per physical screen pixel.
-    Percent(u32),
+    Percent(f32),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

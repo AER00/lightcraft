@@ -1782,7 +1782,7 @@ mod tests {
         assert_ne!(r["ok"], true, "{r}");
         let fit = h.app.image_rect.unwrap();
         h.request("ui.clickWidget", json!({"id": "canvas:image", "fx": 0.5, "fy": 0.5}), t);
-        assert_eq!(h.app.ui.zoom, Zoom::Percent(300));
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(300.0));
         assert!(h.app.ui.zoom_anim, "animation started");
         // every animation frame asks for the same (final-size) render
         let mut keys = std::collections::HashSet::new();
@@ -1801,10 +1801,183 @@ mod tests {
         assert_eq!(h.app.ui.zoom, Zoom::Fit);
         // Z zooms to the same ratio as a click
         h.request("ui.key", json!({"key": "z"}), t);
-        assert_eq!(h.app.ui.zoom, Zoom::Percent(300));
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(300.0));
         h.request("ui.key", json!({"key": "z"}), t);
         assert_eq!(h.app.ui.zoom, Zoom::Fit);
         h.settle(SETTLE);
+    }
+
+    #[test]
+    fn trackpad_navigation_keeps_the_image_cursor_between_events() {
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "none", "filmstrip": false}), t);
+        h.request("engine.execute", json!({"command": "view.zoom100"}), t);
+        h.settle(SETTLE);
+        let anchor = h.app.canvas_rect.unwrap().center();
+        h.request("ui.move", json!({"x": anchor.x, "y": anchor.y}), t);
+        for (tool, expected) in [
+            ("", egui::CursorIcon::Grab),
+            ("wbPicker", egui::CursorIcon::Crosshair),
+            ("colorRange", egui::CursorIcon::Crosshair),
+            ("pointColor", egui::CursorIcon::Crosshair),
+            ("tat:curve", egui::CursorIcon::ResizeVertical),
+        ] {
+            h.app.ui.tool = tool.into();
+            for event in [
+                None,
+                Some(egui::Event::Zoom(1.01)),
+                None,
+                Some(egui::Event::Zoom(1.01)),
+                Some(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(10.0, -10.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                }),
+                None,
+            ] {
+                let raw = HeadlessView::raw_input(h.size, h.pixels_per_point, h.time, event.into_iter().collect());
+                let mut cursor = egui::CursorIcon::Default;
+                h.view.run(raw, |ui| {
+                    h.app.logic(ui.ctx());
+                    h.app.ui(ui);
+                    cursor = ui.ctx().output(|output| output.cursor_icon);
+                });
+                h.time += FRAME_DT;
+                assert_eq!(cursor, expected, "cursor changed between navigation events with tool {tool:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn trackpad_pinch_anchors_fractional_zoom_and_scroll_pans() {
+        use crate::state::Zoom;
+        let mut h = demo([1000.0, 700.0]);
+        h.pixels_per_point = 2.0;
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "none", "leftPanel": false, "filmstrip": false}), t);
+        h.request("engine.execute", json!({"command": "view.zoom100"}), t);
+        h.settle(SETTLE);
+        let before = h.app.image_rect.unwrap();
+        let anchor = h.app.canvas_rect.unwrap().center() + egui::vec2(30.0, -20.0);
+        h.request("ui.move", json!({"x": anchor.x, "y": anchor.y}), t);
+        let point = (anchor - before.min) / before.size();
+        h.request("ui.zoom", json!({"factor": 1.001}), t);
+        let after = h.app.image_rect.unwrap();
+        assert!((after.width() / before.width() - 1.001).abs() < 0.00001);
+        assert!(((anchor - after.min) / after.size() - point).length() < 0.00001, "point under pointer moved");
+        assert!(matches!(h.app.ui.zoom, Zoom::Percent(p) if (p - 100.1).abs() < 0.001), "{:?}", h.app.ui.zoom);
+        assert!(!h.app.ui.zoom_anim, "pinch follows the fingers immediately");
+
+        h.request("ui.scroll", json!({"dx": 40.0, "dy": -30.0}), t);
+        for _ in 0..40 {
+            h.step();
+        }
+        let panned = h.app.image_rect.unwrap();
+        assert!(panned.left() > after.left() && panned.top() < after.top(), "two-finger pan must move both axes");
+        h.request("ui.scroll", json!({"dx": 100000.0, "dy": -100000.0}), t);
+        for _ in 0..40 {
+            h.step();
+        }
+        let edge = h.app.image_rect.unwrap();
+        let area = h.app.canvas_rect.unwrap().shrink(24.0);
+        assert!((edge.left() - area.left()).abs() < 0.01 && (edge.bottom() - area.bottom()).abs() < 0.01, "{edge:?} vs {area:?}");
+
+        h.request("ui.zoom", json!({"factor": 1e20}), t);
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(800.0));
+        h.request("ui.zoom", json!({"factor": 0.000001}), t);
+        assert_eq!(h.app.ui.zoom, Zoom::Fit);
+        assert_eq!(h.app.ui.pan, (0.5, 0.5));
+        // Panel / toolbar gestures must not move the image.
+        h.request("ui.move", json!({"x": 10, "y": 10}), t);
+        h.request("ui.zoom", json!({"factor": 2}), t);
+        h.request("ui.scroll", json!({"dx": 100, "dy": 100}), t);
+        assert_eq!(h.app.ui.zoom, Zoom::Fit);
+        assert_eq!(h.app.ui.pan, (0.5, 0.5));
+    }
+
+    #[test]
+    fn trackpad_navigation_works_in_tools_compare_reference_and_before_after() {
+        use crate::state::Zoom;
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "leftPanel": false, "filmstrip": false}), t);
+        h.settle(SETTLE);
+        let active = h.app.session.active().unwrap();
+        let settings = h.app.session.catalog.photo(active).unwrap().develop.clone();
+        for right in ["crop", "masking", "remove", "redEye", "none"] {
+            h.request("ui.set", json!({"right": right, "zoom": "fit", "pan": [0.5, 0.5]}), t);
+            h.request("ui.hoverWidget", json!({"id": "canvas:image"}), t);
+            h.request("ui.zoom", json!({"factor": 2}), t);
+            assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "pinch in {right}");
+            assert_eq!(h.app.session.catalog.photo(active).unwrap().develop, settings, "navigation must not edit the photo");
+        }
+        h.request("ui.set", json!({"fullscreen": true, "zoom": "fit"}), t);
+        h.request("ui.hoverWidget", json!({"id": "canvas:image"}), t);
+        h.request("ui.zoom", json!({"factor": 2}), t);
+        assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "full-screen pinch");
+
+        h.request("ui.set", json!({"fullscreen": false, "zoom": "fit", "beforeAfter": "sideBySide"}), t);
+        let canvas = h.app.canvas_rect.unwrap();
+        h.request("ui.move", json!({"x": canvas.left() + canvas.width() * 0.25, "y": canvas.center().y}), t);
+        h.request("ui.zoom", json!({"factor": 2}), t);
+        assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "pinch over the Before pane");
+
+        h.request("ui.set", json!({"beforeAfter": "off", "zoom": "fit"}), t);
+        h.request("engine.execute", json!({"command": "view.compare"}), t);
+        // The left Compare pane must navigate too; zoom/pan are shared with the right pane.
+        let canvas = h.app.canvas_rect.unwrap();
+        h.request("ui.move", json!({"x": canvas.left() + canvas.width() * 0.25, "y": canvas.center().y}), t);
+        h.request("ui.zoom", json!({"factor": 2}), t);
+        assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "Compare pinch");
+        let pan = h.app.ui.pan;
+        h.request("ui.scroll", json!({"dx": -50, "dy": -50}), t);
+        assert_ne!(h.app.ui.pan, pan, "Compare pan");
+
+        h.request("ui.set", json!({"zoom": "fit", "pan": [0.5, 0.5]}), t);
+        h.request("engine.execute", json!({"command": "view.reference"}), t);
+        h.request("ui.move", json!({"x": canvas.left() + canvas.width() * 0.25, "y": canvas.center().y}), t);
+        h.request("ui.zoom", json!({"factor": 2}), t);
+        assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "Reference pinch");
+    }
+
+    #[test]
+    fn navigation_rejects_invalid_input_and_preserves_old_zoom_state() {
+        use crate::state::Zoom;
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        assert_eq!(serde_json::from_value::<Zoom>(json!({"percent": 100})).unwrap(), Zoom::Percent(100.0));
+        for factor in [json!(0), json!(-1), json!(1e308), json!("big"), Value::Null] {
+            let r = h.request("ui.zoom", json!({"factor": factor}), t);
+            assert_eq!(r["ok"], false, "{r}");
+        }
+        for params in [
+            json!({"zoom": {"percent": -1}}),
+            json!({"zoom": {"percent": 1e308}}),
+            json!({"zoom": "oops"}),
+            json!({"zoom": {"percent": 123.4}, "pan": [-1, 0.5]}),
+            json!({"pan": [0.5, 1e308]}),
+            json!({"pan": [0.5]}),
+        ] {
+            assert!(h.app.run("view.navigate", params).is_err());
+            assert_eq!(h.app.ui.zoom, Zoom::Fit, "failed request changed zoom");
+            assert_eq!(h.app.ui.pan, (0.5, 0.5), "failed request changed pan");
+        }
+        h.app.run("view.navigate", json!({"zoom": {"percent": 123.4}, "pan": [0.4, 0.6]})).unwrap();
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(123.4));
+        assert_eq!(h.app.ui.pan, (0.4, 0.6));
+        h.app.run("view.zoomIn", json!({})).unwrap();
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(200.0));
+        h.app.run("view.zoomOut", json!({})).unwrap();
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(100.0));
+
+        let area = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(1000.0, 700.0));
+        for pan in [(0.0, 0.0), (1.0, 1.0)] {
+            let image = crate::panels::detail::fit_rect(area, 10.0, Zoom::Percent(100.0), [4000, 400], 1.0, pan);
+            assert_eq!(image.center().y, area.center().y, "smaller axis must stay centred");
+            assert!(image.left() <= area.left() && image.right() >= area.right(), "pan exposed space outside the photo");
+        }
     }
 
     /// The Navigator appears when zoomed in; clicking it pans to that point.
@@ -1821,7 +1994,7 @@ mod tests {
         h.request("ui.clickWidget", json!({"id": "canvas:navigator", "fx": 0.1, "fy": 0.2}), t);
         let (u, v) = h.app.ui.pan;
         assert!((u - 0.1).abs() < 0.03 && (v - 0.2).abs() < 0.03, "pan {:?}", h.app.ui.pan);
-        assert_eq!(h.app.ui.zoom, crate::state::Zoom::Percent(100), "the click didn't reach the loupe (which would zoom out)");
+        assert_eq!(h.app.ui.zoom, crate::state::Zoom::Percent(100.0), "the click didn't reach the loupe (which would zoom out)");
         h.settle(SETTLE);
         let nav = h.app.widgets.iter().rev().find(|(w, _)| w == "canvas:navigator").map(|(_, r)| *r).unwrap();
         let to = nav.min + egui::vec2(nav.width() * 0.8, nav.height() * 0.7);

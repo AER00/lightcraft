@@ -160,7 +160,14 @@ fn photo_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, slot: Slo
     );
     let aspect = frame.aspect() as f32;
     let native = [photo.width.max(1) as usize, photo.height.max(1) as usize];
-    let img = super::detail::fit_rect(img_area, aspect, zoom, native, ppp, app.ui.pan);
+    let mut img = super::detail::fit_rect(img_area, aspect, zoom, native, ppp, app.ui.pan);
+    if matches!(app.ui.view, ViewMode::Compare | ViewMode::Reference) {
+        if super::detail::navigate_gesture(app, ui, &resp, img_area, img, native) {
+            img = super::detail::fit_rect(img_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
+        } else if resp.dragged() {
+            super::detail::pan_image(app, img_area, img, resp.drag_delta());
+        }
+    }
     let want = (img.width().max(img.height()).min(img_area.width().max(img_area.height()) * 4.0) * ppp).min(2560.0) as usize;
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     if let Some(job) = app.session.render_job(id, rw.max(8), rh.max(8), false, true) {
@@ -233,15 +240,6 @@ fn slot_index(s: Slot) -> u8 {
     }
 }
 
-/// Drag-to-pan when zoomed in (shared by both compare panes: zoom and pan are synced).
-fn pan(app: &mut LightcraftApp, resp: &egui::Response, img: Rect) {
-    if app.ui.zoom != Zoom::Fit && resp.dragged() {
-        let d = resp.drag_delta();
-        let (px, py) = app.ui.pan;
-        app.ui.pan = ((px - d.x / img.width().max(1.0)).clamp(0.0, 1.0), (py - d.y / img.height().max(1.0)).clamp(0.0, 1.0));
-    }
-}
-
 pub fn show_compare(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let canvas = area_and_filmstrip(app, ui);
     let Some((sel, cand)) = compare_pair(app) else {
@@ -260,12 +258,11 @@ pub fn show_compare(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         if i == 1 {
             app.image_rect = Some(img);
         }
-        pan(app, &resp, img);
         if resp.clicked() {
             select_pair(app, sel, cand, id);
         }
         if resp.double_clicked() {
-            app.ui.zoom = if app.ui.zoom == Zoom::Fit { Zoom::Percent(100) } else { Zoom::Fit };
+            app.ui.zoom = if app.ui.zoom == Zoom::Fit { Zoom::Percent(100.0) } else { Zoom::Fit };
         }
         resp.context_menu(|ui| {
             if ui.button(crate::i18n::tr("Swap")).clicked() {
@@ -361,9 +358,8 @@ pub fn show_reference(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let left = Rect::from_min_size(area.min, vec2(half, area.height()));
     let right = Rect::from_min_size(pos2(area.right() - half, area.top()), vec2(half, area.height()));
     let (_, lresp) = photo_tile(app, ui, r, Slot::Compare(0), left, "Reference", zoom);
-    let (img, resp) = photo_tile(app, ui, active, Slot::Compare(1), right, "Active", zoom);
+    let (img, _) = photo_tile(app, ui, active, Slot::Compare(1), right, "Active", zoom);
     app.image_rect = Some(img);
-    pan(app, &resp, img);
     lresp.context_menu(|ui| {
         if ui.button(crate::i18n::tr("Clear Reference")).clicked() {
             app.ui.reference = None;

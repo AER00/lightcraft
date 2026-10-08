@@ -23,7 +23,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 |---|---:|---:|---:|---:|---:|---:|
 | A. Import (IMP) | 11 | 3 | 1 | 1 | 3/5 (60%) | 5/5 (100%) |
 | B. Library management (LIB) | 22 | 2 | 1 | 2 | 9/9 (100%) | 9/9 (100%) |
-| C. Views & navigation (VIEW) | 16 | 0 | 1 | 0 | 9/9 (100%) | 4/4 (100%) |
+| C. Views & navigation (VIEW) | 15 | 1 | 1 | 0 | 8/9 (89%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 11 | 1 | 1 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
 | F. Edit panel — global adjustments (EDIT) | 41 | 2 | 5 | 1 | 27/28 (96%) | 13/14 (93%) |
@@ -75,6 +75,10 @@ Take the first one nobody is working on.
    use the same model with fixed prompts; denoise / super-resolution models remain a maintainer decision.
 7. **HDR** (Q. HDR, LR-EXP-HDR), **video** (R. Video), **Classic output modules** (Map view, Book, Slideshow module,
    Print, publish): large, well understood, lower priority than 1–5.
+8. **LR-VIEW-ZOOM** (P0): pinch zoom and two-finger pan now work, with stable image cursors between gesture events.
+   The whole-image preview is still capped by
+   Settings → Performance → Preview size (2,560 px by default). Render visible regions at native resolution so
+   100% can reliably show original-pixel detail on larger photos.
 
 ## Shortcuts: conflicts and missing bindings
 
@@ -172,7 +176,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-VIEW-EDIT | Edit view | P0 | ✅ | `cmd:panel.edit` | |
 | LR-VIEW-FULLSCREEN | Full-screen preview | P1 | ✅ | `cmd:view.fullScreenPreview`, `cmd:view.enterFullScreen` | photo on black, arrows step, Esc exits; ⇧⌘F window full screen |
 | LR-VIEW-FILMSTRIP | Filmstrip | P0 | ✅ | `cmd:view.filmstrip`, `crates/ui-egui/src/panels/detail.rs` | the photo context menu on right-click; the mouse wheel scrolls it sideways; it follows the active photo only when that changes (centred if off screen), so a scrolled strip stays put; every selected photo is highlighted, the active one framed in white, as in the grid |
-| LR-VIEW-ZOOM | Zoom & pan | P0 | ✅ | `cmd:view.zoomFit`, `cmd:view.zoom100`, `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle`, `cmd:view.clickZoom` | steps 25–800 % (not 6–1600 %); Fill only in the bottom bar; a click on the photo (and Z / Space) eases to the click-zoom ratio (1:1 default, 2:1, 3:1, 4:1, 8:1 in the bottom bar) |
+| LR-VIEW-ZOOM | Zoom & pan | P0 | 🟡 | `cmd:view.zoomFit`, `cmd:view.zoom100`, `cmd:view.zoomIn`, `cmd:view.zoomOut`, `cmd:view.zoomToggle`, `cmd:view.clickZoom`, `cmd:view.navigate`, `crates/ui-egui/src/panels/detail.rs`, `crates/ui-egui/src/headless.rs` | continuous native pinch / modifier-wheel zoom (Fit–800%, anchored under the pointer), two-finger scroll / touch pan with edge limits; Detail (including tools, Before/After and full-screen preview), Compare and Reference; fractional percentages preserve small gestures; image, picker and targeted-adjustment cursors stay steady between gesture events; keyboard steps 25–800 % (not 6–1600 %); Fill in the bottom bar; click / Z / Space eases to the chosen ratio (1:1 default, 2:1, 3:1, 4:1, 8:1). Missing: native-resolution detail beyond the configured whole-image preview size (2,560 px default); no visible-region tiles |
 | LR-VIEW-NAVIGATOR | Navigator mini map | P1 | ✅ | `cmd:view.navigator`, `crates/ui-egui/src/panels/detail.rs` | shown while zoomed (bottom right); click/drag pans |
 | LR-VIEW-BEFOREAFTER | Before / after | P0 | ✅ | `cmd:view.showOriginal`, `cmd:view.beforeAfter`, `cmd:view.beforeAfterSplit`, `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom`, `cmd:beforeAfter.setBefore`, `cmd:beforeAfter.copyAfterToBefore`, `cmd:beforeAfter.copyBeforeToAfter`, `cmd:beforeAfter.swap`, `cmd:beforeAfter.resetBefore` | all four layouts; before = the import state (defaults + import preset) or a chosen history step / version / the current settings; copy and swap (View → Before/After Settings, History row menu). The chosen before lasts for the session |
 | LR-VIEW-COMPARE | Compare two photos | P1 | ✅ | `cmd:view.compare`, `cmd:compare.swap`, `cmd:compare.makeSelect`, `crates/ui-egui/src/panels/compare.rs` | select / candidate, synced zoom + pan, arrows move the candidate; no zoom-link toggle |

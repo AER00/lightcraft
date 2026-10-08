@@ -67,6 +67,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.zoomToggle", "Toggle Zoom", Some("Z"), "View"),
     // the ratio a click (and Z / Space) zooms to
     ("view.clickZoom", "Click Zoom Ratio", None, ""),
+    ("view.navigate", "Set Image Zoom and Pan", None, ""),
     ("view.zoomIn", "Zoom In", Some("Cmd+="), "View"),
     ("view.zoomOut", "Zoom Out", Some("Cmd+-"), "View"),
     ("view.clipping", "Show Clipping", Some("J"), "View"),
@@ -463,12 +464,12 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "view.zoom100" => {
-            app.ui.zoom = Zoom::Percent(100);
+            app.ui.zoom = Zoom::Percent(100.0);
             Ok(Value::Null)
         }
         "view.zoomToggle" => {
             // the same ratio a click on the photo zooms to
-            app.ui.zoom = if app.ui.zoom == Zoom::Fit { Zoom::Percent(app.ui.click_zoom) } else { Zoom::Fit };
+            app.ui.zoom = if app.ui.zoom == Zoom::Fit { Zoom::Percent(app.ui.click_zoom as f32) } else { Zoom::Fit };
             app.ui.zoom_anim = true;
             Ok(Value::Null)
         }
@@ -484,18 +485,43 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(json!({"ratio": app.ui.click_zoom / 100}))
         }
         "view.zoomIn" | "view.zoomOut" => {
-            let steps = [25u32, 50, 100, 200, 400, 800];
+            let steps = [25.0, 50.0, 100.0, 200.0, 400.0, 800.0];
             let cur = match app.ui.zoom {
                 Zoom::Percent(p) => p,
-                _ => 25,
+                _ => 25.0,
             };
             let next = if id == "view.zoomIn" {
-                steps.iter().find(|s| **s > cur).copied().unwrap_or(800)
+                steps.iter().find(|s| **s > cur).copied().unwrap_or(800.0)
             } else {
-                steps.iter().rev().find(|s| **s < cur).copied().unwrap_or(0)
+                steps.iter().rev().find(|s| **s < cur).copied().unwrap_or(0.0)
             };
-            app.ui.zoom = if next == 0 { Zoom::Fit } else { Zoom::Percent(next) };
+            app.ui.zoom = if next == 0.0 { Zoom::Fit } else { Zoom::Percent(next) };
             Ok(Value::Null)
+        }
+        "view.navigate" => {
+            // {zoom?: "fit"|"fill"|{percent: number}, pan?: [x, y]} (normalized image centre).
+            // Validate the complete request before changing either part of the viewport.
+            let zoom = match p.get("zoom") {
+                Some(v) => match serde_json::from_value::<Zoom>(v.clone()) {
+                    Ok(Zoom::Percent(p)) if !p.is_finite() || p <= 0.0 || p > 800.0 => {
+                        return Some(Err("view.navigate: zoom percent must be greater than 0 and at most 800".into()));
+                    }
+                    Ok(z) => z,
+                    Err(e) => return Some(Err(format!("view.navigate: {e}"))),
+                },
+                None => app.ui.zoom,
+            };
+            let pan = match p.get("pan") {
+                Some(v) => match serde_json::from_value::<(f32, f32)>(v.clone()) {
+                    Ok((x, y)) if x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y) => (x, y),
+                    _ => return Some(Err("view.navigate: pan must be [x, y] with finite coordinates from 0 to 1".into())),
+                },
+                None => app.ui.pan,
+            };
+            app.ui.zoom = zoom;
+            app.ui.pan = pan;
+            app.ui.zoom_anim = false;
+            Ok(json!({"zoom": zoom, "pan": pan}))
         }
         "view.clipping" => {
             app.ui.show_clipping = !app.ui.show_clipping;
