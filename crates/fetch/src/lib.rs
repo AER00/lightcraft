@@ -79,8 +79,8 @@ pub struct Options {
     pub stall_timeout: Duration,
     /// Tries per mirror and file (each resumes where the last one stopped).
     pub attempts: u32,
-    /// The environment variable holding a bearer token for the first mirror's host (sent only over https, never to a
-    /// host a redirect leads to). `None`: nothing is ever sent, so one model's token cannot leak to another's server.
+    /// The environment variable holding a bearer token, sent to each configured mirror's own host (only over https,
+    /// never to a host a redirect leads to), so list only mirrors that may see it. `None`: nothing is ever sent, so one model's token cannot leak to another's server.
     pub token_env: Option<&'static str>,
 }
 
