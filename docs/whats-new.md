@@ -49,8 +49,8 @@
   or unchecks a range of photos (issue #338).
 
 ### Languages
-- The interface is available in German and Russian (Edit ▸ Language), alongside English, Chinese (Simplified and
-  Traditional), Japanese and Brazilian Portuguese.
+- The interface is available in Spanish (issue #371), German and Russian (Edit ▸ Language), alongside English,
+  Chinese (Simplified and Traditional), Japanese and Brazilian Portuguese.
 
 ### Editing
 - Type an exact value into any slider (issue #322): click the number next to its name, type (`1.5`, `-20`, `5600`)
