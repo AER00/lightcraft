@@ -126,7 +126,7 @@ fn total_ram_gb() -> Option<u64> {
         String::from_utf8_lossy(&out.stdout).trim().parse().ok()?
     };
     // round to the nearest GB: "8 GB" machines report slightly less
-    Some((bytes + (1 << 29)) >> 30)
+    Some(bytes.saturating_add(1 << 29) >> 30)
 }
 
 pub fn run(mut cmd: Command, what: &str) -> Result<(), String> {
