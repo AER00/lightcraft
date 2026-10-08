@@ -115,7 +115,7 @@ pub(crate) fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], 
             }
         }
         Zoom::Percent(p) => {
-            // full-resolution pixels at p% (the photo's native width)
+            // the photo's own pixels at p% (its width as shown: cropped and rotated)
             let w = img_px[0] as f32 * p / 100.0 / ppp;
             (w, w / aspect)
         }
@@ -187,6 +187,14 @@ pub(crate) fn navigate_gesture(app: &mut LightcraftApp, ui: &mut egui::Ui, resp:
     true
 }
 
+/// The photo's own pixels as it is shown: its size after the crop and the user's rotation (what
+/// 100 % zoom and the render size limit are measured against), at least 1 × 1.
+pub(crate) fn output_px(frame: &Frame) -> [usize; 2] {
+    let (w, h) = frame.native_size();
+    let px = |v: f64| if v.is_finite() { v.round().clamp(1.0, 1e9) as usize } else { 1 };
+    [px(w), px(h)]
+}
+
 /// Ease the loupe rect toward `target` while a click-zoom animation runs; otherwise follow it exactly.
 fn animated_rect(ctx: &egui::Context, anim: &mut bool, target: Rect) -> Rect {
     let t = if *anim { 0.22 } else { 0.0 };
@@ -230,7 +238,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     } else {
         24.0
     });
-    let native = [photo.width.max(1) as usize, photo.height.max(1) as usize];
+    let native = output_px(&frame);
     // two views (before, after): side by side or stacked
     let split = matches!(app.ui.before_after, BeforeAfter::SideBySide | BeforeAfter::TopBottom);
     let split_view = matches!(app.ui.before_after, BeforeAfter::Split | BeforeAfter::SplitTopBottom);
@@ -315,8 +323,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let Some(np) = app.session.catalog.photo(nid).cloned() else { continue };
                 let nf = Frame::with_lens(np.width.max(1) as usize, np.height.max(1) as usize, &np.develop, !crop_tool, np.embedded_lens.as_ref());
                 let na = nf.aspect() as f32;
-                let nr = fit_rect(main_area, na, app.ui.zoom, [np.width.max(1) as usize, np.height.max(1) as usize], ppp, app.ui.pan);
-                let nw = app.ui.settings.prefetch_edge(nr.width().max(nr.height()) * ppp, np.width.max(np.height).max(1) as usize);
+                let nr = fit_rect(main_area, na, app.ui.zoom, output_px(&nf), ppp, app.ui.pan);
+                let nw = app.ui.settings.prefetch_edge(nr.width().max(nr.height()) * ppp, output_px(&nf).into_iter().max().unwrap_or(1));
                 let (w, h) = if na >= 1.0 { (nw, (nw as f32 / na) as usize) } else { ((nw as f32 * na) as usize, nw) };
                 if let Some(job) = app.session.loupe_job(nid, w.max(8), h.max(8), !crop_tool) {
                     app.renderer.prefetch(Slot::Prefetch(n as u8), job, PREFETCH_PRIORITY);

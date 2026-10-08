@@ -58,6 +58,8 @@ mod tests_scroll;
 mod tests_switch_library;
 #[cfg(test)]
 mod tests_unsaved;
+#[cfg(test)]
+mod tests_zoom;
 
 use std::sync::mpsc::{Receiver, Sender};
 

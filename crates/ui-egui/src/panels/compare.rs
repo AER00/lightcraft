@@ -159,7 +159,7 @@ fn photo_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, slot: Slo
         photo.embedded_lens.as_ref(),
     );
     let aspect = frame.aspect() as f32;
-    let native = [photo.width.max(1) as usize, photo.height.max(1) as usize];
+    let native = super::detail::output_px(&frame);
     let mut img = super::detail::fit_rect(img_area, aspect, zoom, native, ppp, app.ui.pan);
     if matches!(app.ui.view, ViewMode::Compare | ViewMode::Reference) {
         if super::detail::navigate_gesture(app, ui, &resp, img_area, img, native) {
