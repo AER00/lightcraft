@@ -858,3 +858,76 @@ fn missing_photos_skip_local_browse_records() {
     s.execute("library.source", &json!({"kind": "missing"})).unwrap();
     assert_eq!(s.visible_cloned().len(), 4, "the view lists what the count counts");
 }
+
+/// Import a file that is in Recently Deleted (issue #298): by default it is skipped but the
+/// report says it is in the trash; `onDeleted: restore` brings it back with its edits;
+/// `onDeleted: fresh` replaces the trashed record with a new one.
+fn trashed_photo(tag: &str) -> (Session, std::path::PathBuf, u64) {
+    let src = temp_dir(tag);
+    write_png(&src.join("a.png"), 1);
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let id = r["imported"][0].as_u64().unwrap();
+    s.execute("photo.rate", &json!({"ids": [id], "rating": 4})).unwrap();
+    s.execute("photo.delete", &json!({"ids": [id]})).unwrap();
+    (s, src, id)
+}
+
+#[test]
+fn duplicate_in_recently_deleted_is_reported_as_such() {
+    let (mut s, src, id) = trashed_photo("trash-report");
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(ids(&r, "imported"), 0, "{r}");
+    assert_eq!(r["duplicates"][0]["existing"], id, "{r}");
+    assert_eq!(r["duplicates"][0]["existingDeleted"], true, "{r}");
+    assert!(s.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap().deleted, "default: left in the trash");
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn import_can_restore_a_duplicate_from_recently_deleted() {
+    let (mut s, src, id) = trashed_photo("trash-restore");
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()], "onDeleted": "restore"})).unwrap();
+    assert_eq!(r["restored"], json!([id]), "{r}");
+    assert_eq!(ids(&r, "duplicates"), 0, "{r}");
+    let p = s.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap();
+    assert!(!p.deleted && p.rating == 4, "restored with its edits");
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn import_can_replace_a_duplicate_from_recently_deleted() {
+    let (mut s, src, id) = trashed_photo("trash-fresh");
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()], "onDeleted": "fresh"})).unwrap();
+    assert_eq!(ids(&r, "imported"), 1, "{r}");
+    let new = r["imported"][0].as_u64().unwrap();
+    assert_ne!(new, id);
+    assert!(s.catalog.photo(lightcraft_catalog::PhotoId(id)).is_none(), "the trashed record is gone");
+    let p = s.catalog.photo(lightcraft_catalog::PhotoId(new)).unwrap();
+    assert!(!p.deleted && p.rating == 0, "a new photo without the old edits");
+    assert_eq!(s.catalog.len(), 1);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn unknown_on_deleted_is_an_error() {
+    let mut s = Session::new().with_fs();
+    let e = s.execute("library.import", &json!({"paths": [], "onDeleted": "bogus"})).unwrap_err().to_string();
+    assert!(e.contains("onDeleted"), "{e}");
+}
+
+#[test]
+fn empty_recently_deleted_removes_only_trashed_photos() {
+    let (mut s, src, id) = trashed_photo("trash-empty");
+    write_png(&src.join("b.png"), 2);
+    let r = s.execute("library.import", &json!({"paths": [src.join("b.png").to_string_lossy()]})).unwrap();
+    let keep = r["imported"][0].as_u64().unwrap();
+    let r = s.execute("library.emptyRecentlyDeleted", &json!({})).unwrap();
+    assert_eq!(r["deleted"], 1, "{r}");
+    assert!(s.catalog.photo(lightcraft_catalog::PhotoId(id)).is_none());
+    assert!(s.catalog.photo(lightcraft_catalog::PhotoId(keep)).is_some());
+    // nothing to empty is not an error
+    assert_eq!(s.execute("library.emptyRecentlyDeleted", &json!({})).unwrap()["deleted"], 0);
+    s.execute("edit.undo", &json!({})).unwrap();
+    let _ = std::fs::remove_dir_all(&src);
+}
