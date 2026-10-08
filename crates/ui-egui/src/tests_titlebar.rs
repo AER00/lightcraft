@@ -46,7 +46,7 @@ fn double_click_on_the_empty_bar_zooms_then_restores() {
     play(&mut h);
     assert_eq!(h.window_commands, vec![ViewportCommand::Maximized(true)]);
     // a pause longer than egui's multi-click window, or the second pair would count as a triple click
-    for _ in 0..120 {
+    for _ in 0..30 {
         h.step();
     }
     h.request("ui.click", json!({"x": p.x, "y": p.y, "count": 2}), T);
@@ -80,6 +80,16 @@ fn double_click_on_a_button_does_not_zoom() {
     let mut h = integrated();
     let r = widget(&h, "icon:help");
     h.request("ui.click", json!({"x": r.center().x, "y": r.center().y, "count": 2}), T);
+    play(&mut h);
+    assert!(h.window_commands.is_empty(), "{:?}", h.window_commands);
+}
+
+// Scenario: pressing a button and dragging off it does not move the window (as in a native title bar)
+#[test]
+fn dragging_from_a_button_does_not_move_the_window() {
+    let mut h = integrated();
+    let r = widget(&h, "icon:help");
+    h.request("ui.drag", json!({"x": r.center().x, "y": r.center().y, "toX": r.center().x - 150.0, "toY": r.center().y + 30.0}), T);
     play(&mut h);
     assert!(h.window_commands.is_empty(), "{:?}", h.window_commands);
 }

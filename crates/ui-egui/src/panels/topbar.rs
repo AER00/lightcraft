@@ -14,10 +14,22 @@ fn window_handle(app: &LightcraftApp, ui: &mut egui::Ui, content: Rect, margin_l
     use crate::titlebar::{Gesture, WindowState, command_for};
     let bar = Rect::from_min_max(pos2(content.left() - margin_left, content.top()), pos2(content.right() + margin_right, content.bottom()));
     register(ui.ctx(), "region:titlebar", bar);
-    let resp = ui.interact(bar, egui::Id::new("titlebar-handle"), Sense::click_and_drag());
+    let handle = egui::Id::new("titlebar-handle");
+    let resp = ui.interact(bar, handle, Sense::click_and_drag());
+    // a press that began on a button or the search field is theirs: dragging off it must not move the window
+    // (while pressing, egui hovers every widget under the pointer; once the drag starts, only the dragged one)
+    let ctx = ui.ctx().clone();
+    let memo = egui::Id::new("titlebar-press-on-widget");
+    if resp.is_pointer_button_down_on() && ctx.input(|i| i.pointer.primary_pressed()) {
+        let hovered = ctx.interaction_snapshot(|s| s.hovered.clone());
+        let on_widget =
+            hovered.iter().any(|id| *id != handle && ctx.read_response(*id).is_some_and(|r| r.sense.senses_click() || r.sense.senses_drag()));
+        ctx.data_mut(|d| d.insert_temp(memo, on_widget));
+    }
+    let on_widget = ctx.data(|d| d.get_temp::<bool>(memo)).unwrap_or(false);
     let gesture = if resp.double_clicked_by(egui::PointerButton::Primary) {
         Some(Gesture::DoubleClicked)
-    } else if resp.drag_started_by(egui::PointerButton::Primary) {
+    } else if resp.drag_started_by(egui::PointerButton::Primary) && !on_widget {
         Some(Gesture::DragStarted)
     } else {
         None
