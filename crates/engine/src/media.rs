@@ -912,7 +912,31 @@ impl crate::Session {
         window: lightcraft_pipeline::PixelWindow,
         apply_crop: bool,
     ) -> Option<RenderJob> {
-        let mut job = self.render_job(id, full_w, full_h, false, apply_crop)?;
+        self.region_job_of(id, full_w, full_h, window, apply_crop, false)
+    }
+
+    /// [`Self::region_job`] of the photo without its edits (its crop kept): the Before side.
+    pub fn region_job_before(
+        &mut self,
+        id: PhotoId,
+        full_w: usize,
+        full_h: usize,
+        window: lightcraft_pipeline::PixelWindow,
+        apply_crop: bool,
+    ) -> Option<RenderJob> {
+        self.region_job_of(id, full_w, full_h, window, apply_crop, true)
+    }
+
+    fn region_job_of(
+        &mut self,
+        id: PhotoId,
+        full_w: usize,
+        full_h: usize,
+        window: lightcraft_pipeline::PixelWindow,
+        apply_crop: bool,
+        before: bool,
+    ) -> Option<RenderJob> {
+        let mut job = self.render_job(id, full_w, full_h, before, apply_crop)?;
         // what the window's spots and Auto Mask strokes read must fit in one render: else the
         // caller keeps the whole-frame render (a window alone would come out wrong)
         let p = self.catalog.photo(id)?;
@@ -1341,6 +1365,28 @@ mod tests {
         assert!(s.region_job(id, w, h, win, true).is_none());
         // a window elsewhere is fine
         assert!(s.region_job(id, w, h, PixelWindow { x: 5000, y: 5000, w: 400, h: 300 }, true).is_some());
+    }
+
+    // Issue #323: the Before side of a Before/After view at 1:1 is a window too, of the photo
+    // without its edits (the crop is kept), with a key of its own
+    #[test]
+    fn a_before_window_shows_the_unedited_look() {
+        use lightcraft_pipeline::PixelWindow;
+        let mut s = crate::Session::with_demo();
+        let id = s.active().unwrap();
+        let p = s.catalog.photo(id).unwrap().clone();
+        let (w, h) = (p.width as usize, p.height as usize);
+        let mut d = (*s.develop_of(id).unwrap()).clone();
+        d.light.exposure = 2.0;
+        s.set_develop(id, d, "Exposure").unwrap();
+        let win = PixelWindow { x: w / 3, y: h / 3, w: 200, h: 150 };
+        let after = s.region_job(id, w, h, win, true).unwrap();
+        let before = s.region_job_before(id, w, h, win, true).unwrap();
+        assert_ne!(after.key, before.key);
+        let (a, b) = (after.run().rendered.unwrap().image, before.run().rendered.unwrap().image);
+        assert_eq!((a.width, a.height), (b.width, b.height));
+        let mean = |i: &Rgba8| i.data.iter().map(|p| p[1] as f64).sum::<f64>() / i.data.len() as f64;
+        assert!(mean(&a) > mean(&b) + 10.0, "two stops brighter after: {} vs {}", mean(&a), mean(&b));
     }
 
     #[test]
