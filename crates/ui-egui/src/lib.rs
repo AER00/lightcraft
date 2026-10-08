@@ -25,6 +25,7 @@ pub mod softpaint;
 pub mod state;
 pub mod tasks;
 pub mod theme;
+pub mod titlebar;
 pub mod widgets;
 
 #[cfg(test)]
