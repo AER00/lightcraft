@@ -153,6 +153,12 @@
   now develop from the raw data instead of the camera's embedded JPEG, so a B&W or other picture style set in the
   camera no longer gets baked in. Photos already imported as "preview only" switch over on Reload. (Files that
   Nikon splits into two differently compressed halves still use the preview for now.)
+- Panasonic and Leica raws (RW2, RWL and the older RAW files, DMC-LX1 to DC-S1R II) develop from the raw data in
+  every format the cameras write. Most bodies opened as preview only before: GH1–GH5, the G, GX, GF, GM, FZ, LX and
+  TZ/ZS series, Leica D-Lux, V-Lux and C-Lux, and the GH6, GH7, G9 II, S5 II and S9 generation. They start from a
+  colour and tone look fitted to the camera's own JPEG, as Nikon and Sony raws do, framed in the aspect ratio set in
+  the camera; mapped-out sensor defects are filled in. `.rwl` and `.raw` files are imported too. Photos already
+  imported as "preview only" switch over on Reload.
 - Sony ARWs from before about 2017 (RX100, RX100 II–V, RX10, NEX, SLT, ILCE-6000, A7 / A7 II / A7R II and their
   siblings) no longer open bright green (issue #148): their as-shot white balance and black level are read from the
   file (Sony stores them only in scrambled maker-note data on these bodies), the few columns of padding at the right

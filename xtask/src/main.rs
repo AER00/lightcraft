@@ -315,11 +315,22 @@ const RAW_SAMPLES: &[(&str, &str)] = &[
         "raf-fuji-xt20-compressed.raf",
         "https://raw.pixls.us/getfile.php/1178/nice/Fujifilm%20-%20X-T20%20-%2014bit%2014bit%20compressed%20%283:2%29.RAF",
     ),
+    ("raw-panasonic-fz50.raw", "https://raw.pixls.us/getfile.php/2234/nice/Panasonic%20-%20DMC-FZ50%20-%204:3.RAW"),
+    ("raw-panasonic-fz8.raw", "https://raw.pixls.us/getfile.php/2282/nice/Panasonic%20-%20DMC-FZ8%20-%204:3.RAW"),
+    ("rw2-panasonic-fz1000m2-4x3.rw2", "https://raw.pixls.us/getfile.php/4706/nice/Panasonic%20-%20DC-FZ10002%20-%204:3.RW2"),
     ("rw2-panasonic-g9-b.rw2", "https://raw.pixls.us/getfile.php/2348/nice/Panasonic%20-%20DC-G9%20-%204:3.RW2"),
     ("rw2-panasonic-g9.rw2", "https://raw.pixls.us/getfile.php/2585/nice/Panasonic%20-%20DC-G9%20-%204:3.RW2"),
+    ("rw2-panasonic-gh1.rw2", "https://raw.pixls.us/getfile.php/1323/nice/Panasonic%20-%20DMC-GH1%20-%204:3.RW2"),
     ("rw2-panasonic-gh5.rw2", "https://raw.pixls.us/getfile.php/1517/nice/Panasonic%20-%20DC-GH5%20-%204:3.RW2"),
+    ("rw2-panasonic-gh5m2.rw2", "https://raw.pixls.us/getfile.php/5082/nice/Panasonic%20-%20DC-GH5M2%20-%204:3.RW2"),
     ("rw2-panasonic-gh5s.rw2", "https://raw.pixls.us/getfile.php/2603/nice/Panasonic%20-%20DC-GH5S%20-%204:3.RW2"),
+    ("rw2-panasonic-gh6.rw2", "https://raw.pixls.us/getfile.php/5876/nice/Panasonic%20-%20DC-GH6%20-%204:3.RW2"),
     ("rw2-panasonic-gx80.rw2", "https://raw.pixls.us/getfile.php/1569/nice/Panasonic%20-%20DMC-GX80%20-%204:3.RW2"),
+    ("rw2-panasonic-s1.rw2", "https://raw.pixls.us/getfile.php/3038/nice/Panasonic%20-%20DC-S1%20-%203:2.RW2"),
+    ("rw2-panasonic-s5-format7.rw2", "https://raw.pixls.us/getfile.php/6339/nice/Panasonic%20-%20DC-S5%20-%203:2.RW2"),
+    ("rw2-panasonic-s5m2.rw2", "https://raw.pixls.us/getfile.php/7790/nice/Panasonic%20-%20DC-S5M2%20-%2014bit%20%283:2%29.RW2"),
+    ("rw2-panasonic-s9.rw2", "https://raw.pixls.us/getfile.php/7702/nice/Panasonic%20-%20DC-S9%20-%203:2.RW2"),
+    ("rwl-leica-dlux7.rwl", "https://raw.pixls.us/getfile.php/4204/nice/Leica%20-%20D-Lux%207%20-%204:3.RWL"),
 ];
 
 fn cmd_corpus(download: bool) -> Result<(), String> {
