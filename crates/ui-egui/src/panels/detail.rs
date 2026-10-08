@@ -94,6 +94,10 @@ impl CanvasMap {
 }
 
 pub(crate) fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], ppp: f32, pan: (f32, f32)) -> Rect {
+    let zoom = match zoom {
+        Zoom::Percent(p) if !p.is_finite() || p <= 0.0 => Zoom::Fit,
+        _ => zoom,
+    };
     let (aw, ah) = (area.width(), area.height());
     let (w, h) = match zoom {
         Zoom::Fit => {
@@ -112,17 +116,75 @@ pub(crate) fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], 
         }
         Zoom::Percent(p) => {
             // full-resolution pixels at p% (the photo's native width)
-            let w = img_px[0] as f32 * p as f32 / 100.0 / ppp;
+            let w = img_px[0] as f32 * p / 100.0 / ppp;
             (w, w / aspect)
         }
     };
-    let c = if w <= aw && h <= ah {
-        area.center()
-    } else {
-        // pan: which normalized point of the image sits at the area centre
-        pos2(area.center().x - (pan.0 - 0.5) * w, area.center().y - (pan.1 - 0.5) * h)
-    };
+    let pan = bounded_pan(area, vec2(w, h), pan);
+    let c = pos2(area.center().x - (pan.0 - 0.5) * w, area.center().y - (pan.1 - 0.5) * h);
     Rect::from_center_size(c, vec2(w, h))
+}
+
+/// Fit a decoded image inside the frame calculated from catalog metadata. Unsupported RAWs can
+/// only show their embedded camera JPEG, whose crop and aspect ratio can differ from that metadata.
+pub(crate) fn fit_texture_rect(area: Rect, size: [usize; 2]) -> Rect {
+    let (w, h) = (size[0].max(1) as f32, size[1].max(1) as f32);
+    let scale = (area.width() / w).min(area.height() / h);
+    Rect::from_center_size(area.center(), vec2(w * scale, h * scale))
+}
+
+/// Keep the viewport inside the photo; axes smaller than the viewport stay centred.
+fn bounded_pan(area: Rect, size: egui::Vec2, pan: (f32, f32)) -> (f32, f32) {
+    let bound = |visible: f32, image: f32, centre: f32| {
+        let centre = if centre.is_finite() { centre } else { 0.5 };
+        if image > visible.max(0.0) {
+            let half = visible.max(0.0) / image / 2.0;
+            centre.clamp(half, 1.0 - half)
+        } else {
+            0.5
+        }
+    };
+    (bound(area.width(), size.x, pan.0), bound(area.height(), size.y, pan.1))
+}
+
+pub(crate) fn pan_image(app: &mut LightcraftApp, area: Rect, img: Rect, delta: egui::Vec2) {
+    let centre = area.center() - img.min - delta;
+    let pan = bounded_pan(area, img.size(), (centre.x / img.width().max(1.0), centre.y / img.height().max(1.0)));
+    let _ = app.run("view.navigate", json!({"pan": pan}));
+}
+
+/// Native pinch (also modifier-wheel zoom) and two-finger scroll, scoped to this image view.
+pub(crate) fn navigate_gesture(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, area: Rect, img: Rect, native: [usize; 2]) -> bool {
+    if !resp.hovered() {
+        return false;
+    }
+    let (factor, delta, anchor) =
+        ui.input(|i| (i.zoom_delta(), i.translation_delta(), i.multi_touch().map(|t| t.center_pos).or(i.pointer.hover_pos())));
+    if !factor.is_finite() || factor <= 0.0 || !delta.is_finite() || (factor == 1.0 && delta == egui::Vec2::ZERO) {
+        return false;
+    }
+    let Some(anchor) = anchor.filter(|p| area.contains(*p)) else { return false };
+    let ppp = ui.ctx().pixels_per_point();
+    let aspect = img.width() / img.height().max(1.0);
+    let fit = fit_rect(area, aspect, Zoom::Fit, native, ppp, (0.5, 0.5));
+    let fit_pct = fit.width() * ppp * 100.0 / native[0].max(1) as f32;
+    let mut zoom = app.ui.zoom;
+    let size = if factor != 1.0 {
+        // Start at the displayed scale (including Fit/Fill and an interrupted click animation).
+        let pct = (img.width() * ppp * 100.0 / native[0].max(1) as f32 * factor).clamp(fit_pct.min(800.0), 800.0);
+        zoom = if pct <= fit_pct { Zoom::Fit } else { Zoom::Percent(pct) };
+        fit_rect(area, aspect, zoom, native, ppp, (0.5, 0.5)).size()
+    } else {
+        img.size()
+    };
+    // The image point under the pointer remains there as its size changes, then follows the pan.
+    let point = (anchor - img.min) / img.size();
+    let offset = area.center() - anchor - delta;
+    let pan = bounded_pan(area, size, (point.x + offset.x / size.x.max(1.0), point.y + offset.y / size.y.max(1.0)));
+    let _ = app.run("view.navigate", json!({"zoom": zoom, "pan": pan}));
+    ui.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+    ui.ctx().request_repaint();
+    true
 }
 
 /// Ease the loupe rect toward `target` while a click-zoom animation runs; otherwise follow it exactly.
@@ -191,8 +253,31 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         _ => vec![area],
     };
     let main_area = *areas.last().unwrap_or(&area);
-    let target_rect = fit_rect(main_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
-    let img_rect = animated_rect(ui.ctx(), &mut app.ui.zoom_anim, target_rect);
+    let visible_texture_aspect = app
+        .renderer
+        .textures
+        .get(&Slot::Main)
+        .filter(|t| t.photo == id)
+        .or_else(|| app.renderer.textures.get(&Slot::Preview).filter(|t| t.photo == id))
+        .or_else(|| app.renderer.thumb(id))
+        .map(|tex| tex.size[0].max(1) as f32 / tex.size[1].max(1) as f32);
+    // Follow the texture only where it really differs (an unsupported raw's embedded JPEG with
+    // another crop): a texture's whole-pixel size is a little off the exact aspect, and the crop
+    // tool's overlays need the frame's own geometry.
+    let display_aspect = visible_texture_aspect.filter(|a| !crop_tool && (a / aspect - 1.0).abs() > 0.02).unwrap_or(aspect);
+    let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
+    let mut target_rect = fit_rect(main_area, display_aspect, app.ui.zoom, native, ppp, app.ui.pan);
+    let mut img_rect = animated_rect(ui.ctx(), &mut app.ui.zoom_anim, target_rect);
+    let mut navigating = false;
+    for &view_area in &areas {
+        let view_img = if view_area == main_area { img_rect } else { fit_rect(view_area, display_aspect, app.ui.zoom, native, ppp, app.ui.pan) };
+        if navigate_gesture(app, ui, &resp, view_area, view_img, native) {
+            navigating = true;
+            target_rect = fit_rect(main_area, display_aspect, app.ui.zoom, native, ppp, app.ui.pan);
+            img_rect = target_rect;
+            break;
+        }
+    }
     app.image_rect = Some(img_rect);
     // request renders: the loupe at display resolution (drafts during drags)
     let interacting = app.session.interaction.is_some();
@@ -262,7 +347,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         } else {
             return "none";
         };
-        p.image(tex.tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        let image_rect = fit_texture_rect(r, tex.size);
+        p.image(tex.tex.id(), image_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         what
     };
     // soft proofing: a paper-white surround and the proof's name, as Lightroom shows it
@@ -284,9 +370,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     } else if let Some((_key, label)) = &hover_key
         && let Some(tex) = app.renderer.textures.get(&Slot::Hover).filter(|t| t.photo == id)
     {
-        p.image(tex.tex.id(), img_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        let hover_rect = fit_texture_rect(img_rect, tex.size);
+        p.image(tex.tex.id(), hover_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         let g = p.layout_no_wrap(label.clone(), t.font(12.0), Color32::WHITE);
-        let bg = Rect::from_min_size(img_rect.left_top() + vec2(8.0, 8.0), g.size() + vec2(16.0, 8.0));
+        let bg = Rect::from_min_size(hover_rect.left_top() + vec2(8.0, 8.0), g.size() + vec2(16.0, 8.0));
         p.rect_filled(bg, 4.0, Color32::from_black_alpha(160));
         p.galley(bg.min + vec2(8.0, 4.0), g, Color32::WHITE);
         shown = "hover";
@@ -314,7 +401,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if app.ui.before_after == BeforeAfter::Split {
         let mid = img_rect.center().x;
         if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
-            let left = Rect::from_min_max(img_rect.min, pos2(mid, img_rect.bottom()));
+            let before_rect = fit_texture_rect(img_rect, tex.size);
+            let left = Rect::from_min_max(before_rect.min, pos2(before_rect.center().x, before_rect.bottom()));
             p.image(tex.tex.id(), left, Rect::from_min_max(pos2(0.0, 0.0), pos2(0.5, 1.0)), Color32::WHITE);
         }
         p.line_segment([pos2(mid, img_rect.top()), pos2(mid, img_rect.bottom())], Stroke::new(1.5, Color32::WHITE));
@@ -322,7 +410,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if app.ui.before_after == BeforeAfter::SplitTopBottom {
         let mid = img_rect.center().y;
         if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
-            let top = Rect::from_min_max(img_rect.min, pos2(img_rect.right(), mid));
+            let before_rect = fit_texture_rect(img_rect, tex.size);
+            let top = Rect::from_min_max(before_rect.min, pos2(before_rect.right(), before_rect.center().y));
             p.image(tex.tex.id(), top, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 0.5)), Color32::WHITE);
         }
         p.line_segment([pos2(img_rect.left(), mid), pos2(img_rect.right(), mid)], Stroke::new(1.5, Color32::WHITE));
@@ -332,7 +421,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     register(ui.ctx(), "canvas:image", img_rect);
     let map = CanvasMap::new(&frame, img_rect);
-    let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
     info_overlay(app, &p, canvas, &photo);
     if !fullscreen {
         filter_pill(app, ui, canvas);
@@ -362,12 +450,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             p.line_segment([pos2(img_rect.left(), fy), pos2(img_rect.right(), fy)], stroke);
         }
     }
-    match right {
-        RightPanel::Crop => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
-        RightPanel::Masking => mask_overlay(app, ui, &resp, &map, &d),
-        RightPanel::Remove => remove_overlay(app, ui, &resp, &map, &d),
-        RightPanel::RedEye => eye_overlay(app, ui, &resp, &map, &d),
-        _ => general_interaction(app, ui, &resp, &map, img_rect, canvas, native, aspect),
+    // Cursor selection must also run on gesture frames, when tool input is suppressed.
+    if !matches!(right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye) {
+        general_cursor(app, ui, &resp, img_rect, main_area);
+    }
+    if !navigating {
+        match right {
+            RightPanel::Crop => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
+            RightPanel::Masking => mask_overlay(app, ui, &resp, &map, &d),
+            RightPanel::Remove => remove_overlay(app, ui, &resp, &map, &d),
+            RightPanel::RedEye => eye_overlay(app, ui, &resp, &map, &d),
+            _ => general_interaction(app, ui, &resp, &map, img_rect, main_area, native, aspect),
+        }
     }
     // drawn and hit-tested above the loupe and its tools: clicks on it pan
     navigator(app, ui, canvas, img_rect, id);
@@ -537,7 +631,7 @@ fn region_overlay(
             let cross = Stroke::new(1.4, if resp.hovered() { Color32::WHITE } else { Color32::from_gray(210) });
             p.line_segment([c - vec2(m, m), c + vec2(m, m)], cross);
             p.line_segment([c - vec2(m, -m), c + vec2(m, -m)], cross);
-            if resp.on_hover_text("Remove this face box (undo with Edit ▸ Undo)").clicked() {
+            if resp.on_hover_text(crate::i18n::tr("Remove this face box (undo with Edit ▸ Undo)")).clicked() {
                 edit = Some(RegionEdit::Remove(index));
             }
         }
@@ -574,8 +668,9 @@ fn filter_pill(app: &mut LightcraftApp, ui: &mut egui::Ui, canvas: Rect) {
     }
     let t = Tokens::get(ui.ctx());
     let p = ui.painter_at(canvas);
-    let label = chips.iter().map(|c| c.label.as_str()).collect::<Vec<_>>().join("  ·  ");
-    let g = p.layout_no_wrap(format!("Filtered: {label}"), t.font(12.0), Color32::from_gray(225));
+    let label =
+        chips.iter().map(|c| crate::panels::chips::display_label(c, &app.session.filter, &app.session.catalog)).collect::<Vec<_>>().join("  ·  ");
+    let g = p.layout_no_wrap(crate::i18n::tr_format!("Filtered: {label}", label = label), t.font(12.0), Color32::from_gray(225));
     let w = (g.size().x + 40.0).min((canvas.width() - 24.0).max(60.0));
     let r = Rect::from_min_size(canvas.min + vec2(12.0, 3.0), vec2(w, 20.0));
     let resp = ui.interact(r, egui::Id::new("loupe-filter-pill"), Sense::click());
@@ -587,7 +682,7 @@ fn filter_pill(app: &mut LightcraftApp, ui: &mut egui::Ui, canvas: Rect) {
     let cross = Stroke::new(1.3, if resp.hovered() { Color32::WHITE } else { Color32::from_gray(190) });
     p.line_segment([c - vec2(m, m), c + vec2(m, m)], cross);
     p.line_segment([c - vec2(m, -m), c + vec2(m, -m)], cross);
-    if resp.on_hover_text("Click to clear these filters").clicked() {
+    if resp.on_hover_text(crate::i18n::tr("Click to clear these filters")).clicked() {
         let _ = app.run("library.clearFilter", json!({}));
     }
 }
@@ -669,8 +764,7 @@ fn quick_name(q: lightcraft_engine::media::QuickSource) -> &'static str {
 /// Targeted adjustment tool: dragging up/down on the photo raises/lowers the tone-curve region or
 /// the colour-mixer bands under the press point (`develop.targeted`, one call per whole step, all
 /// in one interaction = one undo step).
-fn targeted_drag(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, target: &str) {
-    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+fn targeted_drag(app: &mut LightcraftApp, resp: &egui::Response, map: &CanvasMap, target: &str) {
     if resp.drag_started()
         && let Some(q) = resp.interact_pointer_pos()
     {
@@ -740,6 +834,26 @@ fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
     }
 }
 
+fn general_cursor(app: &LightcraftApp, ui: &egui::Ui, resp: &egui::Response, img: Rect, canvas: Rect) {
+    // A panel or overlay under the pointer keeps its own cursor.
+    if !resp.dragged() && !resp.hovered() {
+        return;
+    }
+    let cursor = match app.ui.tool.as_str() {
+        "wbPicker" | "colorRange" | "pointColor" => egui::CursorIcon::Crosshair,
+        tool if tool.starts_with("tat:") => egui::CursorIcon::ResizeVertical,
+        _ if img.width() > canvas.width() + 1.0 || img.height() > canvas.height() + 1.0 => {
+            if resp.dragged() {
+                egui::CursorIcon::Grabbing
+            } else {
+                egui::CursorIcon::Grab
+            }
+        }
+        _ => return,
+    };
+    ui.ctx().set_cursor_icon(cursor);
+}
+
 fn general_interaction(
     app: &mut LightcraftApp,
     ui: &mut egui::Ui,
@@ -751,7 +865,6 @@ fn general_interaction(
     aspect: f32,
 ) {
     if app.ui.tool == "wbPicker" {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         if resp.clicked()
             && let Some(q) = resp.interact_pointer_pos()
         {
@@ -762,12 +875,11 @@ fn general_interaction(
         return;
     }
     if let Some(target) = app.ui.tool.strip_prefix("tat:").map(str::to_string) {
-        targeted_drag(app, ui, resp, map, &target);
+        targeted_drag(app, resp, map, &target);
         return;
     }
     if app.ui.tool == "colorRange" {
         // click: sample the colour for the selected mask's colour range; ⇧-click adds (up to 5)
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         if resp.clicked()
             && let Some(q) = resp.interact_pointer_pos()
         {
@@ -780,7 +892,6 @@ fn general_interaction(
         return;
     }
     if app.ui.tool == "pointColor" {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         if resp.clicked()
             && let Some(q) = resp.interact_pointer_pos()
         {
@@ -792,7 +903,7 @@ fn general_interaction(
         }
         return;
     }
-    // click toggles Fit ↔ the click-zoom ratio (2:1/3:1/5:1) at the clicked point; drag pans when zoomed
+    // click toggles Fit ↔ the chosen click-zoom ratio at the clicked point; drag pans when zoomed
     let zoomed = img.width() > canvas.width() + 1.0 || img.height() > canvas.height() + 1.0;
     if resp.double_clicked() || (resp.clicked() && !zoomed) {
         if let Some(q) = resp.interact_pointer_pos() {
@@ -800,22 +911,14 @@ fn general_interaction(
             let v = ((q.y - img.top()) / img.height()).clamp(0.0, 1.0);
             app.ui.pan = (u, v);
         }
-        app.ui.zoom = if matches!(app.ui.zoom, Zoom::Fit) { Zoom::Percent(app.ui.click_zoom) } else { Zoom::Fit };
+        app.ui.zoom = if matches!(app.ui.zoom, Zoom::Fit) { Zoom::Percent(app.ui.click_zoom as f32) } else { Zoom::Fit };
         app.ui.zoom_anim = true;
     } else if resp.clicked() && zoomed {
         app.ui.zoom = Zoom::Fit;
         app.ui.zoom_anim = true;
     }
-    if zoomed {
-        // only over the photo: a panel drawn earlier (sliders) must keep its own cursor
-        if resp.dragged() || resp.hovered() {
-            ui.ctx().set_cursor_icon(if resp.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
-        }
-        if resp.dragged() {
-            let dlt = resp.drag_delta();
-            app.ui.pan.0 = (app.ui.pan.0 - dlt.x / img.width()).clamp(0.0, 1.0);
-            app.ui.pan.1 = (app.ui.pan.1 - dlt.y / img.height()).clamp(0.0, 1.0);
-        }
+    if zoomed && resp.dragged() {
+        pan_image(app, canvas, img, resp.drag_delta());
     }
     let _ = (native, aspect);
 }
@@ -921,42 +1024,14 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     {
         match app.gesture.clone() {
             Some(Gesture::CropHandle { handle, start, angle }) => {
+                // The crop model decides what the drag does (anchor, aspect lock, image bounds): see
+                // `lightcraft_geom::drag_crop`; the UI only reports where the pointer started and is.
                 let n = to_straight(map.norm(q), angle, frame);
-                let o = resp.interact_pointer_pos().map(|q0| q0 - resp.drag_delta()).unwrap_or(q);
-                let _ = o;
-                let mut r = start;
                 let orig = ui.input(|i| i.pointer.press_origin()).map(|q0| to_straight(map.norm(q0), angle, frame)).unwrap_or(n);
-                let (dx, dy) = (n.x - orig.x, n.y - orig.y);
-                match handle {
-                    0 => (r.x0, r.y0) = (start.x0 + dx, start.y0 + dy),
-                    1 => (r.x1, r.y0) = (start.x1 + dx, start.y0 + dy),
-                    2 => (r.x1, r.y1) = (start.x1 + dx, start.y1 + dy),
-                    3 => (r.x0, r.y1) = (start.x0 + dx, start.y1 + dy),
-                    4 => r.y0 = start.y0 + dy,
-                    5 => r.x1 = start.x1 + dx,
-                    6 => r.y1 = start.y1 + dy,
-                    7 => r.x0 = start.x0 + dx,
-                    _ => r = start.translate(lightcraft_geom::Vec2::new(dx, dy)),
-                }
-                // aspect lock
-                if let Some((aw, ah)) = d.crop.aspect
-                    && handle < 4
-                {
-                    let (iw, ih) = (frame.ow, frame.oh);
-                    let a = if (iw >= ih) == (aw >= ah) { aw as f64 / ah as f64 } else { ah as f64 / aw as f64 };
-                    let w_px = (r.x1 - r.x0).abs() * iw;
-                    let h_px = w_px / a;
-                    let hn = h_px / ih;
-                    if handle == 0 || handle == 1 {
-                        r.y0 = r.y1 - hn;
-                    } else {
-                        r.y1 = r.y0 + hn;
-                    }
-                }
-                let rr = lightcraft_geom::Rect::new(r.x0.min(r.x1), r.y0.min(r.y1), r.x0.max(r.x1), r.y0.max(r.y1));
-                if rr.width() > 0.02 && rr.height() > 0.02 {
-                    let _ = app.run("crop.set", json!({"rect": [rr.x0, rr.y0, rr.x1, rr.y1]}));
-                }
+                let _ = app.run(
+                    "crop.drag",
+                    json!({"handle": handle, "from": [orig.x, orig.y], "to": [n.x, n.y], "start": [start.x0, start.y0, start.x1, start.y1]}),
+                );
             }
             Some(Gesture::CropRotate { start_angle, a0 }) => {
                 let c = map.screen(Point::new(0.5, 0.5));
@@ -1493,6 +1568,12 @@ fn eye_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response
 
 // ------------------------------------------------------------------------ filmstrip
 
+/// A filmstrip cell's file-name label: names longer than 14 characters are cut to 13 and an
+/// ellipsis. Counts characters, not bytes, so a CJK name is never cut inside a character (#266).
+fn film_label(name: &str) -> String {
+    if name.chars().nth(14).is_some() { format!("{}…", name.chars().take(13).collect::<String>()) } else { name.to_string() }
+}
+
 pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
     let t = Tokens::get(ui.ctx());
     ui.painter().rect_filled(r, 0.0, t.canvas);
@@ -1526,18 +1607,23 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
             }
             let resp = ui.interact(cr, egui::Id::new(("film", id.0)), Sense::click());
             register(ui.ctx(), format!("film:{}", id.0), cr);
-            let sel = Some(*id) == active;
+            let state = app.session.selection.state_of(*id);
+            let sel = state == lightcraft_engine::SelectionState::Active;
             let p = ui.painter();
-            if sel {
-                p.rect_filled(cr, 0.0, t.cell_selected);
+            let label = app.session.catalog.photo(*id).and_then(|ph| ph.label);
+            let selected = state != lightcraft_engine::SelectionState::NotSelected;
+            let base = if selected {
+                t.cell_selected
             } else if resp.hovered() {
-                p.rect_filled(cr, 0.0, t.cell_selected.gamma_multiply(0.6));
-            }
+                t.cell_selected.gamma_multiply(0.6)
+            } else {
+                t.canvas
+            };
+            p.rect_filled(cr, 0.0, crate::theme::label_background(base, label, selected));
             let names = app.ui.settings.film_names;
             if let Some(ph) = app.session.catalog.photo(*id).filter(|_| names) {
                 let name = ph.file_name.rsplit_once('.').map(|(n, _)| n).unwrap_or(&ph.file_name);
-                let short: String = if name.len() > 14 { format!("{}…", &name[..13]) } else { name.to_string() };
-                p.text(pos2(cr.left() + 8.0, cr.top() + 10.0), Align2::LEFT_CENTER, short, t.font(10.0), t.text_dim);
+                p.text(pos2(cr.left() + 8.0, cr.top() + 10.0), Align2::LEFT_CENTER, film_label(name), t.font(10.0), t.text_dim);
                 p.text(pos2(cr.right() - 8.0, cr.top() + 10.0), Align2::RIGHT_CENTER, &ph.format, t.semibold(8.5), t.text_dim);
             }
             let img_area = Rect::from_min_max(cr.min + vec2(10.0, 22.0), cr.max - vec2(10.0, 8.0));
@@ -1549,6 +1635,8 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
                 p.image(tex.tex.id(), fr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                 if sel {
                     p.rect_stroke(fr, 0.0, Stroke::new(1.5, Color32::WHITE), StrokeKind::Outside);
+                } else if state == lightcraft_engine::SelectionState::Selected {
+                    p.rect_stroke(fr, 0.0, Stroke::new(1.5, Color32::from_gray(170)), StrokeKind::Outside);
                 }
                 if app.ui.settings.film_badges
                     && let Some(ph) = app.session.catalog.photo(*id)
@@ -1608,6 +1696,33 @@ fn film_badges(p: &egui::Painter, t: &Tokens, fr: Rect, ph: &lightcraft_catalog:
     }
 }
 
+#[cfg(test)]
+mod preview_geometry_tests {
+    use super::{fit_rect, fit_texture_rect};
+    use crate::state::Zoom;
+    use egui::{Rect, pos2, vec2};
+
+    #[test]
+    fn portrait_preview_keeps_its_ratio_inside_a_landscape_frame() {
+        let frame = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 200.0));
+        let image = fit_texture_rect(frame, [100, 200]);
+
+        assert!((image.width() / image.height() - 0.5).abs() < 1e-6);
+        assert_eq!(image.center(), frame.center());
+        assert!(frame.contains_rect(image));
+    }
+
+    #[test]
+    fn portrait_preview_aspect_fits_detail_area_without_stretching() {
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 200.0));
+        let image = fit_rect(area, 0.5, Zoom::Fit, [4000, 6000], 1.0, (0.5, 0.5));
+
+        assert!((image.width() / image.height() - 0.5).abs() < 1e-6);
+        assert_eq!(image.size(), vec2(100.0, 200.0));
+        assert_eq!(image.center(), area.center());
+    }
+}
+
 /// Straighten tool: drag along a horizon (or a vertical) to set the crop angle; double-click = Auto.
 /// The image is shown unrotated in the crop view, so the line's on-screen angle is its image angle.
 /// `held`: drawn with ⌘ held in the crop tool, which stays active afterwards.
@@ -1646,5 +1761,22 @@ fn straighten_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::R
         if !held {
             app.ui.tool.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::film_label;
+
+    #[test]
+    fn film_labels_cut_on_characters_not_bytes() {
+        // the name from #266: byte 13 falls inside '限'
+        assert_eq!(film_label("202407層三限定訂閱圖(4)"), "202407層三限定訂閱圖…");
+        assert_eq!(film_label("写真"), "写真");
+        // exactly 14 characters (42 bytes) is shown whole
+        assert_eq!(film_label("一二三四五六七八九十一二三四"), "一二三四五六七八九十一二三四");
+        assert_eq!(film_label("IMG_20240712_153012"), "IMG_20240712_…");
+        assert_eq!(film_label("DSC_0001"), "DSC_0001");
+        assert_eq!(film_label(""), "");
     }
 }

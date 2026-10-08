@@ -155,8 +155,16 @@ pub(crate) fn with_init_marker<T>(backends: Backends, f: impl FnOnce() -> T) -> 
 /// If the init marker `path` is present — the last process died while creating the GPU device —
 /// remove it and return what it recorded.
 pub fn take_init_marker(path: &std::path::Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = read_init_marker(path)?;
     let _ = std::fs::remove_file(path);
+    Some(text)
+}
+
+/// What the init marker `path` recorded, if it is present — without removing it. For sessions
+/// that must leave the disk as they found it (`--memory`, issues #164 and #169): GPU rendering
+/// still starts off, and the marker stays for the next ordinary launch to report and clear.
+pub fn read_init_marker(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
     Some(text.trim().to_string())
 }
 
@@ -225,10 +233,13 @@ mod tests {
         set_init_marker(None);
         assert!(seen, "the marker exists while the device is created");
         assert!(!m.exists(), "and is removed afterwards");
-        // a marker left behind by a crashed process is reported once
+        // a marker left behind by a crashed process is reported once; reading it leaves it in place
         std::fs::write(&m, "GPU device creation started (backends DX12)").unwrap();
+        assert!(read_init_marker(&m).unwrap().contains("DX12"));
+        assert!(m.exists(), "read_init_marker leaves the marker for the next launch");
         assert!(take_init_marker(&m).unwrap().contains("DX12"));
         assert_eq!(take_init_marker(&m), None);
+        assert_eq!(read_init_marker(&m), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

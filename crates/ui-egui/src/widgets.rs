@@ -33,9 +33,8 @@ pub fn preview_only_variant(reason: &str) -> &str {
 
 /// What a preview-only raw means for the user (see `Photo::preview_only`).
 pub fn preview_only_explanation(reason: &str) -> String {
-    format!(
-        "LightCraft can't decode this raw variant yet ({}). You're editing the camera's embedded JPEG preview, \
-         which already includes the camera's picture style (e.g. Monochrome) and white balance.",
+    crate::i18n::tr_format!(
+        "LightCraft can't decode this raw variant yet ({}). You're editing the camera's embedded JPEG preview, which already includes the camera's picture style (e.g. Monochrome) and white balance.",
         preview_only_variant(reason)
     )
 }
@@ -61,7 +60,7 @@ pub fn preview_only_notice(ui: &mut Ui, key: &str, reason: &str) {
         })
         .response;
     let r = r.on_hover_text(crate::i18n::tr_format!("Decoder: {reason}", reason = reason));
-    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Preview only: editing the camera's embedded JPEG"));
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, crate::i18n::tr("Preview only: editing the camera's embedded JPEG")));
     register(ui.ctx(), format!("notice:previewOnly:{key}"), r.rect);
 }
 
@@ -589,4 +588,30 @@ mod access_tests {
         assert!(has("Button", "Auto"), "{found:?}");
         assert!(has("Button", "Delete mask"), "{found:?}");
     }
+}
+
+/// `text` shortened to fit `max` (as `width` measures it): leading folders drop first
+/// (`Users/me/Pictures/Lightroom` → `…/Pictures/Lightroom`) so the end of a path, which says the
+/// most, stays; a single name still too long loses its end (`2024-06-12 Tri…`: folders tend to
+/// differ at the start). Cuts fall on characters. The result is never empty.
+pub(crate) fn elide_head(text: &str, max: f32, width: impl Fn(&str) -> f32) -> String {
+    if width(text) <= max {
+        return text.to_string();
+    }
+    let mut rest = text;
+    while let Some(i) = rest.find('/') {
+        rest = rest.get(i + 1..).unwrap_or("");
+        let cand = format!("…/{rest}");
+        if width(&cand) <= max {
+            return cand;
+        }
+    }
+    let n = rest.chars().count();
+    for keep in (1..n).rev() {
+        let cand: String = rest.chars().take(keep).chain(std::iter::once('…')).collect();
+        if width(&cand) <= max {
+            return cand;
+        }
+    }
+    "…".to_string()
 }

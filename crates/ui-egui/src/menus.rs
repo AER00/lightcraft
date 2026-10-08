@@ -18,6 +18,8 @@ pub const LANGUAGE_COMMANDS: &[UiCommand] = &[
     ("app.language.traditionalChinese", crate::i18n::Locale::ZhHant.name(), None, "Edit>Language"),
     ("app.language.japanese", crate::i18n::Locale::Ja.name(), None, "Edit>Language"),
     ("app.language.portuguese", crate::i18n::Locale::PtBr.name(), None, "Edit>Language"),
+    ("app.language.german", crate::i18n::Locale::De.name(), None, "Edit>Language"),
+    ("app.language.russian", crate::i18n::Locale::Ru.name(), None, "Edit>Language"),
 ];
 
 /// Every UI command: the languages, then everything else. `xtask parity` reads both tables from
@@ -35,6 +37,8 @@ pub fn language_from_command(id: &str) -> Option<crate::i18n::Locale> {
         "app.language.traditionalChinese" => Some(crate::i18n::Locale::ZhHant),
         "app.language.japanese" => Some(crate::i18n::Locale::Ja),
         "app.language.portuguese" => Some(crate::i18n::Locale::PtBr),
+        "app.language.german" => Some(crate::i18n::Locale::De),
+        "app.language.russian" => Some(crate::i18n::Locale::Ru),
         _ => None,
     }
 }
@@ -67,6 +71,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.zoomToggle", "Toggle Zoom", Some("Z"), "View"),
     // the ratio a click (and Z / Space) zooms to
     ("view.clickZoom", "Click Zoom Ratio", None, ""),
+    ("view.navigate", "Set Image Zoom and Pan", None, ""),
     ("view.zoomIn", "Zoom In", Some("Cmd+="), "View"),
     ("view.zoomOut", "Zoom Out", Some("Cmd+-"), "View"),
     ("view.clipping", "Show Clipping", Some("J"), "View"),
@@ -180,10 +185,10 @@ pub const UI_COMMANDS: &[UiCommand] = &[
 fn panel(app: &mut LightcraftApp, ctx: &egui::Context, p: RightPanel, name: &str) {
     if app.ui.right == p {
         app.ui.right = RightPanel::None;
-        app.toast(ctx, crate::i18n::tr_format!("{name} Off", name = name));
+        app.toast(ctx, crate::i18n::tr_format!("{name} Off", name = crate::i18n::tr(name)));
     } else {
         app.ui.right = p;
-        app.toast(ctx, crate::i18n::tr_format!("{name} On", name = name));
+        app.toast(ctx, crate::i18n::tr_format!("{name} On", name = crate::i18n::tr(name)));
         if p.is_edit_tool() && !matches!(app.ui.view, ViewMode::Detail) {
             app.ui.view = ViewMode::Detail;
         }
@@ -274,7 +279,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 app.ui.view = ViewMode::PhotoGrid;
             }
             if let Some(k) = app.ui.keyword_painter.clone() {
-                app.toast(&ctx, format!("Painting “{k}”: click photos to add or remove it · Esc stops"));
+                app.toast(&ctx, crate::i18n::tr_format!("Painting “{k}”: click photos to add or remove it · Esc stops", k = k));
             }
             Ok(json!({"keyword": app.ui.keyword_painter}))
         }
@@ -373,7 +378,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.zoom = Zoom::Fit;
             app.ui.tool.clear();
             let _ = app.session.end_interaction();
-            app.toast(&ctx, "Slideshow · Space pauses · Esc ends");
+            app.toast(&ctx, crate::i18n::tr("Slideshow · Space pauses · Esc ends"));
             Ok(json!({"interval": interval}))
         }
         "view.fullScreenPreview" => {
@@ -463,12 +468,12 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "view.zoom100" => {
-            app.ui.zoom = Zoom::Percent(100);
+            app.ui.zoom = Zoom::Percent(100.0);
             Ok(Value::Null)
         }
         "view.zoomToggle" => {
             // the same ratio a click on the photo zooms to
-            app.ui.zoom = if app.ui.zoom == Zoom::Fit { Zoom::Percent(app.ui.click_zoom) } else { Zoom::Fit };
+            app.ui.zoom = if app.ui.zoom == Zoom::Fit { Zoom::Percent(app.ui.click_zoom as f32) } else { Zoom::Fit };
             app.ui.zoom_anim = true;
             Ok(Value::Null)
         }
@@ -484,18 +489,43 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(json!({"ratio": app.ui.click_zoom / 100}))
         }
         "view.zoomIn" | "view.zoomOut" => {
-            let steps = [25u32, 50, 100, 200, 400, 800];
+            let steps = [25.0, 50.0, 100.0, 200.0, 400.0, 800.0];
             let cur = match app.ui.zoom {
                 Zoom::Percent(p) => p,
-                _ => 25,
+                _ => 25.0,
             };
             let next = if id == "view.zoomIn" {
-                steps.iter().find(|s| **s > cur).copied().unwrap_or(800)
+                steps.iter().find(|s| **s > cur).copied().unwrap_or(800.0)
             } else {
-                steps.iter().rev().find(|s| **s < cur).copied().unwrap_or(0)
+                steps.iter().rev().find(|s| **s < cur).copied().unwrap_or(0.0)
             };
-            app.ui.zoom = if next == 0 { Zoom::Fit } else { Zoom::Percent(next) };
+            app.ui.zoom = if next == 0.0 { Zoom::Fit } else { Zoom::Percent(next) };
             Ok(Value::Null)
+        }
+        "view.navigate" => {
+            // {zoom?: "fit"|"fill"|{percent: number}, pan?: [x, y]} (normalized image centre).
+            // Validate the complete request before changing either part of the viewport.
+            let zoom = match p.get("zoom") {
+                Some(v) => match serde_json::from_value::<Zoom>(v.clone()) {
+                    Ok(Zoom::Percent(p)) if !p.is_finite() || p <= 0.0 || p > 800.0 => {
+                        return Some(Err("view.navigate: zoom percent must be greater than 0 and at most 800".into()));
+                    }
+                    Ok(z) => z,
+                    Err(e) => return Some(Err(format!("view.navigate: {e}"))),
+                },
+                None => app.ui.zoom,
+            };
+            let pan = match p.get("pan") {
+                Some(v) => match serde_json::from_value::<(f32, f32)>(v.clone()) {
+                    Ok((x, y)) if x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y) => (x, y),
+                    _ => return Some(Err("view.navigate: pan must be [x, y] with finite coordinates from 0 to 1".into())),
+                },
+                None => app.ui.pan,
+            };
+            app.ui.zoom = zoom;
+            app.ui.pan = pan;
+            app.ui.zoom_anim = false;
+            Ok(json!({"zoom": zoom, "pan": pan}))
         }
         "view.clipping" => {
             app.ui.show_clipping = !app.ui.show_clipping;
@@ -889,10 +919,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             if let Some(f) = app.services.open_with.as_mut()
                 && let Err(e) = f(&path, &editor)
             {
-                app.toast(&ctx, format!("Couldn't open the editor: {e}"));
+                app.toast(&ctx, crate::i18n::tr_format!("Couldn't open the editor: {e}", e = e));
             }
             let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            app.toast(&ctx, format!("{name} opened for editing; it is stacked with the original"));
+            app.toast(&ctx, crate::i18n::tr_format!("{name} opened for editing; it is stacked with the original", name = name));
             Ok(r)
         }
         "dialog.cull" => {
@@ -994,8 +1024,21 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                         let n = v["found"].as_array().map_or(0, Vec::len);
                         let left = v["missing"].as_u64().unwrap_or(0);
                         let unsure = v["ambiguous"].as_array().map_or(0, Vec::len);
-                        let unsure = if unsure > 0 { format!(" ({unsure} with several look-alike files: use Locate)") } else { String::new() };
-                        app.toast(ctx, format!("Found {n} missing photo{}; {left} still missing{unsure}", if n == 1 { "" } else { "s" }));
+                        let unsure = if unsure > 0 {
+                            crate::i18n::tr_format!(" ({unsure} with several look-alike files: use Locate)", unsure = unsure)
+                        } else {
+                            String::new()
+                        };
+                        app.toast(
+                            ctx,
+                            crate::i18n::tr_format!(
+                                "Found {n} missing photo{}; {left} still missing{unsure}",
+                                if n == 1 { "" } else { "s" },
+                                left = left,
+                                n = n,
+                                unsure = unsure
+                            ),
+                        );
                         app.ui.last_find_missing = Some(v);
                     }
                     Err(e) => app.toast(ctx, e),
@@ -1040,14 +1083,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             if let Ok(v) = &r {
                 let n = v["tagged"].as_u64().unwrap_or(0);
                 let sk = &v["skipped"];
-                let mut msg = format!("Tagged {n} photo{} from the tracklog", if n == 1 { "" } else { "s" });
+                let mut msg = crate::i18n::tr_format!("Tagged {n} photo{} from the tracklog", if n == 1 { "" } else { "s" }, n = n);
                 let outside = sk["outside"].as_u64().unwrap_or(0);
                 if outside > 0 {
-                    msg += &format!("; {outside} outside its time range");
+                    msg += &crate::i18n::tr_format!("; {outside} outside its time range", outside = outside);
                 }
                 let kept = sk["hasGps"].as_u64().unwrap_or(0);
                 if kept > 0 {
-                    msg += &format!("; {kept} already had a location");
+                    msg += &crate::i18n::tr_format!("; {kept} already had a location", kept = kept);
                 }
                 app.toast(&egui::Context::default(), msg);
             }
@@ -1128,7 +1171,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 app.session.execute("preset.import", &json!({"paths": preset_paths})).map_err(|e| e.to_string())
             };
             if profiles > 0 {
-                app.toast(&ctx, format!("Imported {profiles} profile{} (Profile browser ▸ their groups)", if profiles == 1 { "" } else { "s" }));
+                app.toast(
+                    &ctx,
+                    crate::i18n::tr_format!(
+                        "Imported {profiles} profile{} (Profile browser ▸ their groups)",
+                        if profiles == 1 { "" } else { "s" },
+                        profiles = profiles
+                    ),
+                );
             }
             if let Ok(v) = &r {
                 let n = v["imported"].as_array().map_or(0, Vec::len);
@@ -1156,7 +1206,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 skipped.dedup();
                 if !skipped.is_empty() {
                     let names: Vec<&str> = skipped.iter().take(3).copied().collect();
-                    msg += &format!(" — not carried over: {}{}", names.join(", "), if skipped.len() > 3 { "…" } else { "" });
+                    msg += &crate::i18n::tr_format!(" — not carried over: {}{}", names.join(", "), if skipped.len() > 3 { "…" } else { "" });
                 }
                 app.toast(&ctx, msg);
                 if n > 0 {
@@ -1240,7 +1290,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             crate::links::open(app, url)
         }
         "app.exportPrevious" => match app.session.last_export.clone() {
-            Some(prev) => crate::control::export_active(app, &prev),
+            Some(prev) => crate::control::export_active(app, &lightcraft_engine::export::ExportOptions::known_keys_only(&prev)),
             None => Err("nothing exported yet — use Export…".into()),
         },
         _ => return None,
@@ -1327,6 +1377,17 @@ pub fn confirm_delete(app: &mut LightcraftApp) -> bool {
     }
     app.ui.dialog = Some(Dialog::ConfirmDelete { count });
     true
+}
+
+/// Platform-appropriate label for revealing a file in the system file manager.
+pub fn reveal_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Show in Finder"
+    } else if cfg!(target_os = "windows") {
+        "Show in Explorer"
+    } else {
+        "Show in File Manager"
+    }
 }
 
 /// Reveal the active photo's original in the system file manager.

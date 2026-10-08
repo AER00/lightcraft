@@ -446,6 +446,14 @@ pub fn profile(id: &str) -> Option<&'static ProfileInfo> {
 pub const RECENT_PROFILES: usize = 5;
 
 impl Session {
+    /// A profile by id, looking up built-in profiles first and imported LUT profiles second.
+    pub fn profile_info(&self, id: &str) -> Option<(&str, &str)> {
+        if let Some(p) = profile(id) {
+            return Some((p.name, p.group));
+        }
+        self.lut_profiles.iter().find(|p| p.id == id).map(|p| (p.name.as_str(), p.group.as_str()))
+    }
+
     /// Remember `id` as the most recently applied profile.
     pub fn note_profile_used(&mut self, id: &str) {
         self.profile_recent.retain(|p| p != id);
