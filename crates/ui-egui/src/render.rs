@@ -96,26 +96,48 @@ pub(crate) fn color_image(img: &lightcraft_raster::Rgba8) -> egui::ColorImage {
     egui::ColorImage { size: [img.width, img.height], source_size: egui::vec2(img.width as f32, img.height as f32), pixels }
 }
 
-/// Which stage caches to clear, in order, so that the rest fit `budget` bytes. The open photo's
-/// own views (the whole frame, the zoom windows, the before side) are never named: they are what a
-/// slider drag reuses on every tick, and a cache cleared every frame is rebuilt every frame (a
-/// drag on a 2800 px canvas got 3.6x slower). What goes is what nothing is looking at, the cheapest
-/// to rebuild and least reused first (hover, compare, second window, background work). Empty
-/// caches are never named. Their weight still counts toward the total and is reported.
+/// How far over the budget the open photo's window and before caches may run before they are cut.
+const HARD_FACTOR: usize = 4;
+
+/// Which stage caches to clear, in order, so that the rest fit `budget` bytes.
+///
+/// What nothing is looking at goes first, the cheapest to rebuild and least reused first (hover,
+/// compare, second window, background work). The open photo's own views are what a slider drag
+/// reuses on every tick, and a cache cleared every frame is rebuilt every frame (a drag on a
+/// 2800 px canvas got 3.6x slower), so they stay — counted and reported — up to
+/// [`HARD_FACTOR`] times the budget; past that (a runaway: 8:1 on a huge canvas, both sides of
+/// Before/After) the before side's and the zoom window's go, the before side first. The
+/// whole-frame view's cache is never named. Empty caches are never named.
 pub(crate) fn stage_trim_order(sizes: &[(Slot, usize)], budget: usize) -> Vec<Slot> {
-    let rank = |s: Slot| match s {
+    let idle_rank = |s: Slot| match s {
         Slot::Hover => 0,
         Slot::Compare(_) => 2,
         Slot::Second => 3,
         _ => 5,
     };
-    let in_use = |s: Slot| matches!(s, Slot::Main | Slot::Region | Slot::RegionBefore | Slot::Before);
+    let view_rank = |s: Slot| match s {
+        Slot::RegionBefore => Some(0),
+        Slot::Before => Some(1),
+        Slot::Region => Some(2),
+        _ => None,
+    };
+    let is_view = |s: Slot| matches!(s, Slot::Main) || view_rank(s).is_some();
     let mut held: usize = sizes.iter().map(|(_, b)| *b).fold(0, usize::saturating_add);
-    let mut order: Vec<(Slot, usize)> = sizes.iter().copied().filter(|(s, b)| *b > 0 && !in_use(*s)).collect();
-    order.sort_by_key(|(s, _)| rank(*s));
     let mut out = Vec::new();
-    for (slot, bytes) in order {
+    let mut idle: Vec<(Slot, usize)> = sizes.iter().copied().filter(|(s, b)| *b > 0 && !is_view(*s)).collect();
+    idle.sort_by_key(|(s, _)| idle_rank(*s));
+    for (slot, bytes) in idle {
         if held <= budget {
+            break;
+        }
+        held = held.saturating_sub(bytes);
+        out.push(slot);
+    }
+    let hard = budget.saturating_mul(HARD_FACTOR);
+    let mut views: Vec<(Slot, usize, u8)> = sizes.iter().filter_map(|(s, b)| view_rank(*s).filter(|_| *b > 0).map(|r| (*s, *b, r))).collect();
+    views.sort_by_key(|(_, _, r)| *r);
+    for (slot, bytes, _) in views {
+        if held <= hard {
             break;
         }
         held = held.saturating_sub(bytes);
@@ -125,7 +147,8 @@ pub(crate) fn stage_trim_order(sizes: &[(Slot, usize)], budget: usize) -> Vec<Sl
 }
 
 /// The share of the memory budget the per-view stage caches (the loupe's, the zoom window's, the
-/// before / hover renders') may hold together before the idle ones are cleared: they are the decoded-image sized buffers that the
+/// before / hover renders') may hold together before the idle ones are cleared (see
+/// [`stage_trim_order`] for the open photo's own): they are the decoded-image sized buffers that the
 /// engine's own caches do not count.
 const STAGE_BUDGET_SHARE: usize = 4;
 
@@ -669,7 +692,7 @@ impl Renderer {
         let tex: usize = self.textures.values().map(|t| t.size[0] * t.size[1] * 4).sum();
         let copies: usize = self.textures.values().filter_map(|t| t.pixels.as_ref()).map(|p| p.pixels.len() * 4).sum();
         serde_json::json!({
-            "stageCaches": {"count": self.stages.len(), "cpuBytes": cpu, "gpuBytes": gpu, "budgetBytes": self.stage_budget(), "trimmed": self.stages_trimmed},
+            "stageCaches": {"count": self.stages.len(), "cpuBytes": cpu, "gpuBytes": gpu, "budgetBytes": self.stage_budget(), "trimmed": self.stages_trimmed, "sharedSourceBytes": lightcraft_engine::gpu::shared_source_bytes()},
             "textures": {"count": self.textures.len(), "bytes": tex, "cpuCopyBytes": copies},
         })
     }
@@ -1147,17 +1170,22 @@ mod stage_budget_tests {
         assert_eq!(stage_trim_order(&sizes, 350 * MB), vec![Slot::Hover, Slot::Compare(0), Slot::Compare(1), Slot::Second]);
     }
 
-    // Given the open photo's views (the whole frame, the zoom windows, the before side) alone are
-    // over the budget, they are not trimmed: they are what a slider drag reuses on every tick, and
-    // clearing them every frame costs far more than the memory (issue #323 review: 3.6x slower
-    // drags on a 2800 px canvas). They are counted and reported, not dropped.
+    // Given the open photo's views over the budget, they are not trimmed: they are what a slider
+    // drag reuses on every tick, and clearing them every frame costs far more than the memory
+    // (issue #323 review: 3.6x slower drags on a 2800 px canvas). They are counted and reported,
+    // and only a runaway (more than HARD_FACTOR times the budget) cuts the window and before
+    // caches, never the whole-frame view's.
     #[test]
-    fn the_open_photos_views_are_never_trimmed() {
+    fn the_open_photos_views_are_trimmed_only_in_a_runaway_and_never_the_whole_frame() {
         let views = [(Slot::Main, 400 * MB), (Slot::Region, 500 * MB), (Slot::RegionBefore, 500 * MB), (Slot::Before, 100 * MB)];
-        assert_eq!(stage_trim_order(&views, 100 * MB), vec![]);
+        assert_eq!(stage_trim_order(&views, 400 * MB), vec![], "1.5 GB against a 400 MB budget is a busy Before/After, not a runaway");
+        // against a 100 MB budget (HARD_FACTOR 4 = 400 MB) it is: the before side goes first, then the window
+        assert_eq!(stage_trim_order(&views, 100 * MB), vec![Slot::RegionBefore, Slot::Before, Slot::Region]);
         let mut with_idle = views.to_vec();
         with_idle.push((Slot::Hover, 50 * MB));
-        assert_eq!(stage_trim_order(&with_idle, 100 * MB), vec![Slot::Hover]);
+        assert_eq!(stage_trim_order(&with_idle, 400 * MB), vec![Slot::Hover]);
+        // a whole-frame view of any size stays
+        assert_eq!(stage_trim_order(&[(Slot::Main, 9000 * MB)], MB), vec![]);
     }
 
     // Given caches of slots that hold nothing, they are never "trimmed"
@@ -1200,6 +1228,7 @@ mod stage_budget_tests {
         let m = r.memory();
         assert!(m["stageCaches"]["budgetBytes"].as_u64().unwrap() > 0, "{m}");
         assert_eq!(m["stageCaches"]["trimmed"], 0);
+        assert!(m["stageCaches"]["sharedSourceBytes"].is_u64(), "the one device copy of a big original is reported: {m}");
     }
 }
 

@@ -679,24 +679,27 @@ mod in_the_loupe {
         }
     }
 
-    // Given a stage budget far below what the open photo's views hold (a 2800 px canvas at 1:1),
-    // a slider drag still reuses them: they are not cleared every frame
+    // Given a stage budget below what the open photo's views hold (a 2800 px canvas at 1:1), a
+    // slider drag still reuses them: they are not cleared every frame
     #[test]
     fn a_drag_over_the_stage_budget_does_not_clear_the_open_views() {
         let (mut h, _) = detail();
-        h.app.renderer.stage_budget_override = Some(1 << 20);
         h.app.ui.zoom = crate::state::Zoom::Percent(100.0);
         h.settle(SETTLE);
+        let held = |h: &Headless| {
+            let m = h.app.renderer.memory();
+            (m["stageCaches"]["gpuBytes"].as_u64().unwrap() + m["stageCaches"]["cpuBytes"].as_u64().unwrap()) as usize
+        };
+        let before = held(&h);
+        assert!(before > 3, "the views hold something ({before} bytes)");
+        // a third of it is the budget: over it, but inside the runaway limit (four times)
+        h.app.renderer.stage_budget_override = Some(before / 3);
         h.app.session.begin_interaction("Exposure").unwrap();
         for tick in 0..8 {
             h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": tick as f64 * 0.1}}), T);
             h.settle(SETTLE);
         }
         assert_eq!(h.app.renderer.memory()["stageCaches"]["trimmed"], 0);
-        assert!(
-            h.app.renderer.memory()["stageCaches"]["gpuBytes"].as_u64().unwrap()
-                + h.app.renderer.memory()["stageCaches"]["cpuBytes"].as_u64().unwrap()
-                > 1 << 20
-        );
+        assert!(held(&h) > before / 3, "and they are still there");
     }
 }

@@ -433,7 +433,9 @@ fn shared_source(src: &Arc<Rgb32f>, upload: impl FnOnce() -> Buf) -> Arc<Buf> {
     {
         return buf.clone();
     }
-    *g = None; // the previous photo's copy goes before the next is made
+    // the previous photo's copy goes (on a render thread it is retired with the render's other
+    // buffers, so for a moment both exist)
+    *g = None;
     SOURCE_UPLOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let buf = Arc::new(upload());
     *g = Some((Arc::downgrade(src), buf.clone()));
