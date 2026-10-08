@@ -242,18 +242,25 @@ fn sort_menu(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ("File Name", FileName, "fileName"),
         ("Rating", Rating, "rating"),
         ("File Size", FileSize, "fileSize"),
+        ("Random", Random, "random"),
     ] {
         if ui.selectable_label(cur.key == key, crate::i18n::tr(label)).clicked() {
             let _ = app.run("library.sort", json!({"key": k}));
         }
     }
+    if cur.key == Random && ui.button(crate::i18n::tr("Reshuffle")).clicked() {
+        let _ = app.run("library.shuffle", json!({}));
+    }
     ui.separator();
-    if ui.selectable_label(cur.ascending, crate::i18n::tr("Ascending")).clicked() {
-        let _ = app.run("library.sort", json!({"ascending": true}));
-    }
-    if ui.selectable_label(!cur.ascending, crate::i18n::tr("Descending")).clicked() {
-        let _ = app.run("library.sort", json!({"ascending": false}));
-    }
+    // a shuffle has no direction worth choosing
+    ui.add_enabled_ui(cur.key != Random, |ui| {
+        if ui.selectable_label(cur.key != Random && cur.ascending, crate::i18n::tr("Ascending")).clicked() {
+            let _ = app.run("library.sort", json!({"ascending": true}));
+        }
+        if ui.selectable_label(cur.key != Random && !cur.ascending, crate::i18n::tr("Descending")).clicked() {
+            let _ = app.run("library.sort", json!({"ascending": false}));
+        }
+    });
     ui.separator();
     ui.label(egui::RichText::new(crate::i18n::tr("Group by date")).weak());
     for (label, g, k) in [
