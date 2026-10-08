@@ -33,12 +33,12 @@ use http::{HttpError, Limits, Url};
 
 /// One file of the model.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileSpec {
-    pub name: &'static str,
+pub struct FileSpec<'a> {
+    pub name: &'a str,
     /// Exact size in bytes, when pinned (then the download resumes and is checked against it).
     pub size: Option<u64>,
     /// SHA-256 (lower-case hex), when pinned.
-    pub sha256: Option<&'static str>,
+    pub sha256: Option<&'a str>,
     /// Largest size accepted when `size` is not pinned.
     pub max: u64,
 }
@@ -106,6 +106,8 @@ pub struct Progress {
 pub enum DownloadError {
     /// No mirror is configured.
     NoMirrors,
+    /// Invalid filename, size, hash or aggregate bound supplied by the caller.
+    Invalid(String),
     Cancelled,
     /// A local file problem (folder not writable, disk full…).
     Disk(String),
@@ -119,6 +121,7 @@ pub enum DownloadError {
 impl std::fmt::Display for DownloadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            DownloadError::Invalid(e) => write!(f, "invalid download: {e}"),
             DownloadError::NoMirrors => write!(f, "no download location is configured for this model in this build"),
             DownloadError::Cancelled => write!(f, "the download was cancelled"),
             DownloadError::Disk(e) => write!(f, "{e}"),
@@ -135,16 +138,45 @@ enum Fail {
     Disk(String),
 }
 
-/// Download `files` into `dir` from `mirrors` (in order; see [`mirrors`]). Files already there
-/// and verified are kept. `progress` is called as bytes arrive (often: throttle in it).
+/// Fetch a single file from its exact URL, preserving any query string. The local filename
+/// remains `file.name`; it never comes from redirects or response headers.
+pub fn download_url(
+    file: &FileSpec<'_>,
+    url: &str,
+    dir: &Path,
+    opts: &Options,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(&Progress),
+) -> Result<(), DownloadError> {
+    download_source(std::slice::from_ref(file), &[url.to_string()], dir, opts, cancel, progress, true)
+}
+
+/// Download `files` into `dir` from `mirrors` (in order; see [`mirrors`]). Verified files
+/// are kept. `progress` is called as bytes arrive (often: throttle in it).
 pub fn download(
-    files: &[FileSpec],
+    files: &[FileSpec<'_>],
     mirrors: &[String],
     dir: &Path,
     opts: &Options,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(&Progress),
 ) -> Result<(), DownloadError> {
+    download_source(files, mirrors, dir, opts, cancel, progress, false)
+}
+
+fn download_source(
+    files: &[FileSpec<'_>],
+    mirrors: &[String],
+    dir: &Path,
+    opts: &Options,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(&Progress),
+    exact_urls: bool,
+) -> Result<(), DownloadError> {
+    let total = validate_files(files)?;
+    if mirrors.len() > MAX_MIRRORS {
+        return Err(DownloadError::Invalid("too many mirrors".into()));
+    }
     std::fs::create_dir_all(dir).map_err(|e| DownloadError::Disk(format!("can't create {}: {e}", dir.display())))?;
     // what's left to fetch
     let mut todo = Vec::new();
@@ -159,14 +191,13 @@ pub fn download(
     if mirrors.is_empty() {
         return Err(DownloadError::NoMirrors);
     }
-    let total: u64 = files.iter().map(|f| f.size.unwrap_or(0)).sum();
     let mut before: u64 = files.iter().filter(|f| !todo.contains(f)).filter_map(|f| f.size).sum();
     for f in todo {
         let mut errors = Vec::new();
         let mut ok = false;
         'mirrors: for m in mirrors {
-            let url = format!("{m}/{}", f.name);
-            for _ in 0..opts.attempts.max(1) {
+            let url = if exact_urls { m.clone() } else { format!("{m}/{}", f.name) };
+            for _ in 0..opts.attempts.clamp(1, 16) {
                 if cancel.load(Ordering::Relaxed) {
                     return Err(DownloadError::Cancelled);
                 }
@@ -187,11 +218,11 @@ pub fn download(
                     Err(Fail::Cancelled) => return Err(DownloadError::Cancelled),
                     Err(Fail::Disk(e)) => return Err(DownloadError::Disk(e)),
                     Err(Fail::Retry(e)) => {
-                        log::warn!("download of {url}: {e} (retrying)");
+                        log::warn!("download of {}: {e} (retrying)", short(&url));
                         errors.push(format!("{}: {e}", short(m)));
                     }
                     Err(Fail::NextMirror(e)) => {
-                        log::warn!("download of {url}: {e}");
+                        log::warn!("download of {}: {e}", short(&url));
                         errors.push(format!("{}: {e}", short(m)));
                         continue 'mirrors;
                     }
@@ -206,6 +237,43 @@ pub fn download(
     Ok(())
 }
 
+/// Validate before touching disk, including names supplied by a user model catalog.
+fn validate_files(files: &[FileSpec<'_>]) -> Result<u64, DownloadError> {
+    if files.len() > 256 {
+        return Err(DownloadError::Invalid("too many files".into()));
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut total = 0u64;
+    for f in files {
+        let stem = f.name.split('.').next().unwrap_or_default().to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || stem
+                .strip_prefix("COM")
+                .or_else(|| stem.strip_prefix("LPT"))
+                .is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"));
+        if reserved
+            || f.name.ends_with(['.', ' '])
+            || f.name.ends_with(".part")
+            || f.name.is_empty()
+            || f.name.len() > 255
+            || f.name.starts_with('.')
+            || f.name.contains(['/', '\\', ':'])
+            || f.name.chars().any(char::is_control)
+            || !seen.insert(f.name)
+        {
+            return Err(DownloadError::Invalid("a filename must be a unique, ordinary filename".into()));
+        }
+        if f.max == 0
+            || f.size.is_some_and(|n| n == 0 || n > f.max)
+            || f.sha256.is_some_and(|h| h.len() != 64 || !h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+        {
+            return Err(DownloadError::Invalid("invalid file size or SHA-256".into()));
+        }
+        total = total.checked_add(f.size.unwrap_or(0)).ok_or_else(|| DownloadError::Invalid("total size overflow".into()))?;
+    }
+    Ok(total)
+}
+
 /// The bearer token to send to `url`: only a non-empty one, only over https, and only to the host the download began
 /// at (`origin`), never to the host a redirect leads to.
 fn bearer<'a>(token: Option<&'a str>, url: &Url, origin: &str) -> Option<&'a str> {
@@ -218,7 +286,7 @@ fn short(m: &str) -> String {
 }
 
 /// Whether `path` is already the right file (exact size and hash when pinned).
-fn verified(f: &FileSpec, path: &Path) -> Result<bool, DownloadError> {
+fn verified(f: &FileSpec<'_>, path: &Path) -> Result<bool, DownloadError> {
     let Ok(meta) = std::fs::metadata(path) else { return Ok(false) };
     if !meta.is_file() || meta.len() == 0 {
         return Ok(false);
@@ -252,7 +320,7 @@ fn part_path(dir: &Path, name: &str) -> PathBuf {
 
 /// Fetch one file from one mirror into `<name>.part` (resuming it when its size is pinned),
 /// check it and move it into place.
-fn fetch_file(f: &FileSpec, url: &str, dir: &Path, opts: &Options, cancel: &AtomicBool, report: &mut dyn FnMut(u64, u64)) -> Result<(), Fail> {
+fn fetch_file(f: &FileSpec<'_>, url: &str, dir: &Path, opts: &Options, cancel: &AtomicBool, report: &mut dyn FnMut(u64, u64)) -> Result<(), Fail> {
     let part = part_path(dir, f.name);
     let limit = f.size.unwrap_or(f.max);
     let disk = |e: std::io::Error| Fail::Disk(format!("{}: {e}", part.display()));

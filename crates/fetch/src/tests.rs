@@ -22,7 +22,7 @@ fn leak(s: String) -> &'static str {
     Box::leak(s.into_boxed_str())
 }
 
-fn pinned() -> FileSpec {
+fn pinned() -> FileSpec<'static> {
     let p = payload();
     FileSpec { name: "model.bin", size: Some(p.len() as u64), sha256: Some(leak(sha_hex(&p))), max: p.len() as u64 }
 }
@@ -140,7 +140,7 @@ fn quick() -> Options {
     Options { connect_timeout: Duration::from_secs(2), stall_timeout: Duration::from_millis(600), attempts: 2, token_env: None }
 }
 
-fn run(files: &[FileSpec], mirrors: &[String], dir: &Path, cancel: &AtomicBool) -> (Result<(), DownloadError>, Vec<Progress>) {
+fn run(files: &[FileSpec<'_>], mirrors: &[String], dir: &Path, cancel: &AtomicBool) -> (Result<(), DownloadError>, Vec<Progress>) {
     let mut seen = Vec::new();
     let r = download(files, mirrors, dir, &quick(), cancel, &mut |p| seen.push(p.clone()));
     (r, seen)
@@ -328,4 +328,61 @@ fn a_token_is_sent_only_over_https_to_the_first_host() {
     assert_eq!(bearer(Some("  "), &first, "huggingface.co"), None);
     // a caller that names no variable sends nothing, whatever the environment holds
     assert!(Options::default().token_env.is_none());
+}
+
+#[test]
+fn exact_url_keeps_query_and_owned_catalog_values() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/download?file=weights&sig=secret", listener.local_addr().unwrap());
+    let worker = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(socket.try_clone().unwrap());
+        let mut request = String::new();
+        reader.read_line(&mut request).unwrap();
+        assert_eq!(request.trim(), "GET /download?file=weights&sig=secret HTTP/1.1");
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 || line.trim().is_empty() {
+                break;
+            }
+        }
+        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc").unwrap();
+    });
+    let name = String::from("catalog.onnx");
+    let hash = sha_hex(b"abc");
+    let spec = FileSpec { name: &name, size: Some(3), sha256: Some(&hash), max: 3 };
+    let dir = tmp("exact");
+    let mut progress = Vec::new();
+    download_url(&spec, &url, &dir, &quick(), &AtomicBool::new(false), &mut |p| progress.push(p.clone())).unwrap();
+    worker.join().unwrap();
+    assert_eq!(std::fs::read(dir.join(name)).unwrap(), b"abc");
+    assert!(progress.iter().all(|p| !p.mirror.contains("secret")));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn hostile_file_specs_are_rejected_before_touching_disk() {
+    let dir = tmp("invalid");
+    let base = FileSpec { name: "valid.onnx", size: Some(1), sha256: None, max: 1 };
+    let cancel = AtomicBool::new(false);
+    for name in ["", ".hidden", "../escape", "a/b", "a\\b", "C:escape", "bad\nname", "trailing.", "CON.onnx", "a.part"] {
+        let spec = FileSpec { name, ..base.clone() };
+        assert!(matches!(run(&[spec], &[], &dir, &cancel).0, Err(DownloadError::Invalid(_))), "{name}");
+        assert!(!dir.exists());
+    }
+    for spec in [
+        FileSpec { max: 0, ..base.clone() },
+        FileSpec { size: Some(0), ..base.clone() },
+        FileSpec { size: Some(2), ..base.clone() },
+        FileSpec { sha256: Some("not a SHA"), ..base.clone() },
+    ] {
+        assert!(matches!(run(&[spec], &[], &dir, &cancel).0, Err(DownloadError::Invalid(_))));
+        assert!(!dir.exists());
+    }
+    let huge = FileSpec { size: Some(u64::MAX), max: u64::MAX, ..base.clone() };
+    let other = FileSpec { name: "other.onnx", ..huge.clone() };
+    for specs in [vec![huge, other], vec![base.clone(); 257], vec![base.clone(), base]] {
+        assert!(matches!(run(&specs, &[], &dir, &cancel).0, Err(DownloadError::Invalid(_))));
+        assert!(!dir.exists());
+    }
 }
