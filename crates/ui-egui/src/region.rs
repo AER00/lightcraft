@@ -102,6 +102,46 @@ pub fn plan(settings: &crate::state::AppSettings, v: ViewSizes) -> LoupePlan {
     LoupePlan { main_edge, window_edge }
 }
 
+/// How long the render sizes stay as they were after a pinch or two-finger scroll stops (s).
+pub const HOLD_SECS: f64 = 0.25;
+
+/// Holds the loupe's render sizes while a gesture runs (a continuous pinch changes the zoom every
+/// frame; re-planning each time would be a stream of renders of every size in between). The view
+/// keeps being drawn from the renders it has, magnified by the GPU, and is re-planned once the
+/// gesture has been quiet for [`HOLD_SECS`].
+#[derive(Clone, Debug, Default)]
+pub struct SizeHold {
+    photo: Option<lightcraft_catalog::PhotoId>,
+    plan: Option<LoupePlan>,
+    until: f64,
+}
+
+impl SizeHold {
+    /// The plan to render this frame: `fresh` normally; the plan from before the gesture while
+    /// one is running (`gesturing`) and for [`HOLD_SECS`] after. `now` is in seconds.
+    pub fn apply(&mut self, photo: lightcraft_catalog::PhotoId, now: f64, gesturing: bool, fresh: LoupePlan) -> LoupePlan {
+        if self.photo != Some(photo) {
+            *self = SizeHold { photo: Some(photo), plan: Some(fresh), until: f64::NEG_INFINITY };
+            return fresh;
+        }
+        if gesturing {
+            self.until = now + HOLD_SECS;
+        }
+        match self.plan {
+            Some(held) if gesturing || now < self.until => held,
+            _ => {
+                self.plan = Some(fresh);
+                fresh
+            }
+        }
+    }
+
+    /// Whether sizes are being held at `now` (the caller asks for a repaint when it ends).
+    pub fn holding(&self, now: f64) -> bool {
+        now < self.until
+    }
+}
+
 /// Whether the picture on screen has the frame's aspect (to the one pixel a texture's whole-pixel
 /// size is off by): a window is a part of the frame, so it can only be placed over a picture that
 /// is the frame (an unsupported raw's embedded JPEG may be cropped differently).
@@ -239,6 +279,38 @@ mod tests {
     fn a_drag_at_fit_does_not_switch_the_window_on() {
         let p = plan(&auto(), ViewSizes { draft_scale: 0.6, ..sizes(2800.0, 2800.0, 6000) });
         assert_eq!(p.window_edge, None);
+    }
+
+    // Given a pinch from fit to 400 %, the sizes of the first frame hold until the gesture is quiet
+    #[test]
+    fn a_pinch_holds_the_render_sizes() {
+        use lightcraft_catalog::PhotoId;
+        let (fit, zoomed) = (plan(&auto(), sizes(1400.0, 1400.0, 6000)), plan(&auto(), sizes(24000.0, 1400.0, 6000)));
+        assert_ne!(fit, zoomed);
+        let mut hold = SizeHold::default();
+        let p = PhotoId(1);
+        assert_eq!(hold.apply(p, 0.0, false, fit), fit);
+        // the pinch runs for a second: every frame would plan something else
+        for k in 1..60 {
+            assert_eq!(hold.apply(p, k as f64 / 60.0, true, zoomed), fit, "frame {k}");
+        }
+        // it stopped at t = 59/60: still held for a moment (no flicker between two events)…
+        assert!(hold.holding(1.1));
+        assert_eq!(hold.apply(p, 1.1, false, zoomed), fit);
+        // …then the view is planned for where it ended
+        assert!(!hold.holding(59.0 / 60.0 + HOLD_SECS + 0.01));
+        assert_eq!(hold.apply(p, 1.3, false, zoomed), zoomed);
+        assert_eq!(hold.apply(p, 1.4, false, zoomed), zoomed);
+    }
+
+    // Given another photo, the held sizes are forgotten
+    #[test]
+    fn another_photo_is_planned_afresh() {
+        use lightcraft_catalog::PhotoId;
+        let (fit, zoomed) = (plan(&auto(), sizes(1400.0, 1400.0, 6000)), plan(&auto(), sizes(24000.0, 1400.0, 6000)));
+        let mut hold = SizeHold::default();
+        hold.apply(PhotoId(1), 0.0, false, fit);
+        assert_eq!(hold.apply(PhotoId(2), 0.1, true, zoomed), zoomed);
     }
 
     // Hostile numbers give a plan, never a panic

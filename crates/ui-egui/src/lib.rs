@@ -205,6 +205,8 @@ pub struct LightcraftApp {
     pub region_view: Option<region::RegionView>,
     /// The same for the Before side of a Before/After view.
     pub region_before_view: Option<region::RegionView>,
+    /// The loupe's render sizes while a pinch or two-finger scroll runs.
+    pub(crate) size_hold: region::SizeHold,
     pub(crate) region_tiles: std::collections::HashMap<u64, region::RegionView>,
     /// Photo Merge dialog previews and background merges.
     pub merge: merge::MergeState,
@@ -275,6 +277,7 @@ impl LightcraftApp {
             loupe_shown: None,
             region_view: None,
             region_before_view: None,
+            size_hold: Default::default(),
             region_tiles: Default::default(),
             merge: merge::MergeState::default(),
             import: None,

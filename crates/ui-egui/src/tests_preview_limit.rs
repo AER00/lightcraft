@@ -425,4 +425,28 @@ mod in_the_loupe {
         assert_eq!(h.app.region_before_view, None);
         assert!(tile(&h, Slot::Region).is_some());
     }
+
+    // Given a trackpad pinch from fit to well past 100 %, the render sizes are held while it runs:
+    // no stream of renders of every size in between, and the sharp window arrives once it stops
+    #[test]
+    fn a_pinch_holds_the_render_sizes_until_it_stops() {
+        let (mut h, native) = detail();
+        let main_at_fit = rendered_long_edge(&h);
+        let built = h.app.renderer.completed;
+        let at = h.app.canvas_rect.unwrap().center();
+        h.request("ui.move", json!({"x": at.x, "y": at.y}), T);
+        for _ in 0..40 {
+            h.request("ui.zoom", json!({"factor": 1.08}), T);
+            assert_eq!(h.app.region_view, None, "no window while the pinch runs");
+        }
+        assert!(matches!(h.app.ui.zoom, crate::state::Zoom::Percent(p) if p > 100.0), "{:?}", h.app.ui.zoom);
+        assert_eq!(rendered_long_edge(&h), main_at_fit, "the whole-frame render keeps its size");
+        assert!(h.app.renderer.completed <= built + 2, "{} renders finished during the pinch", h.app.renderer.completed - built);
+        for _ in 0..60 {
+            h.step();
+        }
+        h.settle(SETTLE);
+        let region = h.app.region_view.expect("the window arrives when the pinch is over");
+        assert_eq!(region.full.0.max(region.full.1), native);
+    }
 }

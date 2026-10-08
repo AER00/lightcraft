@@ -384,6 +384,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             draft_scale: scale,
         },
     );
+    // a pinch changes the zoom every frame: keep the sizes of before it until it is quiet
+    let now = ui.input(|i| i.time);
+    let plan = app.size_hold.apply(id, now, navigating, plan);
+    if app.size_hold.holding(now) {
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(crate::region::HOLD_SECS));
+    }
     let want = plan.main_edge;
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     // hover and before renders are stand-ins: the preview size is plenty and keeps them cheap
