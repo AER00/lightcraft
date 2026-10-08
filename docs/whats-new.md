@@ -46,6 +46,10 @@
 - The Import Photos review opens bigger and can be resized; its photo grid fills it (issue #337). Shift-click checks
   or unchecks a range of photos (issue #338).
 
+### Languages
+- The interface is available in German and Russian (Edit ▸ Language), alongside English, Chinese (Simplified and
+  Traditional), Japanese and Brazilian Portuguese.
+
 ### Reliability
 - On macOS, single-key shortcuts that appear in the menu bar now work: E, C, H, M, ⇧P, I, K, D, ratings 0–5,
   labels 6–9, P / U and the rest did nothing, because macOS only passes ⌘ / ⌃ combinations and function keys
