@@ -102,6 +102,14 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 
 /// Why `--library DIR` can't be opened; for a library open in another program, how to work with
 /// that one instead (issue #99).
+/// Print the open library's warnings (an unlockable library, damaged settings files) on stderr:
+/// stdout carries command results / MCP protocol messages only.
+fn library_warnings(session: &mut Session, who: &str) {
+    for w in session.take_library_warnings() {
+        eprintln!("{who}: warning: {w}");
+    }
+}
+
 fn library_error(dir: &str, e: lightcraft_engine::EngineError) -> String {
     match e {
         lightcraft_engine::EngineError::LibraryInUse(why) => format!(
@@ -317,6 +325,7 @@ fn mcp(args: &[String]) -> Result<(), String> {
                     let mut h = Headless::default();
                     let r = h.session.open_library(dir, demo).map_err(|e| library_error(dir, e))?;
                     eprintln!("lightcraft-cli mcp: opened library {dir} ({r:?})");
+                    library_warnings(&mut h.session, "lightcraft-cli mcp");
                     h
                 }
                 None if demo => Headless::demo(),
@@ -553,6 +562,7 @@ fn run(args: &[String]) -> Result<(), String> {
                     Some(dir) => {
                         let mut h = Headless::default();
                         h.session.open_library(dir, demo).map_err(|e| library_error(dir, e))?;
+                        library_warnings(&mut h.session, "lightcraft-cli");
                         h
                     }
                     None if demo => Headless::demo(),
