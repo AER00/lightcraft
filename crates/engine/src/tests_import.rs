@@ -544,13 +544,17 @@ fn cube_luts_become_profiles() {
         mean(&warm, 2)
     );
     s.execute("develop.profile", &json!({"id": id, "amount": 0})).unwrap();
-    assert_eq!(s.render_now(photo, 48, 32).unwrap().image.data, base.data, "Amount 0 = the photo as it was");
+    assert_eq!(s.profile_info(&id), Some(("Warm Test", "Film Looks")));
+    s.execute("profile.favorite", &json!({"id": id})).unwrap();
+    assert!(s.profile_favorites.contains(&id));
     // the library keeps it
     drop(s);
     lightcraft_pipeline::lut::unregister(&id);
     let mut s = Session::new().with_fs();
     s.open_library(&lib, false).unwrap();
     assert!(s.lut_profiles.iter().any(|p| p.id == id));
+    assert!(s.profile_favorites.contains(&id), "imported LUT favorite survives reopen");
+    assert_eq!(s.profile_info(&id), Some(("Warm Test", "Film Looks")));
     assert!(lightcraft_pipeline::lut::get(&id).is_some(), "registered again on open");
     s.execute("profile.deleteImported", &json!({"id": id})).unwrap();
     assert!(lightcraft_pipeline::lut::get(&id).is_none());

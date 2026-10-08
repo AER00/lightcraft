@@ -317,20 +317,6 @@ impl Session {
             journal.snapshot(&self.catalog)?;
         }
         let mut settings = SettingsLoad::default();
-        // presets
-        if let Some(f) = settings.read::<PresetsFile>(files.as_mut(), "presets.json") {
-            for p in &mut self.presets {
-                p.favorite = p.builtin && f.favorites.contains(&p.id) || (!p.builtin && p.favorite);
-            }
-            for u in f.user {
-                if !self.presets.iter().any(|p| p.id == u.id) {
-                    self.presets.push(u);
-                }
-            }
-            let known = |id: &String| crate::presets::profile(id).is_some();
-            self.profile_favorites = f.profile_favorites.into_iter().filter(known).collect();
-            self.profile_recent = f.profile_recent.into_iter().filter(known).take(crate::presets::RECENT_PROFILES).collect();
-        }
         // preferences
         let prefs = settings.read::<PrefsFile>(files.as_mut(), "prefs.json").unwrap_or_default();
         self.xmp = prefs.xmp;
@@ -351,6 +337,20 @@ impl Session {
         self.smart_previews_dir = prefs.smart_previews_dir.filter(|_| on_disk).map(PathBuf::from);
         if let Some(d) = &self.smart_previews_dir {
             self.media.smart_dir = Some(d.clone());
+        }
+        // presets
+        if let Some(f) = settings.read::<PresetsFile>(files.as_mut(), "presets.json") {
+            for p in &mut self.presets {
+                p.favorite = p.builtin && f.favorites.contains(&p.id) || (!p.builtin && p.favorite);
+            }
+            for u in f.user {
+                if !self.presets.iter().any(|p| p.id == u.id) {
+                    self.presets.push(u);
+                }
+            }
+            let known = |id: &String| crate::presets::profile(id).is_some() || self.lut_profiles.iter().any(|p| &p.id == id);
+            self.profile_favorites = f.profile_favorites.into_iter().filter(known).collect();
+            self.profile_recent = f.profile_recent.into_iter().filter(known).take(crate::presets::RECENT_PROFILES).collect();
         }
         // view state
         if let Some(v) = settings.read::<ViewFile>(files.as_mut(), "view.json") {

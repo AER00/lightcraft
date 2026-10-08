@@ -139,7 +139,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 14, bottom: 14 }).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(crate::i18n::tr("Profile")).font(t.font(13.0)).color(t.text_dim));
-            let name = lightcraft_engine::presets::profile(&d.profile.id).map(|p| p.name).unwrap_or("Color");
+            let name = app.session.profile_info(&d.profile.id).map(|(name, _)| name).unwrap_or("Color");
             let r = crate::widgets::dropdown(ui, "profile", crate::i18n::tr(name), t.font(15.0), t.text_label);
             egui::Popup::menu(&r).show(|ui| profile_menu(app, ui, &d));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -345,36 +345,37 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 /// The profile dropdown: Favorites, Recent, one submenu per group, then favourite toggle and
 /// Browse….
 fn profile_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
-    use lightcraft_engine::presets::{PROFILES, profile, profile_groups};
+    use lightcraft_engine::presets::{PROFILES, profile_groups};
     let t = Tokens::get(ui.ctx());
     ui.set_min_width(200.0);
     let cur = d.profile.id.as_str();
     // (clicked, hovered)
-    let mut pick: (Option<&'static str>, Option<&'static str>) = (None, None);
-    let item = |ui: &mut egui::Ui,
-                key: &str,
-                p: &'static lightcraft_engine::presets::ProfileInfo,
-                pick: &mut (Option<&'static str>, Option<&'static str>)| {
-        let r = ui.selectable_label(p.id == cur, crate::i18n::tr(p.name));
-        register(ui.ctx(), format!("profileMenu:{key}:{}", p.id), r.rect);
+    let mut pick: (Option<String>, Option<String>) = (None, None);
+    let mut item = |ui: &mut egui::Ui,
+                    key: &str,
+                    id: &str,
+                    name: &str,
+                    pick: &mut (Option<String>, Option<String>)| {
+        let r = ui.selectable_label(id == cur, crate::i18n::tr(name));
+        register(ui.ctx(), format!("profileMenu:{key}:{id}"), r.rect);
         if r.clicked() {
-            pick.0 = Some(p.id);
+            pick.0 = Some(id.to_string());
         }
         if r.hovered() {
-            pick.1 = Some(p.id);
+            pick.1 = Some(id.to_string());
         }
     };
     let heading = |ui: &mut egui::Ui, s: &str| {
         ui.label(egui::RichText::new(crate::i18n::tr(s)).font(t.semibold(11.5)).color(t.text_dim));
     };
     for (title, key, ids) in [("Favorites", "fav", app.session.profile_favorites.clone()), ("Recent", "recent", app.session.profile_recent.clone())] {
-        let list: Vec<_> = ids.iter().filter_map(|id| profile(id)).collect();
+        let list: Vec<_> = ids.iter().filter_map(|id| app.session.profile_info(id).map(|(name, _)| (id.as_str(), name))).collect();
         if list.is_empty() {
             continue;
         }
         heading(ui, title);
-        for p in list {
-            item(ui, key, p, &mut pick);
+        for (id, name) in list {
+            item(ui, key, id, name, &mut pick);
         }
         ui.separator();
     }
@@ -382,23 +383,36 @@ fn profile_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings)
         let r = ui.menu_button(crate::i18n::tr(g), |ui| {
             ui.set_min_width(170.0);
             for p in PROFILES.iter().filter(|p| p.group == g) {
-                item(ui, "group", p, &mut pick);
+                item(ui, "group", p.id, p.name, &mut pick);
+            }
+        });
+        register(ui.ctx(), format!("profileMenu:groupMenu:{g}"), r.response.rect);
+    }
+    // imported LUT profile groups
+    let mut lut_groups: Vec<String> = app.session.lut_profiles.iter().map(|p| p.group.clone()).collect();
+    lut_groups.sort_unstable();
+    lut_groups.dedup();
+    for g in &lut_groups {
+        let r = ui.menu_button(crate::i18n::tr(g), |ui| {
+            ui.set_min_width(170.0);
+            for p in app.session.lut_profiles.iter().filter(|p| &p.group == g) {
+                item(ui, "group", &p.id, &p.name, &mut pick);
             }
         });
         register(ui.ctx(), format!("profileMenu:groupMenu:{g}"), r.response.rect);
     }
     ui.separator();
-    if let Some(p) = profile(cur) {
-        let fav = app.session.profile_favorites.iter().any(|f| f == p.id);
+    if let Some((name, _)) = app.session.profile_info(cur) {
+        let fav = app.session.profile_favorites.iter().any(|f| f == cur);
         let label = if fav {
-            crate::i18n::tr_format!("Remove “{}” from Favorites", crate::i18n::tr(p.name))
+            crate::i18n::tr_format!("Remove “{}” from Favorites", crate::i18n::tr(name))
         } else {
-            crate::i18n::tr_format!("Add “{}” to Favorites", crate::i18n::tr(p.name))
+            crate::i18n::tr_format!("Add “{}” to Favorites", crate::i18n::tr(name))
         };
         let r = ui.button(label);
         register(ui.ctx(), "profileMenu:toggleFavorite", r.rect);
         if r.clicked() {
-            let _ = app.run("profile.favorite", json!({"id": p.id}));
+            let _ = app.run("profile.favorite", json!({"id": cur}));
         }
     }
     let r = ui.button(crate::i18n::tr("Browse…"));
@@ -407,13 +421,14 @@ fn profile_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings)
         let _ = app.run("panel.profiles", json!({}));
     }
     // resting on a profile previews it in the loupe
-    if let Some(p) = pick.1.and_then(profile)
-        && p.id != cur
+    if let Some(hovered_id) = &pick.1
+        && hovered_id != cur
+        && let Some((name, _)) = app.session.profile_info(hovered_id)
     {
         let mut s = d.clone();
-        s.profile.id = p.id.to_string();
+        s.profile.id = hovered_id.clone();
         s.profile.amount = 100.0;
-        app.hover_preview = Some(crate::HoverPreview { label: crate::i18n::tr_format!("Profile: {}", crate::i18n::tr(p.name)), settings: s });
+        app.hover_preview = Some(crate::HoverPreview { label: crate::i18n::tr_format!("Profile: {}", crate::i18n::tr(name)), settings: s });
     }
     if let Some(id) = pick.0 {
         let _ = app.run("develop.profile", json!({"id": id}));
