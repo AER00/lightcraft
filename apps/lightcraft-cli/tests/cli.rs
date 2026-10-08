@@ -19,6 +19,19 @@ fn gradient_png(path: &std::path::Path) {
     std::fs::write(path, png).unwrap();
 }
 
+#[test]
+fn calibrate_reads_raf_inputs_and_reports_bad_files() {
+    let input = tmp("invalid.RAF");
+    std::fs::write(&input, b"FUJIFILMCCD-RAW").unwrap();
+    let out = tmp("raf-profiles");
+    let result = Command::new(BIN).args(["calibrate", "--out"]).arg(&out).arg(&input).output().unwrap();
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("1 of 1 raw files"), "RAF was silently ignored: {stderr}");
+    assert!(stderr.contains("invalid.RAF") && stderr.contains("no profile written"), "{stderr}");
+    assert!(!out.join("X-T4.json").exists(), "bad input must not produce a profile");
+}
+
 fn mean(path: &std::path::Path) -> f64 {
     let d = lightcraft_codecs::decode(&std::fs::read(path).unwrap(), Default::default()).unwrap();
     let img = d.to_srgb8();
