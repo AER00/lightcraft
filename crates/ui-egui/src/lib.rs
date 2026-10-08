@@ -19,6 +19,7 @@ pub mod menubar;
 pub mod menus;
 pub mod merge;
 pub mod panels;
+pub mod region;
 pub mod render;
 pub mod shortcuts;
 pub mod softpaint;

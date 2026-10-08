@@ -881,6 +881,32 @@ impl crate::Session {
         Some(job)
     }
 
+    /// A render of one window of the loupe's frame, for a view zoomed past what one whole-frame
+    /// render can hold: the frame is `full_w × full_h` (the size the loupe would draw it at) and
+    /// the result is `window`'s pixels of it, at that scale, from the source level that size needs.
+    /// Nothing is cached here (a window is only worth keeping while it is on screen).
+    pub fn region_job(
+        &mut self,
+        id: PhotoId,
+        full_w: usize,
+        full_h: usize,
+        window: lightcraft_pipeline::PixelWindow,
+        apply_crop: bool,
+    ) -> Option<RenderJob> {
+        let mut job = self.render_job(id, full_w, full_h, false, apply_crop)?;
+        job.request.window = Some(window);
+        job.key = Hasher128::new()
+            .u64(job.key)
+            .str("window")
+            .u64(window.x as u64)
+            .u64(window.y as u64)
+            .u64(window.w as u64)
+            .u64(window.h as u64)
+            .finish()
+            .0 as u64;
+        Some(job)
+    }
+
     /// The embedded preview of an unedited raw (path, loader), when the app installed a loader.
     fn embedded_of(&self, p: &Photo) -> Option<(String, PreviewLoader)> {
         match (&p.source, &self.media.preview_loader) {
@@ -1216,6 +1242,31 @@ mod tests {
         let plain: Vec<_> = s.catalog.photos().filter(|p| !p.is_edited()).map(|p| p.id).take(2).collect();
         let (a, b) = (s.render_job(plain[0], 1600, 1600, false, true).unwrap(), s.render_job(plain[1], 1600, 1600, false, true).unwrap());
         assert_ne!(a.key, b.key);
+    }
+
+    // Issue #323: a window of a 1:1 view is its own job: the window's pixels, at the zoom scale,
+    // from the original, with a key of its own
+    #[test]
+    fn region_jobs_render_a_window_of_the_zoomed_frame() {
+        use lightcraft_pipeline::PixelWindow;
+        let mut s = crate::Session::with_demo();
+        let p = s.catalog.photos().next().unwrap().clone();
+        let (w, h) = (p.width as usize, p.height as usize);
+        assert!(w.max(h) > 2560, "demo photos are camera-sized");
+        let win = PixelWindow { x: w / 3, y: h / 3, w: 300, h: 200 };
+        let job = s.region_job(p.id, w, h, win, true).unwrap();
+        assert_eq!(job.level, SourceLevel::Full, "a 1:1 window reads the original");
+        let img = job.run().rendered.unwrap().image;
+        assert_eq!((img.width, img.height), (300, 200));
+        // other windows, and the whole-frame job, never share a key
+        let other = s.region_job(p.id, w, h, PixelWindow { x: win.x + 64, ..win }, true).unwrap();
+        let whole = s.render_job(p.id, w, h, false, true).unwrap();
+        let again = s.region_job(p.id, w, h, win, true).unwrap();
+        assert_ne!(other.key, again.key);
+        assert_ne!(whole.key, again.key);
+        assert_eq!(s.region_job(p.id, w, h, win, true).unwrap().key, again.key, "the same window keeps its key");
+        // a window never writes the photo's view preview or the thumbnail cache
+        assert!(again.view_cache.is_none() && again.cache.is_none());
     }
 
     #[test]
