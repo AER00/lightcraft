@@ -201,7 +201,9 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
             .horizontal_align(egui::Align::RIGHT)
             .desired_width(value_rect.width())
             .margin(egui::Margin::ZERO);
-        let te = ui.put(value_rect, field);
+        // a child over the value, so the field never moves the rows around it
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(value_rect).layout(egui::Layout::right_to_left(egui::Align::Center)));
+        let te = child.add(field);
         if frames < 2 {
             te.request_focus();
             // the old value is selected, so typing replaces it (set again once the field has the
