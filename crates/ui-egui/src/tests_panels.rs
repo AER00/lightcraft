@@ -397,7 +397,8 @@ fn a_renamed_folder_keeps_its_place_in_the_tree() {
     let _cleanup = Cleanup(base.clone());
     std::fs::create_dir_all(base.join("pics/trip")).unwrap();
     std::fs::create_dir_all(base.join("pics/home")).unwrap();
-    let b = base.to_string_lossy().to_string();
+    // the folder tree writes paths with forward slashes, and its widget ids carry them
+    let b = base.to_string_lossy().replace('\\', "/");
     let mut h = folders_app(&[&format!("{b}/pics/trip/a.jpg"), &format!("{b}/pics/home/b.jpg")]);
     h.app.session.source = lightcraft_engine::LibrarySource::LibraryFolder;
     h.app.session.library_folder = Some(format!("{b}/pics/trip"));

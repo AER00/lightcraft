@@ -268,13 +268,9 @@ pub(crate) fn follow_folder(s: &mut Session, from: &str, to: &str) {
 /// the folder itself.
 fn follow_library_folder(chosen: &mut Option<String>, from: &str, to: &str) {
     let Some(c) = chosen.as_deref() else { return };
-    let (ck, fk) = (lightcraft_catalog::query::folder_key(c), lightcraft_catalog::query::folder_key(from));
-    if fk.is_empty() {
-        return;
-    }
-    if let Some(rest) = ck.strip_prefix(fk.as_str()).filter(|r| r.is_empty() || r.starts_with('/') || fk.ends_with('/')) {
-        let rest = rest.trim_start_matches('/');
-        *chosen = Some(if rest.is_empty() { to.to_string() } else { format!("{}/{rest}", to.trim_end_matches(['/', '\\'])) });
+    if let Some(rest) = lightcraft_catalog::query::folder_rest(c, from) {
+        // joined by the platform, so the result is spelled like `to` and like a path read from disk
+        *chosen = Some(rest.iter().fold(std::path::PathBuf::from(to), |p, name| p.join(name)).to_string_lossy().to_string());
     }
 }
 

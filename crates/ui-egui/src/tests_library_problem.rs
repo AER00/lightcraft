@@ -75,6 +75,8 @@ fn unopenable_library_asks_instead_of_running_a_demo() {
     assert!(!has(&h, "button:libraryRetry"));
     assert!(has(&h, "indicator:temporarySession"));
     assert!(h.app.session.library.is_none());
+    // imported on the import worker (issue #374: never synchronously on the UI thread)
+    h.step_until(T, |h| h.app.import.is_none() && h.app.session.catalog.len() == 1);
     assert_eq!(h.app.session.catalog.len(), 1, "the command-line photo is imported into the temporary session");
     if let Some(p) = std::env::var_os("LIGHTCRAFT_TEST_SHOTS") {
         let r = h.request("ui.screenshot", json!({"path": std::path::Path::new(&p).join("banner.png").to_string_lossy(), "headless": true}), T);

@@ -525,6 +525,17 @@ pub fn folder_within(path: &str, root: &str) -> bool {
     key_within(&folder_key(path), &folder_key(root))
 }
 
+/// The names below folder `root` that lead to `path`, as the caller spelled them (`None` when
+/// `path` is not at or inside `root`; empty when it is `root`). Compared by [`folder_key`], but
+/// the names keep their case, which the key lowers on Windows.
+pub fn folder_rest(path: &str, root: &str) -> Option<Vec<String>> {
+    if !key_within(&folder_key(path), &folder_key(root)) {
+        return None;
+    }
+    let depth = split_path(root, false).parts.len();
+    Some(split_path(path, false).parts.into_iter().skip(depth).collect())
+}
+
 /// Whether a library photo (not one only browsed in Local) lies in the folder whose
 /// [`folder_key`] is `root`. A plain POSIX path (no `\`, `.`, `..`, repeated or trailing
 /// separators) is its own identity, so it is read without building a key for it: the check runs

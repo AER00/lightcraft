@@ -56,8 +56,11 @@ fn open(app: &mut LightcraftApp, path: Option<String>) {
         Ok(serde_json::Value::Null) => {} // folder dialog cancelled
         Ok(_) => {
             let files = app.library_problem.take().map(|p| p.pending_import).unwrap_or_default();
-            if !files.is_empty() {
-                let _ = app.run("library.import", json!({"paths": files}));
+            // in the background, like files dropped on the window (issue #374)
+            if !files.is_empty()
+                && let Err(e) = crate::import::start_paths(app, files)
+            {
+                log::warn!("import: {e}");
             }
         }
         Err(e) => {
@@ -144,8 +147,11 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 p.dismissed = true;
             }
             let files = app.library_problem.as_mut().map(|p| std::mem::take(&mut p.pending_import)).unwrap_or_default();
-            if !files.is_empty() {
-                let _ = app.run("library.import", json!({"paths": files}));
+            // in the background, like files dropped on the window (issue #374)
+            if !files.is_empty()
+                && let Err(e) = crate::import::start_paths(app, files)
+            {
+                log::warn!("import: {e}");
             }
         }
         Some(Choice::Quit) => app.ui.quit = true,
