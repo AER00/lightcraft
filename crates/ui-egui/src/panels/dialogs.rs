@@ -778,12 +778,23 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         egui::Grid::new("shortcuts").striped(true).show(ui, |ui| {
                             for (id, label, sc, _) in crate::menus::ui_commands() {
                                 if let Some(sc) = sc {
-                                    ui.label(crate::i18n::tr(label));
+                                    let grid_pick = *id == "panel.presets" && crate::shortcuts::library_grid(app);
+                                    ui.label(crate::i18n::tr(if grid_pick { "Flag as Pick" } else { label }));
                                     ui.label(*sc);
-                                    ui.label(egui::RichText::new(*id).color(t.text_dim));
+                                    ui.label(egui::RichText::new(if grid_pick { "photo.flag" } else { id }).color(t.text_dim));
                                     ui.end_row();
                                 }
                             }
+                            for sc in ["0–5", "Shift+0–5"] {
+                                ui.label(crate::i18n::tr("Set Rating"));
+                                ui.label(sc);
+                                ui.label(egui::RichText::new("photo.rate").color(t.text_dim));
+                                ui.end_row();
+                            }
+                            ui.label(crate::i18n::tr("Set Color Label"));
+                            ui.label("6–9");
+                            ui.label(egui::RichText::new("photo.label").color(t.text_dim));
+                            ui.end_row();
                             for c in lightcraft_engine::command_specs() {
                                 if let Some(sc) = c.shortcut {
                                     ui.label(crate::i18n::tr(c.label));

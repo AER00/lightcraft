@@ -268,7 +268,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
             Err(_) => {
                 let (f, stage) = t.progress.lock().map(|g| g.clone()).unwrap_or_default();
                 let now = ctx.input(|i| i.time);
-                app.ui.toast = Some((crate::i18n::tr_format!("Merging… {stage} {:.0}%", f * 100.0, stage = stage), now + 0.5));
+                app.ui.toast = Some((crate::i18n::tr_format!("Merging… {stage} {:.0}%", f * 100.0, stage = stage), now + 0.5, None));
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
         }

@@ -108,8 +108,10 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Create Version | ⌘⇧S (+ ⇧M) | ⇧M (Windows: Ctrl+⇧S) | — |
 | Select None | ⌘⇧A (+ ⌘D) | ⌘D | — |
 
+**Library culling (KEYC-RATING):** `0–5`, `6–9` and `P/X/U` reach egui on macOS even when displayed in the native menu (adapted from PR #261; issue #283). `Shift+0–9` applies and advances once; `Shift+P` picks and advances in Photo Grid / Square Grid and retains Presets elsewhere. See [library shortcuts](library-shortcuts.md) for the verified Classic mapping and regression coverage. Remaining Classic gaps: rating `[` / `]`, flag cycling and filter-bar keys.
+
 **Still missing / broken:**
-- No command yet: F1 help, ⇧6–9 label + advance (verify the rest of the old list: full screen, settings, stacks,
+- No command yet: F1 help (verify the rest of the old list: full screen, settings, stacks,
   visualize spots and merges have commands now).
 - `H` opens Remove; Lightroom also uses it (Classic) to hide pins — pins toggle from View → Show Mask Pins.
 - ⌘M / ⌘H / ⌘Q / ⌘W rely on the platform window defaults (unverified).
@@ -150,9 +152,9 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-SHARED-ALBUM | Shared albums | P2 | ⬜ | | needs a sharing service |
 | LR-LIB-OFFLINE | Keep album offline | P2 | 🚫 | | not applicable: local-first library |
 | LR-LIB-TARGET | Target album | P2 | ✅ | `cmd:album.setTarget`, `cmd:album.toggleTarget` | see LRC-LIB-COLLECTIONS |
-| LR-LIB-RATING | Star ratings | P0 | ✅ | `cmd:photo.rate` (`advance`), `crates/ui-egui/src/shortcuts.rs` | |
-| LR-LIB-FLAG | Pick / reject flags | P0 | ✅ | `cmd:photo.pick`, `cmd:photo.reject`, `cmd:photo.unflag`, `cmd:photo.flag` | pick key is P (see Shortcuts); no flag cycle |
-| LR-LIB-LABEL | Colour labels | P1 | ✅ | `cmd:photo.label`, `cmd:label.setNames`, `cmd:label.names`, `cmd:dialog.labelNames`, keys 6–9 in `crates/ui-egui/src/shortcuts.rs` | Photo menu and grid context menu (coloured, named), Info-panel swatches, label dot in grid cells; editable label names (undoable, journaled); no purple key (as in Lightroom), no custom extra labels |
+| LR-LIB-RATING | Star ratings | P0 | ✅ | `cmd:photo.rate` (`advance`), `crates/ui-egui/src/shortcuts.rs` | 0 clears; 1–5 set; Shift+0–5 applies and advances once, including with Auto Advance. Batch grid and undo/redo regressions; macOS native ownership corrected (PR #261) |
+| LR-LIB-FLAG | Pick / reject flags | P0 | ✅ | `cmd:photo.pick`, `cmd:photo.reject`, `cmd:photo.unflag`, `cmd:photo.flag` | P pick, X reject, U clear; Shift+P picks and advances in both grids (Presets elsewhere); Shift+X/U and legacy Shift+Z advance; no flag cycle; rejection does not delete the file |
+| LR-LIB-LABEL | Colour labels | P1 | ✅ | `cmd:photo.label`, `cmd:label.setNames`, `cmd:label.names`, `cmd:dialog.labelNames`, keys 6–9 in `crates/ui-egui/src/shortcuts.rs` | Photo menu and grid context menu (coloured, named), Info-panel swatches, label dot plus translucent colour on square-grid/filmstrip surrounds and photo-grid footers (photo pixels unchanged); colour-label toasts have pale matching backgrounds; setting/clearing through keys (including Shift), menus or Info swatches shows the same bottom toast as ratings, with the colour/custom name; editable label names (undoable, journaled); no purple key (as in Lightroom), no custom extra labels |
 | LR-LIB-KEYWORD | Keywords | P0 | ✅ | `cmd:panel.keywords`, `cmd:photo.setMeta` (`addKeywords`/`removeKeywords`), `cmd:keyword.list`, `cmd:keyword.rename`, `cmd:keyword.delete`, `cmd:keyword.merge`, `cmd:keyword.suggest`, `crates/catalog/src/keywords.rs`, `crates/ui-egui/src/panels/left.rs` | left-panel keyword tree with counts (click filters, children included; context menu rename / merge / delete / add / remove); library-wide ops are one undo step and replay from the op log; suggestions (co-occurring / most used / completions) in the Keywords panel; no keyword drag-and-drop |
 | LR-LIB-PEOPLE | People / faces | P2 | 🟡 | `cmd:view.people`, `cmd:view.faceBoxes`, `cmd:photo.removeRegion`, `cmd:photo.setRegion`, `cmd:library.filter`, `crates/ui-egui/src/panels/people.rs`, `crates/catalog/src/query.rs` (`people`), `crates/engine/src/media.rs` (`face_job`), `crates/meta/src/xmp.rs` | MVP: named face regions read from XMP (MWG-RS, read-only, see `docs/xmp-interop.md`; clipped to the photo; Lightroom's `Rotation` of ±π/2 and π handled, mirrored orientations taken as written; boxes follow Rotate Left/Right and flips; a sidecar stating `mwg-rs:Regions`, even empty, replaces the photo's on re-read, one without leaves them) become cards in the People view (View ▸ People, or the People button in the toolbar): a close-up of the person's largest face, name and photo count; a click filters the grid (`person` in `library.filter`, `person:` search token, filter chip). Face boxes in the loupe can be switched off (View ▸ Face Boxes, toolbar) resized with eight drag handles and removed with the × shown on hover (catalog-only and undoable, one undo step per drag; the sidecar is never rewritten for either); no moving a box by dragging it yet. No face detection, no unnamed people / suggestions, no manual tagging, no writing regions back |
 | LR-LIB-STACK | Stacks | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup`, `cmd:stack.toggle`, `cmd:stack.setTop`, `cmd:stack.remove`, `cmd:stack.auto`, `crates/catalog/src/stacks.rs` | grid/filmstrip count badges, expand/collapse, auto-stack by capture time; no visual-similarity auto-stack |
@@ -670,7 +672,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-ADDPHOTOS | Import photos — ⇧⌘I | P0 | ✅ | `cmd:file.addPhotos` | |
 | KEY-VERSIONS | Versions panel — ⇧V | P1 | ✅ | `cmd:panel.versions` | |
 | KEY-SECTIONS | Expand/collapse edit sections — ⌘1…⌘6 | P1 | ✅ | `cmd:section.light`, `cmd:section.color`, `cmd:section.effects`, `cmd:section.detail`, `cmd:section.optics` | ⌘1–⌘5 (Light, Color, Effects, Detail, Optics) as observed; our Edit panel has no Lens Blur / Geometry section for ⌘6 / ⌘7; Zoom 100% moved to ⌥⌘0 |
-| KEY-PRESETS | Presets panel — ⇧P | P0 | ✅ | `cmd:panel.presets` | |
+| KEY-PRESETS | Presets panel — ⇧P | P0 | ✅ | `cmd:panel.presets` | Shift+P opens Presets outside the two library grids; in grids it picks and advances (Classic convention). Menu hides the Presets key there; shortcut help follows the view |
 | KEY-HISTOGRAM | Histogram — ⌘0 | P0 | 🟡 | `cmd:view.histogram` | bound to ⌘⇧H; ⌘0 = zoom to fit |
 | KEY-BRUSHSIZE | Brush size — `[` / `]` | P0 | ✅ | `cmd:brush.smaller`, `cmd:brush.larger` | Masking brush and Remove tool (and its selected spot) |
 | KEY-BRUSHFEATHER | Brush feather — ⇧`[` / ⇧`]` | P0 | ✅ | `cmd:brush.featherLess`, `cmd:brush.featherMore` | |
@@ -680,12 +682,12 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-PICK | Pick — Z | P0 | 🟡 | `cmd:photo.pick` | bound to P; Z toggles zoom |
 | KEY-UNFLAG | Unflag — U | P0 | ✅ | `cmd:photo.unflag` | |
 | KEY-REJECT | Reject — X | P0 | ✅ | `cmd:photo.reject` | swaps crop aspect while cropping |
-| KEY-RATING | Ratings — 0…5 | P0 | ✅ | `crates/ui-egui/src/shortcuts.rs` → `cmd:photo.rate` | |
-| KEY-LABELS | Labels — 6…9 | P1 | ✅ | `crates/ui-egui/src/shortcuts.rs` → `cmd:photo.label` | |
+| KEY-RATING | Ratings — 0…5 | P0 | ✅ | `crates/ui-egui/src/shortcuts.rs` → `cmd:photo.rate` | 0 clears, 1–5 set; Shift applies and advances; native macOS plain keys stay with egui; grid multi-selection and undo/redo tested |
+| KEY-LABELS | Labels — 6…9 | P1 | ✅ | `crates/ui-egui/src/shortcuts.rs` → `cmd:photo.label` | 6 red, 7 yellow, 8 green, 9 blue; Shift+6–9 labels and advances; purple/none available from menus |
 | KEY-MASKING | Masking — M | P0 | ✅ | `cmd:panel.masking` | |
 | KEY-ERASE | Erase while held — ⌥ | P0 | ✅ | `crates/ui-egui/src/panels/detail.rs`, `crates/ui-egui/src/panels/masking.rs` | ⌥ while painting flips Add ↔ Erase for that stroke; Add/Erase buttons too |
 | KEY-RATEADVANCE | Rate and advance — ⇧0…5 | P1 | ✅ | `crates/ui-egui/src/shortcuts.rs` → `cmd:photo.rate` (`advance`) | |
-| KEY-FLAGADVANCE | Flag and advance — ⇧Z / ⇧X / ⇧U | P1 | ✅ | `cmd:photo.flag` (`advance`), `crates/ui-egui/src/shortcuts.rs` | ⇧Z pick, ⇧X reject, ⇧U unflag, each moving to the next photo |
+| KEY-FLAGADVANCE | Flag and advance — ⇧Z / ⇧X / ⇧U | P1 | ✅ | `cmd:photo.flag` (`advance`), `crates/ui-egui/src/shortcuts.rs` | Shift+Z pick, Shift+X reject, Shift+U clear; Shift+P also picks and advances in the library grids; exactly one step with Auto Advance enabled |
 | KEY-NEXTPREV | Next / previous — → / ← | P0 | ✅ | `cmd:library.next`, `cmd:library.previous` | |
 | KEY-BA-CYCLE | Before/after — Y | P0 | ✅ | `cmd:view.beforeAfter` | toggles side by side (no cycling) |
 | KEY-BA-TOPBOTTOM | Before/after top/bottom — ⌥Y | P1 | ✅ | `cmd:view.beforeAfterTopBottom`, `cmd:view.beforeAfterSplitTopBottom` | ⌥Y, ⇧⌥Y |
@@ -799,7 +801,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | KEYC-SECONDWINDOW | Classic secondary-window keys | P2 | ⬜ | | |
 | KEYC-CATALOG | Classic photo/catalog keys (⇧⌘I, ⌘', ⌘R, F2, ⌫, ⇧⌘E…) | P2 | ✅ | `cmd:library.import`, `cmd:photo.delete`, `cmd:photo.virtualCopy`, `cmd:app.showInFinder`, `cmd:dialog.rename`, `cmd:photo.editInExternal` | ⇧⌘I add, ⌘' virtual copy, ⌘R show in Finder, F2 rename, ⌫ delete, ⇧⌘E external editor |
 | KEYC-COMPARE | Classic grid/compare keys (Z, Home/End, =/−, ⌘⇧D, S…) | P2 | 🟡 | `cmd:view.zoomToggle` | Z toggles zoom; no compare, stacks, thumbnail-size keys |
-| KEYC-RATING | Classic rating/flag keys (1–5, ⇧1–5, 6–9, P, X, U, ⇧X, ⇧U, `[` `]`, \`) | P2 | 🟡 | `cmd:photo.rate`, `cmd:photo.pick`, `cmd:photo.flag` | most work; no ⇧P / ⇧6–9 advance, rating `[` `]`, flag cycle, filter-bar keys |
+| KEYC-RATING | Classic rating/flag keys (1–5, ⇧1–5, 6–9, P, X, U, ⇧X, ⇧U, `[` `]`, \`) | P2 | 🟡 | `cmd:photo.rate`, `cmd:photo.pick`, `cmd:photo.flag` | 0–5 / Shift+0–5 and 6–9 / Shift+6–9; P/X/U, Shift+X/U and grid Shift+P work; tests cover batch/undo, active Compare candidate and text focus. Missing: Shift+P outside grids (Presets), rating `[` / `]`, flag cycle and filter-bar keys |
 | KEYC-COLLECTIONS | Classic collection keys (⌘N, B…) | P2 | 🟡 | `cmd:dialog.newAlbum` | ⌘N new album; no quick collection |
 | KEYC-METADATA | Classic keyword/metadata keys (⌘K, ⌘S, ⌘⌥⇧C/V…) | P2 | 🟡 | `cmd:photo.saveMetadataToFile` | ⌘S saves metadata; no keyword sets, metadata copy/paste |
 | KEYC-DEVELOP | Classic develop keys (V, ⌘U, ⇧⌘U, R, Q, K, M, ⇧M, ⇧W, ⇧J, ⇧Q…) | P2 | 🟡 | `cmd:develop.treatment`, `cmd:develop.reset`, `cmd:crop.reset` | V, ⇧⌘R, ⌥⌘R, W, J, Y, ⇧Y, \ match; R/K/M/⇧M differ; no Classic keymap layer |

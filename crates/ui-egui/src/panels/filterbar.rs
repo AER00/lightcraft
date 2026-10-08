@@ -16,15 +16,7 @@ pub const HEIGHT: f32 = 40.0;
 const WIDE: f32 = 1240.0;
 
 /// Colour-label swatches (UI colours, our own choice).
-pub fn label_color(l: ColorLabel) -> Color32 {
-    match l {
-        ColorLabel::Red => Color32::from_rgb(222, 72, 72),
-        ColorLabel::Yellow => Color32::from_rgb(232, 196, 58),
-        ColorLabel::Green => Color32::from_rgb(88, 176, 92),
-        ColorLabel::Blue => Color32::from_rgb(72, 130, 222),
-        ColorLabel::Purple => Color32::from_rgb(158, 100, 210),
-    }
-}
+pub use crate::theme::label_color;
 
 fn filter(app: &mut LightcraftApp, patch: Value) {
     let _ = app.run("library.filter", patch);

@@ -2,6 +2,13 @@
 
 ## October 2026
 
+### Library keyboard culling
+- Colour labels tint thumbnail surrounds in Square Grid and the Detail filmstrip, and the footer in Photo Grid. Label confirmations use a matching pale colour; the photo pixels retain their original appearance.
+- Setting or clearing a colour label shows a brief bottom confirmation, like rating a photo; custom label names appear in the message too.
+- On macOS, ratings `0–5`, labels `6–9` and pick/unflag `P/U` now reach the app even when shown in the native menu (issue #283; adapted from PR #261).
+- `Shift+6–9` labels and advances. `Shift+P` picks and advances in Photo Grid and Square Grid; it opens Presets in other views. With Auto Advance on, Shift still moves only once.
+- Help → Keyboard Shortcuts includes the number-key bindings. See [library shortcuts](library-shortcuts.md).
+
 ### RAW decoding
 - Sony ILCE-7M4 downsized lossless ARWs now decode subsampled YCbCr tiles into linear RGB,
   preserving RAW editing & full-resolution export instead of using embedded JPEG previews.

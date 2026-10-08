@@ -1609,11 +1609,16 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
             let state = app.session.selection.state_of(*id);
             let sel = state == lightcraft_engine::SelectionState::Active;
             let p = ui.painter();
-            if state != lightcraft_engine::SelectionState::NotSelected {
-                p.rect_filled(cr, 0.0, t.cell_selected);
+            let label = app.session.catalog.photo(*id).and_then(|ph| ph.label);
+            let selected = state != lightcraft_engine::SelectionState::NotSelected;
+            let base = if selected {
+                t.cell_selected
             } else if resp.hovered() {
-                p.rect_filled(cr, 0.0, t.cell_selected.gamma_multiply(0.6));
-            }
+                t.cell_selected.gamma_multiply(0.6)
+            } else {
+                t.canvas
+            };
+            p.rect_filled(cr, 0.0, crate::theme::label_background(base, label, selected));
             let names = app.ui.settings.film_names;
             if let Some(ph) = app.session.catalog.photo(*id).filter(|_| names) {
                 let name = ph.file_name.rsplit_once('.').map(|(n, _)| n).unwrap_or(&ph.file_name);
