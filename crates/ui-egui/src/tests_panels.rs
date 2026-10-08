@@ -201,7 +201,7 @@ fn sidebar_sections_collapse_and_remember_it() {
 }
 
 /// By Date and Keywords count the whole library, so choosing a row shows its photos from All
-/// Photos even when another source (here Picks, which is empty) was open (issue #341).
+/// Photos even when another source (here Recently Deleted, which is empty) was open (issue #341).
 #[test]
 fn date_and_keyword_rows_show_their_photos_from_any_source() {
     let mut h = demo([1400.0, 900.0], json!({"view": "photoGrid", "leftPanel": true}));
@@ -209,10 +209,10 @@ fn date_and_keyword_rows_show_their_photos_from_any_source() {
     let year = h.app.session.catalog.photo(first).and_then(|p| p.captured.clone()).expect("demo photo date")[..4].to_string();
     // (Keywords rows go through the same helper, `browse_all_photos`)
     for (row, key) in [(format!("date:{year}"), "date")] {
-        let r = h.request("engine.execute", json!({"command": "library.source", "params": {"kind": "picks"}}), T);
+        let r = h.request("engine.execute", json!({"command": "library.source", "params": {"kind": "recentlyDeleted"}}), T);
         assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
-        assert!(h.app.session.visible().is_empty(), "no picks in the demo");
+        assert!(h.app.session.visible().is_empty(), "nothing deleted in the demo");
         let r = h.request("ui.clickWidget", json!({"id": row}), T);
         assert_eq!(r["ok"], true, "{r}");
         h.step();
