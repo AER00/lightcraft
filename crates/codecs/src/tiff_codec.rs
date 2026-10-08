@@ -25,7 +25,6 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     let icc = tag_bytes(&mut d, Tag::IccProfile);
     let xmp = tag_bytes(&mut d, Tag::from_u16_exhaustive(700)).map(|v| String::from_utf8_lossy(&v).trim_end_matches('\0').to_string());
     let orientation = d.get_tag_u32(Tag::Orientation).ok().map(|v| v as u16);
-    let photometric = d.get_tag_u32(Tag::PhotometricInterpretation).ok();
     let planar = d.get_tag_u32(Tag::PlanarConfiguration).ok() == Some(2);
     let extra = d.get_tag_u16_vec(Tag::ExtraSamples).ok().unwrap_or_default();
     let colormap = d.get_tag_u16_vec(Tag::ColorMap).ok();
@@ -94,14 +93,8 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
         return finish(F, raw, meta, (w, h), opts);
     }
 
-    // WhiteIsZero → invert.
-    if photometric == Some(0) {
-        match &mut buf {
-            Buf::U8(v) => v.iter_mut().for_each(|x| *x = 255 - *x),
-            Buf::U16(v) => v.iter_mut().for_each(|x| *x = 65535 - *x),
-            Buf::F32(v) => v.iter_mut().for_each(|x| *x = 1.0 - *x),
-        }
-    }
+    // WhiteIsZero needs nothing here: the `tiff` crate inverts those samples as it reads them (and
+    // refuses WhiteIsZero layouts it can't invert), so inverting again would show a negative.
 
     // Drop extra samples beyond colour + one alpha.
     let keep = n_color + has_alpha as usize;

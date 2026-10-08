@@ -245,6 +245,44 @@ fn tiff_cmyk_and_orientation() {
     assert!(red[0] > 0.99 && red[1] < 0.01 && red[2] < 0.01, "{red:?}");
 }
 
+/// A one-strip, uncompressed, single-sample TIFF (little-endian) whose samples are `bits` wide and
+/// already packed into `strip`, one padded row after another.
+fn packed_tiff(width: u16, height: u16, bits: u16, photometric: u16, strip: &[u8]) -> Vec<u8> {
+    const STRIP_AT: u32 = 8 + 2 + 9 * 12 + 4;
+    let short = |tag: u16, v: u16| [&tag.to_le_bytes()[..], &3u16.to_le_bytes(), &1u32.to_le_bytes(), &v.to_le_bytes(), &[0, 0]].concat();
+    let long = |tag: u16, v: u32| [&tag.to_le_bytes()[..], &4u16.to_le_bytes(), &1u32.to_le_bytes(), &v.to_le_bytes()].concat();
+    let mut b = b"II*\0".to_vec();
+    b.extend(8u32.to_le_bytes());
+    b.extend(9u16.to_le_bytes());
+    b.extend(short(256, width));
+    b.extend(short(257, height));
+    b.extend(short(258, bits));
+    b.extend(short(259, 1));
+    b.extend(short(262, photometric));
+    b.extend(long(273, STRIP_AT));
+    b.extend(short(277, 1));
+    b.extend(short(278, height));
+    b.extend(long(279, strip.len() as u32));
+    b.extend(0u32.to_le_bytes());
+    assert_eq!(b.len(), STRIP_AT as usize);
+    b.extend_from_slice(strip);
+    b
+}
+
+/// WhiteIsZero (photometric 0) gray: the lowest sample is white. The `tiff` crate already inverts these
+/// samples, and a second inversion here used to show every WhiteIsZero scan as a negative.
+#[test]
+fn tiff_white_is_zero_is_inverted_once() {
+    // Two pixels: the lowest sample, then the highest, at 8 and 16 bits.
+    for (bits, strip) in [(8, vec![0u8, 255]), (16, [0u16.to_le_bytes(), 65535u16.to_le_bytes()].concat())] {
+        for (photometric, first) in [(0, 1.0), (1, 0.0)] {
+            let d = decode(&packed_tiff(2, 1, bits, photometric, &strip), DecodeOptions::default()).unwrap();
+            let (a, b) = (d.image.get(0, 0)[1], d.image.get(1, 0)[1]);
+            assert!((a - first).abs() < 1e-6 && (b - (1.0 - first)).abs() < 1e-6, "{bits}-bit, photometric {photometric}: {a} {b}");
+        }
+    }
+}
+
 #[test]
 fn webp_lossless_exact() {
     let img = gradient(31, 19);
