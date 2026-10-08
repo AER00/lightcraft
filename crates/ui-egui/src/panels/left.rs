@@ -10,6 +10,21 @@ use crate::icons::{Icon, paint};
 use crate::theme::Tokens;
 use crate::widgets::{icon_button, register};
 
+/// How wide the sidebar's content needs to be, from the widest row of the last frame: rows are
+/// drawn at this width (or the panel's, if wider), and the sidebar scrolls sideways when it
+/// exceeds the panel. One frame behind, which needs no second layout pass.
+pub(crate) fn content_width(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(egui::Id::new("left-content-width"))).unwrap_or(0.0)
+}
+
+/// A row says how wide it needs to be.
+fn note_width(ui: &egui::Ui, w: f32) {
+    ui.data_mut(|d| {
+        let m = d.get_temp_mut_or_insert_with::<f32>(egui::Id::new("left-content-width-next"), || 0.0);
+        *m = m.max(w);
+    });
+}
+
 fn row(
     app: &mut LightcraftApp,
     ui: &mut egui::Ui,
@@ -57,16 +72,19 @@ fn row_named(
         icon,
         if selected { t.text } else { t.icon },
     );
-    ui.painter().text(
+    let label_rect = ui.painter().text(
         pos2(r.left() + 42.0 + indent, r.center().y),
         Align2::LEFT_CENTER,
         label,
         t.font(13.5),
         if selected { t.text } else { t.text_label },
     );
+    let mut needed = label_rect.right() - r.left() + 18.0;
     if let Some(n) = count.filter(|_| app.ui.show_counts) {
-        ui.painter().text(pos2(r.right() - 18.0, r.center().y), Align2::RIGHT_CENTER, n.to_string(), t.font(12.5), t.text_dim);
+        let c = ui.painter().text(pos2(r.right() - 18.0, r.center().y), Align2::RIGHT_CENTER, n.to_string(), t.font(12.5), t.text_dim);
+        needed += c.width() + 16.0;
     }
+    note_width(ui, needed);
     let _ = app;
     resp
 }
@@ -106,7 +124,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ui.painter().text(pos2(hr.left() + 18.0, hr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("My Photos"), t.semibold(15.0), t.text);
         let counts = app.caches.counts(&app.session.catalog);
         let (total, picks, deleted) = (counts.total, counts.picks, counts.deleted);
-        egui::ScrollArea::vertical().id_salt("left-scroll").auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::both().id_salt("left-scroll").auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
+            // rows are as wide as the widest one needs (last frame), at least the panel
+            let wide = viewport.width().max(content_width(ui.ctx()));
+            ui.set_min_width(wide);
+            ui.set_max_width(wide);
+            ui.data_mut(|d| d.insert_temp(egui::Id::new("left-content-width-next"), 0.0f32));
             let src = app.session.source;
             for (id, icon, label, count, s) in [
                 ("all", Icon::Photos, "All Photos", Some(total), LibrarySource::All),
@@ -127,9 +150,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.add_space(10.0);
             // Albums header
             let (ar, albums_open) = sidebar_section_header(app, ui, "albums", "Albums");
+            // the + stays at the visible edge when the sidebar is scrolled sideways
+            let plus_right = (ar.left() + viewport.max.x).min(ar.right());
             let mut hdr = ui.new_child(
                 egui::UiBuilder::new()
-                    .max_rect(Rect::from_min_max(pos2(ar.right() - 50.0, ar.top()), ar.right_bottom()))
+                    .max_rect(Rect::from_min_max(pos2(plus_right - 50.0, ar.top()), pos2(plus_right, ar.bottom())))
                     .layout(egui::Layout::right_to_left(egui::Align::Center)),
             );
             let plus = icon_button(&mut hdr, "albumNew", Icon::Plus, vec2(26.0, 26.0), false, true, "Create Album");
@@ -179,6 +204,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.add_space(10.0);
             if row(app, ui, "recentlyDeleted", Icon::Trash, "Recently Deleted", Some(deleted), src == LibrarySource::RecentlyDeleted, 0.0).clicked() {
                 let _ = app.run("library.source", json!({"kind": "recentlyDeleted"}));
+            }
+            // what the rows asked for becomes next frame's width
+            let next = ui.data(|d| d.get_temp::<f32>(egui::Id::new("left-content-width-next"))).unwrap_or(0.0);
+            if (next - content_width(ui.ctx())).abs() > 0.5 {
+                ui.data_mut(|d| d.insert_temp(egui::Id::new("left-content-width"), next));
+                ui.ctx().request_repaint();
             }
         });
     });
@@ -773,10 +804,6 @@ fn reveal_chosen(app: &LightcraftApp, ui: &egui::Ui, tree: &[FolderNode]) {
     open_above(ui, tree, &chosen);
 }
 
-/// Deeper folders keep this indent: a chain of a dozen single folders would otherwise push every
-/// label out of the sidebar.
-const MAX_FOLDER_INDENT: f32 = 16.0 * 5.0;
-
 fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode], indent: f32) {
     let t = Tokens::get(ui.ctx());
     for n in nodes {
@@ -792,14 +819,7 @@ fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode],
             && app.session.source == LibrarySource::LibraryFolder
             && app.session.library_folder.as_deref().is_some_and(|f| same_folder(f, &n.path));
         let name = if selectable { n.name.clone() } else { crate::i18n::tr("This Computer").to_string() };
-        // room for the name: between the icon and the count
-        let font = t.font(13.5);
-        let count_w =
-            if app.ui.show_counts { ui.painter().layout_no_wrap(n.count.to_string(), t.font(12.5), egui::Color32::WHITE).size().x } else { 0.0 };
-        let room = ui.available_width() - 42.0 - indent - count_w - 28.0;
-        let label =
-            crate::widgets::elide_head(&name, room, |s| ui.painter().layout_no_wrap(s.to_string(), font.clone(), egui::Color32::WHITE).size().x);
-        let resp = row_named(app, ui, &format!("libfolder:{}", n.path), Icon::Folder, &label, Some(&name), Some(n.count), sel, indent);
+        let resp = row_named(app, ui, &format!("libfolder:{}", n.path), Icon::Folder, &name, Some(&name), Some(n.count), sel, indent);
         let mut toggled = false;
         if !n.children.is_empty() {
             // disclosure triangle left of the icon
@@ -837,7 +857,7 @@ fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode],
         }
         row_menu(app, &resp, n);
         if open && !n.children.is_empty() {
-            folder_rows(app, ui, &n.children, (indent + 16.0).min(MAX_FOLDER_INDENT));
+            folder_rows(app, ui, &n.children, indent + 16.0);
         }
     }
 }

@@ -429,23 +429,35 @@ fn removing_a_disk_from_the_library_asks_first() {
     assert_eq!(h.app.session.visible().len(), 1, "everything on that disk left the library");
 }
 
-/// However deep the folders go, a row keeps its name, count and click targets inside the panel:
-/// the indent stops growing after five levels instead of pushing the label out of the row.
+/// However deep the folders go, each level is indented one step more than its parent, and the
+/// sidebar scrolls sideways to reach them instead of squeezing the nesting.
 #[test]
-fn a_deep_chain_of_folders_keeps_its_rows_usable() {
+fn a_deep_chain_keeps_its_nesting_and_the_sidebar_scrolls_sideways() {
     let deep = "/a/b/c/d/e/f/g/h/i/j/k/l/m";
     let mut h = folders_app(&[&format!("{deep}/x/1.jpg"), &format!("{deep}/y/2.jpg")]);
-    let toggles: Vec<(String, egui::Rect)> = h.app.widgets.iter().filter(|(w, _)| w.starts_with("libraryFolderToggle:")).cloned().collect();
-    assert!(toggles.len() >= 12, "the chain opens by itself: {}", toggles.len());
-    let row = widget(&h, "source:libfolder:/a");
-    for (id, r) in &toggles {
-        assert!(r.center().x <= row.left() + 10.0 + 16.0 * 5.0 + 1.0, "{id}: the triangle stays near the left edge ({r:?})");
+    let mut xs: Vec<f32> = Vec::new();
+    let mut path = String::new();
+    for name in deep.split('/').filter(|n| !n.is_empty()) {
+        path.push('/');
+        path.push_str(name);
+        xs.push(widget(&h, &format!("libraryFolderToggle:{path}")).center().x);
     }
+    assert!(xs.len() == 13 && xs.windows(2).all(|w| (w[1] - w[0] - 16.0).abs() < 0.5), "every level steps right by one indent: {xs:?}");
+    let panel = widget(&h, "panel:left_panel");
+    assert!(crate::panels::left::content_width(&h.view.ctx) > panel.width(), "the content is wider than the panel: the bar appears");
+    // what a row needs is known before it is drawn off screen, so the plus stays reachable
+    assert!(widget(&h, "icon:albumNew").right() <= panel.right(), "Create Album stays inside the visible panel");
     // a click in the middle of a deep row chooses it; only the little triangle folds it
-    let leaf = format!("source:libfolder:{deep}/x");
-    assert!(has(&h, "libraryFolderToggle:/a/b/c/d/e/f/g/h/i/j/k/l/m") || has(&h, &leaf));
     click(&mut h, "source:libfolder:/a/b/c/d/e/f/g/h/i/j/k/l");
     assert_eq!(h.app.session.library_folder.as_deref(), Some("/a/b/c/d/e/f/g/h/i/j/k/l"), "the row's middle is the row, not its triangle");
+}
+
+/// A sidebar that fits needs no sideways scrolling.
+#[test]
+fn a_sidebar_that_fits_does_not_scroll_sideways() {
+    let h = folders_app(&["/pics/trip/a.jpg", "/pics/home/b.jpg"]);
+    let panel = widget(&h, "panel:left_panel");
+    assert!(crate::panels::left::content_width(&h.view.ctx) <= panel.width(), "no horizontal bar for a shallow tree");
 }
 
 /// A long folder name is trimmed before it can run under the photo count.
