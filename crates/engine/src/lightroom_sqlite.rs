@@ -284,7 +284,7 @@ impl Database {
         let local = if payload_len <= max_local {
             payload_len
         } else {
-            let span = usable - 4;
+            let span = usable.checked_sub(4).ok_or("SQLite usable page size is too small")?;
             let candidate = min_local.saturating_add(payload_len.checked_sub(min_local).ok_or("SQLite payload length is too small")? % span);
             if candidate > max_local { min_local } else { candidate }
         };
