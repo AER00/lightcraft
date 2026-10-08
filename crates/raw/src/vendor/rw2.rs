@@ -43,7 +43,9 @@
 //!   reads as repeats of one code only in this order; MSB-first reading gives code frequencies of exactly
 //!   2^−length, the signature of random bits]. Tag `0x0040` lists (length, code) for 17 prefix codes, the difference
 //!   categories 0–16 of ITU-T T.81 (category `c`, then `c` additional bits, a leading 0 meaning negative). Pixels
-//!   are coded two rows at a time, cell by 2×2 cell (top-left, top-right, bottom-left, bottom-right); each is
+//!   are coded two rows at a time, cell by 2×2 cell, column by column (top-left, bottom-left, top-right,
+//!   bottom-right) [in row order the two greens trade sites: an edge's even and odd rows of green then sit ~2 px
+//!   apart with red and blue between them]; each is
 //!   predicted from the same site of the previous cell, the first cell of a row pair from the first cell of the
 //!   previous pair, 0 at the top [the strips decode to the camera JPEG's image without seams]. The streams end a
 //!   few padding rows before their stated length. Tags `0x0039`–`0x003f`, `0x0041` and `0x0043` carry the same
@@ -401,7 +403,7 @@ fn decode_strip(s: &Strip, codes: &Huffman, mut rows: Vec<&mut [u16]>) -> Result
             for (k, v) in cell.iter_mut().enumerate() {
                 let d = diff(&mut bits, codes).ok_or_else(|| RawError::Corrupt(format!("RW2 format 8: invalid code in row {}", 2 * pair)))?;
                 *v = v.saturating_add(d);
-                if let Some(px) = rows.get_mut(2 * pair + k / 2).and_then(|r| r.get_mut(2 * cx + k % 2)) {
+                if let Some(px) = rows.get_mut(2 * pair + k % 2).and_then(|r| r.get_mut(2 * cx + k / 2)) {
                     *px = (*v).clamp(0, u16::MAX as i32) as u16;
                 }
             }
@@ -962,7 +964,7 @@ mod tests {
             let mut cell = first;
             for cx in 0..w / 2 {
                 for (k, p) in cell.iter_mut().enumerate() {
-                    let v = at(2 * cx + k % 2, 2 * pair + k / 2);
+                    let v = at(2 * cx + k / 2, 2 * pair + k % 2);
                     let d = v - *p;
                     let c = 32 - d.unsigned_abs().leading_zeros();
                     let (len, code) = table[c as usize];
@@ -1024,6 +1026,26 @@ mod tests {
             assert_eq!(crate::probe_info(&bytes).unwrap(), r.info());
             assert_eq!(r.black.mean(), 512.0, "format 8 stores samples at the recorded black level");
         }
+    }
+
+    #[test]
+    fn format8_cell_is_coded_column_by_column() {
+        // One 2×2 cell coded by hand (not with `encode_strip`, which shares the decoder's site order): the values
+        // 1, 2, 3, 4 in stream order. Row order would put the two greens of an RGGB cell on each other's sites.
+        let mut bits: Vec<bool> = vec![];
+        let mut put = |n: u32, v: u32| bits.extend((0..n).rev().map(|i| v >> i & 1 == 1));
+        for v in [1u32, 2, 3, 4] {
+            let c = 32 - v.leading_zeros();
+            let (len, code) = TABLE14[c as usize];
+            put(len, code);
+            put(c, v);
+        }
+        let n = bits.len() as u64;
+        let mut data: Vec<u8> = bits.chunks(8).map(|b| b.iter().enumerate().fold(0u8, |a, (i, &x)| a | (x as u8) << i)).collect();
+        data.extend([0; 8]);
+        let (mut top, mut bottom) = ([0u16; 2], [0u16; 2]);
+        decode_strip(&Strip { data: &data, width: 2, height: 2, bits: n }, &code_table(&TABLE14).unwrap(), vec![&mut top, &mut bottom]).unwrap();
+        assert_eq!((top, bottom), ([1, 3], [2, 4]), "top-left, bottom-left, top-right, bottom-right");
     }
 
     fn replace(tags: &mut Vec<(u16, Value)>, tag: u16, v: Value) {
