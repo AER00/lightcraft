@@ -281,7 +281,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-PROF-LEGACY | Legacy profiles | P2 | ⬜ | | |
 | LR-PROF-NONRAW | Profiles for non-raw files | P0 | ✅ | `cmd:develop.profile` | same looks apply to JPEG/TIFF |
 | LR-PROF-AMOUNT | Profile amount | P1 | ✅ | `ctl:profile.amount` | |
-| LR-PROF-IMPORT | Import profiles | P1 | 🟡 | `cmd:profile.import`, `cmd:profile.deleteImported`, `crates/pipeline/src/lut.rs`, `crates/engine/src/cmd/lut_profiles.rs` | `.cube` 3D LUTs (files, folders, zips) become creative profiles with Amount, grouped in the profile browser, kept with the library; rendered on the CPU; Adobe profile formats deliberately unsupported |
+| LR-PROF-IMPORT | Import profiles | P1 | ✅ | `cmd:profile.import`, `cmd:profile.deleteImported`, `crates/pipeline/src/lut.rs`, `crates/engine/src/cmd/lut_profiles.rs`, `crates/ui-egui/src/panels/edit.rs`, `crates/ui-egui/src/panels/profiles.rs` | `.cube` 3D LUTs (files, folders, zips) become creative profiles with Amount, grouped in the profile browser, kept with the library; rendered on the CPU; Adobe profile formats deliberately unsupported |
 
 ## H. Crop & rotate (CROP)
 
