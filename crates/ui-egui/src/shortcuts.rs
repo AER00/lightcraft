@@ -17,6 +17,10 @@ pub const ALIASES: &[(&str, &str, &str)] = &[
     ("Shift+X", "photo.flag", r#"{"flag": "reject", "advance": true}"#),
     ("Shift+Z", "photo.flag", r#"{"flag": "pick", "advance": true}"#),
     ("Shift+U", "photo.flag", r#"{"flag": "none", "advance": true}"#),
+    ("Shift+6", "photo.label", r#"{"label": "red", "advance": true}"#),
+    ("Shift+7", "photo.label", r#"{"label": "yellow", "advance": true}"#),
+    ("Shift+8", "photo.label", r#"{"label": "green", "advance": true}"#),
+    ("Shift+9", "photo.label", r#"{"label": "blue", "advance": true}"#),
     // Shift+[ / Shift+] arrive as { / } on most layouts
     ("Shift+{", "brush.featherLess", "{}"),
     ("Shift+}", "brush.featherMore", "{}"),
@@ -67,12 +71,21 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
 
 fn matches(i: &egui::InputState, m: Modifiers, k: Key) -> bool {
     i.events.iter().any(|e| match e {
-        egui::Event::Key { key, pressed: true, modifiers, .. } => {
+        egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } => {
             // `Ctrl` is the physical Control key (on macOS distinct from Cmd; elsewhere Cmd = Ctrl);
             // "Delete" (⌫ = Backspace) also matches forward-delete
             let ctrl_ok = if m.ctrl { modifiers.ctrl } else { !modifiers.ctrl || modifiers.command };
             let cmd_ok = m.ctrl || modifiers.command == m.command;
-            (*key == k || (k == Key::Backspace && *key == Key::Delete)) && ctrl_ok && cmd_ok && modifiers.shift == m.shift && modifiers.alt == m.alt
+            // winit can report shifted digits as punctuation (Shift+1 = `!`). Recognize the
+            // physical number key for culling, without changing layout-aware letter shortcuts.
+            let shifted_digit = m.shift
+                && *physical_key == Some(k)
+                && matches!(k, Key::Num0 | Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::Num6 | Key::Num7 | Key::Num8 | Key::Num9);
+            (*key == k || shifted_digit || (k == Key::Backspace && *key == Key::Delete))
+                && ctrl_ok
+                && cmd_ok
+                && modifiers.shift == m.shift
+                && modifiers.alt == m.alt
         }
         _ => false,
     })
@@ -169,11 +182,17 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         if let Some(rest) = f.strip_prefix("rate:") {
             let (n, adv) = rest.split_once(':').unwrap_or(("0", "0"));
             cull(app, "photo.rate", json!({"rating": n.parse::<u8>().unwrap_or(0)}), adv == "1");
-            let label =
-                if n == "0" { "Rating cleared".to_string() } else { crate::i18n::tr_format!("Rated {}", "★".repeat(n.parse().unwrap_or(0))) };
+            let label = if n == "0" {
+                crate::i18n::tr("Rating cleared").to_string()
+            } else {
+                crate::i18n::tr_format!("Rated {}", "★".repeat(n.parse().unwrap_or(0)))
+            };
             app.toast(ctx, label);
         } else if let Some(l) = f.strip_prefix("label:") {
             cull(app, "photo.label", json!({"label": l}), false);
+        } else if f == "panel.presets" && library_grid(app) {
+            // Classic's Shift+P picks and advances in Library; keep the Presets binding elsewhere.
+            cull(app, "photo.flag", json!({"flag": "pick"}), true);
         } else if f == "view.softProof" && matches!(app.ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid) {
             // S in a grid: expand / collapse the stack (Lightroom's Library binding)
             let _ = app.run("stack.toggle", json!({}));
@@ -183,9 +202,9 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         } else if matches!(f.as_str(), "photo.pick" | "photo.reject" | "photo.unflag") && app.ui.right != crate::state::RightPanel::Crop {
             cull(app, &f, json!({}), false);
             match f.as_str() {
-                "photo.pick" => app.toast(ctx, "Flagged as Pick"),
-                "photo.reject" => app.toast(ctx, "Flagged as Reject"),
-                _ => app.toast(ctx, "Unflagged"),
+                "photo.pick" => app.toast(ctx, crate::i18n::tr("Flagged as Pick")),
+                "photo.reject" => app.toast(ctx, crate::i18n::tr("Flagged as Reject")),
+                _ => app.toast(ctx, crate::i18n::tr("Unflagged")),
             }
         } else {
             // in the full-screen preview (no panels) I cycles the info overlay instead
@@ -221,9 +240,16 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             if f == "tool.brush" && matches!(app.ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid) {
                 if let Ok(r) = app.run("album.toggleTarget", json!({})) {
                     let n = app.session.targets(&json!({})).len();
-                    let what = if n == 1 { "photo".to_string() } else { crate::i18n::tr_format!("{n} photos", n = n) };
+                    let what = crate::i18n::tr_format!("{n} photo{}", if n == 1 { "" } else { "s" }, n = n);
                     let name = r["name"].as_str().unwrap_or("Quick Collection").to_string();
-                    app.toast(ctx, if r["added"] == true { format!("Added {what} to {name}") } else { format!("Removed {what} from {name}") });
+                    app.toast(
+                        ctx,
+                        if r["added"] == true {
+                            crate::i18n::tr_format!("Added {what} to {name}", name = name, what = what)
+                        } else {
+                            crate::i18n::tr_format!("Removed {what} from {name}", name = name, what = what)
+                        },
+                    );
                 }
                 continue;
             }
@@ -265,19 +291,231 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 app.toast(ctx, e);
             }
             match f.as_str() {
-                "photo.pick" => app.toast(ctx, "Flagged as Pick"),
-                "photo.reject" => app.toast(ctx, "Flagged as Reject"),
-                "photo.unflag" => app.toast(ctx, "Unflagged"),
-                "edit.undo" => app.toast(ctx, "Undo"),
-                "edit.redo" => app.toast(ctx, "Redo"),
+                "photo.pick" => app.toast(ctx, crate::i18n::tr("Flagged as Pick")),
+                "photo.reject" => app.toast(ctx, crate::i18n::tr("Flagged as Reject")),
+                "photo.unflag" => app.toast(ctx, crate::i18n::tr("Unflagged")),
+                "edit.undo" => app.toast(ctx, crate::i18n::tr("Undo")),
+                "edit.redo" => app.toast(ctx, crate::i18n::tr("Redo")),
                 _ => {}
             }
         }
     }
 }
 
+pub(crate) fn library_grid(app: &LightcraftApp) -> bool {
+    matches!(app.ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid)
+}
+
 #[cfg(test)]
 mod tests {
+
+    fn library() -> crate::headless::Headless {
+        use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+        let mut session = lightcraft_engine::Session::new();
+        for id in 1..=4 {
+            let photo = Photo::new(
+                PhotoId(id),
+                Source::File { path: format!("/lightcraft-shortcuts/{id}.jpg") },
+                &format!("{id}.jpg"),
+                "JPEG",
+                100,
+                100,
+                "2026-10-08",
+            );
+            session.catalog.apply(Op::AddPhoto { photo: Box::new(photo) }).unwrap();
+        }
+        session.execute("library.sort", &json!({"key": "fileName", "ascending": true})).unwrap();
+        session.execute("library.select", &json!({"ids": [1]})).unwrap();
+        let app = LightcraftApp::new(session, crate::Services { png: None, ..Default::default() });
+        let mut h = crate::headless::Headless::new(app, [1200.0, 800.0], 1.0);
+        h.app.ui.view = crate::state::ViewMode::PhotoGrid;
+        for _ in 0..3 {
+            h.step();
+        }
+        h
+    }
+
+    fn key(h: &mut crate::headless::Headless, key: &str, shift: bool) {
+        let r = h.request("ui.key", json!({"key": key, "shift": shift}), std::time::Duration::from_secs(20));
+        assert_eq!(r["ok"], true, "{r}");
+    }
+
+    #[test]
+    fn library_rating_labels_flags_and_undo() {
+        use lightcraft_catalog::{ColorLabel, Flag, PhotoId};
+        for view in [crate::state::ViewMode::PhotoGrid, crate::state::ViewMode::SquareGrid] {
+            let mut h = library();
+            h.app.ui.view = view;
+            h.app.session.execute("library.select", &json!({"ids": [1, 2], "active": 1})).unwrap();
+            for rating in [1, 2, 3, 4, 5, 0] {
+                key(&mut h, &rating.to_string(), false);
+                for id in [1, 2] {
+                    assert_eq!(h.app.session.catalog.photo(PhotoId(id)).unwrap().rating, rating);
+                }
+            }
+            for (k, label) in [("6", ColorLabel::Red), ("7", ColorLabel::Yellow), ("8", ColorLabel::Green), ("9", ColorLabel::Blue)] {
+                key(&mut h, k, false);
+                assert_eq!(h.app.session.catalog.photo(PhotoId(1)).unwrap().label, Some(label));
+                assert_eq!(h.app.session.catalog.photo(PhotoId(2)).unwrap().label, Some(label));
+            }
+            for (k, flag) in [("P", Flag::Pick), ("X", Flag::Reject), ("U", Flag::None)] {
+                key(&mut h, k, false);
+                assert_eq!(h.app.session.catalog.photo(PhotoId(1)).unwrap().flag, flag);
+                assert_eq!(h.app.session.catalog.photo(PhotoId(2)).unwrap().flag, flag);
+            }
+            h.app.session.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(h.app.session.catalog.photo(PhotoId(1)).unwrap().flag, Flag::Reject);
+            assert_eq!(h.app.session.catalog.photo(PhotoId(2)).unwrap().flag, Flag::Reject);
+            h.app.session.execute("edit.redo", &json!({})).unwrap();
+            assert_eq!(h.app.session.catalog.photo(PhotoId(1)).unwrap().flag, Flag::None);
+            assert_eq!(h.app.session.active(), Some(PhotoId(1)));
+        }
+    }
+
+    #[test]
+    fn shift_culling_keys_advance_exactly_once() {
+        use lightcraft_catalog::{ColorLabel, Flag, PhotoId};
+        for auto in [false, true] {
+            for (k, rating, label, flag) in [
+                ("0", 0, None, Flag::Pick),
+                ("5", 5, None, Flag::Pick),
+                ("6", 3, Some(ColorLabel::Red), Flag::Pick),
+                ("7", 3, Some(ColorLabel::Yellow), Flag::Pick),
+                ("8", 3, Some(ColorLabel::Green), Flag::Pick),
+                ("9", 3, Some(ColorLabel::Blue), Flag::Pick),
+                ("P", 3, None, Flag::Pick),
+                ("X", 3, None, Flag::Reject),
+                ("U", 3, None, Flag::None),
+            ] {
+                let mut h = library();
+                h.app.ui.auto_advance = auto;
+                h.app.session.execute("photo.rate", &json!({"rating": 3})).unwrap();
+                h.app.session.execute("photo.pick", &json!({})).unwrap();
+                key(&mut h, k, true);
+                let p = h.app.session.catalog.photo(PhotoId(1)).unwrap();
+                assert_eq!(p.rating, rating, "Shift+{k}");
+                assert_eq!(p.label, label, "Shift+{k}");
+                assert_eq!(p.flag, flag, "Shift+{k}");
+                assert_eq!(h.app.session.active(), Some(PhotoId(2)), "Shift+{k}, auto={auto}");
+            }
+        }
+        let mut h = library();
+        h.app.session.execute("library.select", &json!({"ids": [4]})).unwrap();
+        key(&mut h, "6", true);
+        assert_eq!(h.app.session.active(), Some(PhotoId(4)), "last photo stays selected");
+    }
+
+    #[test]
+    fn shift_pick_preserves_presets_outside_the_library_grids() {
+        let mut h = library();
+        h.app.ui.view = crate::state::ViewMode::SquareGrid;
+        key(&mut h, "P", true);
+        assert_eq!(h.app.session.active(), Some(lightcraft_catalog::PhotoId(2)));
+        assert!(!h.app.ui.presets, "grid Shift+P must not open Presets");
+        assert_eq!(h.app.ui.view, crate::state::ViewMode::SquareGrid);
+        h.app.ui.view = crate::state::ViewMode::Detail;
+        key(&mut h, "P", true);
+        assert!(h.app.ui.presets);
+        assert_eq!(h.app.session.active(), Some(lightcraft_catalog::PhotoId(2)));
+    }
+
+    #[test]
+    fn shift_label_targets_only_candidate_in_compare() {
+        use lightcraft_catalog::{ColorLabel, PhotoId};
+        let mut h = library();
+        h.app.session.execute("library.select", &json!({"ids": [1, 2], "active": 1})).unwrap();
+        crate::panels::compare::enter_compare(&mut h.app).unwrap();
+        key(&mut h, "6", true);
+        assert_eq!(h.app.session.catalog.photo(PhotoId(1)).unwrap().label, None);
+        assert_eq!(h.app.session.catalog.photo(PhotoId(2)).unwrap().label, Some(ColorLabel::Red));
+        assert_eq!(h.app.session.active(), Some(PhotoId(3)));
+    }
+
+    #[test]
+    fn plain_culling_keys_auto_advance_once() {
+        use lightcraft_catalog::PhotoId;
+        for k in ["0", "5", "6", "9", "P", "X", "U"] {
+            let mut h = library();
+            h.app.ui.auto_advance = true;
+            key(&mut h, k, false);
+            assert_eq!(h.app.session.active(), Some(PhotoId(2)), "{k}");
+        }
+    }
+
+    #[test]
+    fn color_label_actions_show_feedback_only_after_success() {
+        use lightcraft_catalog::PhotoId;
+        let mut h = library();
+        for shift in [false, true] {
+            for (k, name) in [("6", "Red"), ("7", "Yellow"), ("8", "Green"), ("9", "Blue")] {
+                h.app.session.execute("library.select", &json!({"ids": [1]})).unwrap();
+                h.app.ui.toast = None;
+                key(&mut h, k, shift);
+                assert_eq!(h.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some(format!("{name} Label").as_str()));
+                assert_eq!(h.app.ui.toast.as_ref().and_then(|t| t.2), h.app.session.catalog.photo(PhotoId(1)).unwrap().label);
+                assert_eq!(h.app.session.active(), Some(PhotoId(if shift { 2 } else { 1 })));
+            }
+        }
+        // Menus and the Info-panel swatches dispatch the same command, including purple/clear.
+        h.app.run("photo.label", json!({"label": "purple"})).unwrap();
+        assert_eq!(h.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some("Purple Label"));
+        h.app.run("photo.label", json!({"label": "none"})).unwrap();
+        assert_eq!(h.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some("Color label cleared"));
+        assert!(h.app.ui.toast.as_ref().is_some_and(|t| t.2.is_none()), "clear uses neutral feedback");
+        h.app.session.execute("label.setNames", &json!({"names": {"red": "Needs review"}})).unwrap();
+        key(&mut h, "6", false);
+        assert_eq!(h.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some("Needs review Label"));
+        // Native menu callbacks run before logic() catches up to the current frame's clock.
+        let now = h.view.ctx.input(|i| i.time);
+        h.app.last_time = now - 10.0;
+        h.app.run("photo.label", json!({"label": "blue"})).unwrap();
+        assert!(h.app.ui.toast.as_ref().is_some_and(|t| t.1 > now), "menu feedback must survive an idle gap");
+        h.app.ui.toast = None;
+        assert!(h.app.run("photo.label", json!({"label": "invalid"})).is_err());
+        assert!(h.app.ui.toast.is_none(), "failed actions must not announce success");
+    }
+
+    #[test]
+    fn shifted_number_punctuation_rates_and_advances() {
+        use lightcraft_catalog::PhotoId;
+        let mut h = library();
+        // A real winit event on a layout with Shift+1 = !, rather than ui.key's logical Num1.
+        for pressed in [true, false] {
+            h.app.synthetic.push(egui::Event::Key {
+                key: Key::Exclamationmark,
+                physical_key: Some(Key::Num1),
+                pressed,
+                repeat: false,
+                modifiers: Modifiers::SHIFT,
+            });
+        }
+        h.step();
+        assert_eq!(h.app.session.catalog.photo(PhotoId(1)).unwrap().rating, 1);
+        assert_eq!(h.app.session.active(), Some(PhotoId(2)));
+    }
+
+    #[test]
+    fn library_keys_yield_to_search_and_crop_context() {
+        use lightcraft_catalog::{Flag, PhotoId};
+        let mut h = library();
+        let r = h.request("ui.clickWidget", json!({"id": "field:search"}), std::time::Duration::from_secs(20));
+        assert_eq!(r["ok"], true, "{r}");
+        for k in ["5", "6", "P", "X", "U"] {
+            key(&mut h, k, false);
+            key(&mut h, k, true);
+        }
+        let p = h.app.session.catalog.photo(PhotoId(1)).unwrap();
+        assert_eq!(p.rating, 0);
+        assert_eq!(p.label, None);
+        assert_eq!(p.flag, Flag::None);
+        assert_eq!(h.app.session.active(), Some(PhotoId(1)));
+
+        let mut h = library();
+        h.app.ui.view = crate::state::ViewMode::Detail;
+        h.app.ui.right = crate::state::RightPanel::Crop;
+        key(&mut h, "X", false);
+        assert_eq!(h.app.session.catalog.photo(PhotoId(1)).unwrap().flag, Flag::None);
+    }
 
     #[test]
     fn delete_means_the_backspace_key() {

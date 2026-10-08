@@ -19,6 +19,19 @@ fn gradient_png(path: &std::path::Path) {
     std::fs::write(path, png).unwrap();
 }
 
+#[test]
+fn calibrate_reads_raf_inputs_and_reports_bad_files() {
+    let input = tmp("invalid.RAF");
+    std::fs::write(&input, b"FUJIFILMCCD-RAW").unwrap();
+    let out = tmp("raf-profiles");
+    let result = Command::new(BIN).args(["calibrate", "--out"]).arg(&out).arg(&input).output().unwrap();
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("1 of 1 raw files"), "RAF was silently ignored: {stderr}");
+    assert!(stderr.contains("invalid.RAF") && stderr.contains("no profile written"), "{stderr}");
+    assert!(!out.join("X-T4.json").exists(), "bad input must not produce a profile");
+}
+
 fn mean(path: &std::path::Path) -> f64 {
     let d = lightcraft_codecs::decode(&std::fs::read(path).unwrap(), Default::default()).unwrap();
     let img = d.to_srgb8();
@@ -183,6 +196,39 @@ fn snapshot_subcommand_renders_the_ui_headlessly() {
     assert_eq!((d.width, d.height), (640, 480));
 }
 
+/// Issue #166: a scripted request that fails makes `snapshot` exit non-zero. The failed reply is
+/// still printed, the later lines still run, and the final `-o` screenshot is still written.
+#[test]
+fn snapshot_script_failure_exits_non_zero() {
+    let script = tmp("snap-fail.jsonl");
+    let out = tmp("snap-fail.png");
+    std::fs::write(
+        &script,
+        format!(
+            "{}\n{}\n",
+            json!({"method": "ui.set", "params": {"view": "grid"}}), // not a view: `photoGrid`, `detail`, …
+            json!({"method": "ui.set", "params": {"view": "photoGrid"}}),
+        ),
+    )
+    .unwrap();
+    let _ = std::fs::remove_file(&out);
+    let o = Command::new(BIN)
+        .args(["snapshot", "--demo", "--script", script.to_str().unwrap(), "-o", out.to_str().unwrap(), "--size", "320x200"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success(), "a failed scripted request must fail the run\n{stderr}");
+    assert!(stderr.contains("1 scripted request(s) failed"), "{stderr}");
+    let replies: Vec<Value> = String::from_utf8_lossy(&o.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    assert_eq!(replies[0]["ok"], false, "{replies:?}");
+    assert!(replies[0]["error"].as_str().unwrap_or("").contains("grid"), "{replies:?}");
+    assert_eq!(replies[1]["ok"], true, "{replies:?}");
+    // continue-and-report: the final screenshot is still written
+    let d = lightcraft_codecs::decode(&std::fs::read(&out).unwrap(), Default::default()).unwrap();
+    assert_eq!((d.width, d.height), (320, 200));
+}
+
 /// Issue #136: with the GPU switched off from the environment the UI starts and renders on the CPU,
 /// without creating a GPU device (no driver is loaded), and says why.
 #[test]
@@ -335,4 +381,30 @@ fn connect_failure_hint_names_the_attempted_port() {
     assert!(!ok);
     assert!(err.contains("--control 18437"), "the hint must name the port it tried: {err}");
     assert!(!err.contains("--control 7980"), "{err}");
+}
+
+/// The CLI logs warnings on stderr (#168): with `RUST_LOG=warn` an unknown GPU backend name is
+/// reported, and `RUST_LOG=off` silences it. Before, no logger was installed and nothing appeared.
+#[test]
+fn warnings_are_logged_on_stderr() {
+    let input = tmp("log-in.png");
+    gradient_png(&input);
+    let out = tmp("log-out.jpg");
+    let run = |level: &str| {
+        let o = Command::new(BIN)
+            .args(["render", input.to_str().unwrap(), "-o", out.to_str().unwrap()])
+            .env("LIGHTCRAFT_GPU_BACKEND", "bogus")
+            .env("RUST_LOG", level)
+            .env_remove("LIGHTCRAFT_LOG")
+            .env_remove("LIGHTCRAFT_GPU")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert!(o.status.success(), "{stderr}");
+        stderr
+    };
+    let warn = run("warn");
+    assert!(warn.contains("LIGHTCRAFT_GPU_BACKEND=bogus names no known backend"), "{warn}");
+    let off = run("off");
+    assert!(!off.contains("names no known backend"), "{off}");
 }

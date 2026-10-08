@@ -55,7 +55,9 @@ Settings ▸ Performance ▸ *Use the GPU for rendering* unchecked (applied befo
 returns, successfully or not. If the marker is still there at the next launch, the process died inside
 the driver: LightCraft starts with GPU rendering off (the preference is saved unchecked), removes the
 marker and says so in a notice. Checking *Use the GPU for rendering* again tries the GPU once more
-(and re-arms the sentinel). Not with `LIGHTCRAFT_NO_PREFS` (tests, scripts). Killing the app during
+(and re-arms the sentinel). Not with `LIGHTCRAFT_NO_PREFS` (tests, scripts), and not in a `--memory` session,
+which writes nothing: it neither arms the sentinel nor removes a marker it finds (it still starts with GPU
+rendering off when one is there, and the next ordinary launch reports and clears it). Killing the app during
 the ~0.3 s of device creation, or two instances starting at the same moment, can trip it falsely —
 harmless: rendering is then on the CPU until the box is checked again. The sentinel only covers the
 compute device; a crash while the window's renderer starts is avoided by the backend defaults above

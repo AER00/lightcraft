@@ -1053,6 +1053,55 @@ mod tests {
         assert_ne!(h.app.session.active(), Some(first), "advanced");
     }
 
+    /// Click a slider's value and type one (issue #322): Return sets it as one undo step, Esc
+    /// keeps the old value, and the keys typed don't reach the shortcuts (1 = one star).
+    #[test]
+    fn slider_values_can_be_typed() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "edit"}), t);
+        h.settle(SETTLE);
+        let active = h.app.session.active().unwrap();
+        let exposure = |h: &Headless| h.app.session.develop_of(h.app.session.active().unwrap()).unwrap().light.exposure;
+        let rating = |h: &Headless| h.app.session.catalog.photo(active).unwrap().rating;
+        let (undo0, rating0) = (h.app.session.undo.len(), rating(&h));
+        assert_eq!(h.request("ui.clickWidget", json!({"id": "sliderValue:light.exposure"}), t)["ok"], true);
+        h.request("ui.text", json!({"text": "1,5"}), t);
+        h.request("ui.key", json!({"key": "Enter"}), t);
+        assert!((exposure(&h) - 1.5).abs() < 1e-9, "{}", exposure(&h));
+        assert_eq!(h.app.session.undo.len(), undo0 + 1, "one undo step");
+        assert_eq!(rating(&h), rating0, "typing 1 set no rating");
+        // Esc keeps the value
+        assert_eq!(h.request("ui.clickWidget", json!({"id": "sliderValue:light.exposure"}), t)["ok"], true);
+        h.request("ui.text", json!({"text": "-2"}), t);
+        h.request("ui.key", json!({"key": "Escape"}), t);
+        assert!((exposure(&h) - 1.5).abs() < 1e-9, "{}", exposure(&h));
+        // something that isn't a number changes nothing
+        assert_eq!(h.request("ui.clickWidget", json!({"id": "sliderValue:light.exposure"}), t)["ok"], true);
+        h.request("ui.text", json!({"text": "bright"}), t);
+        h.request("ui.key", json!({"key": "Enter"}), t);
+        assert!((exposure(&h) - 1.5).abs() < 1e-9, "{}", exposure(&h));
+        assert_eq!(h.app.session.undo.len(), undo0 + 1);
+    }
+
+    /// The eye on a section header switches the section off and on again, one undo step each
+    /// (issue #316).
+    #[test]
+    fn section_eye_switches_a_section_off() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "edit"}), t);
+        h.settle(SETTLE);
+        let light_on = |h: &Headless| h.app.session.develop_of(h.app.session.active().unwrap()).unwrap().section_enabled("light");
+        for expected in [false, true] {
+            // the eye shows while the pointer is on the header
+            assert_eq!(h.request("ui.hoverWidget", json!({"id": "section:light"}), t)["ok"], true);
+            assert_eq!(h.request("ui.clickWidget", json!({"id": "sectionEye:light"}), t)["ok"], true);
+            assert_eq!(light_on(&h), expected);
+        }
+        assert!(h.app.ui.section_open("light"), "the click didn't fold the section");
+    }
+
     /// Return commits a tool panel back to Edit; elsewhere it does nothing.
     #[test]
     fn return_commits_the_crop_tool() {
@@ -1107,6 +1156,26 @@ mod tests {
         let r = h.request("ui.widgets", json!({}), t);
         assert!(r.to_string().contains("label:importSource"), "source shown");
         assert!(h.app.ui.local_roots.is_empty(), "no Local shortcut saved");
+        // The source facts were cached by a worker with the source-language default. They must
+        // still be rendered in German after switching, with the folder name kept verbatim.
+        assert_eq!(h.request("engine.execute", json!({"command": "app.language.german"}), t)["ok"], true);
+        h.settle(SETTLE);
+        fn texts(shape: &egui::epaint::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::epaint::Shape::Text(shape) => out.push(shape.galley.job.text.clone()),
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+        let mut painted = Vec::new();
+        for shape in &h.view.shapes {
+            texts(&shape.shape, &mut painted);
+        }
+        assert!(painted.iter().any(|text| text == &format!("Ordner „{name}“ (und seine Unterordner)")), "{painted:?}");
+        for label in ["Quelle", "Übertragen", "Stichwörter", "Vorgabe"] {
+            assert!(painted.iter().any(|text| text == label), "{label}: {painted:?}");
+        }
+        assert_eq!(h.request("engine.execute", json!({"command": "app.language.english"}), t)["ok"], true);
         // a camera / card folder: copied into the library by default
         h.app.ui.dialog = None;
         let r = h.request("engine.execute", json!({"command": "file.addFromDevice", "params": {"path": sub.to_string_lossy()}}), t);
@@ -1358,6 +1427,122 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The import review offers what to do with files that are in Recently Deleted (issue #298):
+    /// they are unchecked until Restore or Import as new is chosen; then confirming restores the
+    /// photo (with its edits) or imports the file afresh.
+    #[test]
+    fn import_review_offers_recently_deleted_files() {
+        for (choice, tag) in [("restore", "r"), ("fresh", "f")] {
+            let dir = std::env::temp_dir().join(format!("lc-ui-import-trash-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            for i in 0..2u8 {
+                let data: Vec<[u8; 4]> = (0..40 * 30).map(|k| [(k % 40 * 6) as u8, i * 90, 7, 255]).collect();
+                let img = lightcraft_raster::Rgba8 { width: 40, height: 30, data };
+                let png =
+                    lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+                std::fs::write(dir.join(format!("img{i}.png")), png).unwrap();
+            }
+            let services = crate::Services { png: None, ..Default::default() };
+            let mut app = LightcraftApp::new(lightcraft_engine::Session::new().with_fs(), services);
+            app.ui.view = crate::state::ViewMode::PhotoGrid;
+            let mut h = Headless::new(app, [1300.0, 900.0], 1.0);
+            let t = Duration::from_secs(10);
+            let r =
+                h.request("engine.execute", json!({"command": "library.import", "params": {"paths": [dir.join("img0.png").to_string_lossy()]}}), t);
+            let id = r["result"]["imported"][0].as_u64().unwrap();
+            h.request("engine.execute", json!({"command": "photo.rate", "params": {"ids": [id], "rating": 3}}), t);
+            h.request("engine.execute", json!({"command": "photo.delete", "params": {"ids": [id]}}), t);
+            h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [dir.to_string_lossy()]}}), t);
+            h.step_until(SETTLE, |h| matches!(h.app.ui.dialog, Some(crate::state::Dialog::Import { .. })));
+            let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog else { panic!("no import review") };
+            assert_eq!(opts.selected_paths().len(), 1, "only the new file: the trashed one waits for a choice");
+            opts.set_on_deleted(choice);
+            assert_eq!(opts.selected_paths().len(), 2, "the trashed file is checked once a choice is made");
+            // a per-cell choice survives switching between the two options, and "Leave them" unchecks
+            let trashed = (0..opts.candidates.len()).find(|i| opts.is_trashed(*i)).unwrap();
+            opts.checked[trashed] = false;
+            opts.set_on_deleted(if choice == "restore" { "fresh" } else { "restore" });
+            assert_eq!(opts.selected_paths().len(), 1, "still unchecked");
+            opts.set_on_deleted("");
+            assert_eq!(opts.selected_paths().len(), 1);
+            opts.set_on_deleted(choice);
+            assert_eq!(opts.selected_paths().len(), 2);
+            let r = h.request("ui.dialog.confirm", json!({}), t);
+            assert_eq!(r["ok"], true, "{r}");
+            // frames until the import has finished, so its (timed) toast is read before it expires
+            let t0 = std::time::Instant::now();
+            while h.app.import.is_some() && t0.elapsed() < Duration::from_secs(30) {
+                h.step();
+            }
+            assert!(h.app.import.is_none(), "finished");
+            let toast = h.app.ui.toast.clone().map(|t| t.0).unwrap_or_default();
+            let photos = &h.app.session.catalog;
+            assert_eq!(photos.photos().filter(|p| !p.deleted).count(), 2, "{choice}");
+            let old = photos.photo(lightcraft_catalog::PhotoId(id));
+            if choice == "restore" {
+                assert!(toast.contains("1 restored"), "{toast}");
+                assert!(old.is_some_and(|p| !p.deleted && p.rating == 3), "restored with its edits");
+                assert_eq!(photos.len(), 2);
+            } else {
+                assert!(old.is_none(), "the trashed record is gone");
+                assert_eq!(photos.len(), 2);
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// The import review opens bigger than the old fixed 6 × 2.5 grid and can be resized by its
+    /// corner: the photo grid takes the new height, and the window then keeps its size (issue #337).
+    #[test]
+    fn import_review_dialog_resizes() {
+        let mut h = demo([1400.0, 1000.0]);
+        let t = Duration::from_secs(10);
+        let candidates = (0..60)
+            .map(|i| lightcraft_engine::import::ImportCandidate {
+                path: format!("/lc-test/img{i}.png"),
+                name: format!("img{i}.png"),
+                error: Some("not read in this test".into()),
+                ..Default::default()
+            })
+            .collect();
+        h.app.ui.dialog = Some(crate::state::Dialog::Import { opts: Box::new(crate::import::ImportDialog::new(candidates)) });
+        let rect = |h: &mut Headless| {
+            let r = h.request("ui.widgets", json!({}), t);
+            let w = r["result"].as_array().and_then(|a| a.iter().find(|w| w["id"] == "dialog:window")).expect("dialog on screen");
+            [0usize, 1, 2, 3].map(|i| w["rect"][i].as_f64().unwrap())
+        };
+        for _ in 0..10 {
+            h.step();
+        }
+        let r0 = rect(&mut h);
+        assert!(r0[3] > 600.0, "{r0:?}");
+        // the Copy options add rows below the grid: the grid makes room, the window doesn't grow
+        for copy in [true, false] {
+            if let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog {
+                opts.copy = copy;
+            }
+            for _ in 0..10 {
+                h.step();
+            }
+            let r = rect(&mut h);
+            assert!((r[3] - r0[3]).abs() < 0.5, "copy {copy}: {r0:?} → {r:?}");
+        }
+        let (x, y) = (r0[0] + r0[2] - 3.0, r0[1] + r0[3] - 3.0);
+        h.request("ui.drag", json!({"x": x, "y": y, "toX": x + 160.0, "toY": y + 120.0, "steps": 12}), t);
+        for _ in 0..10 {
+            h.step();
+        }
+        let r1 = rect(&mut h);
+        assert!(r1[2] > r0[2] + 100.0 && r1[3] > r0[3] + 80.0, "dragging the corner resized it: {r0:?} → {r1:?}");
+        for _ in 0..60 {
+            h.step();
+        }
+        let r2 = rect(&mut h);
+        assert!((r2[2] - r1[2]).abs() < 0.5 && (r2[3] - r1[3]).abs() < 0.5, "the dialog kept its size: {r1:?} → {r2:?}");
+        assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::Import { .. })), "still open");
+    }
+
     /// Adding a file again that is in Recently Deleted shows it there (side panel opened, photo
     /// selected) instead of only saying "duplicate skipped"; its menus offer Restore, and once
     /// restored a re-add selects it in All Photos.
@@ -1417,6 +1602,8 @@ mod tests {
         h.settle(SETTLE);
         assert!(egui::Popup::is_any_open(&h.view.ctx), "filmstrip context menu");
 
+        // Empty Recently Deleted is offered while the trash is the source
+        assert!(photo_items(&h.app).contains(&"library.emptyRecentlyDeleted".to_string()));
         let r = h.request("ui.menu.invoke", json!({"id": "photo.restore"}), t);
         assert_eq!(r["ok"], true, "{r}");
         assert!(!h.app.session.catalog.photo(id).unwrap().deleted, "restored");
@@ -1426,6 +1613,7 @@ mod tests {
         assert_eq!(h.app.session.selection.ids, vec![id]);
         let toast = h.app.ui.toast.clone().expect("toast").0;
         assert!(toast.contains("All Photos"), "{toast}");
+        assert!(!photo_items(&h.app).contains(&"library.emptyRecentlyDeleted".to_string()), "Empty is for the trash view only");
 
         // deleted permanently, the file imports afresh as a new photo
         h.request("engine.execute", json!({"command": "photo.delete", "params": {"ids": [id.0]}}), t);
@@ -1782,7 +1970,7 @@ mod tests {
         assert_ne!(r["ok"], true, "{r}");
         let fit = h.app.image_rect.unwrap();
         h.request("ui.clickWidget", json!({"id": "canvas:image", "fx": 0.5, "fy": 0.5}), t);
-        assert_eq!(h.app.ui.zoom, Zoom::Percent(300));
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(300.0));
         assert!(h.app.ui.zoom_anim, "animation started");
         // every animation frame asks for the same (final-size) render
         let mut keys = std::collections::HashSet::new();
@@ -1801,10 +1989,183 @@ mod tests {
         assert_eq!(h.app.ui.zoom, Zoom::Fit);
         // Z zooms to the same ratio as a click
         h.request("ui.key", json!({"key": "z"}), t);
-        assert_eq!(h.app.ui.zoom, Zoom::Percent(300));
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(300.0));
         h.request("ui.key", json!({"key": "z"}), t);
         assert_eq!(h.app.ui.zoom, Zoom::Fit);
         h.settle(SETTLE);
+    }
+
+    #[test]
+    fn trackpad_navigation_keeps_the_image_cursor_between_events() {
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "none", "filmstrip": false}), t);
+        h.request("engine.execute", json!({"command": "view.zoom100"}), t);
+        h.settle(SETTLE);
+        let anchor = h.app.canvas_rect.unwrap().center();
+        h.request("ui.move", json!({"x": anchor.x, "y": anchor.y}), t);
+        for (tool, expected) in [
+            ("", egui::CursorIcon::Grab),
+            ("wbPicker", egui::CursorIcon::Crosshair),
+            ("colorRange", egui::CursorIcon::Crosshair),
+            ("pointColor", egui::CursorIcon::Crosshair),
+            ("tat:curve", egui::CursorIcon::ResizeVertical),
+        ] {
+            h.app.ui.tool = tool.into();
+            for event in [
+                None,
+                Some(egui::Event::Zoom(1.01)),
+                None,
+                Some(egui::Event::Zoom(1.01)),
+                Some(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(10.0, -10.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                }),
+                None,
+            ] {
+                let raw = HeadlessView::raw_input(h.size, h.pixels_per_point, h.time, event.into_iter().collect());
+                let mut cursor = egui::CursorIcon::Default;
+                h.view.run(raw, |ui| {
+                    h.app.logic(ui.ctx());
+                    h.app.ui(ui);
+                    cursor = ui.ctx().output(|output| output.cursor_icon);
+                });
+                h.time += FRAME_DT;
+                assert_eq!(cursor, expected, "cursor changed between navigation events with tool {tool:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn trackpad_pinch_anchors_fractional_zoom_and_scroll_pans() {
+        use crate::state::Zoom;
+        let mut h = demo([1000.0, 700.0]);
+        h.pixels_per_point = 2.0;
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "none", "leftPanel": false, "filmstrip": false}), t);
+        h.request("engine.execute", json!({"command": "view.zoom100"}), t);
+        h.settle(SETTLE);
+        let before = h.app.image_rect.unwrap();
+        let anchor = h.app.canvas_rect.unwrap().center() + egui::vec2(30.0, -20.0);
+        h.request("ui.move", json!({"x": anchor.x, "y": anchor.y}), t);
+        let point = (anchor - before.min) / before.size();
+        h.request("ui.zoom", json!({"factor": 1.001}), t);
+        let after = h.app.image_rect.unwrap();
+        assert!((after.width() / before.width() - 1.001).abs() < 0.00001);
+        assert!(((anchor - after.min) / after.size() - point).length() < 0.00001, "point under pointer moved");
+        assert!(matches!(h.app.ui.zoom, Zoom::Percent(p) if (p - 100.1).abs() < 0.001), "{:?}", h.app.ui.zoom);
+        assert!(!h.app.ui.zoom_anim, "pinch follows the fingers immediately");
+
+        h.request("ui.scroll", json!({"dx": 40.0, "dy": -30.0}), t);
+        for _ in 0..40 {
+            h.step();
+        }
+        let panned = h.app.image_rect.unwrap();
+        assert!(panned.left() > after.left() && panned.top() < after.top(), "two-finger pan must move both axes");
+        h.request("ui.scroll", json!({"dx": 100000.0, "dy": -100000.0}), t);
+        for _ in 0..40 {
+            h.step();
+        }
+        let edge = h.app.image_rect.unwrap();
+        let area = h.app.canvas_rect.unwrap().shrink(24.0);
+        assert!((edge.left() - area.left()).abs() < 0.01 && (edge.bottom() - area.bottom()).abs() < 0.01, "{edge:?} vs {area:?}");
+
+        h.request("ui.zoom", json!({"factor": 1e20}), t);
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(800.0));
+        h.request("ui.zoom", json!({"factor": 0.000001}), t);
+        assert_eq!(h.app.ui.zoom, Zoom::Fit);
+        assert_eq!(h.app.ui.pan, (0.5, 0.5));
+        // Panel / toolbar gestures must not move the image.
+        h.request("ui.move", json!({"x": 10, "y": 10}), t);
+        h.request("ui.zoom", json!({"factor": 2}), t);
+        h.request("ui.scroll", json!({"dx": 100, "dy": 100}), t);
+        assert_eq!(h.app.ui.zoom, Zoom::Fit);
+        assert_eq!(h.app.ui.pan, (0.5, 0.5));
+    }
+
+    #[test]
+    fn trackpad_navigation_works_in_tools_compare_reference_and_before_after() {
+        use crate::state::Zoom;
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "leftPanel": false, "filmstrip": false}), t);
+        h.settle(SETTLE);
+        let active = h.app.session.active().unwrap();
+        let settings = h.app.session.catalog.photo(active).unwrap().develop.clone();
+        for right in ["crop", "masking", "remove", "redEye", "none"] {
+            h.request("ui.set", json!({"right": right, "zoom": "fit", "pan": [0.5, 0.5]}), t);
+            h.request("ui.hoverWidget", json!({"id": "canvas:image"}), t);
+            h.request("ui.zoom", json!({"factor": 2}), t);
+            assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "pinch in {right}");
+            assert_eq!(h.app.session.catalog.photo(active).unwrap().develop, settings, "navigation must not edit the photo");
+        }
+        h.request("ui.set", json!({"fullscreen": true, "zoom": "fit"}), t);
+        h.request("ui.hoverWidget", json!({"id": "canvas:image"}), t);
+        h.request("ui.zoom", json!({"factor": 2}), t);
+        assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "full-screen pinch");
+
+        h.request("ui.set", json!({"fullscreen": false, "zoom": "fit", "beforeAfter": "sideBySide"}), t);
+        let canvas = h.app.canvas_rect.unwrap();
+        h.request("ui.move", json!({"x": canvas.left() + canvas.width() * 0.25, "y": canvas.center().y}), t);
+        h.request("ui.zoom", json!({"factor": 2}), t);
+        assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "pinch over the Before pane");
+
+        h.request("ui.set", json!({"beforeAfter": "off", "zoom": "fit"}), t);
+        h.request("engine.execute", json!({"command": "view.compare"}), t);
+        // The left Compare pane must navigate too; zoom/pan are shared with the right pane.
+        let canvas = h.app.canvas_rect.unwrap();
+        h.request("ui.move", json!({"x": canvas.left() + canvas.width() * 0.25, "y": canvas.center().y}), t);
+        h.request("ui.zoom", json!({"factor": 2}), t);
+        assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "Compare pinch");
+        let pan = h.app.ui.pan;
+        h.request("ui.scroll", json!({"dx": -50, "dy": -50}), t);
+        assert_ne!(h.app.ui.pan, pan, "Compare pan");
+
+        h.request("ui.set", json!({"zoom": "fit", "pan": [0.5, 0.5]}), t);
+        h.request("engine.execute", json!({"command": "view.reference"}), t);
+        h.request("ui.move", json!({"x": canvas.left() + canvas.width() * 0.25, "y": canvas.center().y}), t);
+        h.request("ui.zoom", json!({"factor": 2}), t);
+        assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "Reference pinch");
+    }
+
+    #[test]
+    fn navigation_rejects_invalid_input_and_preserves_old_zoom_state() {
+        use crate::state::Zoom;
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        assert_eq!(serde_json::from_value::<Zoom>(json!({"percent": 100})).unwrap(), Zoom::Percent(100.0));
+        for factor in [json!(0), json!(-1), json!(1e308), json!("big"), Value::Null] {
+            let r = h.request("ui.zoom", json!({"factor": factor}), t);
+            assert_eq!(r["ok"], false, "{r}");
+        }
+        for params in [
+            json!({"zoom": {"percent": -1}}),
+            json!({"zoom": {"percent": 1e308}}),
+            json!({"zoom": "oops"}),
+            json!({"zoom": {"percent": 123.4}, "pan": [-1, 0.5]}),
+            json!({"pan": [0.5, 1e308]}),
+            json!({"pan": [0.5]}),
+        ] {
+            assert!(h.app.run("view.navigate", params).is_err());
+            assert_eq!(h.app.ui.zoom, Zoom::Fit, "failed request changed zoom");
+            assert_eq!(h.app.ui.pan, (0.5, 0.5), "failed request changed pan");
+        }
+        h.app.run("view.navigate", json!({"zoom": {"percent": 123.4}, "pan": [0.4, 0.6]})).unwrap();
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(123.4));
+        assert_eq!(h.app.ui.pan, (0.4, 0.6));
+        h.app.run("view.zoomIn", json!({})).unwrap();
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(200.0));
+        h.app.run("view.zoomOut", json!({})).unwrap();
+        assert_eq!(h.app.ui.zoom, Zoom::Percent(100.0));
+
+        let area = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(1000.0, 700.0));
+        for pan in [(0.0, 0.0), (1.0, 1.0)] {
+            let image = crate::panels::detail::fit_rect(area, 10.0, Zoom::Percent(100.0), [4000, 400], 1.0, pan);
+            assert_eq!(image.center().y, area.center().y, "smaller axis must stay centred");
+            assert!(image.left() <= area.left() && image.right() >= area.right(), "pan exposed space outside the photo");
+        }
     }
 
     /// The Navigator appears when zoomed in; clicking it pans to that point.
@@ -1821,7 +2182,7 @@ mod tests {
         h.request("ui.clickWidget", json!({"id": "canvas:navigator", "fx": 0.1, "fy": 0.2}), t);
         let (u, v) = h.app.ui.pan;
         assert!((u - 0.1).abs() < 0.03 && (v - 0.2).abs() < 0.03, "pan {:?}", h.app.ui.pan);
-        assert_eq!(h.app.ui.zoom, crate::state::Zoom::Percent(100), "the click didn't reach the loupe (which would zoom out)");
+        assert_eq!(h.app.ui.zoom, crate::state::Zoom::Percent(100.0), "the click didn't reach the loupe (which would zoom out)");
         h.settle(SETTLE);
         let nav = h.app.widgets.iter().rev().find(|(w, _)| w == "canvas:navigator").map(|(_, r)| *r).unwrap();
         let to = nav.min + egui::vec2(nav.width() * 0.8, nav.height() * 0.7);

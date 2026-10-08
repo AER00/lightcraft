@@ -102,6 +102,7 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
                 "mode": {"type": "string", "enum": ["add", "copy", "move"], "description": "add (default) = reference the files in place; copy = copy them into `destination` (default: the library's Originals/); move = as copy, then each original and its XMP sidecars are removed from the source once the copy is verified and catalogued (duplicates and failures keep their sources; `kept` lists sources left in place and why; undo leaves the moved files at the destination)"},
                 "destination": {"type": "string", "description": "Copy or move: destination folder"},
                 "organize": {"type": "string", "description": "Copy or move: folders inside the destination — date (YYYY/YYYY-MM-DD, default), month (YYYY/YYYY-MM), flat, or a folder template such as {date:%Y}/{date:%Y%m%d} (→ 2026/20260114; the template's / make the levels, tokens as for rename; relative, no ..). Dated by capture time, else the import time"},
+                "onDeleted": {"type": "string", "enum": ["skip", "restore", "fresh"], "description": "A file that is in Recently Deleted: skip (default) = leave it there (the duplicate is reported with existingDeleted); restore = bring the photo back with its edits (`restored` lists it); fresh = delete the trashed record and import the file as a new photo"},
                 "rename": {"type": "string", "description": "Copy or move: file-name template, e.g. {date:%Y%m%d_%H%M%S}_{seq:3} (run_command photo.renameTokens lists the tags); the extension is kept"}
             }),
             &["paths"],
@@ -205,7 +206,7 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
                 "removeLocation": {"type": "boolean"},
                 "colorSpace": {"type": "string", "enum": ["srgb", "displayP3", "adobeRgb", "proPhoto", "rec2020"], "description": "Output colour space (default sRGB; AVIF is always sRGB). adobeRgb = Adobe RGB (1998) compatible; the embedded ICC profile is generated from the published primaries"},
                 "bitDepth": {"type": "integer", "enum": [8, 10, 16, 32], "description": "Bits per channel: PNG 8|16 (default 8), TIFF 8|16|32 (default 16; 32 = linear float with a linear profile), AVIF 8|10; JPEG/WebP are 8-bit"},
-                "watermark": {"description": "Text, or {text, vertical (boolean; defaults to false), size (fraction of short edge), opacity, anchor (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight), inset, color [r,g,b], shadow}"}
+                "watermark": {"description": "Text, or {text, vertical (boolean; defaults to false: upright columns right to left), size (text height as a fraction of the short edge, 0.005..0.5; default 0.035), opacity (0..1; default 0.7), anchor (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight), inset (margin as a fraction of the short edge, 0..0.4; default 0.025), color [r,g,b] (sRGB 0..255), shadow (boolean), image (path of a graphic drawn instead of the text), imageWidth (fraction of the photo's width, 0.01..1; default 0.2)}. Unknown keys and out-of-range sizes are errors"}
             }),
             &[],
         ),
@@ -475,7 +476,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
                 return ToolResult::error(format!("no photos found in {paths:?}"));
             }
             let mut p = json!({"paths": files});
-            for k in ["album", "mode", "destination", "organize", "rename"] {
+            for k in ["album", "mode", "destination", "organize", "rename", "onDeleted"] {
                 if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
                     p[k] = v.clone();
                 }

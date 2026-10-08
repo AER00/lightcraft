@@ -294,6 +294,9 @@ pub fn stage_bytes(stages: &StageCache) -> usize {
 pub fn render(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, stages: Option<&StageCache>) -> Option<Rendered> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // sections switched off with their eye render as if at their defaults (issue #316)
+        let effective = s.effective();
+        let s: &DevelopSettings = &effective;
         // the kernel writes 8-bit output: high-bit-depth exports (and soft proofs) render on the CPU
         if !enabled() || req.depth != lightcraft_pipeline::OutputDepth::U8 || req.proof.is_some() {
             return None;

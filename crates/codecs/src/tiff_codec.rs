@@ -1,5 +1,6 @@
-//! TIFF decode via the `tiff` crate: 8/16/32-bit integer, 16/32/64-bit float, gray/RGB/CMYK/palette,
-//! alpha (associated or not), ICC (34675), XMP (700), orientation (274). First image only.
+//! TIFF decode via the `tiff` crate: 1/2/4/8/16/32/64-bit integer, 16/32/64-bit float, gray/RGB/CMYK,
+//! alpha (associated or not), ICC (34675), XMP (700), orientation (274). First image only. Palette
+//! (indexed-colour) images are refused by the `tiff` crate itself, on every read path.
 
 use crate::convert::{Buf, Meta, Model, Raw, check_size, finish};
 use crate::{DecodeOptions, Decoded, Error, Format, Result};
@@ -25,7 +26,6 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     let icc = tag_bytes(&mut d, Tag::IccProfile);
     let xmp = tag_bytes(&mut d, Tag::from_u16_exhaustive(700)).map(|v| String::from_utf8_lossy(&v).trim_end_matches('\0').to_string());
     let orientation = d.get_tag_u32(Tag::Orientation).ok().map(|v| v as u16);
-    let photometric = d.get_tag_u32(Tag::PhotometricInterpretation).ok();
     let planar = d.get_tag_u32(Tag::PlanarConfiguration).ok() == Some(2);
     let extra = d.get_tag_u16_vec(Tag::ExtraSamples).ok().unwrap_or_default();
     let colormap = d.get_tag_u16_vec(Tag::ColorMap).ok();
@@ -45,6 +45,9 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
         ColorType::Multiband { bit_depth, num_samples } if num_samples >= 1 => (Model::Gray, 1, num_samples as usize, bit_depth),
         other => return Err(Error::Unsupported(F, unsupported_name(other))),
     };
+    if bits < 8 && planar && n_samples > 1 {
+        return Err(Error::Unsupported(F, "planar TIFF with samples narrower than a byte"));
+    }
     let has_alpha = n_samples > n_color && !matches!(ct, ColorType::Palette(_));
     let premultiplied = has_alpha && extra.first() == Some(&1);
 
@@ -52,6 +55,7 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     let (wu, hu) = (w as usize, h as usize);
     let n = wu * hu;
     let mut buf = match res {
+        DecodingResult::U8(v) if bits < 8 => Buf::U8(unpack(&v, wu, hu, n_samples, bits)?),
         DecodingResult::U8(v) => Buf::U8(v),
         DecodingResult::U16(v) => Buf::U16(v),
         // Rare integer widths: keep 16 significant bits (plenty for display-referred data).
@@ -94,14 +98,8 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
         return finish(F, raw, meta, (w, h), opts);
     }
 
-    // WhiteIsZero → invert.
-    if photometric == Some(0) {
-        match &mut buf {
-            Buf::U8(v) => v.iter_mut().for_each(|x| *x = 255 - *x),
-            Buf::U16(v) => v.iter_mut().for_each(|x| *x = 65535 - *x),
-            Buf::F32(v) => v.iter_mut().for_each(|x| *x = 1.0 - *x),
-        }
-    }
+    // WhiteIsZero needs nothing here: the `tiff` crate inverts those samples as it reads them (and
+    // refuses WhiteIsZero layouts it can't invert), so inverting again would show a negative.
 
     // Drop extra samples beyond colour + one alpha.
     let keep = n_color + has_alpha as usize;
@@ -138,6 +136,29 @@ fn unsupported_name(ct: ColorType) -> &'static str {
         ColorType::YCbCr(_) => "uncompressed YCbCr TIFF",
         _ => "colour type",
     }
+}
+
+/// Samples narrower than a byte (1-bit bilevel and fax scans, 2- and 4-bit gray) arrive packed, most
+/// significant bits first, each row padded to a whole byte. Spread them out one per byte, scaled to
+/// 0–255 like any 8-bit sample.
+fn unpack(packed: &[u8], width: usize, height: usize, samples: usize, bits: u8) -> Result<Vec<u8>> {
+    if !matches!(bits, 1 | 2 | 4) {
+        return Err(Error::Unsupported(F, "TIFF samples of 3, 5, 6 or 7 bits"));
+    }
+    let bits = bits as usize;
+    let per_row = width.checked_mul(samples).ok_or_else(|| err("row too wide"))?;
+    let row_bytes = per_row.checked_mul(bits).ok_or_else(|| err("row too wide"))?.div_ceil(8);
+    if row_bytes == 0 || packed.len() / row_bytes < height {
+        return Err(err("sample buffer too short"));
+    }
+    let max = (1u8 << bits) - 1;
+    let scale = 255 / max; // 255, 85, 17: exact
+    let mut out = Vec::with_capacity(per_row.saturating_mul(height));
+    for row in packed.chunks_exact(row_bytes).take(height) {
+        let values = row.iter().flat_map(|&b| (1..=8 / bits).map(move |i| (b >> (8 - bits * i)) & max));
+        out.extend(values.take(per_row).map(|v| v * scale));
+    }
+    Ok(out)
 }
 
 fn interleave(buf: Buf, n: usize, s: usize) -> Buf {

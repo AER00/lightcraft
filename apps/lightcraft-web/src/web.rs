@@ -429,8 +429,17 @@ impl WebApp {
             cores.saturating_sub(1).clamp(1, 4)
         });
         let cache = app.session.media.rendered.clone();
-        let workers =
-            (n > 0).then(|| Workers::start(n, backend.as_ref().map_or("memory", |b| b.kind()), backend.clone(), index, &cache, cc.egui_ctx.clone()));
+        let workers = (n > 0).then(|| {
+            Workers::start(
+                n,
+                backend.as_ref().map_or("memory", |b| b.kind()),
+                backend.clone(),
+                index,
+                &cache,
+                app.session.cache_bytes(),
+                cc.egui_ctx.clone(),
+            )
+        });
         if let Some(w) = &workers {
             app.renderer.set_offload(Box::new(w.clone()));
         }
@@ -601,11 +610,16 @@ impl eframe::App for WebApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         for text in safety::take_notices() {
             let now = ctx.input(|i| i.time);
-            self.app.ui.toast = Some((text, now + NOTICE_SECS));
+            self.app.ui.toast = Some((text, now + NOTICE_SECS, None));
         }
         self.run_inbox();
         self.import_dropped(ctx);
         self.load_originals(ctx);
+        if let Some(w) = &self.workers {
+            // `library.preferences ▸ cacheMb` is read by the session; the worker index prunes on
+            // its own thread, so it gets the budget every frame and applies it on the next store.
+            w.set_budget(self.app.session.cache_bytes());
+        }
         self.app.logic(ctx);
         self.save();
         if let Some(b) = self.bench.as_mut()
