@@ -54,3 +54,12 @@ One photo can show too little of a colour for its own fit to learn it: in a seco
 
 Profiles are JSON files `<model>.json` in `$LIGHTCRAFT_CAMERA_PROFILES`, else `<config>/camera-profiles` (macOS `~/Library/Application Support/LightCraft/camera-profiles`); a local profile replaces a built-in one. Built-in profiles live in `assets/camera-profiles/` (listed in `assets/ATTRIBUTION.md`) and are compiled in, so the app, CLI and web build share them: ILCE-7M4, fitted to 597 photos (2.2 million colour pairs) shot in 2026, mostly with the Standard creative style and DRO Auto. They hold aggregate colour statistics only. A photo of a profiled model takes its colour from the profile and fits only its own tone and chroma curves (DRO and picture styles vary per shot); the acceptance gates still apply, and a rejected fit falls back as before. Files are read once per process and validated (version, bounded invertible matrix, table shape and finite data); a damaged file is ignored with a warning. The profiles folder's contents are part of the render cache keys, so thumbnails rendered before a profile existed are redone; smart previews built before keep their colour until rebuilt.
 
+
+
+## Nikon crop and preview colour metadata
+
+Nikon maker-note `CropArea` (0x0045) supplies the default `[left, top, width, height]` crop. The decoder validates the rectangle against the active sensor area and falls back to that area for missing or invalid values. The CFA origin is unchanged; cropping follows demosaicing.
+
+An embedded JPEG with neither ICC nor EXIF metadata uses Nikon maker-note `ColorSpace` (0x001e: 1 = sRGB, 2 = Adobe RGB). This fallback is applied before transfer decoding and resizing, and used by quick previews, preview-only RAW and the existing camera-look reference decode. A JPEG's own metadata takes precedence. No fitting algorithm, training split, highlight reconstruction or white-balance control changes are included. Render cache version 12 invalidates older previews.
+
+Synthetic tests cover crop bounds/CFA preservation, colour-space tags, fallback transfer decoding and metadata precedence. A private Nikon Z 8 sample reports an 8256 × 5504 default crop from an 8280 × 5520 sensor. No private sample or Adobe asset is included.
