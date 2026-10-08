@@ -403,6 +403,15 @@ impl MediaCache {
         (self.thumbs.len(), self.thumbs.cost())
     }
 
+    /// Whether the decoded source of `id` at `level` is held.
+    pub fn has_source(&self, id: PhotoId, level: SourceLevel) -> bool {
+        match level {
+            SourceLevel::Thumb => self.thumbs.contains(&id),
+            SourceLevel::Preview => self.previews.iter().any(|e| e.0 == id),
+            SourceLevel::Full => self.full.as_ref().is_some_and(|e| e.0 == id),
+        }
+    }
+
     /// Decoded sources held: (thumbnail level, preview level, full size).
     pub fn usage(&self) -> (crate::memory::Usage, crate::memory::Usage, crate::memory::Usage) {
         use crate::memory::Usage;
@@ -1387,6 +1396,20 @@ mod tests {
         assert_eq!((a.width, a.height), (b.width, b.height));
         let mean = |i: &Rgba8| i.data.iter().map(|p| p[1] as f64).sum::<f64>() / i.data.len() as f64;
         assert!(mean(&a) > mean(&b) + 10.0, "two stops brighter after: {} vs {}", mean(&a), mean(&b));
+    }
+
+    #[test]
+    fn has_source_follows_what_the_session_accepted() {
+        let mut s = crate::Session::with_demo();
+        let id = s.active().unwrap();
+        let p = s.catalog.photo(id).unwrap().clone();
+        let long = p.width.max(p.height) as usize;
+        assert!(!s.media.has_source(id, SourceLevel::Full));
+        let r = s.render_job(id, long, long, false, true).unwrap().run();
+        s.accept(&r);
+        assert!(s.media.has_source(id, SourceLevel::Full));
+        assert!(!s.media.has_source(id, SourceLevel::Preview));
+        assert!(!s.media.has_source(PhotoId(id.0 + 1), SourceLevel::Full));
     }
 
     #[test]
