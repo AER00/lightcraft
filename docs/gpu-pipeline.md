@@ -171,7 +171,11 @@ bounds **mean |Δ| < 0.5 LSB and max |Δ| ≤ 3 LSB** per channel. Measured (App
 three mask sets incl. CPU-evaluated shapes, spots + defringe), all 8 orientations ± crop, embedded
 DNG lens data, display-referred sources, draft quality, full-size renders; the 24 MP export in
 `render_bench` also differs by max 1 LSB. Cached (slider-drag) GPU renders are bit-identical to
-fresh ones. The tests skip (pass with a note) when no adapter exists.
+fresh ones. `windows_match` runs the settings cases again as a window of a 3000 × 2000 frame
+(`RenderRequest::window`, the zoomed loupe, issue #323) plus a vignette in a corner and a spot reading
+from outside the window: the vignette geometry arrives as the `VIG_VIEW` parameter, the airlight and
+noise-reduction size come from the whole frame, and a window that spots or Auto Mask strokes grew is
+cut back after the readback. The tests skip (pass with a note) when no adapter exists.
 
 Remaining differences come from f32 vs f64 coordinate math, fast-math transcendental functions on
 Metal and running-sum order in the box filters — all far below one 8-bit step.
