@@ -9,7 +9,7 @@
 //!   produces the same at 1/k of the size straight from the mosaic (previews, thumbnails).
 //! - [`color`] implements the DNG colour model (dual-illuminant interpolation, forward matrices, white balance)
 //!   and produces camera → linear Rec.2020 D65 matrices; [`profile`] reads and applies a DNG's own profile
-//!   look tables and tone curve.
+//!   look tables and tone curve, and [`gaintable`] its gain table map (Apple ProRAW's local tone mapping).
 //!
 //! Formats: DNG (uncompressed, lossless JPEG, lossy JPEG (Smart Previews), Deflate incl. floating point, JPEG XL (DNG 1.7,
 //! `jxl` feature, on by default), tiled/stripped, CFA and LinearRaw),
@@ -28,6 +28,7 @@ pub mod color;
 pub mod demosaic;
 mod dng;
 pub mod dngwrite;
+pub mod gaintable;
 pub mod highlight;
 #[cfg(feature = "jxl")]
 mod jxl;
@@ -513,7 +514,8 @@ pub struct ColorData {
     /// EV to add for a "normal" rendering (`BaselineExposure` + `BaselineExposureOffset`).
     pub baseline_exposure: f64,
     /// The file's own camera-profile look (`ProfileHueSatMap*`, `ProfileLookTable*`,
-    /// `ProfileToneCurve`), applied by [`color`]'s users at render time.
+    /// `ProfileToneCurve`), applied by [`color`]'s users at render time, and its
+    /// `ProfileGainTableMap*`, kept (a DNG export writes it back) but not rendered.
     #[serde(default)]
     pub profile: profile::ProfileLook,
 }

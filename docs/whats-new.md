@@ -20,6 +20,8 @@
 - JPEG XL compressed DNGs (DNG 1.7) now open: lossless tiles decode sample for sample (checked on synthetic files);
   lossy tiles decode too, but no real file has checked them yet. A JPEG XL preview stored in the DNG is used like an
   embedded JPEG.
+- Apple ProRAW's gain table map (its local tone mapping, `ProfileGainTableMap`) is now read and kept when a photo is
+  exported or converted to DNG. It is not applied to the render: Lightroom Classic renders ProRAW without it.
 - Panasonic and Leica raws (RW2, RWL) are now corrected for lens distortion the way the camera corrects its own JPEG
   (issue #256): the correction the camera records in the file is applied under Lens Corrections ▸ Enable Profile
   Corrections, on by default for newly imported photos, with the same framing as the camera's JPEG. At 12 mm the

@@ -676,8 +676,12 @@ mod tests {
         assert!(info.camera_tone.is_none());
         // a map that removes all saturation, and a tone curve
         let grey = HsvTable { hue_divisions: 4, sat_divisions: 2, val_divisions: 1, data: vec![[0.0, 0.0, 1.0]; 8], srgb_value: false };
-        raw.color.profile =
-            ProfileLook { hue_sat_map: [Some(grey), None], look_table: None, tone_curve: ToneCurve::from_tag(&[0.0, 0.0, 0.18, 0.3, 1.0, 1.0]) };
+        raw.color.profile = ProfileLook {
+            hue_sat_map: [Some(grey), None],
+            look_table: None,
+            tone_curve: ToneCurve::from_tag(&[0.0, 0.0, 0.18, 0.3, 1.0, 1.0]),
+            gain_table_map: None,
+        };
         let with = lightcraft_raw::write_dng(&raw, &Default::default()).unwrap();
         let (after, info) = load_bytes(&with, 64).unwrap();
         assert!(sat(&after) < 1e-3, "saturation {} → {}", sat(&before), sat(&after));
@@ -693,6 +697,33 @@ mod tests {
         };
         let (dim, _) = load_bytes(&lightcraft_raw::write_dng(&raw, &Default::default()).unwrap(), 64).unwrap();
         assert!((mean(&dim) / mean(&before) - 0.5).abs() < 0.02, "{} vs {}", mean(&dim), mean(&before));
+    }
+
+    /// Apple ProRAW: like Lightroom Classic, the default render ignores the file's
+    /// `ProfileGainTableMap` (Apple's local tone mapping); a map that would double every pixel
+    /// changes nothing.
+    #[test]
+    fn dng_gain_table_map_is_not_rendered() {
+        use lightcraft_raw::gaintable::GainTableMap;
+        let plain = crate::tests_xmp::synthetic_dng_with(None, Default::default());
+        let mut raw = lightcraft_raw::decode(&plain).unwrap();
+        let (before, _) = load_bytes(&lightcraft_raw::write_dng(&raw, &Default::default()).unwrap(), 64).unwrap();
+        raw.color.profile.gain_table_map = Some(GainTableMap {
+            points_v: 1,
+            points_h: 1,
+            points_n: 1,
+            spacing_v: 1.0,
+            spacing_h: 1.0,
+            origin_v: 0.0,
+            origin_h: 0.0,
+            weights: [0.2, 0.2, 0.2, 0.2, 0.2],
+            gamma: 1.0,
+            gains: vec![2.0],
+        });
+        let with_map = lightcraft_raw::write_dng(&raw, &Default::default()).unwrap();
+        assert!(lightcraft_raw::decode(&with_map).unwrap().color.profile.gain_table_map.is_some(), "the map is kept");
+        let (after, _) = load_bytes(&with_map, 64).unwrap();
+        assert_eq!(before.data, after.data);
     }
 
     #[test]

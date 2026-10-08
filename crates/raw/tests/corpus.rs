@@ -252,9 +252,11 @@ fn corpus_nef_12_bit_black_level_matches_14_bit() {
 }
 
 /// Issue #138: DNGs converted by Adobe software carry their camera profile's hue/saturation map and
-/// look table; we read them (and render with them). Camera-written DNGs here carry none.
+/// look table; we read them (and render with them). Apple ProRAW carries a tone curve and a gain
+/// table map (its local tone mapping, read and kept but not rendered, as in Lightroom Classic).
+/// Other camera-written DNGs here carry none.
 #[test]
-fn corpus_adobe_dngs_carry_profile_looks() {
+fn corpus_dngs_carry_profile_looks() {
     let dir = corpus_root().join("raw");
     let Ok(rd) = std::fs::read_dir(&dir) else {
         eprintln!("skip: {} absent", dir.display());
@@ -278,14 +280,24 @@ fn corpus_adobe_dngs_carry_profile_looks() {
             let g = t.apply([0.18; 3], 1.0);
             assert!(g.iter().all(|v| (v - g[0]).abs() < 0.01 * g[0].max(0.01)), "{name}: grey → {g:?}");
         }
+        if name.starts_with("dng-apple-") {
+            seen += 1;
+            let map = look.gain_table_map.as_ref().unwrap_or_else(|| panic!("{name}: no gain table map"));
+            assert!(map.points_v > 1 && map.points_h > 1 && map.points_n > 1, "{name}");
+            assert!(look.tone_curve.is_some(), "{name}: no tone curve");
+            // the map lifts dark tones (Apple's local tone mapping), most at the darkest input
+            let first = &map.gains[..map.points_n];
+            assert!(first[0] > 1.5 && first[0] >= first[map.points_n - 1], "{name}: first table {first:?}");
+        }
         eprintln!(
-            "{name:44} profile look: hsm {} look {} tone {}",
+            "{name:44} profile look: hsm {} look {} tone {} gain map {}",
             look.hue_sat_map[0].is_some(),
             look.look_table.is_some(),
-            look.tone_curve.is_some()
+            look.tone_curve.is_some(),
+            look.gain_table_map.is_some()
         );
     }
-    eprintln!("{seen} Adobe-converted DNGs checked");
+    eprintln!("{seen} DNGs with profile looks checked");
 }
 
 /// Issue #148: Sony ARWs from before ~2017 carry no plain white-balance, black-level or crop tags in the raw IFD.
