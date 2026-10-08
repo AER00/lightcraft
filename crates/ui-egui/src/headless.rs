@@ -231,18 +231,16 @@ impl Headless {
         self.paint()
     }
 
-    /// Wait for a fixture widget whose background directory listing may still be loading.
+    /// Tests that browse a folder in the temp directory expect it to be a Local location of its
+    /// own. Where the temp directory lies inside the home folder (Windows), the sidebar lists it
+    /// inside Home's tree instead, so hide Home for the test; elsewhere this does nothing.
     #[cfg(test)]
-    pub(crate) fn wait_for_widget(&mut self, id: &str, timeout: Duration) -> bool {
-        let start = Instant::now();
-        while let Some(remaining) = timeout.checked_sub(start.elapsed()) {
-            let reply = self.request("ui.widgets", json!({"filter": id}), remaining);
-            if reply["result"].as_array().is_some_and(|widgets| widgets.iter().any(|w| w["id"].as_str() == Some(id))) {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(1));
+    pub(crate) fn hide_home_above(&mut self, path: &std::path::Path) {
+        let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
+        if !home.is_empty() && lightcraft_catalog::query::folder_within(&path.to_string_lossy(), &home) {
+            let r = self.request("engine.execute", json!({"command": "local.hide", "params": {"path": home}}), Duration::from_secs(10));
+            assert_eq!(r["ok"], true, "{r}");
         }
-        false
     }
 
     /// Send a control-protocol request (see [`crate::control`]) and run frames until it is
@@ -294,6 +292,8 @@ mod tests {
     fn demo_grid_snapshot_has_ui_pixels() {
         let t0 = Instant::now();
         let mut h = demo([1200.0, 760.0]);
+        // settle() can see a quiet spell before the first thumbnails land on a loaded machine
+        h.step_until(SETTLE, |h| h.app.renderer.thumb_textures() > 0);
         let img = h.snapshot(SETTLE);
         eprintln!("headless snapshot: {:?} in {:?} ({} frames)", img.size, t0.elapsed(), h.frames());
         assert_eq!(img.size, [1200, 760]);
@@ -398,6 +398,7 @@ mod tests {
         let id = h.app.session.active().unwrap();
         let photo = |h: &Headless| h.app.session.catalog.photo(id).unwrap().clone();
         let before = photo(&h);
+        h.step_until(SETTLE, |h| h.app.renderer.variant_textures() >= 6);
         assert!(h.app.renderer.variant_textures() >= 6, "variant thumbnails rendered: {}", h.app.renderer.variant_textures());
         // hover: the loupe shows the look, nothing is committed
         let r = h.request("ui.hoverWidget", json!({"id": "profileCell:lc.vivid"}), t);
@@ -900,6 +901,7 @@ mod tests {
         };
         let ids = |h: &mut Headless| -> Vec<String> { rects(h).into_iter().map(|(id, _)| id).collect() };
         h.request("ui.set", json!({"leftPanel": true}), t);
+        h.hide_home_above(&dir);
         // Browse Folder… browses the picked folder and keeps it in Local within one frame; a
         // request runs frames, so keep it first (no frame sees it browsed but not yet kept)
         let r = h.request("engine.execute", json!({"command": "local.addRoot", "params": {"path": path}}), t);
@@ -907,8 +909,11 @@ mod tests {
         let r = h.request("engine.execute", json!({"command": "library.browse", "params": {"path": path}}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
-        assert!(h.wait_for_widget(&format!("source:local:{path}"), t), "the browsed folder is listed: {:?}", ids(&mut h));
-        assert!(!ids(&mut h).iter().any(|i| i == "source:local:restoreHidden"));
+        let row = format!("source:local:{path}");
+        assert!(h.step_until(t, |h| h.app.widgets.iter().any(|(w, _)| *w == row)), "the browsed folder is listed: {:?}", ids(&mut h));
+        // the "Show hidden locations" row appears only while something is hidden
+        let hidden_before = !h.app.ui.hidden_locations.is_empty();
+        assert_eq!(ids(&mut h).iter().any(|i| i == "source:local:restoreHidden"), hidden_before);
         // hide it while it is still being browsed
         let r = h.request("engine.execute", json!({"command": "local.hide", "params": {"path": path}}), t);
         assert_eq!(r["ok"], true, "{r}");
@@ -930,7 +935,11 @@ mod tests {
         assert_eq!(h.request("ui.clickWidget", json!({"id": "source:local:restoreHidden"}), t)["ok"], true);
         h.settle(SETTLE);
         assert!(h.app.ui.hidden_locations.is_empty());
-        assert!(ids(&mut h).contains(&format!("source:local:{path}")));
+        assert!(!ids(&mut h).iter().any(|i| i == "source:local:restoreHidden"), "nothing left to restore");
+        if !hidden_before {
+            // (with Home hidden for this test, the folder is back inside Home's tree instead)
+            assert!(ids(&mut h).contains(&format!("source:local:{path}")));
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -947,12 +956,10 @@ mod tests {
             std::fs::create_dir_all(base.join(d)).unwrap();
         }
         let s = |p: std::path::PathBuf| p.to_string_lossy().to_string();
-        let (photos, day1, day2, other) = (
-            s(base.join("Photos")),
-            s(base.join("Photos").join("2026").join("20260101")),
-            s(base.join("Photos").join("2026").join("20260114")),
-            s(base.join("Other")),
-        );
+        // joined by component: the sidebar's ids spell paths with the platform's separator
+        let year = base.join("Photos").join("2026");
+        let (photos, day1, day2, other) = (s(base.join("Photos")), s(year.join("20260101")), s(year.join("20260114")), s(base.join("Other")));
+        h.hide_home_above(&base);
         let exec = |h: &mut Headless, c: &str, p: Value| h.request("engine.execute", json!({"command": c, "params": p}), t);
         let rects = |h: &mut Headless| -> std::collections::HashMap<String, f64> {
             let w = h.request("ui.widgets", json!({"filter": "lc-ui-roots-"}), t);
@@ -969,7 +976,8 @@ mod tests {
         exec(&mut h, "library.browse", json!({"path": day1}));
         h.settle(SETTLE);
         h.step();
-        assert!(h.wait_for_widget(&format!("source:local:{day2}"), t), "the sibling listing did not arrive");
+        let row = format!("source:local:{day2}");
+        assert!(h.step_until(t, |h| h.app.widgets.iter().any(|(w, _)| *w == row)), "the sibling listing did not arrive");
         let r = rects(&mut h);
         assert!(r.contains_key(&format!("source:local:{photos}")), "the kept root stays: {r:?}");
         assert!(r.contains_key(&format!("source:local:{day2}")), "the sibling stays reachable: {r:?}");
@@ -982,7 +990,8 @@ mod tests {
         assert_eq!(exec(&mut h, "library.browse", json!({"path": other}))["ok"], true);
         h.settle(SETTLE);
         h.step();
-        assert!(h.wait_for_widget(&format!("source:local:{other}"), t), "the other location did not arrive");
+        let row = format!("source:local:{other}");
+        assert!(h.step_until(t, |h| h.app.widgets.iter().any(|(w, _)| *w == row)), "the other location did not arrive");
         let r = rects(&mut h);
         assert!(r.contains_key(&format!("source:local:{photos}")) && r.contains_key(&format!("source:local:{other}")), "{r:?}");
         // restart: the kept roots come back with the saved UI state
@@ -1094,6 +1103,7 @@ mod tests {
         let r = h.request("engine.execute", json!({"command": "file.addFromDevice", "params": {"path": sub.to_string_lossy()}}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
+        h.step_until(SETTLE, |h| matches!(h.app.ui.dialog, Some(crate::state::Dialog::Import { .. })));
         let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review") };
         assert!(opts.copy);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1308,6 +1318,8 @@ mod tests {
         let r = h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [dir.to_string_lossy()]}}), t);
         assert_eq!(r["result"]["scanning"], true, "{r}");
         h.settle(SETTLE);
+        h.step_until(SETTLE, |h| matches!(h.app.ui.dialog, Some(crate::state::Dialog::Import { .. })));
+        h.step_until(SETTLE, |h| h.app.renderer.textures.keys().filter(|s| matches!(s, crate::render::Slot::Import(_))).count() >= 5);
         let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review") };
         assert_eq!(opts.candidates.len(), 6);
         assert_eq!(opts.candidates.iter().filter(|c| c.duplicate.is_some()).count(), 1);
@@ -1440,6 +1452,7 @@ mod tests {
         let r = h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [src.to_string_lossy()]}}), t);
         assert_eq!(r["result"]["scanning"], true, "{r}");
         h.settle(SETTLE);
+        h.step_until(SETTLE, |h| matches!(h.app.ui.dialog, Some(crate::state::Dialog::Import { .. })));
         let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review") };
         assert_eq!(opts.candidates.len(), 10);
         for id in ["button:importCopy", "button:importDest"] {

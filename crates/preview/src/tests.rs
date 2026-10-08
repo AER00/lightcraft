@@ -26,6 +26,30 @@ fn cleared_generation_cannot_read_or_repopulate_memory_or_disk() {
     cache.clear();
 }
 
+#[test]
+fn retired_cache_keeps_its_files_but_refuses_every_read_and_write() {
+    let dir = temp_dir("retire");
+    let old = Arc::new(PreviewCache::with_disk(1 << 20, &dir, 1 << 20));
+    let (kept, late) = (hash_bytes(b"kept"), hash_bytes(b"late"));
+    let img = Arc::new(gradient(8, 8, 7));
+    let generation = old.generation();
+    old.put_at(generation, kept, img.clone());
+    old.retire();
+    assert_ne!(old.generation(), generation);
+    assert!(old.get_at(generation, kept).is_none());
+    assert!(old.get(kept).is_none());
+    old.put_at(generation, late, img.clone());
+    old.put_deferred_at(generation, late, img.clone());
+    old.put(late, img.clone());
+    old.put_deferred(late, img.clone());
+    old.clear();
+    // a replacement for the same directory still finds the valid file, and only that
+    let new = PreviewCache::with_disk(1 << 20, &dir, 1 << 20);
+    assert_eq!(new.get(kept).map(|i| (i.width, i.height)), Some((8, 8)), "the disk file stays (JPEG: lossy)");
+    assert!(new.get(late).is_none());
+    new.clear();
+}
+
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lc-preview-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);

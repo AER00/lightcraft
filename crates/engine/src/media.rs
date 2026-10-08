@@ -244,8 +244,11 @@ fn source_bytes(img: &Rgb32f) -> usize {
 }
 
 impl MediaCache {
-    /// Keep rendered thumbnails on disk in `dir` as well.
+    /// Keep rendered thumbnails on disk in `dir` as well. The cache this replaces is retired
+    /// (its files stay): render jobs still holding it can't write through it any more, even
+    /// into a directory a later clear emptied (`dir` may be the same one).
     pub fn attach_disk_cache(&mut self, dir: &std::path::Path, disk_bytes: u64) {
+        self.rendered.retire();
         self.rendered = Arc::new(PreviewCache::with_disk(rendered_budget(self.budget), dir, disk_bytes));
     }
 
