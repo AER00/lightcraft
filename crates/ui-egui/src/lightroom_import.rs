@@ -188,28 +188,38 @@ fn inspect_report(data: lightcraft_engine::lightroom_catalog::CatalogImport) -> 
 fn terminal(app: &mut LightcraftApp, ctx: &egui::Context, kind: Kind, value: Value) {
     let message = if let Some(e) = value.get("error").and_then(Value::as_str) {
         let warning = value.get("indexWarning").and_then(Value::as_str).map_or(String::new(), |w| format!("; index warning: {w}"));
-        format!(
-            "{}: {e}{warning}",
-            crate::i18n::tr(if matches!(kind, Kind::Inspect) { "Lightroom inspection failed" } else { "Lightroom import failed" })
-        )
+        if matches!(kind, Kind::Inspect) {
+            crate::i18n::tr_format!("Lightroom inspection failed: {e}{warning}", e = e, warning = warning)
+        } else {
+            crate::i18n::tr_format!("Lightroom import failed: {e}{warning}", e = e, warning = warning)
+        }
     } else if value.get("cancelled").and_then(Value::as_bool).unwrap_or(false) {
         crate::i18n::tr(if matches!(kind, Kind::Inspect) { "Lightroom inspection cancelled" } else { "Lightroom import cancelled" }).into()
     } else if matches!(kind, Kind::Inspect) {
         let photos = value["photos"].as_u64().unwrap_or(0);
         let collections = value["collections"].as_u64().unwrap_or(0);
         let missing = value["missing"].as_array().map_or(0, Vec::len);
-        format!("{}: {photos} photos, {collections} collections, {missing} missing", crate::i18n::tr("Lightroom catalog inspected"))
+        crate::i18n::tr_format!(
+            "Lightroom catalog inspected: {photos} photos, {collections} collections, {missing} missing",
+            photos = photos,
+            collections = collections,
+            missing = missing
+        )
     } else {
         let report = value.get("report").unwrap_or(&value);
         let imported = report["imported"].as_u64().unwrap_or(0);
         let failed = report["failed"].as_array().map_or(0, Vec::len);
         let warning = value.get("indexWarning").and_then(Value::as_str);
         if let Some(warning) = warning {
-            format!("{}: {imported} photos added; index warning: {warning}", crate::i18n::tr("Lightroom import complete"))
+            crate::i18n::tr_format!(
+                "Lightroom import complete: {imported} photos added; index warning: {warning}",
+                imported = imported,
+                warning = warning
+            )
         } else if failed == 0 {
-            format!("{}: {imported} photos added", crate::i18n::tr("Lightroom import complete"))
+            crate::i18n::tr_format!("Lightroom import complete: {imported} photos added", imported = imported)
         } else {
-            format!("{}: {imported} photos added, {failed} failed", crate::i18n::tr("Lightroom import complete"))
+            crate::i18n::tr_format!("Lightroom import complete: {imported} photos added, {failed} failed", imported = imported, failed = failed)
         }
     };
     app.lightroom_last = Some(value);
@@ -410,7 +420,7 @@ pub fn progress(app: &mut LightcraftApp, ctx: &egui::Context) {
     };
     let text = match task.phase {
         Phase::Reading if total == 0 => crate::i18n::tr("Reading Lightroom catalog…").into(),
-        Phase::Reading => format!("{} {done} of {total}", crate::i18n::tr("Reading Lightroom catalog…")),
+        Phase::Reading => crate::i18n::tr_format!("Reading Lightroom catalog… {done} of {total}", done = done, total = total),
         Phase::Committing => crate::i18n::tr("Adding Lightroom photos…").into(),
         Phase::Finalizing => crate::i18n::tr("Saving Lightroom import index…").into(),
     };

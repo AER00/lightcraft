@@ -370,6 +370,61 @@ mod tests {
     }
 
     #[test]
+    fn oversized_history_archive_keeps_prepared_import_successful_with_warning() {
+        let archive_dir = std::env::temp_dir().join(format!("lightcraft-lr-prepared-scale-{}", std::process::id()));
+        let mut data = empty_data();
+        data.photos = (0..5_000)
+            .map(|source_id| {
+                let image = std::collections::BTreeMap::from([
+                    ("id_local".into(), serde_json::json!(source_id)),
+                    ("fileFormat".into(), serde_json::json!("JPG")),
+                    ("fileWidth".into(), serde_json::json!(1)),
+                    ("fileHeight".into(), serde_json::json!(1)),
+                ]);
+                lightroom_catalog::CatalogPhoto {
+                    source_id,
+                    uuid: format!("scale-{source_id}"),
+                    path: format!("/missing/scale-{source_id}.jpg"),
+                    image,
+                    settings: String::new(),
+                    xmp: String::new(),
+                    keywords: Vec::new(),
+                    history: vec![std::collections::BTreeMap::from([(
+                        "text".into(),
+                        serde_json::json!(format!("history-{source_id}-{}", "x".repeat(8 * 1024))),
+                    )])],
+                    snapshots: Vec::new(),
+                }
+            })
+            .collect();
+        let archive_path = crate::lightroom_archive::store_best_effort(&archive_dir, &data).unwrap();
+        assert!(archive_path.is_none());
+        data.warnings.push("Lightroom source archive exceeded 32 MiB; archive skipped".into());
+        let mut session = crate::Session::new();
+        let token = LightroomLibraryToken::capture(&session);
+        let prepared = PreparedLightroom {
+            data,
+            normal: Prepared::default(),
+            index: ImportIndex::default(),
+            archive_path,
+            token,
+            missing_sources: HashSet::new(),
+            update_existing: false,
+            now: "2026-01-01T00:00:00".into(),
+            cancelled: false,
+        };
+        let completion = commit_prepared(&mut session, prepared).unwrap();
+        assert_eq!(completion.report["photos"], 5_000);
+        assert!(
+            completion.report["warnings"]
+                .as_array()
+                .is_some_and(|warnings| warnings.iter().any(|warning| warning == "Lightroom source archive exceeded 32 MiB; archive skipped"))
+        );
+        assert_eq!(session.catalog.len(), 5_000);
+        std::fs::remove_dir_all(archive_dir).unwrap();
+    }
+
+    #[test]
     fn execute_fn_import_does_not_rewrite_source_sidecar() {
         let dir = std::env::temp_dir().join(format!("lightcraft-lr-job-sidecar-{}", std::process::id()));
         let path = dir.join("source.jpg");
