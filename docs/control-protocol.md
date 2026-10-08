@@ -86,7 +86,10 @@ lightcraft-cli snapshot --library DIR --script tour.jsonl -o shot.png
 
   `tour.jsonl` holds one request per line (`#` comments allowed), e.g.
   `{"method": "ui.set", "params": {"view": "detail", "right": "edit", "openSections": ["optics"]}}`
-  then `{"method": "ui.screenshot"}`. Replies are printed to stdout. A `ui.screenshot` without
+  then `{"method": "ui.screenshot"}`. Replies are printed to stdout. A failed request
+  (`"ok": false`) does not stop the script — the remaining lines and the final screenshot still
+  run — but the exit status is non-zero when any request failed, as with `run --keep-going`, so
+  CI and nightly runs can judge a snapshot by its exit status. A `ui.screenshot` without
   `path` writes `-o` (then `OUT-2.png`, `OUT-3.png`, …); `ui.settle {timeoutMs?}` waits until no
   renders are in flight. Each request runs frames until it is answered and its injected input
   (clicks, keys, drags) has played out. Widget ids for `ui.clickWidget` come from `ui.widgets`
