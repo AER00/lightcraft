@@ -523,11 +523,15 @@ fn main() -> eframe::Result {
     }
     // The log file: opened after the arguments, so `--version`, `--help` and a usage error leave
     // no file behind. Records logged until now are written to it first.
+    let mut log_file = None;
     if let Some(logger) = logger {
         // a --memory session writes nothing (issue #164), a log file included
         match log_dir().filter(|_| !in_memory) {
             Some(dir) => match logger.attach_dir(&dir) {
-                Ok(path) => log::info!("LightCraft {}, log file {}", env!("CARGO_PKG_VERSION"), path.display()),
+                Ok(path) => {
+                    log::info!("LightCraft {}, log file {}", env!("CARGO_PKG_VERSION"), path.display());
+                    log_file = Some(path);
+                }
                 // The file sink has given up by now, so this goes to standard error only.
                 Err(e) => log::warn!("no log file: {e}"),
             },
@@ -535,6 +539,10 @@ fn main() -> eframe::Result {
         }
     }
     let (prefs, prefs_warning, keep_prefs_file) = load_prefs(in_memory);
+    // the saved language from the start, so a failed start is reported in it too
+    if let Some(ui) = &prefs {
+        lightcraft_ui_egui::i18n::set_language(ui.language);
+    }
     // --library, else the library last opened from Settings, else the default location
     let library_dir = library_dir.or_else(|| {
         prefs
@@ -564,7 +572,7 @@ fn main() -> eframe::Result {
         wgpu_options: window_wgpu_options(),
         ..Default::default()
     };
-    eframe::run_native(
+    let started = eframe::run_native(
         "LightCraft",
         options,
         Box::new(move |cc| {
@@ -618,7 +626,28 @@ fn main() -> eframe::Result {
                 menu,
             )))
         }),
-    )
+    );
+    if let Err(e) = &started {
+        startup_failed(&e.to_string(), log_file.as_deref());
+    }
+    started
+}
+
+/// The window could not start (e.g. no usable graphics device): say so in the log and in a native
+/// message box naming the log file, instead of exiting without a trace — the release builds have
+/// no console on Windows, and an app started from Finder shows no standard error (issue #260).
+fn startup_failed(error: &str, log_file: Option<&std::path::Path>) {
+    log::error!("LightCraft could not open its window: {error}");
+    if std::env::var_os("LIGHTCRAFT_NO_PREFS").is_some() {
+        return; // tests and scripts: no dialog to click away
+    }
+    let (title, text) = lightcraft_ui_egui::i18n::startup_failed_message(error, log_file.map(|p| p.display().to_string()).as_deref());
+    let _ = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title(title)
+        .set_description(text)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
 }
 
 #[cfg(test)]

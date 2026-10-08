@@ -189,6 +189,16 @@ include!(concat!(env!("OUT_DIR"), "/tr-formats.rs"));
 
 /// A stock preset's or profile's name in the UI language; an imported or user-edited name stays
 /// exactly as its owner wrote it.
+/// The title and text of the message box shown when the desktop app's window can't start
+/// (issue #260), in the UI language: the error and, when there is one, the log file to look in.
+pub fn startup_failed_message(error: &str, log_file: Option<&str>) -> (String, String) {
+    let text = match log_file {
+        Some(path) => tr_format!("LightCraft could not open its window: {e}\n\nThe log file has the details: {path}", e = error, path = path),
+        None => tr_format!("LightCraft could not open its window: {e}", e = error),
+    };
+    (tr("LightCraft could not start").to_string(), text)
+}
+
 pub fn builtin_label(source: &str, builtin: bool) -> &str {
     if builtin { tr(source) } else { source }
 }
@@ -404,6 +414,16 @@ mod tests {
     }
 
     /// Locale tags are matched leniently, so a system locale reaches a shipped language.
+    /// The message box for a desktop start that failed (issue #260) names the error and the log
+    /// file, in the UI language.
+    #[test]
+    fn startup_failure_message_names_the_error_and_the_log() {
+        let (title, text) = startup_failed_message("no adapter", Some("/home/a/.config/lightcraft/logs/lightcraft.log"));
+        assert_eq!(title, "LightCraft could not start");
+        assert!(text.contains("no adapter") && text.ends_with("lightcraft.log"), "{text}");
+        assert!(!startup_failed_message("no adapter", None).1.contains("log file"));
+    }
+
     #[test]
     fn locale_tags_normalize() {
         assert_eq!(Locale::parse_tag("en"), Some(Locale::En));
