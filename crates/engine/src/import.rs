@@ -656,34 +656,6 @@ fn normalize_import_path(path: &str) -> String {
     if cfg!(windows) { path.to_lowercase() } else { path }
 }
 
-#[cfg(test)]
-mod prepared_tests {
-    use super::*;
-
-    #[test]
-    fn revalidate_add_only_converts_matching_ready_item() {
-        let mut s = Session::new();
-        let existing_path = std::env::temp_dir().join("lightcraft-revalidate-existing.jpg");
-        let other_path = std::env::temp_dir().join("lightcraft-revalidate-other.jpg");
-        let existing = Photo::new(PhotoId(1), Source::File { path: existing_path.to_string_lossy().into() }, "existing.jpg", "JPG", 1, 1, "now");
-        s.commit("existing", Op::AddPhoto { photo: Box::new(existing) }).unwrap();
-        let ready = |path: &Path| ReadyFile {
-            path: path.to_string_lossy().into(),
-            stored: path.to_string_lossy().into(),
-            info: ProbeInfo { format: "JPG".into(), ..ProbeInfo::default() },
-            sidecar: None,
-            placed: None,
-        };
-        let mut prepared = Prepared {
-            scanned: 2,
-            items: vec![PreparedItem::Ready(Box::new(ready(&existing_path))), PreparedItem::Ready(Box::new(ready(&other_path)))],
-        };
-        prepared.revalidate_add(&s);
-        assert!(matches!(prepared.items.first(), Some(PreparedItem::Duplicate { reason: "path", .. })));
-        assert!(matches!(prepared.items.get(1), Some(PreparedItem::Ready(_))));
-    }
-}
-
 impl ImportJob {
     /// Snapshot what an import with `opts` needs from the session (no file-system calls). Takes
     /// the probes a preceding scan left ([`Session::import_probes`]).
@@ -1091,5 +1063,33 @@ impl Session {
     pub fn with_system_clock(mut self) -> Self {
         self.clock = Box::new(system_clock);
         self
+    }
+}
+
+#[cfg(test)]
+mod prepared_tests {
+    use super::*;
+
+    #[test]
+    fn revalidate_add_only_converts_matching_ready_item() {
+        let mut s = Session::new();
+        let existing_path = std::env::temp_dir().join("lightcraft-revalidate-existing.jpg");
+        let other_path = std::env::temp_dir().join("lightcraft-revalidate-other.jpg");
+        let existing = Photo::new(PhotoId(1), Source::File { path: existing_path.to_string_lossy().into() }, "existing.jpg", "JPG", 1, 1, "now");
+        s.commit("existing", Op::AddPhoto { photo: Box::new(existing) }).unwrap();
+        let ready = |path: &Path| ReadyFile {
+            path: path.to_string_lossy().into(),
+            stored: path.to_string_lossy().into(),
+            info: ProbeInfo { format: "JPG".into(), ..ProbeInfo::default() },
+            sidecar: None,
+            placed: None,
+        };
+        let mut prepared = Prepared {
+            scanned: 2,
+            items: vec![PreparedItem::Ready(Box::new(ready(&existing_path))), PreparedItem::Ready(Box::new(ready(&other_path)))],
+        };
+        prepared.revalidate_add(&s);
+        assert!(matches!(prepared.items.first(), Some(PreparedItem::Duplicate { reason: "path", .. })));
+        assert!(matches!(prepared.items.get(1), Some(PreparedItem::Ready(_))));
     }
 }
