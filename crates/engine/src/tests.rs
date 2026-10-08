@@ -14,7 +14,7 @@ fn active_dev(s: &Session) -> lightcraft_develop::DevelopSettings {
 fn changing_one_wb_control_resolves_as_shot_without_stale_tint() {
     use lightcraft_catalog::{Photo, PhotoId, Source};
     use lightcraft_develop::{DevelopSettings, WbMode};
-    for format in ["ARW", "NEF", "NRW", "RAF"] {
+    for format in ["ARW", "NEF", "NRW", "RAF", "CR2", "PEF"] {
         let mut s = demo();
         let id = PhotoId(100);
         let name = format!("synthetic.{format}");

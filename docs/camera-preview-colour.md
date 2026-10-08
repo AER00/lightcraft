@@ -1,6 +1,6 @@
-# Sony ARW, Nikon NEF, Panasonic RW2, Fujifilm RAF and Canon CR3 starting look
+# Sony ARW, Nikon NEF, Panasonic RW2, Fujifilm RAF, Canon CR3/CR2 and Pentax PEF starting look
 
-ARW, NEF, RW2, RAF and CR3 decoding supply sensor data and camera white-balance multipliers, but currently no measured camera colour matrix. Treating camera RGB as linear sRGB produces a dark, muted default rendering. The loader now estimates a file-local starting look from that file's embedded camera JPEG, only when a usable camera matrix is absent. All output pixels still come from the RAW sensor data; there is no JPEG replacement or uniform saturation boost.
+ARW, NEF, RW2, RAF, CR3, CR2 and PEF decoding supply sensor data and camera white-balance multipliers, but currently no measured camera colour matrix. Treating camera RGB as linear sRGB produces a dark, muted default rendering. The loader now estimates a file-local starting look from that file's embedded camera JPEG, only when a usable camera matrix is absent. All output pixels still come from the RAW sensor data; there is no JPEG replacement or uniform saturation boost.
 
 ## Colour and tone are separate
 
@@ -84,3 +84,10 @@ Nikon maker-note `CropArea` (0x0045) supplies the default `[left, top, width, he
 An embedded JPEG with neither ICC nor EXIF metadata uses Nikon maker-note `ColorSpace` (0x001e: 1 = sRGB, 2 = Adobe RGB). This fallback is applied before transfer decoding and resizing, and used by quick previews, preview-only RAW and the existing camera-look reference decode. A JPEG's own metadata takes precedence. No fitting algorithm, training split, highlight reconstruction or white-balance control changes are included. Render cache version 12 invalidates older previews.
 
 Synthetic tests cover crop bounds/CFA preservation, colour-space tags, fallback transfer decoding and metadata precedence. A private Nikon Z 8 sample reports an 8256 × 5504 default crop from an 8280 × 5520 sensor. No private sample or Adobe asset is included.
+
+### Canon CR2 and Pentax PEF
+
+CR2 and PEF decode without a camera colour matrix too, but were left out of the fit until issue #310 (CR2 files opening
+flat and desaturated: the camera's preview first, then the neutral fallback). They now use the same fit, gates and
+relative white balance. This change was not measured on the corpus: the gates keep the fallback for any file whose fit
+doesn't pass, so a file can only stay as before or move closer to its camera JPEG. Per-model numbers are still to come.

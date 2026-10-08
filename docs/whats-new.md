@@ -15,6 +15,8 @@
   belonged to another command moves to the new one. Menus show the new keys; agents use `app.setShortcut`.
 
 ### RAW decoding
+- Canon CR2 and Pentax PEF raws get the same starting look fitted to the camera's own JPEG as ARW, NEF, RW2, RAF
+  and CR3, instead of opening flat and desaturated (issue #310). Photos already imported pick it up when re-rendered.
 - Panasonic and Leica raws (RW2, RWL) are now corrected for lens distortion the way the camera corrects its own JPEG
   (issue #256): the correction the camera records in the file is applied under Lens Corrections ▸ Enable Profile
   Corrections, on by default for newly imported photos, with the same framing as the camera's JPEG. At 12 mm the
