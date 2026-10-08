@@ -205,3 +205,24 @@ fn resources() {
     }
     assert_eq!(rpc(&mut s, 99, "resources/read", json!({"uri": "lightcraft://nope"}))["error"]["code"], -32002);
 }
+
+/// `select_photos` with an id that is not in the library is a tool error, and the photo that was
+/// active stays active (#182).
+#[test]
+fn select_photos_rejects_unknown_ids_and_keeps_the_active_photo() {
+    let mut b = Headless::demo();
+    let first = b.session.visible_cloned()[0];
+    let r = call_tool(&mut b, "select_photos", &json!({"ids": [first.0]}));
+    assert!(!r.is_error, "{r:?}");
+    let r = call_tool(&mut b, "select_photos", &json!({"ids": [9999]}));
+    assert!(r.is_error, "{r:?}");
+    assert!(r.content[0]["text"].as_str().unwrap().contains("no such photo 9999"), "{r:?}");
+    assert_eq!(b.session.active(), Some(first));
+    let r = call_tool(&mut b, "get_develop", &json!({}));
+    assert!(!r.is_error, "{r:?}");
+    let r = call_tool(&mut b, "get_develop", &json!({"id": 9999}));
+    assert!(r.is_error, "{r:?}");
+    let r = call_tool(&mut b, "set_develop", &json!({"id": 9999, "values": {"light.exposure": 1.0}}));
+    assert!(r.is_error, "{r:?}");
+    assert_eq!(b.session.active(), Some(first));
+}

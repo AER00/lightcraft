@@ -817,3 +817,36 @@ fn face_job_follows_rotate_right() {
     let (pw, ph) = ((r.x1 - r.x0) * h, (r.y1 - r.y0) * w);
     assert!((pw - ph).abs() < 1e-6 * w.max(h), "square in rotated pixels: {pw} × {ph}");
 }
+
+/// Selecting an id that is not in the library is an error, and the selection stays as it was
+/// (#182: `select_photos {"ids": [9999]}` answered `selected: 1` and the session lost its photo).
+#[test]
+fn selecting_an_unknown_photo_is_an_error_and_keeps_the_selection() {
+    let mut s = demo();
+    let vis = s.visible_cloned();
+    s.execute("library.select", &json!({"ids": [vis[0].0]})).unwrap();
+    let before = s.selection.clone();
+    for p in [
+        json!({"ids": [9999]}),
+        json!({"ids": [9999], "active": 9999}),
+        json!({"ids": [vis[1].0], "active": 9999}),
+        json!({"ids": [vis[1].0, 9999]}),
+        json!({"ids": [9999], "mode": "add"}),
+        json!({"ids": [9999], "mode": "toggle"}),
+        json!({"ids": [9999], "mode": "range"}),
+    ] {
+        let e = s.execute("library.select", &p).unwrap_err().to_string();
+        assert!(e.contains("no such photo 9999"), "{p}: {e}");
+        assert_eq!(s.selection, before, "{p}");
+    }
+    assert_eq!(s.active(), Some(vis[0]));
+    assert!(s.execute("develop.get", &json!({})).is_ok());
+    // queries about an explicit id check it too
+    for c in ["develop.get", "photo.inspect", "photo.allMetadata", "history.list"] {
+        let e = s.execute(c, &json!({"id": 9999})).unwrap_err().to_string();
+        assert!(e.contains("no such photo 9999"), "{c}: {e}");
+        assert!(s.execute(c, &json!({"id": vis[1].0})).is_ok(), "{c}");
+    }
+    // an empty selection is still allowed
+    assert_eq!(s.execute("library.select", &json!({"ids": []})).unwrap()["selected"], 0);
+}
