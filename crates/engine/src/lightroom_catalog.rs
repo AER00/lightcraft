@@ -363,7 +363,7 @@ impl Reader {
                 .iter()
                 .zip(columns)
                 .find_map(|(value, column)| {
-                    (column == "image").then(|| match value {
+                    (column == "image").then_some(match value {
                         SqlValue::Integer(n) => *n,
                         _ => 0,
                     })
@@ -628,7 +628,7 @@ pub fn read_with_progress(path: &Path, cancel: &AtomicBool, total: &AtomicUsize,
         return Err("catalog changed during reading; close Lightroom and retry".into());
     }
     let reader = Reader { tables: db.live_tables()?, db };
-    let mut table = |name: &str, required: bool| -> Result<Vec<Row>, String> {
+    let table = |name: &str, required: bool| -> Result<Vec<Row>, String> {
         ensure_read_active(cancel)?;
         let rows = reader.table(name, required)?;
         done.fetch_add(1, Ordering::Relaxed);

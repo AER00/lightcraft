@@ -91,7 +91,7 @@ impl Database {
         }
         let page_size = sqlite_page_size(be_u16(main_header, 16)?)?;
         validate_header_fields(main_header, page_size)?;
-        if main.len() < page_size || main.len() % page_size != 0 {
+        if main.len() < page_size || !main.len().is_multiple_of(page_size) {
             return Err("SQLite image is not a whole number of pages".into());
         }
         let main_pages = u32::try_from(main.len() / page_size).map_err(|_| "SQLite image is too large")?;
@@ -225,10 +225,8 @@ impl Database {
                         if index >= values.len() {
                             return Err("INTEGER PRIMARY KEY column is missing from record".into());
                         }
-                        if matches!(values.get(index), Some(Value::Null)) {
-                            if let Some(value) = values.get_mut(index) {
-                                *value = Value::Integer(rowid);
-                            }
+                        if let Some(value @ Value::Null) = values.get_mut(index) {
+                            *value = Value::Integer(rowid);
                         }
                     }
                     if state.out.len() >= MAX_ROWS {
@@ -524,7 +522,7 @@ fn decode_text(bytes: &[u8], encoding: TextEncoding) -> Result<String, String> {
     match encoding {
         TextEncoding::Utf8 => String::from_utf8(bytes.to_vec()).map_err(|_| "invalid UTF-8 SQLite text".into()),
         TextEncoding::Utf16Le | TextEncoding::Utf16Be => {
-            if bytes.len() % 2 != 0 {
+            if !bytes.len().is_multiple_of(2) {
                 return Err("odd-length UTF-16 SQLite text".into());
             }
             let units: Result<Vec<u16>, String> = bytes
@@ -626,12 +624,12 @@ fn parse_create_table(sql: &str) -> Result<(Vec<String>, Option<usize>), String>
     if columns.is_empty() {
         return Err("CREATE TABLE has no columns".into());
     }
-    if alias.is_none() {
-        if let Some(primary) = table_primary {
-            let key = primary.to_ascii_lowercase();
-            if integer_columns.contains(&key) {
-                alias = columns.iter().position(|column| column.eq_ignore_ascii_case(&primary));
-            }
+    if alias.is_none()
+        && let Some(primary) = table_primary
+    {
+        let key = primary.to_ascii_lowercase();
+        if integer_columns.contains(&key) {
+            alias = columns.iter().position(|column| column.eq_ignore_ascii_case(&primary));
         }
     }
     Ok((columns, alias))

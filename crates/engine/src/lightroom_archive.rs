@@ -50,9 +50,8 @@ pub fn store(directory: &Path, data: &CatalogImport) -> Result<PathBuf, String> 
     managed.sort_by_key(|entry| entry.index);
 
     let temporary = temporary_path(directory)?;
-    write_archive(&temporary, data).map_err(|error| {
+    write_archive(&temporary, data).inspect_err(|_| {
         let _ = remove_managed_file(&temporary);
-        error
     })?;
 
     let recent = managed.iter().rev().take(MAX_MANAGED_ARCHIVES);
@@ -351,7 +350,7 @@ fn retirement_set_protected(entries: &[Managed], protected: Option<&Path>) -> Re
     let mut total = ordered.iter().try_fold(0u64, |sum, entry| sum.checked_add(entry.size)).ok_or("archive size overflow")?;
     let mut retirees = Vec::new();
     while ordered.len() > MAX_MANAGED_ARCHIVES || total > MAX_TOTAL_ARCHIVE_BYTES {
-        let Some(position) = ordered.iter().position(|entry| protected.map_or(true, |path| entry.path != path)) else {
+        let Some(position) = ordered.iter().position(|entry| protected.is_none_or(|path| entry.path != path)) else {
             return Err("cannot satisfy archive retention limit".into());
         };
         let oldest = ordered.remove(position);
