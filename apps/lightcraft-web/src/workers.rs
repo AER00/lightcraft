@@ -27,7 +27,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 use crate::backend::Backend;
-use crate::wire::{ThumbIndex, WireJob, WorkerCore, thumb_storage_key};
+use crate::wire::{CacheWatch, ThumbIndex, WireJob, WorkerCore, thumb_storage_key};
 
 /// Storage key of the thumbnail index.
 pub const THUMB_INDEX: &str = "thumbs/index.json";
@@ -175,7 +175,8 @@ struct W {
 }
 
 struct Inner {
-    preview_generation: Option<(std::sync::Weak<PreviewCache>, u64)>,
+    /// The rendered-thumbnail cache the stored thumbnails belong to.
+    preview_generation: CacheWatch,
     workers: Vec<W>,
     done: Vec<(Slot, RenderResult, f64)>,
     next_id: u32,
@@ -192,17 +193,16 @@ struct Inner {
 
 impl Inner {
     fn observe_cache(&mut self, cache: &Arc<PreviewCache>, generation: u64) {
-        if self.preview_generation.as_ref().is_some_and(|(old, g)| old.as_ptr() != Arc::as_ptr(cache) || *g != generation) {
-            let gone = self.index.invalidate();
-            if let Some(backend) = self.backend.clone() {
-                wasm_bindgen_futures::spawn_local(async move {
-                    for key in gone {
-                        let _ = backend.remove(&thumb_storage_key(&key)).await;
-                    }
-                });
-            }
+        let gone = self.preview_generation.observe(cache, generation, &mut self.index);
+        if !gone.is_empty()
+            && let Some(backend) = self.backend.clone()
+        {
+            wasm_bindgen_futures::spawn_local(async move {
+                for key in gone {
+                    let _ = backend.remove(&thumb_storage_key(&key)).await;
+                }
+            });
         }
-        self.preview_generation = Some((Arc::downgrade(cache), generation));
     }
 }
 
@@ -212,9 +212,11 @@ pub struct Workers(Rc<RefCell<Inner>>);
 
 impl Workers {
     /// Start `n` workers (none: every job runs inline). `store` is the backend kind for workers.
-    pub fn start(n: usize, store: &str, backend: Option<Backend>, index: ThumbIndex, ctx: egui::Context) -> Workers {
+    /// `index` lists the stored thumbnails of `cache`, the session's rendered-thumbnail cache
+    /// now: watching it from the start, a clear before the first render request still counts.
+    pub fn start(n: usize, store: &str, backend: Option<Backend>, index: ThumbIndex, cache: &Arc<PreviewCache>, ctx: egui::Context) -> Workers {
         let w = Workers(Rc::new(RefCell::new(Inner {
-            preview_generation: None,
+            preview_generation: CacheWatch::new(cache),
             workers: Vec::new(),
             done: Vec::new(),
             next_id: 0,
@@ -471,7 +473,7 @@ impl RenderOffload for Workers {
     fn finished(&mut self) -> Vec<(Slot, RenderResult, f64)> {
         let mut g = self.0.borrow_mut();
         // Persist invalidation even when the cleared library has no visible render requests.
-        if let Some(cache) = g.preview_generation.as_ref().and_then(|(cache, _)| cache.upgrade()) {
+        if let Some(cache) = g.preview_generation.cache() {
             g.observe_cache(&cache, cache.generation());
         }
         g.inline_this_frame = false;

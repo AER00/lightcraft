@@ -11,13 +11,13 @@
 //! ([`ThumbIndex`]).
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use lightcraft_engine::catalog::Source;
 use lightcraft_engine::develop::{DevelopSettings, EmbeddedLens};
 use lightcraft_engine::media::{DecodedSource, MediaCache, RenderJob, SourceLevel, SourceRef};
 use lightcraft_engine::pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
-use lightcraft_preview::{Hash128, Lru};
+use lightcraft_preview::{Hash128, Lru, PreviewCache};
 use serde::{Deserialize, Serialize};
 
 use crate::store::hash_of_path;
@@ -299,6 +299,33 @@ impl ThumbIndex {
     }
 }
 
+/// Which rendered-thumbnail cache, at which generation, the stored thumbnails ([`ThumbIndex`])
+/// belong to (main thread). Clearing the previews bumps the cache's generation, and opening
+/// another library replaces the cache: either makes every stored thumbnail obsolete.
+pub struct CacheWatch(Option<(Weak<PreviewCache>, u64)>);
+
+impl CacheWatch {
+    /// Watch `active`, the session's cache when the workers start: the persisted index belongs
+    /// to it at its current generation. (Without this baseline, the first observation after a
+    /// clear would only record the cleared generation and keep the obsolete thumbnails.)
+    pub fn new(active: &Arc<PreviewCache>) -> CacheWatch {
+        CacheWatch(Some((Arc::downgrade(active), active.generation())))
+    }
+
+    /// The watched cache, while it's alive.
+    pub fn cache(&self) -> Option<Arc<PreviewCache>> {
+        self.0.as_ref().and_then(|(cache, _)| cache.upgrade())
+    }
+
+    /// `cache` at `generation` is the active one now. If it was cleared or replaced since the
+    /// last observation, invalidate `index` and return the keys whose files should be deleted.
+    pub fn observe(&mut self, cache: &Arc<PreviewCache>, generation: u64, index: &mut ThumbIndex) -> Vec<String> {
+        let changed = self.0.as_ref().is_some_and(|(old, g)| old.as_ptr() != Arc::as_ptr(cache) || *g != generation);
+        self.0 = Some((Arc::downgrade(cache), generation));
+        if changed { index.invalidate() } else { Vec::new() }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,6 +406,62 @@ mod tests {
         let mut refreshed = job.clone();
         refreshed.cache_generation = 1;
         assert_eq!(core.needs_original(&refreshed).as_deref(), Some(hash.as_str()), "explicit refresh must not reuse the old decoded source");
+    }
+
+    /// The persisted index as a restarted page loads it: one stored thumbnail.
+    fn persisted_index(key: Hash128) -> (ThumbIndex, String) {
+        let mut index = ThumbIndex::default();
+        let hex = index.cache_key(key);
+        index.insert(&hex, 100);
+        (ThumbIndex::from_json(&index.to_json()), hex)
+    }
+
+    #[test]
+    fn clearing_previews_before_the_first_request_invalidates_stored_thumbnails() {
+        let key = lightcraft_preview::hash_bytes(b"thumbnail");
+        let (mut index, old) = persisted_index(key);
+        let cache = Arc::new(PreviewCache::memory(1 << 20));
+        let mut watch = CacheWatch::new(&cache);
+        let mut gone = Vec::new();
+        // each frame (`Workers::finished`) observes the watched cache, even with no requests
+        let mut frame = |watch: &mut CacheWatch, index: &mut ThumbIndex| {
+            if let Some(c) = watch.cache() {
+                gone.extend(watch.observe(&c, c.generation(), index));
+            }
+        };
+        frame(&mut watch, &mut index); // an empty filtered view: no render request yet
+        cache.clear(); // File ▸ Clear Preview Cache
+        frame(&mut watch, &mut index);
+        // the filter is removed: the first thumbnail request (`Workers::try_start`)
+        gone.extend(watch.observe(&cache, cache.generation(), &mut index));
+        let disk_key = index.cache_key(key);
+        assert!(!index.touch(&disk_key), "the pre-clear thumbnail must not be read back");
+        assert_eq!(gone, vec![old.clone()], "the stored file is deleted");
+        assert_ne!(disk_key, old, "a fresh namespace: a late old write can't come back");
+        assert!(index.dirty, "the invalidated index is saved");
+    }
+
+    #[test]
+    fn replacing_the_cache_before_the_first_request_invalidates_stored_thumbnails() {
+        let key = lightcraft_preview::hash_bytes(b"thumbnail");
+        let (mut index, old) = persisted_index(key);
+        let first = Arc::new(PreviewCache::memory(1 << 20));
+        let mut watch = CacheWatch::new(&first);
+        let other = Arc::new(PreviewCache::memory(1 << 20)); // another library, generation 0 again
+        assert_eq!(watch.observe(&other, other.generation(), &mut index), vec![old]);
+    }
+
+    #[test]
+    fn a_normal_start_keeps_stored_thumbnails() {
+        let key = lightcraft_preview::hash_bytes(b"thumbnail");
+        let (mut index, old) = persisted_index(key);
+        let cache = Arc::new(PreviewCache::memory(1 << 20));
+        let mut watch = CacheWatch::new(&cache);
+        for _ in 0..3 {
+            assert!(watch.observe(&cache, cache.generation(), &mut index).is_empty());
+        }
+        assert_eq!(index.cache_key(key), old);
+        assert!(index.touch(&old), "persisted thumbnails survive a restart");
     }
 
     #[test]
