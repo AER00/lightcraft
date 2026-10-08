@@ -209,7 +209,7 @@ fn date_and_keyword_rows_show_their_photos_from_any_source() {
     let first = h.app.session.visible_cloned()[0];
     let year = h.app.session.catalog.photo(first).and_then(|p| p.captured.clone()).expect("demo photo date")[..4].to_string();
     // (Keywords rows go through the same helper, `browse_all_photos`)
-    for (row, key) in [(format!("date:{year}"), "date")] {
+    for (row, key) in [(format!("source:date:{year}"), "date")] {
         let r = h.request("engine.execute", json!({"command": "library.source", "params": {"kind": "recentlyDeleted"}}), T);
         assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
