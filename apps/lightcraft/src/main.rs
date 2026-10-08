@@ -228,6 +228,16 @@ impl PrefsWriter {
     }
 }
 
+/// The Windows command that opens `url` in the default browser. `explorer <url>` opened File
+/// Explorer instead for links with a query or fragment, like the Map button's OpenStreetMap link
+/// (issue #234). The URL protocol handler hands the URL to the browser as is; no shell runs, so
+/// `?`, `&` and `#` need no escaping.
+fn windows_open_url_command(url: &str) -> std::process::Command {
+    let mut c = std::process::Command::new("rundll32");
+    c.args(["url.dll,FileProtocolHandler", url]);
+    c
+}
+
 fn services() -> Services {
     Services {
         pick_folder: Some(Box::new(|| {
@@ -262,7 +272,7 @@ fn services() -> Services {
             let status = if cfg!(target_os = "macos") {
                 std::process::Command::new("open").arg(url).status()
             } else if cfg!(target_os = "windows") {
-                std::process::Command::new("explorer").arg(url).status()
+                windows_open_url_command(url).status()
             } else {
                 std::process::Command::new("xdg-open").arg(url).status()
             };
@@ -614,6 +624,17 @@ mod tests {
             }
         }
         assert!(!b.is_empty());
+    }
+
+    /// Issue #234: Windows opens links with the URL protocol handler (the default browser), not
+    /// File Explorer, and passes the whole map link, `?`, `&` and `#` included, as one argument.
+    #[test]
+    fn windows_links_open_in_the_browser() {
+        let url = "https://www.openstreetmap.org/?mlat=48.856600&mlon=2.352200#map=15/48.856600/2.352200";
+        let c = windows_open_url_command(url);
+        assert_eq!(c.get_program(), "rundll32");
+        let args: Vec<&std::ffi::OsStr> = c.get_args().collect();
+        assert_eq!(args, ["url.dll,FileProtocolHandler", url]);
     }
 
     #[test]
