@@ -10,6 +10,11 @@
 - Help → Keyboard Shortcuts includes the number-key bindings. See [library shortcuts](library-shortcuts.md).
 
 ### RAW decoding
+- Panasonic and Leica raws (RW2, RWL) are now corrected for lens distortion the way the camera corrects its own JPEG
+  (issue #256): the correction the camera records in the file is applied under Lens Corrections ▸ Enable Profile
+  Corrections, on by default for newly imported photos, with the same framing as the camera's JPEG. At 12 mm the
+  12–32 mm kit zoom was off by about 5 % of the image width at the corners before. Files shot with the correction off
+  are unchanged; photos imported before this change get it when imported again.
 - Sony ILCE-7M4 downsized lossless ARWs now decode subsampled YCbCr tiles into linear RGB,
   preserving RAW editing & full-resolution export instead of using embedded JPEG previews.
 
