@@ -382,6 +382,61 @@ fn crop_aspect_lock_current_and_toggle() {
     assert!(active_dev(&s).crop.aspect.is_none(), "toggle unlocks");
 }
 
+// Feature: dragging crop handles (issue 295)
+#[test]
+fn crop_drag_stops_at_the_image_edge_and_keeps_the_anchor() {
+    let mut s = demo();
+    s.execute("crop.set", &json!({"rect": [0.2, 0.2, 0.8, 0.8]})).unwrap();
+    s.execute("crop.drag", &json!({"handle": "bottomRight", "from": [0.8, 0.8], "to": [1.4, 0.7]})).unwrap();
+    let r = active_dev(&s).crop.geometry.rect;
+    assert!((r.x0 - 0.2).abs() < 1e-6 && (r.y0 - 0.2).abs() < 1e-6, "anchor moved: {r:?}");
+    assert!((r.x1 - 1.0).abs() < 1e-6 && (r.y1 - 0.7).abs() < 1e-6, "{r:?}");
+}
+
+#[test]
+fn crop_drag_keeps_a_locked_ratio_on_every_handle() {
+    let mut s = demo();
+    s.execute("crop.aspect", &json!({"aspect": "16x9"})).unwrap();
+    let d = active_dev(&s);
+    assert!(d.crop.aspect.is_some());
+    let want = d.crop.geometry.rect.aspect();
+    let r = d.crop.geometry.rect;
+    for (handle, to) in [("left", [r.x0 + 0.1, 0.5]), ("top", [0.5, r.y0 + 0.05]), ("bottomRight", [1.3, 1.3]), ("right", [0.9, 0.5])] {
+        s.execute("crop.drag", &json!({"handle": handle, "from": [0.5, 0.5], "to": to, "start": [r.x0, r.y0, r.x1, r.y1]})).unwrap();
+        let g = active_dev(&s).crop.geometry.rect;
+        assert!((g.aspect() - want).abs() < 1e-6, "{handle}: {} vs {want}", g.aspect());
+    }
+}
+
+#[test]
+fn crop_drag_rejects_unknown_handles_and_bad_points() {
+    let mut s = demo();
+    assert!(s.execute("crop.drag", &json!({"handle": "sideways", "from": [0.5, 0.5], "to": [0.6, 0.6]})).is_err());
+    assert!(s.execute("crop.drag", &json!({"handle": "move", "from": [0.5], "to": [0.6, 0.6]})).is_err());
+    assert!(s.execute("crop.drag", &json!({"handle": "move", "to": [0.6, 0.6]})).is_err());
+}
+
+#[test]
+fn crop_aspect_rejects_degenerate_custom_ratios() {
+    let mut s = demo();
+    let before = active_dev(&s).crop;
+    for bad in [json!([0.004, 3]), json!([3, 0]), json!([-1, 2]), json!([1000, 0.01]), json!(["a", 2]), json!([1, 2, 3])] {
+        assert!(s.execute("crop.aspect", &json!({"aspect": bad.clone()})).is_err(), "{bad}");
+    }
+    assert!(s.execute("crop.aspect", &json!({"aspect": "0x5"})).is_err());
+    let after = active_dev(&s).crop;
+    assert_eq!(before.geometry, after.geometry, "a rejected ratio leaves the crop alone");
+    s.execute("crop.aspect", &json!({"aspect": [2.5, 1]})).unwrap();
+    assert!(!active_dev(&s).crop.geometry.rect.is_empty());
+}
+
+#[test]
+fn crop_drag_rejects_non_numeric_points() {
+    let mut s = demo();
+    assert!(s.execute("crop.drag", &json!({"handle": "move", "from": ["a", 0.5, 0.5], "to": [0.6, 0.6]})).is_err());
+    assert!(s.execute("crop.drag", &json!({"handle": "move", "from": [0.5, 0.5], "to": [0.6, 0.6], "start": [0.1, "x", 0.5, 0.5]})).is_err());
+}
+
 #[test]
 fn paste_from_previous_and_copy_paste_metadata() {
     let mut s = demo();
