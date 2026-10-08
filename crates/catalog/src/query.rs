@@ -37,6 +37,10 @@ pub struct Filter {
     pub deleted: bool,
     /// Capture date prefix (`2026`, `2026-04`, `2026-04-12`).
     pub date: Option<String>,
+    /// A folder the library's photos were imported from: those photos and the ones imported from
+    /// the folders inside it (see [`crate::folders`]). Photos only browsed in Local are never part
+    /// of it, unlike [`Filter::folder`].
+    pub library_folder: Option<String>,
     /// A keyword; hierarchical keywords match their children too (`travel` finds `travel|italy`).
     pub keyword: Option<String>,
     /// A person: photos with a named face region of this name (case-insensitive), as read from XMP.
@@ -186,6 +190,7 @@ impl Filter {
             ("camera", &self.camera),
             ("lens", &self.lens),
             ("date", &self.date),
+            ("folder", &self.library_folder),
             ("imported", &self.imported),
         ] {
             if let Some(x) = val {
@@ -213,6 +218,19 @@ impl Filter {
     }
 
     pub fn matches(&self, p: &Photo, cat: &Catalog) -> bool {
+        self.matches_in(p, cat, self.library_root().as_deref())
+    }
+
+    /// [`Filter::library_folder`] as a folder identity ([`folder_key`]); `None` without a choice.
+    fn library_root(&self) -> Option<String> {
+        // as given: a folder may be named with spaces at its edge, and trimming would make it
+        // another folder
+        self.library_folder.as_deref().filter(|d| !d.trim().is_empty()).map(folder_key)
+    }
+
+    /// [`Filter::matches`] with the library folder already turned into its identity, so a query
+    /// over a big library does that once, not once per photo.
+    fn matches_in(&self, p: &Photo, cat: &Catalog, root: Option<&str>) -> bool {
         if p.deleted != self.deleted {
             return false;
         }
@@ -285,6 +303,11 @@ impl Filter {
         {
             return false;
         }
+        if let Some(root) = root
+            && !photo_in_root(p, root)
+        {
+            return false;
+        }
         if let Some(d) = &self.imported
             && !p.imported.starts_with(d.as_str())
         {
@@ -317,7 +340,8 @@ impl Filter {
 impl Catalog {
     /// Photos matching `filter`, in `sort` order (ties broken by id for stability).
     pub fn query(&self, filter: &Filter, sort: &Sort) -> Vec<PhotoId> {
-        let mut v: Vec<&Photo> = self.photos().map(|p| p.as_ref()).filter(|p| filter.matches(p, self)).collect();
+        let root = filter.library_root();
+        let mut v: Vec<&Photo> = self.photos().map(|p| p.as_ref()).filter(|p| filter.matches_in(p, self, root.as_deref())).collect();
         v.sort_by(|a, b| {
             let o = match sort.key {
                 SortKey::CaptureDate => a.date().cmp(b.date()),
@@ -384,7 +408,8 @@ impl Catalog {
     pub fn people_in(&self, filter: &Filter) -> Vec<Person> {
         let filter = Filter { person: None, ..filter.clone() };
         let mut m: std::collections::HashMap<String, (Person, f64)> = Default::default();
-        for p in self.photos().filter(|p| filter.matches(p, self)) {
+        let root = filter.library_root();
+        for p in self.photos().filter(|p| filter.matches_in(p, self, root.as_deref())) {
             let mut seen: Vec<String> = Vec::new();
             for r in p.meta.regions.iter().filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
                 let Some(name) = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else { continue };
@@ -438,12 +463,18 @@ pub fn in_folder(path: &str, dir: &str, deep: bool) -> bool {
     !rest.is_empty() && (deep || !rest.contains(['/', '\\']))
 }
 
-/// A folder path's identity, for telling whether two spellings name the same folder: `/` and
-/// `\\` are both separators, repeated separators, `.` and a trailing separator are dropped,
-/// `..` is resolved lexically, a Windows verbatim prefix (`\\?\`) is removed and the drive
-/// letter lower-cased; on Windows (case-insensitive file names) the whole path is lower-cased.
-/// No file-system access: the paths compared should already be absolute.
-pub fn folder_key(path: &str) -> String {
+/// A path read the way [`folder_key`] reads it: the part `..` can't climb above (`//server/share`,
+/// `c:`; empty for `/` and relative paths), the names below it, and whether it is absolute.
+pub(crate) struct SplitPath {
+    pub prefix: String,
+    pub parts: Vec<String>,
+    pub absolute: bool,
+}
+
+/// Both separators, repeated separators (also between a server and its share), `.` and a
+/// trailing separator dropped, `..` resolved lexically, a Windows verbatim prefix removed;
+/// `lower_drive` lower-cases a drive letter (the identity does, a display name wants it as is).
+pub(crate) fn split_path(path: &str, lower_drive: bool) -> SplitPath {
     let mut s = path.replace('\\', "/");
     if let Some(rest) = s.strip_prefix("//?/").or_else(|| s.strip_prefix("//./")) {
         s = match rest.strip_prefix("UNC/") {
@@ -451,28 +482,39 @@ pub fn folder_key(path: &str) -> String {
             None => rest.to_string(),
         };
     }
-    // the part `..` can't climb above: `//server/share`, `c:` or `/`
     let (prefix, rest) = if let Some(unc) = s.strip_prefix("//").filter(|u| !u.is_empty() && !u.starts_with('/')) {
-        let mut it = unc.splitn(3, '/');
-        let (server, share, rest) = (it.next().unwrap_or(""), it.next().unwrap_or(""), it.next().unwrap_or(""));
-        (format!("//{server}/{share}"), rest.to_string())
-    } else if s.len() >= 2 && s.as_bytes()[1] == b':' && s.as_bytes()[0].is_ascii_alphabetic() {
-        (s[..2].to_ascii_lowercase(), s[2..].to_string())
+        let mut segs = unc.split('/').filter(|x| !x.is_empty());
+        let (server, share) = (segs.next().unwrap_or(""), segs.next().unwrap_or(""));
+        (format!("//{server}/{share}"), segs.collect::<Vec<_>>().join("/"))
+    } else if let (true, Some(drive), Some(rest)) = (matches!(s.as_bytes(), [a, b':', ..] if a.is_ascii_alphabetic()), s.get(..2), s.get(2..)) {
+        (if lower_drive { drive.to_ascii_lowercase() } else { drive.to_string() }, rest.to_string())
     } else {
         (String::new(), s.clone())
     };
     let absolute = rest.starts_with('/') || !prefix.is_empty();
-    let mut parts: Vec<&str> = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
     for c in rest.split('/') {
         match c {
             "" | "." => {}
-            ".." if parts.last().is_some_and(|p| *p != "..") => {
+            ".." if parts.last().is_some_and(|p| p != "..") => {
                 parts.pop();
             }
             ".." if absolute => {}
-            c => parts.push(c),
+            c => parts.push(c.to_string()),
         }
     }
+    SplitPath { prefix, parts, absolute }
+}
+
+/// A folder path's identity, for telling whether two spellings name the same folder: `/` and
+/// `\\` are both separators, repeated separators, `.` and a trailing separator are dropped,
+/// `..` is resolved lexically, a Windows verbatim prefix (`\\?\`) is removed and the drive
+/// letter lower-cased; on Windows (case-insensitive file names) the whole path is lower-cased.
+/// File names are otherwise compared as written, so on a case-insensitive disk elsewhere
+/// (macOS, a Samba share) two spellings that differ in case are two folders here.
+/// No file-system access: the paths compared should already be absolute.
+pub fn folder_key(path: &str) -> String {
+    let SplitPath { prefix, parts, absolute } = split_path(path, true);
     let key = if absolute { format!("{prefix}/{}", parts.join("/")) } else { parts.join("/") };
     if cfg!(windows) { key.to_lowercase() } else { key }
 }
@@ -480,8 +522,40 @@ pub fn folder_key(path: &str) -> String {
 /// Whether `path` is folder `root` or lies somewhere inside it, however either is spelled
 /// (see [`folder_key`]).
 pub fn folder_within(path: &str, root: &str) -> bool {
-    let (p, r) = (folder_key(path), folder_key(root));
-    p == r || (p.starts_with(&r) && (r.ends_with('/') || p[r.len()..].starts_with('/')))
+    key_within(&folder_key(path), &folder_key(root))
+}
+
+/// Whether a library photo (not one only browsed in Local) lies in the folder whose
+/// [`folder_key`] is `root`. A plain POSIX path (no `\`, `.`, `..`, repeated or trailing
+/// separators) is its own identity, so it is read without building a key for it: the check runs
+/// for every photo of the library on each refresh, and this keeps it cheap.
+pub(crate) fn photo_in_root(p: &Photo, root: &str) -> bool {
+    if p.local {
+        return false;
+    }
+    let crate::Source::File { path } = &p.source else { return false };
+    let plain = path.starts_with('/')
+        && !path.starts_with("//")
+        && !path.ends_with('/')
+        && !path.contains(['\\'])
+        && !path.contains("//")
+        && !path.contains("/.");
+    if !cfg!(windows) && plain && root.starts_with('/') && !root.starts_with("//") {
+        let r = root.trim_end_matches('/');
+        return path.strip_prefix(r).is_some_and(|rest| rest.starts_with('/'));
+    }
+    crate::local::folder_of(p).is_some_and(|f| key_within(&f, root))
+}
+
+/// [`folder_within`] for two paths already turned into their [`folder_key`].
+pub(crate) fn key_within(p: &str, r: &str) -> bool {
+    // `.` or `a/..` name no folder: not "everything"
+    if r.is_empty() {
+        return false;
+    }
+    // a disk's root key ends in `/` (`c:/`, `//srv/share/`), a folder's does not: same folder
+    let (p, r) = (p.trim_end_matches('/'), r.trim_end_matches('/'));
+    p == r || p.strip_prefix(r).is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// The kind of Photo Merge result a file is, from the name merges give it (`IMG_1-HDR.dng`,

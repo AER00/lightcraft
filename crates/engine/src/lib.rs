@@ -25,6 +25,7 @@ pub mod guard;
 pub mod import;
 mod import_move;
 pub mod library;
+pub mod logging;
 pub mod media;
 pub mod memory;
 pub mod merge;
@@ -46,7 +47,7 @@ use lightcraft_catalog::{Catalog, Filter, Op, PhotoId, Sort};
 use lightcraft_develop::DevelopSettings;
 pub use media::{RenderJob, SourceLevel};
 use serde_json::Value;
-pub use view::{Browse, FilterChip, LibrarySource, Selection, filter_chips};
+pub use view::{Browse, FilterChip, LibrarySource, Selection, SelectionState, filter_chips};
 pub use {lightcraft_catalog as catalog, lightcraft_develop as develop, lightcraft_gpu as gpu, lightcraft_pipeline as pipeline};
 
 #[derive(Debug, thiserror::Error)]
@@ -155,6 +156,9 @@ pub struct Session {
     pub clipboard: Option<Value>,
     /// The folder on disk the [`LibrarySource::Folder`] view browses.
     pub browse: Option<Browse>,
+    /// The folder the [`LibrarySource::LibraryFolder`] view shows: the library's photos imported
+    /// from it and from the folders inside it.
+    pub library_folder: Option<String>,
     /// Copied metadata (`photo.copyMetadata`): photo.setMeta params.
     pub meta_clipboard: Option<Value>,
     /// The photo that was active before the current one (Paste Settings from Previous).
@@ -255,6 +259,7 @@ impl Session {
             clipboard: None,
             meta_clipboard: None,
             browse: None,
+            library_folder: None,
             previous_active: None,
             copy_groups: lightcraft_develop::SettingsGroup::default_copy(),
             presets: presets::builtin(),
@@ -631,7 +636,8 @@ impl Session {
 
     /// Photos shown in the grid/filmstrip for the current source, filter and sort.
     pub fn visible(&mut self) -> &[PhotoId] {
-        let mut key = (self.catalog.revision, format!("{:?}|{:?}|{:?}|{:?}", self.source, self.filter, self.sort, self.browse));
+        let mut key =
+            (self.catalog.revision, format!("{:?}|{:?}|{:?}|{:?}|{:?}", self.source, self.filter, self.sort, self.browse, self.library_folder));
         if self.source == LibrarySource::Missing && self.media.availability.is_background() {
             // the view fills in as the background checks find files gone
             key.1.push_str(&format!("|{}", self.media.availability.generation()));
@@ -646,7 +652,18 @@ impl Session {
                 f.folder = Some(b.path);
                 f.subfolders = b.subfolders;
             }
+            if self.source == LibrarySource::LibraryFolder {
+                // no folder chosen: nothing (`.` names no folder)
+                f.library_folder = Some(self.library_folder.clone().unwrap_or_else(|| ".".into()));
+            }
             let mut visible = self.catalog.query(&f, &self.sort);
+            if visible.is_empty() && self.source == LibrarySource::LibraryFolder && !self.folder_holds_photos() {
+                // the shown folder lost its last photo (deleted, moved, removed): everything, not
+                // an empty grid under the name of a folder that is gone from the sidebar
+                self.source = LibrarySource::All;
+                self.library_folder = None;
+                return self.visible();
+            }
             if matches!(self.source, LibrarySource::Album(_))
                 && self.sort.key == lightcraft_catalog::SortKey::CaptureDate
                 && let LibrarySource::Album(a) = self.source
@@ -683,19 +700,29 @@ impl Session {
         &self.visible
     }
 
+    /// Whether the library still holds a photo imported from the folder a `LibraryFolder` source
+    /// shows.
+    fn folder_holds_photos(&self) -> bool {
+        let f = Filter { library_folder: self.library_folder.clone(), ..Default::default() };
+        self.library_folder.is_some() && !self.catalog.query(&f, &Sort::default()).is_empty()
+    }
+
     /// Photos in the current source (folder, album, …) before the filter bar and search narrow
     /// them; `None` where that is not a separate number (Missing Photos).
     pub fn source_total(&mut self) -> Option<usize> {
         if self.source == LibrarySource::Missing {
             return None;
         }
-        let key = (self.catalog.revision, format!("{:?}|{:?}", self.source, self.browse));
+        let key = (self.catalog.revision, format!("{:?}|{:?}|{:?}", self.source, self.browse, self.library_folder));
         if self.total.as_ref().map(|t| &t.0) != Some(&key) {
             let mut f = self.source.to_filter(&Filter::default(), &self.catalog);
             if self.source == LibrarySource::Folder {
                 let b = self.browse.clone().unwrap_or_default();
                 f.folder = Some(b.path);
                 f.subfolders = b.subfolders;
+            }
+            if self.source == LibrarySource::LibraryFolder {
+                f.library_folder = Some(self.library_folder.clone().unwrap_or_else(|| ".".into()));
             }
             let n = self.catalog.query(&f, &self.sort).len();
             self.total = Some((key, n));
@@ -749,6 +776,8 @@ mod tests;
 mod tests_color;
 #[cfg(test)]
 mod tests_export;
+#[cfg(test)]
+mod tests_folders;
 #[cfg(test)]
 mod tests_forget_local;
 #[cfg(test)]

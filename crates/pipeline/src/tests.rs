@@ -237,6 +237,35 @@ fn exposure_after_spatial_filters_equals_exposing_the_source() {
     assert!(d <= 2, "max difference {d}");
 }
 
+/// A section whose eye is off renders as if it were at its defaults (issue #316): Light, Color
+/// and Detail, which the pipeline doesn't switch off where it applies them.
+#[test]
+fn sections_switched_off_render_as_defaults() {
+    let src = Rgb32f::from_fn(32, 24, |x, y| [0.05 + x as f32 / 40.0, 0.1 + y as f32 / 30.0, 0.3]);
+    let info = SourceInfo::default();
+    let req = RenderRequest::fit(32, 24);
+    let plain = render(&src, &info, &DevelopSettings::default(), &req).image;
+    let mut s = DevelopSettings::default();
+    s.light.exposure = 1.5;
+    s.light.contrast = 40.0;
+    s.color.saturation = -60.0;
+    s.color.vibrance = 30.0;
+    s.detail.sharpen_amount = 120.0;
+    let edited = render(&src, &info, &s, &req).image;
+    assert_ne!(edited.data, plain.data);
+    for section in ["light", "color", "detail"] {
+        s.set_section_enabled(section, false);
+    }
+    assert_eq!(render(&src, &info, &s, &req).image.data, plain.data, "every edited section off = the unedited photo");
+    // one section back on brings back only its own adjustments
+    s.set_section_enabled("light", true);
+    let mut light_only = DevelopSettings::default();
+    light_only.light.exposure = 1.5;
+    light_only.light.contrast = 40.0;
+    assert_eq!(render(&src, &info, &s, &req).image.data, render(&src, &info, &light_only, &req).image.data);
+    assert!(matches!(DevelopSettings::default().effective(), std::borrow::Cow::Borrowed(_)), "nothing is copied when every section is on");
+}
+
 #[test]
 fn calibration_shifts_colours_but_keeps_greys() {
     let info = SourceInfo { raw: true, ..Default::default() };
@@ -329,4 +358,29 @@ fn soft_proof_maps_into_the_proof_gamut_and_flags_what_does_not_fit() {
             .image;
     assert!(blue(&pro) > 0);
     assert!(red(&pro) < n, "ProPhoto holds more than sRGB");
+}
+
+#[test]
+fn tint_negative_is_green_and_positive_is_magenta() {
+    use lightcraft_develop::WbMode;
+    let src = Rgb32f::filled(16, 16, [0.18; 3]);
+    // Rendered images, uncalibrated RAW and calibrated RAW with a nonzero As Shot tint.
+    for info in [
+        SourceInfo::default(),
+        SourceInfo { raw: true, relative_wb: true, ..Default::default() },
+        SourceInfo { raw: true, as_shot_temp: 4200.0, as_shot_tint: 15.0, ..Default::default() },
+    ] {
+        let mut s = DevelopSettings::default();
+        let neutral = render(&src, &info, &s, &RenderRequest::fit(16, 16)).image.get(8, 8);
+        assert!((neutral[0] as i16 - neutral[1] as i16).abs() <= 1);
+        assert!((neutral[2] as i16 - neutral[1] as i16).abs() <= 1);
+        s.wb.mode = WbMode::Custom;
+        s.wb.temp = info.as_shot_temp;
+        for delta in [-50.0, 50.0] {
+            s.wb.tint = info.as_shot_tint + delta;
+            let p = render(&src, &info, &s, &RenderRequest::fit(16, 16)).image.get(8, 8);
+            let magenta = (p[0] as f64 + p[2] as f64) / 2.0 - p[1] as f64;
+            assert!(magenta * delta > 100.0, "delta {delta} must follow the green/magenta track, got {p:?}");
+        }
+    }
 }

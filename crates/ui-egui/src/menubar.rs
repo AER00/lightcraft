@@ -272,6 +272,8 @@ fn host_supports(app: &LightcraftApp, id: &str) -> bool {
         "file.restoreLibrary" => app.services.restore_library.is_some(),
         "photo.restore" | "photo.deletePermanently" => selection_deleted(app),
         "photo.delete" => !selection_deleted(app),
+        // only where the trash is on screen
+        "library.emptyRecentlyDeleted" => app.session.source == lightcraft_engine::LibrarySource::RecentlyDeleted,
         _ => true,
     }
 }
@@ -342,6 +344,7 @@ fn live_label(app: &LightcraftApp, id: &str, label: &str) -> String {
         "photo.delete" if n > 1 => crate::i18n::tr_format!("Delete {n} Photos", n = n),
         "photo.virtualCopy" if n > 1 => crate::i18n::tr_format!("Create {n} Virtual Copies", n = n),
         "dialog.rename" if n > 1 => crate::i18n::tr_format!("Rename {n} Photos…", n = n),
+        "app.showInFinder" => crate::i18n::tr(crate::menus::reveal_label()).to_string(),
         _ => label.to_string(),
     }
 }
@@ -358,19 +361,26 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 item(
                     "library.buildPreviews",
                     json!({"size": "standard", "edge": app.ui.settings.preview_edge}),
-                    format!("Build Standard-Sized Previews ({scope})"),
+                    crate::i18n::tr_format!("Build Standard-Sized Previews ({scope})", scope = crate::i18n::tr(scope)),
                     None,
                     !running,
                     None,
                 ),
-                item("library.buildPreviews", json!({"size": "full"}), format!("Build 1:1 Previews ({scope})"), None, !running, None),
+                item(
+                    "library.buildPreviews",
+                    json!({"size": "full"}),
+                    crate::i18n::tr_format!("Build 1:1 Previews ({scope})", scope = crate::i18n::tr(scope)),
+                    None,
+                    !running,
+                    None,
+                ),
                 item("library.cancelPreviews", Value::Null, "Stop Building Previews", None, running, None),
                 MenuNode::Separator,
                 // (read and written on a worker thread: the originals may be on a slow drive)
                 item(
                     "library.smartPreviews",
                     json!({"background": true}),
-                    format!("Build Smart Previews ({scope})"),
+                    crate::i18n::tr_format!("Build Smart Previews ({scope})", scope = crate::i18n::tr(scope)),
                     None,
                     app.session.media.smart_dir.is_some() && !running,
                     None,
@@ -378,7 +388,7 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 item(
                     "library.smartPreviews",
                     json!({"discard": true, "background": true}),
-                    format!("Discard Smart Previews ({scope})"),
+                    crate::i18n::tr_format!("Discard Smart Previews ({scope})", scope = crate::i18n::tr(scope)),
                     None,
                     app.session.media.smart_dir.is_some() && !running,
                     None,
@@ -411,7 +421,7 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 .map(|(l, sc)| {
                     let name = format!("{l:?}");
                     let label = match app.session.catalog.custom_label_name(*l) {
-                        Some(custom) => format!("{custom} ({name})"),
+                        Some(custom) => format!("{custom} ({})", crate::i18n::tr(&name)),
                         None => name.clone(),
                     };
                     item(
@@ -435,7 +445,7 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 v.push(item(
                     "label.applySet",
                     json!({"name": name}),
-                    format!("Label Set: {name}"),
+                    format!("{}: {name}", crate::i18n::tr("Label Set")),
                     None,
                     true,
                     Some(current.as_deref() == Some(name)),
@@ -573,7 +583,9 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
 }
 
 fn node(app: &LightcraftApp, e: &MenuEntry) -> MenuNode {
-    item(&e.id, Value::Null, live_label(app, &e.id, &e.label), e.shortcut.as_deref(), e.enabled, checked(app, &e.id))
+    // Shift+P picks and advances in Library; don't advertise it on Presets in those views.
+    let shortcut = if e.id == "panel.presets" && crate::shortcuts::library_grid(app) { None } else { e.shortcut.as_deref() };
+    item(&e.id, Value::Null, live_label(app, &e.id, &e.label), shortcut, e.enabled, checked(app, &e.id))
 }
 
 /// Drop leading, trailing and doubled separators (also inside submenus) and empty submenus.

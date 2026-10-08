@@ -158,6 +158,7 @@ impl WbMode {
 pub struct WhiteBalance {
     pub mode: WbMode,
     pub temp: f64,
+    /// Correction direction: negative adds green, positive adds magenta.
     pub tint: f64,
 }
 
@@ -539,8 +540,9 @@ impl Default for Optics {
     }
 }
 
-/// Lens corrections embedded in a DNG file (`OpcodeList3`: `WarpRectilinear`, `FixVignetteRadial`), converted
-/// to the oriented, default-cropped image. This is camera/file data (stored on the photo record, not in the develop
+/// Lens corrections embedded in the file, converted to the oriented, default-cropped image: a DNG's `OpcodeList3`
+/// (`WarpRectilinear`, `FixVignetteRadial`), or a raw reader's equivalent of the camera's own correction (Panasonic /
+/// Leica RW2 distortion, `lightcraft_raw`'s `vendor/rw2.rs`). This is camera/file data (stored on the photo record, not in the develop
 /// settings); "Enable Profile Corrections" applies it, scaled by the profile distortion/vignetting amounts.
 /// LightCraft never uses Adobe LCP lens profiles.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

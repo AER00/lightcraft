@@ -29,7 +29,11 @@ pub mod widgets;
 #[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
+mod tests_filmstrip;
+#[cfg(test)]
 mod tests_grid;
+#[cfg(test)]
+mod tests_labels;
 #[cfg(test)]
 mod tests_library_problem;
 #[cfg(test)]
@@ -54,6 +58,8 @@ use serde_json::Value;
 
 pub use control::{ControlRequest, ControlResponse};
 pub use state::UiState;
+
+const TOAST_SECONDS: f64 = 1.4;
 
 pub type PickFiles = Box<dyn FnMut() -> Vec<String>>;
 /// A save dialog: suggested file name → chosen path (`None` = cancelled).
@@ -268,6 +274,20 @@ impl LightcraftApp {
             return r;
         }
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
+        if r.is_ok() && id == "photo.label" {
+            let label = params.get("label").and_then(Value::as_str).and_then(lightcraft_catalog::ColorLabel::parse);
+            let text = match label {
+                Some(label) => {
+                    let name =
+                        self.session.catalog.custom_label_name(label).map(str::to_owned).unwrap_or_else(|| i18n::tr(&format!("{label:?}")).into());
+                    i18n::tr_format!("{name} Label", name = name)
+                }
+                None => i18n::tr("Color label cleared").into(),
+            };
+            // Native menu clicks can arrive before logic() updates last_time after an idle gap.
+            let now = self.tasks.repaint.as_ref().map(|ctx| ctx.input(|i| i.time)).unwrap_or(self.last_time);
+            self.ui.toast = Some((text, now + TOAST_SECONDS, label));
+        }
         if let Err(e) = &r {
             log::warn!("{id}: {e}");
             self.ui.status = e.clone();
@@ -312,11 +332,13 @@ impl LightcraftApp {
                 let plural = if done == 1 { "" } else { "s" };
                 let mut msg = match (b.error(), b.what) {
                     (Some(e), what) => format!("{}: {e}", if what.is_empty() { "previews" } else { what }),
-                    (None, "") => format!("Previews ready for {done} photo{plural}"),
-                    (None, what) => format!("Done ({what}): {done} photo{plural}"),
+                    (None, "") => crate::i18n::tr_format!("Previews ready for {done} photo{plural}", done = done, plural = plural),
+                    (None, what) => {
+                        crate::i18n::tr_format!("Done ({what}): {done} photo{plural}", done = done, plural = plural, what = crate::i18n::tr(what))
+                    }
                 };
                 if failed > 0 {
-                    msg.push_str(&format!(" · {failed} couldn't be rendered"));
+                    msg.push_str(&crate::i18n::tr_format!(" · {failed} couldn't be rendered", failed = failed));
                 }
                 self.toast(ctx, msg);
             }
@@ -324,8 +346,8 @@ impl LightcraftApp {
             if self.ui.preview_build_seen != Some((key, false)) {
                 self.ui.preview_build_seen = Some((key, false));
                 let msg = match b.what {
-                    "" => format!("Building previews for {} photos…", b.total),
-                    what => format!("Working on {what} for {} photos…", b.total),
+                    "" => crate::i18n::tr_format!("Building previews for {} photos…", b.total),
+                    what => crate::i18n::tr_format!("Working on {what} for {} photos…", b.total, what = crate::i18n::tr(what)),
                 };
                 self.toast(ctx, msg);
             }
@@ -341,8 +363,16 @@ impl LightcraftApp {
             (Some((n, e)), false) => {
                 self.ui.unsaved_seen = true;
                 let t = ctx.input(|i| i.time);
-                let what = if n == 1 { "1 change".to_string() } else { format!("{n} changes") };
-                self.ui.toast = Some((format!("{what} saved in memory but not written to disk: {e} — LightCraft will retry"), t + 6.0));
+                self.ui.toast = Some((
+                    crate::i18n::tr_format!(
+                        "{n} change{} saved in memory but not written to disk: {e} — LightCraft will retry",
+                        if n == 1 { "" } else { "s" },
+                        n = n,
+                        e = e
+                    ),
+                    t + 6.0,
+                    None,
+                ));
             }
             (None, true) => {
                 self.ui.unsaved_seen = false;
@@ -354,13 +384,13 @@ impl LightcraftApp {
     }
 
     pub fn toast(&mut self, ctx: &egui::Context, text: impl Into<String>) {
-        self.toast_for(ctx, text, 1.4);
+        self.toast_for(ctx, text, TOAST_SECONDS);
     }
 
     /// A toast that stays `secs` seconds (messages that say where to look or what to do next).
     pub fn toast_for(&mut self, ctx: &egui::Context, text: impl Into<String>, secs: f64) {
         let t = ctx.input(|i| i.time);
-        self.ui.toast = Some((text.into(), t + secs));
+        self.ui.toast = Some((text.into(), t + secs, None));
     }
 
     /// AI masks: apply finished background requests (clicks, descriptions, detail passes) and
@@ -395,7 +425,7 @@ impl LightcraftApp {
                 (Some(e), false) if e.contains("cancelled") => {
                     self.toast(ctx, crate::i18n::tr("SAM 3 download stopped: it resumes where it left off next time."))
                 }
-                (Some(e), false) => self.toast_error(ctx, format!("The SAM 3 download failed: {e}")),
+                (Some(e), false) => self.toast_error(ctx, crate::i18n::tr_format!("The SAM 3 download failed: {e}", e = e)),
                 (None, false) if download.finished => {
                     self.toast_error(ctx, crate::i18n::tr("The SAM 3 model is installed: Object and Describe masks are ready."))
                 }
@@ -438,7 +468,7 @@ impl LightcraftApp {
     /// A toast for an error the user has to read and act on (stays 6 s).
     pub fn toast_error(&mut self, ctx: &egui::Context, text: impl Into<String>) {
         let t = ctx.input(|i| i.time);
-        self.ui.toast = Some((text.into(), t + 6.0));
+        self.ui.toast = Some((text.into(), t + 6.0, None));
     }
 
     fn drain_control(&mut self, ctx: &egui::Context) {
@@ -890,6 +920,7 @@ mod drop_tests {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
+    folder_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::FolderNode>>)>,
     people: Option<(u64, lightcraft_catalog::Filter, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
     counts: Option<(u64, LibraryCounts)>,
@@ -926,6 +957,17 @@ pub(crate) fn key_of(parts: impl std::hash::Hash) -> u64 {
 }
 
 impl Caches {
+    /// The folders the library's photos were imported from.
+    pub fn folder_tree(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::FolderNode>> {
+        match &self.folder_tree {
+            Some((r, t)) if *r == cat.revision => t.clone(),
+            _ => {
+                let t = std::sync::Arc::new(cat.folder_tree());
+                self.folder_tree = Some((cat.revision, t.clone()));
+                t
+            }
+        }
+    }
     /// The library's keyword tree.
     pub fn keyword_tree(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>> {
         match &self.keyword_tree {

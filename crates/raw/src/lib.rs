@@ -13,10 +13,10 @@
 //!
 //! Formats: DNG (uncompressed, lossless JPEG, lossy JPEG (Smart Previews), Deflate incl. floating point, tiled/stripped, CFA and LinearRaw),
 //! Canon CR2, Nikon NEF/NRW (uncompressed, Huffman lossless / lossy compressed), Sony ARW (uncompressed, ARW2, lossless), Fujifilm RAF (uncompressed Bayer
-//! and X-Trans), Panasonic RW2 / Leica RWL / Panasonic RAW (every raw format: compressed 4 and 6, the prefix-coded strips of 8,
+//! and X-Trans, lossless and lossy compressed), Panasonic RW2 / Leica RWL / Panasonic RAW (every raw format: compressed 4 and 6, the prefix-coded strips of 8,
 //! packed 2/5/7, the 16-bit words of the oldest bodies), Pentax PEF (uncompressed, Huffman), Olympus ORF (uncompressed).
 //! [`embedded_preview`] covers all of them plus CR3. Variants we can't decode yet (Nikon "lossy after split" NEF,
-//! compressed ORF/RAF, CR3) return [`RawError::Unsupported`]; each vendor module documents its sources
+//! compressed ORF, CR3) return [`RawError::Unsupported`]; each vendor module documents its sources
 //! (public specifications, tag-name documentation, black-box analysis of CC0 samples) and gaps. Non-DNG files carry no
 //! colour matrix: [`color`] falls back to a documented neutral model. The decoders never panic on malformed input.
 #![forbid(unsafe_code)]
@@ -43,7 +43,7 @@ pub use lightcraft_geom::Orientation;
 pub use lightcraft_meta::Metadata;
 pub use lightcraft_raster::Rgb32f;
 pub use opcodes::{Opcode, OpcodeLists};
-pub use preview::embedded_preview;
+pub use preview::{PreviewColorSpace, embedded_preview, embedded_preview_color_space};
 
 use lightcraft_color::Xy;
 use lightcraft_tiff::{Tiff, TiffError};
@@ -159,9 +159,9 @@ pub fn decode(bytes: &[u8]) -> Result<RawImage> {
 /// measure them from the samples).
 ///
 /// A few uncompressed vendor formats derive part of this from the samples themselves (Nikon
-/// NEF: optically masked trailing columns; Olympus ORF: the CFA phase and bit depth; Pentax PEF
-/// without crop tags: dark borders); for those the samples are read (unpacked, nothing to
-/// decompress) and dropped.
+/// NEF: optically masked trailing columns; Olympus ORF: the bit depth of 16-bit files, and the CFA
+/// phase of files without an Exif `CFAPattern`; Pentax PEF without crop tags: dark borders); for
+/// those the samples are read (unpacked, nothing to decompress) and dropped.
 pub fn probe_info(bytes: &[u8]) -> Result<RawInfo> {
     decode_with(bytes, Mode::Header).map(RawImage::into_info)
 }
@@ -185,7 +185,7 @@ fn decode_with(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         RawFormat::Raf => vendor::raf::decode(bytes, mode),
         RawFormat::Rw2 => vendor::rw2::decode(bytes, mode),
         RawFormat::Pef => vendor::pef::decode(bytes, mode),
-        RawFormat::Orf => vendor::orf::decode(bytes),
+        RawFormat::Orf => vendor::orf::decode(bytes, mode),
         other => Err(RawError::Unsupported(format!("{other:?} files are not decoded yet"))),
     }
 }

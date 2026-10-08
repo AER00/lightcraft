@@ -37,7 +37,8 @@ mode ([mcp.md](mcp.md)) is a thin layer over this channel. Implementation:
 | `ui.pointer` | `{events: [{kind: down\|drag\|up, x, y}], alt?, shift?, cmd?}` | Gesture in normalized image coordinates (Detail view) |
 | `ui.key` | `{key, cmd?, shift?, alt?, ctrl?}` | Key press |
 | `ui.text` | `{text}` | Text input |
-| `ui.scroll` | `{dx, dy}` | Mouse wheel |
+| `ui.scroll` | `{dx, dy, cmd?, ctrl?, shift?, alt?}` | Wheel / two-finger scroll at the current pointer; pans over the image, modifier-scroll zooms |
+| `ui.zoom` | `{factor}` | Pinch zoom at the current pointer (positive scale multiplier; 1 = unchanged). Position it first with `ui.move` or `ui.hoverWidget` |
 | `ui.set` | partial UI state, e.g. `{"view": "detail"}` | Resulting UI state |
 | `ui.dialog.confirm` / `ui.dialog.cancel` | — | Close the open dialog |
 | `ui.resize` | `{width, height}` | Resize the window |
@@ -45,6 +46,14 @@ mode ([mcp.md](mcp.md)) is a thin layer over this channel. Implementation:
 | `engine.execute {command: "app.export", params}` | export params (see `docs/mcp.md`), plus `preset`, `dir` / `path`, `ids`, `background` | Writes the files and returns `{files}`; with `background: true` (what the Export dialog and menus use) it returns `{background: true, total}` at once and the batch runs on a worker thread — poll `ui.inspect` → `export` |
 | `ui.render` | `{id?, size?, path?}` | Render a photo (PNG to `path`), `{width, height}` |
 | `app.quit` | — | Close the app |
+
+Image navigation is also available directly as the UI command `view.navigate`, with
+`{zoom?: "fit" | "fill" | {"percent": number}, pan?: [x, y]}`. Percentage zoom accepts fractional
+values greater than 0 and at most 800; pan is the normalized image centre, with coordinates from 0 to 1.
+Pinching keeps the image point under the pointer steady and zooms between Fit and 800%; two-finger
+scrolling pans in both axes and respects the operating system's scrolling direction and momentum.
+These gestures work in Detail (including editing tools and full-screen preview), Compare and Reference
+views, and only apply over their image areas. Panning stops at the image edges.
 
 ### When the library can't be saved
 
@@ -86,7 +95,10 @@ lightcraft-cli snapshot --library DIR --script tour.jsonl -o shot.png
 
   `tour.jsonl` holds one request per line (`#` comments allowed), e.g.
   `{"method": "ui.set", "params": {"view": "detail", "right": "edit", "openSections": ["optics"]}}`
-  then `{"method": "ui.screenshot"}`. Replies are printed to stdout. A `ui.screenshot` without
+  then `{"method": "ui.screenshot"}`. Replies are printed to stdout. A failed request
+  (`"ok": false`) does not stop the script — the remaining lines and the final screenshot still
+  run — but the exit status is non-zero when any request failed, as with `run --keep-going`, so
+  CI and nightly runs can judge a snapshot by its exit status. A `ui.screenshot` without
   `path` writes `-o` (then `OUT-2.png`, `OUT-3.png`, …); `ui.settle {timeoutMs?}` waits until no
   renders are in flight. Each request runs frames until it is answered and its injected input
   (clicks, keys, drags) has played out. Widget ids for `ui.clickWidget` come from `ui.widgets`
