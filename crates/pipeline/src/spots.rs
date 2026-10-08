@@ -107,13 +107,16 @@ pub fn pick_source(
 }
 
 /// The most a window grows to take in the spots that touch it.
-const MAX_SPOT_SPAN: usize = 8192;
+const MAX_SPOT_SPAN: usize = if cfg!(target_arch = "wasm32") { 4096 } else { 8192 };
+/// Strokes with more dabs than this are not examined dab by dab (the render would be too slow anyway).
+const MAX_DABS_CONSIDERED: usize = 200_000;
 
 /// `win` (a window of the `full_w × full_h` output of `frame`) grown to hold, for every spot (or
 /// Auto Mask stroke) that reaches into it, the whole spot and the patch it reads from: [`apply`] works on the pixels it
 /// is given, so a spot cut by the window's edge, or whose source lies outside it, would come out
 /// different from the same spot in the whole render. Spots with an automatic source (`None`)
-/// search up to 4.2 radii around themselves. Growth stops at [`MAX_SPOT_SPAN`] pixels.
+/// search up to 4.2 radii around themselves. Growth that would pass [`MAX_SPOT_SPAN`] pixels is not
+/// done (the window comes back as asked; see [`window_for_reads_checked`] to know).
 pub fn window_for_reads(
     s: &lightcraft_develop::DevelopSettings,
     frame: &Frame,
@@ -122,10 +125,25 @@ pub fn window_for_reads(
     ppl: f64,
     win: crate::PixelWindow,
 ) -> crate::PixelWindow {
+    window_for_reads_checked(s, frame, full_w, full_h, ppl, win).unwrap_or(win)
+}
+
+/// [`window_for_reads`], or `None` when holding everything the window reads would take more than
+/// [`MAX_SPOT_SPAN`] pixels along an axis: a caller that can show something else (the loupe's
+/// whole-frame render) must, because the window alone would come out wrong.
+pub fn window_for_reads_checked(
+    s: &lightcraft_develop::DevelopSettings,
+    frame: &Frame,
+    full_w: usize,
+    full_h: usize,
+    ppl: f64,
+    win: crate::PixelWindow,
+) -> Option<crate::PixelWindow> {
     let spots = &s.spots;
     let autos: Vec<&lightcraft_develop::BrushStroke> = s
         .masks
         .iter()
+        .filter(|m| m.visible)
         .flat_map(|m| &m.components)
         .filter_map(|c| match &c.shape {
             lightcraft_develop::MaskShape::Brush { strokes } => Some(strokes),
@@ -135,12 +153,12 @@ pub fn window_for_reads(
         .filter(|st| st.auto_mask)
         .collect();
     if spots.is_empty() && autos.is_empty() {
-        return win;
+        return Some(win);
     }
     let to_out = frame.norm_to_out(full_w, full_h);
     let origin = to_out.apply(Point::new(0.0, 0.0));
     // (target box, source box) of each spot, in output pixels: [x0, y0, x1, y1]
-    let mut boxes: Vec<([f64; 4], [f64; 4])> = spots
+    let boxes: Vec<([f64; 4], [f64; 4])> = spots
         .iter()
         .filter_map(|spot| {
             let r = (spot.size * ppl).max(1.0);
@@ -163,24 +181,35 @@ pub fn window_for_reads(
             Some((t, s)).filter(|(t, s)| t.iter().chain(s).all(|v| v.is_finite()))
         })
         .collect();
-    // Auto Mask strokes weigh each dab by its similarity to the pixel under the dab's centre, and
-    // refine the stroke over a few radii: a stroke reaching into the window needs all of that
+    // Auto Mask strokes weigh each dab by its similarity to the pixel under the dab's centre and
+    // refine the stroke over a couple of radii: each dab matters to pixels within 2.5 radii
+    let mut dab_boxes: Vec<[f64; 4]> = Vec::new();
     for st in autos {
-        let r = (st.size * ppl).max(0.5);
-        let pts: Vec<_> = st.points.iter().map(|p| to_out.apply(*p)).collect();
-        let Some(first) = pts.first() else { continue };
-        let (mut x0, mut y0, mut x1, mut y1) = (first.x, first.y, first.x, first.y);
-        for p in &pts {
-            (x0, y0, x1, y1) = (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y));
+        let dabs = crate::masks::brush_dabs(st, frame, full_w, full_h);
+        let r = dabs.r;
+        if dabs.dabs.len() > MAX_DABS_CONSIDERED {
+            continue;
         }
-        let b = [x0 - 2.0 * r, y0 - 2.0 * r, x1 + 2.0 * r, y1 + 2.0 * r];
-        if b.iter().all(|v| v.is_finite()) {
-            boxes.push((b, b));
+        for d in &dabs.dabs {
+            let b = [d.x - 2.5 * r, d.y - 2.5 * r, d.x + 2.5 * r, d.y + 2.5 * r];
+            if b.iter().all(|v| v.is_finite()) {
+                dab_boxes.push(b);
+            }
         }
     }
     let (fw, fh) = (full_w as f64, full_h as f64);
     let mut r = [win.x as f64, win.y as f64, (win.x + win.w) as f64, (win.y + win.h) as f64];
     let touches = |r: &[f64; 4], b: &[f64; 4]| b[0] < r[2] && b[2] > r[0] && b[1] < r[3] && b[3] > r[1];
+    // a dab reaching the requested window needs its surroundings, once: the pixels that brings in
+    // are only read, not drawn on (unlike spots, whose patches other spots may read)
+    let asked = r;
+    for b in dab_boxes.iter().filter(|b| touches(&asked, b)) {
+        r = [r[0].min(b[0]), r[1].min(b[1]), r[2].max(b[2]), r[3].max(b[3])];
+    }
+    r = [r[0].max(0.0), r[1].max(0.0), r[2].min(fw), r[3].min(fh)];
+    if r[2] - r[0] > MAX_SPOT_SPAN as f64 || r[3] - r[1] > MAX_SPOT_SPAN as f64 {
+        return None;
+    }
     for _ in 0..=boxes.len() {
         let mut grown = r;
         for (t, s) in &boxes {
@@ -191,14 +220,19 @@ pub fn window_for_reads(
             }
         }
         let grown = [grown[0].max(0.0), grown[1].max(0.0), grown[2].min(fw), grown[3].min(fh)];
-        if grown == r || grown[2] - grown[0] > MAX_SPOT_SPAN as f64 || grown[3] - grown[1] > MAX_SPOT_SPAN as f64 {
+        if grown == r {
             break;
+        }
+        if grown[2] - grown[0] > MAX_SPOT_SPAN as f64 || grown[3] - grown[1] > MAX_SPOT_SPAN as f64 {
+            return None;
         }
         r = grown;
     }
     let (x, y) = (r[0].floor() as usize, r[1].floor() as usize);
-    crate::PixelWindow { x, y, w: (r[2].ceil() as usize).saturating_sub(x).max(1), h: (r[3].ceil() as usize).saturating_sub(y).max(1) }
-        .clamped(full_w, full_h)
+    Some(
+        crate::PixelWindow { x, y, w: (r[2].ceil() as usize).saturating_sub(x).max(1), h: (r[3].ceil() as usize).saturating_sub(y).max(1) }
+            .clamped(full_w, full_h),
+    )
 }
 
 /// Apply all spots to `img` (output resolution). `ppl` = output pixels per long-edge unit.
@@ -409,6 +443,29 @@ mod tests {
         assert_eq!(window_for_reads(&plain, &frame, 4000, 3000, ppl, win), win, "a plain stroke reads nothing around it");
         let auto = DevelopSettings { masks: vec![mask(true)], ..Default::default() };
         let g = window_for_reads(&auto, &frame, 4000, 3000, ppl, win);
-        assert!(g.x + g.w >= 2000 && g.x <= 1200, "{g:?}");
+        // the dabs near the window, not the whole stroke (it runs on to x = 2000)
+        assert!(g.x <= 1000 && g.x + g.w > 1400 && g.x + g.w < 1700, "{g:?}");
+        // a window at the far end of a long stroke does not grow back along all of it
+        let far = window_for_reads(&auto, &frame, 4000, 3000, ppl, PixelWindow { x: 1900, ..win });
+        assert!(far.x > 1500, "{far:?}");
+        // a hidden mask reads nothing
+        let hidden = DevelopSettings { masks: vec![Mask { visible: false, ..auto.masks[0].clone() }], ..Default::default() };
+        assert_eq!(window_for_reads(&hidden, &frame, 4000, 3000, ppl, win), win);
+    }
+
+    // Given a window that would have to grow past the cap, there is no answer (never a wrong one)
+    #[test]
+    fn a_window_that_cannot_hold_what_it_reads_is_refused() {
+        use crate::PixelWindow;
+        let frame = Frame::new(40_000, 30_000, &DevelopSettings::default(), true);
+        let ppl = frame.px_per_long(40_000);
+        let win = PixelWindow { x: 1000, y: 1000, w: 400, h: 300 };
+        let far = with_spots(vec![spot_at(0.03, 0.04, 0.01, Some(Point::new(0.6, 0.0)))]);
+        assert_eq!(window_for_reads_checked(&far, &frame, 40_000, 30_000, ppl, win), None);
+        let near = with_spots(vec![spot_at(0.03, 0.04, 0.01, Some(Point::new(0.02, 0.0)))]);
+        assert!(window_for_reads_checked(&near, &frame, 40_000, 30_000, ppl, win).is_some());
+        // a spot that doesn't touch the window is no business of it, however far it reads
+        let elsewhere = with_spots(vec![spot_at(0.9, 0.9, 0.01, Some(Point::new(-0.8, 0.0)))]);
+        assert_eq!(window_for_reads_checked(&elsewhere, &frame, 40_000, 30_000, ppl, win), Some(win));
     }
 }

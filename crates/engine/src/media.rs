@@ -902,7 +902,8 @@ impl crate::Session {
     /// A render of one window of the loupe's frame, for a view zoomed past what one whole-frame
     /// render can hold: the frame is `full_w × full_h` (the size the loupe would draw it at) and
     /// the result is `window`'s pixels of it, at that scale, from the source level that size needs.
-    /// Nothing is cached here (a window is only worth keeping while it is on screen). 
+    /// Nothing is cached here (a window is only worth keeping while it is on screen). `None`: no
+    /// such photo, or the window reads (spots, Auto Mask strokes) more than one render can hold.
     pub fn region_job(
         &mut self,
         id: PhotoId,
@@ -912,6 +913,18 @@ impl crate::Session {
         apply_crop: bool,
     ) -> Option<RenderJob> {
         let mut job = self.render_job(id, full_w, full_h, false, apply_crop)?;
+        // what the window's spots and Auto Mask strokes read must fit in one render: else the
+        // caller keeps the whole-frame render (a window alone would come out wrong)
+        let p = self.catalog.photo(id)?;
+        let frame = lightcraft_pipeline::geometry::Frame::with_lens(
+            p.width.max(1) as usize,
+            p.height.max(1) as usize,
+            &job.settings,
+            apply_crop,
+            p.embedded_lens.as_ref(),
+        );
+        let ppl = frame.px_per_long(full_w);
+        lightcraft_pipeline::spots::window_for_reads_checked(&job.settings, &frame, full_w, full_h, ppl, window.clamped(full_w, full_h))?;
         job.request.window = Some(window);
         job.key = Hasher128::new()
             .u64(job.key)
@@ -1306,6 +1319,28 @@ mod tests {
         assert_eq!(s.render_job(id, 1600, 1600, false, false).unwrap().level, SourceLevel::Preview);
         // and a crop shown small enough still reads the preview
         assert_eq!(s.render_job(id, 600, 600, false, true).unwrap().level, SourceLevel::Preview);
+    }
+
+    // a window whose spot reads from further away than a render can hold is refused
+    #[test]
+    fn a_region_job_is_refused_when_a_spot_reads_beyond_what_fits() {
+        use lightcraft_pipeline::PixelWindow;
+        let mut s = crate::Session::with_demo();
+        let id = s.active().unwrap();
+        let p = s.catalog.photo(id).unwrap().clone();
+        let (w, h) = (p.width as usize * 8, p.height as usize * 8);
+        let mut d = (*s.develop_of(id).unwrap()).clone();
+        d.spots.push(lightcraft_develop::Spot {
+            points: vec![lightcraft_geom::Point::new(0.2, 0.5)],
+            size: 0.01,
+            source_offset: Some(lightcraft_geom::Point::new(0.6, 0.0)),
+            ..Default::default()
+        });
+        s.set_develop(id, d, "Spot").unwrap();
+        let win = PixelWindow { x: (w as f64 * 0.2) as usize - 100, y: h / 2 - 100, w: 400, h: 300 };
+        assert!(s.region_job(id, w, h, win, true).is_none());
+        // a window elsewhere is fine
+        assert!(s.region_job(id, w, h, PixelWindow { x: 5000, y: 5000, w: 400, h: 300 }, true).is_some());
     }
 
     #[test]
