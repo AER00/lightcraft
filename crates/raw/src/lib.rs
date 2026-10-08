@@ -159,9 +159,9 @@ pub fn decode(bytes: &[u8]) -> Result<RawImage> {
 /// measure them from the samples).
 ///
 /// A few uncompressed vendor formats derive part of this from the samples themselves (Nikon
-/// NEF: optically masked trailing columns; Olympus ORF: the CFA phase and bit depth; Pentax PEF
-/// without crop tags: dark borders); for those the samples are read (unpacked, nothing to
-/// decompress) and dropped.
+/// NEF: optically masked trailing columns; Olympus ORF: the bit depth of 16-bit files, and the CFA
+/// phase of files without an Exif `CFAPattern`; Pentax PEF without crop tags: dark borders); for
+/// those the samples are read (unpacked, nothing to decompress) and dropped.
 pub fn probe_info(bytes: &[u8]) -> Result<RawInfo> {
     decode_with(bytes, Mode::Header).map(RawImage::into_info)
 }
@@ -185,7 +185,7 @@ fn decode_with(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         RawFormat::Raf => vendor::raf::decode(bytes, mode),
         RawFormat::Rw2 => vendor::rw2::decode(bytes, mode),
         RawFormat::Pef => vendor::pef::decode(bytes, mode),
-        RawFormat::Orf => vendor::orf::decode(bytes),
+        RawFormat::Orf => vendor::orf::decode(bytes, mode),
         other => Err(RawError::Unsupported(format!("{other:?} files are not decoded yet"))),
     }
 }
