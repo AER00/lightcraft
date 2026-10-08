@@ -183,6 +183,39 @@ fn snapshot_subcommand_renders_the_ui_headlessly() {
     assert_eq!((d.width, d.height), (640, 480));
 }
 
+/// Issue #166: a scripted request that fails makes `snapshot` exit non-zero. The failed reply is
+/// still printed, the later lines still run, and the final `-o` screenshot is still written.
+#[test]
+fn snapshot_script_failure_exits_non_zero() {
+    let script = tmp("snap-fail.jsonl");
+    let out = tmp("snap-fail.png");
+    std::fs::write(
+        &script,
+        format!(
+            "{}\n{}\n",
+            json!({"method": "ui.set", "params": {"view": "grid"}}), // not a view: `photoGrid`, `detail`, …
+            json!({"method": "ui.set", "params": {"view": "photoGrid"}}),
+        ),
+    )
+    .unwrap();
+    let _ = std::fs::remove_file(&out);
+    let o = Command::new(BIN)
+        .args(["snapshot", "--demo", "--script", script.to_str().unwrap(), "-o", out.to_str().unwrap(), "--size", "320x200"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success(), "a failed scripted request must fail the run\n{stderr}");
+    assert!(stderr.contains("1 scripted request(s) failed"), "{stderr}");
+    let replies: Vec<Value> = String::from_utf8_lossy(&o.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    assert_eq!(replies[0]["ok"], false, "{replies:?}");
+    assert!(replies[0]["error"].as_str().unwrap_or("").contains("grid"), "{replies:?}");
+    assert_eq!(replies[1]["ok"], true, "{replies:?}");
+    // continue-and-report: the final screenshot is still written
+    let d = lightcraft_codecs::decode(&std::fs::read(&out).unwrap(), Default::default()).unwrap();
+    assert_eq!((d.width, d.height), (320, 200));
+}
+
 /// Issue #136: with the GPU switched off from the environment the UI starts and renders on the CPU,
 /// without creating a GPU device (no driver is loaded), and says why.
 #[test]

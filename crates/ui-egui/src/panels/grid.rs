@@ -499,12 +499,8 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     request_thumb(app, id, size, if onscreen { 10 } else { 5 });
     if let Some(tex) = app.renderer.thumb(id) {
         let [tw, th] = tex.size;
-        let fit = if square {
-            let s = (img_rect.width() / tw as f32).min(img_rect.height() / th as f32);
-            Rect::from_center_size(img_rect.center(), vec2(tw as f32 * s, th as f32 * s))
-        } else {
-            img_rect
-        };
+        // Preserve the decoded preview's ratio when it differs from the catalog dimensions.
+        let fit = super::detail::fit_texture_rect(img_rect, [tw, th]);
         p.image(tex.tex.id(), fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         if active {
             p.rect_stroke(fit.expand(if square { 2.0 } else { 0.0 }), 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
@@ -904,7 +900,7 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if missing && ui.button(crate::i18n::tr("Locate Missing File…")).clicked() {
         let _ = app.run("photo.locate", json!({}));
     }
-    if ui.add_enabled(crate::menus::ui_enabled(app, "app.showInFinder"), egui::Button::new(crate::i18n::tr("Show in Finder"))).clicked() {
+    if ui.add_enabled(crate::menus::ui_enabled(app, "app.showInFinder"), egui::Button::new(crate::i18n::tr(crate::menus::reveal_label()))).clicked() {
         let _ = app.run("app.showInFinder", json!({}));
     }
     if ui.button(crate::i18n::tr("Export…")).clicked() {

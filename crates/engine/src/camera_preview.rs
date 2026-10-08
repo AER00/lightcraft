@@ -60,9 +60,8 @@ pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransf
 /// Same-size proxies of the sensor (white-balanced, baseline exposure, through `transform`'s
 /// matrix: the generic camera ≈ sRGB model) and of the file's embedded camera JPEG (linear Rec.2020).
 fn proxies(raw: &RawImage, bytes: &[u8], transform: &CameraTransform, size: usize) -> Option<(Rgb32f, Rgb32f)> {
-    let jpeg = lightcraft_raw::embedded_preview(bytes)?;
     let edge = (2 * size).max(384) as u32;
-    let decoded = lightcraft_codecs::decode(&jpeg, lightcraft_codecs::DecodeOptions { max_size: Some((edge, edge)), max_pixels: 64_000_000 }).ok()?;
+    let decoded = crate::files::decode_raw_preview(bytes, lightcraft_codecs::DecodeOptions { max_size: Some((edge, edge)), max_pixels: 64_000_000 })?;
     let mut reference = decoded.to_working();
     let (a, crop) = (raw.active_area, raw.crop.clipped(raw.active_area.width, raw.active_area.height));
     if crop.width == 0 || crop.height == 0 || reference.width == 0 || reference.height == 0 {

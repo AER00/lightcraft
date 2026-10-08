@@ -482,7 +482,9 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ui.add(egui::Label::new(egui::RichText::new(path).size(12.0).color(t.text_label)).truncate());
             if crate::menus::ui_enabled(app, "app.showInFinder") {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::widgets::icon_button(ui, "infoReveal", Icon::Folder, vec2(20.0, 20.0), false, true, "Show in Finder").clicked() {
+                    if crate::widgets::icon_button(ui, "infoReveal", Icon::Folder, vec2(20.0, 20.0), false, true, crate::menus::reveal_label())
+                        .clicked()
+                    {
                         let _ = app.run("app.showInFinder", json!({}));
                     }
                 });

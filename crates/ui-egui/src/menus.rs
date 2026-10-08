@@ -1240,7 +1240,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             crate::links::open(app, url)
         }
         "app.exportPrevious" => match app.session.last_export.clone() {
-            Some(prev) => crate::control::export_active(app, &prev),
+            Some(prev) => crate::control::export_active(app, &lightcraft_engine::export::ExportOptions::known_keys_only(&prev)),
             None => Err("nothing exported yet — use Export…".into()),
         },
         _ => return None,
@@ -1327,6 +1327,17 @@ pub fn confirm_delete(app: &mut LightcraftApp) -> bool {
     }
     app.ui.dialog = Some(Dialog::ConfirmDelete { count });
     true
+}
+
+/// Platform-appropriate label for revealing a file in the system file manager.
+pub fn reveal_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Show in Finder"
+    } else if cfg!(target_os = "windows") {
+        "Show in Explorer"
+    } else {
+        "Show in File Manager"
+    }
 }
 
 /// Reveal the active photo's original in the system file manager.

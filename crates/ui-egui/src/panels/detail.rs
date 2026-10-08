@@ -125,6 +125,14 @@ pub(crate) fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], 
     Rect::from_center_size(c, vec2(w, h))
 }
 
+/// Fit a decoded image inside the frame calculated from catalog metadata. Unsupported RAWs can
+/// only show their embedded camera JPEG, whose crop and aspect ratio can differ from that metadata.
+pub(crate) fn fit_texture_rect(area: Rect, size: [usize; 2]) -> Rect {
+    let (w, h) = (size[0].max(1) as f32, size[1].max(1) as f32);
+    let scale = (area.width() / w).min(area.height() / h);
+    Rect::from_center_size(area.center(), vec2(w * scale, h * scale))
+}
+
 /// Ease the loupe rect toward `target` while a click-zoom animation runs; otherwise follow it exactly.
 fn animated_rect(ctx: &egui::Context, anim: &mut bool, target: Rect) -> Rect {
     let t = if *anim { 0.22 } else { 0.0 };
@@ -191,7 +199,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         _ => vec![area],
     };
     let main_area = *areas.last().unwrap_or(&area);
-    let target_rect = fit_rect(main_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
+    let visible_texture_aspect = app
+        .renderer
+        .textures
+        .get(&Slot::Main)
+        .filter(|t| t.photo == id)
+        .or_else(|| app.renderer.textures.get(&Slot::Preview).filter(|t| t.photo == id))
+        .or_else(|| app.renderer.thumb(id))
+        .map(|tex| tex.size[0].max(1) as f32 / tex.size[1].max(1) as f32);
+    // Follow the texture only where it really differs (an unsupported raw's embedded JPEG with
+    // another crop): a texture's whole-pixel size is a little off the exact aspect, and the crop
+    // tool's overlays need the frame's own geometry.
+    let display_aspect = visible_texture_aspect.filter(|a| !crop_tool && (a / aspect - 1.0).abs() > 0.02).unwrap_or(aspect);
+    let target_rect = fit_rect(main_area, display_aspect, app.ui.zoom, native, ppp, app.ui.pan);
     let img_rect = animated_rect(ui.ctx(), &mut app.ui.zoom_anim, target_rect);
     app.image_rect = Some(img_rect);
     // request renders: the loupe at display resolution (drafts during drags)
@@ -262,7 +282,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         } else {
             return "none";
         };
-        p.image(tex.tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        let image_rect = fit_texture_rect(r, tex.size);
+        p.image(tex.tex.id(), image_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         what
     };
     // soft proofing: a paper-white surround and the proof's name, as Lightroom shows it
@@ -284,9 +305,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     } else if let Some((_key, label)) = &hover_key
         && let Some(tex) = app.renderer.textures.get(&Slot::Hover).filter(|t| t.photo == id)
     {
-        p.image(tex.tex.id(), img_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        let hover_rect = fit_texture_rect(img_rect, tex.size);
+        p.image(tex.tex.id(), hover_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         let g = p.layout_no_wrap(label.clone(), t.font(12.0), Color32::WHITE);
-        let bg = Rect::from_min_size(img_rect.left_top() + vec2(8.0, 8.0), g.size() + vec2(16.0, 8.0));
+        let bg = Rect::from_min_size(hover_rect.left_top() + vec2(8.0, 8.0), g.size() + vec2(16.0, 8.0));
         p.rect_filled(bg, 4.0, Color32::from_black_alpha(160));
         p.galley(bg.min + vec2(8.0, 4.0), g, Color32::WHITE);
         shown = "hover";
@@ -314,7 +336,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if app.ui.before_after == BeforeAfter::Split {
         let mid = img_rect.center().x;
         if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
-            let left = Rect::from_min_max(img_rect.min, pos2(mid, img_rect.bottom()));
+            let before_rect = fit_texture_rect(img_rect, tex.size);
+            let left = Rect::from_min_max(before_rect.min, pos2(before_rect.center().x, before_rect.bottom()));
             p.image(tex.tex.id(), left, Rect::from_min_max(pos2(0.0, 0.0), pos2(0.5, 1.0)), Color32::WHITE);
         }
         p.line_segment([pos2(mid, img_rect.top()), pos2(mid, img_rect.bottom())], Stroke::new(1.5, Color32::WHITE));
@@ -322,7 +345,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if app.ui.before_after == BeforeAfter::SplitTopBottom {
         let mid = img_rect.center().y;
         if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
-            let top = Rect::from_min_max(img_rect.min, pos2(img_rect.right(), mid));
+            let before_rect = fit_texture_rect(img_rect, tex.size);
+            let top = Rect::from_min_max(before_rect.min, pos2(before_rect.right(), before_rect.center().y));
             p.image(tex.tex.id(), top, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 0.5)), Color32::WHITE);
         }
         p.line_segment([pos2(img_rect.left(), mid), pos2(img_rect.right(), mid)], Stroke::new(1.5, Color32::WHITE));
@@ -1493,6 +1517,12 @@ fn eye_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response
 
 // ------------------------------------------------------------------------ filmstrip
 
+/// A filmstrip cell's file-name label: names longer than 14 characters are cut to 13 and an
+/// ellipsis. Counts characters, not bytes, so a CJK name is never cut inside a character (#266).
+fn film_label(name: &str) -> String {
+    if name.chars().nth(14).is_some() { format!("{}…", name.chars().take(13).collect::<String>()) } else { name.to_string() }
+}
+
 pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
     let t = Tokens::get(ui.ctx());
     ui.painter().rect_filled(r, 0.0, t.canvas);
@@ -1527,8 +1557,10 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
             let resp = ui.interact(cr, egui::Id::new(("film", id.0)), Sense::click());
             register(ui.ctx(), format!("film:{}", id.0), cr);
             let sel = Some(*id) == active;
+            // as in the grid: every selected photo is filled, the active one framed in white (#187)
+            let selected = sel || app.session.selection.contains(*id);
             let p = ui.painter();
-            if sel {
+            if selected {
                 p.rect_filled(cr, 0.0, t.cell_selected);
             } else if resp.hovered() {
                 p.rect_filled(cr, 0.0, t.cell_selected.gamma_multiply(0.6));
@@ -1536,8 +1568,7 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
             let names = app.ui.settings.film_names;
             if let Some(ph) = app.session.catalog.photo(*id).filter(|_| names) {
                 let name = ph.file_name.rsplit_once('.').map(|(n, _)| n).unwrap_or(&ph.file_name);
-                let short: String = if name.len() > 14 { format!("{}…", &name[..13]) } else { name.to_string() };
-                p.text(pos2(cr.left() + 8.0, cr.top() + 10.0), Align2::LEFT_CENTER, short, t.font(10.0), t.text_dim);
+                p.text(pos2(cr.left() + 8.0, cr.top() + 10.0), Align2::LEFT_CENTER, film_label(name), t.font(10.0), t.text_dim);
                 p.text(pos2(cr.right() - 8.0, cr.top() + 10.0), Align2::RIGHT_CENTER, &ph.format, t.semibold(8.5), t.text_dim);
             }
             let img_area = Rect::from_min_max(cr.min + vec2(10.0, 22.0), cr.max - vec2(10.0, 8.0));
@@ -1549,6 +1580,8 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
                 p.image(tex.tex.id(), fr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                 if sel {
                     p.rect_stroke(fr, 0.0, Stroke::new(1.5, Color32::WHITE), StrokeKind::Outside);
+                } else if selected {
+                    p.rect_stroke(fr, 0.0, Stroke::new(1.5, Color32::from_gray(170)), StrokeKind::Outside);
                 }
                 if app.ui.settings.film_badges
                     && let Some(ph) = app.session.catalog.photo(*id)
@@ -1608,6 +1641,33 @@ fn film_badges(p: &egui::Painter, t: &Tokens, fr: Rect, ph: &lightcraft_catalog:
     }
 }
 
+#[cfg(test)]
+mod preview_geometry_tests {
+    use super::{fit_rect, fit_texture_rect};
+    use crate::state::Zoom;
+    use egui::{Rect, pos2, vec2};
+
+    #[test]
+    fn portrait_preview_keeps_its_ratio_inside_a_landscape_frame() {
+        let frame = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 200.0));
+        let image = fit_texture_rect(frame, [100, 200]);
+
+        assert!((image.width() / image.height() - 0.5).abs() < 1e-6);
+        assert_eq!(image.center(), frame.center());
+        assert!(frame.contains_rect(image));
+    }
+
+    #[test]
+    fn portrait_preview_aspect_fits_detail_area_without_stretching() {
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 200.0));
+        let image = fit_rect(area, 0.5, Zoom::Fit, [4000, 6000], 1.0, (0.5, 0.5));
+
+        assert!((image.width() / image.height() - 0.5).abs() < 1e-6);
+        assert_eq!(image.size(), vec2(100.0, 200.0));
+        assert_eq!(image.center(), area.center());
+    }
+}
+
 /// Straighten tool: drag along a horizon (or a vertical) to set the crop angle; double-click = Auto.
 /// The image is shown unrotated in the crop view, so the line's on-screen angle is its image angle.
 /// `held`: drawn with ⌘ held in the crop tool, which stays active afterwards.
@@ -1646,5 +1706,22 @@ fn straighten_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::R
         if !held {
             app.ui.tool.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::film_label;
+
+    #[test]
+    fn film_labels_cut_on_characters_not_bytes() {
+        // the name from #266: byte 13 falls inside '限'
+        assert_eq!(film_label("202407層三限定訂閱圖(4)"), "202407層三限定訂閱圖…");
+        assert_eq!(film_label("写真"), "写真");
+        // exactly 14 characters (42 bytes) is shown whole
+        assert_eq!(film_label("一二三四五六七八九十一二三四"), "一二三四五六七八九十一二三四");
+        assert_eq!(film_label("IMG_20240712_153012"), "IMG_20240712_…");
+        assert_eq!(film_label("DSC_0001"), "DSC_0001");
+        assert_eq!(film_label(""), "");
     }
 }
