@@ -31,7 +31,10 @@ pub(crate) const PROFILE_PROXY: usize = 192;
 /// as-shot look (`docs/camera-preview-colour.md`). The catalog's `Photo::relative_wb` matches the
 /// same formats by file extension.
 pub(crate) fn file_local_look(format: RawFormat) -> bool {
-    matches!(format, RawFormat::Arw | RawFormat::Nef | RawFormat::Nrw | RawFormat::Rw2 | RawFormat::Raf | RawFormat::Cr3)
+    matches!(
+        format,
+        RawFormat::Arw | RawFormat::Nef | RawFormat::Nrw | RawFormat::Rw2 | RawFormat::Raf | RawFormat::Cr3 | RawFormat::Cr2 | RawFormat::Pef
+    )
 }
 
 pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransform) -> Option<CameraLook> {
@@ -1017,8 +1020,11 @@ mod tests {
 
     #[test]
     fn supported_raws_get_a_file_local_look() {
-        assert!([RawFormat::Arw, RawFormat::Nef, RawFormat::Nrw, RawFormat::Rw2, RawFormat::Raf, RawFormat::Cr3].into_iter().all(file_local_look));
-        assert!(![RawFormat::Dng, RawFormat::Cr2].into_iter().any(file_local_look));
+        // every decoded raw without a colour matrix of its own (issue #310: CR2 rendered flat with the fallback)
+        let local = [RawFormat::Arw, RawFormat::Nef, RawFormat::Nrw, RawFormat::Rw2, RawFormat::Raf, RawFormat::Cr3, RawFormat::Cr2, RawFormat::Pef];
+        assert!(local.into_iter().all(file_local_look));
+        // DNG carries its own colour model
+        assert!(!file_local_look(RawFormat::Dng));
     }
 
     #[test]
