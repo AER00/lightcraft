@@ -242,3 +242,17 @@ fn filter_chips_clear_one_filter_and_total_ignores_the_filter() {
     }
     assert_eq!(s.filter, Default::default());
 }
+
+/// A shuffle is part of the saved view: the same seed (and so the same grid) is back on the next launch.
+#[test]
+fn random_sort_persists_with_the_view() {
+    let dir = temp_dir("random-view");
+    let mut s = open(&dir);
+    s.execute("library.sort", &json!({"key": "random", "seed": 123_456_789})).unwrap();
+    s.close_library().unwrap();
+    drop(s);
+    let s2 = open(&dir);
+    assert_eq!(s2.sort.key, lightcraft_catalog::SortKey::Random);
+    assert_eq!(s2.sort.seed, 123_456_789);
+    let _ = std::fs::remove_dir_all(&dir);
+}

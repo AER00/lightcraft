@@ -452,7 +452,7 @@ old
     fn reads_the_language_commands_from_menus_rs() {
         let menus = include_str!("../../crates/ui-egui/src/menus.rs");
         let ids = ui_command_ids(menus);
-        for id in ["view.detail", "app.language.english", "app.language.japanese", "app.language.simplifiedChinese"] {
+        for id in ["view.detail", "app.language.english", "app.language.japanese", "app.language.simplifiedChinese", "app.language.portuguese"] {
             assert!(ids.iter().any(|known| known == id), "{id} not found");
         }
         assert_eq!(ids.iter().filter(|id| id.as_str() == "app.language.english").count(), 1, "one Language menu entry per language");

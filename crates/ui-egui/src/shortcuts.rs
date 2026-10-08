@@ -158,8 +158,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 o.remove("advance");
             }
             cull(app, id, params, advance);
-        } else {
-            let _ = app.run(id, params);
+        } else if let Err(e) = app.run(id, params)
+            && matches!(id, "app.export" | "app.exportPrevious")
+        {
+            // an export that can't start (e.g. no folder) says why instead of doing nothing
+            app.toast(ctx, e);
         }
     }
     for f in fire {
@@ -255,7 +258,12 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                     continue;
                 }
             }
-            let _ = app.run(&f, json!({}));
+            // an export that can't start (e.g. no folder) says why instead of doing nothing
+            if let Err(e) = app.run(&f, json!({}))
+                && matches!(f.as_str(), "app.export" | "app.exportPrevious")
+            {
+                app.toast(ctx, e);
+            }
             match f.as_str() {
                 "photo.pick" => app.toast(ctx, "Flagged as Pick"),
                 "photo.reject" => app.toast(ctx, "Flagged as Reject"),
