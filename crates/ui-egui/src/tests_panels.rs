@@ -209,20 +209,19 @@ fn date_and_keyword_rows_show_their_photos_from_any_source() {
     let first = h.app.session.visible_cloned()[0];
     let year = h.app.session.catalog.photo(first).and_then(|p| p.captured.clone()).expect("demo photo date")[..4].to_string();
     // (Keywords rows go through the same helper, `browse_all_photos`)
-    for (row, key) in [(format!("source:date:{year}"), "date")] {
-        let r = h.request("engine.execute", json!({"command": "library.source", "params": {"kind": "recentlyDeleted"}}), T);
-        assert_eq!(r["ok"], true, "{r}");
-        h.settle(SETTLE);
-        assert!(h.app.session.visible().is_empty(), "nothing deleted in the demo");
-        let r = h.request("ui.clickWidget", json!({"id": row}), T);
-        assert_eq!(r["ok"], true, "{r}");
-        h.step();
-        assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::All, "{key}");
-        assert!(!h.app.session.visible().is_empty(), "{key}: its photos are shown");
-        // choosing the row again clears it, and stays in All Photos
-        let r = h.request("ui.clickWidget", json!({"id": row}), T);
-        assert_eq!(r["ok"], true, "{r}");
-        h.step();
-        assert_eq!(h.app.session.filter, lightcraft_catalog::Filter::default(), "{key}");
-    }
+    let (row, key) = (format!("source:date:{year}"), "date");
+    let r = h.request("engine.execute", json!({"command": "library.source", "params": {"kind": "recentlyDeleted"}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(h.app.session.visible().is_empty(), "nothing deleted in the demo");
+    let r = h.request("ui.clickWidget", json!({"id": row}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::All, "{key}");
+    assert!(!h.app.session.visible().is_empty(), "{key}: its photos are shown");
+    // choosing the row again clears it, and stays in All Photos
+    let r = h.request("ui.clickWidget", json!({"id": row}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    assert_eq!(h.app.session.filter, lightcraft_catalog::Filter::default(), "{key}");
 }
