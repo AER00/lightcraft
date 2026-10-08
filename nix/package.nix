@@ -6,8 +6,8 @@
 # Kept in step with the release workflow (.github/workflows/release.yml) and packaging/env.sh:
 #   * `Cargo.lock` drives the dependencies (`cargoLock`), so there is no vendorHash to bump — only
 #     crates.io, no git sources;
-#   * `CRAFT_FONTS_DIR` embeds the Japanese fonts from storytold/craft-fonts (the `craft-fonts`
-#     flake input); without it everything builds and runs, but Japanese text has no glyphs;
+#   * `CRAFT_FONTS_DIR` embeds the CJK fonts from storytold/craft-fonts (the `craft-fonts`
+#     flake input); without it everything builds and runs, but Japanese and Chinese text have no glyphs;
 #   * the desktop file, hicolor icons and AppStream metadata are the same files the .deb/.rpm ship
 #     (packaging/linux/), so `apt` and NixOS users see one identical LightCraft;
 #   * `doCheck` runs `cargo test --workspace`, what `cargo xtask ci` runs. `nix build` runs it too;
@@ -38,7 +38,7 @@
   # Adds the driver search path (/run/opengl-driver/lib) to the binaries' RPATH so wgpu finds the
   # installed Vulkan driver on NixOS. Optional: harmless on nixpkgs without it.
   autoAddDriverRunpath ? null,
-  # storytold/craft-fonts checkout (flake input). `null` builds without Japanese glyphs.
+  # storytold/craft-fonts checkout (flake input). `null` builds without CJK glyphs.
   craft-fonts ? null,
   # Release date for the AppStream metadata (YYYY-MM-DD); the flake derives it from its own commit.
   buildDate ? "1970-01-01",

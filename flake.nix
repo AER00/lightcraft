@@ -6,7 +6,7 @@
     # release channel can retarget it: `inputs.lightcraft.inputs.nixpkgs.follows = "nixpkgs";`
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # Optional build input of the repository: the Japanese fonts (BIZ UDPGothic, BIZ UDMincho,
+    # Optional build input of the repository: the CJK fonts (BIZ UDPGothic, BIZ UDMincho, Noto Sans CJK SC,
     # Shippori Mincho) that `crates/engine/build.rs` embeds when `CRAFT_FONTS_DIR` is set. Official
     # releases always build with them; without them everything works but Japanese text has no
     # glyphs. Pinned to the revision the release workflow uses — bump deliberately
@@ -91,7 +91,7 @@
               RUST_BACKTRACE = "1";
             }
             // lib.optionalAttrs (craft-fonts != null) {
-              # Japanese glyphs in `cargo run` too; build.rs reads this as CRAFT_FONTS_DIR.
+              # CJK glyphs in `cargo run` too; build.rs reads this as CRAFT_FONTS_DIR.
               CRAFT_FONTS_DIR = toString craft-fonts;
             }
           );
