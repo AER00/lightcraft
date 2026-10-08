@@ -35,7 +35,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let (cr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
     let name = app.session.profile_info(&d.profile.id).map(|(name, _)| name).unwrap_or("Color");
     ui.painter().text(pos2(cr.left() + 24.0, cr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Profile"), t.font(13.0), t.text_dim);
-    ui.painter().text(pos2(cr.left() + 84.0, cr.center().y), Align2::LEFT_CENTER, crate::i18n::profile_label(&d.profile.id, name), t.font(14.0), t.text_label);
+    ui.painter().text(
+        pos2(cr.left() + 84.0, cr.center().y),
+        Align2::LEFT_CENTER,
+        crate::i18n::profile_label(&d.profile.id, name),
+        t.font(14.0),
+        t.text_label,
+    );
     if d.profile.id != "lc.color" {
         super::edit::control(app, ui, &d, "profile.amount", true);
         ui.add_space(6.0);
@@ -53,20 +59,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         sections.push(("Favorites", "fav", false, favs));
     }
     for g in profile_groups() {
-        sections.push((g, "", false, PROFILES.iter().filter(|p| p.group == g).map(|p| (p.id.to_string(), p.name.to_string(), p.group.to_string())).collect()));
+        sections.push((
+            g,
+            "",
+            false,
+            PROFILES.iter().filter(|p| p.group == g).map(|p| (p.id.to_string(), p.name.to_string(), p.group.to_string())).collect(),
+        ));
     }
     // imported LUT profile groups
     let mut lut_groups: Vec<String> = app.session.lut_profiles.iter().map(|p| p.group.clone()).collect();
     lut_groups.sort_unstable();
     lut_groups.dedup();
     for g in &lut_groups {
-        let profiles = app
-            .session
-            .lut_profiles
-            .iter()
-            .filter(|p| &p.group == g)
-            .map(|p| (p.id.clone(), p.name.clone(), p.group.clone()))
-            .collect();
+        let profiles = app.session.lut_profiles.iter().filter(|p| &p.group == g).map(|p| (p.id.clone(), p.name.clone(), p.group.clone())).collect();
         sections.push((g.as_str(), "", true, profiles));
     }
     for (title, tag, imported, list) in sections {
@@ -81,7 +86,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             if open { Icon::ChevronDown } else { Icon::ChevronRight },
             t.text_label,
         );
-        ui.painter().text(pos2(r.left() + 36.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::builtin_label(title, !imported), t.semibold(13.0), t.text_label);
+        ui.painter().text(
+            pos2(r.left() + 36.0, r.center().y),
+            Align2::LEFT_CENTER,
+            crate::i18n::builtin_label(title, !imported),
+            t.semibold(13.0),
+            t.text_label,
+        );
         ui.painter().text(pos2(r.right() - 22.0, r.center().y), Align2::RIGHT_CENTER, list.len().to_string(), t.font(12.0), t.text_dim);
         if resp.clicked() {
             ui.data_mut(|m| m.insert_temp(open_id, !open));
@@ -111,7 +122,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             && let Some((p_name, _)) = app.session.profile_info(&saved_profile_id)
         {
             let s = with_profile_id(&d, &saved_profile_id);
-            app.hover_preview = Some(HoverPreview { label: crate::i18n::tr_format!("Profile: {}", crate::i18n::profile_label(p_id, p_name)), settings: s });
+            app.hover_preview =
+                Some(HoverPreview { label: crate::i18n::tr_format!("Profile: {}", crate::i18n::profile_label(p_id, p_name)), settings: s });
         }
     } else {
         ui.data_mut(|m| m.remove::<(PhotoId, String)>(last_hover_id));
@@ -160,7 +172,13 @@ fn cell_ui(
         painter.rect_stroke(thumb, 3.0, Stroke::new(1.0, t.text_dim), egui::StrokeKind::Outside);
     }
     let name_color = if applied { t.text } else { t.text_label };
-    painter.text(pos2(cell.left() + 2.0, thumb.bottom() + 12.0), Align2::LEFT_CENTER, crate::i18n::profile_label(p_id, p_name), t.font(12.0), name_color);
+    painter.text(
+        pos2(cell.left() + 2.0, thumb.bottom() + 12.0),
+        Align2::LEFT_CENTER,
+        crate::i18n::profile_label(p_id, p_name),
+        t.font(12.0),
+        name_color,
+    );
     // favourite star (always shown when set, on hover otherwise)
     let fav = app.session.profile_favorites.iter().any(|f| f == p_id);
     let star = Rect::from_center_size(pos2(thumb.right() - 13.0, thumb.top() + 13.0), vec2(20.0, 20.0));
@@ -171,10 +189,15 @@ fn cell_ui(
         paint(painter, star.shrink(4.0), if fav { Icon::StarFilled } else { Icon::Star }, if fav || over_star { t.star } else { Color32::WHITE });
     }
     if resp.hovered() && !applied && !over_star {
-        app.hover_preview = Some(HoverPreview { label: crate::i18n::tr_format!("Profile: {}", crate::i18n::profile_label(p_id, p_name)), settings: s.clone() });
+        app.hover_preview =
+            Some(HoverPreview { label: crate::i18n::tr_format!("Profile: {}", crate::i18n::profile_label(p_id, p_name)), settings: s.clone() });
         ui.data_mut(|m| m.insert_temp(egui::Id::new("last-profile-hover"), (id, p_id.to_string())));
     }
-    let resp = resp.on_hover_text(format!("{} ({})", crate::i18n::profile_label(p_id, p_name), crate::i18n::builtin_label(p_group, lightcraft_engine::presets::profile(p_id).is_some())));
+    let resp = resp.on_hover_text(format!(
+        "{} ({})",
+        crate::i18n::profile_label(p_id, p_name),
+        crate::i18n::builtin_label(p_group, lightcraft_engine::presets::profile(p_id).is_some())
+    ));
     if resp.clicked() {
         if resp.interact_pointer_pos().is_some_and(|q| star.contains(q)) {
             let _ = app.run("profile.favorite", json!({"id": p_id}));

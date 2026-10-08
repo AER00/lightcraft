@@ -1421,6 +1421,8 @@ mod tests {
             }
             let _ = std::fs::remove_dir_all(&dir);
         }
+    }
+
     /// The import review opens bigger than the old fixed 6 × 2.5 grid and can be resized by its
     /// corner: the photo grid takes the new height, and the window then keeps its size (issue #337).
     #[test]

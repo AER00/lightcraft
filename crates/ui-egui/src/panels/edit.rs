@@ -351,11 +351,7 @@ fn profile_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings)
     let cur = d.profile.id.as_str();
     // (clicked, hovered)
     let mut pick: (Option<String>, Option<String>) = (None, None);
-    let mut item = |ui: &mut egui::Ui,
-                    key: &str,
-                    id: &str,
-                    name: &str,
-                    pick: &mut (Option<String>, Option<String>)| {
+    let mut item = |ui: &mut egui::Ui, key: &str, id: &str, name: &str, pick: &mut (Option<String>, Option<String>)| {
         let r = ui.selectable_label(id == cur, crate::i18n::profile_label(id, name));
         register(ui.ctx(), format!("profileMenu:{key}:{id}"), r.rect);
         if r.clicked() {
@@ -429,7 +425,8 @@ fn profile_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings)
         let mut s = d.clone();
         s.profile.id = hovered_id.clone();
         s.profile.amount = 100.0;
-        app.hover_preview = Some(crate::HoverPreview { label: crate::i18n::tr_format!("Profile: {}", crate::i18n::profile_label(hovered_id, name)), settings: s });
+        app.hover_preview =
+            Some(crate::HoverPreview { label: crate::i18n::tr_format!("Profile: {}", crate::i18n::profile_label(hovered_id, name)), settings: s });
     }
     if let Some(id) = pick.0 {
         let _ = app.run("develop.profile", json!({"id": id}));

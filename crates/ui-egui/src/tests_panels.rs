@@ -534,6 +534,8 @@ fn the_selection_bar_stays_inside_the_panel() {
     let panel = widget(&h, "panel:left_panel");
     let bar = widget(&h, "highlight:libfolder:/a/b/c/d/e/f/g/h/i/j/k/l");
     assert!(bar.right() <= panel.right(), "the bar {bar:?} ends inside the panel {panel:?}");
+}
+
 /// Select All in the loupe: every filmstrip cell of a selected photo is drawn selected, not just
 /// the active one (issue #298).
 #[test]
