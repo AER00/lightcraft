@@ -516,7 +516,8 @@ mod in_the_loupe {
         h.app.ui.zoom = crate::state::Zoom::Percent(400.0);
         h.app.session.begin_interaction("Exposure").unwrap();
         let mut ticks = 0;
-        while !h.app.renderer.textures.contains_key(&Slot::Region) && ticks < 3000 {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while !h.app.renderer.textures.contains_key(&Slot::Region) && std::time::Instant::now() < deadline {
             let v = (ticks % 40) as f64 * 0.02;
             h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": v}}), T);
             h.step();
@@ -601,5 +602,26 @@ mod in_the_loupe {
             h.request("ui.zoom", json!({"factor": 0.9}), T);
             assert_eq!(h.app.region_view.map(|v| v.key), Some(key), "the window of before the pinch");
         }
+    }
+
+    // Given a stage budget far below what the open photo's views hold (a 2800 px canvas at 1:1),
+    // a slider drag still reuses them: they are not cleared every frame
+    #[test]
+    fn a_drag_over_the_stage_budget_does_not_clear_the_open_views() {
+        let (mut h, _) = detail();
+        h.app.renderer.stage_budget_override = Some(1 << 20);
+        h.app.ui.zoom = crate::state::Zoom::Percent(100.0);
+        h.settle(SETTLE);
+        h.app.session.begin_interaction("Exposure").unwrap();
+        for tick in 0..8 {
+            h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": tick as f64 * 0.1}}), T);
+            h.settle(SETTLE);
+        }
+        assert_eq!(h.app.renderer.memory()["stageCaches"]["trimmed"], 0);
+        assert!(
+            h.app.renderer.memory()["stageCaches"]["gpuBytes"].as_u64().unwrap()
+                + h.app.renderer.memory()["stageCaches"]["cpuBytes"].as_u64().unwrap()
+                > 1 << 20
+        );
     }
 }

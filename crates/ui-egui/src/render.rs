@@ -96,21 +96,22 @@ pub(crate) fn color_image(img: &lightcraft_raster::Rgba8) -> egui::ColorImage {
     egui::ColorImage { size: [img.width, img.height], source_size: egui::vec2(img.width as f32, img.height as f32), pixels }
 }
 
-/// Which stage caches to clear, in order, so that the rest fit `budget` bytes: the cheapest to
-/// rebuild and least reused first (hover, before, compare, second window, the zoom window), the
-/// open photo's own view last. Empty caches are never named. The budget is hard.
+/// Which stage caches to clear, in order, so that the rest fit `budget` bytes. The open photo's
+/// own views (the whole frame, the zoom windows, the before side) are never named: they are what a
+/// slider drag reuses on every tick, and a cache cleared every frame is rebuilt every frame (a
+/// drag on a 2800 px canvas got 3.6x slower). What goes is what nothing is looking at, the cheapest
+/// to rebuild and least reused first (hover, compare, second window, background work). Empty
+/// caches are never named. Their weight still counts toward the total and is reported.
 pub(crate) fn stage_trim_order(sizes: &[(Slot, usize)], budget: usize) -> Vec<Slot> {
     let rank = |s: Slot| match s {
         Slot::Hover => 0,
-        Slot::Before | Slot::RegionBefore => 1,
         Slot::Compare(_) => 2,
         Slot::Second => 3,
-        Slot::Region => 4,
-        Slot::Main => 6,
         _ => 5,
     };
+    let in_use = |s: Slot| matches!(s, Slot::Main | Slot::Region | Slot::RegionBefore | Slot::Before);
     let mut held: usize = sizes.iter().map(|(_, b)| *b).fold(0, usize::saturating_add);
-    let mut order: Vec<(Slot, usize)> = sizes.iter().copied().filter(|(_, b)| *b > 0).collect();
+    let mut order: Vec<(Slot, usize)> = sizes.iter().copied().filter(|(s, b)| *b > 0 && !in_use(*s)).collect();
     order.sort_by_key(|(s, _)| rank(*s));
     let mut out = Vec::new();
     for (slot, bytes) in order {
@@ -124,7 +125,7 @@ pub(crate) fn stage_trim_order(sizes: &[(Slot, usize)], budget: usize) -> Vec<Sl
 }
 
 /// The share of the memory budget the per-view stage caches (the loupe's, the zoom window's, the
-/// before / hover renders') may hold together: they are the decoded-image sized buffers that the
+/// before / hover renders') may hold together before the idle ones are cleared: they are the decoded-image sized buffers that the
 /// engine's own caches do not count.
 const STAGE_BUDGET_SHARE: usize = 4;
 
@@ -181,7 +182,7 @@ pub struct Renderer {
     stages_trimmed: u64,
     /// A budget other than the memory budget's share (tests).
     #[cfg(test)]
-    stage_budget_override: Option<usize>,
+    pub(crate) stage_budget_override: Option<usize>,
     /// Since when nothing has been pending, and whether the GPU pool was trimmed since.
     #[cfg(not(target_arch = "wasm32"))]
     idle: Option<(std::time::Instant, bool)>,
@@ -1133,29 +1134,36 @@ mod stage_budget_tests {
         assert_eq!(stage_trim_order(&sizes, 512 * MB), vec![]);
     }
 
-    // Given too much held, the least useful caches go first (a hover or before render is rebuilt
-    // cheaply; the open photo's view is what slider drags reuse) and only as many as needed
+    // Given too much held, the caches nothing is looking at go first (a hover render's, a compare
+    // tile's: rebuilt cheaply), the least useful first, and only as many as needed
     #[test]
-    fn the_least_useful_caches_go_first_and_only_as_many_as_needed() {
-        let sizes = [(Slot::Main, 300 * MB), (Slot::Before, 200 * MB), (Slot::Hover, 100 * MB), (Slot::Region, 150 * MB)];
-        // 750 held, 500 allowed: hover (100) then before (200) bring it to 450
-        assert_eq!(stage_trim_order(&sizes, 500 * MB), vec![Slot::Hover, Slot::Before]);
-        // 400 allowed: the window's too (450 > 400), which leaves the open photo's 300
-        assert_eq!(stage_trim_order(&sizes, 400 * MB), vec![Slot::Hover, Slot::Before, Slot::Region]);
-        // 250 allowed: and in the end the open photo's own
-        assert_eq!(stage_trim_order(&sizes, 250 * MB), vec![Slot::Hover, Slot::Before, Slot::Region, Slot::Main]);
+    fn the_idle_caches_go_first_and_only_as_many_as_needed() {
+        let sizes =
+            [(Slot::Main, 300 * MB), (Slot::Hover, 100 * MB), (Slot::Second, 80 * MB), (Slot::Compare(0), 60 * MB), (Slot::Compare(1), 60 * MB)];
+        // 600 held, 500 allowed: the hover render's 100 is enough
+        assert_eq!(stage_trim_order(&sizes, 500 * MB), vec![Slot::Hover]);
+        // 400 allowed: the compare tiles' too (380 left), then, at 350, the second window's
+        assert_eq!(stage_trim_order(&sizes, 400 * MB), vec![Slot::Hover, Slot::Compare(0), Slot::Compare(1)]);
+        assert_eq!(stage_trim_order(&sizes, 350 * MB), vec![Slot::Hover, Slot::Compare(0), Slot::Compare(1), Slot::Second]);
     }
 
-    // Given the open photo's own view alone is over the budget, it goes too (the budget is hard)
+    // Given the open photo's views (the whole frame, the zoom windows, the before side) alone are
+    // over the budget, they are not trimmed: they are what a slider drag reuses on every tick, and
+    // clearing them every frame costs far more than the memory (issue #323 review: 3.6x slower
+    // drags on a 2800 px canvas). They are counted and reported, not dropped.
     #[test]
-    fn the_budget_is_hard() {
-        assert_eq!(stage_trim_order(&[(Slot::Main, 900 * MB)], 100 * MB), vec![Slot::Main]);
+    fn the_open_photos_views_are_never_trimmed() {
+        let views = [(Slot::Main, 400 * MB), (Slot::Region, 500 * MB), (Slot::RegionBefore, 500 * MB), (Slot::Before, 100 * MB)];
+        assert_eq!(stage_trim_order(&views, 100 * MB), vec![]);
+        let mut with_idle = views.to_vec();
+        with_idle.push((Slot::Hover, 50 * MB));
+        assert_eq!(stage_trim_order(&with_idle, 100 * MB), vec![Slot::Hover]);
     }
 
     // Given caches of slots that hold nothing, they are never "trimmed"
     #[test]
     fn empty_caches_are_left_alone() {
-        assert_eq!(stage_trim_order(&[(Slot::Hover, 0), (Slot::Main, 900 * MB)], 100 * MB), vec![Slot::Main]);
+        assert_eq!(stage_trim_order(&[(Slot::Hover, 0), (Slot::Second, 900 * MB)], 100 * MB), vec![Slot::Second]);
     }
 
     // Given real stage caches over the budget, the renderer clears them (the open photo's last)
@@ -1180,9 +1188,9 @@ mod stage_budget_tests {
         assert_eq!(r.stages_trimmed, 1);
         r.stage_budget_override = Some(0);
         r.trim_stages();
-        assert_eq!(r.stages[&Slot::Main].bytes(), 0, "the budget is hard");
+        assert!(r.stages[&Slot::Main].bytes() > 0, "the open photo's view is never trimmed");
         r.trim_stages();
-        assert_eq!(r.stages_trimmed, 2, "empty caches are not trimmed again");
+        assert_eq!(r.stages_trimmed, 1, "and nothing is trimmed again");
     }
 
     // The renderer counts and trims what it holds, and says so
