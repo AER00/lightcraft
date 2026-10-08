@@ -55,15 +55,18 @@ fn psd(w: usize, h: usize, orientation: Option<u16>, rle: bool) -> Vec<u8> {
     b.extend_from_slice(&(rle as u16).to_be_bytes());
     let plane = |c: usize| (0..w * h).map(move |i| ((i * (c + 3) * 11) % 256) as u8);
     if rle {
-        // every row one literal run of `w` bytes (w ≤ 128)
+        // every row as literal runs of at most 128 bytes (PackBits' longest)
+        let row_len = w + w.div_ceil(128);
         for _ in 0..3 * h {
-            b.extend_from_slice(&(w as u16 + 1).to_be_bytes());
+            b.extend_from_slice(&(row_len as u16).to_be_bytes());
         }
         for c in 0..3 {
             let p: Vec<u8> = plane(c).collect();
             for row in p.chunks(w) {
-                b.push(w as u8 - 1);
-                b.extend_from_slice(row);
+                for run in row.chunks(128) {
+                    b.push(run.len() as u8 - 1);
+                    b.extend_from_slice(run);
+                }
             }
         }
     } else {
