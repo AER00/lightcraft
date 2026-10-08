@@ -204,7 +204,8 @@ fn sidebar_sections_collapse_and_remember_it() {
 /// Photos even when another source (here Recently Deleted, which is empty) was open (issue #341).
 #[test]
 fn date_and_keyword_rows_show_their_photos_from_any_source() {
-    let mut h = demo([1400.0, 900.0], json!({"view": "photoGrid", "leftPanel": true}));
+    // tall enough that the By Date rows are on screen below the other sections
+    let mut h = demo([1400.0, 2000.0], json!({"view": "photoGrid", "leftPanel": true}));
     let first = h.app.session.visible_cloned()[0];
     let year = h.app.session.catalog.photo(first).and_then(|p| p.captured.clone()).expect("demo photo date")[..4].to_string();
     // (Keywords rows go through the same helper, `browse_all_photos`)
