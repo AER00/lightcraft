@@ -199,7 +199,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-FILT-LOCATION | Location filter | P2 | ✅ | `cmd:library.filter` (`text`, `ruleSet` field `location`) | free text, or a rule on location / city / state / country (smart albums, `library.filter`) |
 | LR-FILT-PEOPLE | People filter | P2 | 🟡 | `cmd:library.filter`, `crates/catalog/src/query.rs` | filter by a person's name (case-insensitive, named Face regions only) from the People view, a filter chip or `person:`; no unnamed / suggested people |
 | LR-FILT-CULL | Culling-score filters | P2 | ✅ | `cmd:library.filter` (`ruleSet` fields `sharpness`, `bestOfGroup`) | Focus and Best of Similar Shots in the rule editor / smart albums |
-| LR-FILT-SORT | Sort | P0 | ✅ | `cmd:library.sort`, `crates/ui-egui/src/panels/bottombar.rs` | no colour-label or custom (manual) order |
+| LR-FILT-SORT | Sort | P0 | ✅ | `cmd:library.sort`, `cmd:library.shuffle`, `crates/ui-egui/src/panels/bottombar.rs` | Random sort (seeded, stable under edits; choosing Random or Reshuffle picks a new seed); the shuffle is part of the saved view state; no effect in Recently Added (always newest import first); no colour-label or custom (manual) order |
 | LR-FILT-SAVED | Filter presets [Classic] | P2 | ✅ | `cmd:filter.savePreset`, `cmd:filter.applyPreset`, `cmd:filter.presets`, `cmd:filter.deletePreset`, `crates/ui-egui/src/panels/filterbar.rs` | filter bar → Presets: apply, save current filter, delete (right-click); saved with the library |
 
 ## E. Metadata (META)
@@ -571,7 +571,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-VIEW-CLIPPING | Show Clipping | P0 | ✅ | `cmd:view.clipping` | |
 | MENU-VIEW-MASKOVERLAY | Mask overlay / cycle colour | P0 | ✅ | `cmd:view.maskOverlay`, `cmd:view.maskOverlayMode`, `cmd:view.maskOverlayColor` | colour cycles through the panel's swatches (no params) or takes `color` / `opacity` |
 | MENU-VIEW-INCLUDESUBFOLDERS | Include subfolders | P1 | ✅ | `cmd:library.browse` (`subfolders`) | toggle in the folder header; imports of folders are recursive |
-| MENU-VIEW-SORT | Sort submenu | P0 | ✅ | `cmd:library.sort` | no colour-label key |
+| MENU-VIEW-SORT | Sort submenu | P0 | ✅ | `cmd:library.sort`, `cmd:library.shuffle` | Random + Reshuffle; no colour-label key |
 | MENU-VIEW-STACKS | Expand/collapse stacks | P1 | ✅ | `cmd:stack.expandAll`, `cmd:stack.collapseAll` | |
 | MENU-VIEW-PHOTOCOUNT | Show photo counts | P2 | ✅ | `cmd:view.photoCounts` | View ▸ Show Photo Counts toggles the left panel's counts |
 | MENU-VIEW-HDR | HDR display options | P2 | ⬜ | | |

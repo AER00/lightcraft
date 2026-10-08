@@ -251,6 +251,7 @@ const HIDDEN: &[&str] = &[
     "photo.unflag",
     "photo.label",
     "library.sort",
+    "library.shuffle",
     "album.addPhotos",
     "album.create",
     "library.import",
@@ -458,13 +459,30 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
                 ("File Name", FileName, "fileName"),
                 ("Rating", Rating, "rating"),
                 ("File Size", FileSize, "fileSize"),
+                ("Random", Random, "random"),
             ]
             .into_iter()
             .map(|(label, key, k)| item("library.sort", json!({"key": k}), label, None, true, Some(cur.key == key)))
             .collect();
+            v.push(item("library.shuffle", json!({}), "Reshuffle", None, cur.key == Random, None));
             v.push(MenuNode::Separator);
-            v.push(item("library.sort", json!({"ascending": true}), "Ascending", None, true, Some(cur.ascending)));
-            v.push(item("library.sort", json!({"ascending": false}), "Descending", None, true, Some(!cur.ascending)));
+            // a shuffle has no direction worth choosing
+            v.push(item(
+                "library.sort",
+                json!({"ascending": true}),
+                "Ascending",
+                None,
+                cur.key != Random,
+                (cur.key != Random).then_some(cur.ascending),
+            ));
+            v.push(item(
+                "library.sort",
+                json!({"ascending": false}),
+                "Descending",
+                None,
+                cur.key != Random,
+                (cur.key != Random).then_some(!cur.ascending),
+            ));
             v.push(MenuNode::Separator);
             use lightcraft_catalog::GroupBy;
             let groups = [
@@ -785,6 +803,42 @@ mod tests {
             MenuNode::Submenu { children, .. } => find(children, id),
             _ => None,
         })
+    }
+
+    /// The Sort submenu is expanded by hand: Reshuffle appears once (not again from the registry),
+    /// only while sorting at random, and the direction items are off for a shuffle.
+    #[test]
+    fn sort_menu_lists_reshuffle_once_and_only_enables_it_for_random() {
+        fn sort_children(bar: &[(String, Vec<MenuNode>)]) -> Vec<MenuNode> {
+            let view = &bar.iter().find(|(t, _)| t == "View").expect("View menu").1;
+            view.iter()
+                .find_map(|n| match n {
+                    MenuNode::Submenu { label, children } if label == "Sort" => Some(children.clone()),
+                    _ => None,
+                })
+                .expect("Sort submenu")
+        }
+        let count = |nodes: &[MenuNode]| nodes.iter().filter(|n| matches!(n, MenuNode::Item { id, .. } if id == "library.shuffle")).count();
+        let mut a = app();
+        let kids = sort_children(&menu_bar(&a));
+        assert_eq!(count(&kids), 1);
+        assert!(matches!(find(&kids, "library.shuffle"), Some(MenuNode::Item { enabled: false, .. })), "off until Random is chosen");
+        a.session.execute("library.sort", &json!({"key": "random"})).expect("sort at random");
+        let kids = sort_children(&menu_bar(&a));
+        assert_eq!(count(&kids), 1);
+        assert!(matches!(find(&kids, "library.shuffle"), Some(MenuNode::Item { enabled: true, .. })));
+        // no direction is shown as chosen while shuffling
+        let dir_checked = |kids: &[MenuNode]| {
+            kids.iter()
+                .filter_map(|n| match n {
+                    MenuNode::Item { label, checked, .. } if label == "Ascending" || label == "Descending" => Some(*checked),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(dir_checked(&kids), vec![None, None]);
+        a.session.execute("library.sort", &json!({"key": "fileName"})).expect("sort by name");
+        assert!(dir_checked(&sort_children(&menu_bar(&a))).iter().all(Option::is_some), "checks come back for other keys");
     }
 
     /// File opens with the import entry points, worded as importing (not as adding a sidebar

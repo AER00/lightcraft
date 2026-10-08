@@ -72,6 +72,9 @@ pub enum SortKey {
     FileName,
     Rating,
     FileSize,
+    /// A shuffle fixed by [`Sort::seed`]: the same seed always gives the same order, and photos
+    /// added or edited later never reshuffle the others. Pick a new seed to reshuffle.
+    Random,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,12 +84,28 @@ pub struct Sort {
     pub ascending: bool,
     /// Date headers in the grid (date sort keys only).
     pub group: crate::GroupBy,
+    /// Which shuffle [`SortKey::Random`] gives (ignored by the other keys).
+    pub seed: u64,
 }
 
 impl Default for Sort {
     fn default() -> Self {
-        Sort { key: SortKey::CaptureDate, ascending: false, group: crate::GroupBy::Auto }
+        Sort { key: SortKey::CaptureDate, ascending: false, group: crate::GroupBy::Auto, seed: 0 }
     }
+}
+
+/// splitmix64 finaliser: a stateless, platform-independent mix (no RNG state, no `rand` version
+/// to drift), so a seed names the same shuffle on every machine.
+pub fn mix64(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// A photo's place in the shuffle for `seed`.
+fn shuffle_rank(seed: u64, id: PhotoId) -> u64 {
+    mix64(mix64(seed) ^ id.0)
 }
 
 fn token_matches(p: &Photo, tok: &str) -> bool {
@@ -307,6 +326,7 @@ impl Catalog {
                 SortKey::FileName => a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()),
                 SortKey::Rating => a.rating.cmp(&b.rating),
                 SortKey::FileSize => a.file_size.cmp(&b.file_size),
+                SortKey::Random => shuffle_rank(sort.seed, a.id).cmp(&shuffle_rank(sort.seed, b.id)),
             }
             .then(a.id.cmp(&b.id));
             if sort.ascending { o } else { o.reverse() }
