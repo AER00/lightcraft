@@ -344,3 +344,61 @@ fn disk_roots_are_told_from_folders() {
     }
     assert!(is_startup_disk("/") && is_startup_disk("//") && !is_startup_disk("/Volumes/nas") && !is_startup_disk("C:"));
 }
+
+#[test]
+fn a_folder_name_with_spaces_at_its_edge_is_its_own_folder() {
+    // legal on macOS and Linux: `/p/shoot ` is not `/p/shoot`
+    let c = library(&["/p/shoot /a.jpg", "/p/shoot/b.jpg", "/p/other/c.jpg"]);
+    let tree = c.folder_tree();
+    let shoot_space = find(&tree, "/p/shoot ").expect("its own row");
+    let shoot = find(&tree, "/p/shoot").expect("and the other");
+    for (node, want) in [(shoot_space, "a.jpg"), (shoot, "b.jpg")] {
+        let f = Filter { library_folder: Some(node.path.clone()), ..Default::default() };
+        let ids = c.query(&f, &Sort::default());
+        let names: Vec<&str> = ids.iter().filter_map(|id| c.photo(*id)).map(|p| p.file_name.as_str()).collect();
+        assert_eq!(names, [want], "{:?} shows its own photo", node.path);
+    }
+}
+
+#[test]
+fn a_local_photo_never_counts_as_imported_even_when_a_disk_folder_is_also_shown() {
+    let mut c = Catalog::new();
+    let browsed = add_with(&mut c, "/pics/trip/b.jpg", |p| p.local = true);
+    let f = Filter { folder: Some("/pics/trip".into()), library_folder: Some("/pics/trip".into()), ..Default::default() };
+    assert!(!f.matches(c.photo(browsed).unwrap(), &c));
+}
+
+#[test]
+fn the_quick_check_agrees_with_the_careful_one() {
+    use crate::query::{folder_key, key_within, photo_in_root};
+    let paths = [
+        "/a/b/c.jpg",
+        "/a/b/d/e.jpg",
+        "/a/bc/x.jpg",
+        "/a/./b/x.jpg",
+        "/a/../a/b/x.jpg",
+        "/a//b/x.jpg",
+        "/a\\b\\x.jpg",
+        "/a/b ",
+        "/a/b /x.jpg",
+        "/.hidden/x.jpg",
+        "/a/.b/x.jpg",
+        "/x.jpg",
+        "//srv/share/x.jpg",
+        "C:\\a\\b\\x.jpg",
+        "relative/a/b/x.jpg",
+        "/Volumes/tokyo/a/x.jpg",
+        "/日本/写真/x.jpg",
+    ];
+    let roots = ["/", "/a", "/a/b", "/a/b/", "/a/bc", "/a/b ", "/Volumes/tokyo", "//srv/share", "C:\\a", "/日本", "relative", "/a/../a/b"];
+    for p in paths {
+        let mut c = Catalog::new();
+        let id = add(&mut c, p);
+        let photo = c.photo(id).unwrap();
+        for r in roots {
+            let root = folder_key(r);
+            let slow = crate::local::folder_of(photo).is_some_and(|f| key_within(&f, &root));
+            assert_eq!(photo_in_root(photo, &root), slow, "{p:?} in {r:?}");
+        }
+    }
+}

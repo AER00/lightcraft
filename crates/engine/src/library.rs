@@ -516,7 +516,8 @@ impl Session {
         let view = ViewFile {
             source: self.source,
             browse: self.browse.clone(),
-            library_folder: self.library_folder.clone(),
+            // only while it is shown: a leftover would be a stale choice nobody made
+            library_folder: self.library_folder.clone().filter(|_| self.source == LibrarySource::LibraryFolder),
             sort: self.sort,
             selection: self.selection.clone(),
         };

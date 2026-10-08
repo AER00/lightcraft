@@ -235,7 +235,7 @@ fn click(h: &mut Headless, id: &str) {
 /// Photos imported from two folders: the sidebar's Folders section lists them, choosing one
 /// fills the grid with its photos, and All Photos shows everything again.
 #[test]
-fn folders_section_lists_where_photos_were_imported_from_and_narrows_the_grid() {
+fn folders_section_lists_where_photos_were_imported_from_and_fills_the_grid() {
     let mut h = folders_app(&["/pics/trip/a.jpg", "/pics/trip/b.jpg", "/pics/home/c.jpg"]);
     // the disk's row starts open; the folders inside a folder stay folded until it is opened
     assert!(has(&h, "source:libfolder:/pics"), "the Folders section lists the library's folders");
@@ -445,6 +445,11 @@ fn a_deep_chain_keeps_its_nesting_and_the_sidebar_scrolls_sideways() {
     assert!(xs.len() == 13 && xs.windows(2).all(|w| (w[1] - w[0] - 16.0).abs() < 0.5), "every level steps right by one indent: {xs:?}");
     let panel = widget(&h, "panel:left_panel");
     assert!(crate::panels::left::content_width(&h.view.ctx) > panel.width(), "the content is wider than the panel: the bar appears");
+    assert!(widget(&h, "source:all").width() > panel.width(), "the rows are as wide as the widest one, so there is something to scroll to");
+    // counts stay where you can read them, at the visible edge, however wide the rows are
+    for id in ["count:all", "count:picks", "count:recentlyDeleted", "count:libfolder:/a"] {
+        assert!(widget(&h, id).right() <= panel.right(), "{id} stays inside the panel");
+    }
     // what a row needs is known before it is drawn off screen, so the plus stays reachable
     assert!(widget(&h, "icon:albumNew").right() <= panel.right(), "Create Album stays inside the visible panel");
     // a click in the middle of a deep row chooses it; only the little triangle folds it
@@ -457,7 +462,9 @@ fn a_deep_chain_keeps_its_nesting_and_the_sidebar_scrolls_sideways() {
 fn a_sidebar_that_fits_does_not_scroll_sideways() {
     let h = folders_app(&["/pics/trip/a.jpg", "/pics/home/b.jpg"]);
     let panel = widget(&h, "panel:left_panel");
-    assert!(crate::panels::left::content_width(&h.view.ctx) <= panel.width(), "no horizontal bar for a shallow tree");
+    let w = crate::panels::left::content_width(&h.view.ctx);
+    assert!(w > 0.0 && w <= panel.width(), "rows were measured and fit: no horizontal bar ({w} vs {})", panel.width());
+    assert!((widget(&h, "source:all").width() - (panel.width() - 0.0)).abs() < 24.0, "rows are as wide as the panel");
 }
 
 /// A long folder name is trimmed before it can run under the photo count.

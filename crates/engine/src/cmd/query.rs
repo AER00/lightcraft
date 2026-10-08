@@ -88,7 +88,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let n = s.visible().len();
             Ok(json!({
                 "source": s.source,
-                "libraryFolder": s.library_folder,
+                "libraryFolder": s.library_folder.as_ref().filter(|_| s.source == LibrarySource::LibraryFolder),
                 "sourceLabel": label,
                 "filter": s.filter,
                 "sort": s.sort,

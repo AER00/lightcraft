@@ -344,12 +344,13 @@ fn a_folder_source_and_a_folder_filter_never_disagree() {
 }
 
 #[test]
-fn a_folder_source_with_no_folder_shows_nothing() {
+fn a_folder_source_with_no_folder_falls_back_to_all_photos() {
     let mut s = session();
     s.source = LibrarySource::LibraryFolder;
     s.library_folder = None;
-    assert_eq!(s.visible().len(), 0, "not everything");
-    assert_eq!(s.source_total(), Some(0));
+    assert_eq!(s.visible().len(), 3, "everything, not an empty grid under no name");
+    assert_eq!((s.source, s.library_folder.as_deref()), (LibrarySource::All, None));
+    assert_eq!(s.source_total(), Some(3));
 }
 
 #[test]
@@ -376,4 +377,74 @@ fn removing_a_folder_above_a_disk_needs_asking_by_name_even_with_one_disk() {
     assert_eq!(s.visible().len(), 2);
     assert_eq!(s.execute("library.removeFolder", &json!({"path": "/Volumes/nas/a"})).unwrap()["removed"], 1, "a folder on the disk is just a folder");
     assert_eq!(s.visible().len(), 1);
+}
+
+#[test]
+fn a_folder_name_with_spaces_at_its_edge_is_never_mistaken_for_its_neighbour() {
+    let mut s = Session::new();
+    for p in ["/p/shoot /a.jpg", "/p/shoot/b.jpg", "/p/other/c.jpg"] {
+        add(&mut s, p);
+    }
+    assert_eq!(source_folder(&mut s, "/p/shoot ")["count"], 1);
+    let shown: Vec<String> = s.visible().to_vec().iter().filter_map(|id| s.catalog.photo(*id)).map(|p| p.file_name.clone()).collect();
+    assert_eq!(s.library_folder.as_deref(), Some("/p/shoot "), "kept as the tree gave it");
+    assert_eq!(shown.len(), 1);
+    let before: Vec<_> = s.catalog.photos().filter(|p| p.deleted).map(|p| p.id).collect();
+    assert!(before.is_empty());
+    let r = s.execute("library.removeFolder", &json!({"path": "/p/shoot "})).unwrap();
+    assert_eq!(r["removed"], 1);
+    let gone: Vec<String> = s
+        .catalog
+        .photos()
+        .filter(|p| p.deleted)
+        .map(|p| match &p.source {
+            Source::File { path } => path.clone(),
+            Source::Demo { .. } => String::new(),
+        })
+        .collect();
+    assert_eq!(gone, ["/p/shoot /a.jpg"], "the folder named, not its neighbour");
+}
+
+#[test]
+fn editing_a_smart_album_made_from_a_folder_view_keeps_the_folder() {
+    let mut s = session();
+    source_folder(&mut s, "/pics/trip");
+    let r = s.execute("album.createSmart", &json!({"name": "Trip"})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    // the rules dialog saves what it shows (no folder field) with `replace`
+    let r = s.execute("album.setRules", &json!({"id": id, "replace": true, "rules": {"ruleSet": {"rules": []}}})).unwrap();
+    assert_eq!(r["count"], 2, "the folder is not something the dialog can show, so it is kept: {r}");
+    let r = s.execute("album.setRules", &json!({"id": id, "replace": true, "rules": {"libraryFolder": null}})).unwrap();
+    assert_eq!(r["count"], 3, "and can be dropped on purpose");
+}
+
+#[test]
+fn a_shown_folder_that_loses_its_last_photo_gives_way_to_all_photos() {
+    let mut s = session();
+    source_folder(&mut s, "/pics/home");
+    s.execute("photo.delete", &json!({})).unwrap();
+    assert_eq!(s.visible().len(), 2, "back to everything that is left");
+    assert_eq!((s.source, s.library_folder.as_deref()), (LibrarySource::All, None));
+    // a folder whose photos are only hidden by the filter bar stays
+    let mut s = session();
+    source_folder(&mut s, "/pics/trip");
+    s.execute("library.filter", &json!({"rating": 5})).unwrap();
+    assert_eq!(s.visible().len(), 0);
+    assert_eq!(s.source, LibrarySource::LibraryFolder, "the filters hide them, the folder is still there");
+}
+
+#[test]
+fn the_state_names_a_folder_only_while_it_is_shown() {
+    let mut s = session();
+    source_folder(&mut s, "/pics/trip");
+    assert_eq!(s.execute("library.state", &json!({})).unwrap()["libraryFolder"], "/pics/trip");
+    s.execute("library.source", &json!({"kind": "all"})).unwrap();
+    assert!(s.execute("library.state", &json!({})).unwrap()["libraryFolder"].is_null(), "not a stale leftover");
+}
+
+#[test]
+fn a_blank_folder_filter_is_no_filter() {
+    let mut s = session();
+    s.execute("library.filter", &json!({"libraryFolder": "  "})).unwrap();
+    assert_eq!(s.filter, lightcraft_catalog::Filter::default(), "no hidden 'filters active' state");
 }

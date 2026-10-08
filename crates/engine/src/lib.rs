@@ -615,6 +615,13 @@ impl Session {
                 f.library_folder = Some(self.library_folder.clone().unwrap_or_else(|| ".".into()));
             }
             let mut visible = self.catalog.query(&f, &self.sort);
+            if visible.is_empty() && self.source == LibrarySource::LibraryFolder && !self.folder_holds_photos() {
+                // the shown folder lost its last photo (deleted, moved, removed): everything, not
+                // an empty grid under the name of a folder that is gone from the sidebar
+                self.source = LibrarySource::All;
+                self.library_folder = None;
+                return self.visible();
+            }
             if matches!(self.source, LibrarySource::Album(_))
                 && self.sort.key == lightcraft_catalog::SortKey::CaptureDate
                 && let LibrarySource::Album(a) = self.source
@@ -649,6 +656,13 @@ impl Session {
             self.visible_key = Some(key);
         }
         &self.visible
+    }
+
+    /// Whether the library still holds a photo imported from the folder a `LibraryFolder` source
+    /// shows.
+    fn folder_holds_photos(&self) -> bool {
+        let f = Filter { library_folder: self.library_folder.clone(), ..Default::default() };
+        self.library_folder.is_some() && !self.catalog.query(&f, &Sort::default()).is_empty()
     }
 
     /// Photos in the current source (folder, album, …) before the filter bar and search narrow

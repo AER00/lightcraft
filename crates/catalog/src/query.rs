@@ -223,7 +223,9 @@ impl Filter {
 
     /// [`Filter::library_folder`] as a folder identity ([`folder_key`]); `None` without a choice.
     fn library_root(&self) -> Option<String> {
-        self.library_folder.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(folder_key)
+        // as given: a folder may be named with spaces at its edge, and trimming would make it
+        // another folder
+        self.library_folder.as_deref().filter(|d| !d.trim().is_empty()).map(folder_key)
     }
 
     /// [`Filter::matches`] with the library folder already turned into its identity, so a query
@@ -302,7 +304,7 @@ impl Filter {
             return false;
         }
         if let Some(root) = root
-            && !(!p.local && crate::local::folder_of(p).is_some_and(|f| key_within(&f, root)))
+            && !photo_in_root(p, root)
         {
             return false;
         }
@@ -523,8 +525,30 @@ pub fn folder_within(path: &str, root: &str) -> bool {
     key_within(&folder_key(path), &folder_key(root))
 }
 
+/// Whether a library photo (not one only browsed in Local) lies in the folder whose
+/// [`folder_key`] is `root`. A plain POSIX path (no `\`, `.`, `..`, repeated or trailing
+/// separators) is its own identity, so it is read without building a key for it: the check runs
+/// for every photo of the library on each refresh, and this keeps it cheap.
+pub(crate) fn photo_in_root(p: &Photo, root: &str) -> bool {
+    if p.local {
+        return false;
+    }
+    let crate::Source::File { path } = &p.source else { return false };
+    let plain = path.starts_with('/')
+        && !path.starts_with("//")
+        && !path.ends_with('/')
+        && !path.contains(['\\'])
+        && !path.contains("//")
+        && !path.contains("/.");
+    if !cfg!(windows) && plain && root.starts_with('/') && !root.starts_with("//") {
+        let r = root.trim_end_matches('/');
+        return path.strip_prefix(r).is_some_and(|rest| rest.starts_with('/'));
+    }
+    crate::local::folder_of(p).is_some_and(|f| key_within(&f, root))
+}
+
 /// [`folder_within`] for two paths already turned into their [`folder_key`].
-fn key_within(p: &str, r: &str) -> bool {
+pub(crate) fn key_within(p: &str, r: &str) -> bool {
     // `.` or `a/..` name no folder: not "everything"
     if r.is_empty() {
         return false;

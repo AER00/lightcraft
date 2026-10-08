@@ -81,8 +81,18 @@ fn row_named(
     );
     let mut needed = label_rect.right() - r.left() + 18.0;
     if let Some(n) = count.filter(|_| app.ui.show_counts) {
-        let c = ui.painter().text(pos2(r.right() - 18.0, r.center().y), Align2::RIGHT_CENTER, n.to_string(), t.font(12.5), t.text_dim);
-        needed += c.width() + 16.0;
+        // the count stays at the visible edge when the sidebar is scrolled sideways
+        let visible_right: f32 = ui.data(|d| d.get_temp(egui::Id::new("left-visible-right"))).unwrap_or(f32::MAX);
+        let galley = ui.painter().layout_no_wrap(n.to_string(), t.font(12.5), t.text_dim);
+        let right = r.right().min(visible_right) - 18.0;
+        let rect = Rect::from_min_size(pos2(right - galley.size().x, r.center().y - galley.size().y / 2.0), galley.size());
+        if label_rect.right() + 6.0 > rect.left() {
+            // a long name runs under it: the count gets the row's colour behind it
+            ui.painter().rect_filled(rect.expand2(vec2(6.0, 2.0)), 3.0, if selected { t.canvas } else { t.chrome });
+        }
+        ui.painter().galley(rect.min, galley, t.text_dim);
+        register(ui.ctx(), format!("count:{id}"), rect);
+        needed += rect.width() + 16.0;
     }
     note_width(ui, needed);
     let _ = app;
@@ -129,7 +139,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let wide = viewport.width().max(content_width(ui.ctx()));
             ui.set_min_width(wide);
             ui.set_max_width(wide);
-            ui.data_mut(|d| d.insert_temp(egui::Id::new("left-content-width-next"), 0.0f32));
+            ui.data_mut(|d| {
+                d.insert_temp(egui::Id::new("left-content-width-next"), 0.0f32);
+                // where the visible part of the content ends (screen x), for what stays at the edge
+                d.insert_temp(egui::Id::new("left-visible-right"), ui.cursor().left() + viewport.max.x);
+            });
             let src = app.session.source;
             for (id, icon, label, count, s) in [
                 ("all", Icon::Photos, "All Photos", Some(total), LibrarySource::All),

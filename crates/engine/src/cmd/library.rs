@@ -269,7 +269,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         LibrarySource::Album(a)
                     }
                     "libraryFolder" => {
-                        let path = str_param(p, "path").map(str::trim).filter(|d| !lightcraft_catalog::query::folder_key(d).is_empty());
+                        let path = str_param(p, "path").filter(|d| !d.trim().is_empty() && !lightcraft_catalog::query::folder_key(d).is_empty());
                         let path = path.ok_or_else(|| bad("library.source", "libraryFolder needs the `path` of a folder from library.folders"))?;
                         if lightcraft_catalog::folders::is_startup_disk(path) {
                             return Err(bad("library.source", "the startup disk's path covers every disk: choose a folder in it"));
@@ -307,6 +307,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 let mut v = serde_json::to_value(&s.filter).unwrap_or_default();
                 lightcraft_develop::presets::deep_merge(&mut v, p);
                 let f: Filter = serde_json::from_value(v).map_err(|e| bad("library.filter", e.to_string()))?;
+                let mut f = f;
+                // a blank folder is no folder: no hidden "filters active" state
+                f.library_folder = f.library_folder.filter(|d| !d.trim().is_empty());
                 if f.library_folder.is_some() && s.source == LibrarySource::LibraryFolder {
                     return Err(bad("library.filter", "a folder is already shown (library.source): show another source first"));
                 }
@@ -332,7 +335,7 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             |s, p| {
                 const C: &str = "library.removeFolder";
-                let path = str_param(p, "path").map(str::trim).filter(|d| !d.is_empty()).ok_or_else(|| bad(C, "missing `path`"))?;
+                let path = str_param(p, "path").filter(|d| !d.trim().is_empty()).ok_or_else(|| bad(C, "missing `path`"))?;
                 if lightcraft_catalog::query::folder_key(path).is_empty() {
                     return Err(bad(C, format!("{path}: not a folder")));
                 }
@@ -801,8 +804,16 @@ pub fn specs() -> Vec<CommandSpec> {
                 let rules = if bool_or(p, "fromView", false) {
                     view_rules(s)
                 } else {
-                    let base = if bool_or(p, "replace", false) { Default::default() } else { cur };
-                    merge_rules(&base, p.get("rules").unwrap_or(&Value::Null), "album.setRules")?
+                    let replace = bool_or(p, "replace", false);
+                    let folder = cur.library_folder.clone();
+                    let base = if replace { Default::default() } else { cur };
+                    let mut r = merge_rules(&base, p.get("rules").unwrap_or(&Value::Null), "album.setRules")?;
+                    // the rules dialog has no folder field: replacing its rules keeps the folder
+                    // unless the call says (`libraryFolder: null`) to drop it
+                    if replace && p.get("rules").and_then(|r| r.get("libraryFolder")).is_none() {
+                        r.library_folder = folder;
+                    }
+                    r
                 };
                 s.commit("Edit Smart Album", Op::SetAlbumRules { id, rules: Box::new(rules) })?;
                 Ok(json!({"count": s.catalog.album_count(id)}))
