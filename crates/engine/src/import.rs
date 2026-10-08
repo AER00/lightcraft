@@ -48,9 +48,34 @@ pub enum ImportMode {
     Move,
 }
 
+/// What an import does with a file the library already has in Recently Deleted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OnDeleted {
+    /// Leave it there; the report says so ([`Duplicate::existing_deleted`]).
+    #[default]
+    Skip,
+    /// Bring the trashed photo back, with its edits ([`ImportReport::restored`]).
+    Restore,
+    /// Delete the trashed record permanently and import the file as a new photo.
+    Fresh,
+}
+
+impl OnDeleted {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "skip" => Some(Self::Skip),
+            "restore" => Some(Self::Restore),
+            "fresh" => Some(Self::Fresh),
+            _ => None,
+        }
+    }
+}
+
 /// What an import does besides adding the photos.
 #[derive(Clone, Debug, Default)]
 pub struct ImportOptions {
+    /// A file that is in Recently Deleted: skip (default), restore, or import afresh.
+    pub on_deleted: OnDeleted,
     pub mode: ImportMode,
     /// Applied to every imported photo (one History entry).
     pub preset: Option<lightcraft_develop::Preset>,
@@ -147,12 +172,18 @@ pub struct Duplicate {
     pub existing: Option<u64>,
     /// `"path"` (already imported from there) or `"content"` (same bytes elsewhere).
     pub reason: &'static str,
+    /// That photo is in Recently Deleted (see [`OnDeleted`]).
+    #[serde(rename = "existingDeleted", skip_serializing_if = "std::ops::Not::not")]
+    pub existing_deleted: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ImportReport {
     pub imported: Vec<u64>,
     pub duplicates: Vec<Duplicate>,
+    /// [`OnDeleted::Restore`]: photos brought back from Recently Deleted instead of imported.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub restored: Vec<u64>,
     /// Move: the originals that were moved (and removed from the source).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub moved: Vec<Moved>,
@@ -638,6 +669,10 @@ impl ImportJob {
         let mut by_path = HashMap::new();
         let mut by_hash = HashMap::new();
         for p in s.catalog.photos() {
+            // a trashed photo is replaced by a fresh import, so it doesn't count as a duplicate
+            if p.deleted && opts.on_deleted == OnDeleted::Fresh {
+                continue;
+            }
             if let Source::File { path } = &p.source {
                 by_path.insert(path.clone(), (p.id, p.local));
             }
@@ -840,6 +875,20 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
     let mut placed: Vec<crate::import_move::Placed> = Vec::new();
     // photos added by this batch, by content (a duplicate of a file earlier in the import names it)
     let mut new_hash: HashMap<String, PhotoId> = HashMap::new();
+    // Fresh: trashed photos a new import replaces (by content or by file), each removed once
+    let (mut trash_hash, mut trash_path): (HashMap<String, PhotoId>, HashMap<String, PhotoId>) = Default::default();
+    if opts.on_deleted == OnDeleted::Fresh {
+        for p in s.catalog.photos().filter(|p| p.deleted) {
+            if let Some(h) = &p.content_hash {
+                trash_hash.insert(h.clone(), p.id);
+            }
+            if let Source::File { path } = &p.source {
+                trash_path.insert(path.clone(), p.id);
+            }
+        }
+    }
+    let mut purge: Vec<PhotoId> = Vec::new();
+    let mut purged: std::collections::HashSet<PhotoId> = Default::default();
     for it in prepared.items {
         match it {
             PreparedItem::Promote(id) => {
@@ -853,7 +902,16 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                     let h = hash?;
                     new_hash.get(&h).copied().or_else(|| s.catalog.photos().find(|p| p.content_hash.as_deref() == Some(h.as_str())).map(|p| p.id))
                 });
-                report.duplicates.push(Duplicate { path, existing: existing.map(|i| i.0), reason });
+                let trashed = existing.filter(|id| s.catalog.photo(*id).is_some_and(|p| p.deleted));
+                match trashed {
+                    Some(id) if opts.on_deleted == OnDeleted::Restore => {
+                        if !report.restored.contains(&id.0) {
+                            ops.push(Op::SetDeleted { id, deleted: false });
+                            report.restored.push(id.0);
+                        }
+                    }
+                    _ => report.duplicates.push(Duplicate { path, existing: existing.map(|i| i.0), reason, existing_deleted: trashed.is_some() }),
+                }
             }
             PreparedItem::Failed(path, e) => report.failed.push((path, e)),
             PreparedItem::Kept(k) => report.kept.push(k),
@@ -863,6 +921,11 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                 let id = s.catalog.alloc_photo_id();
                 if let Some(h) = &info.content_hash {
                     new_hash.insert(h.clone(), id);
+                }
+                for old in info.content_hash.as_ref().and_then(|h| trash_hash.get(h)).into_iter().chain(trash_path.get(&stored)) {
+                    if purged.insert(*old) {
+                        purge.push(*old);
+                    }
                 }
                 let sidecar = sidecar.map(|sc| sc.resolve_label(&s.catalog)).filter(|sc| *sc != crate::sidecar::SidecarData::default());
                 // a copy is catalogued under its new name
@@ -907,9 +970,18 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
             }
         }
     }
+    // (built against the catalog as it is: one op list for all of them, ahead of the additions)
+    if !purge.is_empty() {
+        ops.insert(0, s.catalog.delete_photos_permanently_ops(&purge));
+    }
     let log0 = s.pending_log.len();
+    let (verb, n) = if report.imported.is_empty() && !report.restored.is_empty() {
+        ("Restore", report.restored.len())
+    } else {
+        ("Add", report.imported.len().max(1))
+    };
     if !ops.is_empty()
-        && let Err(e) = s.commit(&format!("Add {} Photo{}", ops.len(), if ops.len() == 1 { "" } else { "s" }), Op::Batch { ops })
+        && let Err(e) = s.commit(&format!("{verb} {n} Photo{}", if n == 1 { "" } else { "s" }), Op::Batch { ops })
     {
         // nothing was catalogued: take the moves back (their sources were never touched)
         placed.iter().for_each(crate::import_move::rollback);
