@@ -921,42 +921,14 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     {
         match app.gesture.clone() {
             Some(Gesture::CropHandle { handle, start, angle }) => {
+                // The crop model decides what the drag does (anchor, aspect lock, image bounds): see
+                // `lightcraft_geom::drag_crop`; the UI only reports where the pointer started and is.
                 let n = to_straight(map.norm(q), angle, frame);
-                let o = resp.interact_pointer_pos().map(|q0| q0 - resp.drag_delta()).unwrap_or(q);
-                let _ = o;
-                let mut r = start;
                 let orig = ui.input(|i| i.pointer.press_origin()).map(|q0| to_straight(map.norm(q0), angle, frame)).unwrap_or(n);
-                let (dx, dy) = (n.x - orig.x, n.y - orig.y);
-                match handle {
-                    0 => (r.x0, r.y0) = (start.x0 + dx, start.y0 + dy),
-                    1 => (r.x1, r.y0) = (start.x1 + dx, start.y0 + dy),
-                    2 => (r.x1, r.y1) = (start.x1 + dx, start.y1 + dy),
-                    3 => (r.x0, r.y1) = (start.x0 + dx, start.y1 + dy),
-                    4 => r.y0 = start.y0 + dy,
-                    5 => r.x1 = start.x1 + dx,
-                    6 => r.y1 = start.y1 + dy,
-                    7 => r.x0 = start.x0 + dx,
-                    _ => r = start.translate(lightcraft_geom::Vec2::new(dx, dy)),
-                }
-                // aspect lock
-                if let Some((aw, ah)) = d.crop.aspect
-                    && handle < 4
-                {
-                    let (iw, ih) = (frame.ow, frame.oh);
-                    let a = if (iw >= ih) == (aw >= ah) { aw as f64 / ah as f64 } else { ah as f64 / aw as f64 };
-                    let w_px = (r.x1 - r.x0).abs() * iw;
-                    let h_px = w_px / a;
-                    let hn = h_px / ih;
-                    if handle == 0 || handle == 1 {
-                        r.y0 = r.y1 - hn;
-                    } else {
-                        r.y1 = r.y0 + hn;
-                    }
-                }
-                let rr = lightcraft_geom::Rect::new(r.x0.min(r.x1), r.y0.min(r.y1), r.x0.max(r.x1), r.y0.max(r.y1));
-                if rr.width() > 0.02 && rr.height() > 0.02 {
-                    let _ = app.run("crop.set", json!({"rect": [rr.x0, rr.y0, rr.x1, rr.y1]}));
-                }
+                let _ = app.run(
+                    "crop.drag",
+                    json!({"handle": handle, "from": [orig.x, orig.y], "to": [n.x, n.y], "start": [start.x0, start.y0, start.x1, start.y1]}),
+                );
             }
             Some(Gesture::CropRotate { start_angle, a0 }) => {
                 let c = map.screen(Point::new(0.5, 0.5));

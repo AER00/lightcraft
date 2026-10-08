@@ -62,33 +62,99 @@ fn padded(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 6, bottom: 6 }).show(ui, add);
 }
 
+/// The aspect presets of the Crop panel: (menu label, `crop.aspect` value).
+const ASPECT_PRESETS: [(&str, &str); 10] = [
+    ("Free", "free"),
+    ("Original", "original"),
+    ("1 × 1", "1x1"),
+    ("4 × 5 / 8 × 10", "4x5"),
+    ("8.5 × 11", "8.5x11"),
+    ("5 × 7", "5x7"),
+    ("2 × 3 / 4 × 6", "2x3"),
+    ("4 × 3", "4x3"),
+    ("16 × 9", "16x9"),
+    ("16 × 10", "16x10"),
+];
+
+/// What the aspect button says for the stored lock (`aspect` = width × 100, height × 100):
+/// a preset's name when the ratio matches one in either orientation, "Original" for the photo's own
+/// shape, otherwise the ratio as `1.37 : 1`.
+fn aspect_label(aspect: Option<(u32, u32)>, original: Option<f64>) -> String {
+    let Some((w, h)) = aspect else { return "Free".into() };
+    if w == 0 || h == 0 {
+        return "Free".into();
+    }
+    let r = w as f64 / h as f64;
+    let is = |q: f64| q.is_finite() && q > 0.0 && ((r - q).abs() / q < 0.004 || (1.0 / r - q).abs() / q < 0.004);
+    if original.is_some_and(is) {
+        return "Original".into();
+    }
+    for (label, key) in ASPECT_PRESETS {
+        if let Some((x, y)) = key.split_once('x')
+            && let (Ok(x), Ok(y)) = (x.parse::<f64>(), y.parse::<f64>())
+            && is(x / y)
+        {
+            return label.to_string();
+        }
+    }
+    format!("{:.2} : 1", r.max(1.0 / r))
+}
+
+/// "Custom" row of the aspect menu: two number fields and an Apply button (`crop.aspect` `[w, h]`).
+fn custom_aspect(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let key = egui::Id::new("crop-custom-aspect");
+    let (mut w, mut h): (String, String) = ui.data_mut(|d| d.get_temp(key)).unwrap_or_else(|| ("3".into(), "2".into()));
+    let mut apply = false;
+    ui.horizontal(|ui| {
+        ui.label(crate::i18n::tr("Custom"));
+        let a = ui.add(egui::TextEdit::singleline(&mut w).desired_width(34.0));
+        register(ui.ctx(), "field:cropCustomW", a.rect);
+        ui.label("×");
+        let b = ui.add(egui::TextEdit::singleline(&mut h).desired_width(34.0));
+        register(ui.ctx(), "field:cropCustomH", b.rect);
+        let go = text_button(ui, "cropCustomApply", "Apply", false);
+        apply = go.clicked() || ((a.lost_focus() || b.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+    });
+    if apply {
+        // Accept `3`, `2.5` and `3,5`; anything else (zero, negative, text, huge) is ignored.
+        let num = |t: &str| t.trim().replace(',', ".").parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0 && *v <= 1000.0);
+        if let (Some(x), Some(y)) = (num(&w), num(&h))
+            && (1.0 / lightcraft_geom::MAX_RATIO..=lightcraft_geom::MAX_RATIO).contains(&(x / y))
+        {
+            let _ = app.run("crop.aspect", json!({"aspect": [x, y]}));
+            ui.close();
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(key, (w, h)));
+}
+
 fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let d = app.session.develop_of(id).unwrap_or_default();
     header(ui, "Crop");
     padded(ui, |ui| {
+        let original = app.session.catalog.photo(id).map(|p| {
+            let (w, h) = (p.width.max(1) as f64, p.height.max(1) as f64);
+            if d.orientation.swaps_axes() { h / w } else { w / h }
+        });
         ui.horizontal(|ui| {
             ui.label(crate::i18n::tr("Aspect Ratio"));
-            let cur = d.crop.aspect.map(|(w, h)| format!("{} × {}", w as f64 / 100.0, h as f64 / 100.0)).unwrap_or_else(|| "Free".into());
-            let r = ui.add(egui::Button::new(crate::i18n::tr(&cur)).frame(false));
-            register(ui.ctx(), "button:cropAspect", r.rect);
+            let cur = aspect_label(d.crop.aspect, original);
+            let t = Tokens::get(ui.ctx());
+            let r = crate::widgets::dropdown(ui, "cropAspect", crate::i18n::tr(&cur), t.font(12.5), t.text);
+
             egui::Popup::menu(&r).show(|ui| {
-                for (label, a) in [
-                    ("Free", "free"),
-                    ("Original", "original"),
-                    ("1 × 1", "1x1"),
-                    ("4 × 5 / 8 × 10", "4x5"),
-                    ("8.5 × 11", "8.5x11"),
-                    ("5 × 7", "5x7"),
-                    ("2 × 3 / 4 × 6", "2x3"),
-                    ("4 × 3", "4x3"),
-                    ("16 × 9", "16x9"),
-                    ("16 × 10", "16x10"),
-                ] {
+                for (label, a) in ASPECT_PRESETS {
                     if ui.button(crate::i18n::tr(label)).clicked() {
                         let _ = app.run("crop.aspect", json!({"aspect": a}));
                     }
                 }
+                ui.separator();
+                custom_aspect(app, ui);
             });
+            let locked = d.crop.aspect.is_some();
+            if text_button(ui, "cropLock", if locked { "Locked" } else { "Lock" }, locked).clicked() {
+                let _ = app.run("crop.aspect", json!({"aspect": "toggle"}));
+            }
         });
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
@@ -969,6 +1035,23 @@ fn activity(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 
 #[cfg(test)]
 mod tests {
+    // Feature: the aspect button tells what is locked
+    #[test]
+    fn aspect_label_names_presets_in_either_orientation() {
+        assert_eq!(super::aspect_label(None, Some(1.5)), "Free");
+        assert_eq!(super::aspect_label(Some((1600, 900)), None), "16 × 9");
+        assert_eq!(super::aspect_label(Some((900, 1600)), None), "16 × 9", "portrait 16:9");
+        assert_eq!(super::aspect_label(Some((400, 500)), None), "4 × 5 / 8 × 10");
+    }
+
+    #[test]
+    fn aspect_label_prefers_original_over_a_coinciding_preset_and_never_shows_pixel_sizes() {
+        assert_eq!(super::aspect_label(Some((300, 200)), Some(1.5)), "Original");
+        assert_eq!(super::aspect_label(Some((600_000, 400_000)), Some(1.5)), "Original");
+        assert_eq!(super::aspect_label(Some((137, 100)), Some(1.5)), "1.37 : 1");
+        assert_eq!(super::aspect_label(Some((0, 5)), None), "Free");
+    }
+
     #[test]
     fn short_times() {
         assert_eq!(super::short_time("2026-09-30T12:00:05"), "Sep 30, 2026, 12:00 PM");
