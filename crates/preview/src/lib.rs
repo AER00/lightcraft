@@ -28,7 +28,8 @@ pub use pool::JobPool;
 
 /// Rendered-thumbnail cache: memory LRU over an optional disk cache.
 pub struct PreviewCache {
-    generation: RwLock<u64>,
+    /// Current generation; `None` once [`Self::retire`]d (nothing is read or written any more).
+    generation: RwLock<Option<u64>>,
     mem: Mutex<Lru<Hash128, Arc<Rgba8>>>,
     disk: Option<DiskCache>,
 }
@@ -36,12 +37,12 @@ pub struct PreviewCache {
 impl PreviewCache {
     /// Memory-only cache of at most `mem_bytes`.
     pub fn memory(mem_bytes: usize) -> PreviewCache {
-        PreviewCache { generation: RwLock::new(0), mem: Mutex::new(Lru::new(mem_bytes)), disk: None }
+        PreviewCache { generation: RwLock::new(Some(0)), mem: Mutex::new(Lru::new(mem_bytes)), disk: None }
     }
 
     /// Memory LRU + disk cache in `dir` (at most `disk_bytes`).
     pub fn with_disk(mem_bytes: usize, dir: &Path, disk_bytes: u64) -> PreviewCache {
-        PreviewCache { generation: RwLock::new(0), mem: Mutex::new(Lru::new(mem_bytes)), disk: Some(DiskCache::new(dir, disk_bytes)) }
+        PreviewCache { generation: RwLock::new(Some(0)), mem: Mutex::new(Lru::new(mem_bytes)), disk: Some(DiskCache::new(dir, disk_bytes)) }
     }
 
     pub fn disk(&self) -> Option<&DiskCache> {
@@ -53,13 +54,14 @@ impl PreviewCache {
     }
 
     /// Changes when explicitly cleared; jobs captured before that clear cannot repopulate it.
+    /// A retired cache reports `u64::MAX`, which no job's generation matches.
     pub fn generation(&self) -> u64 {
-        *self.generation.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.generation.read().unwrap_or_else(std::sync::PoisonError::into_inner).unwrap_or(u64::MAX)
     }
 
     pub fn get_at(&self, generation: u64, key: Hash128) -> Option<Arc<Rgba8>> {
         let current = self.generation.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *current != generation {
+        if *current != Some(generation) {
             return None;
         }
         if let Some(v) = self.mem.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
@@ -76,7 +78,7 @@ impl PreviewCache {
 
     pub fn put_at(&self, generation: u64, key: Hash128, img: Arc<Rgba8>) {
         let current = self.generation.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *current != generation {
+        if *current != Some(generation) {
             return;
         }
         if let Some(d) = &self.disk {
@@ -94,7 +96,7 @@ impl PreviewCache {
 
     pub fn put_deferred_at(self: &Arc<Self>, generation: u64, key: Hash128, img: Arc<Rgba8>) {
         let current = self.generation.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *current != generation {
+        if *current != Some(generation) {
             return;
         }
         let c = cost(&img);
@@ -106,7 +108,7 @@ impl PreviewCache {
         let me = self.clone();
         let write = move || {
             let current = me.generation.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if *current != generation {
+            if *current != Some(generation) {
                 return;
             }
             if let Some(d) = &me.disk {
@@ -121,14 +123,28 @@ impl PreviewCache {
         write();
     }
 
-    /// Drop everything (memory and disk).
+    /// Drop everything (memory and disk). Does nothing once [`Self::retire`]d.
     pub fn clear(&self) {
         let mut generation = self.generation.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        *generation = generation.wrapping_add(1);
+        // a retired cache no longer owns its directory (its replacement may)
+        let Some(g) = generation.as_mut() else { return };
+        // (never reaches u64::MAX, which stands for "retired")
+        *g = g.wrapping_add(1) % u64::MAX;
         self.mem.lock().unwrap_or_else(|e| e.into_inner()).clear();
         if let Some(d) = &self.disk {
             d.clear();
         }
+    }
+
+    /// Stop this cache object for good, leaving its disk files alone: called when another cache
+    /// object replaces it (a library reopened or another one opened). Jobs still holding it then
+    /// can neither read nor write through it, so a later clear of the replacement's directory
+    /// (possibly the same one) can't be repopulated by them. Waits for writes in progress, like
+    /// [`Self::clear`].
+    pub fn retire(&self) {
+        let mut generation = self.generation.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *generation = None;
+        self.mem.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
     /// Use tick ([`next_tick`]) of the least recently used image in memory.
