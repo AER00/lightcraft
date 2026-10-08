@@ -354,7 +354,9 @@ mod tests {
         assert_eq!(first.report["mapping"]["1"].as_u64(), Some(1));
         assert_eq!(session.undo.len(), 1);
         let id = lightcraft_catalog::PhotoId(1);
-        session.set_develop(id, lightcraft_develop::DevelopSettings::default(), "Personal").unwrap();
+        let mut personal = lightcraft_develop::DevelopSettings::default();
+        personal.light.exposure = 1.5;
+        session.set_develop(id, personal, "Personal").unwrap();
         let before = session.catalog.photo(id).map(|photo| photo.develop.clone());
         let prepared = prepared_for(&session, path, 5);
         commit_prepared(&mut session, prepared).unwrap();
