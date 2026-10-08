@@ -251,6 +251,17 @@ pub(crate) fn rename_folder_on_disk(from: &str, to: &str) -> std::result::Result
 
 /// After a folder moved from `from` to `to`: a browsed folder at or below it follows.
 pub(crate) fn follow_folder(s: &mut Session, from: &str, to: &str) {
+    // a chosen library folder at or below it follows too (compared the way the filter does, by
+    // folder identity, so a differently spelled choice is not widened to the folder itself)
+    if let Some(chosen) = s.filter.library_folder.clone() {
+        let (ck, fk) = (lightcraft_catalog::query::folder_key(&chosen), lightcraft_catalog::query::folder_key(from));
+        if !fk.is_empty()
+            && let Some(rest) = ck.strip_prefix(fk.as_str()).filter(|r| r.is_empty() || r.starts_with('/') || fk.ends_with('/'))
+        {
+            let rest = rest.trim_start_matches('/');
+            s.filter.library_folder = Some(if rest.is_empty() { to.to_string() } else { format!("{}/{rest}", to.trim_end_matches(['/', '\\'])) });
+        }
+    }
     if let Some(b) = &mut s.browse
         && let Ok(rel) = Path::new(&b.path).strip_prefix(from)
     {

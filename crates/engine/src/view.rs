@@ -173,6 +173,11 @@ pub fn filter_chips(f: &Filter, cat: &Catalog) -> Vec<FilterChip> {
     if let Some(d) = &f.date {
         add(format!("Date: {}", date_label(d)), json!({"date": Null}));
     }
+    if let Some(d) = f.library_folder.as_deref().filter(|d| !d.trim().is_empty()) {
+        // the last two names, so two folders called "Pictures" are told apart
+        let name = lightcraft_catalog::folders::folder_label(d);
+        add(format!("Folder: {name}"), json!({"libraryFolder": Null}));
+    }
     if let Some(d) = &f.imported {
         add(format!("Imported: {}", date_label(d)), json!({"imported": Null}));
     }

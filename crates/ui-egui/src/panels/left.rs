@@ -1,7 +1,7 @@
 //! The left "My Photos" panel: library sources, albums tree, and date groups.
 
 use egui::{Align2, Rect, Sense, pos2, vec2};
-use lightcraft_catalog::{Album, AlbumId, KeywordNode};
+use lightcraft_catalog::{Album, AlbumId, FolderNode, KeywordNode};
 use lightcraft_engine::LibrarySource;
 use serde_json::json;
 
@@ -20,13 +20,29 @@ fn row(
     selected: bool,
     indent: f32,
 ) -> egui::Response {
+    row_named(app, ui, id, icon, label, None, count, selected, indent)
+}
+
+/// [`row`] whose spoken name is `spoken` when the painted `label` is a shortened form of it.
+fn row_named(
+    app: &mut LightcraftApp,
+    ui: &mut egui::Ui,
+    id: &str,
+    icon: Icon,
+    label: &str,
+    spoken: Option<&str>,
+    count: Option<usize>,
+    selected: bool,
+    indent: f32,
+) -> egui::Response {
     let label = if matches!(id, "all" | "recentlyAdded" | "picks" | "missing" | "recentlyDeleted") { crate::i18n::tr(label) } else { label };
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 29.0), Sense::click());
     register(ui.ctx(), format!("source:{id}"), r);
+    let said = spoken.unwrap_or(label);
     let name = match count {
-        Some(n) => crate::i18n::tr_format!("{label}, {n} photos", label = label, n = n),
-        None => label.to_string(),
+        Some(n) => crate::i18n::tr_format!("{label}, {n} photos", label = said, n = n),
+        None => said.to_string(),
     };
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name));
     let inner = r.shrink2(vec2(8.0, 0.0));
@@ -158,6 +174,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     }
                 }
             }
+            folders_section(app, ui);
             keywords_section(app, ui);
             ui.add_space(10.0);
             if row(app, ui, "recentlyDeleted", Icon::Trash, "Recently Deleted", Some(deleted), src == LibrarySource::RecentlyDeleted, 0.0).clicked() {
@@ -715,6 +732,199 @@ fn is_within(app: &LightcraftApp, id: lightcraft_catalog::AlbumId, ancestor: lig
     false
 }
 
+/// "Folders": where on disk the library's photos were imported from, with photo counts (see
+/// `lightcraft_catalog::folders`). A click shows the photos imported from that folder and the
+/// folders inside it, the triangle opens a level. Only folders holding imported photos are
+/// listed; every folder on disk is under Local.
+fn folders_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let tree = app.caches.folder_tree(&app.session.catalog);
+    if tree.is_empty() {
+        return;
+    }
+    ui.add_space(10.0);
+    if sidebar_section_header(app, ui, "folders", "Folders").1 {
+        reveal_chosen(app, ui, &tree);
+        folder_rows(app, ui, &tree, 0.0);
+    }
+}
+
+/// `text` shortened to fit `max` (as `width` measures it): leading folders drop first
+/// (`Users/me/Pictures/Lightroom` → `…/Pictures/Lightroom`) so the end of a path, which says the
+/// most, stays; a single name still too long loses its end (`2024-06-12 Tri…`: folders tend to
+/// differ at the start). Cuts fall on characters. The result is never empty.
+fn elide_head(text: &str, max: f32, width: impl Fn(&str) -> f32) -> String {
+    if width(text) <= max {
+        return text.to_string();
+    }
+    let mut rest = text;
+    while let Some(i) = rest.find('/') {
+        rest = rest.get(i + 1..).unwrap_or("");
+        let cand = format!("…/{rest}");
+        if width(&cand) <= max {
+            return cand;
+        }
+    }
+    let n = rest.chars().count();
+    for keep in (1..n).rev() {
+        let cand: String = rest.chars().take(keep).chain(std::iter::once('…')).collect();
+        if width(&cand) <= max {
+            return cand;
+        }
+    }
+    "…".to_string()
+}
+
+/// Whenever the chosen folder changes (a click, an agent, a rename or its undo), open the rows
+/// above it so it is on screen; folding one by hand afterwards sticks until the choice changes.
+fn reveal_chosen(app: &LightcraftApp, ui: &egui::Ui, tree: &[FolderNode]) {
+    let chosen = app.session.filter.library_folder.clone().filter(|c| !lightcraft_catalog::query::folder_key(c).is_empty());
+    let seen = egui::Id::new("libfolder-revealed");
+    let now = chosen.as_deref().map(lightcraft_catalog::query::folder_key);
+    if ui.data(|d| d.get_temp::<Option<String>>(seen)) == Some(now.clone()) {
+        return;
+    }
+    ui.data_mut(|d| d.insert_temp(seen, now));
+    let Some(chosen) = chosen else { return };
+    fn open_above(ui: &egui::Ui, nodes: &[FolderNode], chosen: &str) {
+        for n in nodes {
+            if lightcraft_catalog::query::folder_within(chosen, &n.path) && !same_folder(chosen, &n.path) {
+                let key = lightcraft_catalog::query::folder_key(&n.path);
+                ui.data_mut(|d| d.insert_temp(egui::Id::new(("libfolder-open", key)), true));
+                open_above(ui, &n.children, chosen);
+            }
+        }
+    }
+    open_above(ui, tree, &chosen);
+}
+
+fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode], indent: f32) {
+    let t = Tokens::get(ui.ctx());
+    for n in nodes {
+        let key = lightcraft_catalog::query::folder_key(&n.path);
+        let open_id = egui::Id::new(("libfolder-open", key.clone()));
+        // a disk starts open: its folders are what the section is for
+        let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(n.volume);
+        // a row whose path would cover other disks' photos too only opens and closes
+        let selectable = n.selectable;
+        let sel = selectable && app.session.filter.library_folder.as_deref().is_some_and(|f| same_folder(f, &n.path));
+        let name = if selectable { n.name.clone() } else { crate::i18n::tr("This Computer").to_string() };
+        // room for the name: between the icon and the count
+        let font = t.font(13.5);
+        let count_w =
+            if app.ui.show_counts { ui.painter().layout_no_wrap(n.count.to_string(), t.font(12.5), egui::Color32::WHITE).size().x } else { 0.0 };
+        let room = ui.available_width() - 42.0 - indent - count_w - 28.0;
+        let label = elide_head(&name, room, |s| ui.painter().layout_no_wrap(s.to_string(), font.clone(), egui::Color32::WHITE).size().x);
+        let resp = row_named(app, ui, &format!("libfolder:{}", n.path), Icon::Folder, &label, Some(&name), Some(n.count), sel, indent);
+        let mut toggled = false;
+        if !n.children.is_empty() {
+            // disclosure triangle left of the icon
+            let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
+            let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
+            let tr = ui.interact(tri, egui::Id::new(("libfolder-tri", key)), Sense::click());
+            register(ui.ctx(), format!("libraryFolderToggle:{}", n.path), tri);
+            let col = if tr.hovered() { t.text } else { t.text_dim };
+            let pts = if open {
+                vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
+            } else {
+                vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
+            };
+            ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+            toggled = tr.clicked();
+            // the triangle sits on the row and takes its clicks: the menu opens from it too
+            row_menu(app, &tr, n);
+        }
+        let tip = if n.children.is_empty() { n.path.clone() } else { format!("{} ({})", n.path, crate::i18n::tr("includes the folders inside it")) };
+        let resp = resp.on_hover_text(tip);
+        if resp.clicked() && !toggled {
+            if selectable {
+                // the library's folder, not a mix with the Local folder being browsed
+                if app.session.source == LibrarySource::Folder {
+                    let _ = app.run("library.source", json!({"kind": "all"}));
+                }
+                let v = if sel { serde_json::Value::Null } else { json!(n.path) };
+                let _ = app.run("library.filter", json!({"libraryFolder": v}));
+            } else {
+                toggled = true;
+            }
+        }
+        if toggled {
+            open = !open;
+            ui.data_mut(|d| d.insert_temp(open_id, open));
+        }
+        row_menu(app, &resp, n);
+        if open && !n.children.is_empty() {
+            folder_rows(app, ui, &n.children, indent + 16.0);
+        }
+    }
+}
+
+/// The context menu of a Folders row: a folder's own, a disk's (remove it), none for the
+/// startup disk.
+fn row_menu(app: &mut LightcraftApp, resp: &egui::Response, n: &FolderNode) {
+    if !n.volume {
+        folder_menu_for_library(app, resp, n);
+    } else if n.path != "/" {
+        resp.context_menu(|ui| {
+            if ui
+                .button(crate::i18n::tr("Remove Disk from Library…"))
+                .on_hover_text(crate::i18n::tr("Moves every photo imported from this disk to Recently Deleted; no file is touched"))
+                .clicked()
+            {
+                app.ui.dialog = Some(crate::state::Dialog::RemoveFolder { path: n.path.clone(), name: n.name.clone(), count: n.count, disk: true });
+                ui.close();
+            }
+        });
+    }
+}
+
+/// The context menu of a folder row: the folder's disk actions (the same as Local's, photos
+/// follow) and taking its photos out of the library.
+fn folder_menu_for_library(app: &mut LightcraftApp, resp: &egui::Response, n: &FolderNode) {
+    let path = n.path.as_str();
+    let name = std::path::Path::new(path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
+    // what dialogs call it: the last two names, so same-named folders are told apart
+    let label = lightcraft_catalog::folders::folder_label(path);
+    resp.context_menu(|ui| {
+        if ui.button(crate::i18n::tr("Rename Folder…")).clicked() {
+            app.ui.dialog = Some(crate::state::Dialog::TextPrompt {
+                title: crate::i18n::tr_format!("Rename “{name}”", name = label),
+                hint: "Folder name (renamed on disk; its photos follow)".into(),
+                value: name.clone(),
+                command: "folder.rename".into(),
+                params: json!({"path": path}),
+                key: "name".into(),
+            });
+            ui.close();
+        }
+        if app.services.pick_folder.is_some() && ui.button(crate::i18n::tr("Move Folder To…")).clicked() {
+            let into = app.services.pick_folder.as_mut().and_then(|f| f());
+            if let Some(into) = into {
+                match app.run("folder.move", json!({"path": path, "into": into})) {
+                    Ok(r) => app.toast(ui.ctx(), format!("Moved; {} photo(s) relinked", r["relinked"])),
+                    Err(e) => app.toast(ui.ctx(), e),
+                }
+            }
+            ui.close();
+        }
+        if app.services.reveal.is_some()
+            && ui.button(crate::i18n::tr("Show in Finder")).clicked()
+            && let Some(f) = app.services.reveal.as_mut()
+        {
+            let _ = f(path);
+            ui.close();
+        }
+        ui.separator();
+        if ui
+            .button(crate::i18n::tr("Remove from Library…"))
+            .on_hover_text(crate::i18n::tr("Moves the photos imported from this folder to Recently Deleted; no file is touched"))
+            .clicked()
+        {
+            app.ui.dialog = Some(crate::state::Dialog::RemoveFolder { path: path.to_string(), name: label.clone(), count: n.count, disk: false });
+            ui.close();
+        }
+    });
+}
+
 /// "Keywords": the library's keyword tree with photo counts (`a|b|c` keywords nest). A click
 /// filters the grid by the keyword (children included), the triangle opens a level, and the
 /// context menu renames, merges or deletes the keyword across the library.
@@ -786,7 +996,35 @@ fn keyword_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[KeywordNode
 
 #[cfg(test)]
 mod tests {
-    use super::local_places;
+    use super::{elide_head, local_places};
+
+    /// Width = characters, so a limit of 12 is "12 characters".
+    fn fit(text: &str, max: usize) -> String {
+        elide_head(text, max as f32, |s| s.chars().count() as f32)
+    }
+
+    #[test]
+    fn a_label_that_fits_is_left_alone() {
+        assert_eq!(fit("/Users/me/Pictures", 18), "/Users/me/Pictures");
+    }
+
+    #[test]
+    fn a_long_path_loses_its_leading_folders_not_its_end() {
+        assert_eq!(fit("/Users/me/Pictures/Lightroom", 20), "…/Pictures/Lightroom");
+        assert_eq!(fit("/Users/me/Pictures/Lightroom", 12), "…/Lightroom");
+    }
+
+    #[test]
+    fn a_single_name_too_long_is_cut_at_the_end() {
+        assert_eq!(fit("2024-summer-holiday", 8), "2024-su…");
+        assert_eq!(fit("2024-summer-holiday", 1), "…");
+        assert_eq!(fit("2024-summer-holiday", 0), "…");
+    }
+
+    #[test]
+    fn multibyte_names_are_cut_on_character_boundaries() {
+        assert_eq!(fit("/写真/夏休み旅行の記録", 6), "夏休み旅行…");
+    }
 
     fn names(v: &[(String, String)]) -> Vec<&str> {
         v.iter().map(|(n, _)| n.as_str()).collect()

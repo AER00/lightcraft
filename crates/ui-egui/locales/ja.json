@@ -1029,5 +1029,13 @@
   "Friday": "金曜日",
   "Saturday": "土曜日",
   "Sunday": "日曜日",
-  "Unknown Date": "日付不明"
+  "Unknown Date": "日付不明",
+  "Remove Folder from Library": "フォルダをライブラリから除去",
+  "Remove from Library…": "ライブラリから除去…",
+  "This Computer": "このコンピュータ",
+  "includes the folders inside it": "内側のフォルダを含む",
+  "They move to Recently Deleted and can be restored; no file on disk is touched.": "「最近削除した写真」に移動し、復元できます。ディスク上のファイルには手を加えません",
+  "Moves the photos imported from this folder to Recently Deleted; no file is touched": "このフォルダから読み込んだ写真を「最近削除した写真」に移動します。ファイルには手を加えません",
+  "Remove Disk from Library…": "ディスクをライブラリから除去…",
+  "Moves every photo imported from this disk to Recently Deleted; no file is touched": "このディスクから読み込んだすべての写真を「最近削除した写真」に移動します。ファイルには手を加えません"
 }

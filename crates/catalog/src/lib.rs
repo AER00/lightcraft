@@ -14,6 +14,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod dates;
+pub mod folders;
 pub mod journal;
 pub mod keywords;
 pub mod local;
@@ -29,6 +30,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub use dates::{DateRun, GroupBy};
+pub use folders::FolderNode;
 pub use journal::{Journal, LoadReport, PersistStats, SnapshotPolicy, SnapshotTiming};
 pub use keywords::KeywordNode;
 use lightcraft_develop::DevelopSettings;
@@ -654,6 +656,8 @@ impl Catalog {
 mod tests;
 #[cfg(test)]
 mod tests_background;
+#[cfg(test)]
+mod tests_folders;
 #[cfg(test)]
 mod tests_format_version;
 #[cfg(test)]

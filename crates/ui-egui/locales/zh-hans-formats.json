@@ -118,5 +118,6 @@
   "{month}": "{month}月",
   "{month} {year}": "{year}年{month}月",
   "{weekday}, {day}": "{day}日 {weekday}",
-  "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日 {weekday}"
+  "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日 {weekday}",
+  "Remove “{name}” and its {count} photo{} from the library?": "要将“{name}”及其 {count} 张照片从图库中移除吗？{:.0}"
 }

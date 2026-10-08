@@ -1,7 +1,7 @@
 //! Library commands: view source, filter/sort, selection, ratings/flags/labels, rotate, delete,
 //! metadata, albums, import.
 
-use lightcraft_catalog::{Album, AlbumId, ColorLabel, CopyrightStatus, Flag, GroupBy, Op, PhotoId, Sort, SortKey};
+use lightcraft_catalog::{Album, AlbumId, ColorLabel, CopyrightStatus, Filter, Flag, GroupBy, Op, PhotoId, Sort, SortKey};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, has_active, has_selection, ok, str_param};
@@ -282,13 +282,61 @@ pub fn specs() -> Vec<CommandSpec> {
             "Filter",
             [],
             None,
-            "partial Filter: {text?, rating?, ratingOp?: atLeast|exactly|atMost, flag?: pick|reject|none|null, label?, kind?, merged?: hdr|panorama|hdrPanorama|any, edited?, date?, keyword?, person?, camera?}",
+            "partial Filter: {text?, rating?, ratingOp?: atLeast|exactly|atMost, flag?: pick|reject|none|null, label?, kind?, merged?: hdr|panorama|hdrPanorama|any, edited?, date?, libraryFolder?: a path from library.folders, keyword?, person?, camera?}",
             always,
             |s, p| {
                 let mut v = serde_json::to_value(&s.filter).unwrap_or_default();
                 lightcraft_develop::presets::deep_merge(&mut v, p);
                 s.filter = serde_json::from_value(v).map_err(|e| bad("library.filter", e.to_string()))?;
                 Ok(json!({"count": s.visible().len()}))
+            }
+        ),
+        cmd!(
+            query "library.folders",
+            "Library Folders",
+            [],
+            None,
+            "{} → [{name, path, count, own, children}] the folders the library's photos were imported from, with photo counts (subfolders included in `count`); pass a `path` to library.filter as `libraryFolder`",
+            always,
+            |s, _| Ok(serde_json::to_value(s.catalog.folder_tree()).unwrap_or_default())
+        ),
+        cmd!(
+            "library.removeFolder",
+            "Remove Folder from Library",
+            [],
+            None,
+            "{path, disk?: bool} — move the library photos imported from this folder (and the folders inside it) to Recently Deleted; one undo step, no file is touched. A whole disk or share (`/Volumes/nas`, `C:\\`, `\\\\srv\\share`) goes only with `disk: true`, the startup disk never → {removed}",
+            always,
+            |s, p| {
+                const C: &str = "library.removeFolder";
+                let path = str_param(p, "path").map(str::trim).filter(|d| !d.is_empty()).ok_or_else(|| bad(C, "missing `path`"))?;
+                if lightcraft_catalog::query::folder_key(path).is_empty() {
+                    return Err(bad(C, format!("{path}: not a folder")));
+                }
+                if lightcraft_catalog::folders::is_startup_disk(path) {
+                    return Err(bad(C, "choose a folder, not the whole startup disk"));
+                }
+                if lightcraft_catalog::folders::is_disk_root(path) && !bool_or(p, "disk", false) {
+                    return Err(bad(C, format!("{path} is a whole disk or share: pass `disk: true` to remove everything on it")));
+                }
+                let f = Filter { library_folder: Some(path.to_string()), ..Default::default() };
+                let ids = s.catalog.query(&f, &Sort::default());
+                if ids.is_empty() {
+                    return Err(bad(C, format!("{path}: no photo in the library was imported from it")));
+                }
+                let disks: std::collections::BTreeSet<String> =
+                    ids.iter().filter_map(|id| s.catalog.photo(*id)).filter_map(|p| lightcraft_catalog::folders::volume_of(p)).collect();
+                if disks.len() > 1 && !bool_or(p, "disk", false) {
+                    return Err(bad(C, format!("{path} holds photos of {} disks: pass `disk: true` to remove them all", disks.len())));
+                }
+                let ops = ids.iter().map(|id| Op::SetDeleted { id: *id, deleted: true }).collect();
+                s.commit("Remove Folder from Library", Op::Batch { ops })?;
+                if s.filter.library_folder.as_deref().is_some_and(|c| lightcraft_catalog::query::folder_within(c, path)) {
+                    s.filter.library_folder = None;
+                }
+                let vis = s.visible_cloned();
+                s.selection = vis.first().map(|f| Selection::single(*f)).unwrap_or_default();
+                Ok(json!({"removed": ids.len()}))
             }
         ),
         cmd!("library.clearFilter", "Clear Filters", ["View"], None, "{}", always, |s, _| {

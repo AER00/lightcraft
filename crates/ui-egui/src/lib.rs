@@ -890,6 +890,7 @@ mod drop_tests {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
+    folder_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::FolderNode>>)>,
     people: Option<(u64, lightcraft_catalog::Filter, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
     counts: Option<(u64, LibraryCounts)>,
@@ -926,6 +927,17 @@ pub(crate) fn key_of(parts: impl std::hash::Hash) -> u64 {
 }
 
 impl Caches {
+    /// The folders the library's photos were imported from.
+    pub fn folder_tree(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::FolderNode>> {
+        match &self.folder_tree {
+            Some((r, t)) if *r == cat.revision => t.clone(),
+            _ => {
+                let t = std::sync::Arc::new(cat.folder_tree());
+                self.folder_tree = Some((cat.revision, t.clone()));
+                t
+            }
+        }
+    }
     /// The library's keyword tree.
     pub fn keyword_tree(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>> {
         match &self.keyword_tree {

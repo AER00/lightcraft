@@ -199,3 +199,190 @@ fn sidebar_sections_collapse_and_remember_it() {
     click(&mut h, "icon:albumNew");
     assert!(!h.app.ui.sidebar_section_collapsed("albums"), "the plus does not fold Albums");
 }
+
+/// A headless app over a library of file-backed photos that exist only in the catalog.
+fn folders_app(paths: &[&str]) -> Headless {
+    use lightcraft_catalog::{Op, Photo, Source};
+    let mut session = lightcraft_engine::Session::new();
+    for path in paths {
+        let id = session.catalog.alloc_photo_id();
+        let p = Photo::new(id, Source::File { path: (*path).into() }, "x.jpg", "JPEG", 60, 40, "2026-01-01T10:00:00");
+        session.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    }
+    let app = LightcraftApp::new(session, Services { png: None, ..Default::default() });
+    let mut h = Headless::new(app, [1400.0, 900.0], 1.0);
+    let r = h.request("ui.set", json!({"view": "photoGrid", "leftPanel": true}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    h
+}
+
+fn has(h: &Headless, id: &str) -> bool {
+    h.app.widgets.iter().any(|(w, _)| w == id)
+}
+
+fn click(h: &mut Headless, id: &str) {
+    let r = h.request("ui.clickWidget", json!({"id": id}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    h.step();
+}
+
+/// Photos imported from two folders: the sidebar's Folders section lists them, choosing one
+/// narrows the grid to its photos, and choosing it again shows everything (like By Date).
+#[test]
+fn folders_section_lists_where_photos_were_imported_from_and_narrows_the_grid() {
+    let mut h = folders_app(&["/pics/trip/a.jpg", "/pics/trip/b.jpg", "/pics/home/c.jpg"]);
+    // the disk's row starts open; the folders inside a folder stay folded until it is opened
+    assert!(has(&h, "source:libfolder:/pics"), "the Folders section lists the library's folders");
+    assert!(!has(&h, "source:libfolder:/pics/trip"));
+    click(&mut h, "libraryFolderToggle:/pics");
+    assert!(has(&h, "source:libfolder:/pics/trip") && has(&h, "source:libfolder:/pics/home"));
+    assert_eq!(h.app.session.visible().len(), 3);
+    click(&mut h, "source:libfolder:/pics/trip");
+    assert_eq!(h.app.session.visible().len(), 2, "only the photos imported from that folder");
+    assert_eq!(h.app.session.filter.library_folder.as_deref(), Some("/pics/trip"));
+    click(&mut h, "source:libfolder:/pics/trip");
+    assert_eq!(h.app.session.visible().len(), 3, "choosing it again shows everything");
+    // the section folds like the others
+    click(&mut h, "sidebarSection:folders");
+    assert!(!has(&h, "source:libfolder:/pics"), "folded");
+    click(&mut h, "sidebarSection:folders");
+    assert!(has(&h, "source:libfolder:/pics"));
+}
+
+/// Each disk is a row of its own; the startup disk's row only opens and closes, another disk's
+/// row also chooses everything on that disk.
+#[test]
+fn disks_are_rows_of_their_own() {
+    let mut h = folders_app(&["/Users/me/a.jpg", "/Volumes/nas/p/b.jpg", "/Volumes/nas/c.jpg"]);
+    assert!(has(&h, "source:libfolder:/") && has(&h, "source:libfolder:/Volumes/nas"), "both disks are listed");
+    assert!(has(&h, "source:libfolder:/Volumes/nas/p"), "an open disk shows its folders");
+    click(&mut h, "source:libfolder:/");
+    assert_eq!(h.app.session.filter.library_folder, None, "the startup disk's path would cover every disk");
+    assert!(!has(&h, "source:libfolder:/Users/me"), "a click on it folds it instead");
+    click(&mut h, "source:libfolder:/");
+    assert!(has(&h, "source:libfolder:/Users/me"));
+    click(&mut h, "source:libfolder:/Volumes/nas");
+    assert_eq!(h.app.session.visible().len(), 2, "everything on the nas");
+}
+
+/// Choosing a folder while Local is the source shows the library's folder, not a mix.
+#[test]
+fn choosing_a_library_folder_leaves_a_local_folder_view() {
+    let mut h = folders_app(&["/pics/trip/a.jpg", "/pics/home/b.jpg"]);
+    h.app.session.source = lightcraft_engine::LibrarySource::Folder;
+    click(&mut h, "libraryFolderToggle:/pics");
+    click(&mut h, "source:libfolder:/pics/trip");
+    assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::All);
+    assert_eq!(h.app.session.visible().len(), 1);
+}
+
+/// Removing a folder from the library asks first, then moves its photos to Recently Deleted.
+#[test]
+fn removing_a_folder_from_the_library_asks_first() {
+    use crate::state::Dialog;
+    let mut h = folders_app(&["/pics/trip/a.jpg", "/pics/trip/b.jpg", "/pics/home/c.jpg"]);
+    h.app.ui.dialog = Some(Dialog::RemoveFolder { path: "/pics/trip".into(), name: "trip".into(), count: 2, disk: false });
+    h.step();
+    assert_eq!(h.app.session.visible().len(), 3, "nothing happens until it is confirmed");
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(h.app.session.visible().len(), 1, "the photos left the library");
+    assert_eq!(h.app.ui.dialog, None);
+}
+
+fn popup_open(h: &Headless) -> bool {
+    egui::Popup::is_any_open(&h.view.ctx)
+}
+
+fn right_click(h: &mut Headless, id: &str) {
+    let c = widget(h, id).center();
+    let r = h.request("ui.click", json!({"x": c.x, "y": c.y, "button": "right"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    h.step();
+}
+
+/// A folder row that holds other disks as well would show their photos too: it only opens.
+#[test]
+fn a_folder_that_holds_other_disks_only_opens() {
+    let mut h = folders_app(&["/Volumes/1.jpg", "/Volumes/tokyo/x.jpg"]);
+    assert!(has(&h, "source:libfolder:/Volumes"));
+    click(&mut h, "source:libfolder:/Volumes");
+    assert_eq!(h.app.session.filter.library_folder, None, "choosing it would show the tokyo disk too");
+    click(&mut h, "source:libfolder:/Volumes/tokyo");
+    assert_eq!(h.app.session.visible().len(), 1, "a disk's own row does choose");
+}
+
+/// Whatever sets the chosen folder (a click, an agent, a rename, undo), its row is on screen.
+#[test]
+fn the_chosen_folder_is_always_in_view() {
+    let mut h = folders_app(&["/pics/trip/day1/a.jpg", "/pics/trip/b.jpg", "/pics/home/c.jpg"]);
+    assert!(!has(&h, "source:libfolder:/pics/trip/day1"), "folded to begin with");
+    h.app.session.filter.library_folder = Some("/pics/trip/day1".into());
+    h.step();
+    h.step();
+    assert!(has(&h, "source:libfolder:/pics/trip/day1"), "the rows above it opened");
+    // folding a parent by hand sticks until the choice changes
+    click(&mut h, "libraryFolderToggle:/pics/trip");
+    assert!(!has(&h, "source:libfolder:/pics/trip/day1"));
+}
+
+#[test]
+fn a_renamed_folder_keeps_its_place_in_the_tree() {
+    let base = std::env::temp_dir().join(format!("lc-ui-rename-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("pics/trip")).unwrap();
+    std::fs::create_dir_all(base.join("pics/home")).unwrap();
+    let b = base.to_string_lossy().to_string();
+    let mut h = folders_app(&[&format!("{b}/pics/trip/a.jpg"), &format!("{b}/pics/home/b.jpg")]);
+    h.app.session.filter.library_folder = Some(format!("{b}/pics/trip"));
+    h.step();
+    h.step();
+    assert!(has(&h, &format!("source:libfolder:{b}/pics/trip")));
+    let r = h.request("engine.execute", json!({"command": "folder.rename", "params": {"path": format!("{b}/pics"), "name": "pics2"}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    h.step();
+    assert!(has(&h, &format!("source:libfolder:{b}/pics2/trip")), "the chosen folder is still on screen after the rename");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The menu opens from anywhere on a folder row, the disclosure triangle included; a disk row
+/// has its own, the startup disk none.
+#[test]
+fn right_click_opens_a_folders_menu_from_the_triangle_too() {
+    let mut h = folders_app(&["/pics/trip/a.jpg", "/pics/home/b.jpg", "/Volumes/nas/c.jpg"]);
+    click(&mut h, "libraryFolderToggle:/pics");
+    right_click(&mut h, "source:libfolder:/pics/trip");
+    assert!(popup_open(&h), "on the row");
+    h.request("ui.key", json!({"key": "escape"}), T);
+    h.step();
+    h.step();
+    assert!(!popup_open(&h));
+    right_click(&mut h, "libraryFolderToggle:/pics");
+    assert!(popup_open(&h), "on the triangle");
+    h.request("ui.key", json!({"key": "escape"}), T);
+    h.step();
+    h.step();
+    right_click(&mut h, "source:libfolder:/Volumes/nas");
+    assert!(popup_open(&h), "a disk row offers removing the disk");
+    h.request("ui.key", json!({"key": "escape"}), T);
+    h.step();
+    h.step();
+    right_click(&mut h, "source:libfolder:/");
+    assert!(!popup_open(&h), "the startup disk offers nothing");
+}
+
+#[test]
+fn removing_a_disk_from_the_library_asks_first() {
+    use crate::state::Dialog;
+    let mut h = folders_app(&["/Volumes/nas/a/1.jpg", "/Volumes/nas/2.jpg", "/Users/me/3.jpg"]);
+    h.app.ui.dialog = Some(Dialog::RemoveFolder { path: "/Volumes/nas".into(), name: "nas".into(), count: 2, disk: true });
+    h.step();
+    assert_eq!(h.app.session.visible().len(), 3);
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(h.app.session.visible().len(), 1, "everything on that disk left the library");
+}

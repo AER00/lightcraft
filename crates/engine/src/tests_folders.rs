@@ -1,0 +1,232 @@
+//! Exploring the library by folder: `library.folders` lists where the imported photos live and
+//! `library.filter {libraryFolder}` shows one folder's photos (see `lightcraft_catalog::folders`);
+//! `library.removeFolder` takes a folder's photos out of the library.
+//!
+//! * Given photos imported from two folders, an agent can list them with counts, then choose one
+//!   and see exactly its photos; the filter shows as a chip that clears just that choice.
+//! * A path that is not a library folder shows nothing rather than everything.
+//! * Removing a folder from the library moves its photos to Recently Deleted (one undo step) and
+//!   leaves every file where it is.
+//! * Renaming or moving a folder on disk keeps the chosen folder chosen.
+
+use lightcraft_catalog::{Op, Photo, Source};
+use serde_json::json;
+
+use crate::{LibrarySource, Session, filter_chips};
+
+fn add(s: &mut Session, path: &str) {
+    let id = s.catalog.alloc_photo_id();
+    let p = Photo::new(id, Source::File { path: path.into() }, "x.jpg", "JPEG", 60, 40, "2026-01-01T10:00:00");
+    s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+}
+
+/// A scratch folder that goes away with the test, however it ends.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new(tag: &str) -> Scratch {
+        let dir = std::env::temp_dir().join(format!("lc-folders-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Scratch(dir)
+    }
+    fn path(&self, rel: &str) -> String {
+        self.0.join(rel).to_string_lossy().to_string()
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn session() -> Session {
+    let mut s = Session::new();
+    for path in ["/pics/trip/a.jpg", "/pics/trip/b.jpg", "/pics/home/c.jpg"] {
+        add(&mut s, path);
+    }
+    s
+}
+
+#[test]
+fn the_folders_command_lists_where_the_photos_were_imported_from() {
+    let mut s = session();
+    let r = s.execute("library.folders", &json!({})).unwrap();
+    assert_eq!((r[0]["name"].as_str(), r[0]["volume"].as_bool(), r[0]["count"].as_u64()), (Some("/"), Some(true), Some(3)));
+    let pics = &r[0]["children"][0];
+    assert_eq!(pics["name"], "pics");
+    let kids: Vec<(&str, u64)> =
+        pics["children"].as_array().unwrap().iter().map(|c| (c["name"].as_str().unwrap(), c["count"].as_u64().unwrap())).collect();
+    assert_eq!(kids, [("home", 1), ("trip", 2)]);
+}
+
+#[test]
+fn choosing_a_folder_shows_its_photos_and_a_chip_that_clears_it() {
+    let mut s = session();
+    assert_eq!(s.visible().len(), 3);
+    let r = s.execute("library.filter", &json!({"libraryFolder": "/pics/trip"})).unwrap();
+    assert_eq!(r["count"], 2);
+    let chips = filter_chips(&s.filter, &s.catalog);
+    assert_eq!(chips.len(), 1);
+    assert_eq!(chips[0].label, "Folder: pics/trip", "two names, so two folders called trip are told apart");
+    s.execute("library.filter", &chips[0].clear).unwrap();
+    assert_eq!(s.visible().len(), 3, "clearing the chip shows everything again");
+}
+
+#[test]
+fn a_path_that_is_not_a_library_folder_shows_nothing() {
+    let mut s = session();
+    let r = s.execute("library.filter", &json!({"libraryFolder": "/elsewhere"})).unwrap();
+    assert_eq!(r["count"], 0);
+}
+
+#[test]
+fn removing_a_folder_moves_its_photos_to_recently_deleted_and_undo_brings_them_back() {
+    let mut s = session();
+    let r = s.execute("library.removeFolder", &json!({"path": "/pics//trip/"})).unwrap();
+    assert_eq!(r["removed"], 2);
+    assert_eq!(s.visible().len(), 1, "only /pics/home is left");
+    let tree = s.execute("library.folders", &json!({})).unwrap();
+    assert_eq!(tree[0]["count"], 1);
+    s.source = LibrarySource::RecentlyDeleted;
+    assert_eq!(s.visible().len(), 2, "they wait in Recently Deleted");
+    s.source = LibrarySource::All;
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.visible().len(), 3, "one undo step");
+}
+
+#[test]
+fn removing_a_folder_that_holds_nothing_or_a_whole_disk_is_refused() {
+    let mut s = session();
+    assert!(s.execute("library.removeFolder", &json!({"path": "/elsewhere"})).is_err());
+    assert!(s.execute("library.removeFolder", &json!({"path": "/"})).is_err(), "choose a folder, not everything");
+    assert!(s.execute("library.removeFolder", &json!({"path": " "})).is_err());
+    assert!(s.execute("library.removeFolder", &json!({})).is_err());
+    assert_eq!(s.visible().len(), 3, "nothing changed");
+}
+
+#[test]
+fn removing_a_folder_leaves_browsed_and_already_deleted_photos_alone() {
+    let mut s = session();
+    for (path, local, deleted) in [("/pics/trip/browsed.jpg", true, false), ("/pics/trip/gone.jpg", false, true)] {
+        let id = s.catalog.alloc_photo_id();
+        let mut p = Photo::new(id, Source::File { path: path.into() }, "x.jpg", "JPEG", 60, 40, "2026-01-01T10:00:00");
+        (p.local, p.deleted) = (local, deleted);
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    }
+    let r = s.execute("library.removeFolder", &json!({"path": "/pics/trip"})).unwrap();
+    assert_eq!(r["removed"], 2, "only the two library photos of the folder");
+    let state: Vec<(bool, bool)> = s.catalog.photos().filter(|p| p.local || p.deleted).map(|p| (p.local, p.deleted)).collect();
+    assert!(state.contains(&(true, false)) && state.contains(&(false, true)), "browsed stays browsed, the old deletion stays: {state:?}");
+}
+
+#[test]
+fn removing_the_folder_that_is_chosen_clears_the_choice_but_a_parent_stays() {
+    let mut s = session();
+    s.execute("library.filter", &json!({"libraryFolder": "/pics/trip"})).unwrap();
+    s.execute("library.removeFolder", &json!({"path": "/pics/trip"})).unwrap();
+    assert_eq!(s.filter.library_folder, None, "no empty grid under a chip for a folder that is gone");
+    let mut s = session();
+    s.execute("library.filter", &json!({"libraryFolder": "/pics"})).unwrap();
+    s.execute("library.removeFolder", &json!({"path": "/pics/trip"})).unwrap();
+    assert_eq!(s.filter.library_folder.as_deref(), Some("/pics"));
+}
+
+#[test]
+fn a_path_that_names_no_folder_removes_nothing() {
+    let mut s = session();
+    for path in [".", "./", "a/..", "../..", "x/../.."] {
+        assert!(s.execute("library.removeFolder", &json!({"path": path})).is_err(), "{path:?}");
+    }
+    assert_eq!(s.visible().len(), 3);
+}
+
+#[test]
+fn a_whole_disk_goes_only_when_asked_for_by_name_and_never_the_startup_disk() {
+    let mut s = Session::new();
+    for p in ["/Volumes/nas/a/1.jpg", "/Volumes/nas/2.jpg", "/Users/me/3.jpg", r"C:\x\4.jpg", r"\\srv\share\5.jpg"] {
+        add(&mut s, p);
+    }
+    for path in ["/Volumes/nas", "C:", "C:\\", r"\\?\C:\", "C:\\..", r"\\srv\share"] {
+        assert!(s.execute("library.removeFolder", &json!({"path": path})).is_err(), "{path:?} is a whole disk");
+    }
+    for path in ["/", "//"] {
+        assert!(s.execute("library.removeFolder", &json!({"path": path, "disk": true})).is_err(), "{path:?}: never the startup disk");
+    }
+    assert_eq!(s.visible().len(), 5, "nothing changed");
+    let r = s.execute("library.removeFolder", &json!({"path": "/Volumes/nas", "disk": true})).unwrap();
+    assert_eq!(r["removed"], 2, "everything on the nas, nothing elsewhere");
+    assert_eq!(s.visible().len(), 3);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.visible().len(), 5);
+}
+
+#[test]
+fn a_folder_that_spans_several_disks_is_removed_only_when_asked_for_by_name() {
+    let mut s = Session::new();
+    for p in ["/Volumes/nas/a/1.jpg", "/Volumes/tokyo/2.jpg", "/Volumes/3.jpg"] {
+        add(&mut s, p);
+    }
+    assert!(s.execute("library.removeFolder", &json!({"path": "/Volumes"})).is_err(), "it would take two disks' photos at once");
+    assert_eq!(s.visible().len(), 3);
+    let r = s.execute("library.removeFolder", &json!({"path": "/Volumes", "disk": true})).unwrap();
+    assert_eq!(r["removed"], 3);
+}
+
+#[test]
+fn the_folder_filter_takes_only_a_text_path() {
+    let mut s = session();
+    assert!(s.execute("library.filter", &json!({"libraryFolder": 5})).is_err());
+    assert_eq!(s.filter.library_folder, None, "refused, nothing changed");
+    s.execute("library.filter", &json!({"libraryFolder": "   "})).unwrap();
+    assert_eq!(s.visible().len(), 3, "a blank path is no choice");
+    s.execute("library.filter", &json!({"libraryFolder": "."})).unwrap();
+    assert_eq!(s.visible().len(), 0, "a path that names no folder shows nothing, not everything");
+}
+
+#[test]
+fn a_renamed_folder_stays_the_chosen_one_and_undo_follows_it_back() {
+    let dir = Scratch::new("rename");
+    std::fs::create_dir_all(dir.0.join("trip/day1")).unwrap();
+    let (trip, renamed) = (dir.path("trip"), dir.path("holiday"));
+    let mut s = Session::new();
+    add(&mut s, &format!("{trip}/a.jpg"));
+    add(&mut s, &format!("{trip}/day1/b.jpg"));
+    s.execute("library.filter", &json!({"libraryFolder": trip})).unwrap();
+    assert_eq!(s.visible().len(), 2);
+    s.execute("folder.rename", &json!({"path": trip, "name": "holiday"})).unwrap();
+    assert_eq!(s.filter.library_folder.as_deref(), Some(renamed.as_str()), "the choice follows the folder");
+    assert_eq!(s.visible().len(), 2, "and still shows its photos");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.filter.library_folder.as_deref(), Some(trip.as_str()));
+    assert_eq!(s.visible().len(), 2);
+}
+
+#[test]
+fn a_moved_folder_keeps_a_chosen_subfolder_chosen() {
+    let dir = Scratch::new("move");
+    std::fs::create_dir_all(dir.0.join("trip/day1")).unwrap();
+    std::fs::create_dir_all(dir.0.join("archive")).unwrap();
+    let (day1, moved) = (dir.path("trip/day1"), dir.path("archive/trip/day1"));
+    let mut s = Session::new();
+    add(&mut s, &format!("{day1}/b.jpg"));
+    s.execute("library.filter", &json!({"libraryFolder": day1})).unwrap();
+    s.execute("folder.move", &json!({"path": dir.path("trip"), "into": dir.path("archive")})).unwrap();
+    assert_eq!(s.filter.library_folder.as_deref(), Some(moved.as_str()), "the subfolder follows its parent");
+    assert_eq!(s.visible().len(), 1);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.filter.library_folder.as_deref(), Some(day1.as_str()));
+}
+
+#[test]
+fn following_a_folder_reads_both_spellings_the_same_way() {
+    // the choice was typed with a `..` in it; the folder that moved was not
+    let mut s = Session::new();
+    s.filter.library_folder = Some("/a/x/../b/sub".into());
+    crate::cmd::browse::follow_folder(&mut s, "/a/b", "/a/c");
+    assert_eq!(s.filter.library_folder.as_deref(), Some("/a/c/sub"), "a subfolder stays a subfolder, never widens to its parent");
+    s.filter.library_folder = Some("/elsewhere/b".into());
+    crate::cmd::browse::follow_folder(&mut s, "/a/b", "/a/c");
+    assert_eq!(s.filter.library_folder.as_deref(), Some("/elsewhere/b"), "other folders are left alone");
+}

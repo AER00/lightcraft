@@ -1246,5 +1246,13 @@
   "this photo": "這張照片",
   "日本語": "日本語",
   "繁體中文（台灣）": "繁體中文（台灣）",
-  "In Recently Deleted": "在「最近刪除」中"
+  "In Recently Deleted": "在「最近刪除」中",
+  "Remove Folder from Library": "從照片庫移除資料夾",
+  "Remove from Library…": "從照片庫移除…",
+  "This Computer": "這部電腦",
+  "includes the folders inside it": "包含其中的資料夾",
+  "They move to Recently Deleted and can be restored; no file on disk is touched.": "它們會移至「最近刪除」，可以還原；磁碟上的檔案不會被更動。",
+  "Moves the photos imported from this folder to Recently Deleted; no file is touched": "將從此資料夾匯入的照片移至「最近刪除」；不會更動任何檔案",
+  "Remove Disk from Library…": "從照片庫移除磁碟…",
+  "Moves every photo imported from this disk to Recently Deleted; no file is touched": "將從此磁碟匯入的所有照片移至「最近刪除」；不會更動任何檔案"
 }
