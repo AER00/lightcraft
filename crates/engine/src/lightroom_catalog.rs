@@ -1055,4 +1055,35 @@ mod tests {
         assert!(read(&path).is_err());
         std::fs::remove_file(path).unwrap();
     }
+
+    #[test]
+    fn oversized_optional_table_warns_and_is_skipped() {
+        let mut main = vec![0u8; 2 * 512];
+        main[..16].copy_from_slice(b"SQLite format 3\0");
+        main[16..18].copy_from_slice(&512u16.to_be_bytes());
+        main[18] = 1;
+        main[19] = 1;
+        main[21] = 64;
+        main[22] = 32;
+        main[23] = 32;
+        main[28..32].copy_from_slice(&2u32.to_be_bytes());
+        main[44..48].copy_from_slice(&4u32.to_be_bytes());
+        main[56..60].copy_from_slice(&1u32.to_be_bytes());
+        let page = &mut main[512..];
+        page[0] = 0x0d;
+        page[3..5].copy_from_slice(&1u16.to_be_bytes());
+        let mut cell = varint((64 * 1024 * 1024 + 1) as u64);
+        cell.extend(varint(1));
+        let start = 500 - cell.len();
+        page[start..start + cell.len()].copy_from_slice(&cell);
+        page[8..10].copy_from_slice(&u16::try_from(start).unwrap_or(0).to_be_bytes());
+        page[5..7].copy_from_slice(&u16::try_from(start).unwrap_or(0).to_be_bytes());
+        let db = Database::open_with_wal(main, &[]).unwrap();
+        let reader =
+            Reader { db, tables: vec![LiveTable { name: "optional_history".into(), rootpage: 2, column_names: Some(vec!["payload".into()]) }] };
+        let mut warnings = Vec::new();
+        let rows = reader.optional_table("optional_history", &mut warnings).unwrap();
+        assert!(rows.is_empty());
+        assert!(warnings.iter().any(|warning| warning.contains("optional_history")));
+    }
 }
