@@ -84,6 +84,18 @@ struct Queued {
     job: RenderJob,
 }
 
+/// The texture of a render: its pixels as egui wants them. Renders are opaque, so the common case
+/// is a plain copy; only a pixel with alpha pays for premultiplying. (The generic conversion, on
+/// the UI thread, was most of the time a 5 MP zoom window took to show.)
+pub(crate) fn color_image(img: &lightcraft_raster::Rgba8) -> egui::ColorImage {
+    let pixels = img
+        .data
+        .iter()
+        .map(|p| if p[3] == 255 { egui::Color32::from_rgb(p[0], p[1], p[2]) } else { egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]) })
+        .collect();
+    egui::ColorImage { size: [img.width, img.height], source_size: egui::vec2(img.width as f32, img.height as f32), pixels }
+}
+
 /// Which stage caches to clear, in order, so that the rest fit `budget` bytes: the cheapest to
 /// rebuild and least reused first (hover, before, compare, second window, the zoom window), the
 /// open photo's own view last. Empty caches are never named. The budget is hard.
@@ -509,7 +521,9 @@ impl Renderer {
         for (mut slot, r, ms) in finished {
             self.completed += 1;
             // Ignore obsolete pixels, failures and decoded sources, even for the same render key;
-            // an interactive view still takes a superseded draft that is newer than what it shows.
+            // an interactive view still takes a superseded draft that is newer than what it
+            // shows, and the source it decoded: a drag supersedes every request before it
+            // finishes, and a source thrown away with them is decoded again for every tick.
             if self.request_ids.get(&slot) != Some(&r.request_id) {
                 let newer_draft = slot.is_view()
                     && self.request_ids.contains_key(&slot)
@@ -519,6 +533,7 @@ impl Renderer {
                 if !newer_draft {
                     continue;
                 }
+                session.accept(&r);
             } else {
                 self.request_ids.remove(&slot);
                 session.accept(&r);
@@ -558,7 +573,7 @@ impl Renderer {
                 self.textures.remove(&Slot::ThumbQuick(id));
             }
             let img = &rendered.image;
-            let color = std::sync::Arc::new(egui::ColorImage::from_rgba_unmultiplied([img.width, img.height], &img.as_bytes()));
+            let color = std::sync::Arc::new(color_image(img));
             let pixels = self.keep_pixels.then(|| color.clone());
             let name = format!("{slot:?}");
             match self.textures.get_mut(&slot) {
@@ -1177,5 +1192,34 @@ mod stage_budget_tests {
         let m = r.memory();
         assert!(m["stageCaches"]["budgetBytes"].as_u64().unwrap() > 0, "{m}");
         assert_eq!(m["stageCaches"]["trimmed"], 0);
+    }
+}
+
+#[cfg(test)]
+mod color_image_tests {
+    use super::*;
+
+    // The texture a render becomes is what egui would make of its bytes, whatever the alpha
+    #[test]
+    fn the_fast_conversion_equals_eguis() {
+        let img = lightcraft_raster::Rgba8::from_fn(37, 29, |x, y| {
+            let a = match (x + y) % 5 {
+                0 => 0,
+                1 => 17,
+                2 => 128,
+                _ => 255,
+            };
+            [(x * 7) as u8, (y * 9) as u8, (x * y) as u8, a]
+        });
+        let want = egui::ColorImage::from_rgba_unmultiplied([img.width, img.height], &img.as_bytes());
+        let got = color_image(&img);
+        assert_eq!(got.size, want.size);
+        assert_eq!(got.pixels, want.pixels);
+    }
+
+    #[test]
+    fn an_empty_image_is_an_empty_texture() {
+        let img = lightcraft_raster::Rgba8::new(0, 0);
+        assert!(color_image(&img).pixels.is_empty());
     }
 }
