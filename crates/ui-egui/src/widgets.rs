@@ -187,13 +187,7 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     // first frames (not on the click's own, whose release would take the focus straight back)
     let mut typing: Option<(String, u8)> = ui.data(|m| m.get_temp(typing_id));
     if enabled && typing.is_none() && value_resp.clicked() {
-        let text = shown_value(spec, value).trim_start_matches('+').to_string();
-        // the old value starts selected, so typing replaces it
-        let mut state = egui::text_edit::TextEditState::load(ui.ctx(), field_id).unwrap_or_default();
-        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
-        state.cursor.set_char_range(Some(all));
-        state.store(ui.ctx(), field_id);
-        typing = Some((text, 0));
+        typing = Some((shown_value(spec, value).trim_start_matches('+').to_string(), 0));
     }
     let mut out = SliderOut::default();
     let span = (spec.max - spec.min).max(1e-9);
@@ -210,6 +204,12 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         let te = ui.put(value_rect, field);
         if frames < 2 {
             te.request_focus();
+            // the old value is selected, so typing replaces it (set again once the field has the
+            // focus, which places the cursor)
+            let mut state = egui::text_edit::TextEditState::load(ui.ctx(), field_id).unwrap_or_default();
+            let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
+            state.cursor.set_char_range(Some(all));
+            state.store(ui.ctx(), field_id);
             typing = Some((text.clone(), frames + 1));
             ui.data_mut(|m| m.insert_temp(typing_id, (text, frames + 1)));
         } else if !te.has_focus() || !enabled {
