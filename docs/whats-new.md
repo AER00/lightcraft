@@ -26,6 +26,8 @@
 - Luminar looks: `.lmp` files and `.mplumpack` collections import as presets (grouped by collection); the sliders
   with a counterpart here come along, the rest is listed.
 - 23 new built-in presets: Portrait, Landscape, Urban, Food, Seasons, Vintage and B&W toners.
+- Imported `.cube` LUT profiles appear in the Profile menu and the profile browser, grouped by their folder, and stay
+  favourites across restarts (issue #328).
 
 ### Editing
 - The Tint slider works the right way round (issues #188, #321): left adds green, right adds magenta, as its track

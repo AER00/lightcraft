@@ -191,6 +191,12 @@ pub fn builtin_label(source: &str, builtin: bool) -> &str {
     if builtin { tr(source) } else { source }
 }
 
+/// A profile's name for display: a built-in profile's is translated, an imported LUT's is shown as
+/// its file named it (it may happen to match a message, like "Vivid").
+pub fn profile_label<'a>(id: &str, name: &'a str) -> &'a str {
+    builtin_label(name, lightcraft_engine::presets::profile(id).is_some())
+}
+
 /// An Activity (history) step for display. The step's stored label stays English; generated steps
 /// are translated around the names they carry, and a user preset's name is kept verbatim.
 pub fn history_label(source: &str, presets: &[lightcraft_develop::Preset]) -> String {
