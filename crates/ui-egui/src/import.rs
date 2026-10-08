@@ -625,9 +625,9 @@ fn finish(app: &mut LightcraftApp, ctx: &egui::Context, task: ImportTask) {
     let steps = app.session.undo.len().saturating_sub(task.undo0);
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     let label = if task.imported == 0 && task.restored > 0 {
-        format!("Restore {} Photo{}", task.restored, plural(task.restored))
+        crate::i18n::tr_format!("Restore {} Photo{}", task.restored, plural(task.restored))
     } else if task.restored > 0 {
-        format!("Add {} Photo{}, restore {}", task.imported, plural(task.imported), task.restored)
+        crate::i18n::tr_format!("Add {} Photo{}, restore {}", task.imported, plural(task.imported), task.restored)
     } else {
         crate::i18n::tr_format!("Add {} Photo{}", task.imported, if task.imported == 1 { "" } else { "s" })
     };
@@ -659,7 +659,7 @@ fn finish(app: &mut LightcraftApp, ctx: &egui::Context, task: ImportTask) {
         crate::i18n::tr_format!("Imported {} photo{}", task.imported, plural(task.imported))
     };
     if task.restored > 0 {
-        msg.push_str(&format!(" · {} restored from Recently Deleted", task.restored));
+        msg.push_str(&crate::i18n::tr_format!(" · {} restored from Recently Deleted", task.restored));
     }
     if task.params["mode"] == "move" {
         msg.push_str(&crate::i18n::tr_format!(" · {} moved", task.moved));
