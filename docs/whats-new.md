@@ -67,6 +67,10 @@
 - The Tint slider works the right way round (issues #188, #321): left adds green, right adds magenta, as its track
   shows and as in Lightroom, and Tint values in Lightroom XMP sidecars now render as they do there. A custom Tint
   saved in an earlier version now shifts the other way; set it again (or re-run Auto / the white-balance picker).
+- White balance on DNGs (and other raws with a colour matrix) re-develops the photo for the new white through the
+  camera's own colour matrices, as Lightroom does, instead of shifting the colours of the as-shot rendering: a grey
+  lit by the chosen white comes out grey and saturated colours move as the camera records them. The eyedropper and
+  Auto use the same model. Custom white balances on these photos render slightly differently than before.
 - Crop (issue #295): a Lock toggle keeps the aspect ratio on every handle, Custom takes your own ratio (Apply), and
   dragging a handle into the image edge stops there instead of pushing the crop out of shape.
 

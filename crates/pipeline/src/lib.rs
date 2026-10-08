@@ -54,6 +54,17 @@ use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8, par_rows};
 
 pub use tone::ToneMap;
 
+/// A raw source's own colour model, for white balance: like Lightroom, a white balance
+/// re-evaluates the camera's colour matrices at the chosen white (camera-space white balance, DNG
+/// spec ch. 6) instead of adapting the as-shot rendering ([`local::wb_matrix_for`]).
+#[derive(Debug, PartialEq)]
+pub struct CameraColor {
+    /// The file's colour tags (its profile look left out: it is applied at load).
+    pub tags: lightcraft_raw::ColorData,
+    /// The white the source pixels were developed for.
+    pub developed_for: lightcraft_color::Xy,
+}
+
 /// Facts about the source the settings are interpreted against.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceInfo {
@@ -66,6 +77,9 @@ pub struct SourceInfo {
     pub as_shot_tint: f64,
     /// No measured camera illuminant: WB adjustments are relative to the camera's rendered look.
     pub relative_wb: bool,
+    /// The camera's colour model (raw files with a colour matrix); `None`: white balance adapts
+    /// the developed pixels (Bradford, linear Rec.2020).
+    pub camera_color: Option<Arc<CameraColor>>,
     pub camera_tone: Option<tone::CameraTone>,
     /// Segmentation mattes stored in the file (DNG semantic masks): AI masks use them.
     pub mattes: Option<Arc<masks::Mattes>>,
@@ -73,7 +87,16 @@ pub struct SourceInfo {
 
 impl Default for SourceInfo {
     fn default() -> Self {
-        Self { raw: false, as_shot_temp: 6500.0, as_shot_tint: 0.0, lens: None, relative_wb: false, camera_tone: None, mattes: None }
+        Self {
+            raw: false,
+            as_shot_temp: 6500.0,
+            as_shot_tint: 0.0,
+            lens: None,
+            relative_wb: false,
+            camera_color: None,
+            camera_tone: None,
+            mattes: None,
+        }
     }
 }
 

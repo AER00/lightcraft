@@ -307,9 +307,18 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
         }
         let (temp, tint) = xy_to_temp_tint(xy);
         let relative = crate::camera_preview::file_local_look(raw.format) && t.matrix_is_fallback;
+        // White balance re-evaluates the file's own colour model (when it has one and no
+        // file-local look matrix sits on top of it)
+        let camera_color = (!t.matrix_is_fallback && camera_look.is_none()).then(|| {
+            let tags = lightcraft_raw::ColorData { profile: Default::default(), ..raw.color.clone() };
+            Arc::new(lightcraft_pipeline::CameraColor { tags, developed_for: xy })
+        });
         let camera_tone = camera_look.as_ref().map(|p| p.tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));
         let (temp, tint) = if relative { (6500.0, 0.0) } else { (temp.round(), tint.round()) };
-        return Ok((img, SourceInfo { raw: true, as_shot_temp: temp, as_shot_tint: tint, lens, relative_wb: relative, camera_tone, mattes }));
+        return Ok((
+            img,
+            SourceInfo { raw: true, as_shot_temp: temp, as_shot_tint: tint, lens, relative_wb: relative, camera_color, camera_tone, mattes },
+        ));
     }
     let d = lightcraft_codecs::decode(&bytes, fit_box(max_edge)).map_err(|e| e.to_string())?;
     drop(bytes);
@@ -798,6 +807,28 @@ mod tests {
         let heuristic = SourceInfo { mattes: None, ..info.clone() };
         assert!(green(&s, &heuristic, 2) < green(&plain, &heuristic, 2));
         assert_eq!(green(&s, &heuristic, 13), green(&plain, &heuristic, 13));
+    }
+
+    /// A DNG's white balance is re-evaluated through its own colour model: the decoder hands the
+    /// pipeline the file's colour tags (without the profile look, applied at load) and the white
+    /// the pixels were developed for, and a custom white balance renders a neutral differently
+    /// from the Bradford adaptation it replaces.
+    #[test]
+    fn dng_white_balance_uses_the_camera_colour_model() {
+        use lightcraft_pipeline::{RenderRequest, render};
+        let dng = crate::tests_xmp::synthetic_dng_with(None, Default::default());
+        let raw = lightcraft_raw::decode(&dng).unwrap();
+        let (img, info) = load_bytes(&dng, 64).unwrap();
+        let cc = info.camera_color.as_ref().expect("a DNG with a colour matrix");
+        assert_eq!(cc.developed_for, lightcraft_raw::color::as_shot_white_xy(&raw));
+        assert!(cc.tags.profile.is_empty());
+        assert_eq!(cc.tags.color_matrix, raw.color.color_matrix);
+        let mut s = lightcraft_develop::DevelopSettings::default();
+        (s.wb.mode, s.wb.temp, s.wb.tint) = (lightcraft_develop::WbMode::Custom, 3000.0, 20.0);
+        let req = RenderRequest::fit(32, 32);
+        let camera = render(&img, &info, &s, &req).image;
+        let adapted = render(&img, &SourceInfo { camera_color: None, ..info.clone() }, &s, &req).image;
+        assert_ne!(camera.data, adapted.data);
     }
 
     /// Apple ProRAW: like Lightroom Classic, the default render ignores the file's

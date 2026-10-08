@@ -22,12 +22,20 @@ pub fn white_balance(img: &mut Rgb32f, info: &SourceInfo, s: &DevelopSettings) {
     wb_gain(img, info, s, 1.0);
 }
 
-/// The white-balance matrix (linear Rec.2020, luminance-preserving) for the settings, or `None`
-/// when the as-shot white is kept.
+/// The white-balance matrix (linear Rec.2020) for the settings, or `None` when the as-shot white
+/// is kept. A raw source with its camera colour model ([`crate::CameraColor`]) is re-developed for
+/// the new white in camera space, as Lightroom does (so a neutral under the chosen white renders
+/// neutral and saturated colours move as the camera's matrices say); other sources are adapted
+/// with Bradford, luminance-preserving.
 pub fn wb_matrix_for(info: &SourceInfo, s: &DevelopSettings) -> Option<[[f32; 3]; 3]> {
     let (t, tint) = effective_wb(info, s);
     if (t - info.as_shot_temp).abs() < 1e-6 && (tint - info.as_shot_tint).abs() < 1e-6 {
         return None;
+    }
+    if let Some(cc) = info.camera_color.as_deref().filter(|_| info.raw && !info.relative_wb)
+        && let Some(m) = lightcraft_raw::color::rebalance(&cc.tags, cc.developed_for, temp_tint_to_xy(t, tint))
+    {
+        return Some(m.to_f32());
     }
     let set = wb_matrix(&REC2020, temp_tint_to_xy(t, tint));
     let shot = wb_matrix(&REC2020, temp_tint_to_xy(info.as_shot_temp, info.as_shot_tint));

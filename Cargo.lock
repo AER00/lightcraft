@@ -2986,6 +2986,7 @@ dependencies = [
  "lightcraft-develop",
  "lightcraft-geom",
  "lightcraft-raster",
+ "lightcraft-raw",
  "lightcraft-scenes",
  "proptest",
  "rayon",
