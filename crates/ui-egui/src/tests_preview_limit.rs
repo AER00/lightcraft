@@ -233,4 +233,47 @@ mod in_the_loupe {
         }
         assert!(sum / n < 6.0, "mean difference {:.2} / 255 between the window and the frame render", sum / n);
     }
+
+    // Given a Fit view, a slider drag (whose Main draft is at 0.6 scale) does not start window renders
+    #[test]
+    fn a_slider_drag_at_fit_makes_no_window_render() {
+        let (mut h, _) = detail();
+        h.app.session.begin_interaction("Exposure").unwrap();
+        for _ in 0..5 {
+            h.step();
+        }
+        assert_eq!(h.app.region_view, None);
+        assert_eq!(region_tile(&h), None);
+    }
+
+    // Given a zoomed view with a window render, when I zoom back to Fit, then the window's texture is freed
+    #[test]
+    fn the_window_texture_is_freed_when_it_is_not_needed() {
+        let (mut h, _) = detail();
+        h.app.ui.settings.preview_limit = 1600;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        assert!(region_tile(&h).is_some());
+        h.request("engine.execute", json!({"command": "view.zoomFit"}), T);
+        h.settle(SETTLE);
+        assert_eq!(region_tile(&h), None);
+        assert_eq!(h.app.region_view, None);
+    }
+
+    // Given a zoomed view, when the photo is edited, then the old window (made with the old look)
+    // is no longer current and is replaced by one for the new look
+    #[test]
+    fn an_edit_replaces_the_window() {
+        let (mut h, _) = detail();
+        h.app.ui.settings.preview_limit = 1600;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        let first = h.app.region_view.expect("a window");
+        h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": 1.0}}), T);
+        h.settle(SETTLE);
+        let second = h.app.region_view.expect("a window");
+        assert_ne!(first.settings, second.settings);
+        assert_ne!(first.key, second.key);
+        assert_eq!(h.app.renderer.textures.get(&Slot::Region).map(|t| t.key), Some(second.key), "the new window arrived");
+    }
 }

@@ -233,7 +233,13 @@ impl Renderer {
     /// Whether windows of the frame can be rendered here: not in the browser build, whose workers
     /// rebuild the request from a wire format that has no window yet.
     pub fn can_render_windows(&self) -> bool {
-        self.offload.is_none()
+        self.offload.is_none() && !cfg!(target_arch = "wasm32")
+    }
+
+    /// Free a view slot's texture and stage cache (the view is no longer shown).
+    pub fn release(&mut self, slot: Slot) {
+        self.textures.remove(&slot);
+        self.stages.remove(&slot);
     }
 
     /// Run jobs through `offload` from now on (instead of the job pool / inline).

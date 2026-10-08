@@ -10,10 +10,10 @@ use lightcraft_engine::pipeline::PixelWindow;
 
 /// Windows start and end on multiples of this many pixels of the zoomed frame.
 pub const SNAP: usize = 256;
-/// Context rendered beyond the visible pixels (a multiple of [`SNAP`] after snapping).
-pub const MARGIN: usize = 256;
+/// The most context rendered beyond the visible pixels (a multiple of [`SNAP`]).
+pub const MAX_MARGIN: usize = 768;
 /// The most a window may span on either axis: a bound on its texture whatever the window size.
-pub const MAX_SPAN: usize = 8192;
+pub const MAX_SPAN: usize = 6144;
 
 /// A window render the loupe asked for: which photo, the size of the zoomed frame it is a window
 /// of, and the window. The texture that comes back is drawn at this place of the frame.
@@ -23,6 +23,30 @@ pub struct RegionView {
     pub key: u64,
     pub full: (usize, usize),
     pub window: PixelWindow,
+    /// Hash of the develop settings it was rendered with.
+    pub settings: u64,
+}
+
+impl RegionView {
+    /// Whether this window's pixels still belong in a loupe showing `photo` with `settings` in a
+    /// frame of `full` pixels (they are drawn until the next window arrives, if so).
+    pub fn is_current(&self, photo: lightcraft_catalog::PhotoId, full: (usize, usize), settings: u64) -> bool {
+        self.photo == photo && self.full == full && self.settings == settings
+    }
+}
+
+/// Whether windows can be rendered for these settings. Spot removal reads its source patch from
+/// outside the spot, and an automatic one is chosen from the pixels at hand: neither is the same
+/// in a window as in the whole frame, so those photos stay on the whole-frame render.
+pub fn windows_allowed(s: &lightcraft_develop::DevelopSettings) -> bool {
+    s.spots.is_empty()
+}
+
+/// Context to render around the visible pixels of a frame `full_long` pixels along: enough for the
+/// wide stages (base, clarity and dehaze planes have sigmas up to 0.02 of it) up to a cap.
+pub fn margin_for(full_long: usize) -> usize {
+    let want = (full_long as f64 * 0.045).min(MAX_MARGIN as f64) as usize;
+    want.div_ceil(SNAP).max(1) * SNAP
 }
 
 /// Whether a view drawn `drawn_long` pixels along its long edge needs a window render on top of
@@ -32,19 +56,20 @@ pub fn needed(drawn_long: f32, rendered_long: usize) -> bool {
 }
 
 /// The window of a `full_w × full_h` frame to render so that `visible` — `(x0, y0, x1, y1)` in the
-/// frame's pixels, as much of the frame as is on screen — is covered: expanded by [`MARGIN`],
-/// snapped outwards to the [`SNAP`] grid and clamped into the frame. `None`: nothing is visible.
+/// frame's pixels, as much of the frame as is on screen — is covered: expanded by a margin,
+/// snapped outwards to the [`SNAP`] grid (margin: see [`margin_for`]) and clamped into the frame. `None`: nothing is visible.
 pub fn window_for(full_w: usize, full_h: usize, visible: (f32, f32, f32, f32)) -> Option<PixelWindow> {
     if full_w == 0 || full_h == 0 || [visible.0, visible.1, visible.2, visible.3].iter().any(|v| !v.is_finite()) {
         return None;
     }
+    let margin = margin_for(full_w.max(full_h));
     let axis = |lo: f32, hi: f32, full: usize| -> Option<(usize, usize)> {
         let (lo, hi) = (lo.max(0.0), hi.min(full as f32));
         if hi <= lo {
             return None;
         }
-        let a = (lo as usize).saturating_sub(MARGIN) / SNAP * SNAP;
-        let b = ((hi.ceil() as usize).saturating_add(MARGIN)).div_ceil(SNAP).saturating_mul(SNAP).min(full);
+        let a = (lo as usize).saturating_sub(margin) / SNAP * SNAP;
+        let b = ((hi.ceil() as usize).saturating_add(margin)).div_ceil(SNAP).saturating_mul(SNAP).min(full);
         // a window larger than MAX_SPAN keeps the visible part (centred on it), snapped
         if b - a > MAX_SPAN {
             let mid = ((lo + hi) / 2.0) as usize;
@@ -76,8 +101,9 @@ mod tests {
     #[test]
     fn the_window_covers_the_visible_area_with_a_margin_on_the_grid() {
         let w = window_for(48_000, 32_000, (20_000.0, 10_000.0, 21_400.0, 10_900.0)).unwrap();
-        assert!(w.x <= 20_000 - MARGIN && w.x + w.w >= 21_400 + MARGIN, "{w:?}");
-        assert!(w.y <= 10_000 - MARGIN && w.y + w.h >= 10_900 + MARGIN, "{w:?}");
+        let m = margin_for(48_000);
+        assert!(w.x + m <= 20_000 && w.x + w.w >= 21_400 + m, "{w:?}");
+        assert!(w.y + m <= 10_000 && w.y + w.h >= 10_900 + m, "{w:?}");
         assert_eq!((w.x % SNAP, w.y % SNAP, w.w % SNAP, w.h % SNAP), (0, 0, 0, 0));
     }
 
@@ -99,6 +125,41 @@ mod tests {
         let w = window_for(3000, 2000, (2500.0, 1500.0, 9000.0, 9000.0)).unwrap();
         assert!(w.x + w.w <= 3000 && w.y + w.h <= 2000, "{w:?}");
         assert_eq!((w.x + w.w, w.y + w.h), (3000, 2000));
+    }
+
+    // Given a deeper zoom, the margin grows with the wide stages' kernels (3σ of the base, clarity
+    // and dehaze planes are 0.045 of the frame), up to a cap that bounds the window
+    #[test]
+    fn the_margin_grows_with_the_zoom_up_to_a_cap() {
+        assert_eq!(margin_for(1000), SNAP, "never less than one grid step");
+        assert!(margin_for(8000) > margin_for(3000));
+        assert_eq!(margin_for(48_000), MAX_MARGIN);
+        assert_eq!(margin_for(0), SNAP);
+        assert!(margin_for(usize::MAX) <= MAX_MARGIN);
+        for l in [100, 3000, 8000, 48_000, 400_000] {
+            assert_eq!(margin_for(l) % SNAP, 0);
+        }
+    }
+
+    // Given a tile rendered for other settings, another photo or another zoom, it is not drawn
+    #[test]
+    fn a_tile_is_drawn_only_while_it_shows_what_the_loupe_shows() {
+        use lightcraft_catalog::PhotoId;
+        let v = RegionView { photo: PhotoId(1), key: 7, full: (6000, 4000), window: PixelWindow { x: 0, y: 0, w: 256, h: 256 }, settings: 11 };
+        assert!(v.is_current(PhotoId(1), (6000, 4000), 11));
+        assert!(!v.is_current(PhotoId(2), (6000, 4000), 11), "another photo");
+        assert!(!v.is_current(PhotoId(1), (6000, 4001), 11), "another zoom");
+        assert!(!v.is_current(PhotoId(1), (6000, 4000), 12), "another look (an edit, an undo)");
+    }
+
+    // Given a photo with spot removal, no window render: a spot reads pixels beyond the window
+    #[test]
+    fn photos_with_spots_stay_on_the_whole_frame_render() {
+        use lightcraft_develop::{DevelopSettings, Spot};
+        let mut s = DevelopSettings::default();
+        assert!(windows_allowed(&s));
+        s.spots.push(Spot::default());
+        assert!(!windows_allowed(&s));
     }
 
     // Given nothing visible, or hostile numbers, there is no window (never a panic)
