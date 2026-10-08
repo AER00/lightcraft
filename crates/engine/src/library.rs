@@ -395,7 +395,7 @@ impl Session {
             forgot_local: None,
             presets_written,
             view_written,
-            settings_warnings: settings.warnings,
+            settings_warnings: unlocked_warning(lock.as_ref()).into_iter().chain(settings.warnings).collect(),
             warnings_reported: 0,
             blocked: settings.blocked,
             lock: lock.take(),
@@ -570,7 +570,8 @@ impl Session {
         lib.files.write_atomic("prefs.json", &v).map_err(|e| EngineError::Other(format!("prefs: {e}")))
     }
 
-    /// Settings-file warnings of the open library not handed out yet (the UI shows each once).
+    /// Warnings about the open library not handed out yet: its settings files, and a lock that
+    /// couldn't be taken (the UI shows each once; the CLI and MCP print them on stderr).
     pub fn take_library_warnings(&mut self) -> Vec<String> {
         let Some(lib) = self.library.as_mut() else { return vec![] };
         let new = lib.settings_warnings[lib.warnings_reported..].to_vec();
@@ -624,4 +625,16 @@ impl Session {
         }
         Ok(())
     }
+}
+
+/// The warning for a library opened without its one-program-at-a-time lock (issue #171): its
+/// file system can't lock `catalog.lock` (some network shares). It opens anyway, as documented —
+/// refusing would lock the user out — but the user must learn that a second program could open it.
+fn unlocked_warning(lock: Option<&LibraryLock>) -> Option<String> {
+    lock.filter(|l| !l.held()).map(|_| {
+        "This library could not be locked (its catalog.lock file can't be locked where it is stored, e.g. on some network \
+         shares), so it is open without protection against a second program: use it in one LightCraft app or command at \
+         a time, or changes made in one of them can be lost."
+            .to_string()
+    })
 }
