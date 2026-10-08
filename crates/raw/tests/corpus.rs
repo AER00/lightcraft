@@ -166,6 +166,34 @@ fn corpus_cr2_cfa_patterns() {
     eprintln!("CR2 CFA layouts checked on {seen} files");
 }
 
+/// The as-shot white balance of Canon CR2s whose ColorData is stored as SHORT words stays readable (the PowerShot /
+/// EOS M files that store it as UNDEFINED bytes are covered by the unit test in `vendor/cr2.rs`; none is in this corpus).
+/// Daylight-ish CR2s have R/G above 1 and B/G between 1 and 2.5 (observed 1.4-2.7 on these nine bodies).
+#[test]
+fn corpus_cr2_as_shot_white_balance() {
+    let dir = corpus_root().join("raw");
+    let mut seen = 0;
+    for name in [
+        "cr2-canon-40d.cr2",
+        "cr2-canon-550d.cr2",
+        "cr2-canon-5d2.cr2",
+        "cr2-canon-5d3.cr2",
+        "cr2-canon-5dsr.cr2",
+        "cr2-canon-6d.cr2",
+        "cr2-canon-7d.cr2",
+        "cr2-canon-80d.cr2",
+    ] {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            eprintln!("skip: {name} absent");
+            continue;
+        };
+        let wb = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}")).wb_multipliers.unwrap_or_else(|| panic!("{name}: no as-shot WB"));
+        assert!(wb[1] == 1.0 && wb[0] > 1.0 && wb[2] > 0.5 && wb[0] < 4.0 && wb[2] < 4.0, "{name}: WB {wb:?}");
+        seen += 1;
+    }
+    eprintln!("CR2 as-shot WB checked on {seen} files");
+}
+
 /// raw.pixls.us has the same D5100 scene as 14-bit lossless compressed and uncompressed NEF: the Huffman decode must
 /// match the uncompressed image (up to the small differences between two exposures).
 #[test]
