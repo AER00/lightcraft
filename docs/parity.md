@@ -44,13 +44,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 6 | 0 | 3 | 2 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 17 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
+| X. Cross-cutting behaviours (BEHAV) | 17 | 5 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 75 | 3 | 3 | 1 | 49/52 (94%) | 23/24 (96%) |
 | Lightroom Classic extras | 32 | 11 | 39 | 9 | — | 22/24 (92%) |
-| **Total** | 392 | 35 | 86 | 36 | 193/200 (97%) | 142/152 (93%) |
+| **Total** | 392 | 36 | 86 | 36 | 193/200 (97%) | 142/152 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.8%** of 513 in-scope rows — P0 98.2% of 200 · P1 95.7% of 152 · P2 41.6% of 160.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.8%** of 514 in-scope rows — P0 98.2% of 200 · P1 95.7% of 152 · P2 41.6% of 161.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -522,6 +522,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-LEARN | Tutorials | OOS | 🚫 | | |
 | LR-BEHAV-WHATSNEW | What's new | P2 | ✅ | `cmd:app.whatsNew`, `docs/whats-new.md` | Help ▸ What's New: release highlights |
 | LR-BEHAV-AI-EA | Early-access badges | P2 | ⬜ | | |
+| LR-BEHAV-TITLEBAR | Title bar drag and double-click zoom (macOS) | P2 | 🟡 | `crates/ui-egui/src/titlebar.rs`, `crates/ui-egui/src/panels/topbar.rs`, `crates/ui-egui/src/tests_titlebar.rs` | the native title bar is hidden on macOS, so the top bar's empty space (including the traffic-light margin) moves the window and a double-click zooms or restores it; buttons and the search field keep their clicks; ignored in full screen. Zoom is winit's `Maximized`: it does not follow System Settings › “Double-click a window's title bar to” (Fill / Minimize). Not checked on a real macOS window yet |
 
 ## Y. Menus
 
