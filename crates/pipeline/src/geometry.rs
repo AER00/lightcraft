@@ -110,6 +110,13 @@ impl Frame {
         self.crop.rect = Rect::from_center(r.center(), r.width() * t, r.height() * t);
     }
 
+    /// Long edge, in pixels, of the whole output this frame draws (its own size unless it is a
+    /// window of a larger one): what size-relative effects (noise reduction, edge refinement)
+    /// must scale with, so a window matches the same pixels of the whole render.
+    pub fn output_long(&self, w: usize, h: usize) -> usize {
+        self.view.map_or(w.max(h), |v| v.full_w.max(v.full_h) as usize)
+    }
+
     /// This frame narrowed to `win` of its `full_w × full_h` output: the same mapping, but the
     /// output is only that window (the crop rectangle shrinks to it; flips are as drawn).
     pub fn window(&self, full_w: usize, full_h: usize, win: crate::PixelWindow) -> Frame {

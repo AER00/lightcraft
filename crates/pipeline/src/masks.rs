@@ -60,7 +60,7 @@ pub fn evaluate_one(m: &Mask, frame: &Frame, w: usize, h: usize, img: &Rgb32f, l
         // Refine Edges: the mask's edges follow the photo's (window up to ~4 % of the long edge,
         // the width of a soft brush edge or gradient)
         let k = (m.refine / 100.0).clamp(0.0, 1.0) as f32;
-        let sigma = (0.04 * w.max(h) as f32 * k).max(1.0);
+        let sigma = (0.04 * frame.output_long(w, h) as f32 * k).max(1.0);
         let refined = guided_cross(log_l, &alpha, sigma, 0.02);
         for (a, r) in alpha.data.iter_mut().zip(&refined.data) {
             *a += (r - *a) * k.sqrt();

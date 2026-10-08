@@ -150,3 +150,51 @@ fn windows_outside_or_degenerate_are_clamped() {
         assert!(r.width >= 1 && r.height >= 1 && r.width <= W && r.height <= H, "{win:?}: {}×{}", r.width, r.height);
     }
 }
+
+/// A textured, noisy source: what noise reduction and edge refinement act on.
+fn noisy_scene() -> Rgb32f {
+    let base = scene();
+    Rgb32f::from_fn(base.width, base.height, |x, y| {
+        let mut v = (x as u32).wrapping_mul(0x8da6_b343) ^ (y as u32).wrapping_mul(0xd816_3841);
+        v ^= v >> 13;
+        v = v.wrapping_mul(0x5bd1_e995);
+        v ^= v >> 15;
+        let n = 1.0 + 0.25 * ((v & 0xffff) as f32 / 32768.0 - 1.0);
+        base.data[y * base.width + x].map(|c| c * n)
+    })
+}
+
+fn check_noisy(name: &str, s: &DevelopSettings, win: PixelWindow, max_ok: u8, mean_ok: f64) {
+    let src = noisy_scene();
+    let f = render(&src, &SourceInfo::default(), s, &RenderRequest::fit(W, H)).image;
+    let w = render(&src, &SourceInfo::default(), s, &RenderRequest { window: Some(win), ..RenderRequest::fit(W, H) }).image;
+    let (max, mean) = compare(&f, &w, win);
+    assert!(max <= max_ok && mean <= mean_ok, "{name}: max {max} (≤ {max_ok}), mean {mean:.3} (≤ {mean_ok})");
+}
+
+// Given noise reduction, its strength follows the whole frame's size, not the window's
+#[test]
+fn noise_reduction_does_not_depend_on_the_window() {
+    for (id, v) in [("detail.nrLuminance", 80.0), ("detail.nrColor", 80.0)] {
+        let mut s = DevelopSettings::default();
+        controls::set(&mut s, id, v);
+        check_noisy(id, &s, MID, 3, 0.15);
+    }
+}
+
+// Given a mask with Refine Edges, the refinement width follows the whole frame's size
+#[test]
+fn mask_edge_refinement_does_not_depend_on_the_window() {
+    use lightcraft_develop::{LocalAdjustments, Mask, MaskComponent, MaskOp, MaskShape};
+    use lightcraft_geom::Point;
+    let shape = MaskShape::Linear { start: Point::new(0.45, 0.5), end: Point::new(0.55, 0.5) };
+    let mut s = DevelopSettings::default();
+    s.masks.push(Mask {
+        id: 1,
+        components: vec![MaskComponent { name: None, op: MaskOp::Add, invert: false, shape }],
+        adjust: LocalAdjustments { exposure: 1.5, ..Default::default() },
+        refine: 100.0,
+        ..Default::default()
+    });
+    check_noisy("refine", &s, MID, 3, 0.2);
+}
