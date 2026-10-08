@@ -43,6 +43,8 @@
 - Select All and multi-selection show every selected photo in the grid and filmstrip, not only the active one
   (issues #187, #298). Importing files that are in Recently Deleted asks whether to leave them there, restore them
   (with their edits) or import them as new; the trash view's Photo menu has Empty Recently Deleted.
+- The Import Photos review opens bigger and can be resized; its photo grid fills it (issue #337). Shift-click checks
+  or unchecks a range of photos (issue #338).
 
 ### Reliability
 - On macOS, single-key shortcuts that appear in the menu bar now work: E, C, H, M, ⇧P, I, K, D, ratings 0–5,
@@ -56,6 +58,7 @@
   with the logs of the two previous runs beside it, so warnings and crashes of a run started from a desktop menu or the
   Dock can be attached to a bug report. `LIGHTCRAFT_LOG` works as before; `RUST_LOG` takes env_logger-style
   directives. See README → Quick start → Logs.
+- `lightcraft-cli` logs warnings on stderr too (issue #168); `LIGHTCRAFT_LOG` or `RUST_LOG` picks another level.
 - LightCraft no longer crashes at launch on Windows PCs whose Vulkan driver is broken (issue #136, e.g. some Intel UHD
   630 drivers): on Windows the window and GPU rendering use DirectX 12 only and never load the Vulkan driver unless
   asked to. `LIGHTCRAFT_GPU_BACKEND=dx12 | vulkan | metal | off` (or wgpu's `WGPU_BACKEND`, which GPU rendering
