@@ -69,6 +69,16 @@ rendering; `set VK_LOADER_DRIVERS_DISABLE=*igvk64*` (Vulkan loader) hides a spec
 from every program started with it. Help ▸ System Info and `app.gpu` show the adapter and backend in
 use (e.g. `Intel(R) UHD Graphics 630 (Dx12)`).
 
+**Window never appears, "not responding" (Windows, NVIDIA; issue #374).** With *Shader Cache Size*
+set to **Disabled** in NVIDIA Control Panel (Manage 3D settings → Global Settings), NVIDIA's driver
+walks the whole system drive while the window's GPU device is created (`D3D12CreateDevice` →
+`nvwgf2umx.dll` → `NvMemMapStoragex.dll!TotalDiskUsage`), before the first frame: a black,
+unresponsive window for minutes. The Vulkan driver shares that code, so another backend doesn't
+help. Set *Shader Cache Size* back to **Driver Default** (or any size); the setting is global, there
+is no per-program override. Other programs that create a DX12 or Vulkan device at startup hang the
+same way (PhotoCraft does). It is a driver issue: nothing in LightCraft itself
+walks the drive.
+
 ## Where it is used
 - `lightcraft_engine::media::develop` (called by every `RenderJob`): loupe / before / compare views,
   `render_now` (CLI, MCP, control channel renders) and exports render on the GPU when one is
