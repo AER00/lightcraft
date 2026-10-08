@@ -88,6 +88,12 @@ pub struct Renderer {
     #[cfg(test)]
     pub(crate) thumb_jobs_built: usize,
     request_ids: HashMap<Slot, u64>,
+    /// Request id of the pixels each interactive view (loupe, before, hover) shows: a draft that
+    /// finishes after a newer request was made still replaces older pixels, so a long slider drag
+    /// keeps updating the loupe instead of waiting for the drag to pause.
+    shown_ids: HashMap<Slot, u64>,
+    /// Requests made before this id belong to a library or preview cache that is gone.
+    epoch: u64,
     preview_generation: Option<(std::sync::Weak<lightcraft_preview::PreviewCache>, u64)>,
     /// Last thumbnail inputs; weak identities do not retain photo histories or force deep clones.
     /// (photo, size bucket, job key, whether the request went through an embedded stand-in)
@@ -147,6 +153,8 @@ impl Renderer {
             #[cfg(test)]
             thumb_jobs_built: 0,
             request_ids: HashMap::new(),
+            shown_ids: HashMap::new(),
+            epoch: 0,
             preview_generation: None,
             pool: JobPool::new(threads),
             thumb_inputs: HashMap::new(),
@@ -289,6 +297,8 @@ impl Renderer {
     /// Drop every texture and cached stage (another library was opened: photo ids changed meaning).
     pub fn forget_all(&mut self) {
         self.request_ids.clear();
+        self.shown_ids.clear();
+        self.epoch = lightcraft_preview::next_tick();
         self.preview_generation = None;
         self.pool.reprioritize(|_, _| None);
         self.thumb_inputs.clear();
@@ -439,12 +449,24 @@ impl Renderer {
         let mut changed = false;
         for (mut slot, r, ms) in finished {
             self.completed += 1;
-            // Ignore obsolete pixels, failures and decoded sources, even for the same render key.
+            // Ignore obsolete pixels, failures and decoded sources, even for the same render key;
+            // an interactive view still takes a superseded draft that is newer than what it shows.
             if self.request_ids.get(&slot) != Some(&r.request_id) {
-                continue;
+                let newer_draft = matches!(slot, Slot::Main | Slot::Before | Slot::Hover)
+                    && self.request_ids.contains_key(&slot)
+                    && r.request_id >= self.epoch
+                    && self.shown_ids.get(&slot).is_none_or(|shown| r.request_id > *shown)
+                    && r.rendered.is_ok();
+                if !newer_draft {
+                    continue;
+                }
+            } else {
+                self.request_ids.remove(&slot);
+                session.accept(&r);
             }
-            self.request_ids.remove(&slot);
-            session.accept(&r);
+            if matches!(slot, Slot::Main | Slot::Before | Slot::Hover) {
+                self.shown_ids.insert(slot, r.request_id);
+            }
             if self.pending.get(&slot).is_some_and(|p| p.0 == r.key) {
                 self.pending.remove(&slot);
             }
@@ -851,6 +873,33 @@ mod thumbnail_tests {
         app.renderer.poll(&ctx, &mut app.session);
         assert!(!app.renderer.textures.contains_key(&slot));
         assert_eq!(app.session.media.source_usage().0, 0);
+    }
+
+    #[test]
+    fn loupe_shows_superseded_drafts_newer_than_its_pixels_during_a_drag() {
+        let (mut app, work, ctx) = fixture();
+        let mut jobs = Vec::new();
+        for exposure in [0.0, 1.0, 2.0] {
+            let mut edit = lightcraft_develop::DevelopSettings::default();
+            edit.light.exposure = exposure;
+            app.session.catalog.apply(Op::SetDevelop { id: PhotoId(1), settings: Arc::new(edit), label: "drag".into(), edited: None }).unwrap();
+            let job = app.session.loupe_job(PhotoId(1), 8, 8, true).unwrap().draft();
+            app.renderer.request(Slot::Main, job, 100);
+            jobs.push(take_job(&work).1);
+        }
+        let keys: Vec<u64> = jobs.iter().map(|j| j.key).collect();
+        let mut jobs = jobs.into_iter();
+        let (first, second, last) = (jobs.next().unwrap(), jobs.next().unwrap(), jobs.next().unwrap());
+        // the first draft lands while the newest is still rendering: the loupe moves on
+        finish(&mut app, &work, &ctx, Slot::Main, first.run());
+        assert_eq!(app.renderer.textures.get(&Slot::Main).map(|t| t.key), Some(keys[0]));
+        assert!(app.renderer.is_pending(Slot::Main));
+        finish(&mut app, &work, &ctx, Slot::Main, last.run());
+        assert_eq!(app.renderer.textures.get(&Slot::Main).map(|t| t.key), Some(keys[2]));
+        // a draft older than the pixels shown never replaces them
+        finish(&mut app, &work, &ctx, Slot::Main, second.run());
+        assert_eq!(app.renderer.textures.get(&Slot::Main).map(|t| t.key), Some(keys[2]));
+        assert!(!app.renderer.is_pending(Slot::Main));
     }
 
     #[test]

@@ -120,6 +120,7 @@ language_table! {
     ZhHans, "zh-hans", "简体中文", "Hans", include_str!("../locales/zh-hans.json");
     ZhHant, "zh-hant", "繁體中文（台灣）", "Hant", include_str!("../locales/zh-hant.json");
     Ja, "ja", "日本語", "Jpan", include_str!("../locales/ja.json");
+    PtBr, "pt-br", "Português (Brasil)", "Latn", include_str!("../locales/pt-br.json");
 }
 
 // The settings file stores the BCP-47 code (`"zh-hans"`), never the Rust variant name, so a
@@ -339,6 +340,10 @@ mod tests {
         assert_eq!(Locale::parse_tag("zh-Hant-TW"), Some(Locale::ZhHant));
         assert_eq!(Locale::parse_tag("zh-CN"), Some(Locale::ZhHans));
         assert_eq!(Locale::parse_tag("ja_JP.UTF-8"), Some(Locale::Ja));
+        assert_eq!(Locale::parse_tag("pt-br"), Some(Locale::PtBr));
+        assert_eq!(Locale::parse_tag("pt-BR"), Some(Locale::PtBr));
+        assert_eq!(Locale::parse_tag("pt_BR.UTF-8"), Some(Locale::PtBr));
+        assert_eq!(Locale::parse_tag("pt"), Some(Locale::PtBr));
         assert_eq!(Locale::parse_tag("de"), None);
     }
 
@@ -353,6 +358,9 @@ mod tests {
         assert_eq!(tr("A string no catalog has"), "A string no catalog has");
         set_language(Locale::Ja);
         assert_eq!(tr("Exposure"), "露出");
+        set_language(Locale::PtBr);
+        assert_eq!(tr("Exposure"), "Exposição");
+        assert_eq!(tr("Settings"), "Configurações");
         set_language(Locale::En);
         assert_eq!(tr("Exposure"), "Exposure");
     }
@@ -457,6 +465,7 @@ mod tests {
             ("app.language.english", Locale::En),
             ("app.language.simplifiedChinese", Locale::ZhHans),
             ("app.language.japanese", Locale::Ja),
+            ("app.language.portuguese", Locale::PtBr),
         ];
         // One command per language, and every command reachable from the menu table.
         assert_eq!(commands.len(), Locale::ALL.len());
@@ -559,6 +568,8 @@ mod tests {
         assert!(text.contains("マイフォト") && text.contains("すべての写真"), "{text}");
         let text = painted_text(&ctx, &mut app, Locale::ZhHans);
         assert!(text.contains("我的照片") && text.contains("所有照片"), "{text}");
+        let text = painted_text(&ctx, &mut app, Locale::PtBr);
+        assert!(text.contains("Minhas fotos") && text.contains("Todas as fotos"), "{text}");
         set_language(Locale::En);
     }
 
