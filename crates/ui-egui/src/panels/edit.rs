@@ -351,7 +351,7 @@ fn profile_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings)
     let cur = d.profile.id.as_str();
     // (clicked, hovered)
     let mut pick: (Option<String>, Option<String>) = (None, None);
-    let mut item = |ui: &mut egui::Ui, key: &str, id: &str, name: &str, pick: &mut (Option<String>, Option<String>)| {
+    let item = |ui: &mut egui::Ui, key: &str, id: &str, name: &str, pick: &mut (Option<String>, Option<String>)| {
         let r = ui.selectable_label(id == cur, crate::i18n::profile_label(id, name));
         register(ui.ctx(), format!("profileMenu:{key}:{id}"), r.rect);
         if r.clicked() {

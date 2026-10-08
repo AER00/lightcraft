@@ -1437,7 +1437,7 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        h.app.ui.dialog = Some(crate::state::Dialog::Import { opts: crate::import::ImportDialog::new(candidates) });
+        h.app.ui.dialog = Some(crate::state::Dialog::Import { opts: Box::new(crate::import::ImportDialog::new(candidates)) });
         let rect = |h: &mut Headless| {
             let r = h.request("ui.widgets", json!({}), t);
             let w = r["result"].as_array().and_then(|a| a.iter().find(|w| w["id"] == "dialog:window")).expect("dialog on screen");
