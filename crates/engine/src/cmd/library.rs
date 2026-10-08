@@ -271,7 +271,20 @@ pub fn specs() -> Vec<CommandSpec> {
                     "libraryFolder" => {
                         let path = str_param(p, "path").map(str::trim).filter(|d| !lightcraft_catalog::query::folder_key(d).is_empty());
                         let path = path.ok_or_else(|| bad("library.source", "libraryFolder needs the `path` of a folder from library.folders"))?;
+                        if lightcraft_catalog::folders::is_startup_disk(path) {
+                            return Err(bad("library.source", "the startup disk's path covers every disk: choose a folder in it"));
+                        }
+                        let f = Filter { library_folder: Some(path.to_string()), ..Default::default() };
+                        let ids = s.catalog.query(&f, &Sort::default());
+                        if ids.is_empty() {
+                            return Err(bad("library.source", format!("{path}: no photo in the library was imported from it")));
+                        }
+                        if covers_other_disks(s, path, &ids) {
+                            return Err(bad("library.source", format!("{path} holds other disks as well: choose a disk or a folder on one")));
+                        }
                         s.library_folder = Some(path.to_string());
+                        // one folder at a time: a folder filter left over would be ignored
+                        s.filter.library_folder = None;
                         LibrarySource::LibraryFolder
                     }
                     other => return Err(bad("library.source", format!("unknown source `{other}`"))),
@@ -293,7 +306,11 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 let mut v = serde_json::to_value(&s.filter).unwrap_or_default();
                 lightcraft_develop::presets::deep_merge(&mut v, p);
-                s.filter = serde_json::from_value(v).map_err(|e| bad("library.filter", e.to_string()))?;
+                let f: Filter = serde_json::from_value(v).map_err(|e| bad("library.filter", e.to_string()))?;
+                if f.library_folder.is_some() && s.source == LibrarySource::LibraryFolder {
+                    return Err(bad("library.filter", "a folder is already shown (library.source): show another source first"));
+                }
+                s.filter = f;
                 Ok(json!({"count": s.visible().len()}))
             }
         ),
@@ -302,7 +319,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Library Folders",
             [],
             None,
-            "{} → [{name, path, count, own, children}] the folders the library's photos were imported from, with photo counts (subfolders included in `count`); pass a `path` to library.filter as `libraryFolder`",
+            "{} → [{name, path, count, own, volume, selectable, children}] the disks and the folders the library's photos were imported from, with photo counts (subfolders included in `count`); show one with library.source {kind: libraryFolder, path} (rows with selectable false only open)",
             always,
             |s, _| Ok(serde_json::to_value(s.catalog.folder_tree()).unwrap_or_default())
         ),
@@ -330,10 +347,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 if ids.is_empty() {
                     return Err(bad(C, format!("{path}: no photo in the library was imported from it")));
                 }
-                let disks: std::collections::BTreeSet<String> =
-                    ids.iter().filter_map(|id| s.catalog.photo(*id)).filter_map(|p| lightcraft_catalog::folders::volume_of(p)).collect();
-                if disks.len() > 1 && !bool_or(p, "disk", false) {
-                    return Err(bad(C, format!("{path} holds photos of {} disks: pass `disk: true` to remove them all", disks.len())));
+                if covers_other_disks(s, path, &ids) && !bool_or(p, "disk", false) {
+                    return Err(bad(C, format!("{path} holds whole disks: pass `disk: true` to remove everything on them")));
                 }
                 let ops = ids.iter().map(|id| Op::SetDeleted { id: *id, deleted: true }).collect();
                 s.commit("Remove Folder from Library", Op::Batch { ops })?;
@@ -1112,6 +1127,16 @@ fn merge_rules(base: &lightcraft_catalog::Filter, patch: &Value, c: &str) -> Res
     Ok(f)
 }
 
+/// Whether `path` lies above a disk: some of its `ids` photos are on a disk (not the startup
+/// disk) that the folder does not lie in. Such a folder (`/Volumes`, `/mnt`…) is not a folder of
+/// one disk but a way to reach several.
+fn covers_other_disks(s: &Session, path: &str, ids: &[PhotoId]) -> bool {
+    ids.iter()
+        .filter_map(|id| s.catalog.photo(*id))
+        .filter_map(|p| lightcraft_catalog::folders::volume_of(p))
+        .any(|v| v != "/" && !lightcraft_catalog::query::folder_within(path, &v))
+}
+
 /// The current view (source + filter) as smart-album rules. Viewing a smart album starts from
 /// its rules with the filter bar's settings on top.
 fn view_rules(s: &Session) -> lightcraft_catalog::Filter {
@@ -1138,6 +1163,9 @@ fn view_rules(s: &Session) -> lightcraft_catalog::Filter {
         None => {
             let mut f = s.source.to_filter(&s.filter, &s.catalog);
             f.deleted = false;
+            if s.source == LibrarySource::LibraryFolder {
+                f.library_folder = s.library_folder.clone();
+            }
             f
         }
     }

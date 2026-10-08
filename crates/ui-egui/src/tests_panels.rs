@@ -202,6 +202,10 @@ fn sidebar_sections_collapse_and_remember_it() {
 
 /// A headless app over a library of file-backed photos that exist only in the catalog.
 fn folders_app(paths: &[&str]) -> Headless {
+    folders_app_sized(paths, [1400.0, 900.0])
+}
+
+fn folders_app_sized(paths: &[&str], size: [f32; 2]) -> Headless {
     use lightcraft_catalog::{Op, Photo, Source};
     let mut session = lightcraft_engine::Session::new();
     for path in paths {
@@ -210,7 +214,7 @@ fn folders_app(paths: &[&str]) -> Headless {
         session.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
     }
     let app = LightcraftApp::new(session, Services { png: None, ..Default::default() });
-    let mut h = Headless::new(app, [1400.0, 900.0], 1.0);
+    let mut h = Headless::new(app, size, 1.0);
     let r = h.request("ui.set", json!({"view": "photoGrid", "leftPanel": true}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
@@ -229,7 +233,7 @@ fn click(h: &mut Headless, id: &str) {
 }
 
 /// Photos imported from two folders: the sidebar's Folders section lists them, choosing one
-/// narrows the grid to its photos, and choosing it again shows everything (like By Date).
+/// fills the grid with its photos, and All Photos shows everything again.
 #[test]
 fn folders_section_lists_where_photos_were_imported_from_and_narrows_the_grid() {
     let mut h = folders_app(&["/pics/trip/a.jpg", "/pics/trip/b.jpg", "/pics/home/c.jpg"]);
@@ -361,8 +365,16 @@ fn the_chosen_folder_is_always_in_view() {
 
 #[test]
 fn a_renamed_folder_keeps_its_place_in_the_tree() {
+    /// Removes the folder however the test ends.
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
     let base = std::env::temp_dir().join(format!("lc-ui-rename-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
+    let _cleanup = Cleanup(base.clone());
     std::fs::create_dir_all(base.join("pics/trip")).unwrap();
     std::fs::create_dir_all(base.join("pics/home")).unwrap();
     let b = base.to_string_lossy().to_string();
@@ -377,7 +389,6 @@ fn a_renamed_folder_keeps_its_place_in_the_tree() {
     h.step();
     h.step();
     assert!(has(&h, &format!("source:libfolder:{b}/pics2/trip")), "the chosen folder is still on screen after the rename");
-    let _ = std::fs::remove_dir_all(&base);
 }
 
 /// The menu opens from anywhere on a folder row, the disclosure triangle included; a disk row
@@ -416,4 +427,36 @@ fn removing_a_disk_from_the_library_asks_first() {
     let r = h.request("ui.dialog.confirm", json!({}), T);
     assert_eq!(r["ok"], true, "{r}");
     assert_eq!(h.app.session.visible().len(), 1, "everything on that disk left the library");
+}
+
+/// However deep the folders go, a row keeps its name, count and click targets inside the panel:
+/// the indent stops growing after five levels instead of pushing the label out of the row.
+#[test]
+fn a_deep_chain_of_folders_keeps_its_rows_usable() {
+    let deep = "/a/b/c/d/e/f/g/h/i/j/k/l/m";
+    let mut h = folders_app(&[&format!("{deep}/x/1.jpg"), &format!("{deep}/y/2.jpg")]);
+    let toggles: Vec<(String, egui::Rect)> = h.app.widgets.iter().filter(|(w, _)| w.starts_with("libraryFolderToggle:")).cloned().collect();
+    assert!(toggles.len() >= 12, "the chain opens by itself: {}", toggles.len());
+    let row = widget(&h, "source:libfolder:/a");
+    for (id, r) in &toggles {
+        assert!(r.center().x <= row.left() + 10.0 + 16.0 * 5.0 + 1.0, "{id}: the triangle stays near the left edge ({r:?})");
+    }
+    // a click in the middle of a deep row chooses it; only the little triangle folds it
+    let leaf = format!("source:libfolder:{deep}/x");
+    assert!(has(&h, "libraryFolderToggle:/a/b/c/d/e/f/g/h/i/j/k/l/m") || has(&h, &leaf));
+    click(&mut h, "source:libfolder:/a/b/c/d/e/f/g/h/i/j/k/l");
+    assert_eq!(h.app.session.library_folder.as_deref(), Some("/a/b/c/d/e/f/g/h/i/j/k/l"), "the row's middle is the row, not its triangle");
+}
+
+/// A long folder name is trimmed before it can run under the photo count.
+#[test]
+fn a_long_folder_name_never_runs_under_the_photo_count() {
+    let long = "/very/long/2024-06-12 Tripping Through The Extremely Long Named Mountains Of Somewhere";
+    let mut h = folders_app_sized(&[&format!("{long}/a.jpg")], [900.0, 700.0]);
+    h.app.session.source = lightcraft_engine::LibrarySource::LibraryFolder;
+    h.app.session.library_folder = Some(long.into());
+    h.step();
+    h.step();
+    let (title, count) = (widget(&h, "grid:title"), widget(&h, "grid:count"));
+    assert!(title.right() + 8.0 <= count.left(), "title {title:?} vs count {count:?}");
 }

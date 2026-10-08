@@ -150,9 +150,19 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             folder_header(app, ui, hr, &b, &ids, local, &cnt)
         }
         None => {
-            let title = crate::i18n::source_title(&app.session);
-            ui.painter().text(pos2(hr.left() + 20.0, hr.center().y), Align2::LEFT_CENTER, &title, t.semibold(17.0), t.text);
-            ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
+            let full = crate::i18n::source_title(&app.session);
+            let count_w = ui.painter().layout_no_wrap(cnt.clone(), t.font(12.5), t.text_dim).size().x;
+            // the title gives way to the count: a long album or folder name is trimmed, in full on hover
+            let room = (hr.width() - 20.0 - count_w - 36.0).max(0.0);
+            let font = t.semibold(17.0);
+            let title = crate::widgets::elide_head(&full, room, |s| ui.painter().layout_no_wrap(s.to_string(), font.clone(), t.text).size().x);
+            let title_rect = ui.painter().text(pos2(hr.left() + 20.0, hr.center().y), Align2::LEFT_CENTER, &title, font, t.text);
+            let count_rect = ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
+            crate::widgets::register(ui.ctx(), "grid:title", title_rect);
+            crate::widgets::register(ui.ctx(), "grid:count", count_rect);
+            if title != full {
+                ui.interact(title_rect, ui.id().with("grid-title"), Sense::hover()).on_hover_text(full);
+            }
         }
     }
     super::chips::show(app, ui, &chips);

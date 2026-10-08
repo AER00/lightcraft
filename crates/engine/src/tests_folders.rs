@@ -267,7 +267,8 @@ fn the_folder_source_takes_a_library_folder_path_only() {
         assert!(s.execute("library.source", &params).is_err(), "{params}");
     }
     assert_eq!(s.source, LibrarySource::All, "refused, nothing changed");
-    assert_eq!(source_folder(&mut s, "/elsewhere")["count"], 0, "a folder with no photos shows nothing, not everything");
+    assert!(s.execute("library.source", &json!({"kind": "libraryFolder", "path": "/elsewhere"})).is_err(), "no photo was imported from it");
+    assert_eq!(s.source, LibrarySource::All);
 }
 
 #[test]
@@ -308,4 +309,71 @@ fn the_shown_folder_follows_reading_both_spellings_the_same_way() {
     s.library_folder = Some("/a/x/../b/sub".into());
     crate::cmd::browse::follow_folder(&mut s, "/a/b", "/a/c");
     assert_eq!(s.library_folder.as_deref(), Some("/a/c/sub"));
+}
+
+#[test]
+fn switching_from_one_folder_to_another_changes_what_is_shown() {
+    let mut s = session();
+    assert_eq!(source_folder(&mut s, "/pics/trip")["count"], 2);
+    assert_eq!(s.source_total(), Some(2));
+    assert_eq!(source_folder(&mut s, "/pics/home")["count"], 1, "same source, another folder");
+    assert_eq!(s.visible().len(), 1);
+    assert_eq!(s.source_total(), Some(1));
+}
+
+#[test]
+fn a_smart_album_made_from_a_folder_view_keeps_the_folder() {
+    let mut s = session();
+    source_folder(&mut s, "/pics/trip");
+    assert_eq!(s.visible().len(), 2);
+    let r = s.execute("album.createSmart", &json!({"name": "Trip"})).unwrap();
+    assert_eq!(r["count"], 2, "the album matches the folder's photos, not the whole library: {r}");
+}
+
+#[test]
+fn a_folder_source_and_a_folder_filter_never_disagree() {
+    let mut s = session();
+    s.execute("library.filter", &json!({"libraryFolder": "/pics/home"})).unwrap();
+    source_folder(&mut s, "/pics/trip");
+    assert_eq!(s.filter.library_folder, None, "choosing a folder drops a folder filter left over");
+    assert!(s.execute("library.filter", &json!({"libraryFolder": "/pics/home"})).is_err(), "one folder at a time");
+    assert_eq!(s.visible().len(), 2);
+    s.execute("library.filter", &json!({"libraryFolder": null, "rating": 0})).unwrap();
+    s.execute("library.source", &json!({"kind": "all"})).unwrap();
+    assert!(s.execute("library.filter", &json!({"libraryFolder": "/pics/home"})).is_ok(), "fine while no folder is the source");
+}
+
+#[test]
+fn a_folder_source_with_no_folder_shows_nothing() {
+    let mut s = session();
+    s.source = LibrarySource::LibraryFolder;
+    s.library_folder = None;
+    assert_eq!(s.visible().len(), 0, "not everything");
+    assert_eq!(s.source_total(), Some(0));
+}
+
+#[test]
+fn only_a_folder_that_shows_exactly_its_own_photos_can_be_the_source() {
+    let mut s = Session::new();
+    for p in ["/Volumes/nas/a/1.jpg", "/Users/me/2.jpg", "/Volumes/3.jpg"] {
+        add(&mut s, p);
+    }
+    for path in ["/", "//", "/elsewhere", "/Volumes"] {
+        assert!(s.execute("library.source", &json!({"kind": "libraryFolder", "path": path})).is_err(), "{path:?}");
+    }
+    assert_eq!(s.source, LibrarySource::All, "refused, nothing changed");
+    assert_eq!(source_folder(&mut s, "/Volumes/nas")["count"], 1, "a disk is a fine source");
+    assert_eq!(source_folder(&mut s, "/Users/me")["count"], 1);
+}
+
+#[test]
+fn removing_a_folder_above_a_disk_needs_asking_by_name_even_with_one_disk() {
+    let mut s = Session::new();
+    for p in ["/Volumes/nas/a/1.jpg", "/Users/me/2.jpg"] {
+        add(&mut s, p);
+    }
+    assert!(s.execute("library.removeFolder", &json!({"path": "/Volumes"})).is_err(), "it would take the whole nas");
+    assert_eq!(s.visible().len(), 2);
+    assert_eq!(s.execute("library.removeFolder", &json!({"path": "/Volumes/nas/a"})).unwrap()["removed"], 1, "a folder on the disk is just a folder");
+    assert_eq!(s.visible().len(), 1);
 }

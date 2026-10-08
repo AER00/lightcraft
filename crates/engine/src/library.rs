@@ -357,9 +357,14 @@ impl Session {
             self.source = v.source;
             self.browse = v.browse;
             self.library_folder = v.library_folder.filter(|f| !f.trim().is_empty());
-            if self.source == LibrarySource::LibraryFolder && self.library_folder.is_none() {
-                // no folder to show: everything, not an empty grid
-                self.source = LibrarySource::All;
+            if self.source == LibrarySource::LibraryFolder {
+                // a folder that is gone (or none): everything, not an empty grid
+                let f = lightcraft_catalog::Filter { library_folder: self.library_folder.clone(), ..Default::default() };
+                let any = self.library_folder.is_some() && !self.catalog.query(&f, &lightcraft_catalog::Sort::default()).is_empty();
+                if !any {
+                    self.source = LibrarySource::All;
+                    self.library_folder = None;
+                }
             }
             self.sort = v.sort;
             self.selection = v.selection;

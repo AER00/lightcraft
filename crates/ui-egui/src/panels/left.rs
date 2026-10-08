@@ -749,32 +749,6 @@ fn folders_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
 }
 
-/// `text` shortened to fit `max` (as `width` measures it): leading folders drop first
-/// (`Users/me/Pictures/Lightroom` → `…/Pictures/Lightroom`) so the end of a path, which says the
-/// most, stays; a single name still too long loses its end (`2024-06-12 Tri…`: folders tend to
-/// differ at the start). Cuts fall on characters. The result is never empty.
-fn elide_head(text: &str, max: f32, width: impl Fn(&str) -> f32) -> String {
-    if width(text) <= max {
-        return text.to_string();
-    }
-    let mut rest = text;
-    while let Some(i) = rest.find('/') {
-        rest = rest.get(i + 1..).unwrap_or("");
-        let cand = format!("…/{rest}");
-        if width(&cand) <= max {
-            return cand;
-        }
-    }
-    let n = rest.chars().count();
-    for keep in (1..n).rev() {
-        let cand: String = rest.chars().take(keep).chain(std::iter::once('…')).collect();
-        if width(&cand) <= max {
-            return cand;
-        }
-    }
-    "…".to_string()
-}
-
 /// Whenever the shown folder changes (a click, an agent, a rename or its undo), open the rows
 /// above it so it is on screen; folding one by hand afterwards sticks until the choice changes.
 fn reveal_chosen(app: &LightcraftApp, ui: &egui::Ui, tree: &[FolderNode]) {
@@ -799,6 +773,10 @@ fn reveal_chosen(app: &LightcraftApp, ui: &egui::Ui, tree: &[FolderNode]) {
     open_above(ui, tree, &chosen);
 }
 
+/// Deeper folders keep this indent: a chain of a dozen single folders would otherwise push every
+/// label out of the sidebar.
+const MAX_FOLDER_INDENT: f32 = 16.0 * 5.0;
+
 fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode], indent: f32) {
     let t = Tokens::get(ui.ctx());
     for n in nodes {
@@ -819,7 +797,8 @@ fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode],
         let count_w =
             if app.ui.show_counts { ui.painter().layout_no_wrap(n.count.to_string(), t.font(12.5), egui::Color32::WHITE).size().x } else { 0.0 };
         let room = ui.available_width() - 42.0 - indent - count_w - 28.0;
-        let label = elide_head(&name, room, |s| ui.painter().layout_no_wrap(s.to_string(), font.clone(), egui::Color32::WHITE).size().x);
+        let label =
+            crate::widgets::elide_head(&name, room, |s| ui.painter().layout_no_wrap(s.to_string(), font.clone(), egui::Color32::WHITE).size().x);
         let resp = row_named(app, ui, &format!("libfolder:{}", n.path), Icon::Folder, &label, Some(&name), Some(n.count), sel, indent);
         let mut toggled = false;
         if !n.children.is_empty() {
@@ -836,6 +815,9 @@ fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode],
             };
             ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
             toggled = tr.clicked();
+            tr.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, if open { crate::i18n::tr("Collapse") } else { crate::i18n::tr("Expand") })
+            });
             // the triangle sits on the row and takes its clicks: the menu opens from it too
             row_menu(app, &tr, n);
         }
@@ -855,7 +837,7 @@ fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode],
         }
         row_menu(app, &resp, n);
         if open && !n.children.is_empty() {
-            folder_rows(app, ui, &n.children, indent + 16.0);
+            folder_rows(app, ui, &n.children, (indent + 16.0).min(MAX_FOLDER_INDENT));
         }
     }
 }
@@ -998,7 +980,8 @@ fn keyword_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[KeywordNode
 
 #[cfg(test)]
 mod tests {
-    use super::{elide_head, local_places};
+    use super::local_places;
+    use crate::widgets::elide_head;
 
     /// Width = characters, so a limit of 12 is "12 characters".
     fn fit(text: &str, max: usize) -> String {

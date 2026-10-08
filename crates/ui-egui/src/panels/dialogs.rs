@@ -97,6 +97,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::Merge { opts } => opts.title(),
         Dialog::Settings { .. } => "Settings",
         Dialog::ConfirmDelete { .. } => "Delete Photos",
+        Dialog::RemoveFolder { disk: true, .. } => "Remove Disk from Library",
         Dialog::RemoveFolder { .. } => "Remove Folder from Library",
         Dialog::SamModel { .. } => "Download the SAM 3 Model?",
         Dialog::About => "About LightCraft",
@@ -711,7 +712,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ui.label(crate::i18n::tr_format!("Move {what} to Recently Deleted?", what = what));
                     ui.label(egui::RichText::new(crate::i18n::tr("They can be restored from Recently Deleted until it is emptied.")).color(t.text_dim));
                 }
-                Dialog::RemoveFolder { name, count, path, .. } => {
+                Dialog::RemoveFolder { name, count, path, disk } => {
                     ui.label(crate::i18n::tr_format!(
                         "Remove “{name}” and its {count} photo{} from the library?",
                         if *count == 1 { "" } else { "s" },
@@ -719,6 +720,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         count = count
                     ));
                     ui.label(egui::RichText::new(path.as_str()).color(t.text_dim));
+                    let scope = if *disk { "All the photos imported from this disk are included." } else { "That includes the photos in the folders inside it." };
+                    ui.label(egui::RichText::new(crate::i18n::tr(scope)).color(t.text_dim));
                     ui.label(
                         egui::RichText::new(crate::i18n::tr("They move to Recently Deleted and can be restored; no file on disk is touched."))
                             .color(t.text_dim),

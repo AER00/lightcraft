@@ -611,8 +611,8 @@ impl Session {
                 f.subfolders = b.subfolders;
             }
             if self.source == LibrarySource::LibraryFolder {
-                // no folder chosen: nothing (an empty path names no folder)
-                f.library_folder = Some(self.library_folder.clone().unwrap_or_default());
+                // no folder chosen: nothing (`.` names no folder)
+                f.library_folder = Some(self.library_folder.clone().unwrap_or_else(|| ".".into()));
             }
             let mut visible = self.catalog.query(&f, &self.sort);
             if matches!(self.source, LibrarySource::Album(_))
@@ -666,7 +666,7 @@ impl Session {
                 f.subfolders = b.subfolders;
             }
             if self.source == LibrarySource::LibraryFolder {
-                f.library_folder = Some(self.library_folder.clone().unwrap_or_default());
+                f.library_folder = Some(self.library_folder.clone().unwrap_or_else(|| ".".into()));
             }
             let n = self.catalog.query(&f, &self.sort).len();
             self.total = Some((key, n));
