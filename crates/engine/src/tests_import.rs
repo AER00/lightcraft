@@ -1007,3 +1007,58 @@ fn trashed_photo_ids(tag: &str) -> (Session, std::path::PathBuf, [u64; 1], u64) 
     let (s, src, id) = trashed_photo(tag);
     (s, src, [id], 0)
 }
+
+/// Issue #374: launch arguments never turn into a walk of a whole drive or home folder. An empty
+/// argument is ignored; `.`, `..` and (on Windows) `/` are resolved against the working folder a
+/// launcher picked, which is often a drive root; a root is replaced by its memory card's DCIM
+/// folder or refused, and so is the home folder.
+#[test]
+fn launch_paths_never_become_a_drive_root_or_the_home_folder() {
+    use crate::import::{LaunchPath, launch_path};
+    let root = if cfg!(windows) { Path::new("C:\\") } else { Path::new("/") };
+    let home = if cfg!(windows) { Path::new("C:\\Users\\me") } else { Path::new("/home/me") };
+    let none = |_: &Path| None;
+    let refused = |r: Option<LaunchPath>| matches!(r, Some(LaunchPath::Refused { .. }));
+    for empty in ["", "  "] {
+        assert_eq!(launch_path(empty, Some(root), Some(home), none), None, "{empty:?}");
+    }
+    // the working folder is the drive root: `.` (and `..`) name the whole drive
+    for arg in [".", "..", "./", ".\\..", "/"] {
+        let arg = if cfg!(windows) { arg.to_string() } else { arg.replace('\\', "/") };
+        assert!(refused(launch_path(&arg, Some(root), Some(home), none)), "{arg:?}");
+    }
+    assert!(refused(launch_path("..", Some(&home.join("Pictures")), Some(home), none)), "up to the home folder");
+    assert!(refused(launch_path(&home.to_string_lossy(), None, Some(home), none)));
+    assert!(refused(launch_path(".", None, Some(home), none)), "relative, no working folder");
+    // a memory card's root: its camera folder
+    let dcim = |r: &Path| Some(r.join("DCIM"));
+    assert_eq!(launch_path(".", Some(root), Some(home), dcim), Some(LaunchPath::Import(root.join("DCIM").to_string_lossy().to_string())));
+    // ordinary folders and files resolve to absolute paths
+    let pics = home.join("Pictures");
+    assert_eq!(launch_path("Pictures", Some(home), Some(home), none), Some(LaunchPath::Import(pics.to_string_lossy().to_string())));
+    assert_eq!(
+        launch_path(&pics.join("a.jpg").to_string_lossy(), None, Some(home), none),
+        Some(LaunchPath::Import(pics.join("a.jpg").to_string_lossy().to_string()))
+    );
+}
+
+/// Issue #374: a folder import is bounded — a tree deeper or larger than the limits is not walked
+/// to the end (it stops and says so), and what it found is still returned.
+#[test]
+fn expand_stops_at_the_walk_limits() {
+    let d = temp_dir("bounded");
+    let mut deep = d.clone();
+    for i in 0..8 {
+        deep = deep.join(format!("d{i}"));
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join(format!("p{i}.jpg")), b"x").unwrap();
+    }
+    let top = [d.to_string_lossy().to_string()];
+    let (all, cut) = crate::import::expand_within(&top, None, crate::walk::Limits::default());
+    assert_eq!((all.len(), cut), (8, false));
+    let (some, cut) = crate::import::expand_within(&top, None, crate::walk::Limits { max_depth: 3, max_entries: 1000 });
+    assert_eq!((some.len(), cut), (2, true), "{some:?}");
+    let (few, cut) = crate::import::expand_within(&top, None, crate::walk::Limits { max_depth: 32, max_entries: 5 });
+    assert!(cut && few.len() < 8, "{few:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}

@@ -462,6 +462,31 @@ ENVIRONMENT:
                    <settings folder>/logs/lightcraft.log (previous runs: lightcraft.1.log, lightcraft.2.log)
 ";
 
+/// The launch arguments' files and folders to import (absolute), and a notice for each one that
+/// is not imported (see [`lightcraft_engine::import::launch_path`]; issue #374).
+fn launch_imports(args: &[String]) -> (Vec<String>, Vec<String>) {
+    let cwd = std::env::current_dir().ok();
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|h| !h.is_empty()).map(std::path::PathBuf::from);
+    launch_imports_in(args, cwd.as_deref(), home.as_deref())
+}
+
+fn launch_imports_in(args: &[String], cwd: Option<&std::path::Path>, home: Option<&std::path::Path>) -> (Vec<String>, Vec<String>) {
+    use lightcraft_engine::import::{LaunchPath, launch_path};
+    let (mut files, mut notices) = (Vec::new(), Vec::new());
+    for a in args {
+        match launch_path(a, cwd, home, lightcraft_engine::devices::dcim_in) {
+            Some(LaunchPath::Import(p)) => files.push(p),
+            Some(LaunchPath::Refused { path, why }) => {
+                log::warn!("not importing {path} given at launch: {why}");
+                notices
+                    .push(format!("{path} was not imported: it is {why}. To import from it, choose a folder inside it with File ▸ Import Photos…"));
+            }
+            None => {}
+        }
+    }
+    (files, notices)
+}
+
 /// Where the log files live: `logs` in the settings folder, next to `ui.json` (see `logging`).
 /// None with `LIGHTCRAFT_NO_PREFS` (tests, scripts), so those runs don't rotate away the user's logs.
 fn log_dir() -> Option<std::path::PathBuf> {
@@ -534,6 +559,9 @@ fn main() -> eframe::Result {
             None => logger.no_file(),
         }
     }
+    // what the arguments name, resolved now: an empty or relative argument never becomes a drive
+    // root, and a whole drive or home folder is not walked (issue #374)
+    let (files, launch_notices) = launch_imports(&files);
     let (prefs, prefs_warning, keep_prefs_file) = load_prefs(in_memory);
     // the saved language from the start, so a failed start is reported in it too
     if let Some(ui) = &prefs {
@@ -586,6 +614,7 @@ fn main() -> eframe::Result {
             lightcraft_ui_egui::i18n::set_language(app.ui.language);
             app.integrated_titlebar = cfg!(target_os = "macos");
             app.notices.extend(prefs_warning);
+            app.notices.extend(launch_notices);
             // what's on disk now: only changes are written
             let writer = PrefsWriter {
                 path: if in_memory { None } else { prefs_path() },
@@ -608,7 +637,12 @@ fn main() -> eframe::Result {
                 p.pending_import = files;
                 app.library_problem = Some(p);
             } else if !files.is_empty() {
-                let _ = app.run("library.import", serde_json::json!({"paths": files}));
+                // listed and read on the import worker once the window shows (issue #374: never
+                // here, before the first frame, where a large folder kept the window from
+                // appearing)
+                if let Err(e) = lightcraft_ui_egui::import::start_paths(&mut app, files) {
+                    log::warn!("import at launch: {e}");
+                }
                 app.ui.view = lightcraft_ui_egui::state::ViewMode::PhotoGrid;
             }
             // native menu bar generated from the command registry (macOS; elsewhere the menus are
@@ -656,6 +690,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// Issue #374: launch arguments that would walk a whole drive or home folder are reported,
+    /// not imported; empty ones are ignored; the rest are imported as absolute paths.
+    #[test]
+    fn launch_arguments_never_walk_a_drive_or_the_home_folder() {
+        let home = dir("launch");
+        std::fs::create_dir_all(home.join("Trip")).unwrap();
+        let args: Vec<String> = ["", "  ", ".", "Trip", &home.to_string_lossy()].iter().map(|s| s.to_string()).collect();
+        let (files, notices) = launch_imports_in(&args, Some(&home), Some(&home));
+        assert_eq!(files, [home.join("Trip").to_string_lossy().to_string()]);
+        assert_eq!(notices.len(), 2, "{notices:?}");
+        assert!(notices.iter().all(|n| n.contains("was not imported")), "{notices:?}");
+        // the working folder is a drive root (a launcher's choice): `.` is never the whole drive
+        let root = home.ancestors().last().unwrap().to_path_buf();
+        let (files, notices) = launch_imports_in(&[".".to_string()], Some(&root), None);
+        assert!(files.iter().all(|f| f.ends_with("DCIM")) && files.len() + notices.len() == 1, "{files:?} {notices:?}");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// Issue #103: a damaged ui.json (which holds the library location) is kept aside and
