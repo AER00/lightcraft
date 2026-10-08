@@ -92,8 +92,10 @@ fn ext_upper(name: &str) -> String {
     std::path::Path::new(name).extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_default()
 }
 
-/// Probe a file's bytes: kind, dimensions (oriented), metadata. Raws are described from their
-/// headers ([`lightcraft_raw::probe_info`]): no pixel data is decompressed.
+/// Probe a file's bytes: kind, dimensions (oriented), metadata. No pixel data is decompressed:
+/// raws are described from their headers ([`lightcraft_raw::probe_info`]), other images too
+/// ([`lightcraft_codecs::read_header`], which refuses truncated files but can't see damage inside
+/// compressed data that is all there: such a file imports and shows as unreadable when rendered).
 pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
     let content_hash = Some(lightcraft_preview::hash_bytes(bytes).to_string());
     let m = lightcraft_meta::extract(bytes);
@@ -152,9 +154,10 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
     if !fmt.can_decode() {
         return Err(format!("{fmt:?} files are not supported yet"));
     }
-    let d = lightcraft_codecs::decode(bytes, lightcraft_codecs::DecodeOptions::fit(64, 64)).map_err(|e| e.to_string())?;
-    let o = Orientation::from_exif(d.orientation);
-    let (mut w, mut h) = (d.source_width, d.source_height);
+    // headers only (issue #367: decoding the pixels was nearly all of an import's CPU time)
+    let header = lightcraft_codecs::read_header(bytes).map_err(|e| e.to_string())?;
+    let o = Orientation::from_exif(header.orientation);
+    let (mut w, mut h) = (header.width, header.height);
     if o.swaps_axes() {
         std::mem::swap(&mut w, &mut h);
     }
@@ -423,6 +426,37 @@ impl crate::Session {
 mod tests {
     use super::*;
     use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};
+
+    /// Issue #367: probes read headers, not pixels, and report what the decode-based probe did:
+    /// oriented dimensions (EXIF orientation 6 swaps them), metadata, the error for a truncated
+    /// file or one that isn't an image.
+    #[test]
+    fn image_probe_reads_headers_like_the_decode_did() {
+        let (w, h) = (300u32, 200u32);
+        let rgb: Vec<u8> = (0..w * h * 3).map(|i| (i * 7 % 251) as u8).collect();
+        let img = EncodeImage::new(w, h, 3, Samples::U8(&rgb));
+        for o in [None, Some(1), Some(6), Some(3), Some(8)] {
+            let exif = o.map(lightcraft_codecs::exif::minimal_exif);
+            let meta = EncodeMeta { exif: exif.as_deref(), ..Default::default() };
+            let jpeg = encode_jpeg(&img, 90, ChromaSubsampling::S420, &meta).unwrap();
+            let png = lightcraft_codecs::encode_png(&img, &meta).unwrap();
+            for (name, bytes) in [("a.jpg", &jpeg), ("a.png", &png)] {
+                let p = probe_bytes(name, bytes).unwrap();
+                // what the probe computed from a decode before
+                let d = lightcraft_codecs::decode(bytes, lightcraft_codecs::DecodeOptions::fit(64, 64)).unwrap();
+                let swap = Orientation::from_exif(d.orientation).swaps_axes();
+                let want = if swap { (d.source_height, d.source_width) } else { (d.source_width, d.source_height) };
+                assert_eq!((p.width, p.height), want, "{name} {o:?}");
+                assert_eq!((p.width, p.height), if matches!(o, Some(6 | 8)) { (h, w) } else { (w, h) }, "{name} {o:?}");
+                assert_eq!(p.kind, MediaKind::Image);
+                assert_eq!(p.format, if name == "a.jpg" { "JPEG" } else { "PNG" });
+                assert_eq!(p.file_size, bytes.len() as u64);
+                assert!(p.content_hash.is_some());
+                assert!(probe_bytes(name, &bytes[..bytes.len() / 2]).is_err(), "{name}: truncated file accepted");
+            }
+        }
+        assert!(probe_bytes("x.jpg", b"not an image").is_err());
+    }
 
     /// Luminance (from linear RGB) minus its 9 × 9 local mean: tone differences between a render and a camera JPEG
     /// mostly cancel, edges remain.
