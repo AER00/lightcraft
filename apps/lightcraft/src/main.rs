@@ -24,9 +24,11 @@
 
 mod alloc_release;
 mod control_server;
+mod dialog_filter;
 #[cfg(target_os = "macos")]
 mod native_menu;
 
+use dialog_filter::FileDialogExt as _;
 use lightcraft_engine::Session;
 use lightcraft_ui_egui::panels::library_problem::LibraryProblem;
 use lightcraft_ui_egui::{LightcraftApp, Services, UiState};
@@ -283,13 +285,7 @@ fn services() -> Services {
         })),
         pick_files: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .add_filter(
-                    lightcraft_ui_egui::i18n::tr("Photos"),
-                    &[
-                        "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "cr3", "nef", "nrw", "arw", "raf", "orf", "rw2", "rwl", "raw",
-                        "pef", "psd", "jxl", "gif", "bmp",
-                    ],
-                )
+                .add_filter_nocase(lightcraft_ui_egui::i18n::tr("Photos"), lightcraft_engine::import::EXTENSIONS)
                 .pick_files()
                 .unwrap_or_default()
                 .into_iter()
@@ -299,7 +295,7 @@ fn services() -> Services {
         pick_preset_files: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .set_title(lightcraft_ui_egui::i18n::tr("Import Presets"))
-                .add_filter(
+                .add_filter_nocase(
                     lightcraft_ui_egui::i18n::tr("Presets & Profiles"),
                     &["lcpreset", "xmp", "lrtemplate", "zip", "dng", "lmp", "mplumpack", "cube"],
                 )
@@ -312,7 +308,7 @@ fn services() -> Services {
         pick_tracklog: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .set_title(lightcraft_ui_egui::i18n::tr("Auto-Tag from Tracklog"))
-                .add_filter(lightcraft_ui_egui::i18n::tr("GPS Track Log"), &["gpx"])
+                .add_filter_nocase(lightcraft_ui_egui::i18n::tr("GPS Track Log"), &["gpx"])
                 .pick_file()
                 .map(|p| vec![p.to_string_lossy().to_string()])
                 .unwrap_or_default()
@@ -320,7 +316,7 @@ fn services() -> Services {
         save_preset_file: Some(Box::new(|name: &str| {
             rfd::FileDialog::new()
                 .set_title(lightcraft_ui_egui::i18n::tr("Export Presets"))
-                .add_filter(lightcraft_ui_egui::i18n::tr("LightCraft Preset"), &["lcpreset"])
+                .add_filter_nocase(lightcraft_ui_egui::i18n::tr("LightCraft Preset"), &["lcpreset"])
                 .set_file_name(name)
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
@@ -328,7 +324,7 @@ fn services() -> Services {
         pick_curve_preset_files: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .set_title(lightcraft_ui_egui::i18n::tr("Import Point Curve Presets"))
-                .add_filter(lightcraft_ui_egui::i18n::tr("Point Curve Presets"), &["lccurve", "json"])
+                .add_filter_nocase(lightcraft_ui_egui::i18n::tr("Point Curve Presets"), &["lccurve", "json"])
                 .pick_files()
                 .unwrap_or_default()
                 .into_iter()
@@ -338,7 +334,7 @@ fn services() -> Services {
         save_curve_preset_file: Some(Box::new(|name: &str| {
             rfd::FileDialog::new()
                 .set_title(lightcraft_ui_egui::i18n::tr("Export Point Curve Presets"))
-                .add_filter(lightcraft_ui_egui::i18n::tr("Point Curve Presets"), &["lccurve"])
+                .add_filter_nocase(lightcraft_ui_egui::i18n::tr("Point Curve Presets"), &["lccurve"])
                 .set_file_name(name)
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
