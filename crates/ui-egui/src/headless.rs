@@ -546,6 +546,14 @@ mod tests {
     fn keyword_list_filters_renames_and_suggests() {
         // tall: the demo library's own keywords come first in the list
         let mut h = demo([1300.0, 1800.0]);
+        // Host folders arrive asynchronously above Keywords. Keep this keyword fixture's
+        // geometry independent of their existence and the background stat timing.
+        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+            h.app.ui.hidden_locations.extend(
+                ["Pictures", "Desktop", "Downloads", ""]
+                    .map(|sub| if sub.is_empty() { home.clone() } else { std::path::Path::new(&home).join(sub).to_string_lossy().to_string() }),
+            );
+        }
         let t = Duration::from_secs(10);
         let vis: Vec<u64> = h.app.session.visible_cloned().iter().map(|p| p.0).collect();
         let ex = |h: &mut Headless, c: &str, p: Value| h.request("engine.execute", json!({"command": c, "params": p}), Duration::from_secs(10));
@@ -576,6 +584,7 @@ mod tests {
         h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [vis[1]]}}), t);
         ex(&mut h, "photo.setMeta", json!({"ids": [vis[0]], "addKeywords": ["gelato"]}));
         h.request("ui.set", json!({"right": "keywords"}), t);
+        assert!(h.settle(SETTLE), "keyword suggestions did not settle");
         let r = h.request("ui.clickWidget", json!({"id": "kwSuggest:gelato"}), t);
         assert_eq!(r["ok"], true, "{r}");
         assert!(h.app.session.catalog.photo(lightcraft_catalog::PhotoId(vis[1])).unwrap().meta.keywords.contains(&"gelato".to_string()));

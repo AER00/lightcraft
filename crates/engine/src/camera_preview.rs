@@ -84,7 +84,7 @@ fn proxies(raw: &RawImage, bytes: &[u8], transform: &CameraTransform, size: usiz
     }
     // Fixed, bounded proxy: the selected look cannot depend on thumbnail/export resolution.
     let k = (crop.width.max(crop.height).div_ceil(edge as usize).max(2)).div_ceil(2) * 2;
-    let sensor = raw.develop_binned(k, 0.99).ok()??;
+    let sensor = sensor_proxy(raw, k, edge as usize)?;
     let mut sensor = fit(&sensor, size, size, Filter::Box);
     let reference = fit(&reference, sensor.width, sensor.height, Filter::Box);
     let gain = 2f32.powf(transform.baseline_exposure as f32);
@@ -111,6 +111,14 @@ pub(crate) fn profile_pairs(raw: &RawImage, bytes: &[u8]) -> Option<Vec<([f64; 3
 pub(crate) fn fit_profile(pairs: &[([f64; 3], [f64; 3])]) -> Option<(Mat3, Option<HsvTable>)> {
     let matrix = fit_matrix(pairs)?;
     Some((matrix, fit_hue_sat(pairs, &matrix)))
+}
+
+fn sensor_proxy(raw: &RawImage, k: usize, edge: usize) -> Option<Rgb32f> {
+    Some(match raw.develop_binned(k, 0.99).ok()? {
+        Some(sensor) => sensor,
+        None if raw.cpp == 3 && raw.cfa.is_none() => fit(&raw.develop(lightcraft_raw::Method::Bilinear).ok()?, edge, edge, Filter::Box),
+        None => return None,
+    })
 }
 
 /// A fit must cut the held-out squared error to below this share of the fallback's.
@@ -521,6 +529,35 @@ fn fit_tone(mut pairs: Vec<(f64, f64)>) -> Option<CameraTone> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linear_arw_gets_a_sensor_proxy_without_demosaicing() {
+        use lightcraft_raw::{BlackLevel, ColorData, OpcodeLists, Orientation, RawData, RawFormat, Rect};
+        let mut raw = RawImage {
+            format: RawFormat::Arw,
+            width: 32,
+            height: 32,
+            cpp: 3,
+            data: RawData::F32([0.2, 0.3, 0.4].repeat(32 * 32)),
+            cfa: None,
+            bits: 16,
+            black: BlackLevel::uniform(0.0),
+            white: vec![1.0],
+            active_area: Rect::new(0, 0, 32, 32),
+            crop: Rect::new(0, 0, 32, 32),
+            orientation: Orientation::from_exif(1),
+            color: ColorData::default(),
+            wb_multipliers: Some([1.0; 3]),
+            linearized: true,
+            opcodes: OpcodeLists::default(),
+            metadata: lightcraft_meta::Metadata::default(),
+        };
+        let proxy = sensor_proxy(&raw, 2, 384).unwrap();
+        assert_eq!((proxy.width, proxy.height), (32, 32));
+        assert_eq!(proxy.data[0], [0.2, 0.3, 0.4]);
+        raw.data = RawData::F32(Vec::new());
+        assert!(sensor_proxy(&raw, 2, 384).is_none());
+    }
     #[test]
     fn separates_nonlinear_tone_from_colour_and_keeps_sensor_headroom() {
         let known = Mat3([[1.8, -0.4, -0.1], [-0.2, 1.5, -0.1], [-0.05, -0.3, 1.7]]);
