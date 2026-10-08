@@ -449,4 +449,19 @@ mod in_the_loupe {
         let region = h.app.region_view.expect("the window arrives when the pinch is over");
         assert_eq!(region.full.0.max(region.full.1), native);
     }
+
+    // Given a picture on screen that is not the frame (an unsupported raw's embedded JPEG cropped
+    // differently, #280), no window is rendered: its coordinates are the frame's
+    #[test]
+    fn no_window_over_a_picture_that_is_not_the_frame() {
+        let (mut h, _) = detail();
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        assert!(h.app.region_view.is_some());
+        let t = h.app.renderer.textures.get_mut(&Slot::Main).unwrap();
+        t.size = [t.size[0], t.size[1] / 2];
+        h.step();
+        assert_eq!(h.app.region_view, None);
+        assert_eq!(region_tile(&h), None);
+    }
 }
