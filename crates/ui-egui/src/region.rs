@@ -42,6 +42,13 @@ pub fn margin_for(full_long: usize) -> usize {
     want.div_ceil(SNAP).max(1) * SNAP
 }
 
+/// The widest a window may be on a host whose GPU textures are at most `texture_side` px: a
+/// window is one texture, and a texture over the limit makes some backends (egui_glow, i.e. the
+/// browser build) panic. A multiple of [`SNAP`], at least one grid step, at most [`MAX_SPAN`].
+pub fn max_span(texture_side: usize) -> usize {
+    (texture_side.min(MAX_SPAN) / SNAP * SNAP).max(SNAP)
+}
+
 /// Whether a view drawn `drawn_long` pixels along its long edge needs a window render on top of
 /// the whole-frame render, which has only `rendered_long` of them.
 pub fn needed(drawn_long: f32, rendered_long: usize) -> bool {
@@ -50,8 +57,9 @@ pub fn needed(drawn_long: f32, rendered_long: usize) -> bool {
 
 /// The window of a `full_w × full_h` frame to render so that `visible` — `(x0, y0, x1, y1)` in the
 /// frame's pixels, as much of the frame as is on screen — is covered: expanded by a margin,
-/// snapped outwards to the [`SNAP`] grid (margin: see [`margin_for`]) and clamped into the frame. `None`: nothing is visible.
-pub fn window_for(full_w: usize, full_h: usize, visible: (f32, f32, f32, f32)) -> Option<PixelWindow> {
+/// snapped outwards to the [`SNAP`] grid (margin: see [`margin_for`]) and clamped into the frame,
+/// at most `max_span` ([`max_span`]) wide or high. `None`: nothing is visible.
+pub fn window_for(full_w: usize, full_h: usize, visible: (f32, f32, f32, f32), max_span: usize) -> Option<PixelWindow> {
     if full_w == 0 || full_h == 0 || [visible.0, visible.1, visible.2, visible.3].iter().any(|v| !v.is_finite()) {
         return None;
     }
@@ -64,10 +72,10 @@ pub fn window_for(full_w: usize, full_h: usize, visible: (f32, f32, f32, f32)) -
         let a = (lo as usize).saturating_sub(margin) / SNAP * SNAP;
         let b = ((hi.ceil() as usize).saturating_add(margin)).div_ceil(SNAP).saturating_mul(SNAP).min(full);
         // a window larger than MAX_SPAN keeps the visible part (centred on it), snapped
-        if b - a > MAX_SPAN {
+        if b - a > max_span {
             let mid = ((lo + hi) / 2.0) as usize;
-            let a = mid.saturating_sub(MAX_SPAN / 2) / SNAP * SNAP;
-            return Some((a, (a + MAX_SPAN).min(full)));
+            let a = mid.saturating_sub(max_span / 2) / SNAP * SNAP;
+            return Some((a, (a + max_span).min(full)));
         }
         Some((a, b))
     };
@@ -93,7 +101,7 @@ mod tests {
     // Given a visible area in the middle of a big frame, the window covers it with a margin, on the grid
     #[test]
     fn the_window_covers_the_visible_area_with_a_margin_on_the_grid() {
-        let w = window_for(48_000, 32_000, (20_000.0, 10_000.0, 21_400.0, 10_900.0)).unwrap();
+        let w = window_for(48_000, 32_000, (20_000.0, 10_000.0, 21_400.0, 10_900.0), MAX_SPAN).unwrap();
         let m = margin_for(48_000);
         assert!(w.x + m <= 20_000 && w.x + w.w >= 21_400 + m, "{w:?}");
         assert!(w.y + m <= 10_000 && w.y + w.h >= 10_900 + m, "{w:?}");
@@ -103,19 +111,19 @@ mod tests {
     // Given a small pan, the same window is kept (no re-render); a big pan changes it
     #[test]
     fn small_pans_keep_the_window() {
-        let a = window_for(48_000, 32_000, (20_000.0, 10_000.0, 21_400.0, 10_900.0)).unwrap();
-        let b = window_for(48_000, 32_000, (20_040.0, 10_030.0, 21_440.0, 10_930.0)).unwrap();
+        let a = window_for(48_000, 32_000, (20_000.0, 10_000.0, 21_400.0, 10_900.0), MAX_SPAN).unwrap();
+        let b = window_for(48_000, 32_000, (20_040.0, 10_030.0, 21_440.0, 10_930.0), MAX_SPAN).unwrap();
         assert_eq!(a, b);
-        let c = window_for(48_000, 32_000, (26_000.0, 10_000.0, 27_400.0, 10_900.0)).unwrap();
+        let c = window_for(48_000, 32_000, (26_000.0, 10_000.0, 27_400.0, 10_900.0), MAX_SPAN).unwrap();
         assert_ne!(a, c);
     }
 
     // Given a frame smaller than the margin, or a view at its edge, the window is clamped into it
     #[test]
     fn the_window_stays_inside_the_frame() {
-        let w = window_for(3000, 2000, (-500.0, -500.0, 900.0, 700.0)).unwrap();
+        let w = window_for(3000, 2000, (-500.0, -500.0, 900.0, 700.0), MAX_SPAN).unwrap();
         assert_eq!((w.x, w.y), (0, 0));
-        let w = window_for(3000, 2000, (2500.0, 1500.0, 9000.0, 9000.0)).unwrap();
+        let w = window_for(3000, 2000, (2500.0, 1500.0, 9000.0, 9000.0), MAX_SPAN).unwrap();
         assert!(w.x + w.w <= 3000 && w.y + w.h <= 2000, "{w:?}");
         assert_eq!((w.x + w.w, w.y + w.h), (3000, 2000));
     }
@@ -145,23 +153,36 @@ mod tests {
         assert!(!v.is_current(PhotoId(1), (6000, 4000), 12), "another look (an edit, an undo)");
     }
 
+    // Given a GPU that allows 2048 px textures, no window is wider than that
+    #[test]
+    fn a_window_fits_the_texture_side() {
+        for tex in [512, 2048, 4096] {
+            let span = max_span(tex);
+            assert!(span <= tex.max(SNAP) && span.is_multiple_of(SNAP), "{tex}: {span}");
+            let w = window_for(48_000, 32_000, (20_000.0, 10_000.0, 21_400.0, 10_900.0), span).unwrap();
+            assert!(w.w <= span && w.h <= span, "{tex}: {w:?}");
+        }
+        assert_eq!(max_span(100_000), MAX_SPAN);
+        assert_eq!(max_span(0), SNAP);
+    }
+
     // Given nothing visible, or hostile numbers, there is no window (never a panic)
     #[test]
     fn nothing_visible_or_hostile_input_is_no_window() {
-        assert_eq!(window_for(1000, 1000, (2000.0, 0.0, 3000.0, 100.0)), None);
-        assert_eq!(window_for(1000, 1000, (10.0, 10.0, 10.0, 90.0)), None);
-        assert_eq!(window_for(0, 1000, (0.0, 0.0, 10.0, 10.0)), None);
+        assert_eq!(window_for(1000, 1000, (2000.0, 0.0, 3000.0, 100.0), MAX_SPAN), None);
+        assert_eq!(window_for(1000, 1000, (10.0, 10.0, 10.0, 90.0), MAX_SPAN), None);
+        assert_eq!(window_for(0, 1000, (0.0, 0.0, 10.0, 10.0), MAX_SPAN), None);
         for v in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            assert_eq!(window_for(1000, 1000, (v, 0.0, 10.0, 10.0)), None);
+            assert_eq!(window_for(1000, 1000, (v, 0.0, 10.0, 10.0), MAX_SPAN), None);
         }
-        let w = window_for(usize::MAX / 2, usize::MAX / 2, (0.0, 0.0, 1e30, 1e30)).unwrap();
+        let w = window_for(usize::MAX / 2, usize::MAX / 2, (0.0, 0.0, 1e30, 1e30), MAX_SPAN).unwrap();
         assert!(w.w <= MAX_SPAN && w.h <= MAX_SPAN, "{w:?}");
     }
 
     // Given a view of an enormous area, the window is bounded
     #[test]
     fn a_window_is_bounded() {
-        let w = window_for(100_000, 100_000, (0.0, 0.0, 90_000.0, 90_000.0)).unwrap();
+        let w = window_for(100_000, 100_000, (0.0, 0.0, 90_000.0, 90_000.0), MAX_SPAN).unwrap();
         assert!(w.w <= MAX_SPAN && w.h <= MAX_SPAN);
     }
 }

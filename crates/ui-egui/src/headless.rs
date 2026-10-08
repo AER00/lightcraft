@@ -107,6 +107,8 @@ impl HeadlessView {
 pub struct Headless {
     pub app: LightcraftApp,
     pub view: HeadlessView,
+    /// The largest texture the pretend GPU takes (what a WebGL device may report: 2048).
+    pub max_texture_side: usize,
     /// Logical size (points) and scale.
     pub size: egui::Vec2,
     pub pixels_per_point: f32,
@@ -126,6 +128,7 @@ impl Headless {
         Headless {
             app,
             view: HeadlessView::new(),
+            max_texture_side: 16384,
             size: egui::vec2(size[0], size[1]),
             pixels_per_point,
             time: 0.0,
@@ -148,6 +151,7 @@ impl Headless {
     /// Run one frame.
     pub fn step(&mut self) {
         let mut raw = HeadlessView::raw_input(self.size, self.pixels_per_point, self.time, std::mem::take(&mut self.events));
+        raw.max_texture_side = Some(self.max_texture_side);
         self.app.raw_input_hook(&mut raw);
         let app = &mut self.app;
         let commands = self.view.run(raw, |ui| {

@@ -168,7 +168,8 @@ fn photo_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, slot: Slo
             super::detail::pan_image(app, img_area, img, resp.drag_delta());
         }
     }
-    let want = (img.width().max(img.height()).min(img_area.width().max(img_area.height()) * 4.0) * ppp).min(2560.0) as usize;
+    let want = (img.width().max(img.height()).min(img_area.width().max(img_area.height()) * 4.0) * ppp)
+        .min(2560.0_f32.min(super::detail::texture_side(ui.ctx()) as f32)) as usize;
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     if let Some(job) = app.session.render_job(id, rw.max(8), rh.max(8), false, true) {
         app.renderer.request(slot, job, 60);

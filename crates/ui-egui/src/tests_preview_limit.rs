@@ -4,6 +4,9 @@
 
 use crate::state::{AppSettings, LOUPE_EDGE_CEILING, PREVIEW_LIMITS, STANDARD_PREVIEW_EDGE};
 
+/// A texture side no GPU we run on refuses (see the tests of small ones below).
+const BIG: usize = 16384;
+
 fn with_limit(preview_limit: u32) -> AppSettings {
     AppSettings { preview_limit, ..Default::default() }
 }
@@ -18,21 +21,21 @@ fn default_is_automatic() {
 // Given Automatic, when a 24 MP photo is shown at 1:1, then the render is the photo's own width
 #[test]
 fn automatic_renders_a_one_to_one_view_at_native_size() {
-    assert_eq!(with_limit(0).loupe_edge(6000.0, 6000), 6000);
+    assert_eq!(with_limit(0).loupe_edge(6000.0, 6000, BIG), 6000);
 }
 
 // Given Automatic, a Retina fit view of 3024 px is not held to the old 2560 px cap
 #[test]
 fn automatic_does_not_cap_a_fit_view_at_the_old_default() {
-    assert_eq!(with_limit(0).loupe_edge(3024.0, 6000), 3072, "rounded up to the next 64 px step");
+    assert_eq!(with_limit(0).loupe_edge(3024.0, 6000, BIG), 3072, "rounded up to the next 64 px step");
 }
 
 // Dragging a window edge must not re-render (and re-key the caches) on every pixel
 #[test]
 fn render_sizes_move_in_steps() {
     let s = with_limit(0);
-    assert_eq!(s.loupe_edge(2945.0, 6000), s.loupe_edge(3008.0, 6000));
-    assert_ne!(s.loupe_edge(3008.0, 6000), s.loupe_edge(3009.0, 6000));
+    assert_eq!(s.loupe_edge(2945.0, 6000, BIG), s.loupe_edge(3008.0, 6000, BIG));
+    assert_ne!(s.loupe_edge(3008.0, 6000, BIG), s.loupe_edge(3009.0, 6000, BIG));
 }
 
 // Neighbour prefetch and hover / before stand-ins stay at the preview level: a full-size decode
@@ -42,29 +45,55 @@ fn prefetch_and_stand_ins_never_ask_for_the_full_source_level() {
     use lightcraft_engine::SourceLevel;
     let s = with_limit(0);
     for wanted in [1000.0, 2560.0, 3024.0, 6000.0, 48000.0] {
-        assert!(s.prefetch_edge(wanted, 6000) <= SourceLevel::Preview.max_edge(), "{wanted}");
-        assert!(s.stand_in_edge(s.loupe_edge(wanted, 6000)) <= SourceLevel::Preview.max_edge());
+        assert!(s.prefetch_edge(wanted, 6000, BIG) <= SourceLevel::Preview.max_edge(), "{wanted}");
+        assert!(s.stand_in_edge(s.loupe_edge(wanted, 6000, BIG), BIG) <= SourceLevel::Preview.max_edge());
     }
-    assert_eq!(s.prefetch_edge(1000.0, 6000), 1024, "a small view is not raised");
+    assert_eq!(s.prefetch_edge(1000.0, 6000, BIG), 1024, "a small view is not raised");
 }
 
 // Given Automatic, a small photo zoomed far in is not rendered above its own pixels
 #[test]
 fn never_renders_above_the_photos_own_pixels() {
-    assert_eq!(with_limit(0).loupe_edge(8000.0, 1000), 1000);
+    assert_eq!(with_limit(0).loupe_edge(8000.0, 1000, BIG), 1000);
 }
 
 // Given Automatic, a huge zoom on a huge photo stays under the memory/GPU ceiling
 #[test]
 fn automatic_is_bounded_by_the_ceiling() {
-    assert_eq!(with_limit(0).loupe_edge(48000.0, 12000), LOUPE_EDGE_CEILING as usize);
+    assert_eq!(with_limit(0).loupe_edge(48000.0, 12000, BIG), LOUPE_EDGE_CEILING as usize);
 }
 
 // Given the user chose 1600 px, the render never exceeds it
 #[test]
 fn an_explicit_limit_caps_the_render() {
-    assert_eq!(with_limit(1600).loupe_edge(6000.0, 6000), 1600);
-    assert_eq!(with_limit(1600).loupe_edge(900.0, 6000), 960, "and does not raise a small view past its step");
+    assert_eq!(with_limit(1600).loupe_edge(6000.0, 6000, BIG), 1600);
+    assert_eq!(with_limit(1600).loupe_edge(900.0, 6000, BIG), 960, "and does not raise a small view past its step");
+}
+
+// Given a browser whose GPU allows 2048 px textures (egui_glow panics on a bigger one), no render
+// the loupe asks for is larger than that: the loupe, its neighbours' prefetch and the stand-ins
+#[test]
+fn nothing_is_rendered_larger_than_the_gpu_texture_side() {
+    let s = with_limit(0);
+    for tex in [512, 2048, 4096, 8192] {
+        for wanted in [100.0, 2000.0, 6000.0, 48000.0, f32::INFINITY] {
+            let e = s.loupe_edge(wanted, 12000, tex);
+            assert!(e <= tex, "loupe {e} > {tex}");
+            assert!(s.prefetch_edge(wanted, 12000, tex) <= tex);
+            assert!(s.stand_in_edge(e, tex) <= tex);
+        }
+    }
+    assert_eq!(s.loupe_edge(6000.0, 6000, 2048), 2048);
+}
+
+// A host that reports nothing sensible gets the smallest safe sizes, never a panic or zero
+#[test]
+fn a_nonsense_texture_side_is_clamped() {
+    let s = with_limit(0);
+    for tex in [0, 1, 7] {
+        let e = s.loupe_edge(1000.0, 6000, tex);
+        assert!((8..=512).contains(&e), "{tex}: {e}");
+    }
 }
 
 // Whatever the inputs (hostile or degenerate), the result is a usable size
@@ -72,11 +101,11 @@ fn an_explicit_limit_caps_the_render() {
 fn degenerate_inputs_give_a_usable_size() {
     let s = with_limit(0);
     for wanted in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -5.0, 0.0] {
-        let e = s.loupe_edge(wanted, 6000);
+        let e = s.loupe_edge(wanted, 6000, BIG);
         assert!((8..=LOUPE_EDGE_CEILING as usize).contains(&e), "{wanted}: {e}");
     }
-    assert!((8..=LOUPE_EDGE_CEILING as usize).contains(&s.loupe_edge(1000.0, 0)) && s.prefetch_edge(f32::NAN, 0) >= 8);
-    assert!(with_limit(7).loupe_edge(1000.0, 6000) >= 8, "a corrupt limit is clamped");
+    assert!((8..=LOUPE_EDGE_CEILING as usize).contains(&s.loupe_edge(1000.0, 0, BIG)) && s.prefetch_edge(f32::NAN, 0, BIG) >= 8);
+    assert!(with_limit(7).loupe_edge(1000.0, 6000, BIG) >= 8, "a corrupt limit is clamped");
 }
 
 // Build Standard-Sized Previews needs a number even when the limit is Automatic
@@ -294,5 +323,24 @@ mod in_the_loupe {
         h.request("engine.execute", json!({"command": "view.zoom100"}), T);
         h.settle(SETTLE);
         assert!(region_tile(&h).is_some(), "a window render");
+    }
+
+    // Given a browser GPU that takes only 2048 px textures (egui_glow panics on a bigger one), when
+    // I zoom to 1:1 and 8:1, then no texture the loupe holds is larger than that
+    #[test]
+    fn no_loupe_texture_exceeds_the_gpu_limit() {
+        let (mut h, _) = detail();
+        h.max_texture_side = 2048;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        for zoom in [crate::state::Zoom::Fit, crate::state::Zoom::Percent(100.0), crate::state::Zoom::Percent(800.0)] {
+            h.app.ui.zoom = zoom;
+            h.settle(SETTLE);
+            for (slot, t) in &h.app.renderer.textures {
+                assert!(t.size[0] <= 2048 && t.size[1] <= 2048, "{zoom:?} {slot:?}: {}×{}", t.size[0], t.size[1]);
+            }
+            let main = h.app.renderer.textures.get(&Slot::Main).expect("loupe");
+            assert!(main.size[0].max(main.size[1]) >= 700, "still a real render, not a thumbnail: {:?}", main.size);
+        }
     }
 }
