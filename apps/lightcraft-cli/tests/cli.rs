@@ -336,3 +336,29 @@ fn connect_failure_hint_names_the_attempted_port() {
     assert!(err.contains("--control 18437"), "the hint must name the port it tried: {err}");
     assert!(!err.contains("--control 7980"), "{err}");
 }
+
+/// The CLI logs warnings on stderr (#168): with `RUST_LOG=warn` an unknown GPU backend name is
+/// reported, and `RUST_LOG=off` silences it. Before, no logger was installed and nothing appeared.
+#[test]
+fn warnings_are_logged_on_stderr() {
+    let input = tmp("log-in.png");
+    gradient_png(&input);
+    let out = tmp("log-out.jpg");
+    let run = |level: &str| {
+        let o = Command::new(BIN)
+            .args(["render", input.to_str().unwrap(), "-o", out.to_str().unwrap()])
+            .env("LIGHTCRAFT_GPU_BACKEND", "bogus")
+            .env("RUST_LOG", level)
+            .env_remove("LIGHTCRAFT_LOG")
+            .env_remove("LIGHTCRAFT_GPU")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert!(o.status.success(), "{stderr}");
+        stderr
+    };
+    let warn = run("warn");
+    assert!(warn.contains("LIGHTCRAFT_GPU_BACKEND=bogus names no known backend"), "{warn}");
+    let off = run("off");
+    assert!(!off.contains("names no known backend"), "{off}");
+}

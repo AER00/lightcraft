@@ -409,39 +409,14 @@ ENVIRONMENT:
   LIGHTCRAFT_SAM3_DIR=DIR   the SAM 3 model for Object / Describe masks (default: <settings folder>/models/sam3;
                    optional: LightCraft offers to download it when first needed)
   LIGHTCRAFT_SAM3_MIRRORS=URL,…   where to download the SAM 3 model from (base URLs, tried in order)
+  LIGHTCRAFT_LOG=LEVEL (or RUST_LOG)   what is logged on stderr: off, error, warn (default), info, debug, trace
 ";
-
-/// Warnings and errors (failed commands, AI mask analysis) on stderr; `LIGHTCRAFT_LOG=info`
-/// (or `debug`) shows more.
-struct StderrLog(log::LevelFilter);
-
-impl log::Log for StderrLog {
-    fn enabled(&self, m: &log::Metadata) -> bool {
-        m.level() <= self.0 && (m.level() <= log::Level::Warn || m.target().starts_with("lightcraft"))
-    }
-    fn log(&self, r: &log::Record) {
-        if self.enabled(r.metadata()) {
-            eprintln!("lightcraft: {} {}: {}", r.level(), r.target(), r.args());
-        }
-    }
-    fn flush(&self) {}
-}
-
-fn install_log() {
-    let level = match std::env::var("LIGHTCRAFT_LOG").unwrap_or_default().as_str() {
-        "debug" => log::LevelFilter::Debug,
-        "info" => log::LevelFilter::Info,
-        _ => log::LevelFilter::Warn,
-    };
-    static LOGGER: std::sync::OnceLock<StderrLog> = std::sync::OnceLock::new();
-    if log::set_logger(LOGGER.get_or_init(|| StderrLog(level))).is_ok() {
-        log::set_max_level(level);
-    }
-}
 
 fn main() -> eframe::Result {
     lightcraft_engine::guard::install_hook(std::env::temp_dir().join("lightcraft-panics.log"));
-    install_log();
+    // Warnings and errors (failed commands, AI mask analysis, GPU fallbacks) on stderr;
+    // LIGHTCRAFT_LOG or RUST_LOG picks another level.
+    lightcraft_engine::logging::install("lightcraft");
     alloc_release::install();
     let mut control_port: Option<u16> = std::env::var("LIGHTCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
     let mut files = Vec::new();
