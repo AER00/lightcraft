@@ -894,6 +894,40 @@ mod tests {
         page[base + 5..base + 7].copy_from_slice(&u16::try_from(start).unwrap_or(0).to_be_bytes());
     }
 
+    fn leaf_rows(page: &mut [u8], base: usize, rows: &[(u64, &[u8])]) {
+        page[base] = 0x0d;
+        page[base + 3..base + 5].copy_from_slice(&u16::try_from(rows.len()).unwrap_or(0).to_be_bytes());
+        let mut end = page.len();
+        for (index, (rowid, payload)) in rows.iter().enumerate() {
+            let mut cell = varint(payload.len() as u64);
+            cell.extend(varint(*rowid));
+            cell.extend(payload);
+            end -= cell.len();
+            page[end..end + cell.len()].copy_from_slice(&cell);
+            let pointer = base + 8 + index * 2;
+            page[pointer..pointer + 2].copy_from_slice(&u16::try_from(end).unwrap_or(0).to_be_bytes());
+        }
+        page[base + 5..base + 7].copy_from_slice(&u16::try_from(end).unwrap_or(0).to_be_bytes());
+    }
+
+    fn schema_record(name: &str, root: u8, sql: &str) -> Vec<u8> {
+        let mut header = vec![23];
+        let text_serial = |text: &str| 13 + 2 * text.len() as u64;
+        header.extend(varint(text_serial(name)));
+        header.extend(varint(text_serial(name)));
+        header.push(1);
+        header.extend(varint(text_serial(sql)));
+        let mut body = b"table".to_vec();
+        body.extend(name.as_bytes());
+        body.extend(name.as_bytes());
+        body.push(root);
+        body.extend(sql.as_bytes());
+        let mut record = varint((1 + header.len()) as u64);
+        record.extend(header);
+        record.extend(body);
+        record
+    }
+
     #[test]
     fn schema_names_and_integer_primary_key_alias_are_decoded() {
         let sql = r#"CREATE TABLE "t" ("id_local" INTEGER PRIMARY KEY, "odd,name" TEXT, PRIMARY KEY ("id_local"))"#;
@@ -905,6 +939,30 @@ mod tests {
         let (table_names, table_alias) = parse_create_table("CREATE TABLE t (id INTEGER, value TEXT, PRIMARY KEY(id))").unwrap();
         assert_eq!(table_names, vec!["id", "value"]);
         assert_eq!(table_alias, Some(0));
+    }
+
+    #[test]
+    fn unsupported_unrelated_schema_entries_are_skipped() {
+        let mut main = vec![0u8; 2 * 512];
+        main[..16].copy_from_slice(b"SQLite format 3\0");
+        main[16..18].copy_from_slice(&512u16.to_be_bytes());
+        main[18] = 1;
+        main[19] = 1;
+        main[21] = 64;
+        main[22] = 32;
+        main[23] = 32;
+        main[28..32].copy_from_slice(&2u32.to_be_bytes());
+        main[44..48].copy_from_slice(&4u32.to_be_bytes());
+        main[56..60].copy_from_slice(&1u32.to_be_bytes());
+        let virtual_sql = "CREATE VIRTUAL TABLE unrelated USING fts5(text)";
+        let supported_sql = "CREATE TABLE supported (id INTEGER PRIMARY KEY)";
+        let virtual_record = schema_record("unrelated", 2, virtual_sql);
+        let supported_record = schema_record("supported", 2, supported_sql);
+        leaf_rows(&mut main[..512], 100, &[(1, &virtual_record), (2, &supported_record)]);
+        let db = Database::open_with_wal(main, &[]).unwrap();
+        let tables = db.live_tables().unwrap();
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].name, "supported");
     }
 
     #[test]
