@@ -283,6 +283,42 @@ fn tiff_white_is_zero_is_inverted_once() {
     }
 }
 
+/// 1-, 2- and 4-bit samples (bilevel scans, fax images, low-depth gray) arrive packed eight, four or
+/// two to a byte with each row padded to a byte; they used to be rejected as "sample buffer too short".
+#[test]
+fn tiff_samples_narrower_than_a_byte() {
+    let gray = |d: &Decoded, x: usize, y: usize| d.image.get(x, y)[1];
+
+    // 10 × 2 bilevel: rows are 2 bytes, the last 6 bits of each are padding (set, to prove they are ignored).
+    // Row 0 alternates set/clear bits; row 1 is clear but for its last pixel.
+    let rows = [0b1010_1010, 0b1011_1111, 0b0000_0000, 0b0111_1111];
+    // What a set bit decodes to: white for BlackIsZero (1), black for WhiteIsZero (0).
+    for (photometric, set_bit) in [(1, 1.0), (0, 0.0)] {
+        let d = decode(&packed_tiff(10, 2, 1, photometric, &rows), DecodeOptions::default()).unwrap();
+        assert_eq!((d.image.width, d.image.height, d.bit_depth), (10, 2, 1));
+        assert!(d.grayscale);
+        let clear_bit = 1.0 - set_bit;
+        for x in 0..10 {
+            let want = (if x % 2 == 0 { set_bit } else { clear_bit }, if x == 9 { set_bit } else { clear_bit });
+            assert!((gray(&d, x, 0) - want.0).abs() < 1e-6, "row 0, x {x}, photometric {photometric}");
+            assert!((gray(&d, x, 1) - want.1).abs() < 1e-6, "row 1, x {x}, photometric {photometric}");
+        }
+    }
+
+    // 2-bit: 0, 1, 2, 3 → 0, 85, 170, 255. 4-bit: 0, 15, 8 → 0, 255, 136 (the row's last nibble is padding).
+    let d = decode(&packed_tiff(4, 1, 2, 1, &[0b00_01_10_11]), DecodeOptions::default()).unwrap();
+    for (x, v) in [0, 85, 170, 255].into_iter().enumerate() {
+        assert!((gray(&d, x, 0) - srgb_to_linear(v as f32 / 255.0)).abs() < 1e-6, "2-bit x {x}");
+    }
+    let d = decode(&packed_tiff(3, 1, 4, 1, &[0x0F, 0x8F]), DecodeOptions::default()).unwrap();
+    for (x, v) in [0, 255, 136].into_iter().enumerate() {
+        assert!((gray(&d, x, 0) - srgb_to_linear(v as f32 / 255.0)).abs() < 1e-6, "4-bit x {x}");
+    }
+
+    // A strip shorter than its rows is an error, never a panic.
+    assert!(decode(&packed_tiff(10, 2, 1, 1, &rows[..3]), DecodeOptions::default()).is_err());
+}
+
 #[test]
 fn webp_lossless_exact() {
     let img = gradient(31, 19);
