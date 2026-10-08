@@ -414,6 +414,9 @@ fn warp_params(
 /// ~20 % faster than 8 at 6000 × 4000 (fewer interval evaluations, few more edge pixels).
 const COVER_ROWS: usize = 16;
 
+/// The largest source (bytes on the device) a view's stages keep uploaded between renders.
+const RETAIN_SOURCE_BYTES: usize = 96 << 20;
+
 /// The reference framing decision ([`Warp::covers`](lightcraft_pipeline::optics::Warp::covers)) for every
 /// output pixel, one bit per pixel, rows padded to 32-bit words. Blocks of 32 × [`COVER_ROWS`] pixels whose
 /// interval bounds place them clearly inside or outside the image are filled at once
@@ -552,9 +555,11 @@ pub fn render(
         Some(e) => e.sampled.clone(),
         None if gpu.fits(src.data.len() * 3) => {
             let upload = || gpu.upload(rgb_words(src));
+            // (a source too big to keep is uploaded for this render only: a window is cut from the
+            // photo's own pixels, and what its stages keep is its own sampled pixels)
             let src_buf = match stages {
-                Some(c) => c.source(src, upload),
-                None => Arc::new(upload()),
+                Some(c) if src.data.len() * 12 <= RETAIN_SOURCE_BYTES => c.source(src, upload),
+                _ => Arc::new(upload()),
             };
             sample(&mut cx, src, src_buf, &plan)
         }

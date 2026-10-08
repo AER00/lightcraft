@@ -701,3 +701,29 @@ fn windows_match() {
     let corner = RenderRequest { window: Some(PixelWindow { x: 2360, y: 1520, w: 640, h: 480 }), ..RenderRequest::fit(3000, 2000) };
     check("window: vignette corner", &src, &info, &s, &corner);
 }
+
+/// Issue #323: a window of a 24 MP photo is cut from a source of 288 MB on the device. Keeping that
+/// upload with the view's stages counted it against the stage budget on every tick of a drag and
+/// got the stages cleared, and the upload and resampling redone: the window's stages are its own
+/// pixels, not the photo's.
+#[test]
+fn a_window_does_not_keep_the_whole_source_on_the_device() {
+    if !gpu() {
+        return;
+    }
+    use lightcraft_pipeline::PixelWindow;
+    let src = scene(1, 6000, 4000);
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let stages = StageCache::default();
+    let s = DevelopSettings::default();
+    let req = RenderRequest { window: Some(PixelWindow { x: 2000, y: 1500, w: 640, h: 480 }), ..RenderRequest::fit(6000, 4000) };
+    let _ = lightcraft_gpu::render(&src, &info, &s, &req, Some(&stages)).expect("gpu render");
+    let held = lightcraft_gpu::stage_bytes(&stages);
+    assert!(held < 100 << 20, "the view's GPU stages hold {} MiB for a 640×480 window", held >> 20);
+    // …and the next tick of a drag reuses what is there
+    let mut s2 = s.clone();
+    s2.light.exposure = 0.5;
+    let again = lightcraft_gpu::render(&src, &info, &s2, &req, Some(&stages)).expect("gpu render");
+    assert_eq!((again.image.width, again.image.height), (640, 480));
+    assert!(lightcraft_gpu::stage_bytes(&stages) < 100 << 20);
+}
