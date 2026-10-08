@@ -336,6 +336,42 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     {
         app.renderer.request(Slot::Before, job, 90);
     }
+    // zoomed past what the whole-frame render holds: also render the part on screen at the zoom
+    // scale (not while comparing, hovering a look or showing an overlay: those draw one image)
+    let plain_view = !split
+        && !show_before
+        && !split_view
+        && hover_key.is_none()
+        && !app.ui.soft_proof
+        && view_overlay(app, &d) == lightcraft_pipeline::Overlay::None;
+    let drawn_long = target_rect.width().max(target_rect.height()) * ppp;
+    let region_wanted = plain_view && app.renderer.can_render_windows() && crate::region::needed(drawn_long, rw.max(rh));
+    if region_wanted {
+        let (fw, fh) = if aspect >= 1.0 { (drawn_long, drawn_long / aspect) } else { (drawn_long * aspect, drawn_long) };
+        let (fw, fh) = (fw.round().max(1.0) as usize, fh.round().max(1.0) as usize);
+        // what is on screen, in pixels of the zoomed frame
+        let to_px = |v: f32| v * ppp;
+        let visible = (
+            to_px(canvas.left() - target_rect.left()),
+            to_px(canvas.top() - target_rect.top()),
+            to_px(canvas.right() - target_rect.left()),
+            to_px(canvas.bottom() - target_rect.top()),
+        );
+        if let Some(win) = crate::region::window_for(fw, fh, visible)
+            && let Some(job) = app.session.region_job(id, fw, fh, win, !crop_tool)
+        {
+            let job = if interacting { job.draft() } else { job };
+            let view = crate::region::RegionView { photo: id, key: job.key, full: (fw, fh), window: win };
+            if app.region_tiles.len() > 8 {
+                app.region_tiles.clear();
+            }
+            app.region_tiles.insert(job.key, view);
+            app.region_view = Some(view);
+            app.renderer.request(Slot::Region, job, 99);
+        }
+    } else {
+        app.region_view = None;
+    }
     let p = ui.painter_at(canvas);
     // what a view slot shows: its own render of this photo, else the stand-ins (no blank frame
     // between photos, and the full render replaces them in place)
@@ -399,6 +435,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
             }
         }
+    }
+    // the window render, drawn over the whole-frame one where it belongs in the frame
+    if region_wanted
+        && let Some(tex) = app.renderer.textures.get(&Slot::Region).filter(|t| t.photo == id)
+        && let Some(v) = app.region_tiles.get(&tex.key).filter(|v| v.photo == id && Some(v.full) == app.region_view.map(|r| r.full))
+    {
+        let (fw, fh) = (v.full.0 as f32, v.full.1 as f32);
+        let at = img_rect.min + vec2(v.window.x as f32 / fw * img_rect.width(), v.window.y as f32 / fh * img_rect.height());
+        let dst = Rect::from_min_size(at, vec2(v.window.w as f32 / fw * img_rect.width(), v.window.h as f32 / fh * img_rect.height()));
+        p.image(tex.tex.id(), dst, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
     app.loupe_shown = Some((id, shown));
     if app.ui.before_after == BeforeAfter::Split {

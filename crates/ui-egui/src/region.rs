@@ -15,6 +15,16 @@ pub const MARGIN: usize = 256;
 /// The most a window may span on either axis: a bound on its texture whatever the window size.
 pub const MAX_SPAN: usize = 8192;
 
+/// A window render the loupe asked for: which photo, the size of the zoomed frame it is a window
+/// of, and the window. The texture that comes back is drawn at this place of the frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RegionView {
+    pub photo: lightcraft_catalog::PhotoId,
+    pub key: u64,
+    pub full: (usize, usize),
+    pub window: PixelWindow,
+}
+
 /// Whether a view drawn `drawn_long` pixels along its long edge needs a window render on top of
 /// the whole-frame render, which has only `rendered_long` of them.
 pub fn needed(drawn_long: f32, rendered_long: usize) -> bool {

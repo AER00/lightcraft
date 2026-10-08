@@ -198,6 +198,10 @@ pub struct LightcraftApp {
     /// What the loupe drew last frame: photo and source ("render", "cached", "embedded", "small",
     /// "thumb", "none").
     pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
+    /// The window render the loupe asked for last, by job key (see [`region`]); kept for the few
+    /// windows whose textures can be on screen, and for the inspector.
+    pub region_view: Option<region::RegionView>,
+    pub(crate) region_tiles: std::collections::HashMap<u64, region::RegionView>,
     /// Photo Merge dialog previews and background merges.
     pub merge: merge::MergeState,
     /// An import in progress (the import review dialog's batches).
@@ -265,6 +269,8 @@ impl LightcraftApp {
             widgets: vec![],
             gesture: None,
             loupe_shown: None,
+            region_view: None,
+            region_tiles: Default::default(),
             merge: merge::MergeState::default(),
             import: None,
             scan: None,

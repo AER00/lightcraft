@@ -161,4 +161,76 @@ mod in_the_loupe {
         h.settle(SETTLE);
         assert!(rendered_long_edge(&h) <= 1600, "rendered {}", rendered_long_edge(&h));
     }
+
+    fn region_tile(h: &Headless) -> Option<(usize, usize)> {
+        h.app.renderer.textures.get(&Slot::Region).map(|t| (t.size[0], t.size[1]))
+    }
+
+    // Given a photo that fits the whole-frame render at 1:1, then no second render is made
+    #[test]
+    fn no_window_render_while_the_whole_frame_render_is_sharp_enough() {
+        let (mut h, _) = detail();
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        assert_eq!(region_tile(&h), None);
+    }
+
+    // Given the user capped the preview at 1600 px, when I zoom to 1:1, then the visible part is
+    // rendered on its own at the zoom scale and drawn over the whole-frame render
+    #[test]
+    fn a_capped_one_to_one_view_gets_a_sharp_window() {
+        let (mut h, native) = detail();
+        h.app.ui.settings.preview_limit = 1600;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        let (w, hh) = region_tile(&h).expect("a window render");
+        // it covers what is on screen (the 1400×900 window less its chrome), and is not the frame
+        assert!(w >= 1300 && hh >= 700, "{w}×{hh}");
+        assert!(w < native && hh < native, "{w}×{hh} of a {native} px frame");
+        let region = h.app.region_view.expect("the window is described for the inspector");
+        assert_eq!(region.full.0.max(region.full.1), native, "1:1 means the frame is the photo's own size");
+    }
+
+    // Given 800 % zoom (a frame of 48000 px), the window is rendered and bounded
+    #[test]
+    fn eight_to_one_renders_only_what_is_visible() {
+        let (mut h, native) = detail();
+        h.app.ui.zoom = crate::state::Zoom::Percent(800.0);
+        h.settle(SETTLE);
+        let (w, hh) = region_tile(&h).expect("a window render");
+        assert!(w.max(hh) <= crate::region::MAX_SPAN && w < native * 8 / 2, "{w}×{hh}");
+        // …and panning far away asks for another window
+        let before = h.app.region_view.unwrap().window;
+        h.app.ui.pan = (0.9, 0.9);
+        h.settle(SETTLE);
+        assert_ne!(h.app.region_view.unwrap().window, before);
+    }
+
+    // The window is drawn where it belongs: its pixels agree with the whole-frame render at the
+    // same place of the frame (a shift, a flip or a wrong scale would not)
+    #[test]
+    fn the_window_lines_up_with_the_whole_frame_render() {
+        let (mut h, _) = detail();
+        h.app.renderer.keep_pixels = true;
+        h.app.ui.settings.preview_limit = 1600;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        let view = h.app.region_view.expect("a window render");
+        let tile = h.app.renderer.textures.get(&Slot::Region).and_then(|t| t.pixels.clone()).expect("tile pixels");
+        let main = h.app.renderer.textures.get(&Slot::Main).and_then(|t| t.pixels.clone()).expect("main pixels");
+        let (mut sum, mut n) = (0.0f32, 0.0f32);
+        for j in (8..tile.size[1] - 8).step_by(37) {
+            for i in (8..tile.size[0] - 8).step_by(37) {
+                // the same point of the frame in the whole-frame render
+                let u = (view.window.x + i) as f32 / view.full.0 as f32;
+                let v = (view.window.y + j) as f32 / view.full.1 as f32;
+                let (mx, my) =
+                    (((u * main.size[0] as f32) as usize).min(main.size[0] - 1), ((v * main.size[1] as f32) as usize).min(main.size[1] - 1));
+                let (a, b) = (tile.pixels[j * tile.size[0] + i], main.pixels[my * main.size[0] + mx]);
+                sum += (0..3).map(|k| (a.to_array()[k] as f32 - b.to_array()[k] as f32).abs()).sum::<f32>() / 3.0;
+                n += 1.0;
+            }
+        }
+        assert!(sum / n < 6.0, "mean difference {:.2} / 255 between the window and the frame render", sum / n);
+    }
 }

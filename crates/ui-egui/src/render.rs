@@ -30,6 +30,9 @@ pub enum Slot {
     /// A thumbnail's stand-in (embedded preview of an unedited raw).
     ThumbQuick(PhotoId),
     Main,
+    /// The loupe zoomed past what `Main` can hold: the window of the frame that is on screen,
+    /// rendered at the zoom scale and drawn over `Main` (see [`crate::region`]).
+    Region,
     /// The loupe's stand-in until `Main` has the photo.
     Preview,
     Before,
@@ -137,6 +140,14 @@ pub struct Renderer {
 #[cfg(not(target_arch = "wasm32"))]
 const IDLE_TRIM: std::time::Duration = std::time::Duration::from_secs(3);
 
+impl Slot {
+    /// An interactive view of the open photo: slider drags redo only the stages they feed, and a
+    /// draft that finishes late still replaces older pixels.
+    pub fn is_view(self) -> bool {
+        matches!(self, Slot::Main | Slot::Region | Slot::Before | Slot::Hover)
+    }
+}
+
 impl Default for Renderer {
     fn default() -> Self {
         let threads = if cfg!(target_arch = "wasm32") { 0 } else { JobPool::<Slot, RenderResult>::default_threads().min(6) };
@@ -219,6 +230,12 @@ impl Renderer {
         }
         true
     }
+    /// Whether windows of the frame can be rendered here: not in the browser build, whose workers
+    /// rebuild the request from a wire format that has no window yet.
+    pub fn can_render_windows(&self) -> bool {
+        self.offload.is_none()
+    }
+
     /// Run jobs through `offload` from now on (instead of the job pool / inline).
     pub fn set_offload(&mut self, offload: Box<dyn RenderOffload>) {
         self.offload = Some(offload);
@@ -247,8 +264,7 @@ impl Renderer {
         job.request_id = lightcraft_preview::next_tick();
         self.request_ids.insert(slot, job.request_id);
         // (an offload keeps its own per-view stage caches; the flag tells it to)
-        let job =
-            if matches!(slot, Slot::Main | Slot::Before | Slot::Hover) { job.with_stages(self.stages.entry(slot).or_default().clone()) } else { job };
+        let job = if slot.is_view() { job.with_stages(self.stages.entry(slot).or_default().clone()) } else { job };
         if self.offload.is_some() {
             self.seq += 1;
             self.queue.retain(|q| q.slot != slot);
@@ -452,7 +468,7 @@ impl Renderer {
             // Ignore obsolete pixels, failures and decoded sources, even for the same render key;
             // an interactive view still takes a superseded draft that is newer than what it shows.
             if self.request_ids.get(&slot) != Some(&r.request_id) {
-                let newer_draft = matches!(slot, Slot::Main | Slot::Before | Slot::Hover)
+                let newer_draft = slot.is_view()
                     && self.request_ids.contains_key(&slot)
                     && r.request_id >= self.epoch
                     && self.shown_ids.get(&slot).is_none_or(|shown| r.request_id > *shown)
@@ -464,7 +480,7 @@ impl Renderer {
                 self.request_ids.remove(&slot);
                 session.accept(&r);
             }
-            if matches!(slot, Slot::Main | Slot::Before | Slot::Hover) {
+            if slot.is_view() {
                 self.shown_ids.insert(slot, r.request_id);
             }
             if self.pending.get(&slot).is_some_and(|p| p.0 == r.key) {
