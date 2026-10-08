@@ -329,7 +329,7 @@ pub struct Plan<'a> {
     /// The whole frame's dehaze airlight, for a windowed render (which can't see the whole frame).
     pub fixed_air: Option<f32>,
     /// A windowed render works on a larger window when spots reach into it (see
-    /// [`spots::window_for_spots`]); this is the requested window inside the rendered one, which
+    /// [`spots::window_for_reads`]); this is the requested window inside the rendered one, which
     /// the result is cut to.
     pub keep: Option<PixelWindow>,
 }
@@ -369,7 +369,7 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
                 fixed_air = Some(local::frame_airlight(src, info, s, &frame, pw, ph));
             }
             // (spots grow the rendered window; only 8-bit renders are cut back to the request)
-            let work = if req.depth == OutputDepth::U8 { spots::window_for_spots(&s.spots, &frame, full_w, full_h, px_per_long, win) } else { win };
+            let work = if req.depth == OutputDepth::U8 { spots::window_for_reads(s, &frame, full_w, full_h, px_per_long, win) } else { win };
             if work != win {
                 keep = Some(PixelWindow { x: win.x - work.x, y: win.y - work.y, ..win });
             }

@@ -336,11 +336,13 @@ pub fn auto_similarity(l: f32, ch: [f32; 3], rl: f32, rch: [f32; 3]) -> f32 {
     1.0 - smooth(0.5, 1.0, (dl * dl + dc * dc).sqrt())
 }
 
-/// The output pixel a dab at `d` samples its reference colour from.
+/// The output pixel a dab at `d` samples its reference colour from. The position is taken at f32
+/// precision (like the GPU kernel): a dab on a pixel boundary must not fall on either side of it
+/// by an f64 rounding error, which depends on where the window of a zoomed view starts.
 #[inline]
 pub fn dab_pixel(d: Point, w: usize, h: usize) -> usize {
-    let x = (d.x.floor().max(0.0) as usize).min(w - 1);
-    let y = (d.y.floor().max(0.0) as usize).min(h - 1);
+    let x = ((d.x as f32).floor().max(0.0) as usize).min(w - 1);
+    let y = ((d.y as f32).floor().max(0.0) as usize).min(h - 1);
     y * w + x
 }
 

@@ -298,8 +298,7 @@ pub fn render(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &R
         let effective = s.effective();
         let s: &DevelopSettings = &effective;
         // the kernel writes 8-bit output: high-bit-depth exports (and soft proofs) render on the CPU
-        // (a windowed render runs on the CPU until the kernels know the window: vignette and airlight)
-        if !enabled() || req.depth != lightcraft_pipeline::OutputDepth::U8 || req.proof.is_some() || req.window.is_some() {
+        if !enabled() || req.depth != lightcraft_pipeline::OutputDepth::U8 || req.proof.is_some() {
             return None;
         }
         let gpu = device()?;

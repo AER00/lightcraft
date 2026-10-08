@@ -315,3 +315,29 @@ fn an_automatic_spot_source_does_not_depend_on_the_window() {
     }
     assert!(n > 0 && max <= 2, "overlapping windows disagree by up to {max}");
 }
+
+// Given Auto Mask strokes that run in and out of the window, the window shows the whole render's mask
+#[test]
+fn auto_mask_strokes_match_the_whole_render() {
+    use lightcraft_develop::{BrushStroke, LocalAdjustments, Mask, MaskComponent, MaskOp, MaskShape};
+    use lightcraft_geom::Point;
+    let st = |pts: &[(f64, f64)], auto_mask, erase| BrushStroke {
+        points: pts.iter().map(|p| Point::new(p.0, p.1)).collect(),
+        size: 0.06,
+        feather: 40.0,
+        flow: 80.0,
+        auto_mask,
+        erase,
+        ..Default::default()
+    };
+    let strokes = vec![st(&[(0.2, 0.55), (0.5, 0.6), (0.8, 0.5)], true, false), st(&[(0.5, 0.58)], true, true)];
+    let s = DevelopSettings {
+        masks: vec![Mask {
+            components: vec![MaskComponent { name: None, op: MaskOp::Add, invert: false, shape: MaskShape::Brush { strokes } }],
+            adjust: LocalAdjustments { exposure: 1.0, saturation: -50.0, ..Default::default() },
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    check_noisy("auto mask", &s, PixelWindow { x: 400, y: 300, w: 300, h: 250 }, 2, 0.1);
+}

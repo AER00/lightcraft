@@ -579,7 +579,11 @@ pub fn render(
         Some(p) if p.key == plan.lin_key => p,
         _ => Planes { key: plan.lin_key, ..Default::default() },
     };
-    let prep = prepare(&mut cx, &lin, &plan, req, &mut planes);
+    let mut prep = prepare(&mut cx, &lin, &plan, req, &mut planes);
+    // a window dehazes with the whole frame's airlight
+    if let Some(a) = plan.fixed_air {
+        prep.air = a;
+    }
     lap("planes", &mut t, &mut cx);
     if let Some(c) = stages {
         c.put(Entry { src: src.clone(), geo: plan.geo, sampled, lin: Some((plan.lin_key, lin.clone())), planes });
@@ -650,7 +654,10 @@ pub fn render(
         fail(FailKind::Fatal, format!("the GPU returned an incomplete image ({unwritten} of {n} pixels unwritten)"));
         return None;
     }
-    let histogram = Histogram::of_srgb8(&image);
+    let histogram = match plan.keep {
+        Some(k) => Histogram::of_srgb8(&image.crop(k.x, k.y, k.w, k.h)),
+        None => Histogram::of_srgb8(&image),
+    };
     lap("histogram", &mut t, &mut cx);
     // An entirely black result (upstream work that did not run would give that too): redo it on
     // the CPU, which costs time only for the rare photo that really is black.
@@ -669,6 +676,10 @@ pub fn render(
         }
     });
     lightcraft_pipeline::visualize::apply(&mut image, req.overlay, &plan, overlay_mask.as_ref());
+    // spots grew the window the render worked on: cut it back to the request
+    if let Some(k) = plan.keep {
+        image = image.crop(k.x, k.y, k.w, k.h);
+    }
     Some(Rendered { image, histogram, deep: None })
 }
 
@@ -713,7 +724,7 @@ fn linear(cx: &mut Cx<'_>, sampled: &Buf, info: &SourceInfo, plan: &Plan<'_>, ho
 fn denoise(cx: &mut Cx<'_>, img: Buf, plan: &Plan<'_>) -> Buf {
     let (w, h) = (plan.w, plan.h);
     let n = w * h;
-    let (lum, col) = local::nr_params(&plan.settings, plan.src_long, w.max(h));
+    let (lum, col) = local::nr_params(&plan.settings, plan.src_long, plan.frame.output_long(w, h));
     let mut img = img;
     if let Some(nr) = lum {
         let l = cx.gpu.buffer(n);
