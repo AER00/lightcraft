@@ -128,49 +128,56 @@ pub fn embedded_preview(bytes: &[u8]) -> Option<Vec<u8>> {
 
 /// The end of the DCT JPEG whose SOI is at `soi` (exclusive index after its EOI) and its component count,
 /// walking the marker segments and the entropy-coded data. `None` when it is not a complete, displayable
-/// (baseline or progressive) JPEG, so a stray `D8 FF` in other data is rejected.
-fn jpeg_extent(b: &[u8], soi: usize) -> Option<(usize, u8)> {
+/// (baseline or progressive) JPEG, so a stray `D8 FF` in other data is rejected. `*reach` is left at
+/// the furthest byte looked at (what the walk cost; see [`scan_for_jpeg`]).
+fn jpeg_extent(b: &[u8], soi: usize, reach: &mut usize) -> Option<(usize, u8)> {
     let mut i = soi + 2;
+    let r = walk_jpeg(b, &mut i);
+    *reach = i;
+    r
+}
+
+fn walk_jpeg(b: &[u8], i: &mut usize) -> Option<(usize, u8)> {
     let mut components = None;
     for _ in 0..4096 {
-        if *b.get(i)? != 0xff {
+        if *b.get(*i)? != 0xff {
             return None;
         }
-        while *b.get(i)? == 0xff {
-            i += 1;
+        while *b.get(*i)? == 0xff {
+            *i += 1;
         }
-        let m = *b.get(i)?;
-        i += 1;
+        let m = *b.get(*i)?;
+        *i += 1;
         match m {
-            0xd9 => return components.map(|c| (i, c)),
+            0xd9 => return components.map(|c| (*i, c)),
             0x01 | 0xd0..=0xd8 => continue,
             _ => {}
         }
-        let len = usize::from(u16::from_be_bytes([*b.get(i)?, *b.get(i + 1)?]));
+        let len = usize::from(u16::from_be_bytes([*b.get(*i)?, *b.get(*i + 1)?]));
         if len < 2 {
             return None;
         }
         match m {
             0xc0..=0xc2 => {
                 // precision, height, width, component count
-                let h = u16::from_be_bytes([*b.get(i + 3)?, *b.get(i + 4)?]);
-                let w = u16::from_be_bytes([*b.get(i + 5)?, *b.get(i + 6)?]);
+                let h = u16::from_be_bytes([*b.get(*i + 3)?, *b.get(*i + 4)?]);
+                let w = u16::from_be_bytes([*b.get(*i + 5)?, *b.get(*i + 6)?]);
                 if h == 0 || w == 0 || components.is_some() {
                     return None;
                 }
-                components = Some(*b.get(i + 7)?);
+                components = Some(*b.get(*i + 7)?);
             }
             0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf => return None, // lossless, arithmetic, hierarchical
             _ => {}
         }
-        i += len;
+        *i += len;
         if m == 0xda {
             // entropy-coded data up to the next marker that is not a stuffed 0xff or a restart
             loop {
-                i += b.get(i..)?.iter().position(|&x| x == 0xff)?;
-                match *b.get(i + 1)? {
-                    0x00 | 0xd0..=0xd7 => i += 2,
-                    0xff => i += 1,
+                *i += b.get(*i..)?.iter().position(|&x| x == 0xff)?;
+                match *b.get(*i + 1)? {
+                    0x00 | 0xd0..=0xd7 => *i += 2,
+                    0xff => *i += 1,
                     _ => break,
                 }
             }
@@ -186,9 +193,14 @@ fn jpeg_extent(b: &[u8], soi: usize) -> Option<(usize, u8)> {
 /// Evidence: in the Minolta and Epson files the first byte of the stored preview is not `ff` (it is `00`, `02` or
 /// `ee`) while the rest is a regular JPEG, so a run is found by its `d8 ff` and starts one byte earlier,
 /// with that byte restored to `ff`.
+///
+/// A crafted file can hold millions of JPEG-like starts whose walks each run to its end: the walks
+/// share a budget of eight times the file's size, so the scan stays linear (a real file's candidates
+/// fail within a few bytes, or are the preview itself).
 fn scan_for_jpeg(data: &[u8]) -> Option<Vec<u8>> {
     let mut best: Option<(usize, usize)> = None;
     let mut at = 1;
+    let mut budget = data.len().saturating_mul(8).max(1 << 20);
     while let Some(off) = data.get(at..).and_then(|s| s.iter().position(|&b| b == 0xd8)) {
         let d8 = at + off;
         at = d8 + 1;
@@ -196,7 +208,13 @@ fn scan_for_jpeg(data: &[u8]) -> Option<Vec<u8>> {
             continue;
         }
         let start = d8 - 1; // `at` starts at 1, so d8 >= 1
-        if let Some((end, 3)) = jpeg_extent(data, start) {
+        let mut reach = start;
+        let found = jpeg_extent(data, start, &mut reach);
+        budget = budget.saturating_sub(reach.saturating_sub(start));
+        if budget == 0 {
+            break;
+        }
+        if let Some((end, 3)) = found {
             if best.is_none_or(|(s, e)| end - start > e - s) {
                 best = Some((start, end));
             }
@@ -350,6 +368,21 @@ mod tests {
         j.extend(std::iter::repeat_n(0x55u8, n));
         j.extend_from_slice(&[0xff, 0x00, 0x12, 0xff, 0xd0, 0x34, 0xff, 0xd9]);
         j
+    }
+
+    /// A crafted container full of JPEG-like starts (each walk running on through the ones after it)
+    /// is scanned in linear time: the walks share a budget (without it this 40 MB file takes about a minute).
+    #[test]
+    fn a_scan_through_many_fake_jpegs_stays_linear() {
+        let mut unit = vec![0u8, 0xd8, 0xff, 0xdb, 0x00, 0x02, 0xff, 0xda, 0x00, 0x02];
+        unit.extend(std::iter::repeat_n(0x55u8, 190));
+        let mut f = b"\0MRM\0\x01\0\0".to_vec();
+        for _ in 0..200_000 {
+            f.extend_from_slice(&unit);
+        }
+        let t = std::time::Instant::now();
+        assert_eq!(scan_for_jpeg(&f), None);
+        assert!(t.elapsed() < std::time::Duration::from_secs(10), "{:?}", t.elapsed());
     }
 
     /// Containers whose structure we do not walk give up their largest colour JPEG, found by scanning.
