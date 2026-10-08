@@ -127,7 +127,7 @@ pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &R
             }
         }
         MaskShape::ColorRange { samples, refine } => {
-            let tol = 0.04 + 0.16 * (*refine as f32 / 100.0);
+            let tol = color_range_tolerance(*refine);
             let samples: Vec<[f32; 3]> = samples.iter().map(|s| [s[0] as f32, s[1] as f32, s[2] as f32]).collect();
             for (v, c) in out.data.iter_mut().zip(&img.data) {
                 let lab = lightcraft_color::perceptual::oklab_from_2020(tonemap_for_select(c.map(|v| v * gain)));
@@ -255,6 +255,21 @@ fn smooth_plane(p: &mut Plane, sigma: f32) {
 /// A rough display mapping for colour picking (so samples taken on screen match).
 pub(crate) fn tonemap_for_select(c: [f32; 3]) -> [f32; 3] {
     c.map(|v| v / (1.0 + v))
+}
+
+/// Colour range: the OkLab distance (a, b at full weight, L at a quarter) at which a pixel leaves
+/// the selection for a Refine amount of 0..100. A pixel is fully selected up to half of it and
+/// fades out over the other half (CPU here, `mask.wgsl` kind 3; both take this value).
+///
+/// Issue #157: `0.04 + 0.16·refine` selected the whole photo. Through [`tonemap_for_select`] a
+/// slightly teal mid-grey (sRGB 120,150,155) and a neutral light grey (200,198,195) are only ~0.063
+/// apart — L 0.60 vs 0.72, a/b ≤ 0.02 — so at the default Refine 50 (full selection below 0.06)
+/// the grey patch was 99 % selected, and at Refine 85 / 100 still most of it. A JND is ~0.01 on
+/// this scale, so Refine 50 now holds a surface up to ~2 JND from its sample and drops everything
+/// beyond ~4.5 (full to 0.0225, gone at 0.045); Refine 85 is gone at 0.066, past that grey patch;
+/// Refine 100 reaches 0.075 and Refine 0 is the sample's own shade (full to 0.0075, gone at 0.015).
+pub fn color_range_tolerance(refine: f64) -> f32 {
+    0.015 + 0.06 * (refine / 100.0).clamp(0.0, 1.0) as f32
 }
 
 /// A brush stroke resolved to output pixels: dab centres (spacing r/4 along the path), radius,
@@ -597,5 +612,43 @@ mod tests {
         };
         let (plain, sharp) = (step(&soft), step(&refined));
         assert!(sharp > plain * 1.5 && sharp > 0.1, "the edge in the mask follows the photo's: {plain} → {sharp}");
+    }
+
+    /// Issue #157: a colour-range sample of one flat patch must not select a clearly different
+    /// patch. The two patches are the ones from the report (sRGB 120,150,155 and 200,198,195),
+    /// sampled the way `mask.sampleColor` does (3×3 mean of the selection-space OkLab).
+    #[test]
+    fn color_range_keeps_to_the_sampled_colour() {
+        use lightcraft_color::{REC2020, SRGB, transfer::decode_srgb8};
+        let (w, h) = (120usize, 40usize);
+        let m = SRGB.to_space(&REC2020);
+        let patch = |rgb: [u8; 3]| m.apply_f32(rgb.map(decode_srgb8));
+        let (left, right) = (patch([120, 150, 155]), patch([200, 198, 195]));
+        let img = Rgb32f::from_fn(w, h, |x, _| if x < 60 { left } else { right });
+        let log_l = img.map(crate::local::log_lum);
+        let f = Frame::new(w, h, &Default::default(), true);
+        let mut sample = [0f64; 3];
+        for y in 19..=21 {
+            for x in 29..=31 {
+                let lab = lightcraft_color::perceptual::oklab_from_2020(tonemap_for_select(img.data[y * w + x]));
+                for k in 0..3 {
+                    sample[k] += lab[k] as f64 / 9.0;
+                }
+            }
+        }
+        let alpha = |refine| {
+            let shape = MaskShape::ColorRange { samples: vec![sample], refine };
+            let a = shape_alpha(&shape, &f, w, h, &img, &log_l, 0.0);
+            (a.get(30, 20), a.get(90, 20))
+        };
+        for refine in [0.0, 50.0, 85.0] {
+            let (l, r) = alpha(refine);
+            assert!(l > 0.95, "refine {refine}: sampled patch {l}");
+            assert!(r < 0.05, "refine {refine}: other patch {r}");
+        }
+        // Refine 100 reaches furthest (the grey is ~0.063 away, the fade ends at 0.075), but the
+        // other patch stays mostly out
+        let (l, r) = alpha(100.0);
+        assert!(l > 0.95 && r < 0.3, "refine 100: {l} vs {r}");
     }
 }

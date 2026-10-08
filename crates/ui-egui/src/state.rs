@@ -45,14 +45,14 @@ impl RightPanel {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Zoom {
     #[default]
     Fit,
     Fill,
     /// 100 % = one image pixel per physical screen pixel.
-    Percent(u32),
+    Percent(f32),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,9 +374,9 @@ pub struct UiState {
     /// Reference view: the reference photo.
     #[serde(skip)]
     pub reference: Option<u64>,
-    /// Transient toast text and its expiry (seconds of app time).
+    /// Transient toast text, expiry (seconds of app time), and optional colour-label styling.
     #[serde(skip)]
-    pub toast: Option<(String, f64)>,
+    pub toast: Option<(String, f64, Option<lightcraft_catalog::ColorLabel>)>,
     /// The result of the last Find Missing Photos (it searches in the background).
     #[serde(skip)]
     pub last_find_missing: Option<serde_json::Value>,
@@ -532,6 +532,15 @@ pub enum Dialog {
     /// Confirm moving photos to Recently Deleted.
     ConfirmDelete {
         count: usize,
+    },
+    /// Confirm taking a folder's photos out of the library (`library.removeFolder`).
+    RemoveFolder {
+        path: String,
+        /// What the question calls it (a folder's last two names, a disk's name).
+        name: String,
+        count: usize,
+        /// A whole disk or share (`library.removeFolder` takes it only on request).
+        disk: bool,
     },
     About,
     Shortcuts,

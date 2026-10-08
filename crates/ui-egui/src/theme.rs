@@ -7,6 +7,28 @@ use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId,
 
 pub const FONT_SEMIBOLD: &str = "semibold";
 
+/// Shared colour-label palette for badges, thumbnail surrounds and feedback.
+pub fn label_color(label: lightcraft_catalog::ColorLabel) -> Color32 {
+    use lightcraft_catalog::ColorLabel;
+    match label {
+        ColorLabel::Red => Color32::from_rgb(222, 72, 72),
+        ColorLabel::Yellow => Color32::from_rgb(232, 196, 58),
+        ColorLabel::Green => Color32::from_rgb(88, 176, 92),
+        ColorLabel::Blue => Color32::from_rgb(72, 130, 222),
+        ColorLabel::Purple => Color32::from_rgb(158, 100, 210),
+    }
+}
+
+/// A translucent label colour over thumbnail chrome; selection remains brighter.
+pub fn label_background(base: Color32, label: Option<lightcraft_catalog::ColorLabel>, selected: bool) -> Color32 {
+    label.map_or(base, |l| base.lerp_to_gamma(label_color(l), if selected { 0.32 } else { 0.22 }))
+}
+
+/// Label confirmations use a pale colour and dark text, distinct from neutral/error HUDs.
+pub fn label_toast_colors(label: lightcraft_catalog::ColorLabel) -> (Color32, Color32) {
+    (Color32::WHITE.lerp_to_gamma(label_color(label), 0.3), Color32::from_rgb(36, 24, 24))
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Tokens {
     /// Top bar, side panels, bottom bar, tool strip.

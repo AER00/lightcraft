@@ -14,6 +14,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod dates;
+pub mod folders;
 pub mod journal;
 pub mod keywords;
 pub mod local;
@@ -29,6 +30,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub use dates::{DateRun, GroupBy};
+pub use folders::FolderNode;
 pub use journal::{Journal, LoadReport, PersistStats, SnapshotPolicy, SnapshotTiming};
 pub use keywords::KeywordNode;
 use lightcraft_develop::DevelopSettings;
@@ -612,6 +614,22 @@ impl Catalog {
         Op::Batch { ops }
     }
 
+    /// [`Self::delete_permanently_ops`] for several photos at once. One op list built against the
+    /// catalog as it is now: albums lose all of them in one write each, and stacks are shortened
+    /// (or dissolved) once, however many of their photos go.
+    pub fn delete_photos_permanently_ops(&self, ids: &[PhotoId]) -> Op {
+        let gone: std::collections::HashSet<PhotoId> = ids.iter().copied().collect();
+        let mut ops: Vec<Op> = self
+            .albums
+            .values()
+            .filter(|a| a.photos.iter().any(|p| gone.contains(p)))
+            .map(|a| Op::SetAlbumPhotos { id: a.id, photos: a.photos.iter().copied().filter(|p| !gone.contains(p)).collect() })
+            .collect();
+        ops.extend(self.remove_from_stacks_ops(ids));
+        ops.extend(gone.iter().map(|id| Op::RemovePhoto { id: *id }));
+        Op::Batch { ops }
+    }
+
     // ---- persistence
 
     /// Full snapshot as JSON.
@@ -654,6 +672,8 @@ impl Catalog {
 mod tests;
 #[cfg(test)]
 mod tests_background;
+#[cfg(test)]
+mod tests_folders;
 #[cfg(test)]
 mod tests_format_version;
 #[cfg(test)]

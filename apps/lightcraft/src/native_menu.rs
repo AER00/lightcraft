@@ -2,9 +2,12 @@
 //! the in-window menus ([`lightcraft_ui_egui::menubar`]): the registry's menu paths, shortcuts,
 //! enabled and checked state, and live labels ("Undo Exposure").
 //!
-//! Key handling: a native key equivalent consumes the key press before egui sees it, so
-//! - shortcuts installed natively are listed in `LightcraftApp::native_shortcuts` and skipped by
-//!   the egui shortcut handler (nothing fires twice);
+//! Key handling: AppKit offers a key press to the menu bar only when it carries ⌘ or ⌃, or is a
+//! function key (F1…). Every other key (`E`, `1`, `⇧P`, `⌥Y`…) goes straight to the window, whose
+//! winit view always takes it, so a menu item never fires from it. Hence
+//! - shortcuts the menu bar really receives ([`menu_delivers`]) are listed in
+//!   `LightcraftApp::native_shortcuts` and skipped by the egui shortcut handler (nothing fires
+//!   twice); the others stay on their menu items for display and egui runs them;
 //! - while a text field has keyboard focus, accelerators without ⌘ (`G`, `1`, `Delete`…) and the
 //!   text-editing ones (⌘A/⌘C/⌘V/⌘X/⌘Z) are removed, so typing and text editing work; they come
 //!   back when the field loses focus.
@@ -144,6 +147,18 @@ fn accelerator(sc: &str) -> Option<Accelerator> {
 /// Accelerators that must step aside while a text field has focus.
 fn yields_to_text(sc: &str) -> bool {
     !sc.contains("Cmd") && !sc.contains("Ctrl") || TEXT_EDIT.contains(&sc)
+}
+
+/// Whether AppKit hands this shortcut to the menu bar: only key presses with ⌘ or ⌃, and function
+/// keys. A plain `C` or `⇧P` never reaches it (the window's view takes the key), so egui has to run
+/// those even though their menu item shows the key.
+fn menu_delivers(sc: &str) -> bool {
+    sc.split('+').any(|part| matches!(part, "Cmd" | "Ctrl") || part.strip_prefix('F').is_some_and(|n| n.parse::<u8>().is_ok()))
+}
+
+/// The shortcuts the menu bar runs itself, for `LightcraftApp::native_shortcuts`.
+fn owned_by_menu<'a>(installed: impl Iterator<Item = &'a str>, text_focus: bool) -> HashSet<String> {
+    installed.filter(|sc| menu_delivers(sc) && !(text_focus && yields_to_text(sc))).map(str::to_string).collect()
 }
 
 /// `&` marks a mnemonic in muda labels.
@@ -329,13 +344,8 @@ impl NativeMenu {
 
     /// Tell the egui shortcut handler which shortcuts the menu bar currently owns.
     fn publish_shortcuts(&self, app: &mut LightcraftApp) {
-        app.native_shortcuts = self
-            .items
-            .values()
-            .filter(|i| i.accel.is_some())
-            .filter_map(|i| i.shortcut.clone())
-            .filter(|sc| !(self.text_focus && yields_to_text(sc)))
-            .collect::<HashSet<_>>();
+        let installed = self.items.values().filter(|i| i.accel.is_some()).filter_map(|i| i.shortcut.as_deref());
+        app.native_shortcuts = owned_by_menu(installed, self.text_focus);
         app.native_shortcuts.insert(SETTINGS_KEY.to_string());
     }
 
@@ -466,5 +476,40 @@ mod tests {
         for sc in scs.iter().filter(|s| !CONTEXTUAL.contains(&s.as_str())) {
             assert!(accelerator(sc).is_some(), "{sc}");
         }
+    }
+
+    /// Single keys shown in the menu bar (E, C, ⇧P, ratings…) never reach it on macOS, so egui must
+    /// keep handling them; ⌘ / ⌃ combinations and function keys are the menu bar's own.
+    #[test]
+    fn single_key_shortcuts_stay_with_egui() {
+        assert!(menu_delivers("Cmd+Shift+H") && menu_delivers("Ctrl+H") && menu_delivers("F2") && menu_delivers("Cmd+F11"));
+        assert!(!menu_delivers("E") && !menu_delivers("Shift+P") && !menu_delivers("Alt+Y") && !menu_delivers("1") && !menu_delivers("F"));
+        let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), Default::default());
+        fn all(n: &[MenuNode], out: &mut Vec<String>) {
+            for x in n {
+                match x {
+                    MenuNode::Item { shortcut: Some(s), .. } if accelerator(s).is_some() => out.push(s.clone()),
+                    MenuNode::Submenu { children, .. } => all(children, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut installed = Vec::new();
+        for (_, v) in menu_bar(&app) {
+            all(&v, &mut installed);
+        }
+        for sc in ["E", "C", "Shift+P", "Cmd+Shift+H", "F2"] {
+            assert!(installed.iter().any(|s| s == sc), "{sc} is in the menu bar");
+        }
+        let owned = owned_by_menu(installed.iter().map(String::as_str), false);
+        for sc in ["E", "C", "Shift+P", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "P", "U"] {
+            assert!(installed.iter().any(|s| s == sc), "{sc} is displayed in the menu");
+            assert!(!owned.contains(sc), "{sc} must be left to egui");
+        }
+        for sc in ["Cmd+Shift+H", "F2"] {
+            assert!(owned.contains(sc), "{sc} is run by the menu bar");
+        }
+        // while typing, the menu bar gives up F2 too (the text field has it)
+        assert!(!owned_by_menu(installed.iter().map(String::as_str), true).contains("F2"));
     }
 }

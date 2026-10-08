@@ -15,10 +15,9 @@ fn corpus_root() -> PathBuf {
 
 /// Variants known not to decode yet (see the crate docs): matched against the lower-case file name.
 const KNOWN_UNSUPPORTED: &[&str] = &[
-    "cr3-",                     // CR3 / CRX (M11.1)
-    "raf-fuji-xt20-compressed", // Fujifilm compressed RAF
-    "orf-olympus-em",           // Olympus compressed ORF
-    "sraw",                     // Canon sRAW / mRAW
+    "cr3-",           // CR3 / CRX (M11.1)
+    "orf-olympus-em", // Olympus compressed ORF
+    "sraw",           // Canon sRAW / mRAW
 ];
 
 #[test]
@@ -164,6 +163,34 @@ fn corpus_cr2_cfa_patterns() {
         seen += 1;
     }
     eprintln!("CR2 CFA layouts checked on {seen} files");
+}
+
+/// The as-shot white balance of Canon CR2s whose ColorData is stored as SHORT words stays readable (the PowerShot /
+/// EOS M files that store it as UNDEFINED bytes are covered by the unit test in `vendor/cr2.rs`; none is in this corpus).
+/// Daylight-ish CR2s have R/G above 1 and B/G between 1 and 2.5 (observed 1.4-2.7 on these nine bodies).
+#[test]
+fn corpus_cr2_as_shot_white_balance() {
+    let dir = corpus_root().join("raw");
+    let mut seen = 0;
+    for name in [
+        "cr2-canon-40d.cr2",
+        "cr2-canon-550d.cr2",
+        "cr2-canon-5d2.cr2",
+        "cr2-canon-5d3.cr2",
+        "cr2-canon-5dsr.cr2",
+        "cr2-canon-6d.cr2",
+        "cr2-canon-7d.cr2",
+        "cr2-canon-80d.cr2",
+    ] {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            eprintln!("skip: {name} absent");
+            continue;
+        };
+        let wb = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}")).wb_multipliers.unwrap_or_else(|| panic!("{name}: no as-shot WB"));
+        assert!(wb[1] == 1.0 && wb[0] > 1.0 && wb[2] > 0.5 && wb[0] < 4.0 && wb[2] < 4.0, "{name}: WB {wb:?}");
+        seen += 1;
+    }
+    eprintln!("CR2 as-shot WB checked on {seen} files");
 }
 
 /// raw.pixls.us has the same D5100 scene as 14-bit lossless compressed and uncompressed NEF: the Huffman decode must
@@ -426,4 +453,81 @@ fn corpus_panasonic_encodings() {
         seen += 1;
     }
     eprintln!("Panasonic encodings checked on {seen} files");
+}
+
+/// Olympus ORF (`crates/raw/src/vendor/orf.rs`): the colour-filter layout comes from the file's Exif `CFAPattern`.
+/// With it, the decoded mosaic's colours follow the camera's own JPEG better than with any other layout.
+#[test]
+fn corpus_orf_cfa_patterns() {
+    let dir = corpus_root().join("raw");
+    let cases = [("orf-olympus-e1.orf", "GRBG"), ("orf-olympus-e400.orf", "GRBG"), ("orf-olympus-xz2.orf", "RGGB")];
+    let mut seen = 0;
+    for (name, cfa) in cases {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            eprintln!("skip: {name} absent");
+            continue;
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(img.cfa.as_ref().map(|c| c.name()).as_deref(), Some(cfa), "{name}: CFA layout");
+        assert_eq!(green_on_main_diagonal(&img), cfa.starts_with('G'), "{name}: mosaic statistics disagree with {cfa}");
+        let jpeg = embedded_preview(&bytes).unwrap_or_else(|| panic!("{name}: no embedded preview"));
+        let (gw, gh) = (24, 18);
+        let (sites, jpeg) = (raw_sites(&img, gw, gh), jpeg_cells(&jpeg, gw, gh));
+        let agree = |l: &str| chroma_agreement(&sites, &jpeg, &lightcraft_raw::Cfa::bayer(l).unwrap().pattern);
+        let best_other = ["RGGB", "GRBG", "GBRG", "BGGR"].into_iter().filter(|l| *l != cfa).map(agree).fold(f64::MIN, f64::max);
+        let own = agree(cfa);
+        let a = img.active_area;
+        eprintln!("{name:32} {cfa}, active area at ({}, {}): colour agreement {own:.3} (others ≤ {best_other:.3})", a.x, a.y);
+        assert!(own > 0.5 && own > best_other, "{name}: colours follow the JPEG better with another layout ({own} vs {best_other})");
+        seen += 1;
+    }
+    eprintln!("ORF CFA layouts checked on {seen} files");
+}
+
+/// Reference sensor sums and position-weighted sums from black-box decoding, independent
+/// of this implementation. These cover complete images, padding, stripe boundaries and
+/// lossy block quantizer changes; the source files are CC0, fetched by `xtask corpus`.
+#[test]
+fn corpus_fujifilm_compressed_samples() {
+    use sha2::{Digest, Sha256};
+    let checksums = include_str!("../../../docs/raf-corpus.sha256");
+    let cases: &[(&str, usize, usize, u64, u64)] = &[
+        ("raf-fuji-gfx100-3773.raf", 11808, 8754, 483668733090, 6453395759968151080),
+        ("raf-fuji-gfx100-3775.raf", 11808, 8754, 120434414850, 6144091676930008551),
+        ("raf-fuji-gfx100rf-8091.raf", 11808, 8754, 509005112862, 6771145666297463071),
+        ("raf-fuji-gfx100s-4495.raf", 11808, 8754, 941987648006, 4811558780180901389),
+        ("raf-fuji-gfx100s-4503.raf", 11808, 8754, 939580201129, 4821879272388485929),
+        ("raf-fuji-gfx50s-1435.raf", 9216, 6210, 79545293042, 2565169091480702981),
+        ("raf-fuji-xe5-8509.raf", 7872, 5196, 76435253154, 1299804440011842144),
+        ("raf-fuji-xh2-6001.raf", 7872, 5196, 83480264024, 1799924693528487099),
+        ("raf-fuji-xh2-6002.raf", 7872, 5196, 72476569659, 1547275125734054244),
+        ("raf-fuji-xm5-7748.raf", 6336, 4182, 93243605328, 986712869515471030),
+        ("raf-fuji-xt2-865.raf", 6048, 4038, 44212684244, 541983062567959797),
+        ("raf-fuji-xt20-compressed.raf", 6048, 4038, 72690241711, 882852288583469317),
+        ("raf-fuji-xt4-3914.raf", 6384, 4182, 45943146703, 599112804573868025),
+        ("raf-fuji-xt4-3918.raf", 6384, 4182, 46401490361, 605690093061448074),
+        ("raf-fuji-xt5-6122.raf", 7872, 5196, 109559716516, 1653376659872066392),
+        ("raf-fuji-xt5-6123.raf", 7872, 5196, 109489917369, 1673725237502600190),
+        ("raf-fuji-xt50-7807.raf", 7872, 5196, 76453904143, 1262190863834170778),
+    ];
+    let dir = corpus_root().join("raw");
+    let mut seen = 0;
+    for &(name, width, height, sum, weighted) in cases {
+        let path = format!("corpus/raw/{name}");
+        let checksum = checksums.lines().filter_map(|s| s.split_once("  ")).find(|(_, p)| *p == path).unwrap().0;
+        assert_eq!(checksum.len(), 64, "{name}: missing published SHA-256");
+        let Ok(bytes) = std::fs::read(dir.join(name)) else { continue };
+        let actual_sha: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(actual_sha, checksum, "{name}: corpus file differs from its pinned identity");
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!((img.width, img.height), (width, height), "{name}");
+        let lightcraft_raw::RawData::U16(data) = img.data else { panic!("{name}: float data") };
+        let actual = data
+            .iter()
+            .enumerate()
+            .fold((0u64, 0u64), |(s, w), (i, &v)| (s.wrapping_add(u64::from(v)), w.wrapping_add((i as u64 + 1).wrapping_mul(u64::from(v)))));
+        assert_eq!(actual, (sum, weighted), "{name}: sensor samples differ from reference");
+        seen += 1;
+    }
+    eprintln!("verified {seen} Fujifilm compressed sensor arrays");
 }

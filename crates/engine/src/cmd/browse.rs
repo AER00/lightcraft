@@ -251,12 +251,30 @@ pub(crate) fn rename_folder_on_disk(from: &str, to: &str) -> std::result::Result
 
 /// After a folder moved from `from` to `to`: a browsed folder at or below it follows.
 pub(crate) fn follow_folder(s: &mut Session, from: &str, to: &str) {
+    // a library folder chosen at or below it follows too, as a source or as a filter
+    follow_library_folder(&mut s.library_folder, from, to);
+    follow_library_folder(&mut s.filter.library_folder, from, to);
     if let Some(b) = &mut s.browse
         && let Ok(rel) = Path::new(&b.path).strip_prefix(from)
     {
         b.path = Path::new(to).join(rel).to_string_lossy().to_string();
         let f = b.path.clone();
         s.filter.folder = Some(f);
+    }
+}
+
+/// A chosen library folder at or below `from` becomes the same place below `to`. Compared the
+/// way the filter does, by folder identity, so a differently spelled choice is not widened to
+/// the folder itself.
+fn follow_library_folder(chosen: &mut Option<String>, from: &str, to: &str) {
+    let Some(c) = chosen.as_deref() else { return };
+    let (ck, fk) = (lightcraft_catalog::query::folder_key(c), lightcraft_catalog::query::folder_key(from));
+    if fk.is_empty() {
+        return;
+    }
+    if let Some(rest) = ck.strip_prefix(fk.as_str()).filter(|r| r.is_empty() || r.starts_with('/') || fk.ends_with('/')) {
+        let rest = rest.trim_start_matches('/');
+        *chosen = Some(if rest.is_empty() { to.to_string() } else { format!("{}/{rest}", to.trim_end_matches(['/', '\\'])) });
     }
 }
 
