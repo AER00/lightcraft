@@ -78,7 +78,27 @@ pub struct Selection {
     pub active: Option<PhotoId>,
 }
 
+/// How a photo relates to the selection: what every view draws (grid cell, filmstrip cell…).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionState {
+    NotSelected,
+    /// Selected, but not the photo the loupe and panels act on.
+    Selected,
+    /// The most-selected photo.
+    Active,
+}
+
 impl Selection {
+    /// What views draw for `id`: active, selected or neither (one answer for grid, filmstrip, …).
+    pub fn state_of(&self, id: PhotoId) -> SelectionState {
+        if self.active == Some(id) {
+            SelectionState::Active
+        } else if self.contains(id) {
+            SelectionState::Selected
+        } else {
+            SelectionState::NotSelected
+        }
+    }
     pub fn single(id: PhotoId) -> Selection {
         Selection { ids: vec![id], active: Some(id) }
     }
@@ -210,5 +230,20 @@ fn date_label(d: &str) -> String {
         ([y, _, day], Some(m)) => format!("{m} {}, {y}", day.trim_start_matches('0')),
         ([y, _], Some(m)) => format!("{m} {y}"),
         _ => d.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod selection_state_tests {
+    use super::*;
+    use lightcraft_catalog::PhotoId;
+
+    #[test]
+    fn select_all_marks_the_others_selected_and_one_active() {
+        let ids: Vec<PhotoId> = (1..=3).map(PhotoId).collect();
+        let s = Selection { ids: ids.clone(), active: Some(ids[0]) };
+        assert_eq!(s.state_of(ids[0]), SelectionState::Active);
+        assert_eq!(s.state_of(ids[1]), SelectionState::Selected);
+        assert_eq!(s.state_of(PhotoId(9)), SelectionState::NotSelected);
     }
 }
