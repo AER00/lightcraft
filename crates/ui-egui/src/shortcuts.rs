@@ -169,8 +169,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         if let Some(rest) = f.strip_prefix("rate:") {
             let (n, adv) = rest.split_once(':').unwrap_or(("0", "0"));
             cull(app, "photo.rate", json!({"rating": n.parse::<u8>().unwrap_or(0)}), adv == "1");
-            let label =
-                if n == "0" { "Rating cleared".to_string() } else { crate::i18n::tr_format!("Rated {}", "★".repeat(n.parse().unwrap_or(0))) };
+            let label = if n == "0" {
+                crate::i18n::tr("Rating cleared").to_string()
+            } else {
+                crate::i18n::tr_format!("Rated {}", "★".repeat(n.parse().unwrap_or(0)))
+            };
             app.toast(ctx, label);
         } else if let Some(l) = f.strip_prefix("label:") {
             cull(app, "photo.label", json!({"label": l}), false);
@@ -183,9 +186,9 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         } else if matches!(f.as_str(), "photo.pick" | "photo.reject" | "photo.unflag") && app.ui.right != crate::state::RightPanel::Crop {
             cull(app, &f, json!({}), false);
             match f.as_str() {
-                "photo.pick" => app.toast(ctx, "Flagged as Pick"),
-                "photo.reject" => app.toast(ctx, "Flagged as Reject"),
-                _ => app.toast(ctx, "Unflagged"),
+                "photo.pick" => app.toast(ctx, crate::i18n::tr("Flagged as Pick")),
+                "photo.reject" => app.toast(ctx, crate::i18n::tr("Flagged as Reject")),
+                _ => app.toast(ctx, crate::i18n::tr("Unflagged")),
             }
         } else {
             // in the full-screen preview (no panels) I cycles the info overlay instead
@@ -221,9 +224,16 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             if f == "tool.brush" && matches!(app.ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid) {
                 if let Ok(r) = app.run("album.toggleTarget", json!({})) {
                     let n = app.session.targets(&json!({})).len();
-                    let what = if n == 1 { "photo".to_string() } else { crate::i18n::tr_format!("{n} photos", n = n) };
+                    let what = crate::i18n::tr_format!("{n} photo{}", if n == 1 { "" } else { "s" }, n = n);
                     let name = r["name"].as_str().unwrap_or("Quick Collection").to_string();
-                    app.toast(ctx, if r["added"] == true { format!("Added {what} to {name}") } else { format!("Removed {what} from {name}") });
+                    app.toast(
+                        ctx,
+                        if r["added"] == true {
+                            crate::i18n::tr_format!("Added {what} to {name}", name = name, what = what)
+                        } else {
+                            crate::i18n::tr_format!("Removed {what} from {name}", name = name, what = what)
+                        },
+                    );
                 }
                 continue;
             }
@@ -265,11 +275,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 app.toast(ctx, e);
             }
             match f.as_str() {
-                "photo.pick" => app.toast(ctx, "Flagged as Pick"),
-                "photo.reject" => app.toast(ctx, "Flagged as Reject"),
-                "photo.unflag" => app.toast(ctx, "Unflagged"),
-                "edit.undo" => app.toast(ctx, "Undo"),
-                "edit.redo" => app.toast(ctx, "Redo"),
+                "photo.pick" => app.toast(ctx, crate::i18n::tr("Flagged as Pick")),
+                "photo.reject" => app.toast(ctx, crate::i18n::tr("Flagged as Reject")),
+                "photo.unflag" => app.toast(ctx, crate::i18n::tr("Unflagged")),
+                "edit.undo" => app.toast(ctx, crate::i18n::tr("Undo")),
+                "edit.redo" => app.toast(ctx, crate::i18n::tr("Redo")),
                 _ => {}
             }
         }

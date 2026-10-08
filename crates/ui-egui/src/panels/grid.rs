@@ -475,15 +475,15 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     // screen readers: the file, then rating / flag / label
     let mut spoken = photo.file_name.clone();
     if photo.rating > 0 {
-        spoken.push_str(&format!(", {} star{}", photo.rating, if photo.rating == 1 { "" } else { "s" }));
+        spoken.push_str(&crate::i18n::tr_format!(", {} star{}", photo.rating, if photo.rating == 1 { "" } else { "s" }));
     }
     match photo.flag {
-        lightcraft_catalog::Flag::Pick => spoken.push_str(", picked"),
-        lightcraft_catalog::Flag::Reject => spoken.push_str(", rejected"),
+        lightcraft_catalog::Flag::Pick => spoken.push_str(crate::i18n::tr(", picked")),
+        lightcraft_catalog::Flag::Reject => spoken.push_str(crate::i18n::tr(", rejected")),
         lightcraft_catalog::Flag::None => {}
     }
     if let Some(l) = photo.label {
-        spoken.push_str(&format!(", {} label", app.session.catalog.label_name(l)));
+        spoken.push_str(&crate::i18n::tr_format!(", {} label", crate::i18n::color_label(&app.session.catalog, l)));
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &spoken));
     let active = app.session.selection.active == Some(id);
@@ -730,7 +730,7 @@ pub use super::filterbar::label_color;
 pub fn label_menu(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let current = app.session.active().and_then(|id| app.session.catalog.photo(id)).and_then(|p| p.label);
     for l in ColorLabel::ALL {
-        let name = app.session.catalog.label_name(l);
+        let name = crate::i18n::color_label(&app.session.catalog, l);
         let resp = ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
             ui.painter().circle_filled(r.center(), 5.0, label_color(l));
@@ -792,7 +792,10 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             Ok(r) => {
                 let n = r["photos"].as_array().map_or(0, Vec::len);
                 app.ui.view = crate::state::ViewMode::PhotoGrid;
-                app.toast(ui.ctx(), format!("{n} similar photo{} · View ▸ Clear Filters to see all", if n == 1 { "" } else { "s" }));
+                app.toast(
+                    ui.ctx(),
+                    crate::i18n::tr_format!("{n} similar photo{} · View ▸ Clear Filters to see all", if n == 1 { "" } else { "s" }, n = n),
+                );
             }
             Err(e) => app.toast(ui.ctx(), e),
         }

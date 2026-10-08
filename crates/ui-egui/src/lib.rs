@@ -312,11 +312,13 @@ impl LightcraftApp {
                 let plural = if done == 1 { "" } else { "s" };
                 let mut msg = match (b.error(), b.what) {
                     (Some(e), what) => format!("{}: {e}", if what.is_empty() { "previews" } else { what }),
-                    (None, "") => format!("Previews ready for {done} photo{plural}"),
-                    (None, what) => format!("Done ({what}): {done} photo{plural}"),
+                    (None, "") => crate::i18n::tr_format!("Previews ready for {done} photo{plural}", done = done, plural = plural),
+                    (None, what) => {
+                        crate::i18n::tr_format!("Done ({what}): {done} photo{plural}", done = done, plural = plural, what = crate::i18n::tr(what))
+                    }
                 };
                 if failed > 0 {
-                    msg.push_str(&format!(" · {failed} couldn't be rendered"));
+                    msg.push_str(&crate::i18n::tr_format!(" · {failed} couldn't be rendered", failed = failed));
                 }
                 self.toast(ctx, msg);
             }
@@ -324,8 +326,8 @@ impl LightcraftApp {
             if self.ui.preview_build_seen != Some((key, false)) {
                 self.ui.preview_build_seen = Some((key, false));
                 let msg = match b.what {
-                    "" => format!("Building previews for {} photos…", b.total),
-                    what => format!("Working on {what} for {} photos…", b.total),
+                    "" => crate::i18n::tr_format!("Building previews for {} photos…", b.total),
+                    what => crate::i18n::tr_format!("Working on {what} for {} photos…", b.total, what = crate::i18n::tr(what)),
                 };
                 self.toast(ctx, msg);
             }
@@ -341,8 +343,15 @@ impl LightcraftApp {
             (Some((n, e)), false) => {
                 self.ui.unsaved_seen = true;
                 let t = ctx.input(|i| i.time);
-                let what = if n == 1 { "1 change".to_string() } else { format!("{n} changes") };
-                self.ui.toast = Some((format!("{what} saved in memory but not written to disk: {e} — LightCraft will retry"), t + 6.0));
+                self.ui.toast = Some((
+                    crate::i18n::tr_format!(
+                        "{n} change{} saved in memory but not written to disk: {e} — LightCraft will retry",
+                        if n == 1 { "" } else { "s" },
+                        n = n,
+                        e = e
+                    ),
+                    t + 6.0,
+                ));
             }
             (None, true) => {
                 self.ui.unsaved_seen = false;
@@ -395,7 +404,7 @@ impl LightcraftApp {
                 (Some(e), false) if e.contains("cancelled") => {
                     self.toast(ctx, crate::i18n::tr("SAM 3 download stopped: it resumes where it left off next time."))
                 }
-                (Some(e), false) => self.toast_error(ctx, format!("The SAM 3 download failed: {e}")),
+                (Some(e), false) => self.toast_error(ctx, crate::i18n::tr_format!("The SAM 3 download failed: {e}", e = e)),
                 (None, false) if download.finished => {
                     self.toast_error(ctx, crate::i18n::tr("The SAM 3 model is installed: Object and Describe masks are ready."))
                 }
