@@ -29,3 +29,7 @@ dhat = { workspace = true, optional = true }
 # every allocation (live/peak bytes in `library.memory` / `ui.inspect`) and writes dhat-heap.json
 # (open it in DHAT's viewer: allocation sites by bytes at the peak). Slows allocation-heavy work.
 dhat-heap = ["dep:dhat"]
+
+# Open HEIC/HEIF photos (the optional lightcraft-heif crate). Not default so distributors choose
+# it; official builds (CI, packaging/, release) build with `--features heif`.
+heif = ["lightcraft-codecs/heif"]

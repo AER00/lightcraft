@@ -6,6 +6,11 @@
 - Sony ILCE-7M4 downsized lossless ARWs now decode subsampled YCbCr tiles into linear RGB,
   preserving RAW editing & full-resolution export instead of using embedded JPEG previews.
 
+### Formats
+- HEIC / HEIF photos (iPhone and Mac) open now: the optional `lightcraft-heif` crate (heic-rs, pure Rust) behind
+  codecs' `heif` feature — 8- and 10-bit, alpha, grid tiles, the container's rotation/mirror/crop, ICC, EXIF and XMP.
+  Off by default (HEVC patents are the distributor's call, same as PhotoCraft); official builds pass `--features heif`.
+
 ### Presets and profiles
 - Import presets from other editors: XMP presets, classic `.lrtemplate` files, "DNG presets" from mobile apps and `.zip`
   bundles of any of these — whole folders at once, grouped by pack. Masks inside presets come along.
