@@ -224,6 +224,25 @@ fn select_by(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"selected": n}))
 }
 
+/// Seeds stay exactly representable as a JSON double, so web and agent clients read back what they wrote.
+const MAX_SEED: u64 = 1 << 53;
+
+/// `seed` as an integer in `0..2^53`, or `default` when absent or null; anything else is an error.
+fn seed_param(p: &Value, cmd: &str, default: u64) -> Result<u64> {
+    match p.get("seed") {
+        None | Some(Value::Null) => Ok(default),
+        Some(v) => v.as_u64().filter(|n| *n < MAX_SEED).ok_or_else(|| bad(cmd, "seed must be an integer from 0 to 2^53 - 1")),
+    }
+}
+
+/// The seed after `prev` at time `now`: a mix of `prev` and the clock text, so repeated reshuffles
+/// within one clock tick still differ (barring a 2^-53 collision). Kept below 2^53 so JSON
+/// clients that read numbers as doubles (web, MCP agents) get the same seed back.
+fn next_seed(prev: u64, now: &str) -> u64 {
+    let t = now.bytes().fold(0u64, |h, b| lightcraft_catalog::mix64(h ^ u64::from(b)));
+    (lightcraft_catalog::mix64(prev.wrapping_add(1)) ^ t) & (MAX_SEED - 1)
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         // ---- view source / filter / sort
@@ -281,7 +300,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Sort",
             ["View", "Sort"],
             None,
-            "{key?: captureDate|importDate|editDate|fileName|rating|fileSize, ascending?: bool, group?: auto|none|day|month|year}",
+            "{key?: captureDate|importDate|editDate|fileName|rating|fileSize|random, ascending?: bool, group?: auto|none|day|month|year, seed?: u64 (the shuffle `random` gives)}",
             always,
             |s, p| {
                 let key: SortKey = match p.get("key") {
@@ -292,7 +311,31 @@ pub fn specs() -> Vec<CommandSpec> {
                     Some(g) => GroupBy::parse(g).ok_or_else(|| bad("library.sort", "group must be auto|none|day|month|year"))?,
                     None => s.sort.group,
                 };
-                s.sort = Sort { key, ascending: bool_or(p, "ascending", s.sort.ascending), group };
+                let mut seed = seed_param(p, "library.sort", s.sort.seed)?;
+                let explicit = p.get("seed").is_some_and(|v| !v.is_null());
+                if key == SortKey::Random && s.sort.key != SortKey::Random && !explicit {
+                    // switching to Random is a fresh shuffle, not whatever seed was left behind
+                    seed = next_seed(seed, &(s.clock)());
+                }
+                s.sort = Sort { key, ascending: bool_or(p, "ascending", s.sort.ascending), group, seed };
+                ok()
+            }
+        ),
+        cmd!(
+            "library.shuffle",
+            "Reshuffle",
+            ["View", "Sort"],
+            None,
+            "{seed?: 0..2^53-1} — sort at random; without `seed` a new shuffle each time",
+            always,
+            |s, p| {
+                let seed = match seed_param(p, "library.shuffle", s.sort.seed)? {
+                    given if p.get("seed").is_some_and(|v| !v.is_null()) => given,
+                    // derived from the previous seed and the session clock: reproducible under a test
+                    // clock, and no RNG needed
+                    prev => next_seed(prev, &(s.clock)()),
+                };
+                s.sort = Sort { key: SortKey::Random, seed, ..s.sort };
                 ok()
             }
         ),
@@ -991,6 +1034,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         cmd!("library.clearPreviews", "Clear Preview Cache", ["File"], None, "{}", always, |s, _| {
             s.media.rendered.clear();
+            s.media.clear_sources();
             ok()
         }),
     ]

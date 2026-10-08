@@ -1,6 +1,6 @@
 # LightCraft — instructions for agents
 
-LightCraft is a clean-room, open-source, pure-Rust photo library + non-destructive raw developer targeting Adobe Lightroom parity (and beyond). Native on macOS, Windows, Linux; web via WASM. Sibling of `../printcraft` (Acrobat), `../photocraft` (Photoshop), `../drawcraft` (Illustrator) and `../filmcraft` (Premiere), with the same conventions.
+LightCraft is a clean-room, open-source, pure-Rust photo library + non-destructive raw developer targeting Adobe Lightroom parity (and beyond). Native on macOS, Windows, Linux; web via WASM. Sibling of `../pdfcraft` (Acrobat), `../photocraft` (Photoshop), `../vectorcraft` (Illustrator) and `../filmcraft` (Premiere), with the same conventions.
 
 ## Start every session here
 1. Read `plan/STATUS.md` (current milestone, next unchecked task, blockers).
@@ -119,4 +119,7 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 ## Map of the code
 `geom`, `color`, `raster`, `tiff` (L0) → `raw`, `codecs`, `meta`, `develop` (L1) → `pipeline` → `catalog` → `engine`
 → `ui-egui`, `mcp` (L5) → apps `lightcraft` (desktop), `lightcraft-cli` (render/commands/MCP). `scenes` generates demo
-photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `corpus`, `stats`).
+photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `corpus`, `stats`). `flake.nix` +
+`nix/package.nix` = the Nix package (`nix build` builds both binaries with the craft-fonts input, installs the
+desktop file/icons/AppStream metadata and runs `cargo test --workspace`; `nix develop` = dev shell). Community-maintained and not
+in CI: it may lag behind the workspace; see README → Quick start.

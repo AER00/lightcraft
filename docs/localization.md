@@ -2,9 +2,9 @@
 
 The interface ships in the language it is written in (English) plus every language in the table in
 `crates/ui-egui/src/i18n.rs`. Today that is English, Simplified Chinese (`zh-hans`), Traditional
-Chinese (`zh-hant`, Taiwan) and Japanese (`ja`). This file is the reference for **adding or maintaining a language**; the per-language notes
-are in [`localization-zh-hans.md`](localization-zh-hans.md), [`localization-zh-hant.md`](localization-zh-hant.md) and
-[`localization-ja.md`](localization-ja.md).
+Chinese (`zh-hant`, Taiwan), Japanese (`ja`) and Brazilian Portuguese (`pt-br`). This file is the reference for **adding or maintaining a language**; the per-language notes
+are in [`localization-zh-hans.md`](localization-zh-hans.md), [`localization-zh-hant.md`](localization-zh-hant.md),
+[`localization-ja.md`](localization-ja.md) and [`localization-pt-br.md`](localization-pt-br.md).
 
 ## Adding a language
 
@@ -24,6 +24,7 @@ are in [`localization-zh-hans.md`](localization-zh-hans.md), [`localization-zh-h
        ZhHans, "zh-hans", "简体中文", "Hans", include_str!("../locales/zh-hans.json");
        ZhHant, "zh-hant", "繁體中文（台灣）", "Hant", include_str!("../locales/zh-hant.json");
        Ja, "ja", "日本語", "Jpan", include_str!("../locales/ja.json");
+       PtBr, "pt-br", "Português (Brasil)", "Latn", include_str!("../locales/pt-br.json");
    }
    ```
 

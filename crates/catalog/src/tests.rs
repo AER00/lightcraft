@@ -380,3 +380,69 @@ fn empty_regions_are_not_serialized_and_default_when_missing() {
     let back: Meta = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
     assert_eq!(back, with);
 }
+
+// ---- random sort: Given a seed, the order is a stable, reproducible shuffle of the matching photos
+
+fn many(c: &mut Catalog, n: usize) -> Vec<PhotoId> {
+    (0..n).map(|i| photo(c, &format!("p{i:03}.jpg"), &format!("2026-04-{:02}T10:00:00", i % 28 + 1))).collect()
+}
+
+fn random(seed: u64) -> Sort {
+    Sort { key: SortKey::Random, seed, ..Default::default() }
+}
+
+#[test]
+fn random_sort_is_a_reproducible_permutation() {
+    let mut c = Catalog::new();
+    let ids = many(&mut c, 50);
+    let a = c.query(&Filter::default(), &random(7));
+    assert_eq!(a, c.query(&Filter::default(), &random(7)), "same seed, same order");
+    let mut sorted = a.clone();
+    sorted.sort();
+    let mut all = ids.clone();
+    all.sort();
+    assert_eq!(sorted, all, "every photo exactly once");
+    assert_ne!(a, c.query(&Filter::default(), &random(8)), "another seed, another order");
+    assert_ne!(a, c.query(&Filter::default(), &Sort::default()), "not just the date order");
+}
+
+#[test]
+fn random_sort_keeps_the_relative_order_when_the_set_changes() {
+    let mut c = Catalog::new();
+    let ids = many(&mut c, 30);
+    let before = c.query(&Filter::default(), &random(3));
+    let added = photo(&mut c, "new.jpg", "2026-05-01T10:00:00");
+    c.apply(Op::SetRating { id: ids[0], rating: 5 }).unwrap();
+    let after: Vec<PhotoId> = c.query(&Filter::default(), &random(3)).into_iter().filter(|id| *id != added).collect();
+    assert_eq!(after, before, "adding a photo or editing metadata must not reshuffle the others");
+}
+
+#[test]
+fn random_sort_respects_the_filter_and_handles_tiny_sets() {
+    let mut c = Catalog::new();
+    assert!(c.query(&Filter::default(), &random(1)).is_empty());
+    let ids = many(&mut c, 10);
+    c.apply(Op::SetRating { id: ids[4], rating: 5 }).unwrap();
+    assert_eq!(c.query(&Filter { rating: 5, ..Default::default() }, &random(1)), vec![ids[4]]);
+}
+
+#[test]
+fn random_sort_direction_reverses_and_serde_defaults_hold() {
+    let mut c = Catalog::new();
+    many(&mut c, 20);
+    let desc = c.query(&Filter::default(), &Sort { ascending: false, ..random(5) });
+    let mut asc = c.query(&Filter::default(), &Sort { ascending: true, ..random(5) });
+    asc.reverse();
+    assert_eq!(desc, asc);
+    // saved sorts from before the seed existed still load
+    let old: Sort = serde_json::from_str(r#"{"key":"fileName","ascending":true}"#).unwrap();
+    assert_eq!(old.seed, 0);
+    assert_eq!(serde_json::from_str::<Sort>(r#"{"key":"random","seed":9}"#).unwrap(), Sort { key: SortKey::Random, seed: 9, ..Default::default() });
+}
+
+#[test]
+fn random_sort_has_no_date_headers() {
+    let mut c = Catalog::new();
+    let ids = many(&mut c, 5);
+    assert!(c.date_runs(&ids, SortKey::Random, GroupBy::Day).is_empty());
+}

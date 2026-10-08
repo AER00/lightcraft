@@ -10,6 +10,8 @@ use crate::headless::Headless;
 use crate::state::ViewMode;
 use crate::{LightcraftApp, Services};
 
+const SETTLE: Duration = Duration::from_secs(120);
+
 fn app(view: ViewMode) -> Headless {
     let mut s = lightcraft_engine::Session::new();
     for id in 1..=6 {
@@ -22,7 +24,10 @@ fn app(view: ViewMode) -> Headless {
     h.app.ui.view = view;
     h.app.ui.right = crate::state::RightPanel::None;
     h.app.ui.thumb_size = 160.0;
-    assert!(h.settle(Duration::from_secs(30)));
+    // Parallel UI tests can leave a quiet spell before thumbnail jobs complete. Require the
+    // fixture's real textures before comparing photo pixels, as well as settled layout.
+    assert!(h.step_until(SETTLE, |h| h.app.renderer.thumb_textures() == 6), "all fixture thumbnails must be ready");
+    assert!(h.settle(SETTLE), "label fixture did not settle");
     h
 }
 

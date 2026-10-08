@@ -55,6 +55,31 @@ fn row(
     resp
 }
 
+/// A collapsible section header (Albums, Local, By Date, Keywords): the bold title with a
+/// disclosure chevron after it; a click folds or unfolds the section (kept in the UI state, so it
+/// survives restarts). Returns the header's rect and whether the section is now open.
+fn sidebar_section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, id: &str, title: &str) -> (Rect, bool) {
+    let t = Tokens::get(ui.ctx());
+    let title = crate::i18n::tr(title);
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+    register(ui.ctx(), format!("sidebarSection:{id}"), r);
+    if resp.clicked() {
+        app.ui.toggle_sidebar_section(id);
+    }
+    let open = !app.ui.sidebar_section_collapsed(id);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, open, title));
+    let text = ui.painter().text(pos2(r.left() + 18.0, r.center().y), Align2::LEFT_CENTER, title, t.semibold(13.5), t.text_label);
+    let c = pos2(text.right() + 10.0, r.center().y);
+    let col = if resp.hovered() { t.text } else { t.text_dim };
+    let pts = if open {
+        vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
+    } else {
+        vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+    (r, open)
+}
+
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let frame = egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider));
@@ -85,8 +110,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             }
             ui.add_space(10.0);
             // Albums header
-            let (ar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-            ui.painter().text(pos2(ar.left() + 18.0, ar.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Albums"), t.semibold(13.5), t.text_label);
+            let (ar, albums_open) = sidebar_section_header(app, ui, "albums", "Albums");
             let mut hdr = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(Rect::from_min_max(pos2(ar.right() - 50.0, ar.top()), ar.right_bottom()))
@@ -111,14 +135,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: true });
                 }
             });
-            let albums: Vec<Album> = app.session.catalog.albums().cloned().collect();
-            albums_tree(app, ui, &albums, None, 0.0);
+            if albums_open {
+                let albums: Vec<Album> = app.session.catalog.albums().cloned().collect();
+                albums_tree(app, ui, &albums, None, 0.0);
+            }
             ui.add_space(10.0);
             local_section(app, ui);
             // By date
-            let (dr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-            ui.painter().text(pos2(dr.left() + 18.0, dr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("By Date"), t.semibold(13.5), t.text_label);
-            for g in app.caches.date_groups(&app.session.catalog).iter() {
+            let (_, dates_open) = sidebar_section_header(app, ui, "byDate", "By Date");
+            let groups = if dates_open { app.caches.date_groups(&app.session.catalog) } else { Default::default() };
+            for g in groups.iter() {
                 // year → month → day; a click filters by that prefix, the triangle opens a level
                 if date_row(app, ui, &g.year, &crate::i18n::date_group_label(&g.year, true), g.count, 0.0) {
                     for (m, n) in &g.months {
@@ -190,9 +216,7 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if cfg!(target_arch = "wasm32") {
         return;
     }
-    let t = Tokens::get(ui.ctx());
-    let (lr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-    ui.painter().text(pos2(lr.left() + 18.0, lr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Local"), t.semibold(13.5), t.text_label);
+    let (_, open) = sidebar_section_header(app, ui, "local", "Local");
     let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
     let mut builtin: Vec<(String, String)> = Vec::new();
     if !home.is_empty() {
@@ -210,6 +234,10 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let local = local_places(builtin, &app.ui.local_roots, current.as_deref(), app.ui.local_browse_root.as_deref(), &app.ui.hidden_locations);
     if current.is_some() {
         app.ui.local_browse_root = local.browse_root.clone();
+    }
+    if !open {
+        ui.add_space(10.0);
+        return;
     }
     for (i, (name, path)) in local.places.iter().enumerate() {
         let transient = local.browse_root.as_deref() == Some(path.as_str());
@@ -254,7 +282,7 @@ pub(crate) struct LocalPlaces {
     /// (label, path) of each top-level folder, in order.
     pub places: Vec<(String, String)>,
     /// The top-level folder the browsed folder lies in (the innermost one): its tree opens on
-    /// the way down to it.
+    /// the way down to it. None when that way passes through a hidden folder.
     pub owner: Option<usize>,
     /// A folder listed only for this session because the browsed folder is in no saved
     /// location (browsed from a breadcrumb, the CLI…); it stays while browsing below it.
@@ -299,7 +327,15 @@ pub(crate) fn local_places(
         }
     }
     if let Some(c) = browsing {
-        out.owner = places.iter().enumerate().filter(|(_, (_, p))| folder_within(c, p)).max_by_key(|(_, (_, p))| folder_key(p).len()).map(|(i, _)| i);
+        // A tree never opens on the way down through a hidden folder: hiding a kept folder
+        // beneath Home would otherwise reveal it again inside Home's (possibly huge) tree.
+        let through_hidden = |p: &str| hidden.iter().any(|h| folder_within(c, h) && folder_within(h, p));
+        out.owner = places
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, p))| folder_within(c, p) && !through_hidden(p))
+            .max_by_key(|(_, (_, p))| folder_key(p).len())
+            .map(|(i, _)| i);
     }
     out.places = places;
     out
@@ -325,6 +361,17 @@ fn list_subfolders(path: &str) -> Vec<(String, String)> {
         .unwrap_or_default();
     v.sort_by_key(|(n, _)| n.to_lowercase());
     v
+}
+
+/// How many [`fs_cached`] answers for `ctx` are being worked out right now. Rows appear (and
+/// the sidebar below them moves) when they land, so the headless driver counts them as pending
+/// work and waits for them before acting on widget positions.
+pub(crate) fn fs_cached_running(ctx: &egui::Context) -> usize {
+    fs_running_counter(ctx).load(std::sync::atomic::Ordering::Acquire)
+}
+
+fn fs_running_counter(ctx: &egui::Context) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<std::sync::Arc<std::sync::atomic::AtomicUsize>>(egui::Id::new("fs-cached-running")).clone())
 }
 
 /// A file-system answer for `path` (`f(path)`), kept per `kind` and path and refreshed on a worker
@@ -358,18 +405,24 @@ pub(crate) fn fs_cached<T: Clone + Send + 'static>(ui: &egui::Ui, kind: &'static
         due
     };
     if start {
-        let (out, path, repaint) = (cell.clone(), path.to_string(), ui.ctx().clone());
+        use std::sync::atomic::Ordering;
+        let running = fs_running_counter(ui.ctx());
+        running.fetch_add(1, Ordering::AcqRel);
+        let (out, path, repaint, done) = (cell.clone(), path.to_string(), ui.ctx().clone(), running.clone());
         let work = move || {
             let v = f(&path);
             let mut e = out.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             e.value = Some(v);
             e.running = false;
             drop(e);
+            // after the answer is stored: a frame that sees the count drop also sees the answer
+            done.fetch_sub(1, Ordering::AcqRel);
             repaint.request_repaint();
         };
         #[cfg(not(target_arch = "wasm32"))]
         if std::thread::Builder::new().name("lc-fs-list".into()).spawn(work).is_err() {
             cell.lock().unwrap_or_else(std::sync::PoisonError::into_inner).running = false;
+            running.fetch_sub(1, Ordering::AcqRel);
         }
         #[cfg(target_arch = "wasm32")]
         work();
@@ -666,15 +719,14 @@ fn is_within(app: &LightcraftApp, id: lightcraft_catalog::AlbumId, ancestor: lig
 /// filters the grid by the keyword (children included), the triangle opens a level, and the
 /// context menu renames, merges or deletes the keyword across the library.
 fn keywords_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
-    let t = Tokens::get(ui.ctx());
     let tree = app.caches.keyword_tree(&app.session.catalog);
     if tree.is_empty() {
         return;
     }
     ui.add_space(10.0);
-    let (kr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-    ui.painter().text(pos2(kr.left() + 18.0, kr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Keywords"), t.semibold(13.5), t.text_label);
-    keyword_rows(app, ui, &tree, 0.0);
+    if sidebar_section_header(app, ui, "keywords", "Keywords").1 {
+        keyword_rows(app, ui, &tree, 0.0);
+    }
 }
 
 fn keyword_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[KeywordNode], indent: f32) {
@@ -802,5 +854,23 @@ mod tests {
         // hidden: no row at all
         let l = local_places(Vec::new(), &[], Some("/t/base"), None, &["/t/base/".into()]);
         assert!(l.places.is_empty() && l.browse_root.is_none());
+    }
+
+    /// A hidden folder inside a listed one (a kept folder beneath Home) is not revealed in that
+    /// one's tree while it is browsed, nor are the folders below it; hiding Home itself still
+    /// lets Pictures open down to a folder browsed inside it.
+    #[test]
+    fn hidden_folder_is_not_revealed_in_an_outer_tree() {
+        let builtin = || vec![("Pictures".to_string(), "/home/example/Pictures".to_string()), ("Home".to_string(), "/home/example".to_string())];
+        let kept = ["/home/example/AppData/Temp/lc".to_string()];
+        let l = local_places(builtin(), &kept, Some("/home/example/AppData/Temp/lc"), None, &[]);
+        assert_eq!(l.owner, Some(2), "shown as its own kept row");
+        for browsing in ["/home/example/AppData/Temp/lc", "/home/example/AppData/Temp/lc/Day 1"] {
+            let l = local_places(builtin(), &kept, Some(browsing), None, &["/home/example/AppData/Temp/lc/".into()]);
+            assert_eq!(names(&l.places), ["Pictures", "Home"], "{browsing}");
+            assert_eq!((l.owner, l.browse_root.as_deref()), (None, None), "Home does not open down to {browsing}");
+        }
+        let l = local_places(builtin(), &[], Some("/home/example/Pictures/Trip"), None, &["/home/example".into()]);
+        assert_eq!((names(&l.places), l.owner), (vec!["Pictures"], Some(0)));
     }
 }
