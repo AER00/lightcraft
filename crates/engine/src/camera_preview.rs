@@ -102,7 +102,7 @@ pub(crate) fn profile_pairs(raw: &RawImage, bytes: &[u8]) -> Option<Vec<([f64; 3
     let transform = lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
     let (sensor, reference) = proxies(raw, bytes, &transform, PROFILE_PROXY)?;
     let to_camera = transform.matrix.inverse()?;
-    let (pairs, _) = collect_pairs(&sensor, &reference)?;
+    let (pairs, _) = collect_pairs(&sensor, &reference, None)?;
     Some(pairs.into_iter().map(|(x, y)| (to_camera.apply(x), y)).collect())
 }
 
@@ -150,10 +150,31 @@ fn fit_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
     fit_pairs_with(sensor, reference, None)
 }
 
+/// Largest luminance ratio within the 3×3 neighbourhood of pixel `i` (1 on flat areas, large on edges).
+fn local_contrast(image: &Rgb32f, i: usize) -> f32 {
+    let (w, h) = (image.width, image.height);
+    if w == 0 {
+        return f32::INFINITY;
+    }
+    let (x, y) = (i % w, i / w);
+    let (mut lo, mut hi) = (f32::INFINITY, 0f32);
+    for row in y.saturating_sub(1)..(y + 2).min(h) {
+        for col in x.saturating_sub(1)..(x + 2).min(w) {
+            let l = image.data.get(row * w + col).map_or(0.0, |p| luminance_2020(*p));
+            lo = lo.min(l);
+            hi = hi.max(l);
+        }
+    }
+    if hi.is_finite() { hi / lo.max(1e-4) } else { f32::INFINITY }
+}
+
 /// Training pairs (sensor → JPEG, unclipped midtones) and the wider set including highlights
-/// (for the chroma curve); `None` when too few, or the photo has too little colour.
+/// (for the chroma curve); `None` when too few, or the photo has too little colour. With
+/// `edge_limit`, pixels whose 3×3 neighbourhood in either proxy spans a larger luminance ratio
+/// are left out: there a small geometric mismatch between the raw and its JPEG pairs unrelated
+/// colours (see [`EDGE_CONTRAST`]).
 type Pairs = Vec<([f64; 3], [f64; 3])>;
-fn collect_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<(Pairs, Pairs)> {
+fn collect_pairs(sensor: &Rgb32f, reference: &Rgb32f, edge_limit: Option<f32>) -> Option<(Pairs, Pairs)> {
     if (sensor.width, sensor.height) != (reference.width, reference.height) || sensor.data.len() != reference.data.len() {
         return None;
     }
@@ -161,7 +182,10 @@ fn collect_pairs(sensor: &Rgb32f, reference: &Rgb32f) -> Option<(Pairs, Pairs)> 
     // Highlights too (camera JPEGs bleach colours toward white there), for the chroma curve only.
     let mut bright = Vec::new();
     let mut colour = 0;
-    for (input, output) in sensor.data.iter().zip(&reference.data) {
+    for (i, (input, output)) in sensor.data.iter().zip(&reference.data).enumerate() {
+        if edge_limit.is_some_and(|limit| local_contrast(sensor, i) > limit || local_contrast(reference, i) > limit) {
+            continue;
+        }
         let y = luminance_2020(*output);
         if !input.iter().all(|v| v.is_finite() && *v > 0.001 && *v < 1.5) || !output.iter().all(|v| v.is_finite() && *v >= 0.0) {
             continue;
@@ -215,11 +239,25 @@ fn fit_matrix(pairs: &[([f64; 3], [f64; 3])]) -> Option<Mat3> {
     matrix.0.iter().flatten().all(|v| v.is_finite() && v.abs() < 8.0).then_some(matrix)
 }
 
+/// Neighbourhood luminance ratio above which a pixel counts as an edge for the second attempt
+/// of [`fit_pairs_with`]. Camera JPEGs are often lens-corrected (Sony "Distortion Comp.: Auto",
+/// compacts and kit zooms): on a 51 mm ILCE-7RM2 shot of a glass façade the JPEG is up to 15 px
+/// of 1440 (about one proxy pixel) off the raw, and the fit failed the gate on the mismatched
+/// window frames alone (held-out RMS 0.111; 0.059 for the same shot with distortion correction
+/// off). Away from edges: 0.049. Issue #232.
+const EDGE_CONTRAST: f32 = 3.0;
+
 /// The photo's look: its own matrix (with and without a hue/saturation table), or the given
 /// colour model (a camera profile's, in the sensor proxy's space), each completed with a tone
-/// and chroma curve fitted to this photo.
+/// and chroma curve fitted to this photo. When the fit on all pixels fails the acceptance gates,
+/// it is tried once more on the pixels away from edges (same gates): there colour pairs stay
+/// valid when the camera JPEG's geometry differs slightly from the raw's.
 fn fit_pairs_with(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>) -> Option<CameraLook> {
-    let (pairs, bright) = collect_pairs(sensor, reference)?;
+    fit_pairs_on(sensor, reference, colour.clone(), None).or_else(|| fit_pairs_on(sensor, reference, colour, Some(EDGE_CONTRAST)))
+}
+
+fn fit_pairs_on(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>, edge_limit: Option<f32>) -> Option<CameraLook> {
+    let (pairs, bright) = collect_pairs(sensor, reference, edge_limit)?;
     let candidates = match colour {
         Some(given) => vec![given],
         None => {
@@ -270,9 +308,10 @@ fn fit_pairs_with(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Opt
         .sum();
     if lightcraft_pipeline::profiling() {
         eprintln!(
-            "[profile] camera look holdout RMS {:.5} -> {:.5} ({samples} channels)",
+            "[profile] camera look holdout RMS {:.5} -> {:.5} ({samples} channels{})",
             (before / samples as f64).sqrt(),
-            (after / samples as f64).sqrt()
+            (after / samples as f64).sqrt(),
+            if edge_limit.is_some() { ", away from edges" } else { "" }
         );
     }
     if samples == 0 || after >= before * MIN_IMPROVEMENT || after / samples as f64 > MAX_HOLDOUT_RMS.powi(2) {
@@ -740,7 +779,7 @@ mod tests {
         let mut pool = Vec::new();
         for seed in 0..4 {
             let (sensor, reference) = photo(seed, 2.0 + seed as f32 * 0.5);
-            pool.extend(collect_pairs(&sensor, &reference).unwrap().0);
+            pool.extend(collect_pairs(&sensor, &reference, None).unwrap().0);
         }
         let (matrix, _) = fit_profile(&pool).unwrap();
         // the camera's colours (luminance-normalised: the tone curve sets brightness)
@@ -816,6 +855,68 @@ mod tests {
         assert_eq!((img.width, img.height), (400, 300), "framed in the in-camera aspect ratio");
         assert!(info.camera_tone.is_some(), "no camera look fitted");
         assert!(info.relative_wb && info.as_shot_temp == 6500.0 && info.as_shot_tint == 0.0);
+    }
+
+    /// Issue #232 (skipped without the corpus): the public ILCE-7RM2 sample's camera JPEG is
+    /// distortion-corrected, and on its glass façade the fit on all pixels misses the gate
+    /// (held-out RMS 0.113): it used to open grey with the neutral fallback.
+    #[test]
+    fn corpus_arw_with_a_lens_corrected_preview_gets_a_camera_look() {
+        let path = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+            .join("raw/arw-sony-a7rm2-12bit-uncompressed.arw");
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!("skip: {} absent", path.display());
+            return;
+        };
+        let (_, info) = crate::files::load_bytes(&bytes, 400).unwrap();
+        assert!(info.camera_tone.is_some(), "no camera look fitted");
+    }
+
+    /// Issue #232: an ILCE-7RM2 camera JPEG is lens-corrected ("Distortion Comp.: Auto"), so on a
+    /// façade of window frames the raw and its JPEG are a pixel or two apart. The colours agree
+    /// everywhere away from the edges, and the look must still be found there.
+    #[test]
+    fn fits_a_slightly_misaligned_camera_jpeg_away_from_edges() {
+        let known = Mat3([[1.8, -0.4, -0.1], [-0.2, 1.5, -0.1], [-0.05, -0.3, 1.7]]);
+        let (w, h, block, shift) = (96, 64, 8, 2);
+        // Patches of 8×8 pixels, alternately dark and bright (frames and panes), varied in colour.
+        let scene = |x: usize, y: usize| -> [f32; 3] {
+            let (bx, by) = (x / block, y / block);
+            let ev = if (bx + by) % 2 == 0 { 0.04 + (bx % 3) as f32 * 0.01 } else { 0.3 + (by % 4) as f32 * 0.08 };
+            [ev * (0.7 + ((bx * 7 + by * 3) % 11) as f32 * 0.05), ev, ev * (0.7 + ((bx * 5 + by) % 13) as f32 * 0.04)]
+        };
+        let camera = |p: [f32; 3]| {
+            let q = known.apply_f32(p);
+            let y = luminance_2020(q);
+            q.map(|v| v * (1.0 - (-2.5 * y).exp()) / y)
+        };
+        let mut sensor = Rgb32f::new(w, h);
+        let mut reference = sensor.clone();
+        for y in 0..h {
+            for x in 0..w {
+                sensor.data[y * w + x] = scene(x, y);
+                // The JPEG shows the scene `shift` pixels to the right of where the raw has it.
+                reference.data[y * w + x] = camera(scene(x.saturating_sub(shift), y));
+            }
+        }
+        let fit = fit_pairs(&sensor, &reference).expect("look fitted away from the misaligned edges");
+        // The look itself is right: on the aligned scene it reproduces the camera.
+        let tone = ToneMap::camera(&fit.tone, 0.0, 0.0, 0.0);
+        let (mut error, mut n) = (0.0, 0);
+        for y in 0..h {
+            for x in 0..w {
+                let p = displayed(fit.matrix.apply(scene(x, y).map(f64::from)), &tone);
+                let t = camera(scene(x, y));
+                error += (0..3).map(|c| (p[c] - f64::from(t[c])).powi(2)).sum::<f64>();
+                n += 3;
+            }
+        }
+        assert!((error / n as f64).sqrt() < 0.03, "{}", (error / n as f64).sqrt());
+        // Unrelated colours stay rejected away from edges too (covered below); a flat JPEG as well.
+        reference.data.fill([0.2; 3]);
+        assert!(fit_pairs(&sensor, &reference).is_none());
     }
 
     #[test]
