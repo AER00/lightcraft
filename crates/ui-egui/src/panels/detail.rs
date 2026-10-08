@@ -207,7 +207,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         .or_else(|| app.renderer.textures.get(&Slot::Preview).filter(|t| t.photo == id))
         .or_else(|| app.renderer.thumb(id))
         .map(|tex| tex.size[0].max(1) as f32 / tex.size[1].max(1) as f32);
-    let display_aspect = visible_texture_aspect.unwrap_or(aspect);
+    // Follow the texture only where it really differs (an unsupported raw's embedded JPEG with
+    // another crop): a texture's whole-pixel size is a little off the exact aspect, and the crop
+    // tool's overlays need the frame's own geometry.
+    let display_aspect = visible_texture_aspect.filter(|a| !crop_tool && (a / aspect - 1.0).abs() > 0.02).unwrap_or(aspect);
     let target_rect = fit_rect(main_area, display_aspect, app.ui.zoom, native, ppp, app.ui.pan);
     let img_rect = animated_rect(ui.ctx(), &mut app.ui.zoom_anim, target_rect);
     app.image_rect = Some(img_rect);
