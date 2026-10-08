@@ -18,6 +18,9 @@
   labels 6–9, P / U and the rest did nothing, because macOS only passes ⌘ / ⌃ combinations and function keys
   to the menu bar and the app ignored those keys, assuming the menu bar would handle them. Keys outside the menus
   (Space, G, X, ⌫) and ⌘ shortcuts were not affected.
+- `--memory` sessions keep their promise to save nothing (issues #164, #169): UI changes made in one no longer
+  land in `ui.json` (where they replaced the saved settings), and the GPU crash sentinel no longer creates the
+  settings folder there. The same goes for the temporary session offered when the library can't be opened.
 - LightCraft no longer crashes at launch on Windows PCs whose Vulkan driver is broken (issue #136, e.g. some Intel UHD
   630 drivers): on Windows the window and GPU rendering use DirectX 12 only and never load the Vulkan driver unless
   asked to. `LIGHTCRAFT_GPU_BACKEND=dx12 | vulkan | metal | off` (or wgpu's `WGPU_BACKEND`, which GPU rendering
