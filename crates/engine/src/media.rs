@@ -104,6 +104,20 @@ impl SourceLevel {
     }
 }
 
+/// Pixels along the source's long edge that an output `out_long` pixels long needs: a crop shows
+/// only part of the photo, so its pixels come from a source that many times larger (the source
+/// level is chosen from this, or a tight crop shown at its own pixels would be a stretched preview).
+fn source_edge_needed(p: &Photo, settings: &DevelopSettings, apply_crop: bool, out_long: usize) -> usize {
+    let (w, h) = (f64::from(p.width.max(1)), f64::from(p.height.max(1)));
+    let r = settings.crop.geometry.rect;
+    let shown = if apply_crop { (r.width() * w).max(r.height() * h) } else { w.max(h) };
+    if !shown.is_finite() || shown < 1.0 {
+        return out_long;
+    }
+    let needed = out_long as f64 * w.max(h) / shown;
+    if needed.is_finite() { needed.min(usize::MAX as f64 / 2.0) as usize } else { out_long }
+}
+
 /// Decodes a file into a linear Rec.2020 image no larger than `max_edge` (set by the app).
 pub type FileLoader = Arc<dyn Fn(&str, usize) -> Result<(Rgb32f, SourceInfo), String> + Send + Sync>;
 
@@ -718,9 +732,13 @@ impl crate::Session {
         thumb_bucket: Option<usize>,
     ) -> Option<RenderJob> {
         let p = self.catalog.photo(id)?.clone();
-        let level = SourceLevel::for_size(max_w.max(max_h));
-        let source = self.media.source_ref(&p, level);
         let settings = if before { Arc::new(self.before_settings(&p)) } else { p.develop.clone() };
+        let level = SourceLevel::for_size(if thumb_bucket.is_some() {
+            max_w.max(max_h) // (grid thumbnails of tight crops stay cheap)
+        } else {
+            source_edge_needed(&p, &settings, apply_crop, max_w.max(max_h))
+        });
+        let source = self.media.source_ref(&p, level);
         let request = RenderRequest { apply_crop, ..RenderRequest::fit(max_w, max_h) };
         // the photo id is part of the key: two photos with the same settings and size must not
         // share a result (a view slot showing photo A would otherwise look current for photo B)
@@ -884,7 +902,7 @@ impl crate::Session {
     /// A render of one window of the loupe's frame, for a view zoomed past what one whole-frame
     /// render can hold: the frame is `full_w × full_h` (the size the loupe would draw it at) and
     /// the result is `window`'s pixels of it, at that scale, from the source level that size needs.
-    /// Nothing is cached here (a window is only worth keeping while it is on screen).
+    /// Nothing is cached here (a window is only worth keeping while it is on screen). 
     pub fn region_job(
         &mut self,
         id: PhotoId,
@@ -1267,6 +1285,27 @@ mod tests {
         assert_eq!(s.region_job(p.id, w, h, win, true).unwrap().key, again.key, "the same window keeps its key");
         // a window never writes the photo's view preview or the thumbnail cache
         assert!(again.view_cache.is_none() && again.cache.is_none());
+    }
+
+    // Issue #323: a tight crop shown at its own pixels needs the original, not the 2560 px preview
+    #[test]
+    fn a_tight_crop_reads_the_source_level_its_pixels_need() {
+        let mut s = crate::Session::with_demo();
+        let p = s.catalog.photos().next().unwrap().clone();
+        let long = p.width.max(p.height) as usize;
+        assert!(long > 2560);
+        let id = p.id;
+        let mut d = (*s.develop_of(id).unwrap()).clone();
+        // the uncropped photo at 1600 px: the preview is plenty
+        assert_eq!(s.render_job(id, 1600, 1600, false, true).unwrap().level, SourceLevel::Preview);
+        // a crop to 30 % of each side shown 1600 px long needs 1600 / 0.3 px of the source
+        d.crop.geometry.rect = lightcraft_geom::Rect { x0: 0.2, y0: 0.2, x1: 0.5, y1: 0.5 };
+        s.set_develop(id, d, "Crop").unwrap();
+        assert_eq!(s.render_job(id, 1600, 1600, false, true).unwrap().level, SourceLevel::Full);
+        // …but with the crop tool open (the whole photo shown) it does not
+        assert_eq!(s.render_job(id, 1600, 1600, false, false).unwrap().level, SourceLevel::Preview);
+        // and a crop shown small enough still reads the preview
+        assert_eq!(s.render_job(id, 600, 600, false, true).unwrap().level, SourceLevel::Preview);
     }
 
     #[test]
