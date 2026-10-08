@@ -171,23 +171,28 @@ fn photo_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, slot: Slo
     }
     let p = ui.painter_at(img_area);
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    let mut display = img;
     if let Some(tex) = app.renderer.textures.get(&slot).filter(|x| x.photo == id) {
-        p.image(tex.tex.id(), img, uv, Color32::WHITE);
+        let texture_aspect = tex.size[0].max(1) as f32 / tex.size[1].max(1) as f32;
+        display = super::detail::fit_rect(img_area, texture_aspect, zoom, native, ppp, app.ui.pan);
+        p.image(tex.tex.id(), display, uv, Color32::WHITE);
     } else if let Some(tex) = app.renderer.textures.get(&Slot::Thumb(id)) {
-        p.image(tex.tex.id(), img, uv, Color32::WHITE);
+        let texture_aspect = tex.size[0].max(1) as f32 / tex.size[1].max(1) as f32;
+        display = super::detail::fit_rect(img_area, texture_aspect, zoom, native, ppp, app.ui.pan);
+        p.image(tex.tex.id(), display, uv, Color32::WHITE);
     } else {
         p.rect_filled(img.intersect(img_area), 0.0, Color32::from_gray(38));
     }
     if photo.flag == Flag::Reject {
-        p.rect_filled(img, 0.0, Color32::from_black_alpha(110));
+        p.rect_filled(display, 0.0, Color32::from_black_alpha(110));
     }
     let active = app.session.selection.active == Some(id);
     if active {
-        p.rect_stroke(img.intersect(img_area.shrink(1.0)), 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
+        p.rect_stroke(display.intersect(img_area.shrink(1.0)), 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
     }
     // caption: label · file name · stars · flag
     // caption right under the image (at the bottom when zoomed in)
-    let cap_top = (img.bottom() + 2.0).min(img_area.bottom());
+    let cap_top = (display.bottom() + 2.0).min(img_area.bottom());
     let cap = Rect::from_min_max(pos2(img.left().max(area.left()), cap_top), pos2(area.right(), cap_top + caption_h));
     let pt = ui.painter();
     let mut x = cap.left() + 4.0;
@@ -217,8 +222,8 @@ fn photo_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, slot: Slo
         Flag::Reject if fr.right() < cap.right() => paint(pt, fr, Icon::FlagReject, t.reject),
         _ => {}
     }
-    register(ui.ctx(), format!("cull:{}", id.0), img);
-    (img, resp)
+    register(ui.ctx(), format!("cull:{}", id.0), display);
+    (display, resp)
 }
 
 fn slot_index(s: Slot) -> u8 {

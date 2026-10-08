@@ -125,6 +125,14 @@ pub(crate) fn fit_rect(area: Rect, aspect: f32, zoom: Zoom, img_px: [usize; 2], 
     Rect::from_center_size(c, vec2(w, h))
 }
 
+/// Fit a decoded image inside the frame calculated from catalog metadata. Unsupported RAWs can
+/// only show their embedded camera JPEG, whose crop and aspect ratio can differ from that metadata.
+pub(crate) fn fit_texture_rect(area: Rect, size: [usize; 2]) -> Rect {
+    let (w, h) = (size[0].max(1) as f32, size[1].max(1) as f32);
+    let scale = (area.width() / w).min(area.height() / h);
+    Rect::from_center_size(area.center(), vec2(w * scale, h * scale))
+}
+
 /// Ease the loupe rect toward `target` while a click-zoom animation runs; otherwise follow it exactly.
 fn animated_rect(ctx: &egui::Context, anim: &mut bool, target: Rect) -> Rect {
     let t = if *anim { 0.22 } else { 0.0 };
@@ -191,7 +199,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         _ => vec![area],
     };
     let main_area = *areas.last().unwrap_or(&area);
-    let target_rect = fit_rect(main_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
+    let visible_texture_aspect = app
+        .renderer
+        .textures
+        .get(&Slot::Main)
+        .filter(|t| t.photo == id)
+        .or_else(|| app.renderer.textures.get(&Slot::Preview).filter(|t| t.photo == id))
+        .or_else(|| app.renderer.thumb(id))
+        .map(|tex| tex.size[0].max(1) as f32 / tex.size[1].max(1) as f32);
+    let display_aspect = visible_texture_aspect.unwrap_or(aspect);
+    let target_rect = fit_rect(main_area, display_aspect, app.ui.zoom, native, ppp, app.ui.pan);
     let img_rect = animated_rect(ui.ctx(), &mut app.ui.zoom_anim, target_rect);
     app.image_rect = Some(img_rect);
     // request renders: the loupe at display resolution (drafts during drags)
@@ -262,7 +279,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         } else {
             return "none";
         };
-        p.image(tex.tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        let image_rect = fit_texture_rect(r, tex.size);
+        p.image(tex.tex.id(), image_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         what
     };
     // soft proofing: a paper-white surround and the proof's name, as Lightroom shows it
@@ -284,9 +302,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     } else if let Some((_key, label)) = &hover_key
         && let Some(tex) = app.renderer.textures.get(&Slot::Hover).filter(|t| t.photo == id)
     {
-        p.image(tex.tex.id(), img_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        let hover_rect = fit_texture_rect(img_rect, tex.size);
+        p.image(tex.tex.id(), hover_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         let g = p.layout_no_wrap(label.clone(), t.font(12.0), Color32::WHITE);
-        let bg = Rect::from_min_size(img_rect.left_top() + vec2(8.0, 8.0), g.size() + vec2(16.0, 8.0));
+        let bg = Rect::from_min_size(hover_rect.left_top() + vec2(8.0, 8.0), g.size() + vec2(16.0, 8.0));
         p.rect_filled(bg, 4.0, Color32::from_black_alpha(160));
         p.galley(bg.min + vec2(8.0, 4.0), g, Color32::WHITE);
         shown = "hover";
@@ -314,7 +333,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if app.ui.before_after == BeforeAfter::Split {
         let mid = img_rect.center().x;
         if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
-            let left = Rect::from_min_max(img_rect.min, pos2(mid, img_rect.bottom()));
+            let before_rect = fit_texture_rect(img_rect, tex.size);
+            let left = Rect::from_min_max(before_rect.min, pos2(before_rect.center().x, before_rect.bottom()));
             p.image(tex.tex.id(), left, Rect::from_min_max(pos2(0.0, 0.0), pos2(0.5, 1.0)), Color32::WHITE);
         }
         p.line_segment([pos2(mid, img_rect.top()), pos2(mid, img_rect.bottom())], Stroke::new(1.5, Color32::WHITE));
@@ -322,7 +342,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if app.ui.before_after == BeforeAfter::SplitTopBottom {
         let mid = img_rect.center().y;
         if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
-            let top = Rect::from_min_max(img_rect.min, pos2(img_rect.right(), mid));
+            let before_rect = fit_texture_rect(img_rect, tex.size);
+            let top = Rect::from_min_max(before_rect.min, pos2(before_rect.right(), before_rect.center().y));
             p.image(tex.tex.id(), top, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 0.5)), Color32::WHITE);
         }
         p.line_segment([pos2(img_rect.left(), mid), pos2(img_rect.right(), mid)], Stroke::new(1.5, Color32::WHITE));
@@ -1614,6 +1635,33 @@ fn film_badges(p: &egui::Painter, t: &Tokens, fr: Rect, ph: &lightcraft_catalog:
     }
     if edited {
         paint(p, Rect::from_min_size(pos2(bar.right() - 13.0, y - 5.0), vec2(10.0, 10.0)), Icon::Sliders, t.text_label);
+    }
+}
+
+#[cfg(test)]
+mod preview_geometry_tests {
+    use super::{fit_rect, fit_texture_rect};
+    use crate::state::Zoom;
+    use egui::{Rect, pos2, vec2};
+
+    #[test]
+    fn portrait_preview_keeps_its_ratio_inside_a_landscape_frame() {
+        let frame = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 200.0));
+        let image = fit_texture_rect(frame, [100, 200]);
+
+        assert!((image.width() / image.height() - 0.5).abs() < 1e-6);
+        assert_eq!(image.center(), frame.center());
+        assert!(frame.contains_rect(image));
+    }
+
+    #[test]
+    fn portrait_preview_aspect_fits_detail_area_without_stretching() {
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 200.0));
+        let image = fit_rect(area, 0.5, Zoom::Fit, [4000, 6000], 1.0, (0.5, 0.5));
+
+        assert!((image.width() / image.height() - 0.5).abs() < 1e-6);
+        assert_eq!(image.size(), vec2(100.0, 200.0));
+        assert_eq!(image.center(), area.center());
     }
 }
 
