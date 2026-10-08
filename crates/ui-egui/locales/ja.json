@@ -829,7 +829,7 @@
   "Keywords you add appear here; ⌥1–⌥9 apply them.": "追加したキーワードはここに表示されます（⌥1〜⌥9で適用）",
   "Landscape": "風景",
   "Language": "言語",
-  "Largest long edge the Detail view renders at; larger is sharper on big displays but slower.": "詳細表示の長辺の上限です。大きいほど鮮明になりますが、描画に時間がかかります",
+  "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster.": "自動では、詳細表示を表示サイズ(写真本来の画素数まで)で描画します。サイズを選ぶと上限になります。小さいほど高速です",
   "Last": "前回",
   "Last view": "前回の表示",
   "Lateral Chromatic Aberration": "倍率色収差",

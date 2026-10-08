@@ -1882,8 +1882,8 @@ mod tests {
         h.request("ui.clickWidget", json!({"id": "button:settingsTab-performance"}), t);
         h.request("ui.clickWidget", json!({"id": "button:settingsCache-0"}), t);
         assert_eq!(h.app.session.cache_mb, 512);
-        h.request("ui.clickWidget", json!({"id": "button:settingsPreview-2"}), t);
-        assert_eq!(h.app.ui.settings.preview_edge, 3840);
+        h.request("ui.clickWidget", json!({"id": "button:settingsPreview-3"}), t);
+        assert_eq!(h.app.ui.settings.preview_limit, 3840);
         h.request("ui.clickWidget", json!({"id": "button:settingsMemory-2"}), t);
         assert_eq!(h.app.ui.settings.memory_mb, 1024);
         h.step();

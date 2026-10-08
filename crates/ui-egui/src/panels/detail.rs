@@ -230,7 +230,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     } else {
         24.0
     });
-    let max_edge = app.ui.settings.preview_edge.clamp(512, 8192) as f32;
     let native = [photo.width.max(1) as usize, photo.height.max(1) as usize];
     // two views (before, after): side by side or stacked
     let split = matches!(app.ui.before_after, BeforeAfter::SideBySide | BeforeAfter::TopBottom);
@@ -283,7 +282,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let interacting = app.session.interaction.is_some();
     let scale = if interacting { 0.6 } else { 1.0 };
     // render at the final size: a click-zoom animation only changes how the result is drawn
-    let want = (target_rect.width().max(target_rect.height()) * ppp * scale).min(max_edge) as usize;
+    let native_long = native[0].max(native[1]);
+    let want = app.ui.settings.loupe_edge(target_rect.width().max(target_rect.height()) * ppp * scale, native_long);
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     if let Some(job) = app.session.loupe_job(id, rw.max(8), rh.max(8), !crop_tool) {
         let job = if interacting { job.draft() } else { job };
@@ -313,7 +313,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let nf = Frame::with_lens(np.width.max(1) as usize, np.height.max(1) as usize, &np.develop, !crop_tool, np.embedded_lens.as_ref());
                 let na = nf.aspect() as f32;
                 let nr = fit_rect(main_area, na, app.ui.zoom, [np.width.max(1) as usize, np.height.max(1) as usize], ppp, app.ui.pan);
-                let nw = (nr.width().max(nr.height()) * ppp).min(max_edge) as usize;
+                let nw = app.ui.settings.loupe_edge(nr.width().max(nr.height()) * ppp, np.width.max(np.height).max(1) as usize);
                 let (w, h) = if na >= 1.0 { (nw, (nw as f32 / na) as usize) } else { ((nw as f32 * na) as usize, nw) };
                 if let Some(job) = app.session.loupe_job(nid, w.max(8), h.max(8), !crop_tool) {
                     app.renderer.prefetch(Slot::Prefetch(n as u8), job, PREFETCH_PRIORITY);

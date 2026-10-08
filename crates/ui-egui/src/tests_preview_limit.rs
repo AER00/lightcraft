@@ -1,0 +1,143 @@
+//! Issue #323: the Detail view must not be softened by a hidden render-size cap. By default the
+//! loupe renders at the size it is drawn at (up to the photo's own pixels and a safety ceiling);
+//! "Preview size" in Settings only lowers that when the user asks for it.
+
+use crate::state::{AppSettings, LOUPE_EDGE_CEILING, PREVIEW_LIMITS, STANDARD_PREVIEW_EDGE};
+
+fn with_limit(preview_limit: u32) -> AppSettings {
+    AppSettings { preview_limit, ..Default::default() }
+}
+
+// Given a fresh install
+#[test]
+fn default_is_automatic() {
+    assert_eq!(AppSettings::default().preview_limit, 0);
+    assert_eq!(PREVIEW_LIMITS[0], 0, "Automatic is the first choice");
+}
+
+// Given Automatic, when a 24 MP photo is shown at 1:1, then the render is the photo's own width
+#[test]
+fn automatic_renders_a_one_to_one_view_at_native_size() {
+    assert_eq!(with_limit(0).loupe_edge(6000.0, 6000), 6000);
+}
+
+// Given Automatic, a Retina fit view of 3024 px is not held to the old 2560 px cap
+#[test]
+fn automatic_does_not_cap_a_fit_view_at_the_old_default() {
+    assert_eq!(with_limit(0).loupe_edge(3024.0, 6000), 3024);
+}
+
+// Given Automatic, a small photo zoomed far in is not rendered above its own pixels
+#[test]
+fn never_renders_above_the_photos_own_pixels() {
+    assert_eq!(with_limit(0).loupe_edge(8000.0, 1000), 1000);
+}
+
+// Given Automatic, a huge zoom on a huge photo stays under the memory/GPU ceiling
+#[test]
+fn automatic_is_bounded_by_the_ceiling() {
+    assert_eq!(with_limit(0).loupe_edge(48000.0, 12000), LOUPE_EDGE_CEILING as usize);
+}
+
+// Given the user chose 1600 px, the render never exceeds it
+#[test]
+fn an_explicit_limit_caps_the_render() {
+    assert_eq!(with_limit(1600).loupe_edge(6000.0, 6000), 1600);
+    assert_eq!(with_limit(1600).loupe_edge(900.0, 6000), 900, "and does not raise a small view");
+}
+
+// Whatever the inputs (hostile or degenerate), the result is a usable size
+#[test]
+fn degenerate_inputs_give_a_usable_size() {
+    let s = with_limit(0);
+    for wanted in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -5.0, 0.0] {
+        let e = s.loupe_edge(wanted, 6000);
+        assert!((8..=LOUPE_EDGE_CEILING as usize).contains(&e), "{wanted}: {e}");
+    }
+    assert!((8..=LOUPE_EDGE_CEILING as usize).contains(&s.loupe_edge(1000.0, 0)));
+    assert!(with_limit(7).loupe_edge(1000.0, 6000) >= 8, "a corrupt limit is clamped");
+}
+
+// Build Standard-Sized Previews needs a number even when the limit is Automatic
+#[test]
+fn standard_previews_use_the_limit_or_the_standard_size() {
+    assert_eq!(with_limit(0).standard_preview_edge(), STANDARD_PREVIEW_EDGE);
+    assert_eq!(with_limit(3840).standard_preview_edge(), 3840);
+}
+
+// Given a ui.json from before this setting (key previewEdge), when it loads, then the user is on
+// Automatic: the old default of 2560 was the bug, and the key no longer means anything
+#[test]
+fn an_old_saved_preview_edge_does_not_pin_the_cap() {
+    let s: AppSettings = serde_json::from_str(r#"{"previewEdge": 2560}"#).unwrap();
+    assert_eq!(s.preview_limit, 0);
+}
+
+// A saved limit is kept; an unknown one (hand-edited file) falls back to Automatic
+#[test]
+fn saved_limits_round_trip_and_unknown_ones_are_reset() {
+    let mut ui = crate::UiState::default();
+    ui.settings.preview_limit = 3840;
+    let back = serde_json::from_str::<crate::UiState>(&serde_json::to_string(&ui).unwrap()).unwrap().sanitized();
+    assert_eq!(back.settings.preview_limit, 3840);
+    ui.settings.preview_limit = 123;
+    assert_eq!(ui.sanitized().settings.preview_limit, 0);
+}
+
+// ---- Behaviour in the running UI -------------------------------------------------------------
+
+mod in_the_loupe {
+    use std::time::Duration;
+
+    use serde_json::json;
+
+    use crate::headless::Headless;
+    use crate::render::Slot;
+    use crate::{LightcraftApp, Services};
+
+    const T: Duration = Duration::from_secs(20);
+    const SETTLE: Duration = Duration::from_secs(120);
+
+    /// The demo library in a 1400×900 window, the first photo open in Detail.
+    fn detail() -> (Headless, usize) {
+        let services = Services { png: None, ..Default::default() };
+        let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
+        let mut h = Headless::new(app, [1400.0, 900.0], 1.0);
+        let r = h.request("ui.set", json!({"view": "detail", "right": "none", "filmstrip": false}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        let native = {
+            let id = h.app.session.active().expect("a photo is open");
+            let p = h.app.session.catalog.photo(id).expect("it is in the catalog");
+            p.width.max(p.height) as usize
+        };
+        (h, native)
+    }
+
+    fn rendered_long_edge(h: &Headless) -> usize {
+        let t = h.app.renderer.textures.get(&Slot::Main).expect("the loupe rendered");
+        t.size[0].max(t.size[1])
+    }
+
+    // Given a photo larger than the old 2560 px cap, when I zoom to 1:1, then the loupe holds its pixels
+    #[test]
+    fn one_to_one_is_rendered_at_the_photos_own_size() {
+        let (mut h, native) = detail();
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        let want = native.min(crate::state::LOUPE_EDGE_CEILING as usize);
+        let got = rendered_long_edge(&h);
+        assert!(got.abs_diff(want) <= 2, "native {native}: rendered {got}, wanted {want}");
+    }
+
+    // Given the user capped the preview at 1600 px, then 1:1 is rendered no larger than that
+    #[test]
+    fn an_explicit_limit_still_caps_one_to_one() {
+        let (mut h, native) = detail();
+        assert!(native > 1600, "the demo photo must be larger than the cap for this to mean anything (is {native})");
+        h.app.ui.settings.preview_limit = 1600;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        assert!(rendered_long_edge(&h) <= 1600, "rendered {}", rendered_long_edge(&h));
+    }
+}

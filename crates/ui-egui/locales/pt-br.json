@@ -712,7 +712,7 @@
   "Label Set": "Conjunto de rótulos",
   "Landscape": "Paisagem",
   "Language": "Idioma",
-  "Largest long edge the Detail view renders at; larger is sharper on big displays but slower.": "Maior aresta longa em que a exibição Detalhe é renderizada; maior deixa mais nítida em telas grandes, mas mais lenta.",
+  "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster.": "Automático renderiza a exibição Detalhe no tamanho em que é mostrada, até os pixels da própria foto. Escolha um tamanho para limitá-la: menor é mais rápido.",
   "Last": "Último",
   "Last GPU fallback": "Último fallback de GPU",
   "Last commit": "Último commit",

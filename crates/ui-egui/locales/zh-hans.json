@@ -809,7 +809,7 @@
   "Keywords you add appear here; ⌥1–⌥9 apply them.": "您添加的关键字会显示在此处；按 ⌥1–⌥9 即可应用。",
   "Landscape": "横向",
   "Language": "语言",
-  "Largest long edge the Detail view renders at; larger is sharper on big displays but slower.": "详细视图渲染的最大长边；在大显示器上越大越清晰，但速度更慢。",
+  "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster.": "“自动”按详细视图的显示大小渲染（最高为照片自身像素）。选择一个大小可设上限：越小越快。",
   "Last": "上次",
   "Last view": "上次视图",
   "Lateral Chromatic Aberration": "横向色差",

@@ -140,8 +140,10 @@ pub struct AppSettings {
     pub confirm_delete: bool,
     /// GPU rendering allowed (`app.gpu`).
     pub gpu: bool,
-    /// Largest long edge (pixels) the loupe renders at.
-    pub preview_edge: u32,
+    /// Lowest long edge (pixels) the user lets the loupe render at; 0 = Automatic (the size it is
+    /// drawn at, up to the photo's own pixels and [`LOUPE_EDGE_CEILING`]). Not the old
+    /// `previewEdge` key: its 2560 px default was the soft-image bug (issue #323).
+    pub preview_limit: u32,
     /// Edit in External Editor: the application ("" = the system's default for TIFF files).
     pub external_editor: String,
     /// Memory the caches may hold together, in MB (0 = automatic; `app.memoryBudget`).
@@ -163,7 +165,7 @@ impl Default for AppSettings {
             startup_view: StartupView::Last,
             confirm_delete: false,
             gpu: true,
-            preview_edge: 2560,
+            preview_limit: 0,
             external_editor: String::new(),
             memory_mb: 0,
             film_names: true,
@@ -174,8 +176,29 @@ impl Default for AppSettings {
     }
 }
 
-/// Preview sizes offered in Settings → Performance.
-pub const PREVIEW_EDGES: [u32; 4] = [1600, 2560, 3840, 5120];
+/// Preview size limits offered in Settings → Performance (0 = Automatic).
+pub const PREVIEW_LIMITS: [u32; 5] = [0, 1600, 2560, 3840, 5120];
+
+/// The most the loupe ever renders in one go (memory and GPU texture size), whatever the setting.
+pub const LOUPE_EDGE_CEILING: u32 = 8192;
+
+/// Long edge of Build Standard-Sized Previews when the limit is Automatic.
+pub const STANDARD_PREVIEW_EDGE: u32 = 2560;
+
+impl AppSettings {
+    /// Long edge (pixels) to render the loupe at when it is drawn `wanted_px` wide on screen:
+    /// that size, never above the photo's own `native_long_edge`, the user's limit or the ceiling.
+    pub fn loupe_edge(&self, wanted_px: f32, native_long_edge: usize) -> usize {
+        let ceiling = if self.preview_limit == 0 { LOUPE_EDGE_CEILING } else { self.preview_limit.clamp(512, LOUPE_EDGE_CEILING) } as usize;
+        let wanted = if wanted_px.is_nan() { 8.0 } else { wanted_px.clamp(8.0, ceiling as f32) } as usize;
+        wanted.min(native_long_edge.max(8)).min(ceiling)
+    }
+
+    /// The edge Build Standard-Sized Previews uses.
+    pub fn standard_preview_edge(&self) -> u32 {
+        if self.preview_limit == 0 { STANDARD_PREVIEW_EDGE } else { self.preview_limit }
+    }
+}
 
 /// Click-zoom ratios offered (percent): 1:1, 2:1, 3:1, 4:1, 8:1.
 pub const CLICK_ZOOMS: [u32; 5] = [100, 200, 300, 400, 800];
@@ -685,8 +708,8 @@ impl UiState {
         self.brush_size = self.brush_size.clamp(0.002, 0.5);
         self.dialog = None;
         self.fullscreen = false;
-        if !crate::state::PREVIEW_EDGES.contains(&self.settings.preview_edge) {
-            self.settings.preview_edge = AppSettings::default().preview_edge;
+        if !crate::state::PREVIEW_LIMITS.contains(&self.settings.preview_limit) {
+            self.settings.preview_limit = AppSettings::default().preview_limit;
         }
         match self.settings.startup_view {
             StartupView::Last => {}
