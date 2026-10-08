@@ -22,8 +22,11 @@ CRX version `0x100`, four Bayer planes and `ff01`/`ff02`/`ff03` marker headers
 support lossless RAW and three-level C-RAW with horizontal tiles. Uniform
 quantization values 4–43 are independently verified. Version `0x200` C-RAW
 supports the `ff11`/`ff12`/`ff13` marker family, a single 14-bit Bayer tile and
-its adaptive quantization map. Other unverified coding variants return explicit
-unsupported errors. Header probing validates the same coding variants and
+its adaptive quantization map. C-RAW is quantized, so next to clipped highlights
+its reconstruction can overshoot the sensor range by a few quantization steps
+(up to 36 codes above 16383 in 17 CC0 files); those samples are clamped to the
+CMP1 bit depth. A lossless sample outside the bit depth is still corrupt data.
+Other unverified coding variants return explicit unsupported errors. Header probing validates the same coding variants and
 tile/plane layout as full decoding.
 
 `crates/raw/tests/cr3_corpus.rs` checks every full-sensor sample against a
