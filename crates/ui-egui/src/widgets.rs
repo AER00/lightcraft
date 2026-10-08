@@ -506,3 +506,29 @@ mod access_tests {
         assert!(has("Button", "Delete mask"), "{found:?}");
     }
 }
+
+/// `text` shortened to fit `max` (as `width` measures it): leading folders drop first
+/// (`Users/me/Pictures/Lightroom` → `…/Pictures/Lightroom`) so the end of a path, which says the
+/// most, stays; a single name still too long loses its end (`2024-06-12 Tri…`: folders tend to
+/// differ at the start). Cuts fall on characters. The result is never empty.
+pub(crate) fn elide_head(text: &str, max: f32, width: impl Fn(&str) -> f32) -> String {
+    if width(text) <= max {
+        return text.to_string();
+    }
+    let mut rest = text;
+    while let Some(i) = rest.find('/') {
+        rest = rest.get(i + 1..).unwrap_or("");
+        let cand = format!("…/{rest}");
+        if width(&cand) <= max {
+            return cand;
+        }
+    }
+    let n = rest.chars().count();
+    for keep in (1..n).rev() {
+        let cand: String = rest.chars().take(keep).chain(std::iter::once('…')).collect();
+        if width(&cand) <= max {
+            return cand;
+        }
+    }
+    "…".to_string()
+}

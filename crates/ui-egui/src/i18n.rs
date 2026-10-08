@@ -216,6 +216,15 @@ pub fn source_label(source: lightcraft_engine::LibrarySource, catalog: &lightcra
     if matches!(source, lightcraft_engine::LibrarySource::Album(id) if catalog.album(id).is_some()) { label } else { tr(&label).to_string() }
 }
 
+/// What the grid is titled for the session's source: [`source_label`], or a library folder's last
+/// two names (`photos/travel`; the folder's name is the user's and stays verbatim).
+pub fn source_title(session: &lightcraft_engine::Session) -> String {
+    match (session.source, session.library_folder.as_deref()) {
+        (lightcraft_engine::LibrarySource::LibraryFolder, Some(path)) => lightcraft_catalog::folders::folder_label(path),
+        (source, _) => source_label(source, &session.catalog),
+    }
+}
+
 /// A date group heading (`2026-09-20`, `2026-09`, `2026`) in the UI language: the grid's full
 /// form, or the date sidebar's `short` one ("Sunday, 20" / "September" / "2026"). English keeps the
 /// catalog's own wording; every other language formats it with its `*-formats.json` date

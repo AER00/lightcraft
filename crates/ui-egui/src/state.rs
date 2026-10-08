@@ -533,6 +533,15 @@ pub enum Dialog {
     ConfirmDelete {
         count: usize,
     },
+    /// Confirm taking a folder's photos out of the library (`library.removeFolder`).
+    RemoveFolder {
+        path: String,
+        /// What the question calls it (a folder's last two names, a disk's name).
+        name: String,
+        count: usize,
+        /// A whole disk or share (`library.removeFolder` takes it only on request).
+        disk: bool,
+    },
     About,
     Shortcuts,
 }

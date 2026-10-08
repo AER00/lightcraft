@@ -97,6 +97,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::Merge { opts } => opts.title(),
         Dialog::Settings { .. } => "Settings",
         Dialog::ConfirmDelete { .. } => "Delete Photos",
+        Dialog::RemoveFolder { disk: true, .. } => "Remove Disk from Library",
+        Dialog::RemoveFolder { .. } => "Remove Folder from Library",
         Dialog::SamModel { .. } => "Download the SAM 3 Model?",
         Dialog::About => "About LightCraft",
         Dialog::Shortcuts => "Keyboard Shortcuts",
@@ -220,7 +222,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         }
                     });
                 }
-                Dialog::SmartRules { name, rules, .. } => {
+                Dialog::SmartRules { id, name, rules } => {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
                     crate::widgets::register(ui.ctx(), "field:smartName", r.rect);
                     ui.add_space(6.0);
@@ -228,7 +230,9 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         crate::panels::rules_editor::edit(ui, rules, "rules", 0);
                     });
                     let problems = rules.problems();
-                    let f = lightcraft_catalog::Filter { rule_set: Some(rules.clone()), ..Default::default() };
+                    // the folder an album made from a folder view carries is not in the editor, but it counts
+                    let folder = id.and_then(|id| app.session.catalog.album(lightcraft_catalog::AlbumId(id))).and_then(|a| a.smart.as_deref().and_then(|f| f.library_folder.clone()));
+                    let f = lightcraft_catalog::Filter { rule_set: Some(rules.clone()), library_folder: folder, ..Default::default() };
                     let n = if problems.is_empty() { app.session.catalog.query(&f, &Default::default()).len() } else { 0 };
                     ui.add_space(4.0);
                     ui.label(
@@ -710,6 +714,21 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ui.label(crate::i18n::tr_format!("Move {what} to Recently Deleted?", what = what));
                     ui.label(egui::RichText::new(crate::i18n::tr("They can be restored from Recently Deleted until it is emptied.")).color(t.text_dim));
                 }
+                Dialog::RemoveFolder { name, count, path, disk } => {
+                    ui.label(crate::i18n::tr_format!(
+                        "Remove “{name}” and its {count} photo{} from the library?",
+                        if *count == 1 { "" } else { "s" },
+                        name = name,
+                        count = count
+                    ));
+                    ui.label(egui::RichText::new(path.as_str()).color(t.text_dim));
+                    let scope = if *disk { "All the photos imported from this disk are included." } else { "That includes the photos in the folders inside it." };
+                    ui.label(egui::RichText::new(crate::i18n::tr(scope)).color(t.text_dim));
+                    ui.label(
+                        egui::RichText::new(crate::i18n::tr("They move to Recently Deleted and can be restored; no file on disk is touched."))
+                            .color(t.text_dim),
+                    );
+                }
                 Dialog::About => {
                     ui.set_min_width(680.0);
                     let tab_id = egui::Id::new("about_tab");
@@ -817,6 +836,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     }
                     Dialog::Merge { .. } => "Merge",
                     Dialog::ConfirmDelete { .. } => "Delete",
+                    Dialog::RemoveFolder { .. } => "Remove",
                     Dialog::SamModel { then: Some(_), .. } if sam_installed => "Continue",
                     Dialog::SamModel { .. } if sam_installed || sam_running || sam_nowhere => "",
                     Dialog::SamModel { error, .. } if error.is_some() || sam_failed => "Try Again",
@@ -1030,6 +1050,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         Dialog::Merge { opts } => crate::merge::start_final(app, opts),
         Dialog::Import { opts } => crate::import::start(app, opts),
         Dialog::ConfirmDelete { .. } => app.run("photo.delete", json!({})),
+        Dialog::RemoveFolder { path, disk, .. } => app.run("library.removeFolder", json!({"path": path, "disk": disk})),
         Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. } => Ok(serde_json::Value::Null),
     }
 }

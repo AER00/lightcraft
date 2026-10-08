@@ -1,7 +1,7 @@
 //! Library commands: view source, filter/sort, selection, ratings/flags/labels, rotate, delete,
 //! metadata, albums, import.
 
-use lightcraft_catalog::{Album, AlbumId, ColorLabel, CopyrightStatus, Flag, GroupBy, Op, PhotoId, Sort, SortKey};
+use lightcraft_catalog::{Album, AlbumId, ColorLabel, CopyrightStatus, Filter, Flag, GroupBy, Op, PhotoId, Sort, SortKey};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, has_active, has_selection, ok, str_param};
@@ -251,7 +251,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Show Source",
             [],
             None,
-            "{kind: all|recentlyAdded|album|recentlyDeleted|picks|missing, id?: albumId}",
+            "{kind: all|recentlyAdded|album|recentlyDeleted|picks|missing|libraryFolder, id?: albumId, path?: a path from library.folders (for libraryFolder)}",
             always,
             |s, p| {
                 let kind = str_param(p, "kind").unwrap_or("all");
@@ -268,6 +268,25 @@ pub fn specs() -> Vec<CommandSpec> {
                         }
                         LibrarySource::Album(a)
                     }
+                    "libraryFolder" => {
+                        let path = str_param(p, "path").filter(|d| !d.trim().is_empty() && !lightcraft_catalog::query::folder_key(d).is_empty());
+                        let path = path.ok_or_else(|| bad("library.source", "libraryFolder needs the `path` of a folder from library.folders"))?;
+                        if lightcraft_catalog::folders::is_startup_disk(path) {
+                            return Err(bad("library.source", "the startup disk's path covers every disk: choose a folder in it"));
+                        }
+                        let f = Filter { library_folder: Some(path.to_string()), ..Default::default() };
+                        let ids = s.catalog.query(&f, &Sort::default());
+                        if ids.is_empty() {
+                            return Err(bad("library.source", format!("{path}: no photo in the library was imported from it")));
+                        }
+                        if covers_other_disks(s, path, &ids) {
+                            return Err(bad("library.source", format!("{path} holds other disks as well: choose a disk or a folder on one")));
+                        }
+                        s.library_folder = Some(path.to_string());
+                        // one folder at a time: a folder filter left over would be ignored
+                        s.filter.library_folder = None;
+                        LibrarySource::LibraryFolder
+                    }
                     other => return Err(bad("library.source", format!("unknown source `{other}`"))),
                 };
                 let vis = s.visible_cloned();
@@ -282,13 +301,73 @@ pub fn specs() -> Vec<CommandSpec> {
             "Filter",
             [],
             None,
-            "partial Filter: {text?, rating?, ratingOp?: atLeast|exactly|atMost, flag?: pick|reject|none|null, label?, kind?, merged?: hdr|panorama|hdrPanorama|any, edited?, date?, keyword?, person?, camera?}",
+            "partial Filter: {text?, rating?, ratingOp?: atLeast|exactly|atMost, flag?: pick|reject|none|null, label?, kind?, merged?: hdr|panorama|hdrPanorama|any, edited?, date?, libraryFolder?: a path from library.folders, keyword?, person?, camera?}",
             always,
             |s, p| {
                 let mut v = serde_json::to_value(&s.filter).unwrap_or_default();
                 lightcraft_develop::presets::deep_merge(&mut v, p);
-                s.filter = serde_json::from_value(v).map_err(|e| bad("library.filter", e.to_string()))?;
+                let f: Filter = serde_json::from_value(v).map_err(|e| bad("library.filter", e.to_string()))?;
+                let mut f = f;
+                // a blank folder is no folder: no hidden "filters active" state
+                f.library_folder = f.library_folder.filter(|d| !d.trim().is_empty());
+                if f.library_folder.is_some() && s.source == LibrarySource::LibraryFolder {
+                    return Err(bad("library.filter", "a folder is already shown (library.source): show another source first"));
+                }
+                s.filter = f;
                 Ok(json!({"count": s.visible().len()}))
+            }
+        ),
+        cmd!(
+            query "library.folders",
+            "Library Folders",
+            [],
+            None,
+            "{} → [{name, path, count, own, volume, selectable, children}] the disks and the folders the library's photos were imported from, with photo counts (subfolders included in `count`); show one with library.source {kind: libraryFolder, path} (rows with selectable false only open)",
+            always,
+            |s, _| Ok(serde_json::to_value(s.catalog.folder_tree()).unwrap_or_default())
+        ),
+        cmd!(
+            "library.removeFolder",
+            "Remove Folder from Library",
+            [],
+            None,
+            "{path, disk?: bool} — move the library photos imported from this folder (and the folders inside it) to Recently Deleted; one undo step, no file is touched. A whole disk or share (`/Volumes/nas`, `C:\\`, `\\\\srv\\share`) goes only with `disk: true`, the startup disk never → {removed}",
+            always,
+            |s, p| {
+                const C: &str = "library.removeFolder";
+                let path = str_param(p, "path").filter(|d| !d.trim().is_empty()).ok_or_else(|| bad(C, "missing `path`"))?;
+                if lightcraft_catalog::query::folder_key(path).is_empty() {
+                    return Err(bad(C, format!("{path}: not a folder")));
+                }
+                if lightcraft_catalog::folders::is_startup_disk(path) {
+                    return Err(bad(C, "choose a folder, not the whole startup disk"));
+                }
+                if lightcraft_catalog::folders::is_disk_root(path) && !bool_or(p, "disk", false) {
+                    return Err(bad(C, format!("{path} is a whole disk or share: pass `disk: true` to remove everything on it")));
+                }
+                let f = Filter { library_folder: Some(path.to_string()), ..Default::default() };
+                let ids = s.catalog.query(&f, &Sort::default());
+                if ids.is_empty() {
+                    return Err(bad(C, format!("{path}: no photo in the library was imported from it")));
+                }
+                if covers_other_disks(s, path, &ids) && !bool_or(p, "disk", false) {
+                    return Err(bad(C, format!("{path} holds whole disks: pass `disk: true` to remove everything on them")));
+                }
+                let ops = ids.iter().map(|id| Op::SetDeleted { id: *id, deleted: true }).collect();
+                s.commit("Remove Folder from Library", Op::Batch { ops })?;
+                if s.filter.library_folder.as_deref().is_some_and(|c| lightcraft_catalog::query::folder_within(c, path)) {
+                    s.filter.library_folder = None;
+                }
+                // the folder being shown is gone: back to everything, as for a deleted album
+                if s.library_folder.as_deref().is_some_and(|c| lightcraft_catalog::query::folder_within(c, path)) {
+                    s.library_folder = None;
+                    if s.source == LibrarySource::LibraryFolder {
+                        s.source = LibrarySource::All;
+                    }
+                }
+                let vis = s.visible_cloned();
+                s.selection = vis.first().map(|f| Selection::single(*f)).unwrap_or_default();
+                Ok(json!({"removed": ids.len()}))
             }
         ),
         cmd!("library.clearFilter", "Clear Filters", ["View"], None, "{}", always, |s, _| {
@@ -739,8 +818,16 @@ pub fn specs() -> Vec<CommandSpec> {
                 let rules = if bool_or(p, "fromView", false) {
                     view_rules(s)
                 } else {
-                    let base = if bool_or(p, "replace", false) { Default::default() } else { cur };
-                    merge_rules(&base, p.get("rules").unwrap_or(&Value::Null), "album.setRules")?
+                    let replace = bool_or(p, "replace", false);
+                    let folder = cur.library_folder.clone();
+                    let base = if replace { Default::default() } else { cur };
+                    let mut r = merge_rules(&base, p.get("rules").unwrap_or(&Value::Null), "album.setRules")?;
+                    // the rules dialog has no folder field: replacing its rules keeps the folder
+                    // unless the call says (`libraryFolder: null`) to drop it
+                    if replace && p.get("rules").and_then(|r| r.get("libraryFolder")).is_none() {
+                        r.library_folder = folder;
+                    }
+                    r
                 };
                 s.commit("Edit Smart Album", Op::SetAlbumRules { id, rules: Box::new(rules) })?;
                 Ok(json!({"count": s.catalog.album_count(id)}))
@@ -1065,6 +1152,16 @@ fn merge_rules(base: &lightcraft_catalog::Filter, patch: &Value, c: &str) -> Res
     Ok(f)
 }
 
+/// Whether `path` lies above a disk: some of its `ids` photos are on a disk (not the startup
+/// disk) that the folder does not lie in. Such a folder (`/Volumes`, `/mnt`…) is not a folder of
+/// one disk but a way to reach several.
+fn covers_other_disks(s: &Session, path: &str, ids: &[PhotoId]) -> bool {
+    ids.iter()
+        .filter_map(|id| s.catalog.photo(*id))
+        .filter_map(|p| lightcraft_catalog::folders::volume_of(p))
+        .any(|v| v != "/" && !lightcraft_catalog::query::folder_within(path, &v))
+}
+
 /// The current view (source + filter) as smart-album rules. Viewing a smart album starts from
 /// its rules with the filter bar's settings on top.
 fn view_rules(s: &Session) -> lightcraft_catalog::Filter {
@@ -1091,6 +1188,9 @@ fn view_rules(s: &Session) -> lightcraft_catalog::Filter {
         None => {
             let mut f = s.source.to_filter(&s.filter, &s.catalog);
             f.deleted = false;
+            if s.source == LibrarySource::LibraryFolder {
+                f.library_folder = s.library_folder.clone();
+            }
             f
         }
     }

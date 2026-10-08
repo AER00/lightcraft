@@ -118,5 +118,6 @@
   "… and {more} more": "…以及另外 {more} 個",
   " ({} in Recently Deleted)": "（其中 {} 張在「最近刪除」中）",
   "Already in the library: {} photo{} selected in All Photos": "已在照片庫中：已在「所有照片」中選取 {} 張照片{:.0}",
-  "Already in the library, in Recently Deleted: {} photo{} selected · right-click ▸ Restore, or Delete Permanently to import afresh": "已在照片庫的「最近刪除」中：已選取 {} 張照片{:.0} · 按右鍵 ▸ 還原，或永久刪除後重新匯入"
+  "Already in the library, in Recently Deleted: {} photo{} selected · right-click ▸ Restore, or Delete Permanently to import afresh": "已在照片庫的「最近刪除」中：已選取 {} 張照片{:.0} · 按右鍵 ▸ 還原，或永久刪除後重新匯入",
+  "Remove “{name}” and its {count} photo{} from the library?": "要將「{name}」及其 {count} 張照片從照片庫移除嗎？{:.0}"
 }
