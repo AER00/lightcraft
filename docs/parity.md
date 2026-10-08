@@ -287,8 +287,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-CROP-RECT | Crop rectangle | P0 | ✅ | `cmd:crop.set`, `crates/ui-egui/src/panels/detail.rs` | double-click inside the box applies the crop (like Return) |
-| LR-CROP-ASPECT | Aspect ratios | P0 | ✅ | `cmd:crop.aspect`, `cmd:crop.rotateAspect` | no "As Shot"; custom ratio via command params only |
+| LR-CROP-RECT | Crop rectangle | P0 | ✅ | `cmd:crop.set`, `cmd:crop.drag`, `crates/geom/src/crop_drag.rs`, `crates/ui-egui/src/panels/detail.rs` | double-click inside the box applies the crop (like Return) |
+| LR-CROP-ASPECT | Aspect ratios | P0 | ✅ | `cmd:crop.aspect`, `cmd:crop.rotateAspect`, `crates/ui-egui/src/panels/right.rs` | menu with presets + custom W × H, visible Lock toggle (also A), button names the active ratio; every handle honours the lock and the drag stops at the image edge instead of shifting the frame (issue #295); "Original" is the photo's own shape (no separate As Shot) |
 | LR-CROP-STRAIGHTEN | Straighten tool | P0 | ✅ | `cmd:crop.straighten`, `cmd:crop.autoStraighten` | Straighten Tool button: drag along a horizon/vertical; double-click or Auto levels automatically |
 | LR-CROP-AUTO | Auto straighten | P1 | ✅ | `cmd:crop.autoStraighten` | crop-angle leveling from detected horizon/plumb lines (consensus required) |
 | LR-CROP-ANGLE | Angle slider | P0 | ✅ | `ctl:crop.angle` | |
