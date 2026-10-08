@@ -14,6 +14,10 @@ use serde_json::json;
 
 use crate::{LibrarySource, Session, filter_chips};
 
+fn source_folder(s: &mut Session, path: &str) -> serde_json::Value {
+    s.execute("library.source", &json!({"kind": "libraryFolder", "path": path})).unwrap()
+}
+
 fn add(s: &mut Session, path: &str) {
     let id = s.catalog.alloc_photo_id();
     let p = Photo::new(id, Source::File { path: path.into() }, "x.jpg", "JPEG", 60, 40, "2026-01-01T10:00:00");
@@ -229,4 +233,79 @@ fn following_a_folder_reads_both_spellings_the_same_way() {
     s.filter.library_folder = Some("/elsewhere/b".into());
     crate::cmd::browse::follow_folder(&mut s, "/a/b", "/a/c");
     assert_eq!(s.filter.library_folder.as_deref(), Some("/elsewhere/b"), "other folders are left alone");
+}
+
+#[test]
+fn choosing_a_folder_replaces_the_source_the_way_an_album_does() {
+    let mut s = session();
+    s.execute("library.source", &json!({"kind": "picks"})).unwrap();
+    assert_eq!(s.visible().len(), 0, "no picks");
+    let r = source_folder(&mut s, "/pics/trip");
+    assert_eq!(r["count"], 2, "the folder's photos, whatever was shown before");
+    assert_eq!((s.source, s.library_folder.as_deref()), (LibrarySource::LibraryFolder, Some("/pics/trip")));
+    assert!(filter_chips(&s.filter, &s.catalog).is_empty(), "a source is not a filter chip");
+    let state = s.execute("library.state", &json!({})).unwrap();
+    assert_eq!((state["sourceLabel"].as_str(), state["libraryFolder"].as_str()), (Some("pics/trip"), Some("/pics/trip")), "agents see which folder");
+    // the filter bar narrows it further, as it does an album
+    s.execute("library.filter", &json!({"rating": 1})).unwrap();
+    assert_eq!(s.visible().len(), 0);
+    s.execute("library.clearFilter", &json!({})).unwrap();
+    assert_eq!(s.visible().len(), 2);
+    s.execute("library.source", &json!({"kind": "all"})).unwrap();
+    assert_eq!(s.visible().len(), 3, "back to everything");
+}
+
+#[test]
+fn the_folder_source_takes_a_library_folder_path_only() {
+    let mut s = session();
+    for params in [
+        json!({"kind": "libraryFolder"}),
+        json!({"kind": "libraryFolder", "path": 5}),
+        json!({"kind": "libraryFolder", "path": "  "}),
+        json!({"kind": "libraryFolder", "path": "."}),
+    ] {
+        assert!(s.execute("library.source", &params).is_err(), "{params}");
+    }
+    assert_eq!(s.source, LibrarySource::All, "refused, nothing changed");
+    assert_eq!(source_folder(&mut s, "/elsewhere")["count"], 0, "a folder with no photos shows nothing, not everything");
+}
+
+#[test]
+fn removing_the_folder_being_shown_returns_to_all_photos() {
+    let mut s = session();
+    source_folder(&mut s, "/pics/trip");
+    s.execute("library.removeFolder", &json!({"path": "/pics/trip"})).unwrap();
+    assert_eq!((s.source, s.library_folder.as_deref()), (LibrarySource::All, None));
+    assert_eq!(s.visible().len(), 1);
+    // removing another folder leaves the source alone
+    let mut s = session();
+    source_folder(&mut s, "/pics/home");
+    s.execute("library.removeFolder", &json!({"path": "/pics/trip"})).unwrap();
+    assert_eq!(s.source, LibrarySource::LibraryFolder);
+    assert_eq!(s.visible().len(), 1);
+}
+
+#[test]
+fn a_renamed_folder_stays_the_one_shown_and_undo_follows_it_back() {
+    let dir = Scratch::new("source-rename");
+    std::fs::create_dir_all(dir.0.join("trip/day1")).unwrap();
+    let (trip, day1, renamed) = (dir.path("trip"), dir.path("trip/day1"), dir.path("holiday"));
+    let mut s = Session::new();
+    add(&mut s, &format!("{trip}/a.jpg"));
+    add(&mut s, &format!("{day1}/b.jpg"));
+    source_folder(&mut s, &day1);
+    s.execute("folder.rename", &json!({"path": trip, "name": "holiday"})).unwrap();
+    assert_eq!(s.library_folder.as_deref(), Some(format!("{renamed}/day1").as_str()), "the subfolder follows its parent");
+    assert_eq!(s.visible().len(), 1);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.library_folder.as_deref(), Some(day1.as_str()));
+    assert_eq!(s.visible().len(), 1);
+}
+
+#[test]
+fn the_shown_folder_follows_reading_both_spellings_the_same_way() {
+    let mut s = Session::new();
+    s.library_folder = Some("/a/x/../b/sub".into());
+    crate::cmd::browse::follow_folder(&mut s, "/a/b", "/a/c");
+    assert_eq!(s.library_folder.as_deref(), Some("/a/c/sub"));
 }

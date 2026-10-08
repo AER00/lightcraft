@@ -102,6 +102,8 @@ struct PresetsFile {
 struct ViewFile {
     source: LibrarySource,
     browse: Option<crate::Browse>,
+    /// The folder a `libraryFolder` source shows.
+    library_folder: Option<String>,
     // No filter: a library opens unfiltered. A date, keyword or person left over from the last session
     // would silently hide photos, with only a small badge to say so.
     sort: lightcraft_catalog::Sort,
@@ -309,6 +311,7 @@ impl Session {
         self.pending_log.clear();
         self.selection = Selection::default();
         self.source = LibrarySource::All;
+        self.library_folder = None;
         if report.created && seed_demo {
             crate::demo::load(self);
             journal.snapshot(&self.catalog)?;
@@ -353,6 +356,11 @@ impl Session {
         if let Some(v) = settings.read::<ViewFile>(files.as_mut(), "view.json") {
             self.source = v.source;
             self.browse = v.browse;
+            self.library_folder = v.library_folder.filter(|f| !f.trim().is_empty());
+            if self.source == LibrarySource::LibraryFolder && self.library_folder.is_none() {
+                // no folder to show: everything, not an empty grid
+                self.source = LibrarySource::All;
+            }
             self.sort = v.sort;
             self.selection = v.selection;
             self.selection.ids.retain(|id| self.catalog.photo(*id).is_some());
@@ -500,7 +508,13 @@ impl Session {
     }
 
     fn view_json(&self) -> Vec<u8> {
-        let view = ViewFile { source: self.source, browse: self.browse.clone(), sort: self.sort, selection: self.selection.clone() };
+        let view = ViewFile {
+            source: self.source,
+            browse: self.browse.clone(),
+            library_folder: self.library_folder.clone(),
+            sort: self.sort,
+            selection: self.selection.clone(),
+        };
         serde_json::to_vec_pretty(&view).unwrap_or_default()
     }
 

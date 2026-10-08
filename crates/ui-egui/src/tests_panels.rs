@@ -241,9 +241,11 @@ fn folders_section_lists_where_photos_were_imported_from_and_narrows_the_grid() 
     assert_eq!(h.app.session.visible().len(), 3);
     click(&mut h, "source:libfolder:/pics/trip");
     assert_eq!(h.app.session.visible().len(), 2, "only the photos imported from that folder");
-    assert_eq!(h.app.session.filter.library_folder.as_deref(), Some("/pics/trip"));
-    click(&mut h, "source:libfolder:/pics/trip");
-    assert_eq!(h.app.session.visible().len(), 3, "choosing it again shows everything");
+    assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::LibraryFolder);
+    assert_eq!(h.app.session.library_folder.as_deref(), Some("/pics/trip"));
+    assert_eq!(h.app.session.filter, lightcraft_catalog::Filter::default(), "a source, not a filter");
+    click(&mut h, "source:all");
+    assert_eq!(h.app.session.visible().len(), 3, "All Photos shows everything again");
     // the section folds like the others
     click(&mut h, "sidebarSection:folders");
     assert!(!has(&h, "source:libfolder:/pics"), "folded");
@@ -259,7 +261,7 @@ fn disks_are_rows_of_their_own() {
     assert!(has(&h, "source:libfolder:/") && has(&h, "source:libfolder:/Volumes/nas"), "both disks are listed");
     assert!(has(&h, "source:libfolder:/Volumes/nas/p"), "an open disk shows its folders");
     click(&mut h, "source:libfolder:/");
-    assert_eq!(h.app.session.filter.library_folder, None, "the startup disk's path would cover every disk");
+    assert_eq!(h.app.session.library_folder, None, "the startup disk's path would cover every disk");
     assert!(!has(&h, "source:libfolder:/Users/me"), "a click on it folds it instead");
     click(&mut h, "source:libfolder:/");
     assert!(has(&h, "source:libfolder:/Users/me"));
@@ -267,15 +269,42 @@ fn disks_are_rows_of_their_own() {
     assert_eq!(h.app.session.visible().len(), 2, "everything on the nas");
 }
 
-/// Choosing a folder while Local is the source shows the library's folder, not a mix.
+/// A folder loads into the grid the way an album, a Local folder or Picks does: whatever was
+/// shown before is replaced, and the folder's own row is highlighted.
 #[test]
-fn choosing_a_library_folder_leaves_a_local_folder_view() {
+fn choosing_a_library_folder_replaces_whatever_was_shown() {
+    use lightcraft_engine::LibrarySource;
     let mut h = folders_app(&["/pics/trip/a.jpg", "/pics/home/b.jpg"]);
-    h.app.session.source = lightcraft_engine::LibrarySource::Folder;
     click(&mut h, "libraryFolderToggle:/pics");
+    for before in [LibrarySource::Picks, LibrarySource::Folder, LibrarySource::RecentlyDeleted, LibrarySource::Missing] {
+        h.app.session.source = before;
+        click(&mut h, "source:libfolder:/pics/trip");
+        assert_eq!(h.app.session.source, LibrarySource::LibraryFolder, "from {before:?}");
+        assert_eq!(h.app.session.visible().len(), 1);
+    }
     click(&mut h, "source:libfolder:/pics/trip");
-    assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::All);
-    assert_eq!(h.app.session.visible().len(), 1);
+    assert_eq!(h.app.session.source, LibrarySource::LibraryFolder, "choosing it again keeps it, as an album does");
+    click(&mut h, "source:libfolder:/pics/home");
+    assert_eq!(h.app.session.library_folder.as_deref(), Some("/pics/home"));
+}
+
+#[test]
+fn the_grid_is_titled_after_the_folder() {
+    let mut h = folders_app(&["/Volumes/tokyo/photos/travel/a.jpg"]);
+    h.app.session.source = lightcraft_engine::LibrarySource::LibraryFolder;
+    h.app.session.library_folder = Some("/Volumes/tokyo/photos/travel".into());
+    assert_eq!(crate::i18n::source_title(&h.app.session), "photos/travel");
+    h.app.session.source = lightcraft_engine::LibrarySource::All;
+    assert_eq!(crate::i18n::source_title(&h.app.session), "All Photos");
+}
+
+/// A folder that holds nothing itself and leads to one folder starts open: the tree opens down to
+/// where the library branches.
+#[test]
+fn a_chain_of_single_folders_starts_open() {
+    let h = folders_app(&["/Users/me/Pictures/2024/a.jpg", "/Users/me/Pictures/2025/b.jpg"]);
+    assert!(has(&h, "source:libfolder:/Users/me/Pictures"), "Users and me opened by themselves");
+    assert!(!has(&h, "source:libfolder:/Users/me/Pictures/2024"), "the branching folder waits to be opened");
 }
 
 /// Removing a folder from the library asks first, then moves its photos to Recently Deleted.
@@ -310,7 +339,7 @@ fn a_folder_that_holds_other_disks_only_opens() {
     let mut h = folders_app(&["/Volumes/1.jpg", "/Volumes/tokyo/x.jpg"]);
     assert!(has(&h, "source:libfolder:/Volumes"));
     click(&mut h, "source:libfolder:/Volumes");
-    assert_eq!(h.app.session.filter.library_folder, None, "choosing it would show the tokyo disk too");
+    assert_eq!(h.app.session.library_folder, None, "choosing it would show the tokyo disk too");
     click(&mut h, "source:libfolder:/Volumes/tokyo");
     assert_eq!(h.app.session.visible().len(), 1, "a disk's own row does choose");
 }
@@ -320,7 +349,8 @@ fn a_folder_that_holds_other_disks_only_opens() {
 fn the_chosen_folder_is_always_in_view() {
     let mut h = folders_app(&["/pics/trip/day1/a.jpg", "/pics/trip/b.jpg", "/pics/home/c.jpg"]);
     assert!(!has(&h, "source:libfolder:/pics/trip/day1"), "folded to begin with");
-    h.app.session.filter.library_folder = Some("/pics/trip/day1".into());
+    h.app.session.source = lightcraft_engine::LibrarySource::LibraryFolder;
+    h.app.session.library_folder = Some("/pics/trip/day1".into());
     h.step();
     h.step();
     assert!(has(&h, "source:libfolder:/pics/trip/day1"), "the rows above it opened");
@@ -337,7 +367,8 @@ fn a_renamed_folder_keeps_its_place_in_the_tree() {
     std::fs::create_dir_all(base.join("pics/home")).unwrap();
     let b = base.to_string_lossy().to_string();
     let mut h = folders_app(&[&format!("{b}/pics/trip/a.jpg"), &format!("{b}/pics/home/b.jpg")]);
-    h.app.session.filter.library_folder = Some(format!("{b}/pics/trip"));
+    h.app.session.source = lightcraft_engine::LibrarySource::LibraryFolder;
+    h.app.session.library_folder = Some(format!("{b}/pics/trip"));
     h.step();
     h.step();
     assert!(has(&h, &format!("source:libfolder:{b}/pics/trip")));

@@ -5,10 +5,10 @@
 //! ones above them, never a folder that holds nothing of the library, with how many photos each
 //! holds — its subfolders included, like a year in By Date counts its months.
 //!
-//! Folders above the imported ones that hold nothing themselves and lead to a single folder fold
-//! into one row (`/Users/me/Pictures`) instead of a staircase of single-child levels; the row
-//! stands for the deepest folder it names. A folder spelled two ways (`/` or `\`, repeated or
-//! trailing separators, `.`) is one folder (see [`crate::query::folder_key`]).
+//! Every folder is a row of its own, the ones above the imported photos included
+//! (`/Users` → `me` → `Pictures`), so a row is exactly the folder it names. A folder spelled two
+//! ways (`/` or `\`, repeated or trailing separators, `.`) is one folder (see
+//! [`crate::query::folder_key`]).
 //!
 //! Each disk is a *volume*, a top-level row of its own: a drive letter (`D:`), a Windows share
 //! (`//server/share`), a mounted disk or share (macOS `/Volumes/tokyo`, Linux `/media/me/usb`,
@@ -41,8 +41,8 @@ pub const MAX_DEPTH: usize = 64;
 /// One row of the library's folder tree.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct FolderNode {
-    /// What the row says: the folder's name, or the whole run (`Users/me/Pictures`) of folded
-    /// levels; for a volume, its name (`nas`, `D:`, `//server/share`, `/` for the startup disk).
+    /// What the row says: the folder's name; for a volume, its name (`nas`, `D:`,
+    /// `//server/share`, `/` for the startup disk).
     pub name: String,
     /// The folder the row stands for, written out from the names of the photos' paths (forward
     /// slashes, no verbatim prefix); hand it back to [`crate::Filter::library_folder`] to see its
@@ -205,17 +205,12 @@ impl Catalog {
     }
 }
 
-/// The node for `key` with everything below it (at most [`MAX_DEPTH`] deep), folding a level
-/// that holds nothing and leads to one folder into that folder (never a volume).
+/// The node for `key` with everything below it (at most [`MAX_DEPTH`] deep).
 fn build(key: &str, levels: &HashMap<String, Level>) -> Option<FolderNode> {
     let l = levels.get(key)?;
     let mut children: Vec<FolderNode> = l.children.iter().filter_map(|k| build(k, levels)).collect();
     sort(&mut children);
     let count = l.own + children.iter().map(|c| c.count).sum::<usize>();
-    if !l.volume && l.own == 0 && children.len() == 1 {
-        let c = children.remove(0);
-        return Some(FolderNode { name: format!("{}/{}", l.name, c.name), ..c });
-    }
     Some(FolderNode { name: l.name.clone(), path: l.path.clone(), count, own: l.own, volume: l.volume, selectable: true, children })
 }
 

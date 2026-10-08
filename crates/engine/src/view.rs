@@ -19,6 +19,9 @@ pub enum LibrarySource {
     Folder,
     /// Photos whose original file can't be found (`library.missing`).
     Missing,
+    /// A folder the library's photos were imported from ([`crate::Session::library_folder`]),
+    /// and the folders inside it (`library.folders`).
+    LibraryFolder,
 }
 
 /// The folder a [`LibrarySource::Folder`] view shows.
@@ -49,7 +52,7 @@ impl LibrarySource {
             LibrarySource::RecentlyDeleted => f.deleted = true,
             LibrarySource::Picks => f.flag = Some(lightcraft_catalog::Flag::Pick),
             // the folder itself is filled in by the session (it holds the path)
-            LibrarySource::Folder | LibrarySource::Missing => {}
+            LibrarySource::Folder | LibrarySource::Missing | LibrarySource::LibraryFolder => {}
         }
         f
     }
@@ -62,6 +65,7 @@ impl LibrarySource {
             LibrarySource::RecentlyDeleted => "Recently Deleted".into(),
             LibrarySource::Picks => "Picks".into(),
             LibrarySource::Folder => "Folder".into(),
+            LibrarySource::LibraryFolder => "Folder".into(),
             LibrarySource::Missing => "Missing Photos".into(),
         }
     }

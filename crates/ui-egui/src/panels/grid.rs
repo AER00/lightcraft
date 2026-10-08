@@ -150,7 +150,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             folder_header(app, ui, hr, &b, &ids, local, &cnt)
         }
         None => {
-            let title = crate::i18n::source_label(app.session.source, &app.session.catalog);
+            let title = crate::i18n::source_title(&app.session);
             ui.painter().text(pos2(hr.left() + 20.0, hr.center().y), Align2::LEFT_CENTER, &title, t.semibold(17.0), t.text);
             ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
         }
@@ -164,11 +164,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         if !chips.is_empty() {
             let body = match total {
                 Some(n) if n > 0 => {
-                    crate::i18n::tr_format!(
-                        "{n} photos in {} are hidden by the filters above",
-                        crate::i18n::source_label(app.session.source, &app.session.catalog),
-                        n = n
-                    )
+                    crate::i18n::tr_format!("{n} photos in {} are hidden by the filters above", crate::i18n::source_title(&app.session), n = n)
                 }
                 _ => "Remove a filter above, or choose Clear all".to_string(),
             };

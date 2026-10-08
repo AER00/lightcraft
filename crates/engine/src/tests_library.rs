@@ -212,6 +212,23 @@ fn profile_favorites_and_recent_survive_reopen() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn the_shown_library_folder_survives_reopen() {
+    let dir = temp_dir("libfolder");
+    let mut s = open(&dir, true);
+    s.execute("library.source", &json!({"kind": "libraryFolder", "path": "/pics/trip"})).unwrap();
+    s.save_view();
+    drop(s);
+    let s = open(&dir, false);
+    assert_eq!((s.source, s.library_folder.as_deref()), (crate::LibrarySource::LibraryFolder, Some("/pics/trip")));
+    drop(s);
+    // a view file that names the source but no folder opens on everything, never an empty grid
+    std::fs::write(dir.join("view.json"), br#"{"source": {"kind": "libraryFolder"}}"#).unwrap();
+    let s = open(&dir, false);
+    assert_eq!((s.source, s.library_folder), (crate::LibrarySource::All, None));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Smart albums with a rule set: all / any / none, nested groups, validation, live updates.
 #[test]
 fn smart_album_rule_sets() {

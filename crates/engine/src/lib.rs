@@ -134,6 +134,9 @@ pub struct Session {
     pub clipboard: Option<Value>,
     /// The folder on disk the [`LibrarySource::Folder`] view browses.
     pub browse: Option<Browse>,
+    /// The folder the [`LibrarySource::LibraryFolder`] view shows: the library's photos imported
+    /// from it and from the folders inside it.
+    pub library_folder: Option<String>,
     /// Copied metadata (`photo.copyMetadata`): photo.setMeta params.
     pub meta_clipboard: Option<Value>,
     /// The photo that was active before the current one (Paste Settings from Previous).
@@ -234,6 +237,7 @@ impl Session {
             clipboard: None,
             meta_clipboard: None,
             browse: None,
+            library_folder: None,
             previous_active: None,
             copy_groups: lightcraft_develop::SettingsGroup::default_copy(),
             presets: presets::builtin(),
@@ -590,7 +594,8 @@ impl Session {
 
     /// Photos shown in the grid/filmstrip for the current source, filter and sort.
     pub fn visible(&mut self) -> &[PhotoId] {
-        let mut key = (self.catalog.revision, format!("{:?}|{:?}|{:?}|{:?}", self.source, self.filter, self.sort, self.browse));
+        let mut key =
+            (self.catalog.revision, format!("{:?}|{:?}|{:?}|{:?}|{:?}", self.source, self.filter, self.sort, self.browse, self.library_folder));
         if self.source == LibrarySource::Missing && self.media.availability.is_background() {
             // the view fills in as the background checks find files gone
             key.1.push_str(&format!("|{}", self.media.availability.generation()));
@@ -604,6 +609,10 @@ impl Session {
                 let b = self.browse.clone().unwrap_or_default();
                 f.folder = Some(b.path);
                 f.subfolders = b.subfolders;
+            }
+            if self.source == LibrarySource::LibraryFolder {
+                // no folder chosen: nothing (an empty path names no folder)
+                f.library_folder = Some(self.library_folder.clone().unwrap_or_default());
             }
             let mut visible = self.catalog.query(&f, &self.sort);
             if matches!(self.source, LibrarySource::Album(_))
@@ -648,13 +657,16 @@ impl Session {
         if self.source == LibrarySource::Missing {
             return None;
         }
-        let key = (self.catalog.revision, format!("{:?}|{:?}", self.source, self.browse));
+        let key = (self.catalog.revision, format!("{:?}|{:?}|{:?}", self.source, self.browse, self.library_folder));
         if self.total.as_ref().map(|t| &t.0) != Some(&key) {
             let mut f = self.source.to_filter(&Filter::default(), &self.catalog);
             if self.source == LibrarySource::Folder {
                 let b = self.browse.clone().unwrap_or_default();
                 f.folder = Some(b.path);
                 f.subfolders = b.subfolders;
+            }
+            if self.source == LibrarySource::LibraryFolder {
+                f.library_folder = Some(self.library_folder.clone().unwrap_or_default());
             }
             let n = self.catalog.query(&f, &self.sort).len();
             self.total = Some((key, n));

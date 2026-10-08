@@ -5,7 +5,7 @@ use lightcraft_develop::{CONTROLS, controls};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd, has_active};
-use crate::Session;
+use crate::{LibrarySource, Session};
 
 pub fn photo_summary(p: &Photo) -> Value {
     json!({
@@ -81,10 +81,14 @@ pub fn specs() -> Vec<CommandSpec> {
             }))
         }),
         cmd!(query "library.state", "Library State", [], None, "{}", always, |s, _| {
-            let label = s.source.label(&s.catalog);
+            let label = match (s.source, s.library_folder.as_deref()) {
+                (LibrarySource::LibraryFolder, Some(path)) => lightcraft_catalog::folders::folder_label(path),
+                _ => s.source.label(&s.catalog),
+            };
             let n = s.visible().len();
             Ok(json!({
                 "source": s.source,
+                "libraryFolder": s.library_folder,
                 "sourceLabel": label,
                 "filter": s.filter,
                 "sort": s.sort,

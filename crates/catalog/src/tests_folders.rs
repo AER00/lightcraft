@@ -5,8 +5,7 @@
 //! * Given photos imported from several folders, the tree lists those folders and no others,
 //!   each with how many photos it holds, under the disk (volume) they are on.
 //! * A folder's count includes the folders inside it.
-//! * Folders above the imported ones that hold nothing themselves fold into one row, until the
-//!   library branches.
+//! * Every folder is a row of its own, the ones above the imported photos included.
 //! * Photos only browsed in Local, deleted photos and demo scenes are not "imported from" anywhere.
 //! * However a folder is spelled, it is one folder.
 //! * Choosing a folder shows what was imported from it and from the folders inside it — exactly
@@ -71,18 +70,27 @@ fn only_folders_with_imported_photos_are_listed_with_their_counts() {
 #[test]
 fn a_folders_count_includes_the_folders_inside_it() {
     let r = rows(&["/pics/trip/a.jpg", "/pics/trip/day1/b.jpg", "/pics/trip/day1/c.jpg", "/pics/trip/day2/d.jpg"]);
-    assert_eq!(r, vec![row("/", 4, 0), row("pics/trip", 4, 1), row("day1", 2, 2), row("day2", 1, 1)]);
+    assert_eq!(r, vec![row("/", 4, 0), row("pics", 4, 0), row("trip", 4, 1), row("day1", 2, 2), row("day2", 1, 1)]);
 }
 
 #[test]
-fn folders_that_hold_nothing_fold_into_one_row_until_the_library_branches() {
+fn every_folder_is_a_row_of_its_own_even_when_it_holds_nothing_itself() {
     let c = library(&["/Users/me/Pictures/2024/a.jpg", "/Users/me/Pictures/2025/b.jpg", "/Volumes/nas/photos/c.jpg"]);
     let tree = c.folder_tree();
     assert_eq!(
         outline(&tree),
-        vec![row("/", 2, 0), row("Users/me/Pictures", 2, 0), row("2024", 1, 1), row("2025", 1, 1), row("nas", 1, 0), row("photos", 1, 1)]
+        vec![
+            row("/", 2, 0),
+            row("Users", 2, 0),
+            row("me", 2, 0),
+            row("Pictures", 2, 0),
+            row("2024", 1, 1),
+            row("2025", 1, 1),
+            row("nas", 1, 0),
+            row("photos", 1, 1)
+        ]
     );
-    assert_eq!(tree[0].children[0].path, "/Users/me/Pictures", "the folded row stands for the deepest folder it names");
+    assert_eq!(tree[0].children[0].children[0].children[0].path, "/Users/me/Pictures", "a row is exactly the folder it names");
 }
 
 #[test]
@@ -99,13 +107,13 @@ fn browsed_deleted_and_demo_photos_are_not_imported_from_anywhere() {
     let id = c.alloc_photo_id();
     let demo = Photo::new(id, Source::Demo { scene: 1 }, "demo", "JPEG", 60, 40, "2026-01-01T10:00:00");
     c.apply(Op::AddPhoto { photo: Box::new(demo) }).unwrap();
-    assert_eq!(outline(&c.folder_tree()), vec![row("/", 1, 0), row("pics/kept", 1, 1)]);
+    assert_eq!(outline(&c.folder_tree()), vec![row("/", 1, 0), row("pics", 1, 0), row("kept", 1, 1)]);
 }
 
 #[test]
 fn however_a_folder_is_spelled_it_is_one_folder() {
     let r = rows(&["/pics/trip/a.jpg", "/pics//trip/./b.jpg", "/pics\\trip\\c.jpg", "/pics/x/../trip/d.jpg"]);
-    assert_eq!(r, vec![row("/", 4, 0), row("pics/trip", 4, 4)]);
+    assert_eq!(r, vec![row("/", 4, 0), row("pics", 4, 0), row("trip", 4, 4)]);
 }
 
 #[test]
@@ -159,7 +167,14 @@ fn shares_the_other_systems_mount_are_volumes_too() {
     let r = rows(&[r"\\tokyo.local\photos\a.jpg", r"\\192.168.1.5\scans\b.jpg", r"\\wsl$\Ubuntu\home\me\c.jpg", r"Z:\d.jpg"]);
     assert_eq!(
         r,
-        vec![row("//192.168.1.5/scans", 1, 1), row("//tokyo.local/photos", 1, 1), row("//wsl$/Ubuntu", 1, 0), row("home/me", 1, 1), row("Z:", 1, 1)]
+        vec![
+            row("//192.168.1.5/scans", 1, 1),
+            row("//tokyo.local/photos", 1, 1),
+            row("//wsl$/Ubuntu", 1, 0),
+            row("home", 1, 0),
+            row("me", 1, 1),
+            row("Z:", 1, 1)
+        ]
     );
 }
 

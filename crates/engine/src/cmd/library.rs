@@ -251,7 +251,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Show Source",
             [],
             None,
-            "{kind: all|recentlyAdded|album|recentlyDeleted|picks|missing, id?: albumId}",
+            "{kind: all|recentlyAdded|album|recentlyDeleted|picks|missing|libraryFolder, id?: albumId, path?: a path from library.folders (for libraryFolder)}",
             always,
             |s, p| {
                 let kind = str_param(p, "kind").unwrap_or("all");
@@ -267,6 +267,12 @@ pub fn specs() -> Vec<CommandSpec> {
                             return Err(bad("library.source", "no such album"));
                         }
                         LibrarySource::Album(a)
+                    }
+                    "libraryFolder" => {
+                        let path = str_param(p, "path").map(str::trim).filter(|d| !lightcraft_catalog::query::folder_key(d).is_empty());
+                        let path = path.ok_or_else(|| bad("library.source", "libraryFolder needs the `path` of a folder from library.folders"))?;
+                        s.library_folder = Some(path.to_string());
+                        LibrarySource::LibraryFolder
                     }
                     other => return Err(bad("library.source", format!("unknown source `{other}`"))),
                 };
@@ -333,6 +339,13 @@ pub fn specs() -> Vec<CommandSpec> {
                 s.commit("Remove Folder from Library", Op::Batch { ops })?;
                 if s.filter.library_folder.as_deref().is_some_and(|c| lightcraft_catalog::query::folder_within(c, path)) {
                     s.filter.library_folder = None;
+                }
+                // the folder being shown is gone: back to everything, as for a deleted album
+                if s.library_folder.as_deref().is_some_and(|c| lightcraft_catalog::query::folder_within(c, path)) {
+                    s.library_folder = None;
+                    if s.source == LibrarySource::LibraryFolder {
+                        s.source = LibrarySource::All;
+                    }
                 }
                 let vis = s.visible_cloned();
                 s.selection = vis.first().map(|f| Selection::single(*f)).unwrap_or_default();

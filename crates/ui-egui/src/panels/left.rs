@@ -733,8 +733,9 @@ fn is_within(app: &LightcraftApp, id: lightcraft_catalog::AlbumId, ancestor: lig
 }
 
 /// "Folders": where on disk the library's photos were imported from, with photo counts (see
-/// `lightcraft_catalog::folders`). A click shows the photos imported from that folder and the
-/// folders inside it, the triangle opens a level. Only folders holding imported photos are
+/// `lightcraft_catalog::folders`). A click makes that folder the source, like an album or a
+/// Local folder: its photos and those of the folders inside it fill the grid. The triangle opens
+/// a level. Only folders holding imported photos are
 /// listed; every folder on disk is under Local.
 fn folders_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let tree = app.caches.folder_tree(&app.session.catalog);
@@ -774,10 +775,11 @@ fn elide_head(text: &str, max: f32, width: impl Fn(&str) -> f32) -> String {
     "…".to_string()
 }
 
-/// Whenever the chosen folder changes (a click, an agent, a rename or its undo), open the rows
+/// Whenever the shown folder changes (a click, an agent, a rename or its undo), open the rows
 /// above it so it is on screen; folding one by hand afterwards sticks until the choice changes.
 fn reveal_chosen(app: &LightcraftApp, ui: &egui::Ui, tree: &[FolderNode]) {
-    let chosen = app.session.filter.library_folder.clone().filter(|c| !lightcraft_catalog::query::folder_key(c).is_empty());
+    let shown = app.session.library_folder.clone().filter(|_| app.session.source == LibrarySource::LibraryFolder);
+    let chosen = shown.filter(|c| !lightcraft_catalog::query::folder_key(c).is_empty());
     let seen = egui::Id::new("libfolder-revealed");
     let now = chosen.as_deref().map(lightcraft_catalog::query::folder_key);
     if ui.data(|d| d.get_temp::<Option<String>>(seen)) == Some(now.clone()) {
@@ -802,11 +804,15 @@ fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode],
     for n in nodes {
         let key = lightcraft_catalog::query::folder_key(&n.path);
         let open_id = egui::Id::new(("libfolder-open", key.clone()));
-        // a disk starts open: its folders are what the section is for
-        let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(n.volume);
+        // a disk starts open, and so does a folder that holds nothing itself and leads to one
+        // folder (`Users` → `me`): the first row where the library branches is what you look for
+        let leads_on = n.own == 0 && n.children.len() == 1;
+        let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(n.volume || leads_on);
         // a row whose path would cover other disks' photos too only opens and closes
         let selectable = n.selectable;
-        let sel = selectable && app.session.filter.library_folder.as_deref().is_some_and(|f| same_folder(f, &n.path));
+        let sel = selectable
+            && app.session.source == LibrarySource::LibraryFolder
+            && app.session.library_folder.as_deref().is_some_and(|f| same_folder(f, &n.path));
         let name = if selectable { n.name.clone() } else { crate::i18n::tr("This Computer").to_string() };
         // room for the name: between the icon and the count
         let font = t.font(13.5);
@@ -837,12 +843,8 @@ fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode],
         let resp = resp.on_hover_text(tip);
         if resp.clicked() && !toggled {
             if selectable {
-                // the library's folder, not a mix with the Local folder being browsed
-                if app.session.source == LibrarySource::Folder {
-                    let _ = app.run("library.source", json!({"kind": "all"}));
-                }
-                let v = if sel { serde_json::Value::Null } else { json!(n.path) };
-                let _ = app.run("library.filter", json!({"libraryFolder": v}));
+                // a source like an album or a Local folder: it replaces what the grid showed
+                let _ = app.run("library.source", json!({"kind": "libraryFolder", "path": n.path}));
             } else {
                 toggled = true;
             }
