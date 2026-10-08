@@ -182,6 +182,79 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     finish(F, raw, Meta { icc, exif, xmp, ..Default::default() }, (width as u32, height as u32), opts)
 }
 
+/// Stored dimensions and EXIF orientation (resource 1058) from the header and image resources,
+/// without reading the merged image data. Refused, as a decode would refuse it: an unsupported
+/// depth, colour mode or compression, or merged image data that runs past the end of the file
+/// (truncated). The run-length data itself is not unpacked.
+pub(crate) fn header(bytes: &[u8]) -> Result<(u32, u32, u16)> {
+    let mut r = Rd { b: bytes, p: 0 };
+    if r.take(4)? != b"8BPS" {
+        return Err(err("bad signature"));
+    }
+    let psb = match r.u16()? {
+        1 => false,
+        2 => true,
+        _ => return Err(err("bad version")),
+    };
+    r.take(6)?;
+    let channels = r.u16()? as usize;
+    let height = r.u32()? as usize;
+    let width = r.u32()? as usize;
+    let depth = r.u16()?;
+    let mode = r.u16()?;
+    check_size(F, width as u64, height as u64, &DecodeOptions::default())?;
+    if channels == 0 || channels > 56 {
+        return Err(err("bad channel count"));
+    }
+    let cm_len = r.u32()? as usize;
+    let color_mode_data = r.take(cm_len)?;
+    let res_len = r.u32()? as usize;
+    let (_, exif, _) = resources(r.take(res_len)?);
+    let lm_len = if psb { r.u64()? as usize } else { r.u32()? as usize };
+    r.take(lm_len)?;
+    let compression = r.u16()?;
+    let bpc = match depth {
+        8 => 1usize,
+        16 => 2,
+        32 => 4,
+        1 => return Err(Error::Unsupported(F, "1-bit bitmap PSD")),
+        _ => return Err(err("bad depth")),
+    };
+    let n_color = match mode {
+        1 | 8 | 7 | 2 => 1,
+        3 => 3,
+        4 => 4,
+        9 => return Err(Error::Unsupported(F, "Lab PSD")),
+        _ => return Err(err("unknown colour mode")),
+    };
+    if channels < n_color {
+        return Err(err("too few channels"));
+    }
+    if mode == 2 && (color_mode_data.len() < 768 || depth != 8) {
+        return Err(err("bad indexed palette"));
+    }
+    let rest = bytes.len().saturating_sub(r.p);
+    let need = match compression {
+        0 => width.checked_mul(height).and_then(|n| n.checked_mul(bpc)).and_then(|n| n.checked_mul(channels)),
+        1 => {
+            // the row byte counts, then the rows they count
+            let rows = channels.checked_mul(height).ok_or_else(|| err("truncated"))?;
+            let table = rows.checked_mul(if psb { 4 } else { 2 }).filter(|&t| t <= rest).ok_or_else(|| err("truncated"))?;
+            let mut total = table;
+            for _ in 0..rows {
+                total = total.saturating_add(if psb { r.u32()? as usize } else { r.u16()? as usize });
+            }
+            Some(total)
+        }
+        _ => return Err(Error::Unsupported(F, "ZIP-compressed merged image data")),
+    };
+    if need.is_none_or(|n| n > rest) {
+        return Err(err("truncated"));
+    }
+    let orientation = exif.as_deref().map(crate::exif::summarize).unwrap_or_default().orientation.unwrap_or(1);
+    Ok((width as u32, height as u32, orientation))
+}
+
 /// PackBits: append exactly `row_bytes` bytes (zero-padded if the run data is short).
 fn unpackbits(mut src: &[u8], row_bytes: usize, out: &mut Vec<u8>) {
     let target = out.len() + row_bytes;
