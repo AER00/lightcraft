@@ -290,6 +290,8 @@ mod tests {
     fn demo_grid_snapshot_has_ui_pixels() {
         let t0 = Instant::now();
         let mut h = demo([1200.0, 760.0]);
+        // settle() can see a quiet spell before the first thumbnails land on a loaded machine
+        h.step_until(SETTLE, |h| h.app.renderer.thumb_textures() > 0);
         let img = h.snapshot(SETTLE);
         eprintln!("headless snapshot: {:?} in {:?} ({} frames)", img.size, t0.elapsed(), h.frames());
         assert_eq!(img.size, [1200, 760]);
@@ -394,6 +396,7 @@ mod tests {
         let id = h.app.session.active().unwrap();
         let photo = |h: &Headless| h.app.session.catalog.photo(id).unwrap().clone();
         let before = photo(&h);
+        h.step_until(SETTLE, |h| h.app.renderer.variant_textures() >= 6);
         assert!(h.app.renderer.variant_textures() >= 6, "variant thumbnails rendered: {}", h.app.renderer.variant_textures());
         // hover: the loupe shows the look, nothing is committed
         let r = h.request("ui.hoverWidget", json!({"id": "profileCell:lc.vivid"}), t);
@@ -1033,6 +1036,7 @@ mod tests {
         let r = h.request("engine.execute", json!({"command": "file.addFromDevice", "params": {"path": sub.to_string_lossy()}}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
+        h.step_until(SETTLE, |h| matches!(h.app.ui.dialog, Some(crate::state::Dialog::Import { .. })));
         let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review") };
         assert!(opts.copy);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1247,6 +1251,8 @@ mod tests {
         let r = h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [dir.to_string_lossy()]}}), t);
         assert_eq!(r["result"]["scanning"], true, "{r}");
         h.settle(SETTLE);
+        h.step_until(SETTLE, |h| matches!(h.app.ui.dialog, Some(crate::state::Dialog::Import { .. })));
+        h.step_until(SETTLE, |h| h.app.renderer.textures.keys().filter(|s| matches!(s, crate::render::Slot::Import(_))).count() >= 5);
         let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review") };
         assert_eq!(opts.candidates.len(), 6);
         assert_eq!(opts.candidates.iter().filter(|c| c.duplicate.is_some()).count(), 1);
@@ -1379,6 +1385,7 @@ mod tests {
         let r = h.request("engine.execute", json!({"command": "file.addPhotos", "params": {"paths": [src.to_string_lossy()]}}), t);
         assert_eq!(r["result"]["scanning"], true, "{r}");
         h.settle(SETTLE);
+        h.step_until(SETTLE, |h| matches!(h.app.ui.dialog, Some(crate::state::Dialog::Import { .. })));
         let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review") };
         assert_eq!(opts.candidates.len(), 10);
         for id in ["button:importCopy", "button:importDest"] {
