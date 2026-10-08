@@ -329,10 +329,24 @@ fn preview_orientation(raw_bytes: &[u8], jpeg_orientation: u16) -> Orientation {
     lightcraft_meta::extract(raw_bytes).orientation.unwrap_or(Orientation::Normal)
 }
 
+/// What stands in for a raw file we can't decode: its largest embedded JPEG, else, for a TIFF-based
+/// raw, the file's own first image when the TIFF reader can show it (a reduced RGB copy: the only
+/// preview some containers carry). Returns image bytes for [`lightcraft_codecs::decode`].
+fn stand_in_image(bytes: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
+    if let Some(jpeg) = lightcraft_raw::embedded_preview(bytes) {
+        return Some(std::borrow::Cow::Owned(jpeg));
+    }
+    let undecodable = lightcraft_raw::probe(bytes).is_some_and(|f| !f.is_supported());
+    (undecodable && lightcraft_codecs::sniff(bytes).is_some_and(|f| f == lightcraft_codecs::Format::Tiff))
+        .then_some(std::borrow::Cow::Borrowed(bytes))
+}
+
 /// Shared colour interpretation for quick previews, unsupported RAW fallback and camera-look fitting.
 pub(crate) fn decode_raw_preview(bytes: &[u8], opts: lightcraft_codecs::DecodeOptions) -> Option<lightcraft_codecs::Decoded> {
-    let jpeg = lightcraft_raw::embedded_preview(bytes)?;
-    match lightcraft_raw::embedded_preview_color_space(bytes) {
+    let jpeg = stand_in_image(bytes)?;
+    // the colour space is a property of the JPEG; a TIFF stand-in is read by the TIFF reader
+    let is_jpeg = matches!(jpeg, std::borrow::Cow::Owned(_));
+    match lightcraft_raw::embedded_preview_color_space(bytes).filter(|_| is_jpeg) {
         Some(space) => {
             let space = match space {
                 lightcraft_raw::PreviewColorSpace::Srgb => lightcraft_codecs::NamedSpace::Srgb,
@@ -346,7 +360,7 @@ pub(crate) fn decode_raw_preview(bytes: &[u8], opts: lightcraft_codecs::DecodeOp
 
 /// Oriented size of the embedded preview of a raw file.
 fn embedded_preview_size(bytes: &[u8]) -> Option<(u32, u32)> {
-    let jpeg = lightcraft_raw::embedded_preview(bytes)?;
+    let jpeg = stand_in_image(bytes)?;
     let d = lightcraft_codecs::decode(&jpeg, lightcraft_codecs::DecodeOptions::fit(64, 64)).ok()?;
     let (mut w, mut h) = (d.source_width, d.source_height);
     if preview_orientation(bytes, d.orientation).swaps_axes() {
@@ -702,6 +716,49 @@ mod tests {
         assert_eq!(s.catalog.photo(id).unwrap().preview_only, None);
         drop(s);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A raw whose TIFF shell holds only a small RGB image (IFD0) next to a private block, as Exif
+    /// declares a picture 25x its size.
+    fn tiff_shell(w: u32, h: u32, shell: bool) -> Vec<u8> {
+        use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+        let mut ifd0 = IfdBuilder::new();
+        ifd0.set(t::IMAGE_WIDTH, Value::Long(vec![w]));
+        ifd0.set(t::IMAGE_LENGTH, Value::Long(vec![h]));
+        ifd0.set(t::BITS_PER_SAMPLE, Value::Short(vec![8, 8, 8]));
+        ifd0.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![3]));
+        ifd0.set(t::PHOTOMETRIC, Value::Short(vec![2]));
+        ifd0.set(t::COMPRESSION, Value::Short(vec![1]));
+        let px: Vec<u8> = (0..w * h).flat_map(|i| [(i % 251) as u8, 128, 200]).collect();
+        ifd0.set_image(ImageData::Strips { rows_per_strip: h, strips: vec![px] });
+        ifd0.set_child(
+            t::EXIF_IFD,
+            IfdBuilder::new().with(t::PIXEL_X_DIMENSION, Value::Long(vec![w * 25])).with(t::PIXEL_Y_DIMENSION, Value::Long(vec![h * 25])),
+        );
+        let mut b = TiffWriter::default().write(&[ifd0]).unwrap();
+        if shell {
+            b.extend(std::iter::repeat_n(0x5au8, (w * h * 625 / 8) as usize + 100));
+        }
+        b
+    }
+
+    /// A TIFF raw whose only image is a small thumbnail used to open as a plain image of that size
+    /// ("a 150 MP file renders 296x220"), with nothing saying so. Now it is recognised as a raw we can't
+    /// decode: preview only, with the reason, still showing that image.
+    #[test]
+    fn thumbnail_only_tiff_raw_is_preview_only_not_a_plain_image() {
+        let b = tiff_shell(24, 16, true);
+        let p = probe_bytes("IMG_0001.IIQ", &b).unwrap();
+        assert_eq!((p.kind, p.format.as_str(), p.width, p.height), (MediaKind::Raw, "IIQ", 24, 16));
+        let why = p.preview_only.expect("marked preview only");
+        assert!(why.contains("600x400") && why.contains("24x16"), "{why}");
+        let (img, src) = load_bytes(&b, 12).unwrap();
+        assert_eq!((img.width, img.height, src.raw), (12, 8, false));
+        assert!(embedded_preview_srgb(&b, 12).is_some());
+        // the same pixels without the private block are a small ordinary image
+        let plain = probe_bytes("small.tif", &tiff_shell(24, 16, false)).unwrap();
+        assert_eq!((plain.kind, plain.preview_only, plain.width, plain.height), (MediaKind::Image, None, 24, 16));
+        assert!(lightcraft_raw::probe(&tiff_shell(24, 16, false)).is_none());
     }
 
     #[test]
