@@ -140,7 +140,7 @@ pub struct AppSettings {
     pub confirm_delete: bool,
     /// GPU rendering allowed (`app.gpu`).
     pub gpu: bool,
-    /// Lowest long edge (pixels) the user lets the loupe render at; 0 = Automatic (the size it is
+    /// Largest long edge (pixels) the user lets the loupe render at; 0 = Automatic (the size it is
     /// drawn at, up to the photo's own pixels and [`LOUPE_EDGE_CEILING`]). Not the old
     /// `previewEdge` key: its 2560 px default was the soft-image bug (issue #323).
     pub preview_limit: u32,
