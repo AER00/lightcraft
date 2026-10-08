@@ -114,7 +114,7 @@ pub struct Headless {
     pub pixels_per_point: f32,
     time: f64,
     frames: u64,
-    events: Vec<egui::Event>,
+    pub(crate) events: Vec<egui::Event>,
     control: Sender<ControlRequest>,
     quit: bool,
 }

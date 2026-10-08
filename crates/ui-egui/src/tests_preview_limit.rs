@@ -578,6 +578,29 @@ mod in_the_loupe {
         }
     }
 
+    // Given `\` held in a wipe at 1:1, the Before is shown everywhere, so its window is painted
+    // everywhere (not only left of the line)
+    #[test]
+    fn holding_backslash_in_a_wipe_paints_the_before_window_across_the_canvas() {
+        let (mut h, _) = detail();
+        h.app.ui.before_after = crate::state::BeforeAfter::Split;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        h.events.push(egui::Event::Key {
+            key: egui::Key::Backslash,
+            physical_key: Some(egui::Key::Backslash),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.settle(SETTLE);
+        h.step();
+        let canvas = h.app.canvas_rect.unwrap();
+        let window = drawn(&h, Slot::RegionBefore);
+        assert!(!window.is_empty());
+        assert!(window[0].1.right() >= canvas.right() - 0.5, "the Before window stops at the wipe line: {:?}", window[0].1);
+    }
+
     // Given Before and After side by side at 1:1, each window is painted inside its own pane: its
     // margin (a window is wider than what its pane shows) does not spill into the neighbour
     #[test]

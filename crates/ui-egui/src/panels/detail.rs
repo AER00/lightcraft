@@ -602,7 +602,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // …and the window renders go over the whole-frame ones, all of them, where they belong in the
     // frame (clipped to their pane, or their side of the line)
     for (v, view) in &windows {
-        let clip = crate::region::window_clip(app.ui.before_after, v.before, v.visible, canvas, img_rect);
+        // (holding `\` in a wipe shows the Before everywhere: it is the Before view alone then)
+        let mode = if show_before { BeforeAfter::Original } else { app.ui.before_after };
+        let clip = crate::region::window_clip(mode, v.before, v.visible, canvas, img_rect);
         draw_window(&p.with_clip_rect(clip), app, &window_ctx, v, view);
     }
     // the line of a wipe over both
