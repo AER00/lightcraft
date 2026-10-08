@@ -336,12 +336,12 @@ impl Photo {
     pub fn develops_raw(&self) -> bool {
         self.kind == MediaKind::Raw && self.preview_only.is_none()
     }
-    /// The current ARW, NEF and RW2 readers have vendor WB multipliers but no measured camera
+    /// The current ARW, NEF, RW2 and CR3 readers have vendor WB multipliers but no measured camera
     /// illuminant. Use adjustments relative to the camera's as-shot look, as for rendered
     /// photographs (the engine's `camera_preview::file_local_look` covers the same formats; RWL and
     /// RAW are Leica's and the oldest Panasonic bodies' names for RW2 files).
     pub fn relative_wb(&self) -> bool {
-        self.develops_raw() && ["ARW", "NEF", "NRW", "RW2", "RWL", "RAW"].iter().any(|f| self.format.eq_ignore_ascii_case(f))
+        self.develops_raw() && ["ARW", "NEF", "NRW", "RW2", "RWL", "RAW", "CR3"].iter().any(|f| self.format.eq_ignore_ascii_case(f))
     }
     /// The develop settings import gave this photo: [`Photo::camera_defaults`], or the user's
     /// default preset applied on top of them ([`Photo::import_look`]).
@@ -430,7 +430,7 @@ mod edited_tests {
     }
 
     #[test]
-    fn sony_and_nikon_raws_use_relative_white_balance() {
+    fn vendor_raws_without_camera_calibration_use_relative_white_balance() {
         for (name, format, relative) in [
             ("a.arw", "ARW", true),
             ("a.nef", "NEF", true),
@@ -438,6 +438,7 @@ mod edited_tests {
             ("a.rw2", "RW2", true),
             ("a.rwl", "RWL", true),
             ("a.raw", "RAW", true),
+            ("a.cr3", "cr3", true),
             ("a.dng", "DNG", false),
         ] {
             let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, name, format, 10, 10, "2026-10-01T00:00:00");
