@@ -312,7 +312,7 @@ LightCraft is young and moving fast. **Where we honestly stand** (details in the
 | Import: Add in place / Copy / Move, rename and folder templates, devices, duplicate detection, watched folders; Local folder browsing | ✅ |
 | MCP server (headless or live app, persistent libraries), CLI, control channel | ✅ |
 | XMP sidecars (read/write, auto-write), reading `crs:` develop settings, preset files (`.lcpreset`, XMP presets) | ✅ |
-| Optics (distortion, vignetting, auto + manual CA, defringe, DNG-embedded lens corrections), Geometry (transforms, Constrain Crop), Upright (Auto/Level/Vertical/Full/Guided) | ✅ · camera lens profiles (our own) ⬜ |
+| Optics (distortion, vignetting, auto + manual CA, defringe, lens corrections embedded in DNG files and Panasonic / Leica RW2 / RWL distortion data), Geometry (transforms, Constrain Crop), Upright (Auto/Level/Vertical/Full/Guided) | ✅ · camera lens profiles (our own) ⬜ |
 | Photo Merge: HDR (auto-align, deghost), Panorama (spherical/cylindrical/perspective, boundary warp, auto crop), HDR Panorama → DNG | ✅ |
 | GPU pipeline (wgpu compute, CPU-exact within 1/255), CPU fallback on device limits / errors | ✅ · WebGPU in the browser 🚧 |
 | AI: segmentation masks, AI denoise, super resolution, faces; HDR editing; video | ⬜ (see [roadmap](ROADMAP.md#where-were-going)) |
@@ -355,6 +355,19 @@ repo; see [craftrules `standards/fonts.md`](https://github.com/storytold/craftru
 
 **Interface language:** **Edit → Language** (English, 简体中文, 繁體中文（台灣）, 日本語) or **Settings → General →
 Language**; the choice applies immediately and persists. See [docs/localization.md](docs/localization.md).
+
+**Logs:** the desktop app writes its log to standard error and to `logs/lightcraft.log` in its settings folder
+(Linux `$XDG_CONFIG_HOME/lightcraft/logs/`, by default `~/.config/lightcraft/logs/`; macOS
+`~/Library/Application Support/LightCraft/logs/`; Windows `%APPDATA%\LightCraft\logs\`), never in the library. A
+launch from a desktop menu or the Dock has no terminal, so attach this file to a bug report. Each start moves the
+previous log to `lightcraft.1.log` and that one to `lightcraft.2.log`, so the log of a run that crashed survives the
+next start; the file stops growing at 16 MiB, `--version` and `--help` write none, and runs with
+`LIGHTCRAFT_NO_PREFS` log to standard error only. By default LightCraft's own crates log at `info` and everything else
+at `warn`. `LIGHTCRAFT_LOG=info` or `debug` works as before (that level for LightCraft's own crates, warnings and
+errors from the rest; any other value: warnings and errors only) and wins over `RUST_LOG`, which otherwise replaces
+the default with env_logger-style directives such as `RUST_LOG=debug` or `RUST_LOG=warn,lightcraft_pipeline=trace` (a
+directive ending in `*` covers every target starting with it, as in `lightcraft*=debug`). Panics are recorded there
+too, and still in `lightcraft-panics.log` in the temp folder. The logger is `apps/lightcraft/src/logging.rs`.
 
 The web build needs the `wasm32-unknown-unknown` target and the matching `wasm-bindgen` CLI
 (`cargo xtask web` prints the exact install command); see [docs/web.md](docs/web.md).

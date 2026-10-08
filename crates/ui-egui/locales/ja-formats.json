@@ -4,9 +4,11 @@
   " · {} failed: {}": "・{}件失敗：{}",
   " · {} moved": "・{}件移動",
   " · {} not readable": "・{}件は読み込み不可",
+  " · {} restored from Recently Deleted": "・最近削除した写真から{}枚を復元",
   ", {failed} file{} not readable": "、{failed}件を読み込めません{:.0}",
   "Add {local_n} to My Photos": "{local_n}枚をマイフォトに追加",
   "Add {} Photo{}": "{}枚の写真を追加{:.0}",
+  "Add {} Photo{}, restore {}": "{}枚の写真を追加{:.0}、{}枚を復元",
   "Add “{}” to Favorites": "「{}」をお気に入りに追加",
   "Added {n} photo{} to My Photos": "マイフォトに{n}枚を追加しました{:.0}",
   "Added {n} photo{} to “{}”": "「{1}」に{n}枚を追加しました{0:.0}",
@@ -53,6 +55,7 @@
   "Rename “{name}”": "「{name}」の名前を変更",
   "Rendering on the CPU: {why}": "CPUで描画：{why}",
   "Reset {} Channel": "{}チャンネルをリセット",
+  "Restore {} Photo{}": "{}枚の写真を復元{:.0}",
   "Saved export preset “{}”": "書き出しプリセット「{}」を保存しました",
   "Show {hidden} hidden location{}": "非表示の{hidden}か所を表示{:.0}",
   "Showing {n} of {}": "{}枚中{n}枚を表示",
@@ -118,5 +121,6 @@
   "{verb} {n} Photo{}": "{n}枚を{verb}{:.0}",
   "{weekday}, {day}": "{day}日（{weekday}）",
   "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日（{weekday}）",
-  "{year}": "{year}年"
+  "{year}": "{year}年",
+  "Remove “{name}” and its {count} photo{} from the library?": "「{name}」と写真{count}枚をライブラリから除去しますか？{:.0}"
 }

@@ -199,7 +199,9 @@ impl Pool {
     /// Add one raw file's colour pairs. `Ok(None)` when the file can't contribute (not an ARW or
     /// NEF without colour matrices, no usable camera JPEG, too little colour).
     pub fn add(&mut self, bytes: &[u8]) -> Result<Option<String>, String> {
-        let raw = lightcraft_raw::decode(bytes).map_err(|e| e.to_string())?;
+        let mut raw = lightcraft_raw::decode(bytes).map_err(|e| e.to_string())?;
+        // colour only: geometric lens corrections would stop the sensor proxy from binning
+        raw.opcodes.list3.retain(|op| !op.is_lens_correction());
         let Some(model) = raw.metadata.model.as_deref().map(str::trim).filter(|m| !m.is_empty()) else { return Ok(None) };
         let Some(pairs) = crate::camera_preview::profile_pairs(&raw, bytes) else { return Ok(None) };
         let step = pairs.len().div_ceil(PAIRS_PER_FILE).max(1);

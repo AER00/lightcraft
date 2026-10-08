@@ -150,9 +150,19 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             folder_header(app, ui, hr, &b, &ids, local, &cnt)
         }
         None => {
-            let title = crate::i18n::source_label(app.session.source, &app.session.catalog);
-            ui.painter().text(pos2(hr.left() + 20.0, hr.center().y), Align2::LEFT_CENTER, &title, t.semibold(17.0), t.text);
-            ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
+            let full = crate::i18n::source_title(&app.session);
+            let count_w = ui.painter().layout_no_wrap(cnt.clone(), t.font(12.5), t.text_dim).size().x;
+            // the title gives way to the count: a long album or folder name is trimmed, in full on hover
+            let room = (hr.width() - 20.0 - count_w - 36.0).max(0.0);
+            let font = t.semibold(17.0);
+            let title = crate::widgets::elide_head(&full, room, |s| ui.painter().layout_no_wrap(s.to_string(), font.clone(), t.text).size().x);
+            let title_rect = ui.painter().text(pos2(hr.left() + 20.0, hr.center().y), Align2::LEFT_CENTER, &title, font, t.text);
+            let count_rect = ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
+            crate::widgets::register(ui.ctx(), "grid:title", title_rect);
+            crate::widgets::register(ui.ctx(), "grid:count", count_rect);
+            if title != full {
+                ui.interact(title_rect, ui.id().with("grid-title"), Sense::hover()).on_hover_text(full);
+            }
         }
     }
     super::chips::show(app, ui, &chips);
@@ -164,11 +174,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         if !chips.is_empty() {
             let body = match total {
                 Some(n) if n > 0 => {
-                    crate::i18n::tr_format!(
-                        "{n} photos in {} are hidden by the filters above",
-                        crate::i18n::source_label(app.session.source, &app.session.catalog),
-                        n = n
-                    )
+                    crate::i18n::tr_format!("{n} photos in {} are hidden by the filters above", crate::i18n::source_title(&app.session), n = n)
                 }
                 _ => "Remove a filter above, or choose Clear all".to_string(),
             };
@@ -471,7 +477,8 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
     let resp = ui.interact(r, egui::Id::new(("cell", id.0)), Sense::click_and_drag());
     register(ui.ctx(), format!("thumb:{}", id.0), r);
-    let selected = app.session.selection.contains(id);
+    let state = app.session.selection.state_of(id);
+    let selected = state != lightcraft_engine::SelectionState::NotSelected;
     // screen readers: the file, then rating / flag / label
     let mut spoken = photo.file_name.clone();
     if photo.rating > 0 {
@@ -486,10 +493,11 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         spoken.push_str(&format!(", {} label", app.session.catalog.label_name(l)));
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &spoken));
-    let active = app.session.selection.active == Some(id);
+    let active = state == lightcraft_engine::SelectionState::Active;
     let p = ui.painter();
     let img_rect = if square {
-        p.rect_filled(r, 0.0, if selected { t.cell_selected } else { t.cell });
+        let base = if selected { t.cell_selected } else { t.cell };
+        p.rect_filled(r, 0.0, crate::theme::label_background(base, photo.label, selected));
         Rect::from_min_max(r.min + vec2(10.0, 24.0), r.max - vec2(10.0, 10.0))
     } else {
         r
@@ -510,6 +518,12 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     } else {
         let ph = img_rect.shrink(if square { 20.0 } else { 0.0 });
         p.rect_filled(ph, 0.0, Color32::from_gray(38));
+        // not drawn yet (or unreadable): the selection is still visible
+        if active {
+            p.rect_stroke(ph, 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
+        } else if selected {
+            p.rect_stroke(ph, 0.0, Stroke::new(2.0, Color32::from_gray(170)), StrokeKind::Outside);
+        }
         if app.renderer.failure(Slot::Thumb(id)).is_some() {
             // unreadable / missing file
             p.text(ph.center(), Align2::CENTER_CENTER, "!", t.semibold(18.0), t.text_dim);
@@ -548,9 +562,15 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         crate::state::GridBadges::Always => true,
         crate::state::GridBadges::Never => false,
     };
+    let badge_bar = Rect::from_min_max(pos2(img_rect.left(), img_rect.bottom() - 24.0), img_rect.right_bottom());
+    if !square && photo.label.is_some() {
+        // Justified photos fill the whole cell, so the label shows as a translucent tinted footer
+        // over the photo's bottom edge (opaque, it would hide 24 px of every labelled photo).
+        p.rect_filled(badge_bar, 0.0, crate::theme::label_background(t.cell, photo.label, selected).gamma_multiply(0.7));
+    }
     if show_badges {
-        let bar = Rect::from_min_max(pos2(img_rect.left(), img_rect.bottom() - 24.0), img_rect.right_bottom());
-        if resp.hovered() || selected {
+        let bar = badge_bar;
+        if (resp.hovered() || selected) && (square || photo.label.is_none()) {
             p.rect_filled(bar, 0.0, Color32::from_black_alpha(120));
         }
         let mut x = bar.left() + 6.0;

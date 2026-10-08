@@ -191,6 +191,12 @@ pub fn builtin_label(source: &str, builtin: bool) -> &str {
     if builtin { tr(source) } else { source }
 }
 
+/// A profile's name for display: a built-in profile's is translated, an imported LUT's is shown as
+/// its file named it (it may happen to match a message, like "Vivid").
+pub fn profile_label<'a>(id: &str, name: &'a str) -> &'a str {
+    builtin_label(name, lightcraft_engine::presets::profile(id).is_some())
+}
+
 /// An Activity (history) step for display. The step's stored label stays English; generated steps
 /// are translated around the names they carry, and a user preset's name is kept verbatim.
 pub fn history_label(source: &str, presets: &[lightcraft_develop::Preset]) -> String {
@@ -214,6 +220,15 @@ pub fn history_label(source: &str, presets: &[lightcraft_develop::Preset]) -> St
 pub fn source_label(source: lightcraft_engine::LibrarySource, catalog: &lightcraft_catalog::Catalog) -> String {
     let label = source.label(catalog);
     if matches!(source, lightcraft_engine::LibrarySource::Album(id) if catalog.album(id).is_some()) { label } else { tr(&label).to_string() }
+}
+
+/// What the grid is titled for the session's source: [`source_label`], or a library folder's last
+/// two names (`photos/travel`; the folder's name is the user's and stays verbatim).
+pub fn source_title(session: &lightcraft_engine::Session) -> String {
+    match (session.source, session.library_folder.as_deref()) {
+        (lightcraft_engine::LibrarySource::LibraryFolder, Some(path)) => lightcraft_catalog::folders::folder_label(path),
+        (source, _) => source_label(source, &session.catalog),
+    }
 }
 
 /// A date group heading (`2026-09-20`, `2026-09`, `2026`) in the UI language: the grid's full

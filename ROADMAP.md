@@ -10,7 +10,7 @@ projects (DrawCraft reached its first four milestones in ≈ 4½ h) and are revi
 [`docs/parity.md`](docs/parity.md) counts features that **exist**; this section is about whether a photographer can
 **switch** from Lightroom. Update it when a gap below closes.*
 
-**In one line:** the checklist says **79%** (P0 98.5%, P1 95.9%, P2 39%), but measured by whether a working
+**In one line:** the checklist says **79.7%** (P0 98.2%, P1 95.6%, P2 41.6%), but measured by whether a working
 photographer could replace Lightroom without noticing, we are at roughly **60–70%**. The remaining gap is mostly
 **quality of results and camera coverage**, not missing buttons.
 
@@ -22,7 +22,7 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 
 | Dimension | Estimate | What's true today | Biggest gaps |
 |---|---:|---|---|
-| **Feature checklist** | 79% | P0 core and P1 nearly complete: import (Add / Copy / Move, templates, devices), library, grid/loupe/compare/survey, every Edit slider, curves, colour grading, masking tools, crop/Upright, heal/clone, presets/profiles, versions/history, sync, export, menus, shortcuts | P1: lens-profile database, content-aware fill (patch synthesis), video playback/trim |
+| **Feature checklist** | 79.7% | P0 core and P1 nearly complete: import (Add / Copy / Move, templates, devices), library, grid/loupe/compare/survey, every Edit slider, curves, colour grading, masking tools, crop/Upright, heal/clone, presets/profiles, versions/history, sync, export, menus, shortcuts | P0: full-resolution zoom detail; P1: lens-profile database, content-aware fill (patch synthesis), video playback/trim |
 | **RAW coverage** (formats people shoot) | ~55% | DNG (all kinds), CR2, ARW, NEF (uncompressed + Huffman lossless/lossy), uncompressed RAF/ORF, RW2 / RWL / Panasonic RAW (every raw format, checked on 178 files from 118 Panasonic and Leica bodies), PEF; every container's embedded preview (incl. CR3) | **CR3** (every Canon since ~2018), compressed RAF/ORF, Nikon lossy-after-split, Canon sRAW, HEIC/AVIF. NEFs labelled compressed but stored uncompressed (Z 6 packed 14-bit, D850 12-bit uncompressed). Per-model verification is thin (~55 corpus files vs >1,000 models) |
 | **Colour & image quality** | ~55–65% | Pipeline is complete and fast; GPU path CPU-exact within 1/255 | **No measured camera calibration database**: ARW, NEF and RW2 have a guarded per-file embedded-JPEG colour estimate (docs/camera-preview-colour.md); other non-DNG raws and rejected estimates use a neutral matrix. Colour fidelity remains incomplete. No lens-profile database. No measured fidelity against Lightroom (tone, highlights, texture/clarity, NR, sharpening are tuned by eye) |
 | **AI & computational** | ~15–20% | Assisted culling (focus, bursts), auto tone, HDR/panorama merge; subject/sky/background masks as classical heuristics | Real segmentation masks (subject, sky, people, objects, landscape, depth), AI denoise, super resolution, lens blur, generative remove, faces/people, natural-language search. **Blocked on a model strategy** (licensable weights or our own training; pure-Rust inference is feasible) |
@@ -67,6 +67,10 @@ Already closed in the week of 2026-10-03: compressed NEF (#10), Move import (#29
 Local roots / cleanup, grid and catalog performance at 85k photos (#35, #37), failed-save reporting, GPU export
 hardening (#78), copyright metadata (#51), GPX geotagging (#60), import tag help and folder templates (#31, #32).
 
+Image navigation now supports native pinch zoom and two-finger pan in Detail, Compare and Reference views.
+The whole-image preview still has a configurable size cap (2,560 px default), so 100% on larger photos does not
+yet guarantee original-pixel detail; visible-region rendering remains a gap (LR-VIEW-ZOOM).
+
 ## Milestones
 
 **Status legend:** ✅ done · 🚧 in progress · ⬜ not started
@@ -98,10 +102,10 @@ parity` prints this line on every run, so it stays current):
 
 | Scope | Weighted completion | Rows | 2026-10-02 |
 |---|---:|---:|---:|
-| P0 (core) | **98.5%** | 200 | 98.7% |
-| P1 (important parity) | **95.9%** | 147 | 94.4% |
-| P2 (later / AI / niche, incl. Classic modules) | **39.2%** | 158 | 29.4% |
-| **All in-scope rows** | **79.2%** | 505 | 75.6% |
+| P0 (core) | **98.2%** | 200 | 98.7% |
+| P1 (important parity) | **95.6%** | 149 | 94.4% |
+| P2 (later / AI / niche, incl. Classic modules) | **41.6%** | 160 | 29.4% |
+| **All in-scope rows** | **79.7%** | 509 | 75.6% |
 
 The 2026-10-05 count includes three new 🟡 rows that make quality gaps visible (camera colour calibration, verified
 camera coverage, render fidelity), which is why P0 dipped slightly.

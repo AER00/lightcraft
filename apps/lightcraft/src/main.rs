@@ -24,6 +24,7 @@
 
 mod alloc_release;
 mod control_server;
+mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
 
@@ -63,10 +64,10 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         if let Err(e) = self.1.save(&self.0) {
-            eprintln!("lightcraft: {e}");
+            log::error!("{e}");
         }
         if let Err(e) = self.0.session.close_library() {
-            eprintln!("lightcraft: saving the library failed: {e}");
+            log::error!("saving the library failed: {e}");
         }
     }
 }
@@ -256,8 +257,8 @@ impl PrefsWriter {
         match self.save(app) {
             Ok(()) => self.failing = false,
             Err(e) => {
-                eprintln!("lightcraft: {e}");
                 if !self.failing {
+                    log::warn!("{e}");
                     app.notices.push(format!("{e}. LightCraft keeps trying."));
                 }
                 self.failing = true;
@@ -407,7 +408,7 @@ fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: boo
     }
     let unopened = || Session::new().with_fs().with_system_clock();
     let Some(dir) = dir else {
-        eprintln!("lightcraft: no library location (set --library or LIGHTCRAFT_LIBRARY)");
+        log::warn!("no library location (set --library or LIGHTCRAFT_LIBRARY)");
         return (unopened(), Some(LibraryProblem::new("", "There is no home folder to keep the library in. Choose a folder for it.")));
     };
     let t0 = std::time::Instant::now();
@@ -415,8 +416,8 @@ fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: boo
     match s.open_library(&dir, seed_demo) {
         Ok(r) => {
             let (replayed, torn) = (r.replayed, r.torn_bytes);
-            eprintln!(
-                "lightcraft: library {}: {} photos, {replayed} log records replayed{} ({:.1} ms)",
+            log::info!(
+                "library {}: {} photos, {replayed} log records replayed{} ({:.1} ms)",
                 dir.display(),
                 s.catalog.len(),
                 if torn > 0 { ", torn tail repaired" } else { "" },
@@ -425,7 +426,7 @@ fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: boo
             (s, None)
         }
         Err(e) => {
-            eprintln!("lightcraft: can't open library {}: {e}", dir.display());
+            log::error!("can't open library {}: {e}", dir.display());
             (unopened(), Some(LibraryProblem::new(dir.to_string_lossy(), e.to_string())))
         }
     }
@@ -450,41 +451,40 @@ ENVIRONMENT:
   LIGHTCRAFT_SAM3_DIR=DIR   the SAM 3 model for Object / Describe masks (default: <settings folder>/models/sam3;
                    optional: LightCraft offers to download it when first needed)
   LIGHTCRAFT_SAM3_MIRRORS=URL,…   where to download the SAM 3 model from (base URLs, tried in order)
+  LIGHTCRAFT_LOG=info|debug   more log detail from LightCraft itself (default: info from LightCraft, warnings
+                   from other crates); else RUST_LOG=<env_logger directives>. Records go to stderr and to
+                   <settings folder>/logs/lightcraft.log (previous runs: lightcraft.1.log, lightcraft.2.log)
 ";
 
-/// Warnings and errors (failed commands, AI mask analysis) on stderr; `LIGHTCRAFT_LOG=info`
-/// (or `debug`) shows more.
-struct StderrLog(log::LevelFilter);
-
-impl log::Log for StderrLog {
-    fn enabled(&self, m: &log::Metadata) -> bool {
-        m.level() <= self.0 && (m.level() <= log::Level::Warn || m.target().starts_with("lightcraft"))
+/// Where the log files live: `logs` in the settings folder, next to `ui.json` (see `logging`).
+/// None with `LIGHTCRAFT_NO_PREFS` (tests, scripts), so those runs don't rotate away the user's logs.
+fn log_dir() -> Option<std::path::PathBuf> {
+    if std::env::var_os("LIGHTCRAFT_NO_PREFS").is_some() {
+        return None;
     }
-    fn log(&self, r: &log::Record) {
-        if self.enabled(r.metadata()) {
-            eprintln!("lightcraft: {} {}: {}", r.level(), r.target(), r.args());
-        }
-    }
-    fn flush(&self) {}
+    config_dir().map(|d| d.join("logs"))
 }
 
-fn install_log() {
-    let level = match std::env::var("LIGHTCRAFT_LOG").unwrap_or_default().as_str() {
-        "debug" => log::LevelFilter::Debug,
-        "info" => log::LevelFilter::Info,
-        _ => log::LevelFilter::Warn,
-    };
-    static LOGGER: std::sync::OnceLock<StderrLog> = std::sync::OnceLock::new();
-    if log::set_logger(LOGGER.get_or_init(|| StderrLog(level))).is_ok() {
-        log::set_max_level(level);
+/// The control port `value` names; a value that isn't a port is logged and ignored (`what` is
+/// the option or variable it came from). Logged before the log file opens, so it is kept for it.
+fn control_port_from(what: &str, value: Option<String>) -> Option<u16> {
+    let value = value?;
+    let port = value.trim().parse().ok();
+    if port.is_none() {
+        log::warn!("{what} {value:?} is not a port number; no control server");
     }
+    port
 }
 
 fn main() -> eframe::Result {
+    // First, so every start-up record is kept for the log file (`logging`).
+    let logger = logging::install();
     lightcraft_engine::guard::install_hook(std::env::temp_dir().join("lightcraft-panics.log"));
-    install_log();
+    if let Some(logger) = logger {
+        logging::record_panics(logger);
+    }
     alloc_release::install();
-    let mut control_port: Option<u16> = std::env::var("LIGHTCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
+    let mut control_port = control_port_from("LIGHTCRAFT_CONTROL_PORT", std::env::var("LIGHTCRAFT_CONTROL_PORT").ok().filter(|v| !v.is_empty()));
     let mut files = Vec::new();
     let mut seed_demo = true;
     let mut in_memory = false;
@@ -492,7 +492,7 @@ fn main() -> eframe::Result {
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
-            "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
+            "--control" => control_port = control_port_from("--control", Some(args.next().unwrap_or_default())),
             "--library" => library_dir = args.next().map(std::path::PathBuf::from),
             "--no-demo" => seed_demo = false,
             "--memory" | "--demo" => in_memory = true,
@@ -509,6 +509,19 @@ fn main() -> eframe::Result {
                 std::process::exit(2);
             }
             _ => files.push(a),
+        }
+    }
+    // The log file: opened after the arguments, so `--version`, `--help` and a usage error leave
+    // no file behind. Records logged until now are written to it first.
+    if let Some(logger) = logger {
+        // a --memory session writes nothing (issue #164), a log file included
+        match log_dir().filter(|_| !in_memory) {
+            Some(dir) => match logger.attach_dir(&dir) {
+                Ok(path) => log::info!("LightCraft {}, log file {}", env!("CARGO_PKG_VERSION"), path.display()),
+                // The file sink has given up by now, so this goes to standard error only.
+                Err(e) => log::warn!("no log file: {e}"),
+            },
+            None => logger.no_file(),
         }
     }
     let (prefs, prefs_warning, keep_prefs_file) = load_prefs(in_memory);
@@ -729,6 +742,16 @@ mod tests {
             }
         }
         assert!(!b.is_empty());
+    }
+
+    #[test]
+    fn a_control_port_that_is_not_a_number_is_ignored() {
+        assert_eq!(control_port_from("--control", Some("7980".into())), Some(7980));
+        assert_eq!(control_port_from("--control", Some(" 18001 ".into())), Some(18001));
+        assert_eq!(control_port_from("--control", Some("nope".into())), None);
+        assert_eq!(control_port_from("--control", Some(String::new())), None);
+        assert_eq!(control_port_from("--control", Some("70000".into())), None);
+        assert_eq!(control_port_from("LIGHTCRAFT_CONTROL_PORT", None), None);
     }
 
     #[test]
