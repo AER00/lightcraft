@@ -18,8 +18,10 @@ use crate::render::Slot;
 use crate::theme::Tokens;
 use crate::widgets::register;
 
-/// Files per batch (each batch joins the catalog as it is ready, so the progress window updates).
-pub(crate) const BATCH: usize = 8;
+/// Files per batch in the browser build (each batch joins the catalog as it is ready, so the
+/// progress window updates); the desktop's worker uses [`lightcraft_engine::import::batch_size`].
+#[cfg(target_arch = "wasm32")]
+const BATCH: usize = 8;
 
 /// The review dialog's first size (points). It can be resized; the photo grid takes the height.
 pub(crate) const DIALOG_SIZE: [f32; 2] = [960.0, 720.0];
@@ -273,7 +275,7 @@ impl ImportRun {
         let ctx = ctx.clone();
         let work = move || {
             let files = job.expand(&queue);
-            for chunk in files.chunks(BATCH) {
+            for chunk in files.chunks(lightcraft_engine::import::batch_size()) {
                 if cancel.load(Ordering::Relaxed) {
                     break;
                 }
