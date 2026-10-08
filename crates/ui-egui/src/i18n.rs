@@ -615,12 +615,17 @@ mod tests {
             let missing: Vec<&&str> = labels[..ui_labels].iter().filter(|label| !catalog.contains_key(**label)).collect();
             let notes = labels[ui_labels..].iter().filter(|label| !catalog.contains_key(**label)).count();
             if !missing.is_empty() || notes > 0 {
-                eprintln!("{} lacks {} display label(s) (shown in English): {missing:?}; and {notes} What's New line(s)", language.code(), missing.len());
+                eprintln!(
+                    "{} lacks {} display label(s) (shown in English): {missing:?}; and {notes} What's New line(s)",
+                    language.code(),
+                    missing.len()
+                );
             }
         }
         // the German catalog, which set out to cover them all, still covers every other catalog
         let german = Locale::De.catalog();
-        let gaps: Vec<&String> = Locale::ALL.iter().flat_map(|language| language.catalog().keys()).filter(|key| !german.contains_key(key.as_str())).collect();
+        let gaps: Vec<&String> =
+            Locale::ALL.iter().flat_map(|language| language.catalog().keys()).filter(|key| !german.contains_key(key.as_str())).collect();
         if !gaps.is_empty() {
             eprintln!("de lacks {} message(s) another catalog has: {gaps:?}", gaps.len());
         }
