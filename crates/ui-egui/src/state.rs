@@ -371,9 +371,9 @@ pub struct UiState {
     /// Reference view: the reference photo.
     #[serde(skip)]
     pub reference: Option<u64>,
-    /// Transient toast text and its expiry (seconds of app time).
+    /// Transient toast text, expiry (seconds of app time), and optional colour-label styling.
     #[serde(skip)]
-    pub toast: Option<(String, f64)>,
+    pub toast: Option<(String, f64, Option<lightcraft_catalog::ColorLabel>)>,
     /// The result of the last Find Missing Photos (it searches in the background).
     #[serde(skip)]
     pub last_find_missing: Option<serde_json::Value>,

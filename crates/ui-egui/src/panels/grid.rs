@@ -476,7 +476,8 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     let active = app.session.selection.active == Some(id);
     let p = ui.painter();
     let img_rect = if square {
-        p.rect_filled(r, 0.0, if selected { t.cell_selected } else { t.cell });
+        let base = if selected { t.cell_selected } else { t.cell };
+        p.rect_filled(r, 0.0, crate::theme::label_background(base, photo.label, selected));
         Rect::from_min_max(r.min + vec2(10.0, 24.0), r.max - vec2(10.0, 10.0))
     } else {
         r
@@ -539,9 +540,14 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         crate::state::GridBadges::Always => true,
         crate::state::GridBadges::Never => false,
     };
+    let badge_bar = Rect::from_min_max(pos2(img_rect.left(), img_rect.bottom() - 24.0), img_rect.right_bottom());
+    if !square && photo.label.is_some() {
+        // Justified photos fill the whole cell: reserve the badge footer as coloured chrome.
+        p.rect_filled(badge_bar, 0.0, crate::theme::label_background(t.cell, photo.label, selected));
+    }
     if show_badges {
-        let bar = Rect::from_min_max(pos2(img_rect.left(), img_rect.bottom() - 24.0), img_rect.right_bottom());
-        if resp.hovered() || selected {
+        let bar = badge_bar;
+        if (resp.hovered() || selected) && (square || photo.label.is_none()) {
             p.rect_filled(bar, 0.0, Color32::from_black_alpha(120));
         }
         let mut x = bar.left() + 6.0;

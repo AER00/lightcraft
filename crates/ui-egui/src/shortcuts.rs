@@ -434,6 +434,7 @@ mod tests {
                 h.app.ui.toast = None;
                 key(&mut h, k, shift);
                 assert_eq!(h.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some(format!("{name} Label").as_str()));
+                assert_eq!(h.app.ui.toast.as_ref().and_then(|t| t.2), h.app.session.catalog.photo(PhotoId(1)).unwrap().label);
                 assert_eq!(h.app.session.active(), Some(PhotoId(if shift { 2 } else { 1 })));
             }
         }
@@ -442,6 +443,7 @@ mod tests {
         assert_eq!(h.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some("Purple Label"));
         h.app.run("photo.label", json!({"label": "none"})).unwrap();
         assert_eq!(h.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some("Color label cleared"));
+        assert!(h.app.ui.toast.as_ref().is_some_and(|t| t.2.is_none()), "clear uses neutral feedback");
         h.app.session.execute("label.setNames", &json!({"names": {"red": "Needs review"}})).unwrap();
         key(&mut h, "6", false);
         assert_eq!(h.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some("Needs review Label"));

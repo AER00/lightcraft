@@ -30,6 +30,8 @@ mod tests_curve;
 #[cfg(test)]
 mod tests_grid;
 #[cfg(test)]
+mod tests_labels;
+#[cfg(test)]
 mod tests_library_problem;
 #[cfg(test)]
 mod tests_masking;
@@ -268,7 +270,8 @@ impl LightcraftApp {
         }
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
         if r.is_ok() && id == "photo.label" {
-            let text = match params.get("label").and_then(Value::as_str).and_then(lightcraft_catalog::ColorLabel::parse) {
+            let label = params.get("label").and_then(Value::as_str).and_then(lightcraft_catalog::ColorLabel::parse);
+            let text = match label {
                 Some(label) => {
                     let name =
                         self.session.catalog.custom_label_name(label).map(str::to_owned).unwrap_or_else(|| i18n::tr(&format!("{label:?}")).into());
@@ -278,7 +281,7 @@ impl LightcraftApp {
             };
             // Native menu clicks can arrive before logic() updates last_time after an idle gap.
             let now = self.tasks.repaint.as_ref().map(|ctx| ctx.input(|i| i.time)).unwrap_or(self.last_time);
-            self.ui.toast = Some((text, now + TOAST_SECONDS));
+            self.ui.toast = Some((text, now + TOAST_SECONDS, label));
         }
         if let Err(e) = &r {
             log::warn!("{id}: {e}");
@@ -354,7 +357,7 @@ impl LightcraftApp {
                 self.ui.unsaved_seen = true;
                 let t = ctx.input(|i| i.time);
                 let what = if n == 1 { "1 change".to_string() } else { format!("{n} changes") };
-                self.ui.toast = Some((format!("{what} saved in memory but not written to disk: {e} — LightCraft will retry"), t + 6.0));
+                self.ui.toast = Some((format!("{what} saved in memory but not written to disk: {e} — LightCraft will retry"), t + 6.0, None));
             }
             (None, true) => {
                 self.ui.unsaved_seen = false;
@@ -372,7 +375,7 @@ impl LightcraftApp {
     /// A toast that stays `secs` seconds (messages that say where to look or what to do next).
     pub fn toast_for(&mut self, ctx: &egui::Context, text: impl Into<String>, secs: f64) {
         let t = ctx.input(|i| i.time);
-        self.ui.toast = Some((text.into(), t + secs));
+        self.ui.toast = Some((text.into(), t + secs, None));
     }
 
     /// AI masks: apply finished background requests (clicks, descriptions, detail passes) and
@@ -450,7 +453,7 @@ impl LightcraftApp {
     /// A toast for an error the user has to read and act on (stays 6 s).
     pub fn toast_error(&mut self, ctx: &egui::Context, text: impl Into<String>) {
         let t = ctx.input(|i| i.time);
-        self.ui.toast = Some((text.into(), t + 6.0));
+        self.ui.toast = Some((text.into(), t + 6.0, None));
     }
 
     fn drain_control(&mut self, ctx: &egui::Context) {
