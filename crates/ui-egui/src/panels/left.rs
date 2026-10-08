@@ -17,6 +17,9 @@ pub(crate) fn content_width(ctx: &egui::Context) -> f32 {
     ctx.data(|d| d.get_temp::<f32>(egui::Id::new("left-content-width"))).unwrap_or(0.0)
 }
 
+/// The most a row asks for its name: longer ones are cut when there is no more room.
+const MAX_NAME_NEED: f32 = 140.0;
+
 /// A row says how wide it needs to be.
 fn note_width(ui: &egui::Ui, w: f32) {
     ui.data_mut(|d| {
@@ -60,9 +63,14 @@ fn row_named(
         None => said.to_string(),
     };
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name));
-    let inner = r.shrink2(vec2(8.0, 0.0));
+    // what is visible of the row: when the sidebar is scrolled sideways its bars and counts end at
+    // the panel's edge, not at the end of the (wider) content
+    let visible_right: f32 = ui.data(|d| d.get_temp(egui::Id::new("left-visible-right"))).unwrap_or(f32::MAX);
+    let edge = r.right().min(visible_right);
+    let inner = Rect::from_min_max(r.min + vec2(8.0, 0.0), pos2((r.right() - 8.0).min(edge - 8.0).max(r.left() + 8.0), r.bottom()));
     if selected {
         ui.painter().rect_filled(inner, 4.0, t.canvas);
+        register(ui.ctx(), format!("highlight:{id}"), inner);
     } else if resp.hovered() {
         ui.painter().rect_filled(inner, 4.0, t.hover.gamma_multiply(0.6));
     }
@@ -72,27 +80,27 @@ fn row_named(
         icon,
         if selected { t.text } else { t.icon },
     );
-    let label_rect = ui.painter().text(
-        pos2(r.left() + 42.0 + indent, r.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        t.font(13.5),
-        if selected { t.text } else { t.text_label },
-    );
-    let mut needed = label_rect.right() - r.left() + 18.0;
-    if let Some(n) = count.filter(|_| app.ui.show_counts) {
-        // the count stays at the visible edge when the sidebar is scrolled sideways
-        let visible_right: f32 = ui.data(|d| d.get_temp(egui::Id::new("left-visible-right"))).unwrap_or(f32::MAX);
-        let galley = ui.painter().layout_no_wrap(n.to_string(), t.font(12.5), t.text_dim);
-        let right = r.right().min(visible_right) - 18.0;
-        let rect = Rect::from_min_size(pos2(right - galley.size().x, r.center().y - galley.size().y / 2.0), galley.size());
-        if label_rect.right() + 6.0 > rect.left() {
-            // a long name runs under it: the count gets the row's colour behind it
-            ui.painter().rect_filled(rect.expand2(vec2(6.0, 2.0)), 3.0, if selected { t.canvas } else { t.chrome });
-        }
-        ui.painter().galley(rect.min, galley, t.text_dim);
-        register(ui.ctx(), format!("count:{id}"), rect);
+    let font = t.font(13.5);
+    let color = if selected { t.text } else { t.text_label };
+    let count_galley = count.filter(|_| app.ui.show_counts).map(|n| ui.painter().layout_no_wrap(n.to_string(), t.font(12.5), t.text_dim));
+    let label_left = r.left() + 42.0 + indent;
+    let count_left = count_galley.as_ref().map_or(edge - 18.0, |g| edge - 18.0 - g.size().x);
+    // the name gives way to the count: cut with an ellipsis, in full on hover
+    let room = count_left - 8.0 - label_left;
+    let measure = |s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), color).size().x;
+    let full_w = measure(label);
+    let shown = if full_w <= room { label.to_string() } else { crate::widgets::elide_head(label, room.max(0.0), measure) };
+    let label_rect = ui.painter().text(pos2(label_left, r.center().y), Align2::LEFT_CENTER, &shown, font.clone(), color);
+    register(ui.ctx(), format!("label:{id}"), label_rect);
+    let resp = if shown != label { resp.on_hover_text(label) } else { resp };
+    // a row asks for room for its name up to a share of a panel, so one very long name does not
+    // make everything scroll: depth does that
+    let mut needed = 42.0 + indent + full_w.min(MAX_NAME_NEED) + 18.0;
+    if let Some(galley) = count_galley {
+        let rect = Rect::from_min_size(pos2(edge - 18.0 - galley.size().x, r.center().y - galley.size().y / 2.0), galley.size());
         needed += rect.width() + 16.0;
+        register(ui.ctx(), format!("count:{id}"), rect);
+        ui.painter().galley(rect.min, galley, t.text_dim);
     }
     note_width(ui, needed);
     let _ = app;

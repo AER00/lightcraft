@@ -479,3 +479,59 @@ fn a_long_folder_name_never_runs_under_the_photo_count() {
     let (title, count) = (widget(&h, "grid:title"), widget(&h, "grid:count"));
     assert!(title.right() + 8.0 <= count.left(), "title {title:?} vs count {count:?}");
 }
+
+fn tooltip_shown(h: &Headless) -> bool {
+    h.view.ctx.memory(|m| m.areas().visible_layer_ids().into_iter().any(|l| l.order == egui::Order::Tooltip))
+}
+
+const LONG_NAME: &str = "Aliah Ira Polanco-Grylls and a name much longer than any sidebar row can show";
+
+/// A name never runs past the photo count: it is cut with an ellipsis, in full on hover.
+#[test]
+fn a_long_name_stops_at_the_count_and_shows_in_full_on_hover() {
+    let mut h = folders_app(&[&format!("/pics/{LONG_NAME}/a.jpg"), "/pics/short/b.jpg"]);
+    click(&mut h, "libraryFolderToggle:/pics");
+    let (long, short) = (format!("/pics/{LONG_NAME}"), "/pics/short".to_string());
+    let (label, count) = (widget(&h, &format!("label:libfolder:{long}")), widget(&h, &format!("count:libfolder:{long}")));
+    assert!(label.right() + 4.0 <= count.left(), "label {label:?} stays left of the count {count:?}");
+    let short_label = widget(&h, &format!("label:libfolder:{short}"));
+    assert!(short_label.width() < label.width(), "a name that fits is not cut");
+    // hovering the cut one shows the whole name; a name that fits needs no tooltip of its own
+    let c = widget(&h, &format!("source:libfolder:{long}")).center();
+    let r = h.request("ui.move", json!({"x": c.x, "y": c.y}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(h.step_until(Duration::from_secs(5), tooltip_shown), "the full name appears on hover");
+}
+
+/// More room shows more of the name.
+#[test]
+fn widening_the_sidebar_shows_more_of_a_long_name() {
+    let mut h = folders_app(&[&format!("/pics/{LONG_NAME}/a.jpg"), "/pics/short/b.jpg"]);
+    click(&mut h, "libraryFolderToggle:/pics");
+    let id = format!("label:libfolder:/pics/{LONG_NAME}");
+    let narrow = widget(&h, &id).width();
+    let r = h.request("ui.set", json!({"leftWidth": 480.0}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    h.step();
+    assert!(widget(&h, &id).width() > narrow + 100.0, "a wider panel shows more of it");
+}
+
+/// A long name alone does not make the sidebar scroll sideways: depth does.
+#[test]
+fn a_long_name_alone_does_not_make_the_sidebar_scroll() {
+    let h = folders_app(&[&format!("/{LONG_NAME}/a.jpg")]);
+    let panel = widget(&h, "panel:left_panel");
+    assert!(crate::panels::left::content_width(&h.view.ctx) <= panel.width(), "a name takes at most what a row can show");
+}
+
+/// The selection bar ends at the panel's edge, not past it, when the content is wider.
+#[test]
+fn the_selection_bar_stays_inside_the_panel() {
+    let deep = "/a/b/c/d/e/f/g/h/i/j/k/l/m";
+    let mut h = folders_app(&[&format!("{deep}/x/1.jpg"), &format!("{deep}/y/2.jpg")]);
+    click(&mut h, "source:libfolder:/a/b/c/d/e/f/g/h/i/j/k/l");
+    let panel = widget(&h, "panel:left_panel");
+    let bar = widget(&h, "highlight:libfolder:/a/b/c/d/e/f/g/h/i/j/k/l");
+    assert!(bar.right() <= panel.right(), "the bar {bar:?} ends inside the panel {panel:?}");
+}
