@@ -115,6 +115,10 @@ pub struct Headless {
     events: Vec<egui::Event>,
     control: Sender<ControlRequest>,
     quit: bool,
+    /// The simulated window is zoomed (`Maximized(true)` seen, reported back to the app like a real host).
+    pub window_maximized: bool,
+    /// Window-management commands the app sent (`StartDrag`, `Maximized`, …), oldest first.
+    pub window_commands: Vec<ViewportCommand>,
 }
 
 impl Headless {
@@ -133,6 +137,8 @@ impl Headless {
             events: vec![],
             control: tx,
             quit: false,
+            window_maximized: false,
+            window_commands: vec![],
         }
     }
 
@@ -148,6 +154,7 @@ impl Headless {
     /// Run one frame.
     pub fn step(&mut self) {
         let mut raw = HeadlessView::raw_input(self.size, self.pixels_per_point, self.time, std::mem::take(&mut self.events));
+        raw.viewports.entry(ViewportId::ROOT).or_default().maximized = Some(self.window_maximized);
         self.app.raw_input_hook(&mut raw);
         let app = &mut self.app;
         let commands = self.view.run(raw, |ui| {
@@ -164,6 +171,11 @@ impl Headless {
                 }
                 ViewportCommand::InnerSize(s) if s.x >= 1.0 && s.y >= 1.0 => self.size = s,
                 ViewportCommand::Close => self.quit = true,
+                ViewportCommand::Maximized(on) => {
+                    self.window_maximized = on;
+                    self.window_commands.push(c);
+                }
+                ViewportCommand::StartDrag => self.window_commands.push(c),
                 _ => {}
             }
         }
