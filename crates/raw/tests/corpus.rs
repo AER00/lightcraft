@@ -534,3 +534,38 @@ fn corpus_fujifilm_compressed_samples() {
     }
     eprintln!("verified {seen} Fujifilm compressed sensor arrays");
 }
+
+/// The container rule for TIFF "shells" (a small IFD0 next to a private raw block) must not touch real
+/// raws: every corpus file keeps the format its maker implies, and none is described as a private block.
+#[test]
+fn corpus_raws_keep_their_container_and_are_not_thumbnail_shells() {
+    let dir = corpus_root().join("raw");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        eprintln!("skip: {} absent", dir.display());
+        return;
+    };
+    let mut checked = 0;
+    for p in rd.flatten().map(|e| e.path()).filter(|p| p.is_file()) {
+        let name = p.file_name().unwrap().to_string_lossy().to_lowercase();
+        let expected = match name.split(['-', '.']).next().unwrap_or_default() {
+            "arw" => RawFormat::Arw,
+            "cr2" => RawFormat::Cr2,
+            "cr3" => RawFormat::Cr3,
+            "dng" => RawFormat::Dng,
+            "nef" => RawFormat::Nef,
+            "nrw" => RawFormat::Nef, // probed as Nef when the file has several IFDs
+            "orf" => RawFormat::Orf,
+            "pef" => RawFormat::Pef,
+            "raf" => RawFormat::Raf,
+            "rw2" | "rwl" | "raw" => RawFormat::Rw2,
+            _ => continue,
+        };
+        let bytes = std::fs::read(&p).unwrap();
+        assert_eq!(probe(&bytes), Some(expected), "{name}");
+        if let Err(RawError::Unsupported(why)) = probe_info(&bytes) {
+            assert!(!why.contains("private block"), "{name}: {why}");
+        }
+        checked += 1;
+    }
+    eprintln!("{checked} corpus raws keep their container");
+}
