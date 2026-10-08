@@ -334,10 +334,11 @@ cargo run --release -p lightcraft-cli -- render photo.jpg -o out.jpg --set light
 cargo xtask ci                                          # fmt, clippy, tests, layering, wasm checks
 ```
 
-CI defaults to line-table debug information and one build job per 2 GB of RAM
-(at most one per CPU; 4 if the RAM can't be read), so an 8 GB machine builds
-with 4 and a 4 GB machine with 2. Test threads follow, capped at 4. Full-debuginfo linkers, one per CPU,
-otherwise exhaust RAM before any test runs. GPU coverage is unchanged. Explicit
+CI defaults to line-table debug information and one build job per 1.5 GB of RAM
+available when it starts (at most one per CPU; 4 if memory can't be read), so an
+8 GB machine with 6 GB free builds with 4, and a busy machine with little free
+builds with fewer. Test threads follow, capped at 4. Full-debuginfo linkers, one
+per CPU, otherwise exhaust RAM before any test runs. GPU coverage is unchanged. Explicit
 `CARGO_PROFILE_DEV_DEBUG`, `CARGO_BUILD_JOBS` and `RUST_TEST_THREADS` settings
 override these defaults. Ordinary development commands keep their own settings.
 
