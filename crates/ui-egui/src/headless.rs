@@ -1358,6 +1358,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The import review opens bigger than the old fixed 6 × 2.5 grid and can be resized by its
+    /// corner: the photo grid takes the new height, and the window then keeps its size (issue #337).
+    #[test]
+    fn import_review_dialog_resizes() {
+        let mut h = demo([1400.0, 1000.0]);
+        let t = Duration::from_secs(10);
+        let candidates = (0..60)
+            .map(|i| lightcraft_engine::import::ImportCandidate {
+                path: format!("/lc-test/img{i}.png"),
+                name: format!("img{i}.png"),
+                error: Some("not read in this test".into()),
+                ..Default::default()
+            })
+            .collect();
+        h.app.ui.dialog = Some(crate::state::Dialog::Import { opts: crate::import::ImportDialog::new(candidates) });
+        let rect = |h: &mut Headless| {
+            let r = h.request("ui.widgets", json!({}), t);
+            let w = r["result"].as_array().and_then(|a| a.iter().find(|w| w["id"] == "dialog:window")).expect("dialog on screen");
+            [0usize, 1, 2, 3].map(|i| w["rect"][i].as_f64().unwrap())
+        };
+        for _ in 0..10 {
+            h.step();
+        }
+        let r0 = rect(&mut h);
+        assert!(r0[3] > 600.0, "{r0:?}");
+        // the Copy options add rows below the grid: the grid makes room, the window doesn't grow
+        for copy in [true, false] {
+            if let Some(crate::state::Dialog::Import { opts }) = &mut h.app.ui.dialog {
+                opts.copy = copy;
+            }
+            for _ in 0..10 {
+                h.step();
+            }
+            let r = rect(&mut h);
+            assert!((r[3] - r0[3]).abs() < 0.5, "copy {copy}: {r0:?} → {r:?}");
+        }
+        let (x, y) = (r0[0] + r0[2] - 3.0, r0[1] + r0[3] - 3.0);
+        h.request("ui.drag", json!({"x": x, "y": y, "toX": x + 160.0, "toY": y + 120.0, "steps": 12}), t);
+        for _ in 0..10 {
+            h.step();
+        }
+        let r1 = rect(&mut h);
+        assert!(r1[2] > r0[2] + 100.0 && r1[3] > r0[3] + 80.0, "dragging the corner resized it: {r0:?} → {r1:?}");
+        for _ in 0..60 {
+            h.step();
+        }
+        let r2 = rect(&mut h);
+        assert!((r2[2] - r1[2]).abs() < 0.5 && (r2[3] - r1[3]).abs() < 0.5, "the dialog kept its size: {r1:?} → {r2:?}");
+        assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::Import { .. })), "still open");
+    }
+
     /// Adding a file again that is in Recently Deleted shows it there (side panel opened, photo
     /// selected) instead of only saying "duplicate skipped"; its menus offer Restore, and once
     /// restored a re-add selects it in All Photos.
