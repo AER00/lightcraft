@@ -217,13 +217,11 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         } else if !te.has_focus() || !enabled {
             // Esc (or the slider turning off) keeps the old value; Return or clicking away applies
             let cancelled = !enabled || ui.input(|i| i.key_pressed(egui::Key::Escape));
-            if let Some(nv) = typed_value(spec, &text).filter(|_| !cancelled) {
-                if (nv - value).abs() > 1e-12 {
-                    out.value = Some(nv);
-                    out.drag_started = true;
-                    out.drag_stopped = true;
-                    v = nv;
-                }
+            if let Some(nv) = typed_value(spec, &text).filter(|nv| !cancelled && (nv - value).abs() > 1e-12) {
+                out.value = Some(nv);
+                out.drag_started = true;
+                out.drag_stopped = true;
+                v = nv;
             }
             ui.data_mut(|m| m.remove::<(String, u8)>(typing_id));
         } else {
