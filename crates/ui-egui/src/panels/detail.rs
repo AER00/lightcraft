@@ -1527,8 +1527,10 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
             let resp = ui.interact(cr, egui::Id::new(("film", id.0)), Sense::click());
             register(ui.ctx(), format!("film:{}", id.0), cr);
             let sel = Some(*id) == active;
+            // as in the grid: every selected photo is filled, the active one framed in white (#187)
+            let selected = sel || app.session.selection.contains(*id);
             let p = ui.painter();
-            if sel {
+            if selected {
                 p.rect_filled(cr, 0.0, t.cell_selected);
             } else if resp.hovered() {
                 p.rect_filled(cr, 0.0, t.cell_selected.gamma_multiply(0.6));
@@ -1549,6 +1551,8 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
                 p.image(tex.tex.id(), fr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                 if sel {
                     p.rect_stroke(fr, 0.0, Stroke::new(1.5, Color32::WHITE), StrokeKind::Outside);
+                } else if selected {
+                    p.rect_stroke(fr, 0.0, Stroke::new(1.5, Color32::from_gray(170)), StrokeKind::Outside);
                 }
                 if app.ui.settings.film_badges
                     && let Some(ph) = app.session.catalog.photo(*id)
