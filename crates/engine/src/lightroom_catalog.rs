@@ -3,12 +3,15 @@
 //! Raw settings are archived before mutation; mapped edits are approximations, not Adobe renders.
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
+use crate::lightroom_sqlite::{Database, LiveTable, Value as SqlValue};
 use lightcraft_catalog::{Album, Flag, Op, Photo, PhotoId, Source};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlite_core::{Database, Value as SqlValue};
 
 type Row = BTreeMap<String, Value>;
 const COMMAND: &str = "library.importLightroom";
@@ -296,6 +299,10 @@ fn text<'a>(r: &'a Row, k: &str) -> &'a str {
 fn number(r: &Row, k: &str) -> i64 {
     r.get(k).and_then(Value::as_f64).filter(|n| n.is_finite()).unwrap_or(0.0) as i64
 }
+
+pub(crate) fn number_for_job(r: &Row, k: &str) -> i64 {
+    number(r, k)
+}
 fn key(path: &str) -> String {
     let p = path.replace('\\', "/");
     if cfg!(windows) { p.to_lowercase() } else { p }
@@ -309,7 +316,7 @@ fn source_path(p: &Photo) -> Option<&str> {
 
 struct Reader {
     db: Database,
-    tables: Vec<sqlite_core::attribution::LiveTable>,
+    tables: Vec<LiveTable>,
 }
 impl Reader {
     fn table(&self, name: &str, required: bool) -> Result<Vec<Row>, String> {
@@ -328,16 +335,63 @@ impl Reader {
                     .iter()
                     .cloned()
                     .zip(r.values.into_iter().map(|v| match v {
-                        SqlValue::Null => Value::Null,
-                        SqlValue::Integer(n) => json!(n),
-                        SqlValue::Real(n) => json!(n),
-                        SqlValue::Text(s) => json!(s),
-                        // Opaque data is retained in the source catalog; the XMP packet is decoded below.
-                        SqlValue::Blob(b) => json!(b),
+                        SqlValue::Null => Some(Value::Null),
+                        SqlValue::Integer(n) => Some(json!(n)),
+                        SqlValue::Real(n) => Some(json!(n)),
+                        SqlValue::Text(s) => Some(json!(s)),
+                        // Opaque Lightroom payloads never become JSON byte arrays.
+                        SqlValue::Blob(_) => None,
                     }))
+                    .filter_map(|(column, value)| value.map(|value| (column, value)))
                     .collect()
             })
             .collect())
+    }
+
+    fn xmp_table(&self) -> Result<(Vec<Row>, Vec<String>), String> {
+        let Some(t) = self.tables.iter().find(|t| t.name == "Adobe_AdditionalMetadata") else { return Ok((Vec::new(), Vec::new())) };
+        let columns = t.column_names.as_ref().ok_or_else(|| "cannot read Adobe_AdditionalMetadata columns".to_string())?;
+        let rows = self.db.read_table(t.rootpage, columns.len()).map_err(|e| format!("Adobe_AdditionalMetadata: {e:?}"))?;
+        if rows.len() > 1_000_000 {
+            return Err("Adobe_AdditionalMetadata: more than one million records".into());
+        }
+        let mut warnings = Vec::new();
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let image = row
+                .values
+                .iter()
+                .zip(columns)
+                .find_map(|(value, column)| {
+                    (column == "image").then(|| match value {
+                        SqlValue::Integer(n) => *n,
+                        _ => 0,
+                    })
+                })
+                .unwrap_or(0);
+            let mut mapped = Row::new();
+            for (column, value) in columns.iter().zip(row.values) {
+                let value = match value {
+                    SqlValue::Null => Some(Value::Null),
+                    SqlValue::Integer(n) => Some(json!(n)),
+                    SqlValue::Real(n) => Some(json!(n)),
+                    SqlValue::Text(s) => Some(json!(s)),
+                    SqlValue::Blob(bytes) if column == "xmp" => match decode_xmp_bytes(&bytes) {
+                        Ok(packet) => Some(Value::String(packet)),
+                        Err(error) => {
+                            warnings.push(format!("image {image}: {error}"));
+                            None
+                        }
+                    },
+                    SqlValue::Blob(_) => None,
+                };
+                if let Some(value) = value {
+                    mapped.insert(column.clone(), value);
+                }
+            }
+            out.push(mapped);
+        }
+        Ok((out, warnings))
     }
 }
 
@@ -364,10 +418,38 @@ pub struct CatalogImport {
     pub warnings: Vec<String>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
-struct ImportIndex {
-    photos: BTreeMap<String, u64>,
-    collections: BTreeMap<String, u64>,
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub(crate) struct ImportIndex {
+    pub(crate) photos: BTreeMap<String, u64>,
+    pub(crate) collections: BTreeMap<String, u64>,
+}
+
+pub(crate) fn load_index(path: Option<&Path>) -> crate::Result<ImportIndex> {
+    match path {
+        Some(path) => {
+            let file = match std::fs::File::open(path) {
+                Ok(file) => file,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ImportIndex::default()),
+                Err(e) => return Err(error(e.to_string())),
+            };
+            if file.metadata().map_err(|e| error(e.to_string()))?.len() > 16 * 1024 * 1024 {
+                return Err(error("Lightroom import index exceeds 16 MiB"));
+            }
+            let mut bytes = Vec::new();
+            use std::io::Read;
+            file.take(16 * 1024 * 1024 + 1).read_to_end(&mut bytes).map_err(|e| error(e.to_string()))?;
+            if bytes.len() > 16 * 1024 * 1024 {
+                return Err(error("Lightroom import index exceeds 16 MiB"));
+            }
+            serde_json::from_slice(&bytes).map_err(|e| error(format!("invalid Lightroom import index: {e}")))
+        }
+        None => Ok(ImportIndex::default()),
+    }
+}
+
+pub(crate) struct AppliedImport {
+    pub(crate) report: Value,
+    pub(crate) index: ImportIndex,
 }
 
 fn identity(data: &CatalogImport, photo: &CatalogPhoto) -> String {
@@ -406,6 +488,10 @@ fn validate(data: &CatalogImport) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn validate_for_job(data: &CatalogImport) -> Result<(), String> {
+    validate(data)
+}
+
 fn bytes(path: &Path) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -438,6 +524,19 @@ fn xmp(v: Option<&Value>) -> Result<String, String> {
         }
         _ => Ok(String::new()),
     }
+}
+
+fn decode_xmp_bytes(bytes: &[u8]) -> Result<String, String> {
+    let size = bytes.get(..4).and_then(|s| <[u8; 4]>::try_from(s).ok()).map(u32::from_be_bytes).ok_or("truncated XMP header")?;
+    if size > 16 << 20 {
+        return Err("XMP packet exceeds 16 MiB".into());
+    }
+    let decoded = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(bytes.get(4..).ok_or("truncated XMP")?, 16 << 20)
+        .map_err(|_| "invalid compressed XMP")?;
+    if decoded.len() != size as usize {
+        return Err("XMP packet length mismatch".into());
+    }
+    String::from_utf8(decoded).map_err(|e| e.to_string())
 }
 
 fn be_word(bytes: &[u8], at: usize) -> Result<u32, String> {
@@ -500,6 +599,17 @@ fn committed_wal_len(main: &[u8], wal: &[u8]) -> Result<usize, String> {
 
 /// Inspect `.lrcat` plus committed WAL pages without modifying either source file.
 pub fn read(path: &Path) -> Result<CatalogImport, String> {
+    let cancel = AtomicBool::new(false);
+    let total = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    read_with_progress(path, &cancel, &total, &done)
+}
+
+pub fn read_with_progress(path: &Path, cancel: &AtomicBool, total: &AtomicUsize, done: &AtomicUsize) -> Result<CatalogImport, String> {
+    // 13 catalog tables plus one validation stage; ImportJob adds one unit per original path.
+    total.store(14, Ordering::Relaxed);
+    done.store(0, Ordering::Relaxed);
+    ensure_read_active(cancel)?;
     let before = std::fs::metadata(path).map_err(|e| e.to_string())?;
     let wal_path = PathBuf::from(format!("{}-wal", path.display()));
     let wal_before = std::fs::metadata(&wal_path).ok().map(|m| (m.len(), m.modified().ok()));
@@ -510,22 +620,33 @@ pub fn read(path: &Path) -> Result<CatalogImport, String> {
         Err(e) => return Err(e.to_string()),
     };
     let wal_len = committed_wal_len(&main, &wal)?;
+    ensure_read_active(cancel)?;
     let db = Database::open_with_wal(main, &wal[..wal_len]).map_err(|e| format!("invalid SQLite catalog: {e:?}"))?;
     let after = std::fs::metadata(path).map_err(|e| e.to_string())?;
     let wal_after = std::fs::metadata(&wal_path).ok().map(|m| (m.len(), m.modified().ok()));
     if before.len() != after.len() || before.modified().ok() != after.modified().ok() || wal_before != wal_after {
         return Err("catalog changed during reading; close Lightroom and retry".into());
     }
-    let reader = Reader { tables: db.live_tables(), db };
-    let roots: HashMap<_, _> = reader.table("AgLibraryRootFolder", true)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
-    let folders: HashMap<_, _> = reader.table("AgLibraryFolder", true)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
-    let files: HashMap<_, _> = reader.table("AgLibraryFile", true)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
+    let reader = Reader { tables: db.live_tables()?, db };
+    let mut table = |name: &str, required: bool| -> Result<Vec<Row>, String> {
+        ensure_read_active(cancel)?;
+        let rows = reader.table(name, required)?;
+        done.fetch_add(1, Ordering::Relaxed);
+        Ok(rows)
+    };
+    let roots: HashMap<_, _> = table("AgLibraryRootFolder", true)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
+    let folders: HashMap<_, _> = table("AgLibraryFolder", true)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
+    let files: HashMap<_, _> = table("AgLibraryFile", true)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
     let develops: HashMap<_, _> =
-        reader.table("Adobe_imageDevelopSettings", false)?.into_iter().map(|r| (number(&r, "image"), text(&r, "text").to_string())).collect();
-    let metadata: HashMap<_, _> = reader.table("Adobe_AdditionalMetadata", false)?.into_iter().map(|r| (number(&r, "image"), r)).collect();
-    let keyword_rows: HashMap<_, _> = reader.table("AgLibraryKeyword", false)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
+        table("Adobe_imageDevelopSettings", false)?.into_iter().map(|r| (number(&r, "image"), text(&r, "text").to_string())).collect();
+    ensure_read_active(cancel)?;
+    let (metadata_rows, mut metadata_warnings) = reader.xmp_table()?;
+    done.fetch_add(1, Ordering::Relaxed);
+    let metadata: HashMap<_, _> = metadata_rows.into_iter().map(|r| (number(&r, "image"), r)).collect();
+    let keyword_rows: HashMap<_, _> = table("AgLibraryKeyword", false)?.into_iter().map(|r| (number(&r, "id_local"), r)).collect();
     let mut keywords: HashMap<i64, Vec<String>> = HashMap::new();
-    for r in reader.table("AgLibraryKeywordImage", false)? {
+    for r in table("AgLibraryKeywordImage", false)? {
+        ensure_read_active(cancel)?;
         let mut parts = Vec::new();
         let mut at = number(&r, "tag");
         let mut seen = HashSet::new();
@@ -552,17 +673,18 @@ pub fn read(path: &Path) -> Result<CatalogImport, String> {
         }
         out
     };
-    let mut history = group(reader.table("Adobe_libraryImageDevelopHistoryStep", false)?);
-    let mut snapshots = group(reader.table("Adobe_libraryImageDevelopSnapshot", false)?);
+    let mut history = group(table("Adobe_libraryImageDevelopHistoryStep", false)?);
+    let mut snapshots = group(table("Adobe_libraryImageDevelopSnapshot", false)?);
     let mut out = CatalogImport {
         source: path.to_string_lossy().into(),
         photos: Vec::new(),
-        collections: reader.table("AgLibraryCollection", false)?,
-        members: reader.table("AgLibraryCollectionImage", false)?,
-        collection_content: reader.table("AgLibraryCollectionContent", false)?,
-        warnings: Vec::new(),
+        collections: table("AgLibraryCollection", false)?,
+        members: table("AgLibraryCollectionImage", false)?,
+        collection_content: table("AgLibraryCollectionContent", false)?,
+        warnings: std::mem::take(&mut metadata_warnings),
     };
-    for image in reader.table("Adobe_images", true)? {
+    for image in table("Adobe_images", true)? {
+        ensure_read_active(cancel)?;
         let id = number(&image, "id_local");
         let file = files.get(&number(&image, "rootFile")).ok_or_else(|| format!("image {id}: missing file record"))?;
         let folder = folders.get(&number(file, "folder")).ok_or_else(|| format!("image {id}: missing folder record"))?;
@@ -593,7 +715,12 @@ pub fn read(path: &Path) -> Result<CatalogImport, String> {
             snapshots: snapshots.remove(&id).unwrap_or_default(),
         });
     }
+    ensure_read_active(cancel)?;
     Ok(out)
+}
+
+fn ensure_read_active(cancel: &AtomicBool) -> Result<(), String> {
+    if cancel.load(Ordering::Relaxed) { Err("Lightroom import cancelled".into()) } else { Ok(()) }
 }
 
 fn mapped_settings(text: &str, raw: bool, aspect: f64) -> Result<(Value, Vec<String>), String> {
@@ -651,39 +778,60 @@ fn strip_xmp_sentinels(value: &mut Value) {
 /// Import into the current library. Existing edited records are preserved unless explicitly
 /// requested; missing originals remain catalogued for later relinking. The source catalog is read-only.
 pub fn import(s: &mut crate::Session, path: &Path, update_existing: bool) -> crate::Result<Value> {
-    let data = read(path).map_err(error)?;
-    apply(s, data, update_existing)
+    let mut job = crate::lightroom_job::LightroomJob::new(s, path.to_path_buf(), update_existing)?;
+    let cancel = AtomicBool::new(false);
+    let prepared = job.prepare(&cancel)?;
+    let completion = crate::lightroom_job::commit_prepared(s, prepared)?;
+    if s.library.as_ref().is_some_and(|library| library.on_disk) {
+        s.persist()?;
+    }
+    completion.finalization.finish()?;
+    Ok(completion.report)
 }
 
+#[cfg(test)]
 fn apply(s: &mut crate::Session, data: CatalogImport, update_existing: bool) -> crate::Result<Value> {
-    validate(&data).map_err(error)?;
-    let mut warnings = data.warnings.clone();
-    let archive = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("Interop"));
-    let index_path = archive.as_ref().map(|p| p.join("lightroom-index.json"));
-    let mut index: ImportIndex = match index_path.as_ref().map(std::fs::read) {
-        Some(Ok(b)) => serde_json::from_slice(&b).map_err(|e| error(format!("invalid Lightroom import index: {e}")))?,
-        Some(Err(e)) if e.kind() != std::io::ErrorKind::NotFound => return Err(error(e.to_string())),
-        _ => ImportIndex::default(),
-    };
-    // Preserve source data before catalog changes. A unique archive is never overwritten.
-    let archive_path = if let Some(dir) = archive {
-        std::fs::create_dir_all(&dir).map_err(|e| error(e.to_string()))?;
-        let bytes = serde_json::to_vec(&data).map_err(|e| error(e.to_string()))?;
-        let mut names = (0..10000).map(|n| dir.join(format!("lightroom-import-{n}.json")));
-        Some(lightcraft_catalog::safe_file::write_new_unique(&mut names, &bytes).map_err(|e| error(e.to_string()))?)
-    } else {
-        None
-    };
+    let archive_dir = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("Interop"));
+    let index_path = archive_dir.as_ref().map(|p| p.join("lightroom-index.json"));
+    let mut index = load_index(index_path.as_deref())?;
+    let archive_path = archive_dir.as_ref().map(|dir| crate::lightroom_archive::store(dir, &data).map_err(error)).transpose()?;
+    let undo0 = s.undo.len();
     let existing: HashMap<_, _> =
         s.catalog.photos().filter(|p| p.copy_of.is_none()).filter_map(|p| source_path(p).map(|path| (key(path), p.id))).collect();
-    let undo0 = s.undo.len();
     let paths: Vec<_> = data
         .photos
         .iter()
         .filter(|p| number(&p.image, "masterImage") == 0 && !existing.contains_key(&key(&p.path)) && Path::new(&p.path).is_file())
         .map(|p| p.path.clone())
         .collect();
+    let missing_sources: HashSet<String> =
+        data.photos.iter().filter(|p| number(&p.image, "masterImage") == 0).filter(|p| !Path::new(&p.path).is_file()).map(|p| key(&p.path)).collect();
     let files = crate::import::import(s, &paths, crate::import::ImportMode::Add)?;
+    let applied =
+        apply_prepared(s, data, ApplyPrepared { update_existing, files, index: &mut index, archive_path, missing_sources: &missing_sources, undo0 })?;
+    if let Some(path) = index_path {
+        s.persist()?;
+        let bytes = serde_json::to_vec(&applied.index).map_err(|e| error(e.to_string()))?;
+        lightcraft_catalog::safe_file::write_atomic(&path, &bytes).map_err(|e| error(e.to_string()))?;
+    }
+    Ok(applied.report)
+}
+
+/// Apply prepared normal-file results and Lightroom metadata in one owner-thread operation.
+/// This function does no filesystem work; callers finish its returned index separately.
+pub(crate) struct ApplyPrepared<'a> {
+    pub(crate) update_existing: bool,
+    pub(crate) files: crate::import::ImportReport,
+    pub(crate) index: &'a mut ImportIndex,
+    pub(crate) archive_path: Option<PathBuf>,
+    pub(crate) missing_sources: &'a HashSet<String>,
+    pub(crate) undo0: usize,
+}
+
+pub(crate) fn apply_prepared(s: &mut crate::Session, data: CatalogImport, context: ApplyPrepared<'_>) -> crate::Result<AppliedImport> {
+    let ApplyPrepared { update_existing, files, index, archive_path, missing_sources, undo0 } = context;
+    validate(&data).map_err(error)?;
+    let mut warnings = data.warnings.clone();
     let duplicates: HashMap<_, _> = files.duplicates.iter().filter_map(|d| d.existing.map(|id| (key(&d.path), PhotoId(id)))).collect();
     let mut by_path: HashMap<_, _> =
         s.catalog.photos().filter(|p| p.copy_of.is_none()).filter_map(|p| source_path(p).map(|path| (key(path), p.id))).collect();
@@ -729,7 +877,7 @@ fn apply(s: &mut crate::Session, data: CatalogImport, update_existing: bool) -> 
         } else {
             let id = s.catalog.alloc_photo_id();
             let name = Path::new(&src.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| src.path.clone());
-            if !Path::new(&src.path).is_file() {
+            if missing_sources.contains(&key(&src.path)) {
                 missing.push(src.path.clone());
             }
             let mut p = Photo::new(
@@ -866,12 +1014,8 @@ fn apply(s: &mut crate::Session, data: CatalogImport, update_existing: bool) -> 
         s.commit("Import Lightroom Catalog", Op::Batch { ops })?;
     }
     s.merge_undo(s.undo.len().saturating_sub(undo0), "Import Lightroom Catalog");
-    if let Some(path) = index_path {
-        s.persist()?;
-        let bytes = serde_json::to_vec(&index).map_err(|e| error(e.to_string()))?;
-        lightcraft_catalog::safe_file::write_atomic(&path, &bytes).map_err(|e| error(e.to_string()))?;
-    }
-    Ok(
-        json!({"source":data.source,"photos":ids.len(),"imported":files.imported.len(),"collections":albums.len(),"preservedExistingEdits":preserved,"missing":missing,"failed":files.failed,"warnings":warnings,"unmapped":unmapped,"archive":archive_path,"mapping":ids}),
-    )
+    Ok(AppliedImport {
+        report: json!({"source":data.source,"photos":ids.len(),"imported":files.imported.len(),"collections":albums.len(),"preservedExistingEdits":preserved,"missing":missing,"failed":files.failed,"warnings":warnings,"unmapped":unmapped,"archive":archive_path,"mapping":ids}),
+        index: index.clone(),
+    })
 }

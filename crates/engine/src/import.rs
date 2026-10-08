@@ -610,6 +610,78 @@ impl Prepared {
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
+
+    /// Recheck Add-only entries against the owner catalog immediately before commit.
+    /// Preparation may have run while another import added the same path or content.
+    pub fn revalidate_add(&mut self, s: &Session) {
+        let mut paths = HashMap::new();
+        let mut hashes = HashMap::new();
+        for photo in s.catalog.photos() {
+            if let Source::File { path } = &photo.source {
+                paths.insert(normalize_import_path(path), photo.id);
+            }
+            if let Some(hash) = &photo.content_hash {
+                hashes.insert(hash.clone(), photo.id);
+            }
+        }
+        let mut items = Vec::with_capacity(self.items.len());
+        for item in std::mem::take(&mut self.items) {
+            let PreparedItem::Ready(ready) = item else {
+                items.push(item);
+                continue;
+            };
+            let ReadyFile { path, stored, info, sidecar, placed } = *ready;
+            let existing_path = paths.get(&normalize_import_path(&stored)).copied().or_else(|| paths.get(&normalize_import_path(&path)).copied());
+            let existing_hash = info.content_hash.as_ref().and_then(|hash| hashes.get(hash).copied());
+            if let Some(existing) = existing_path.or(existing_hash) {
+                if let Some(placed) = &placed {
+                    crate::import_move::rollback(placed);
+                }
+                items.push(PreparedItem::Duplicate {
+                    path,
+                    existing: Some(existing),
+                    reason: if existing_path.is_some() { "path" } else { "content" },
+                    hash: info.content_hash,
+                });
+            } else {
+                items.push(PreparedItem::Ready(Box::new(ReadyFile { path, stored, info, sidecar, placed })));
+            }
+        }
+        self.items = items;
+    }
+}
+
+fn normalize_import_path(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    if cfg!(windows) { path.to_lowercase() } else { path }
+}
+
+#[cfg(test)]
+mod prepared_tests {
+    use super::*;
+
+    #[test]
+    fn revalidate_add_only_converts_matching_ready_item() {
+        let mut s = Session::new();
+        let existing_path = std::env::temp_dir().join("lightcraft-revalidate-existing.jpg");
+        let other_path = std::env::temp_dir().join("lightcraft-revalidate-other.jpg");
+        let existing = Photo::new(PhotoId(1), Source::File { path: existing_path.to_string_lossy().into() }, "existing.jpg", "JPG", 1, 1, "now");
+        s.commit("existing", Op::AddPhoto { photo: Box::new(existing) }).unwrap();
+        let ready = |path: &Path| ReadyFile {
+            path: path.to_string_lossy().into(),
+            stored: path.to_string_lossy().into(),
+            info: ProbeInfo { format: "JPG".into(), ..ProbeInfo::default() },
+            sidecar: None,
+            placed: None,
+        };
+        let mut prepared = Prepared {
+            scanned: 2,
+            items: vec![PreparedItem::Ready(Box::new(ready(&existing_path))), PreparedItem::Ready(Box::new(ready(&other_path)))],
+        };
+        prepared.revalidate_add(&s);
+        assert!(matches!(prepared.items.first(), Some(PreparedItem::Duplicate { reason: "path", .. })));
+        assert!(matches!(prepared.items.get(1), Some(PreparedItem::Ready(_))));
+    }
 }
 
 impl ImportJob {

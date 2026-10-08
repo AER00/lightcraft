@@ -236,6 +236,10 @@ pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
 
 /// Handle UI commands; `None` means "not a UI command — send it to the engine".
 pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    if matches!(id, "library.inspectLightroom" | "library.importLightroom") {
+        let ctx = egui::Context::default();
+        return Some(crate::lightroom_import::command(app, id, p, &ctx));
+    }
     if let Some(language) = language_from_command(id) {
         app.ui.language = language;
         // Immediately, not on the next frame: the reply and anything else run this frame
@@ -948,11 +952,17 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "library.browse" if !cfg!(target_arch = "wasm32") => {
+            if crate::lightroom_import::is_running(app) {
+                return Some(Err("finish Lightroom catalog import before browsing folders".into()));
+            }
             // listed and read in the background (see `import::browse`)
             let path = p.get("path").and_then(Value::as_str)?;
             crate::import::browse(app, path, p.get("subfolders").and_then(Value::as_bool))
         }
         "file.addPhotos" => {
+            if crate::lightroom_import::is_running(app) {
+                return Some(Err("finish Lightroom catalog import before adding photos".into()));
+            }
             let paths = match p.get("paths").and_then(Value::as_array) {
                 Some(a) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
                 None => app.services.pick_files.as_mut().map(|f| f()).unwrap_or_default(),
@@ -1278,7 +1288,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         "file.exportCurvePresets" => !app.session.curve_presets.is_empty(),
         "view.compare" => app.session.catalog.len() > 1,
         "view.fullScreenPreview" | "view.infoOverlay" | "view.navigator" => app.session.active().is_some() || app.ui.fullscreen,
-        "app.openLibrary" | "file.addFolder" => app.services.pick_folder.is_some(),
+        "app.openLibrary" | "file.addFolder" => app.services.pick_folder.is_some() && !crate::lightroom_import::is_running(app),
         "file.backupLibrary" => app.services.backup_library.is_some(),
         "file.restoreLibrary" => app.services.restore_library.is_some(),
         "compare.swap" | "compare.makeSelect" => app.ui.view == ViewMode::Compare,

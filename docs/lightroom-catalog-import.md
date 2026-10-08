@@ -19,10 +19,15 @@ identity prevents reimport from duplicating virtual copies and collections. One 
 catalog changes; recovery archives remain available.
 
 Before changing records, source image records, decoded XMP, verbatim develop settings, history,
-snapshots and collection content are saved to `Interop/lightroom-import-N.json` in the LightCraft
-library. `Interop/lightroom-index.json` records imported identities. Source catalogs and originals
+snapshots and collection content are saved to compressed `Interop/lightroom-import-N.lca` archives
+in the LightCraft library. Unchanged source data reuses its existing archive. Opaque SQL BLOBs are
+skipped; decoded XMP and structured recovery data remain. Each archive is capped at 32 MiB
+(uncompressed and on disk), with at most eight archives and 128 MiB total retained. Oldest managed
+archives are retired; legacy `.json` archives remain untouched. `Interop/lightroom-index.json` records imported identities. Source catalogs and originals
 are never overwritten. Native import is bounded to a 1 GiB database/WAL, 16 MiB XMP packets and
-one million rows per table. The SQLite reader is Apache-2.0 `sqlite-core`, written in Rust.
+one million rows per table. The in-tree, read-only Rust SQLite B-tree reader follows SQLite’s public file-format specification;
+it introduces no dependency or C runtime. Table payloads are capped at 256 MiB. Unsupported
+WITHOUT ROWID and virtual tables produce explicit errors.
 
 Develop settings reuse the existing XMP/preset mapper. Supported sliders, curves and supported
 mask structures remain editable, but this is approximate rendering: camera profiles, Adobe AI
@@ -33,6 +38,16 @@ History and snapshots are retained as source data, not exposed as native LightCr
 Lightroom's `-999999` deferred-adjustment sentinel is omitted from both catalog and XMP mappings;
 it is reported and archived, never clamped into a real slider value. Deferred Adobe Auto Tone
 is not evaluated by the importer; LightCraft's Auto control remains available after migration.
+
+Native desktop inspection/import runs on a cancellable background worker with progress. Only
+prepared catalog operations commit on the owner thread; archive index writing stays on a worker.
+Late results from a closed or switched library are rejected, including reopening the same path.
+Ordinary edits during preparation remain intact. CLI commands complete synchronously using the
+same preparation/commit pipeline; browser builds reject native catalog import.
+
+Archive version 1 begins with the 12 bytes `LC-LRARCH\0\x01Z`, followed by zlib-compressed JSON.
+Recovery readers must cap decompression at 32 MiB. JSON retains source identities, photo paths,
+settings, decoded XMP, keywords, history, snapshots, collection definitions and membership.
 
 The importer uses shared Rust code on macOS, Windows and Linux. If originals move between
 computers or volumes, use LightCraft's missing-photo relinking tools to update their paths.
