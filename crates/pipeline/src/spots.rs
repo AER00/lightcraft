@@ -106,6 +106,67 @@ pub fn pick_source(
     Some(Point::new(n1.x - n0.x, n1.y - n0.y))
 }
 
+/// The most a window grows to take in the spots that touch it.
+const MAX_SPOT_SPAN: usize = 8192;
+
+/// `win` (a window of the `full_w × full_h` output of `frame`) grown to hold, for every spot that
+/// reaches into it, the whole spot and the patch it reads from: [`apply`] works on the pixels it
+/// is given, so a spot cut by the window's edge, or whose source lies outside it, would come out
+/// different from the same spot in the whole render. Spots with an automatic source (`None`)
+/// search up to 4.2 radii around themselves. Growth stops at [`MAX_SPOT_SPAN`] pixels.
+pub fn window_for_spots(spots: &[Spot], frame: &Frame, full_w: usize, full_h: usize, ppl: f64, win: crate::PixelWindow) -> crate::PixelWindow {
+    if spots.is_empty() {
+        return win;
+    }
+    let to_out = frame.norm_to_out(full_w, full_h);
+    let origin = to_out.apply(Point::new(0.0, 0.0));
+    // (target box, source box) of each spot, in output pixels: [x0, y0, x1, y1]
+    let boxes: Vec<([f64; 4], [f64; 4])> = spots
+        .iter()
+        .filter_map(|spot| {
+            let r = (spot.size * ppl).max(1.0);
+            let pts: Vec<_> = spot.points.iter().map(|p| to_out.apply(*p)).collect();
+            let first = pts.first()?;
+            let (mut x0, mut y0, mut x1, mut y1) = (first.x, first.y, first.x, first.y);
+            for p in &pts {
+                (x0, y0, x1, y1) = (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y));
+            }
+            // the box `apply` works in: the stroke plus a radius, plus a radius of padding
+            let t = [x0 - 2.0 * r, y0 - 2.0 * r, x1 + 2.0 * r, y1 + 2.0 * r];
+            let s = match spot.source_offset {
+                Some(o) => {
+                    let b = to_out.apply(o);
+                    let (dx, dy) = (b.x - origin.x, b.y - origin.y);
+                    [t[0] + dx, t[1] + dy, t[2] + dx, t[3] + dy]
+                }
+                None => [t[0] - 4.2 * r, t[1] - 4.2 * r, t[2] + 4.2 * r, t[3] + 4.2 * r],
+            };
+            Some((t, s)).filter(|(t, s)| t.iter().chain(s).all(|v| v.is_finite()))
+        })
+        .collect();
+    let (fw, fh) = (full_w as f64, full_h as f64);
+    let mut r = [win.x as f64, win.y as f64, (win.x + win.w) as f64, (win.y + win.h) as f64];
+    let touches = |r: &[f64; 4], b: &[f64; 4]| b[0] < r[2] && b[2] > r[0] && b[1] < r[3] && b[3] > r[1];
+    for _ in 0..=boxes.len() {
+        let mut grown = r;
+        for (t, s) in &boxes {
+            if touches(&r, t) {
+                for b in [t, s] {
+                    grown = [grown[0].min(b[0]), grown[1].min(b[1]), grown[2].max(b[2]), grown[3].max(b[3])];
+                }
+            }
+        }
+        let grown = [grown[0].max(0.0), grown[1].max(0.0), grown[2].min(fw), grown[3].min(fh)];
+        if grown == r || grown[2] - grown[0] > MAX_SPOT_SPAN as f64 || grown[3] - grown[1] > MAX_SPOT_SPAN as f64 {
+            break;
+        }
+        r = grown;
+    }
+    let (x, y) = (r[0].floor() as usize, r[1].floor() as usize);
+    crate::PixelWindow { x, y, w: (r[2].ceil() as usize).saturating_sub(x).max(1), h: (r[3].ceil() as usize).saturating_sub(y).max(1) }
+        .clamped(full_w, full_h)
+}
+
 /// Apply all spots to `img` (output resolution). `ppl` = output pixels per long-edge unit.
 pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
     if spots.is_empty() {
@@ -247,5 +308,48 @@ mod tests {
         apply(&mut img, &[spot], &frame, frame.px_per_long(100));
         assert!(img.get(25, 50)[0] > 0.8);
         assert!(img.get(5, 50)[0] < 0.2);
+    }
+
+    fn spot_at(x: f64, y: f64, size: f64, offset: Option<Point>) -> Spot {
+        Spot { points: vec![Point::new(x, y)], size, source_offset: offset, ..Default::default() }
+    }
+
+    #[test]
+    fn a_window_grows_to_hold_the_spots_that_touch_it_and_their_sources() {
+        use crate::PixelWindow;
+        let frame = Frame::new(4000, 3000, &DevelopSettings::default(), true);
+        let ppl = frame.px_per_long(4000);
+        let win = PixelWindow { x: 1000, y: 1000, w: 400, h: 300 };
+        // none: the window is left alone
+        assert_eq!(window_for_spots(&[], &frame, 4000, 3000, ppl, win), win);
+        // a spot far away is no business of this window
+        let far = spot_at(0.9, 0.9, 0.01, Some(Point::new(0.02, 0.0)));
+        assert_eq!(window_for_spots(&[far], &frame, 4000, 3000, ppl, win), win);
+        // a spot inside it, reading from 300 px to the right, widens it to the source
+        let near = spot_at(0.30, 0.38, 0.01, Some(Point::new(0.075, 0.0)));
+        let g = window_for_spots(&[near], &frame, 4000, 3000, ppl, win);
+        assert!(g.x <= win.x && g.x + g.w >= 1200 + 300 + 80 && g.y <= win.y && g.y + g.h >= win.y + win.h, "{g:?}");
+        // a spot that only reaches in with its edge counts too
+        let edge = spot_at(0.24, 0.38, 0.01, Some(Point::new(-0.05, 0.0)));
+        assert!(window_for_spots(&[edge], &frame, 4000, 3000, ppl, win).x < win.x);
+    }
+
+    #[test]
+    fn spot_windows_are_bounded_and_survive_hostile_spots() {
+        use crate::PixelWindow;
+        let frame = Frame::new(40_000, 30_000, &DevelopSettings::default(), true);
+        let ppl = frame.px_per_long(40_000);
+        let win = PixelWindow { x: 1000, y: 1000, w: 400, h: 300 };
+        // a spot whose source is a long way off would need an enormous window: not granted
+        let wide = spot_at(0.03, 0.04, 0.01, Some(Point::new(0.6, 0.0)));
+        let g = window_for_spots(&[wide], &frame, 40_000, 30_000, ppl, win);
+        assert!(g.w <= MAX_SPOT_SPAN && g.h <= MAX_SPOT_SPAN, "{g:?}");
+        for bad in [f64::NAN, f64::INFINITY, 1e300, -1e300] {
+            let s = spot_at(bad, bad, bad, Some(Point::new(bad, bad)));
+            let g = window_for_spots(&[s], &frame, 40_000, 30_000, ppl, win);
+            assert_eq!(g, win);
+        }
+        let empty = Spot { points: vec![], ..Default::default() };
+        assert_eq!(window_for_spots(&[empty], &frame, 40_000, 30_000, ppl, win), win);
     }
 }

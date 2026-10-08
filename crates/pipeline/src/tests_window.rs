@@ -29,9 +29,14 @@ fn window(s: &DevelopSettings, win: PixelWindow) -> Rgba8 {
 /// Largest per-channel difference and mean absolute difference between `win` (rendered for
 /// `at`, kept `HALO` px in from its edges) and the same pixels of `full`.
 fn compare(full: &Rgba8, win: &Rgba8, at: PixelWindow) -> (u8, f64) {
+    compare_inset(full, win, at, HALO)
+}
+
+/// [`compare`] keeping `inset` px in from the window's edges.
+fn compare_inset(full: &Rgba8, win: &Rgba8, at: PixelWindow, inset: usize) -> (u8, f64) {
     let (mut max, mut sum, mut n) = (0u8, 0f64, 0f64);
-    for y in HALO..at.h - HALO {
-        for x in HALO..at.w - HALO {
+    for y in inset..at.h - inset {
+        for x in inset..at.w - inset {
             let (a, b) = (full.get(at.x + x, at.y + y), win.get(x, y));
             for k in 0..3 {
                 let d = a[k].abs_diff(b[k]);
@@ -197,4 +202,116 @@ fn mask_edge_refinement_does_not_depend_on_the_window() {
         ..Default::default()
     });
     check_noisy("refine", &s, MID, 3, 0.2);
+}
+
+// ---- Deep zoom: the wide stages' kernels are far wider than any margin -------------------------
+
+/// Hard-edged blocks of very different brightness at several scales: the wide stages' edge-aware
+/// filters and the dark channel have something to be wrong about.
+fn blocks() -> Rgb32f {
+    Rgb32f::from_fn(600, 400, |x, y| {
+        let cell = |size: usize, k: usize| ((x / size * 7 + y / size * 13 + k) % 5) as f32 / 4.0;
+        let l = 0.02 + 0.5 * cell(97, 1) + 0.25 * cell(31, 2) + 0.1 * cell(11, 3);
+        [l * 1.1, l, l * 0.8]
+    })
+}
+
+const BIG_W: usize = 7680;
+const BIG_H: usize = 5120;
+
+/// A window of a 7680 × 5120 frame against the same pixels of the whole render. The wide stages
+/// (dehaze, clarity, highlights/shadows base) have XX/// can't contain them, so they come from the whole frame at reduced size.
+fn check_big(name: &str, s: &DevelopSettings, max_ok: u8, mean_ok: f64) {
+    let src = blocks();
+    let f = render(&src, &SourceInfo::default(), s, &RenderRequest::fit(BIG_W, BIG_H)).image;
+    let win = PixelWindow { x: 3000, y: 1800, w: 512, h: 384 };
+    let w = render(&src, &SourceInfo::default(), s, &RenderRequest { window: Some(win), ..RenderRequest::fit(BIG_W, BIG_H) }).image;
+    let (max, mean) = compare(&f, &w, win);
+    assert!(max <= max_ok && mean <= mean_ok, "{name}: max {max} (≤ {max_ok}), mean {mean:.3} (≤ {mean_ok})");
+}
+
+#[test]
+fn dehaze_at_depth_matches_the_whole_render() {
+    let mut s = DevelopSettings::default();
+    controls::set(&mut s, "effects.dehaze", 60.0);
+    check_big("dehaze", &s, 6, 0.6);
+}
+
+#[test]
+fn clarity_at_depth_matches_the_whole_render() {
+    let mut s = DevelopSettings::default();
+    controls::set(&mut s, "effects.clarity", 80.0);
+    check_big("clarity", &s, 6, 0.6);
+}
+
+#[test]
+fn highlights_and_shadows_at_depth_match_the_whole_render() {
+    let mut s = DevelopSettings::default();
+    controls::set(&mut s, "light.shadows", 80.0);
+    controls::set(&mut s, "light.highlights", -80.0);
+    check_big("shadows+highlights", &s, 6, 0.6);
+}
+
+// ---- Spot removal reads outside the spot -------------------------------------------------------
+
+/// Like [`check`], over every pixel of the window (a spot at its edge must be right too).
+fn check_whole(name: &str, s: &DevelopSettings, win: PixelWindow, max_ok: u8, mean_ok: f64) {
+    let (f, w) = (full(s), window(s, win));
+    let (max, mean) = compare_inset(&f, &w, win, 0);
+    assert_eq!((w.width, w.height), (win.w, win.h), "{name}: the window's own size");
+    assert!(max <= max_ok && mean <= mean_ok, "{name}: max {max} (≤ {max_ok}), mean {mean:.3} (≤ {mean_ok})");
+}
+
+fn with_spot(mode: lightcraft_develop::SpotMode, at: (f64, f64), offset: Option<(f64, f64)>) -> DevelopSettings {
+    use lightcraft_develop::Spot;
+    use lightcraft_geom::Point;
+    let mut s = DevelopSettings::default();
+    s.spots.push(Spot {
+        mode,
+        points: vec![Point::new(at.0, at.1)],
+        size: 0.04,
+        feather: 30.0,
+        opacity: 100.0,
+        source_offset: offset.map(|(x, y)| Point::new(x, y)),
+    });
+    s
+}
+
+// Given a spot whose source patch lies outside the window, the window still shows it healed
+#[test]
+fn a_spot_with_its_source_outside_the_window_matches_the_whole_render() {
+    use lightcraft_develop::SpotMode;
+    // the target is at x ≈ 0.36 of the frame; its source is 0.12 of the width to the right
+    for mode in [SpotMode::Clone, SpotMode::Heal] {
+        let s = with_spot(mode, (0.40, 0.5), Some((0.12, 0.05)));
+        // a window that holds the target (x ≈ 384) but not the source (x ≈ 499..)
+        check_whole(&format!("{mode:?}"), &s, PixelWindow { x: 250, y: 200, w: 200, h: 200 }, 1, 0.1);
+    }
+}
+
+// Given a spot just outside the window whose feathered edge reaches in, the window shows it
+#[test]
+fn a_spot_overlapping_the_window_edge_matches_the_whole_render() {
+    let s = with_spot(lightcraft_develop::SpotMode::Heal, (0.30, 0.5), Some((-0.1, 0.0)));
+    check_whole("edge", &s, PixelWindow { x: 300, y: 200, w: 240, h: 240 }, 1, 0.1);
+}
+
+// Given a spot with an automatic source, two windows over the same spot choose the same source
+#[test]
+fn an_automatic_spot_source_does_not_depend_on_the_window() {
+    let s = with_spot(lightcraft_develop::SpotMode::Heal, (0.5, 0.5), None);
+    // windows so tight that the candidate sources can't all be inside them
+    let (a, b) = (PixelWindow { x: 430, y: 280, w: 110, h: 90 }, PixelWindow { x: 450, y: 290, w: 110, h: 90 });
+    let (ia, ib) = (window(&s, a), window(&s, b));
+    let (mut max, mut n) = (0u8, 0);
+    for y in 0..80 {
+        for x in 0..90 {
+            let (p, q) = (ia.get(x + 20, y + 10), ib.get(x, y));
+            for k in 0..3 {
+                max = max.max(p[k].abs_diff(q[k]));
+                n += 1;
+            }
+        }
+    }
+    assert!(n > 0 && max <= 2, "overlapping windows disagree by up to {max}");
 }

@@ -276,4 +276,23 @@ mod in_the_loupe {
         assert_ne!(first.key, second.key);
         assert_eq!(h.app.renderer.textures.get(&Slot::Region).map(|t| t.key), Some(second.key), "the new window arrived");
     }
+
+    // Given a photo with spot removal, a zoomed view still gets its sharp window
+    #[test]
+    fn a_photo_with_spots_gets_a_window_too() {
+        let (mut h, _) = detail();
+        let id = h.app.session.active().unwrap();
+        let mut s = (*h.app.session.develop_of(id).unwrap()).clone();
+        s.spots.push(lightcraft_develop::Spot {
+            points: vec![lightcraft_geom::Point::new(0.5, 0.5)],
+            size: 0.01,
+            source_offset: Some(lightcraft_geom::Point::new(0.05, 0.0)),
+            ..Default::default()
+        });
+        h.app.session.set_develop(id, s, "Spot").unwrap();
+        h.app.ui.settings.preview_limit = 1600;
+        h.request("engine.execute", json!({"command": "view.zoom100"}), T);
+        h.settle(SETTLE);
+        assert!(region_tile(&h).is_some(), "a window render");
+    }
 }

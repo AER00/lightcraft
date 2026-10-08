@@ -35,13 +35,6 @@ impl RegionView {
     }
 }
 
-/// Whether windows can be rendered for these settings. Spot removal reads its source patch from
-/// outside the spot, and an automatic one is chosen from the pixels at hand: neither is the same
-/// in a window as in the whole frame, so those photos stay on the whole-frame render.
-pub fn windows_allowed(s: &lightcraft_develop::DevelopSettings) -> bool {
-    s.spots.is_empty()
-}
-
 /// Context to render around the visible pixels of a frame `full_long` pixels along: enough for the
 /// wide stages (base, clarity and dehaze planes have sigmas up to 0.02 of it) up to a cap.
 pub fn margin_for(full_long: usize) -> usize {
@@ -150,16 +143,6 @@ mod tests {
         assert!(!v.is_current(PhotoId(2), (6000, 4000), 11), "another photo");
         assert!(!v.is_current(PhotoId(1), (6000, 4001), 11), "another zoom");
         assert!(!v.is_current(PhotoId(1), (6000, 4000), 12), "another look (an edit, an undo)");
-    }
-
-    // Given a photo with spot removal, no window render: a spot reads pixels beyond the window
-    #[test]
-    fn photos_with_spots_stay_on_the_whole_frame_render() {
-        use lightcraft_develop::{DevelopSettings, Spot};
-        let mut s = DevelopSettings::default();
-        assert!(windows_allowed(&s));
-        s.spots.push(Spot::default());
-        assert!(!windows_allowed(&s));
     }
 
     // Given nothing visible, or hostile numbers, there is no window (never a panic)
