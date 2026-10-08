@@ -907,7 +907,8 @@ mod tests {
         main[56..60].copy_from_slice(&1u32.to_be_bytes());
         let sql = "CREATE TABLE \"t\" (\"id_local\" INTEGER PRIMARY KEY, \"name\" TEXT)";
         // rootpage is an integer field, so replace fourth text value with a compact record.
-        let mut header = vec![23, 15, 15, 1, u8::try_from(13 + 2 * sql.len()).unwrap_or(0)];
+        let mut header = vec![23, 15, 15, 1];
+        header.extend(varint((13 + 2 * sql.len()) as u64));
         let mut body = b"tablett".to_vec();
         body.push(2);
         body.extend(sql.as_bytes());
@@ -1021,10 +1022,13 @@ mod tests {
             rowid_aliases: HashMap::new(),
         };
         let mut cell_page = vec![b'x'; 512];
-        cell_page[100..104].copy_from_slice(&2u32.to_be_bytes());
+        // For a 512-byte table leaf & 600-byte payload, SQLite stores 92
+        // payload bytes locally, followed by the overflow page pointer.
+        cell_page[92..96].copy_from_slice(&2u32.to_be_bytes());
         let inline_page = vec![b'i'; 512];
         assert_eq!(db.payload(&inline_page, 0, 110).unwrap(), vec![b'i'; 110]);
-        let overflow_page = vec![b'y'; 512];
+        let mut overflow_page = vec![b'y'; 512];
+        overflow_page[..4].copy_from_slice(&0u32.to_be_bytes());
         let mut db = db;
         db.main[512..].copy_from_slice(&overflow_page);
         let mut with_overflow = db.overlay;
@@ -1032,6 +1036,8 @@ mod tests {
         db.overlay = with_overflow;
         let bytes = db.payload(&cell_page, 0, 600).unwrap();
         assert_eq!(bytes.len(), 600);
+        assert_eq!(&bytes[..92], &[b'x'; 92]);
+        assert_eq!(&bytes[92..], &[b'y'; 508]);
     }
 
     #[test]
