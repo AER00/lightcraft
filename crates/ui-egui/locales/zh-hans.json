@@ -1739,5 +1739,7 @@
   "Unknown": "未知",
   "Landscape (wide)": "横向",
   "Portrait (tall)": "纵向",
-  "Square": "正方形"
+  "Square": "正方形",
+  "In Color": "彩色",
+  "No Label": "无标签"
 }

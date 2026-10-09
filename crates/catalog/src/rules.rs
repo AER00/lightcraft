@@ -61,7 +61,7 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     (
         "label",
         "Color Label",
-        Kind::Choice(&[("red", "Red"), ("yellow", "Yellow"), ("green", "Green"), ("blue", "Blue"), ("purple", "Purple"), ("none", "None")]),
+        Kind::Choice(&[("red", "Red"), ("yellow", "Yellow"), ("green", "Green"), ("blue", "Blue"), ("purple", "Purple"), ("none", "No Label")]),
     ),
     ("text", "Any Searchable Text", Kind::Text),
     // Source
@@ -117,7 +117,7 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     // Develop
     ("edited", "Has Edits", Kind::Bool),
     ("cropped", "Cropped", Kind::Bool),
-    ("treatment", "Treatment", Kind::Choice(&[("color", "Color"), ("monochrome", "Black & White")])),
+    ("treatment", "Treatment", Kind::Choice(&[("color", "In Color"), ("monochrome", "Black & White")])),
     // Assisted Culling
     ("sharpness", "Focus (assisted culling)", Kind::Number),
     ("bestOfGroup", "Best of Similar Shots", Kind::Bool),
@@ -848,6 +848,10 @@ mod tests {
     fn choices_have_readable_labels() {
         assert_eq!(choice_label("copyrightStatus", "publicDomain"), Some("Public Domain"));
         assert_eq!(choice_label("treatment", "monochrome"), Some("Black & White"));
+        // own labels where a shared word would translate wrongly: "Color" is the colour noun (the
+        // Color panel) and "None" agrees with other nouns in gendered languages
+        assert_eq!(choice_label("treatment", "color"), Some("In Color"));
+        assert_eq!(choice_label("label", "none"), Some("No Label"));
         assert_eq!(choice_label("flag", "pick"), Some("Picked"));
         assert_eq!(choice_label("aspect", "landscape"), Some("Landscape (wide)"));
         assert_eq!(choice_label("flag", "nope"), None);

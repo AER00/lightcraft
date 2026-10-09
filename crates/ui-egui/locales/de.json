@@ -1894,5 +1894,7 @@
   "Unknown": "Unbekannt",
   "Landscape (wide)": "Querformat",
   "Portrait (tall)": "Hochformat",
-  "Square": "Quadratisch"
+  "Square": "Quadratisch",
+  "In Color": "Farbig",
+  "No Label": "Ohne Markierung"
 }

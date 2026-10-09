@@ -1411,5 +1411,7 @@
   "Unknown": "Неизвестно",
   "Landscape (wide)": "Альбомная",
   "Portrait (tall)": "Книжная",
-  "Square": "Квадратная"
+  "Square": "Квадратная",
+  "In Color": "Цветное",
+  "No Label": "Без метки"
 }

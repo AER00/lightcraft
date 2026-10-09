@@ -1739,5 +1739,7 @@
   "Unknown": "Desconocido",
   "Landscape (wide)": "Horizontal (apaisada)",
   "Portrait (tall)": "Vertical (retrato)",
-  "Square": "Cuadrada"
+  "Square": "Cuadrada",
+  "In Color": "En color",
+  "No Label": "Sin etiqueta"
 }

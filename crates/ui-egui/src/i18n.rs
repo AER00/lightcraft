@@ -636,10 +636,6 @@ mod tests {
         }
     }
 
-    /// Every command, control, rule and rename label, and every line of What's New, is a message a
-    /// catalog can translate. What a language lacks is reported, not failed (like
-    /// `catalogs_agree_on_placeholders_and_report_gaps`): a feature PR doesn't have to ship every
-    /// language, and the translations catch up at their own pace.
     /// Smart-album choice values read as words in every language (English "Public Domain", German
     /// "Gemeinfrei"), never as rule ids like `publicDomain`; an id the field doesn't know shows as
     /// written. Unlike other labels these must be translated: an untranslated one would be English
@@ -650,6 +646,9 @@ mod tests {
         assert_eq!(choice_text_in(Locale::En, "copyrightStatus", "publicDomain"), "Public Domain");
         assert_eq!(choice_text_in(Locale::De, "copyrightStatus", "publicDomain"), "Gemeinfrei");
         assert_eq!(choice_text_in(Locale::De, "copyrightStatus", "someday"), "someday");
+        assert_eq!(choice_text_in(Locale::ZhHans, "treatment", "color"), "彩色", "in colour, not the colour noun");
+        assert_eq!(choice_text_in(Locale::Ru, "treatment", "color"), "Цветное");
+        assert_eq!(choice_text_in(Locale::Es, "label", "none"), "Sin etiqueta");
         for language in Locale::ALL {
             for (field, _, kind) in FIELDS {
                 let Kind::Choice(choices) = kind else { continue };
@@ -664,6 +663,10 @@ mod tests {
         }
     }
 
+    /// Every command, control, rule and rename label, and every line of What's New, is a message a
+    /// catalog can translate. What a language lacks is reported, not failed (like
+    /// `catalogs_agree_on_placeholders_and_report_gaps`): a feature PR doesn't have to ship every
+    /// language, and the translations catch up at their own pace.
     #[test]
     fn display_label_gaps_are_reported() {
         let mut labels: Vec<&str> = lightcraft_engine::command_specs().iter().map(|spec| spec.label).collect();
