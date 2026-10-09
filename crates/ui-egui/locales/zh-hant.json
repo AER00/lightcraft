@@ -809,7 +809,7 @@
   "Keywords you add appear here; ⌥1–⌥9 apply them.": "新增的關鍵字會顯示於此；⌥1–⌥9 可套用。",
   "Landscape": "風景",
   "Language": "語言",
-  "Largest long edge the Detail view renders at; larger is sharper on big displays but slower.": "詳細檢視預覽的最長邊尺寸；較大的尺寸在大螢幕上更清晰，但速度較慢。",
+  "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster.": "「自動」會依詳細檢視的顯示大小來渲染（最高為相片本身的像素）。選擇尺寸可設定上限：越小越快。",
   "Last": "最後",
   "Last view": "上次檢視",
   "Lateral Chromatic Aberration": "橫向色差",

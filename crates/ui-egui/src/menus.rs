@@ -960,7 +960,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 ),
                 ("GPU rendering".to_string(), if app.ui.settings.gpu { "on".into() } else { "off".into() }),
                 ("Memory budget".to_string(), mb(lightcraft_engine::memory::default_budget() as u64)),
-                ("Preview size".to_string(), format!("{} px", app.ui.settings.preview_edge)),
+                (
+                    "Preview size".to_string(),
+                    match app.ui.settings.preview_limit {
+                        0 => "automatic".to_string(),
+                        n => format!("{n} px"),
+                    },
+                ),
                 ("Photos".to_string(), info["photos"].to_string()),
                 ("Albums".to_string(), info["albums"].to_string()),
             ];

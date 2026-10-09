@@ -140,8 +140,10 @@ pub struct AppSettings {
     pub confirm_delete: bool,
     /// GPU rendering allowed (`app.gpu`).
     pub gpu: bool,
-    /// Largest long edge (pixels) the loupe renders at.
-    pub preview_edge: u32,
+    /// Largest long edge (pixels) the user lets the loupe render at; 0 = Automatic (the size it is
+    /// drawn at, up to the photo's own pixels and [`LOUPE_EDGE_CEILING`]). Not the old
+    /// `previewEdge` key: its 2560 px default was the soft-image bug (issue #323).
+    pub preview_limit: u32,
     /// Edit in External Editor: the application ("" = the system's default for TIFF files).
     pub external_editor: String,
     /// Memory the caches may hold together, in MB (0 = automatic; `app.memoryBudget`).
@@ -163,7 +165,7 @@ impl Default for AppSettings {
             startup_view: StartupView::Last,
             confirm_delete: false,
             gpu: true,
-            preview_edge: 2560,
+            preview_limit: 0,
             external_editor: String::new(),
             memory_mb: 0,
             film_names: true,
@@ -174,8 +176,66 @@ impl Default for AppSettings {
     }
 }
 
-/// Preview sizes offered in Settings → Performance.
-pub const PREVIEW_EDGES: [u32; 4] = [1600, 2560, 3840, 5120];
+/// Preview size limits offered in Settings → Performance (0 = Automatic).
+pub const PREVIEW_LIMITS: [u32; 5] = [0, 1600, 2560, 3840, 5120];
+
+/// The most the loupe ever renders in one go (memory and GPU texture size), whatever the setting.
+pub const LOUPE_EDGE_CEILING: u32 = 8192;
+
+/// The most a zoomed frame (the one a window is cut from) may be along its long edge: far more
+/// than the photos there are (a window holds only what is on screen, so the frame costs nothing).
+pub const WINDOW_FRAME_CEILING: usize = 65536;
+
+/// The smallest GPU texture side the loupe plans for, whatever the host reports.
+pub const MIN_TEXTURE_SIDE: usize = 512;
+
+/// Loupe render sizes move in steps of this many pixels.
+pub const LOUPE_EDGE_STEP: usize = 64;
+
+/// Long edge of Build Standard-Sized Previews when the limit is Automatic.
+pub const STANDARD_PREVIEW_EDGE: u32 = 2560;
+
+impl AppSettings {
+    /// Long edge (pixels) to render the loupe at when it is drawn `wanted_px` wide on screen:
+    /// that size (rounded up to [`LOUPE_EDGE_STEP`], so resizing a window doesn't re-render at
+    /// every pixel), never above the photo's own `native_long_edge`, the user's limit, the ceiling
+    /// or `texture_side`, the largest texture the GPU allows (egui_glow, i.e. the browser build,
+    /// panics on a bigger one, and many WebGL devices allow only 2048 or 4096).
+    pub fn loupe_edge(&self, wanted_px: f32, native_long_edge: usize, texture_side: usize) -> usize {
+        let limit = if self.preview_limit == 0 { LOUPE_EDGE_CEILING } else { self.preview_limit.clamp(512, LOUPE_EDGE_CEILING) } as usize;
+        let ceiling = limit.min(texture_side.max(MIN_TEXTURE_SIDE));
+        let wanted = if wanted_px.is_nan() { 8.0 } else { wanted_px.clamp(8.0, ceiling as f32) } as usize;
+        let stepped = wanted.div_ceil(LOUPE_EDGE_STEP) * LOUPE_EDGE_STEP;
+        stepped.min(native_long_edge.max(8)).min(ceiling)
+    }
+
+    /// Long edge for warming a neighbouring photo: its loupe size but never above the preview
+    /// source level. A full-size decode would replace the open photo's single full-resolution
+    /// source in the cache, and nothing is gained by it.
+    pub fn prefetch_edge(&self, wanted_px: f32, native_long_edge: usize, texture_side: usize) -> usize {
+        self.loupe_edge(wanted_px, native_long_edge, texture_side).min(lightcraft_engine::SourceLevel::Preview.max_edge())
+    }
+
+    /// Long edge for the hover (preset / profile) and Before renders, which are stand-ins drawn
+    /// over the loupe: capped at the preview source level like the old default.
+    pub fn stand_in_edge(&self, loupe_edge: usize, texture_side: usize) -> usize {
+        loupe_edge.min(lightcraft_engine::SourceLevel::Preview.max_edge()).min(texture_side.max(MIN_TEXTURE_SIDE))
+    }
+
+    /// Long edge of the zoomed frame a window render is cut from, for a photo drawn `drawn_long`
+    /// px along its long edge: as drawn, but never above the photo's own pixels (beyond 100 % the
+    /// GPU magnifies the window) or the ceiling. The preview size limit is not applied: it is about
+    /// the whole-frame render (see [`crate::region::plan`]).
+    pub fn window_frame_edge(&self, drawn_long: f32, native_long_edge: usize) -> usize {
+        let wanted = if drawn_long.is_nan() { 8.0 } else { drawn_long.clamp(8.0, WINDOW_FRAME_CEILING as f32) } as usize;
+        wanted.min(native_long_edge.max(8)).min(WINDOW_FRAME_CEILING)
+    }
+
+    /// The edge Build Standard-Sized Previews uses.
+    pub fn standard_preview_edge(&self) -> u32 {
+        if self.preview_limit == 0 { STANDARD_PREVIEW_EDGE } else { self.preview_limit }
+    }
+}
 
 /// Click-zoom ratios offered (percent): 1:1, 2:1, 3:1, 4:1, 8:1.
 pub const CLICK_ZOOMS: [u32; 5] = [100, 200, 300, 400, 800];
@@ -685,8 +745,8 @@ impl UiState {
         self.brush_size = self.brush_size.clamp(0.002, 0.5);
         self.dialog = None;
         self.fullscreen = false;
-        if !crate::state::PREVIEW_EDGES.contains(&self.settings.preview_edge) {
-            self.settings.preview_edge = AppSettings::default().preview_edge;
+        if !crate::state::PREVIEW_LIMITS.contains(&self.settings.preview_limit) {
+            self.settings.preview_limit = AppSettings::default().preview_limit;
         }
         match self.settings.startup_view {
             StartupView::Last => {}
