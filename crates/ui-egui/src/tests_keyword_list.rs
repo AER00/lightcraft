@@ -306,3 +306,16 @@ fn the_keyword_list_needs_no_selection() {
     ask(&mut h, "ui.key", json!({"key": "Enter"}));
     assert!(h.app.session.catalog.has_keyword("Weddings"), "and creates keywords");
 }
+
+/// Return in the Synonyms field creates the keyword too, as from the name.
+#[test]
+fn return_in_synonyms_creates_the_keyword() {
+    let (mut h, _) = keywords_panel();
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordList:create"}));
+    ask(&mut h, "ui.text", json!({"text": "Weddings"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keywordSynonyms"}));
+    ask(&mut h, "ui.text", json!({"text": "marriage"}));
+    ask(&mut h, "ui.key", json!({"key": "Enter"}));
+    assert_eq!(h.app.ui.dialog, None);
+    assert_eq!(info(&mut h, "Weddings")["synonyms"], json!(["marriage"]));
+}

@@ -742,10 +742,14 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     }
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new(crate::i18n::tr("Synonyms")).color(t.text_dim));
-                    crate::text_field::TextField::singleline("field:keywordSynonyms", synonyms)
+                    // Return in either field creates (or saves) the keyword
+                    let r = crate::text_field::TextField::singleline("field:keywordSynonyms", synonyms)
                         .hint(crate::i18n::tr("Separated by commas"))
                         .width(f32::INFINITY)
                         .show(ui);
+                    if r.ending == Some(crate::text_field::Ending::Return) {
+                        confirm = true;
+                    }
                     ui.add_space(6.0);
                     if editing.is_none() {
                         if let Some(p) = parent {
