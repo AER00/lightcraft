@@ -33,7 +33,15 @@ pub(crate) const PROFILE_PROXY: usize = 192;
 pub(crate) fn file_local_look(format: RawFormat) -> bool {
     matches!(
         format,
-        RawFormat::Arw | RawFormat::Nef | RawFormat::Nrw | RawFormat::Rw2 | RawFormat::Raf | RawFormat::Cr3 | RawFormat::Cr2 | RawFormat::Pef
+        RawFormat::Arw
+            | RawFormat::Nef
+            | RawFormat::Nrw
+            | RawFormat::Rw2
+            | RawFormat::Raf
+            | RawFormat::Cr3
+            | RawFormat::Cr2
+            | RawFormat::Pef
+            | RawFormat::Srw
     )
 }
 
@@ -1021,7 +1029,17 @@ mod tests {
     #[test]
     fn supported_raws_get_a_file_local_look() {
         // every decoded raw without a colour matrix of its own (issue #310: CR2 rendered flat with the fallback)
-        let local = [RawFormat::Arw, RawFormat::Nef, RawFormat::Nrw, RawFormat::Rw2, RawFormat::Raf, RawFormat::Cr3, RawFormat::Cr2, RawFormat::Pef];
+        let local = [
+            RawFormat::Arw,
+            RawFormat::Nef,
+            RawFormat::Nrw,
+            RawFormat::Rw2,
+            RawFormat::Raf,
+            RawFormat::Cr3,
+            RawFormat::Cr2,
+            RawFormat::Pef,
+            RawFormat::Srw,
+        ];
         assert!(local.into_iter().all(file_local_look));
         // DNG carries its own colour model
         assert!(!file_local_look(RawFormat::Dng));
