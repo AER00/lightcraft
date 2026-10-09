@@ -156,16 +156,16 @@ pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
     if make.starts_with("CANON") && t.ifds.len() >= 4 && t.ifds[3].u16(lightcraft_tiff::tags::COMPRESSION) == Some(6) {
         return Some(RawFormat::Cr2);
     }
-    if make.starts_with("NIKON") {
-        return Some(if has_cfa || t.all_ifds().len() > 1 { RawFormat::Nef } else { RawFormat::Nrw });
+    if make.starts_with("NIKON") && has_cfa {
+        return Some(if t.all_ifds().len() > 1 { RawFormat::Nef } else { RawFormat::Nrw });
     }
-    if make.starts_with("SONY") {
+    if make.starts_with("SONY") && has_cfa {
         return Some(RawFormat::Arw);
     }
-    if make.starts_with("PENTAX") || make.starts_with("RICOH") {
+    if (make.starts_with("PENTAX") || make.starts_with("RICOH")) && has_cfa {
         return Some(RawFormat::Pef);
     }
-    if make.starts_with("SAMSUNG") {
+    if make.starts_with("SAMSUNG") && has_cfa {
         return Some(RawFormat::Srw);
     }
     if has_cfa || thumbnail_shell(&t, bytes.len()).is_some() || is_preview_container(ifd0) {
@@ -175,11 +175,15 @@ pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
 }
 
 /// Whether some IFD is marked as raw: CFA photometric, or a raw-only compression value (99 is not a
-/// registered TIFF compression; Leaf MOS files use it for their tiled 16-bit lossless-JPEG raw).
+/// registered TIFF compression; Leaf MOS files use it for their tiled 16-bit lossless-JPEG raw),
+/// or vendor-specific raw tags (Sony tone curve, CFA pattern, or Pentax compression 65535).
 fn has_raw_ifd(t: &Tiff) -> bool {
     t.all_ifds().iter().any(|i| {
         i.u16(lightcraft_tiff::tags::PHOTOMETRIC) == Some(lightcraft_tiff::tags::photometric::CFA)
-            || i.u16(lightcraft_tiff::tags::COMPRESSION).is_some_and(|c| c == 34713 || c == 32767 || c == 32769 || c == 32770 || c == 99)
+            || i.u16(lightcraft_tiff::tags::COMPRESSION).is_some_and(|c| matches!(c, 34713 | 32767 | 32769 | 32770 | 99 | 65535))
+            || i.contains(0x7010)
+            || i.contains(lightcraft_tiff::tags::CFA_PATTERN_EP)
+            || i.contains(lightcraft_tiff::tags::CFA_REPEAT_PATTERN_DIM)
     })
 }
 
@@ -872,6 +876,13 @@ mod tests {
         assert_eq!(probe(&padded(&[rgb_ifd(16, 12), rgb_ifd(400, 300)])), None);
         // no dimensions at all
         assert_eq!(probe(&padded(&[IfdBuilder::new().with(t::MAKE, Value::Ascii("X".into()))])), None);
+        // camera-authored or exported TIFFs preserving camera Make tags remain ordinary images
+        for make in ["SONY", "NIKON CORPORATION", "PENTAX", "RICOH", "SAMSUNG"] {
+            let mut cam = rgb_ifd(400, 300);
+            cam.set(t::MAKE, Value::Ascii(make.into()));
+            cam.set_child(t::EXIF_IFD, exif_size(400, 300));
+            assert_eq!(probe(&padded(&[cam])), None, "{make} TIFF should not be probed as raw");
+        }
     }
 
     // --- containers that are recognised but not decoded, with a preview ---
