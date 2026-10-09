@@ -402,19 +402,38 @@ const EDGE_CONTRAST: f32 = 3.0;
 /// it is tried once more on the pixels away from edges (same gates): there colour pairs stay
 /// valid when the camera JPEG's geometry differs slightly from the raw's.
 fn fit_pairs_with(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>) -> Option<CameraLook> {
+    fit_pairs_ordered(sensor, reference, colour, &[ToneFit::Quantile, ToneFit::ConditionalMedian])
+}
+
+/// [`fit_pairs_with`] with the tone fits to try, in order: the first whose look passes the
+/// acceptance gates is used. Quantile matching comes first because it cannot produce flat steps;
+/// the conditional-median fit follows because on a few photos (compacts, early Micro Four Thirds)
+/// its slightly lower held-out error is what clears the gates, and a photo must not lose its look
+/// to the change of fit. The whole search (all pixels, then away from edges, with and without the
+/// camera profile's colour) runs with one tone fit before the next is tried, so the fallback
+/// accepts exactly what the previous releases accepted.
+fn fit_pairs_ordered(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>, order: &[ToneFit]) -> Option<CameraLook> {
     let has_profile = colour.is_some();
-    // A different picture style can make a camera profile fail the gates. Preserve the
-    // photo's own colour fit before resorting to the neutral fallback.
-    fit_candidate(sensor, reference, colour).or_else(|| has_profile.then(|| fit_candidate(sensor, reference, None)).flatten())
+    order.iter().find_map(|&tone| {
+        // A different picture style can make a camera profile fail the gates. Preserve the
+        // photo's own colour fit before resorting to the neutral fallback.
+        fit_candidate(sensor, reference, colour.clone(), tone).or_else(|| has_profile.then(|| fit_candidate(sensor, reference, None, tone)).flatten())
+    })
 }
 
 /// One candidate colour model, fitted on all pixels and, when that fails the gates, once more on
 /// the pixels away from edges (issue #232).
-fn fit_candidate(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>) -> Option<CameraLook> {
-    fit_pairs_on(sensor, reference, colour.clone(), None).or_else(|| fit_pairs_on(sensor, reference, colour, Some(EDGE_CONTRAST)))
+fn fit_candidate(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>, tone: ToneFit) -> Option<CameraLook> {
+    fit_pairs_on(sensor, reference, colour.clone(), None, tone).or_else(|| fit_pairs_on(sensor, reference, colour, Some(EDGE_CONTRAST), tone))
 }
 
-fn fit_pairs_on(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>, edge_limit: Option<f32>) -> Option<CameraLook> {
+fn fit_pairs_on(
+    sensor: &Rgb32f,
+    reference: &Rgb32f,
+    colour: Option<(Mat3, Option<HsvTable>)>,
+    edge_limit: Option<f32>,
+    tone_fit: ToneFit,
+) -> Option<CameraLook> {
     // A known colour model needs enough signal for tone fitting, not a scene rich enough to
     // learn a new colour matrix. Still reject monochrome references.
     let (pairs, bright) = collect_pairs(sensor, reference, if colour.is_some() { 0.005 } else { 0.05 }, edge_limit)?;
@@ -437,7 +456,7 @@ fn fit_pairs_on(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Optio
         };
         let tone_pairs: Vec<_> =
             pairs.iter().enumerate().filter(|(i, _)| i % 3 != 0).map(|(_, (x, y))| (luma(colour(*x).map(|v| v.max(0.0))), luma(*y))).collect();
-        let Some(curve) = fit_tone(tone_pairs) else { continue };
+        let Some(curve) = tone_fit.fit(tone_pairs) else { continue };
         let mut look = CameraLook { matrix, tone: curve, hue_sat: hue_sat.clone() };
         if let Some(tone) = fit_chroma(&bright, &look) {
             look.tone = tone;
@@ -468,10 +487,11 @@ fn fit_pairs_on(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Optio
         .sum();
     if lightcraft_pipeline::profiling() {
         eprintln!(
-            "[profile] camera look holdout RMS {:.5} -> {:.5} ({samples} channels{})",
+            "[profile] camera look holdout RMS {:.5} -> {:.5} ({samples} channels{}{})",
             (before / samples as f64).sqrt(),
             (after / samples as f64).sqrt(),
-            if edge_limit.is_some() { ", away from edges" } else { "" }
+            if edge_limit.is_some() { ", away from edges" } else { "" },
+            if tone_fit == ToneFit::ConditionalMedian { ", conditional-median tone" } else { "" }
         );
     }
     if samples == 0 || after >= before * MIN_IMPROVEMENT || after / samples as f64 > MAX_HOLDOUT_RMS.powi(2) {
@@ -681,6 +701,24 @@ fn fit_chroma(pairs: &[([f64; 3], [f64; 3])], look: &CameraLook) -> Option<Camer
     (after.is_finite() && after < before).then_some(fitted)
 }
 
+/// How the per-photo tone curve is fitted ([`fit_pairs_ordered`] tries them in order).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ToneFit {
+    /// [`fit_tone`]: no flat steps, no pixel-exact registration needed.
+    Quantile,
+    /// [`fit_tone_conditional`]: the earlier fit, kept as the fallback.
+    ConditionalMedian,
+}
+
+impl ToneFit {
+    fn fit(self, pairs: Vec<(f64, f64)>) -> Option<CameraTone> {
+        match self {
+            ToneFit::Quantile => fit_tone(pairs),
+            ToneFit::ConditionalMedian => fit_tone_conditional(pairs),
+        }
+    }
+}
+
 /// The camera's tone curve from scene/JPEG luminance pairs, by quantile matching: knot `i` pairs
 /// the median of the `i`-th 1/32 of the sorted scene luminances with the median of the `i`-th
 /// 1/32 of the sorted JPEG luminances. A tone curve is monotone, so it maps each quantile of the
@@ -710,6 +748,55 @@ fn fit_tone(pairs: Vec<(f64, f64)>) -> Option<CameraTone> {
     }
     if knots[31][0] < knots[0][0] * 1.5 {
         return None;
+    }
+    CameraTone::new(knots)
+}
+
+fn median(values: &mut [f64]) -> Option<f64> {
+    values.sort_by(f64::total_cmp);
+    values.get(values.len() / 2).copied()
+}
+
+/// The earlier tone fit, kept as the fallback of [`ToneFit`]: the JPEG's median per equal-population
+/// bin of scene luminance, then pooled-adjacent-violators isotonic regression. It follows the
+/// per-pixel pairs closely when the two images are registered, which is why it can clear the
+/// acceptance gates where [`fit_tone`] just misses them, but on lens-corrected JPEGs of busy scenes
+/// the pooling leaves flat steps (issue #475).
+fn fit_tone_conditional(mut pairs: Vec<(f64, f64)>) -> Option<CameraTone> {
+    if pairs.len() < 128 || !pairs.iter().all(|(x, y)| x.is_finite() && *x > 0.0 && y.is_finite()) {
+        return None;
+    }
+    pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut knots = [[0.0; 2]; 32];
+    for (i, knot) in knots.iter_mut().enumerate() {
+        let bin = pairs.get(i * pairs.len() / 32..(i + 1) * pairs.len() / 32)?;
+        let mut xs: Vec<_> = bin.iter().map(|p| p.0).collect();
+        let mut ys: Vec<_> = bin.iter().map(|p| p.1).collect();
+        *knot = [median(&mut xs)? as f32, median(&mut ys)? as f32];
+    }
+    if knots[31][0] < knots[0][0] * 1.5 {
+        return None;
+    }
+    // Pool adjacent violating bins (isotonic regression): no reversals or arbitrary polynomial.
+    let mut blocks: Vec<(f32, usize)> = Vec::new();
+    for knot in knots {
+        blocks.push((knot[1], 1));
+        while blocks.len() >= 2 {
+            let (a, an) = *blocks.get(blocks.len() - 2)?;
+            let (b, bn) = *blocks.last()?;
+            if a <= b {
+                break;
+            }
+            blocks.truncate(blocks.len() - 2);
+            blocks.push(((a * an as f32 + b * bn as f32) / (an + bn) as f32, an + bn));
+        }
+    }
+    let mut i = 0;
+    for (y, n) in blocks {
+        for knot in knots.get_mut(i..i + n)? {
+            knot[1] = y;
+        }
+        i += n;
     }
     CameraTone::new(knots)
 }
@@ -1243,5 +1330,51 @@ mod tests {
             assert!((f64::from(a) / camera(x) - 1.0).abs() < 0.05, "at {x}: {a} vs {}", camera(x));
             x *= 1.02;
         }
+    }
+
+    /// A synthetic photo whose JPEG is the camera look of the scene scaled per pixel by noise of
+    /// `spread` (a pseudo-random, registration-free stand-in for local tone mapping): the per-bin
+    /// median recovers the curve, while the JPEG's broadened distribution stretches the quantile fit.
+    fn noisy_look(spread: f32) -> (Rgb32f, Rgb32f) {
+        let known = Mat3([[1.8, -0.4, -0.1], [-0.2, 1.5, -0.1], [-0.05, -0.3, 1.7]]);
+        let (w, h) = (96usize, 64usize);
+        let mut sensor = Rgb32f::new(w, h);
+        let mut reference = sensor.clone();
+        let mut seed = 0x9e37_79b9_u32;
+        let mut next = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            f32::from((seed >> 16) as u16) / 32768.0 - 1.0
+        };
+        for (src, dst) in sensor.data.iter_mut().zip(&mut reference.data) {
+            let ev = 0.05 + (next() + 1.0) * 0.2;
+            *src = [ev * (0.8 + (next() + 1.0) * 0.1), ev, ev * (0.8 + (next() + 1.0) * 0.1)];
+            let p = known.apply_f32(*src);
+            let y = luminance_2020(p);
+            let scale = (1.0 - (-2.5 * y).exp()) / y * (1.0 + spread * next());
+            *dst = p.map(|v| v * scale);
+        }
+        (sensor, reference)
+    }
+
+    /// Quantile matching is tried first; the conditional-median fit is the fallback and is used
+    /// only where the quantile look misses the acceptance gates, so no photo loses its look.
+    #[test]
+    fn tone_fit_order_quantile_first_conditional_median_as_fallback() {
+        // Clean data: both fits pass, the default order uses the quantile curve (increasing).
+        let (sensor, reference) = noisy_look(0.0);
+        let default = fit_pairs(&sensor, &reference).expect("clean look");
+        let quantile = fit_pairs_ordered(&sensor, &reference, None, &[ToneFit::Quantile]).expect("quantile passes");
+        assert_eq!(default.tone, quantile.tone);
+        // Noisy data: the quantile fit misses the gates, the conditional median still passes.
+        let (sensor, reference) = noisy_look(0.33);
+        assert!(fit_pairs_ordered(&sensor, &reference, None, &[ToneFit::Quantile]).is_none(), "quantile alone misses the gates");
+        let conditional = fit_pairs_ordered(&sensor, &reference, None, &[ToneFit::ConditionalMedian]).expect("conditional median passes");
+        let default = fit_pairs(&sensor, &reference).expect("the fallback keeps the look");
+        assert_eq!(default.tone, conditional.tone);
+        // The order matters only through the first pass; with the fits swapped the conditional one wins even on clean data.
+        let (sensor, reference) = noisy_look(0.0);
+        let swapped = fit_pairs_ordered(&sensor, &reference, None, &[ToneFit::ConditionalMedian, ToneFit::Quantile]).unwrap();
+        let conditional = fit_pairs_ordered(&sensor, &reference, None, &[ToneFit::ConditionalMedian]).unwrap();
+        assert_eq!(swapped.tone, conditional.tone);
     }
 }
