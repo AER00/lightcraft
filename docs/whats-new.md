@@ -40,6 +40,10 @@
 - Samsung SRW files without compression now open as raws: NX5, NX10, NX11, NX20, NX200, NX210, NX1000, NX1100, EX1
   and WB2000. The compressed ones (NX1, NX30, NX300, NX500, NX2000, NX3000, NX3300, NX mini) still open from their
   camera JPEG. Photos already imported pick the change up on Reload.
+- Raws from 52 camera models (22 Canon, 11 Nikon, 11 Sony, 3 Fujifilm and 5 others, plus their other names) start
+  from colour matrices fitted to the camera's measured spectral sensitivities, from the Academy Software
+  Foundation's rawtoaces-data. A camera profile for the model still comes first. See
+  [camera preview colour](camera-preview-colour.md#spectral-camera-matrices-and-the-order-of-precedence).
 - Canon CR2 and Pentax PEF raws get the same starting look fitted to the camera's own JPEG as ARW, NEF, RW2, RAF
   and CR3, instead of opening flat and desaturated (issue #310). Photos already imported pick it up when re-rendered.
 - JPEG XL compressed DNGs (DNG 1.7) now open: lossless tiles decode sample for sample (checked on synthetic files);

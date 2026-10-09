@@ -275,12 +275,13 @@ fn load_bytes_now(
         };
         // Embedded lens corrections are applied by the pipeline ("Enable Profile Corrections"), not baked in
         // (removed before the camera look's binned sensor proxy too, which needs an empty `OpcodeList3`).
-        let lens = embedded_lens(&raw.info());
+        let info = raw.info();
+        let lens = embedded_lens(&info);
         raw.opcodes.list3.retain(|op| !op.is_lens_correction());
-        let xy = lightcraft_raw::color::as_shot_white_xy(&raw);
-        let t = lightcraft_raw::color::camera_transform(&raw, xy);
-        // the source's segmentation mattes (DNG semantic masks), read while the preview is fitted
-        let (camera_look, mattes) = rayon::join(|| crate::camera_preview::fit_preview(&raw, &bytes, &t), || dng_mattes(&bytes, &raw));
+        // Without colour matrices of its own, white balance is relative to the as-shot look (`Photo::relative_wb`).
+        let own_matrix = lightcraft_raw::color::has_matrix(&raw.color);
+        // the source's segmentation mattes (DNG semantic masks), read while the starting colour is fitted
+        let ((xy, t, camera_look), mattes) = rayon::join(|| crate::camera_preview::starting_colour(&mut raw, &bytes), || dng_mattes(&bytes, &info));
         drop(bytes);
         // Previews and thumbnails bin the mosaic straight to (about) the size they need; only
         // larger levels (exports, 1:1) demosaic the whole sensor.
@@ -350,7 +351,7 @@ fn load_bytes_now(
         }
         let twin = twin.map(|picture| finish(picture).0);
         let (temp, tint) = xy_to_temp_tint(xy);
-        let relative = crate::camera_preview::file_local_look(raw.format) && t.matrix_is_fallback;
+        let relative = crate::camera_preview::file_local_look(raw.format) && !own_matrix;
         // White balance re-evaluates the file's own colour model (when it has one and no
         // file-local look matrix sits on top of it)
         let camera_color = (!t.matrix_is_fallback && camera_look.is_none()).then(|| {
@@ -398,7 +399,7 @@ fn local_tone(raw: &lightcraft_raw::RawImage) -> Option<Arc<lightcraft_pipeline:
 /// The semantic masks of a DNG that AI masks understand, over the developed image (default crop,
 /// oriented like it). Person mattes without a confidently selected pixel are left out (the
 /// Subject mask then falls back to its heuristic); a sky matte counts even when empty (no sky).
-fn dng_mattes(bytes: &[u8], raw: &lightcraft_raw::RawImage) -> Option<Arc<lightcraft_pipeline::masks::Mattes>> {
+fn dng_mattes(bytes: &[u8], raw: &lightcraft_raw::RawInfo) -> Option<Arc<lightcraft_pipeline::masks::Mattes>> {
     use lightcraft_pipeline::masks::{MatteKind, Mattes};
     if raw.format != lightcraft_raw::RawFormat::Dng {
         return None;

@@ -77,6 +77,34 @@ One photo can show too little of a colour for its own fit to learn it: in a seco
 Profiles are JSON files `<model>.json` in `$LIGHTCRAFT_CAMERA_PROFILES`, else `<config>/camera-profiles` (macOS `~/Library/Application Support/LightCraft/camera-profiles`); a local profile replaces a built-in one. Built-in profiles live in `assets/camera-profiles/` (listed in `assets/ATTRIBUTION.md`) and are compiled in, so the app, CLI and web build share them: ILCE-7M4, fitted to 597 photos (2.2 million colour pairs) shot in 2026, mostly with the Standard creative style and DRO Auto; X-H2S, 201 photos; X-T4, 545 photos. They hold aggregate colour statistics only. A photo of a profiled model takes its colour from the profile and fits only its own tone and chroma curves (DRO and picture styles vary per shot); the acceptance gates still apply. A rejected profile fit retries the photo's own colour and tone fit before falling back to neutral rendering. Files are read once per process and validated (version, bounded invertible matrix, table shape and finite data); a damaged file is ignored with a warning. The profiles folder's contents are part of the render cache keys, so thumbnails rendered before a profile existed are redone; smart previews built before keep their colour until rebuilt.
 
 
+## Spectral camera matrices and the order of precedence
+
+For 52 camera models LightCraft has colour matrices fitted to the camera's measured spectral sensitivities
+(`crates/raw/src/spectral.rs`, generated into `spectral_table.rs` by `tools/spectral_camera_table.py` from
+[rawtoaces-data](https://github.com/AcademySoftwareFoundation/rawtoaces-data) v1.1.0, Apache-2.0): 22 Canon, 11 Nikon,
+11 Sony, 3 Fujifilm and 5 others, plus the other names rawtoaces-data lists for them (EOS Rebel T3i and Kiss X5 for
+the EOS 600D; bodies it lists as sharing a sensor, such as the GFX100S with the GFX 100). Per model the generator fits,
+under CIE Standard Illuminant A and under D65, a white-preserving 3×3 from white-balanced camera RGB to XYZ by the
+least mean CIE76 error over rawtoaces-data's 190 training reflectances, and writes DNG `ColorMatrix1/2` and
+`ForwardMatrix1/2`. The existing DNG colour model then interpolates them for the file's as-shot white, which the
+vendor white-balance multipliers give through the same matrices. No number comes from Adobe or from a raw decoder.
+
+A raw starts from the first of these that is available (`camera_preview::starting_colour`):
+
+1. the file's own colour matrices (DNG);
+2. a camera profile for its model (bundled or local), with tone and chroma fitted to the file's JPEG;
+3. the model's spectral matrices, with LightCraft's default tone curve and no JPEG fit;
+4. the file-local fit to its own JPEG described above;
+5. the neutral fallback.
+
+A profiled model whose profile fit fails the gates (or that has no usable JPEG) takes its spectral matrices when it
+has them. White balance stays relative to the as-shot look for every raw without matrices of its own, as before, so
+the catalog's `Photo::relative_wb` and the controls are unchanged. `lightcraft-cli calibrate` still pools the
+uncorrected camera colour of covered models, so a profile can be fitted for them and then takes precedence.
+
+No colour-difference measurement of the spectral matrices against the camera JPEG, or against the file-local fit,
+is recorded here yet. Moving step 3 after step 4 is a one-line change in `starting_colour`.
+
 ## Nikon crop and preview colour metadata
 
 Nikon maker-note `CropArea` (0x0045) supplies the default `[left, top, width, height]` crop. The decoder validates the rectangle against the active sensor area and falls back to that area for missing or invalid values. The CFA origin is unchanged; cropping follows demosaicing.

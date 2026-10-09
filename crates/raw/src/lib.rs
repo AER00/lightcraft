@@ -20,7 +20,8 @@
 //! [`embedded_preview`] covers these containers' JPEG previews. Variants we can't decode yet (Nikon "lossy after split" NEF,
 //! compressed ORF, CR3 unverified marker families / C-RAW configurations) return [`RawError::Unsupported`]; each vendor module documents its sources
 //! (public specifications, tag-name documentation, black-box analysis of CC0 samples) and gaps. Non-DNG files carry no
-//! colour matrix: [`color`] falls back to a documented neutral model. The decoders never panic on malformed input.
+//! colour matrix: [`spectral`] has matrices fitted to measured spectral sensitivities for 52 models, and
+//! otherwise [`color`] falls back to a documented neutral model. The decoders never panic on malformed input.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -38,6 +39,7 @@ pub mod opcodes;
 mod preview;
 pub mod profile;
 pub mod semantic;
+pub mod spectral;
 mod tiffraw;
 mod unpack;
 mod vendor;
