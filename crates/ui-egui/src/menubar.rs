@@ -753,10 +753,29 @@ pub fn show_in_window(app: &mut LightcraftApp, ui: &mut egui::Ui, max_width: f32
     if total <= max_width {
         let saved = ui.spacing().item_spacing.x;
         ui.spacing_mut().item_spacing.x = TITLE_GAP;
-        for (title, items) in &bar {
-            let r = ui.add(egui::Button::new(egui::RichText::new(crate::i18n::tr(title)).font(font.clone()).color(t.text_label)).frame(false));
-            crate::widgets::register(ui.ctx(), format!("menu:{title}"), r.rect);
-            egui::Popup::menu(&r).show(|ui| crate::menu_level::level(ui, 1, bar_bottom, |ui| nodes_ui(ui, items, mac, &mut clicked, 1, bar_bottom)));
+        // All titles first, then their popups, so a title the pointer moves onto can take over
+        // from the open menu before either is drawn (no frame with two menus or none).
+        let titles: Vec<egui::Response> = bar
+            .iter()
+            .map(|(title, _)| {
+                let r = ui.add(egui::Button::new(egui::RichText::new(crate::i18n::tr(title)).font(font.clone()).color(t.text_label)).frame(false));
+                crate::widgets::register(ui.ctx(), format!("menu:{title}"), r.rect);
+                r
+            })
+            .collect();
+        let confirmed = switch_open_title(ui.ctx(), &titles);
+        for ((_, items), r) in bar.iter().zip(&titles) {
+            // (opening and closing by click is done in `switch_open_title`)
+            // (the click confirming a menu a hover opened must not close it again)
+            let close = if confirmed == Some(egui::Popup::default_response_id(r)) {
+                egui::PopupCloseBehavior::IgnoreClicks
+            } else {
+                egui::PopupCloseBehavior::CloseOnClick
+            };
+            egui::Popup::menu(r)
+                .close_behavior(close)
+                .open_memory(None)
+                .show(|ui| crate::menu_level::level(ui, 1, bar_bottom, |ui| nodes_ui(ui, items, mac, &mut clicked, 1, bar_bottom)));
         }
         ui.spacing_mut().item_spacing.x = saved;
     } else {
@@ -780,6 +799,47 @@ pub fn show_in_window(app: &mut LightcraftApp, ui: &mut egui::Ui, max_width: f32
         }
     }
     ui.cursor().left() - start
+}
+
+/// Native menu-bar behaviour for the top-level titles: while one menu is open, resting the pointer
+/// on another title closes it and opens that one, and a click on another title opens it in that
+/// same click (instead of only closing the open menu as a click outside). Without an open menu
+/// hovering does nothing; clicking a title toggles its menu. egui keeps one popup open at a time.
+/// Returns the menu whose title was just clicked right after a hover opened it.
+fn switch_open_title(ctx: &egui::Context, titles: &[egui::Response]) -> Option<egui::Id> {
+    let popup = egui::Popup::default_response_id;
+    let key = egui::Id::new("lc-menubar-hover-opened");
+    let open = titles.iter().position(|r| egui::Popup::is_id_open(ctx, popup(r)));
+    // the menu a hover opened, until it closes or is clicked
+    let mut confirmed = None;
+    let mut hover_opened: Option<egui::Id> = ctx.data(|d| d.get_temp(key)).filter(|id| open.is_some_and(|o| popup(&titles[o]) == *id));
+    for (i, r) in titles.iter().enumerate() {
+        if r.clicked() {
+            // the click that follows a hover switch confirms the menu the hover opened
+            if hover_opened == Some(popup(r)) {
+                confirmed = Some(popup(r));
+            } else {
+                egui::Popup::toggle_id(ctx, popup(r));
+            }
+            hover_opened = None;
+        } else if r.hovered() && open.is_some_and(|o| o != i) {
+            egui::Popup::open_id(ctx, popup(r));
+            hover_opened = Some(popup(r));
+            // a pointer move alone doesn't schedule the frame that draws the new menu
+            ctx.request_repaint();
+        }
+    }
+    // (leaving the titles ends it: a later click on the open title closes the menu)
+    let hover_opened = hover_opened.filter(|_| titles.iter().any(|r| r.hovered()));
+    ctx.data_mut(|d| match hover_opened {
+        Some(id) => {
+            d.insert_temp(key, id);
+        }
+        None => {
+            d.remove::<egui::Id>(key);
+        }
+    });
+    confirmed
 }
 
 /// A submenu row showing `text` at `depth`, whose rows `children` draws one level deeper,
