@@ -1066,7 +1066,6 @@ impl LightcraftApp {
         panels::dialogs::show(self, &ctx);
         panels::library_problem::show(self, &ctx);
         sync::progress_window(self, &ctx);
-        lightroom_import::progress(self, &ctx);
         export_task::poll(self, &ctx);
         panels::activity::show(self, &ctx);
         pick::poll(self, &ctx);

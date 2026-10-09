@@ -2024,5 +2024,7 @@
   "Scanning folder": "Ordner wird durchsucht",
   "Building previews": "Vorschauen werden erstellt",
   "Building smart previews": "Smart-Vorschauen werden erstellt",
-  "Discarding smart previews": "Smart-Vorschauen werden verworfen"
+  "Discarding smart previews": "Smart-Vorschauen werden verworfen",
+  "Importing Lightroom catalog": "Lightroom-Katalog wird importiert",
+  "Reading Lightroom catalog": "Lightroom-Katalog wird gelesen"
 }

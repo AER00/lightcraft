@@ -1869,5 +1869,7 @@
   "Scanning folder": "Explorando carpeta",
   "Building previews": "Generando vistas previas",
   "Building smart previews": "Generando vistas previas inteligentes",
-  "Discarding smart previews": "Descartando vistas previas inteligentes"
+  "Discarding smart previews": "Descartando vistas previas inteligentes",
+  "Importing Lightroom catalog": "Importando catálogo de Lightroom",
+  "Reading Lightroom catalog": "Leyendo catálogo de Lightroom"
 }

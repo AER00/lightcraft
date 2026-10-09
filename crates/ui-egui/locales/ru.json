@@ -1582,5 +1582,7 @@
   "Scanning folder": "Сканирование папки",
   "Building previews": "Создание просмотров",
   "Building smart previews": "Создание смарт-просмотров",
-  "Discarding smart previews": "Удаление смарт-просмотров"
+  "Discarding smart previews": "Удаление смарт-просмотров",
+  "Importing Lightroom catalog": "Импорт каталога Lightroom",
+  "Reading Lightroom catalog": "Чтение каталога Lightroom"
 }
