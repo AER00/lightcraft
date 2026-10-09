@@ -52,8 +52,15 @@ struct App(LightcraftApp, PrefsWriter, #[cfg(target_os = "macos")] Option<native
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
-        if let Some(m) = self.2.as_mut() {
-            m.update(&mut self.0, ctx);
+        if let Some(m) = self.2.as_mut()
+            && m.update(&mut self.0, ctx)
+            && lightcraft_ui_egui::panels::notices::may_close(&mut self.0)
+        {
+            // Quit from the menu bar: save exactly what closing the window saves (settings and
+            // library, after the unsaved-changes check; otherwise its prompt shows), then end the
+            // process instead of closing the viewport while AppKit is terminating (PR #444).
+            eframe::App::on_exit(self);
+            std::process::exit(0);
         }
         self.0.logic(ctx);
         self.1.tick(&mut self.0, ctx);
@@ -76,11 +83,13 @@ impl eframe::App for App {
 
 /// The window's renderer (egui-wgpu): eframe's defaults, with LightCraft's backend choice — DX12
 /// alone on Windows unless `LIGHTCRAFT_GPU_BACKEND` / `WGPU_BACKEND` say otherwise (issue #136:
-/// with Vulkan in the set, wgpu loads the Vulkan driver even when it then picks DX12).
+/// with Vulkan in the set, wgpu loads the Vulkan driver even when it then picks DX12) — and DX12
+/// shaders compiled with FXC, never a stray `dxcompiler.dll` (issue #471).
 fn window_wgpu_options() -> eframe::egui_wgpu::WgpuConfiguration {
     let mut c = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(n) = &mut c.wgpu_setup {
         n.instance_descriptor.backends = lightcraft_engine::gpu::backend::window_backends();
+        n.instance_descriptor.backend_options = lightcraft_engine::gpu::backend::backend_options();
     }
     c
 }
@@ -896,6 +905,16 @@ mod tests {
             }
         }
         assert!(!b.is_empty());
+    }
+
+    /// Issue #471: the window's DX12 shaders compile with FXC — wgpu's default loaded any
+    /// `dxcompiler.dll` on the search path, and one without `dxil.dll` kept the window from opening.
+    #[test]
+    fn window_compiles_dx12_shaders_with_fxc() {
+        let eframe::egui_wgpu::WgpuSetup::CreateNew(n) = window_wgpu_options().wgpu_setup else { panic!("expected CreateNew") };
+        if std::env::var_os("WGPU_DX12_COMPILER").is_none() {
+            assert!(matches!(n.instance_descriptor.backend_options.dx12.shader_compiler, eframe::wgpu::Dx12Compiler::Fxc));
+        }
     }
 
     /// Issue #234: Windows opens links with the URL protocol handler (the default browser), not
