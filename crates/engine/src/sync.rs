@@ -13,8 +13,10 @@
 //!   label, metadata, capture time or develop settings). Reading one makes the sidecar win, as
 //!   Read Metadata from File does. Embedded XMP in a raw is not a sidecar and is not looked at.
 //!
-//! [`synchronize`] then imports the new files (in place), moves the missing photos to Recently
-//! Deleted and reads the metadata updates — each only when chosen — as one undo step.
+//! [`synchronize`] then imports the new files (in place), relinks the moved photos, moves the
+//! missing photos to Recently Deleted and reads the metadata updates — each only when chosen — as
+//! one undo step. It runs in halves ([`SyncJob`]) so that, in the app, every file it reads is
+//! read on a worker thread and only the catalog changes happen on the UI thread.
 //!
 //! The scan runs without the session ([`SyncInput`] + [`scan_with`]), so the app can run it on a
 //! worker thread: a folder on a sleeping network share must never stall a frame.
