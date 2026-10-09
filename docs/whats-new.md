@@ -18,8 +18,9 @@
   album that is gone, or an empty group is reported with its rule ("rule 2.1: rating is 0–5, not 9")
   instead of quietly matching nothing or everything. New date rules start at the current year.
 - A smart album can include or exclude another smart album: "Keywords contain travel" and "Album isn't Excluded Photos"
-  leaves out whatever Excluded Photos matches, as its rules change. The album list offers smart albums under their own
-  heading; a rule that would make an album include itself is refused. Esc with a dropdown or calendar open in a dialog
+  leaves out whatever Excluded Photos matches, as its rules change. The album picker shows your albums as in the sidebar
+  (folders open on click) or finds them as you type part of a name or folder (↑ / ↓ and Enter to pick); albums that
+  can't be picked, such as one that would make an album include itself, are greyed with the reason. Esc with a dropdown or calendar open in a dialog
   closes just that.
 - Date rules have a calendar button: pick a day, a month or a whole year (Year / Month / Day), in your language; the
   two dates of a "between" can't be picked out of order; Esc closes just the calendar. It picks dates, not times (a
