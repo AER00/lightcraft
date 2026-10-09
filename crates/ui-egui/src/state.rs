@@ -677,13 +677,17 @@ pub enum Dialog {
         /// What the scan found (`None` while it runs).
         counts: Option<SyncCounts>,
         import_new: bool,
-        #[serde(default)]
+        #[serde(default = "yes")]
         relink_moved: bool,
         remove_missing: bool,
         read_metadata: bool,
     },
     About,
     Shortcuts,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// How many changes a Synchronize Folder scan found, by kind.

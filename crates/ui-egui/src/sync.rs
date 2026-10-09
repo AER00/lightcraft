@@ -173,13 +173,17 @@ pub fn confirm(app: &mut LightcraftApp, dlg: &Dialog) -> Result<Value, String> {
     );
     app.sync_owns_changes = false;
     if r.is_err() {
-        // (the folder changed since the scan, or went offline): look again, in the background
-        let (path, disk) = (path.clone(), *disk);
+        // (the folder changed since the scan, or went offline): look again, in the background,
+        // keeping what was ticked; the error is what is reported, not a failure to look again
         let name = match dlg {
             Dialog::SynchronizeFolder { name, .. } => name.clone(),
             _ => String::new(),
         };
-        open(app, &path, &name, disk)?;
+        if open(app, path, &name, *disk).is_ok()
+            && let Some(Dialog::SynchronizeFolder { import_new: i, relink_moved: l, remove_missing: m, read_metadata: x, .. }) = &mut app.ui.dialog
+        {
+            (*i, *l, *m, *x) = (*import_new, *relink_moved, *remove_missing, *read_metadata);
+        }
     }
     r
 }
