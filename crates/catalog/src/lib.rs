@@ -292,8 +292,18 @@ impl Catalog {
     /// without one after, by name), else by name.
     pub fn album_children(&self, parent: Option<AlbumId>) -> Vec<&Album> {
         let mut kids: Vec<&Album> = self.albums.values().filter(|a| a.parent == parent).collect();
-        kids.sort_by_cached_key(|a| (!a.folder, a.order.is_none(), a.order.unwrap_or(0), a.name.to_lowercase(), a.id));
+        kids.sort_by_cached_key(|a| album_order_key(a));
         kids
+    }
+    /// [`Self::album_children`] of every folder (and of the top level, under `None`) in one pass:
+    /// what a tree view that draws all of them wants each frame.
+    pub fn album_children_by_parent(&self) -> std::collections::HashMap<Option<AlbumId>, Vec<&Album>> {
+        let mut map: std::collections::HashMap<Option<AlbumId>, Vec<&Album>> = std::collections::HashMap::new();
+        for a in self.albums.values() {
+            map.entry(a.parent).or_default().push(a);
+        }
+        map.values_mut().for_each(|kids| kids.sort_by_cached_key(|a| album_order_key(a)));
+        map
     }
     /// Whether anything inside `parent` has a place of its own (the folder is ordered by hand).
     pub fn album_children_are_ordered(&self, parent: Option<AlbumId>) -> bool {
@@ -696,6 +706,12 @@ impl Catalog {
         s.push('\n');
         s
     }
+}
+
+/// How siblings are listed: folders first, then the ones with a place of their own by it, then by
+/// name; the id settles any tie.
+fn album_order_key(a: &Album) -> (bool, bool, u32, String, AlbumId) {
+    (!a.folder, a.order.is_none(), a.order.unwrap_or(0), a.name.to_lowercase(), a.id)
 }
 
 #[cfg(test)]

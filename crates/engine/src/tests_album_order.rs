@@ -37,8 +37,8 @@ fn an_album_is_placed_before_a_sibling_or_last() {
     assert_eq!(names(&s, None), ["A", "B", "C"]);
     reorder(&mut s, a, json!({})).unwrap();
     assert_eq!(names(&s, None), ["B", "C", "A"], "no `before`: last");
-    reorder(&mut s, b, json!({"before": b})).expect_err("not before itself");
-    let _ = (a, b);
+    assert_eq!(reorder(&mut s, b, json!({"before": b})).unwrap()["changed"], 0, "before itself is where it is");
+    assert_eq!(names(&s, None), ["B", "C", "A"]);
 }
 
 /// Folders stay ahead of albums: a folder is placed among folders, an album among albums.
@@ -72,6 +72,33 @@ fn placing_across_folders_moves_it_and_undoes_in_one_step() {
     assert_eq!(names(&s, Some(folder)), ["Y", "X"]);
     assert_eq!(s.catalog.album(AlbumId(loose)).unwrap().parent, None);
     assert_eq!(s.catalog.album(AlbumId(loose)).unwrap().order, None);
+}
+
+/// Undo and redo of placing across folders, of sorting, and of moving a folder that has children.
+#[test]
+fn placing_and_sorting_undo_and_redo() {
+    let mut s = Session::new();
+    let top = make(&mut s, "Top", None, true);
+    let child = make(&mut s, "Child", Some(top), false);
+    let (a, b) = (make(&mut s, "A", None, false), make(&mut s, "B", None, false));
+    reorder(&mut s, b, json!({"before": a})).unwrap();
+    // a folder with children, placed inside another folder
+    let other = make(&mut s, "Other", None, true);
+    reorder(&mut s, top, json!({"parent": other})).unwrap();
+    assert_eq!(names(&s, Some(other)), ["Top"]);
+    assert_eq!(names(&s, Some(top)), ["Child"], "its children came along");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.album(AlbumId(top)).unwrap().parent, None);
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.catalog.album(AlbumId(top)).unwrap().parent, Some(AlbumId(other)));
+    // sort, undo, redo
+    s.execute("album.sort", &json!({})).unwrap();
+    assert_eq!(names(&s, None), ["Other", "A", "B"]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(names(&s, None), ["Other", "B", "A"], "the hand order is back");
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(names(&s, None), ["Other", "A", "B"]);
+    assert_eq!(s.catalog.album(AlbumId(child)).unwrap().parent, Some(AlbumId(top)));
 }
 
 /// Bad requests change nothing: a `before` that is not in the target folder, a target that is not

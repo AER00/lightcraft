@@ -893,13 +893,17 @@ pub fn specs() -> Vec<CommandSpec> {
             "Reorder Album",
             [],
             None,
-            "{id, parent?: folderId|null, before?: albumId|null} — places the album (or folder) in `parent` (default: where it is; null: the top level) before the sibling `before` of the same kind, or last of its kind; the folder is then ordered by hand. One undo step. → {changed}",
+            "{id, parent?: folderId|null, before?: albumId|null} — places the album (or folder) in `parent` (default: where it is; null: the top level) before the sibling `before` of the same kind, or last of its kind; the folder is then ordered by hand. One undo step. → {changed}: how many edits it took (0: already there)",
             always,
             |s, p| {
                 let id = album_param(p, "id", "album.reorder")?;
                 let me = s.catalog.album(id).ok_or_else(|| bad("album.reorder", "no such album"))?;
                 let parent = if p.get("parent").is_some() { opt_album_param(p, "parent", "album.reorder")? } else { me.parent };
                 let before = opt_album_param(p, "before", "album.reorder")?;
+                if before == Some(id) {
+                    // before itself: where it is
+                    return Ok(json!({"changed": 0}));
+                }
                 let mut order: Vec<AlbumId> = s.catalog.album_children(parent).into_iter().filter(|a| a.id != id).map(|a| a.id).collect();
                 let at = match before {
                     Some(b) => {
@@ -939,7 +943,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Sort Albums by Name",
             [],
             None,
-            "{parent?: folderId|null} — drops the hand order of the albums inside the folder (default: the top level), so they are listed by name → {changed}",
+            "{parent?: folderId|null} — drops the hand order of the albums inside the folder (default: the top level), so they are listed by name → {changed}: how many albums lost their place",
             always,
             |s, p| {
                 let parent = opt_album_param(p, "parent", "album.sort")?;

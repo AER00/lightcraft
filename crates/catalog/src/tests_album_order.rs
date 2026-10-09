@@ -57,6 +57,26 @@ fn ordered_children_follow_their_order() {
     assert_eq!(names(&c, Some(f)), ["Z", "Y"]);
 }
 
+/// The one-pass map lists every folder's children exactly as `album_children` does.
+#[test]
+fn the_children_map_matches_the_children_of_each_folder() {
+    let mut c = Catalog::new();
+    let f = add(&mut c, "F", None, true);
+    let g = add(&mut c, "G", Some(f), true);
+    for (name, parent) in [("b", None), ("a", None), ("y", Some(f)), ("x", Some(f)), ("q", Some(g))] {
+        add(&mut c, name, parent, false);
+    }
+    let x = c.albums().find(|a| a.name == "x").unwrap().id;
+    place(&mut c, x, Some(7));
+    let map = c.album_children_by_parent();
+    for parent in [None, Some(f), Some(g)] {
+        let from_map: Vec<AlbumId> = map.get(&parent).map(|v| v.iter().map(|a| a.id).collect()).unwrap_or_default();
+        let direct: Vec<AlbumId> = c.album_children(parent).iter().map(|a| a.id).collect();
+        assert_eq!(from_map, direct, "{parent:?}");
+    }
+    assert!(map.get(&Some(AlbumId(999))).is_none());
+}
+
 /// A place is one undo step, and `None` puts the album back among the alphabetical ones.
 #[test]
 fn a_place_can_be_set_cleared_and_undone() {
