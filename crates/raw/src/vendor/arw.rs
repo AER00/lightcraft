@@ -412,11 +412,10 @@ fn sr2_black_levels(cipher: &[u8], order: lightcraft_tiff::ByteOrder) -> Option<
     (levels.len() == 4 && (64..=4096).contains(&lo) && hi - lo <= 64).then(|| levels.iter().map(|&v| f32::from(v)).sum::<f32>() / 4.0)
 }
 
-/// The image area for files without Sony's crop tags (`0x74c7/0x74c8`, written since about 2017): the DNG-style
-/// default crop when the raw IFD has one, else the maker note's `FullImageSize` (the camera JPEG's size) anchored
-/// at the top-left. Older bodies store a few columns of padding at the right edge of the raw frame (constant
-/// values, 8–32 columns on the samples we checked) inside a frame 16–48 pixels wider than `FullImageSize`, so
-/// the anchored crop removes them while keeping the CFA phase.
+/// The image area: prefer the standard `DefaultCropOrigin` / `DefaultCropSize`, then Sony's
+/// crop tags (`0x74c7/0x74c8`), then a plausible maker-note `FullImageSize` anchored at the top-left,
+/// otherwise the full raw frame. Older bodies store a few padding columns at the right edge;
+/// the anchored fallback removes those while keeping the CFA phase. All crops are clipped to the frame.
 fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, w: usize, h: usize) -> Rect {
     let full = Rect::new(0, 0, w, h);
     if let (Some([x, y]), Some([cw, ch])) = (raw.u64s(t::DEFAULT_CROP_ORIGIN).as_deref(), raw.u64s(t::DEFAULT_CROP_SIZE).as_deref())
@@ -563,7 +562,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         wb_multipliers: if linear_rgb { Some([1.0; 3]) } else { wb },
         linearized: false,
         opcodes: OpcodeLists {
-            list3: if linear_rgb { Vec::new() } else { super::arw_lens::distortion(raw, Rect::new(0, 0, w, h), crop).into_iter().collect() },
+            list3: if linear_rgb { Vec::new() } else { super::arw_lens::distortion(&model, raw, Rect::new(0, 0, w, h), crop).into_iter().collect() },
             ..Default::default()
         },
         metadata,

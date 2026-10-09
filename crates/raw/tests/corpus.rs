@@ -610,3 +610,38 @@ fn corpus_raws_keep_their_container_and_are_not_thumbnail_shells() {
     }
     eprintln!("{checked} corpus raws keep their container");
 }
+
+/// Matching Sony table dimensions are not evidence of a shared correction model. Exercise the
+/// actual corpus headers and decoded files as well as the synthetic model-boundary unit tests.
+#[test]
+fn sony_embedded_distortion_is_limited_to_validated_models() {
+    let root = corpus_root().join("raw");
+    let mut checked = 0;
+    for (name, model, expected) in [
+        ("arw-sony-a7rm4a-compressed.arw", "ILCE-7RM4A", 1),
+        ("arw-sony-a9m2-compressed.arw", "ILCE-9M2", 0),
+        ("arw-sony-a7m3-compressed.arw", "ILCE-7M3", 0),
+        ("arw-sony-a7m3-uncompressed.arw", "ILCE-7M3", 0),
+        ("arw-sony-a7m4-14bit.arw", "ILCE-7M4", 0),
+        ("arw-sony-a7m4-lossless-l.arw", "ILCE-7M4", 0),
+        ("arw-sony-a7m4-lossless-m.arw", "ILCE-7M4", 0),
+        ("arw-sony-a7m4-lossless-s.arw", "ILCE-7M4", 0),
+        ("arw-sony-a7rm2-12bit-uncompressed.arw", "ILCE-7RM2", 0),
+        ("arw-sony-rx100.arw", "DSC-RX100", 0),
+        ("arw-sony-rx100m3.arw", "DSC-RX100M3", 0),
+    ] {
+        let path = root.join(name);
+        if !path.exists() {
+            eprintln!("skip: {} absent", path.display());
+            continue;
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        let full = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(probe_info(&bytes).unwrap(), full.info(), "{name}");
+        assert_eq!(full.metadata.model.as_deref(), Some(model), "{name}");
+        assert_eq!(full.opcodes.list3.len(), expected, "{name}: only the validated Sony model gets a distortion warp");
+        eprintln!("{name}: {expected} warp(s); header and full decode agree");
+        checked += 1;
+    }
+    eprintln!("Sony distortion model boundary: {checked} corpus files checked");
+}

@@ -1,11 +1,13 @@
 # Sony embedded distortion corrections
 
-LightCraft reads the signed 16-sample distortion table in the raw image IFD (`0x7037`) of Sony ARWs.
+LightCraft reads the signed 16-sample distortion table in the raw image IFD (`0x7037`) of
+Sony **ILCE-7RM4A (A7R IVA)** Bayer ARWs. Other camera models are deliberately left uncorrected,
+even when they contain a table with the same layout.
 It converts that table into `OpcodeList3` / `WarpRectilinear`, so the existing profile correction control,
 CPU/GPU optics path, EXIF orientation handling, and DNG export use the same correction.
 
 This adds **distortion only**. Sony vignetting and lateral chromatic-aberration tables are not decoded.
-The tested files are Bayer ARWs from the ILCE-7RM4A with the FE 24–105mm F4 G OSS and
+The enabled and independently validated model is ILCE-7RM4A with the FE 24–105mm F4 G OSS and
 FE 200–600mm F5.6–6.3 G OSS. Linear YCbCr ARWs and non-3:2 camera crops are excluded pending validation. An aspect crop may
 retain the full-frame radial normalization; the decoder does not guess that relationship. Older files that carry
 only encrypted correction metadata, different table lengths, and rejected tables remain uncorrected.
@@ -70,3 +72,42 @@ source has loaded, enable lens corrections if they were previously disabled.
 Tests cover signedness/length rejection, zero and malformed tables, independent 600 mm reference
 geometry, barrel framing, offset crop normalization, both TIFF byte orders, header/full consistency,
 and preservation through DNG export. No private photographs or reference TIFFs are committed.
+
+## Camera coverage and regression boundary
+
+The model check is exact: `ILCE-7RM4` (A7R IV without the A suffix), `ILCE-7M3`, unknown/missing
+model names, and every other model remain unsupported by this distortion decoder. Matching tag
+numbers and table lengths do not establish the scale, interpolation or crop normalization on another
+body. Support can expand after independent geometry validation; do not add model-name prefix matching.
+
+The original nine Sony samples listed by `cargo xtask corpus --download` were downloaded from its
+CC0 URLs. The manifest now also includes CC0 samples 4822 (A7R IVA / 24–105 mm) and 3989
+(A9 II / 200–600 mm), with their SHA-256 hashes recorded alongside the URLs. All eleven files
+are checked with `sony_embedded_distortion_is_limited_to_validated_models`:
+
+| Camera | Corpus samples | Raw-IFD table observed | Expected correction |
+|---|---|---|---|
+| ILCE-7RM4A | Compressed (4822) | 16 samples | One distortion warp |
+| ILCE-9M2 | Compressed (3989) | 16 samples | None |
+| ILCE-7M3 | Compressed, uncompressed | 16 samples | None |
+| ILCE-7M4 | 14-bit, lossless L/M/S | 11 samples in the 14-bit file; 16 in L/M/S | None |
+| ILCE-7RM2 | 12-bit uncompressed | 16 samples | None |
+| DSC-RX100 | One | No raw-IFD table | None |
+| DSC-RX100M3 | One | 11 samples | None |
+
+These are **model-boundary regression checks, not new geometric validation of those models**. In particular,
+refusing the A7 III tables resolves the unverified corner warp identified in review. The lossless M/S
+files are linear YCbCr and remain excluded independently of the model check. Header and full decode
+must agree for every sample. Synthetic tests also verify both TIFF byte orders, exact model matching,
+standard crop precedence, and that DNG export preserves an accepted warp without adding one to rejected
+models. The existing independent Sony geometry tests continue to cover the enabled A7R IVA path.
+Re-exporting the 24, 200 and 600 mm reference files after the model restriction produced byte-identical
+corrected PNGs to the earlier validated exports. Isolated headless app checks showed the A7R IVA profile
+controls present and the A7 III profile controls absent, with no notices and completed RAW renders.
+
+Before enabling another body, compare corrected and uncorrected renders against independent references
+across multiple lenses/focal lengths and photographs with features near the edges and corners. Record
+residuals and spatial coverage, and check crop/aspect and compression variants. Embedded JPEGs are
+useful when the camera actually applied distortion correction; an Off JPEG cannot certify an On warp.
+Prefer same-renderer Sony On/Off exports when the camera setting or geometry is ambiguous. Table-fit
+error alone only checks our polynomial approximation, not whether the table's interpretation is correct.

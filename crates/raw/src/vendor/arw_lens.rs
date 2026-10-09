@@ -11,9 +11,15 @@ const DISTORTION: u16 = 0x7037;
 const SAMPLES: usize = 1024;
 const MAX_ERROR: f64 = 0.0005;
 
-/// The 16-entry layout only. Unknown layouts and implausible/non-smooth maps are left uncorrected.
+/// Only independently validated camera models and the 16-entry layout. Unknown models/layouts
+/// and implausible/non-smooth maps are left uncorrected. See docs/sony-lens-corrections.md.
 /// A camera setting of Off does not remove the lens data: the user can enable it in the developer.
-pub(super) fn distortion(ifd: &Ifd, active: Rect, crop: Rect) -> Option<Opcode> {
+pub(super) fn distortion(model: &str, ifd: &Ifd, active: Rect, crop: Rect) -> Option<Opcode> {
+    // A matching table shape does not establish its scale or radial normalization on another body.
+    // Keep this exact: ILCE-7RM4 and ILCE-7RM4A are distinct models, not interchangeable aliases.
+    if model != "ILCE-7RM4A" {
+        return None;
+    }
     let Value::SShort(values) = &ifd.get(DISTORTION)?.value else { return None };
     let [16, table @ ..] = values.as_slice() else { return None };
     let table: &[i16; 16] = table.try_into().ok()?;
@@ -131,7 +137,7 @@ mod tests {
     #[test]
     fn matches_independent_sony_reference_geometry() {
         // On/off feature correspondences from Imaging Edge 4.1 at 600 mm, independently fitted.
-        let Opcode::WarpRectilinear { planes, center } = distortion(&table(&TELE), AREA, AREA).unwrap() else { panic!("warp") };
+        let Opcode::WarpRectilinear { planes, center } = distortion("ILCE-7RM4A", &table(&TELE), AREA, AREA).unwrap() else { panic!("warp") };
         assert_eq!(center, [0.5, 0.5]);
         let reference = [0.9760159044, 0.0254891644, -0.0005984764, -0.0010120638];
         for i in 0..=100 {
@@ -145,8 +151,8 @@ mod tests {
     fn barrel_framing_and_offset_crop_keep_the_same_geometry() {
         let crop = Rect::new(32, 20, 9504, 6336);
         let active = Rect::new(0, 0, 9600, 6376);
-        let Opcode::WarpRectilinear { planes: a, .. } = distortion(&table(&WIDE), AREA, AREA).unwrap() else { panic!("warp") };
-        let Opcode::WarpRectilinear { planes: b, center } = distortion(&table(&WIDE), active, crop).unwrap() else { panic!("warp") };
+        let Opcode::WarpRectilinear { planes: a, .. } = distortion("ILCE-7RM4A", &table(&WIDE), AREA, AREA).unwrap() else { panic!("warp") };
+        let Opcode::WarpRectilinear { planes: b, center } = distortion("ILCE-7RM4A", &table(&WIDE), active, crop).unwrap() else { panic!("warp") };
         assert!(a[0][0] > 1.02 && a[0][0] < 1.03, "barrel correction expands the middle");
         assert!((center[0] * 9599.0 - 4783.5).abs() < 1e-10);
         assert!((center[1] * 6375.0 - 3187.5).abs() < 1e-10);
@@ -169,41 +175,52 @@ mod tests {
             ifd(Value::Short(vec![16; 17])),
             ifd(Value::Double(vec![f64::NAN; 17])),
         ] {
-            assert!(distortion(&bad, AREA, AREA).is_none());
+            assert!(distortion("ILCE-7RM4A", &bad, AREA, AREA).is_none());
         }
-        assert!(distortion(&table(&TELE), Rect::new(0, 0, 1, 1), AREA).is_none());
-        assert!(distortion(&table(&TELE), AREA, Rect::new(0, 0, 9504, 5346)).is_none());
-        assert!(distortion(&table(&TELE), AREA, Rect::new(99999, 0, 10, 10)).is_none());
+        assert!(distortion("ILCE-7RM4A", &table(&TELE), Rect::new(0, 0, 1, 1), AREA).is_none());
+        assert!(distortion("ILCE-7RM4A", &table(&TELE), AREA, Rect::new(0, 0, 9504, 5346)).is_none());
+        assert!(distortion("ILCE-7RM4A", &table(&TELE), AREA, Rect::new(99999, 0, 10, 10)).is_none());
     }
+    #[test]
+    fn refuses_unvalidated_models_even_with_a_valid_table() {
+        let valid = table(&TELE);
+        assert!(distortion("ILCE-7RM4A", &valid, AREA, AREA).is_some());
+        for model in ["", "ILCE-7M3", "ILCE-7M4", "ILCE-7RM4", "ILCE-7RM5", "ILCE-9M2", "DSC-RX100M3", "ILCE-7RM4A unknown"] {
+            assert!(distortion(model, &valid, AREA, AREA).is_none(), "{model}");
+        }
+    }
+
     #[test]
     fn header_and_full_decode_preserve_correction_through_dng() {
         use lightcraft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, tags as t};
-        for order in [ByteOrder::Little, ByteOrder::Big] {
-            let mut raw = IfdBuilder::new();
-            raw.set(t::MAKE, Value::Ascii("SONY".into()));
-            raw.set(t::MODEL, Value::Ascii("synthetic correction test".into()));
-            raw.set(t::IMAGE_WIDTH, Value::Long(vec![32]));
-            raw.set(t::IMAGE_LENGTH, Value::Long(vec![24]));
-            raw.set(t::BITS_PER_SAMPLE, Value::Short(vec![16]));
-            raw.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
-            raw.set(t::PHOTOMETRIC, Value::Short(vec![t::photometric::CFA]));
-            raw.set(t::COMPRESSION, Value::Short(vec![1]));
-            raw.set(t::WHITE_LEVEL, Value::Long(vec![16383]));
-            raw.set(0x74c7, Value::Long(vec![0, 2]));
-            raw.set(t::DEFAULT_CROP_ORIGIN, Value::Long(vec![2, 2]));
-            raw.set(t::DEFAULT_CROP_SIZE, Value::Long(vec![30, 20]));
-            raw.set(0x74c8, Value::Long(vec![30, 20]));
-            raw.set(DISTORTION, Value::SShort(std::iter::once(16).chain(TELE).collect()));
-            // Zero pixels have the same byte representation in both orders.
-            raw.set_image(ImageData::Strips { rows_per_strip: 24, strips: vec![vec![0; 32 * 24 * 2]] });
-            let file = TiffWriter { order, ..Default::default() }.write(&[raw]).unwrap();
-            let header = super::super::arw::decode(&file, crate::Mode::Header).unwrap();
-            let full = super::super::arw::decode(&file, crate::Mode::Full).unwrap();
-            assert_eq!(header.info(), full.info());
-            assert_eq!(full.opcodes.list3.len(), 1);
-            assert_eq!(full.crop, Rect::new(2, 2, 30, 20));
-            let dng = crate::write_dng(&full, &Default::default()).unwrap();
-            assert_eq!(crate::decode(&dng).unwrap().opcodes.list3, full.opcodes.list3);
+        for (model, expected) in [("ILCE-7RM4A", 1), ("ILCE-7RM4", 0), ("ILCE-7M3", 0), ("", 0)] {
+            for order in [ByteOrder::Little, ByteOrder::Big] {
+                let mut raw = IfdBuilder::new();
+                raw.set(t::MAKE, Value::Ascii("SONY".into()));
+                raw.set(t::MODEL, Value::Ascii(model.into()));
+                raw.set(t::IMAGE_WIDTH, Value::Long(vec![32]));
+                raw.set(t::IMAGE_LENGTH, Value::Long(vec![24]));
+                raw.set(t::BITS_PER_SAMPLE, Value::Short(vec![16]));
+                raw.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
+                raw.set(t::PHOTOMETRIC, Value::Short(vec![t::photometric::CFA]));
+                raw.set(t::COMPRESSION, Value::Short(vec![1]));
+                raw.set(t::WHITE_LEVEL, Value::Long(vec![16383]));
+                raw.set(0x74c7, Value::Long(vec![0, 2]));
+                raw.set(t::DEFAULT_CROP_ORIGIN, Value::Long(vec![2, 2]));
+                raw.set(t::DEFAULT_CROP_SIZE, Value::Long(vec![30, 20]));
+                raw.set(0x74c8, Value::Long(vec![30, 20]));
+                raw.set(DISTORTION, Value::SShort(std::iter::once(16).chain(TELE).collect()));
+                // Zero pixels have the same byte representation in both orders.
+                raw.set_image(ImageData::Strips { rows_per_strip: 24, strips: vec![vec![0; 32 * 24 * 2]] });
+                let file = TiffWriter { order, ..Default::default() }.write(&[raw]).unwrap();
+                let header = super::super::arw::decode(&file, crate::Mode::Header).unwrap();
+                let full = super::super::arw::decode(&file, crate::Mode::Full).unwrap();
+                assert_eq!(header.info(), full.info());
+                assert_eq!(full.opcodes.list3.len(), expected, "{model} {order:?}");
+                assert_eq!(full.crop, Rect::new(2, 2, 30, 20));
+                let dng = crate::write_dng(&full, &Default::default()).unwrap();
+                assert_eq!(crate::decode(&dng).unwrap().opcodes.list3, full.opcodes.list3);
+            }
         }
     }
 }
