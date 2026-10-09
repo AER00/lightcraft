@@ -674,6 +674,8 @@ pub struct RenderJob {
     pub stages: Option<Arc<StageCache>>,
     /// Keep a full-quality result here as the photo's view preview ([`crate::Session::loupe_job`]).
     pub view_cache: Option<(Arc<PreviewCache>, Hash128)>,
+    /// Render for this monitor profile ([`Self::with_display`]).
+    pub display: Option<Arc<crate::display::Display>>,
 }
 
 pub struct RenderResult {
@@ -687,6 +689,9 @@ pub struct RenderResult {
     pub loaded: Option<DecodedSource>,
     /// Set for a [`QuickJob`]'s stand-in: where the image came from.
     pub quick: Option<QuickSource>,
+    /// The display profile (id) the image is encoded for; `None`: sRGB (see
+    /// [`crate::display::present`]).
+    pub display: Option<u64>,
 }
 
 impl RenderJob {
@@ -734,6 +739,21 @@ impl RenderJob {
         self
     }
 
+    /// Render for a monitor profile: into the display's primaries (its gamut, not sRGB's), ready
+    /// to show ([`RenderResult::display`]). The histogram and the cached view preview stay sRGB.
+    /// Gets its own result key. Thumbnail jobs (rendered-thumbnail cache) are left as they are:
+    /// [`crate::display::present`] converts their sRGB results.
+    pub fn with_display(mut self, display: Option<Arc<crate::display::Display>>) -> Self {
+        if self.cache.is_some() || self.request.depth != lightcraft_pipeline::OutputDepth::U8 {
+            return self;
+        }
+        let k = |d: &Option<Arc<crate::display::Display>>| d.as_ref().map_or(0, |d| d.id()).wrapping_mul(0xd6e8_feb8_6659_fd93);
+        self.key ^= k(&self.display) ^ k(&display);
+        self.request.display = display.as_ref().map(|d| d.space);
+        self.display = display;
+        self
+    }
+
     pub fn run(self) -> RenderResult {
         if let Some((cache, key)) = &self.cache
             && let Some(img) = cache.get_at(self.cache_generation, *key)
@@ -749,6 +769,7 @@ impl RenderJob {
                 rendered: Ok(Rendered { image, histogram, deep: None }),
                 loaded: None,
                 quick: None,
+                display: None,
             };
         }
         let was_loaded = matches!(self.source, SourceRef::Loaded(_));
@@ -760,14 +781,30 @@ impl RenderJob {
                 // Thumbnails (many small jobs side by side) stay on the CPU; views and exports use
                 // the GPU when there is one.
                 let gpu = self.cache.is_none();
-                let rendered = develop(src, &info, &self.settings, &self.request, self.stages.as_deref(), gpu);
+                let mut rendered = develop(src, &info, &self.settings, &self.request, self.stages.as_deref(), gpu);
+                // for a display profile: the image goes to the display's values, the histogram
+                // and the cached view preview stay sRGB
+                let mut srgb = None;
+                let display = match (&self.display, self.request.display) {
+                    (Some(d), Some(_)) => {
+                        let keep = self.view_cache.is_some() && self.request.quality == Quality::Full;
+                        let (s, h) = crate::display::finish_render(&mut rendered.image, d, keep);
+                        if let Some(h) = h {
+                            rendered.histogram = h;
+                        }
+                        srgb = s;
+                        Some(d.id())
+                    }
+                    _ => None,
+                };
                 if let Some((cache, key)) = &self.cache {
                     cache.put_at(self.cache_generation, *key, Arc::new(rendered.image.clone()));
                 }
                 if let Some((cache, key)) = &self.view_cache
                     && self.request.quality == Quality::Full
+                    && (display.is_none() || srgb.is_some())
                 {
-                    cache.put_deferred_at(self.cache_generation, *key, Arc::new(rendered.image.clone()));
+                    cache.put_deferred_at(self.cache_generation, *key, Arc::new(srgb.unwrap_or_else(|| rendered.image.clone())));
                 }
                 RenderResult {
                     request_id: self.request_id,
@@ -778,6 +815,7 @@ impl RenderJob {
                     rendered: Ok(rendered),
                     loaded: (!was_loaded).then_some(source),
                     quick: None,
+                    display,
                 }
             }
             Err(e) => RenderResult {
@@ -789,6 +827,7 @@ impl RenderJob {
                 rendered: Err(e),
                 loaded: None,
                 quick: None,
+                display: None,
             },
         }
     }
@@ -853,6 +892,7 @@ impl QuickJob {
             rendered,
             loaded: None,
             quick,
+            display: None,
         };
         let rendered = |image: Rgba8| {
             let histogram = Histogram::of_srgb8(&image);
@@ -972,6 +1012,7 @@ impl crate::Session {
             cache,
             stages: None,
             view_cache: None,
+            display: None,
         })
     }
 
@@ -1022,6 +1063,7 @@ impl crate::Session {
             cache: Some((self.media.rendered.clone(), ck)),
             stages: None,
             view_cache: None,
+            display: None,
         })
     }
 
@@ -1067,6 +1109,7 @@ impl crate::Session {
             cache: Some((self.media.rendered.clone(), ck)),
             stages: None,
             view_cache: None,
+            display: None,
         })
     }
 

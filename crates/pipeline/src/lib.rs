@@ -43,7 +43,7 @@ pub mod transform;
 pub mod upright;
 pub mod visualize;
 
-pub use output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc, Proof};
+pub use output::{DeepImage, DeepSamples, DisplaySpace, OutputDepth, OutputSpace, OutputTrc, Proof};
 pub use visualize::{MaskView, Overlay};
 
 use lightcraft_develop::{DevelopSettings, Treatment};
@@ -132,6 +132,9 @@ pub struct RenderRequest {
     /// Render only this window of the output that `max_w × max_h` describes (a zoomed view):
     /// the result is that window's pixels, as in the whole render. See [`PixelWindow`].
     pub window: Option<PixelWindow>,
+    /// Previews for a monitor with a display profile: render 8-bit into its primaries instead of
+    /// `space` (see [`DisplaySpace`]; ignored by deep renders).
+    pub display: Option<DisplaySpace>,
 }
 
 /// A window of the (virtual) full output, in its pixels: what a zoomed view needs, rendered
@@ -168,6 +171,7 @@ impl RenderRequest {
             depth: OutputDepth::U8,
             proof: None,
             window: None,
+            display: None,
         }
     }
 }
@@ -525,7 +529,7 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         lap("finish (deep)", &mut t);
         return Rendered { image, histogram, deep: Some(deep) };
     }
-    let image = finish::finish(&prep, s, frame, info, req.space, req.proof);
+    let image = finish::finish(&prep, s, frame, info, req.space, req.display.as_ref(), req.proof);
     lap("finish", &mut t);
     let cut = |i: &Rgba8| match plan.keep {
         Some(k) => i.crop(k.x, k.y, k.w, k.h),

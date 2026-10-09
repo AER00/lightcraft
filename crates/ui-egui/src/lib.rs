@@ -115,6 +115,8 @@ pub struct Services {
     pub pick_preset_files: Option<PickFiles>,
     /// Open dialog for a GPS track log (`.gpx`; Photo ▸ Auto-Tag from Tracklog…).
     pub pick_tracklog: Option<PickFiles>,
+    /// Open dialog for a monitor ICC profile (`.icc` / `.icm`; Settings ▸ Display; desktop only).
+    pub pick_display_profile: Option<PickFiles>,
     /// Save dialog for an exported `.lcpreset` file.
     pub save_preset_file: Option<SaveFile>,
     /// Open dialog for point-curve preset files (`.lccurve`).
@@ -259,6 +261,10 @@ pub struct LightcraftApp {
     gpu_applied: Option<bool>,
     /// The memory budget setting last applied (MB, 0 = automatic).
     memory_applied: Option<u32>,
+    /// The display profile setting last applied (`app.displayProfile`).
+    pub(crate) display_applied: Option<String>,
+    /// Why the display profile setting could not be applied (shown in Settings ▸ Display).
+    pub display_error: Option<String>,
     /// The library failed to open at launch: the blocking window, then the temporary-session
     /// banner (issue #100). Cleared once a library opens.
     pub library_problem: Option<panels::library_problem::LibraryProblem>,
@@ -320,6 +326,8 @@ impl LightcraftApp {
             window_is_fullscreen: false,
             gpu_applied: None,
             memory_applied: None,
+            display_applied: None,
+            display_error: None,
             library_problem: None,
             model_setup: Default::default(),
         }
@@ -837,6 +845,24 @@ impl LightcraftApp {
             let _ = self.session.execute("app.memoryBudget", &serde_json::json!({"mb": mb}));
         }
         self.memory_applied = Some(mb);
+        // the monitor profile (Settings ▸ Display): previews follow it from the next frame
+        if self.display_applied.as_ref() != Some(&self.ui.settings.display_profile) {
+            let path = self.ui.settings.display_profile.clone();
+            match lightcraft_engine::display::Display::load_opt(&path) {
+                Ok(d) => {
+                    self.renderer.set_display(d);
+                    self.display_error = None;
+                }
+                Err(msg) => {
+                    // a profile that can't be used: previews are sRGB, the setting is kept
+                    self.renderer.set_display(None);
+                    log::warn!("display profile: {msg}");
+                    self.toast_error(ctx, format!("{}: {msg}", crate::i18n::tr("Display profile not used")));
+                    self.display_error = Some(msg);
+                }
+            }
+            self.display_applied = Some(path);
+        }
         if let Some(fs) = ctx.input(|i| i.viewport().fullscreen) {
             self.window_is_fullscreen = fs;
         }

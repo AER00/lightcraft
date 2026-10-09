@@ -156,6 +156,9 @@ pub struct AppSettings {
     pub grid_badges: GridBadges,
     /// Shortcuts the user changed (Help ▸ Keyboard Shortcuts): command id → shortcut, `""` = none.
     pub keymap: crate::shortcuts::Keymap,
+    /// The monitor's ICC profile previews are shown through (`app.displayProfile`; "" = none:
+    /// the display is treated as sRGB).
+    pub display_profile: String,
 }
 
 impl Default for AppSettings {
@@ -172,6 +175,7 @@ impl Default for AppSettings {
             film_badges: true,
             grid_badges: GridBadges::Auto,
             keymap: Default::default(),
+            display_profile: String::new(),
         }
     }
 }

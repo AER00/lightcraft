@@ -1371,6 +1371,7 @@ impl Session {
             cache: None,
             stages: None,
             view_cache: None,
+            display: None,
         };
         let embedded = match (&self.media.preview_loader, c.kind) {
             (Some(l), MediaKind::Raw) => Some((c.path.clone(), l.clone(), edge)),
