@@ -819,8 +819,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"id": id.0, "count": s.catalog.album_count(id)}))
             }
         ),
-        cmd!(query "album.ruleFields", "Smart Album Rule Fields", [], None, "{} → [{field, label, kind, ops: [{op, label}], choices?}] for ruleSet rules", always, |_, _| {
-            use lightcraft_catalog::rules::{FIELDS, Kind, ops_for};
+        cmd!(query "album.ruleFields", "Smart Album Rule Fields", [], None, "{} → [{field, label, kind, group (field-menu submenu, null at the top level), ops: [{op, label}], choices?}] for ruleSet rules, in menu order", always, |_, _| {
+            use lightcraft_catalog::rules::{FIELDS, Kind, field_group, ops_for};
             Ok(json!(FIELDS
                 .iter()
                 .map(|(id, label, kind)| {
@@ -832,7 +832,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         Kind::Choice(_) => "choice",
                         Kind::Bool => "bool",
                     };
-                    let mut v = json!({"field": id, "label": label, "kind": k, "ops": ops_for(*kind).iter().map(|(o, l)| json!({"op": o, "label": l})).collect::<Vec<_>>()});
+                    let mut v = json!({"field": id, "label": label, "kind": k, "group": field_group(id), "ops": ops_for(*kind).iter().map(|(o, l)| json!({"op": o, "label": l})).collect::<Vec<_>>()});
                     if let Kind::Choice(c) = kind {
                         v["choices"] = json!(c);
                     }

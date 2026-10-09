@@ -252,6 +252,10 @@ fn smart_album_rule_sets() {
     s.clock = Box::new(|| "2026-10-02T12:00:00".to_string());
     let fields = s.execute("album.ruleFields", &serde_json::json!({})).unwrap();
     assert!(fields.as_array().unwrap().iter().any(|f| f["field"] == "keywords" && f["ops"].as_array().unwrap().len() > 3));
+    // each field names its field-menu group (null at the top level)
+    let group = |id: &str| fields.as_array().unwrap().iter().find(|f| f["field"] == id).map(|f| f["group"].clone());
+    assert_eq!(group("filePath"), Some(serde_json::json!("File")));
+    assert_eq!(group("rating"), Some(serde_json::Value::Null));
     let bad = s.execute(
         "album.createSmart",
         &serde_json::json!({"name": "Bad", "rules": {"ruleSet": {"rules": [{"field": "rating", "op": "contains", "value": 1}]}}}),

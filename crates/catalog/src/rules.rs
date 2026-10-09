@@ -52,39 +52,78 @@ pub enum Kind {
     Bool,
 }
 
-/// The fields rules can test: (id, label, kind).
+/// The fields rules can test: (id, label, kind), in field-menu order ([`TOP_LEVEL_FIELDS`], then
+/// each of [`FIELD_GROUPS`]).
 pub const FIELDS: &[(&str, &str, Kind)] = &[
     ("rating", "Rating", Kind::Number),
     ("flag", "Pick Flag", Kind::Choice(&["pick", "reject", "none"])),
     ("label", "Color Label", Kind::Choice(&["red", "yellow", "green", "blue", "purple", "none"])),
-    ("kind", "File Type", Kind::Choice(&["image", "raw", "video"])),
-    ("edited", "Has Edits", Kind::Bool),
-    ("keywords", "Keywords", Kind::Keywords),
     ("text", "Any Searchable Text", Kind::Text),
+    // Source
+    ("album", "Album", Kind::Number),
+    ("virtualCopy", "Virtual Copy", Kind::Bool),
+    // File
     ("fileName", "Filename", Kind::Text),
     ("filePath", "File Path", Kind::Text),
+    ("kind", "File Type", Kind::Choice(&["image", "raw", "video"])),
     ("format", "File Format", Kind::Text),
-    ("title", "Title", Kind::Text),
-    ("caption", "Caption", Kind::Text),
-    ("camera", "Camera", Kind::Text),
-    ("lens", "Lens", Kind::Text),
-    ("location", "Location", Kind::Text),
-    ("creator", "Creator", Kind::Text),
-    ("copyright", "Copyright", Kind::Text),
-    ("copyrightStatus", "Copyright Status", Kind::Choice(&["copyrighted", "publicDomain", "unknown"])),
+    // Date
     ("captureDate", "Capture Date", Kind::Date),
     ("importDate", "Import Date", Kind::Date),
     ("editDate", "Edit Date", Kind::Date),
-    ("iso", "ISO Speed", Kind::Number),
-    ("aperture", "Aperture", Kind::Number),
+    // Keywords & People
+    ("keywords", "Keywords", Kind::Keywords),
+    // Description
+    ("title", "Title", Kind::Text),
+    ("caption", "Caption", Kind::Text),
+    ("creator", "Creator", Kind::Text),
+    ("copyright", "Copyright", Kind::Text),
+    ("copyrightStatus", "Copyright Status", Kind::Choice(&["copyrighted", "publicDomain", "unknown"])),
+    // Camera Info
+    ("camera", "Camera", Kind::Text),
+    ("lens", "Lens", Kind::Text),
     ("focalLength", "Focal Length", Kind::Number),
-    ("megapixels", "Megapixels", Kind::Number),
+    ("aperture", "Aperture", Kind::Number),
+    ("iso", "ISO Speed", Kind::Number),
+    // Location
+    ("location", "Location", Kind::Text),
     ("hasGps", "Has GPS", Kind::Bool),
-    ("virtualCopy", "Virtual Copy", Kind::Bool),
-    ("album", "Album", Kind::Number),
+    // Size
+    ("megapixels", "Megapixels", Kind::Number),
+    // Develop
+    ("edited", "Has Edits", Kind::Bool),
+    // Assisted Culling
     ("sharpness", "Focus (assisted culling)", Kind::Number),
     ("bestOfGroup", "Best of Similar Shots", Kind::Bool),
 ];
+
+/// The fields the field menu shows at its top level, before the groups.
+pub const TOP_LEVEL_FIELDS: &[&str] = &["rating", "flag", "label", "text"];
+
+/// The field menu's submenus: (label, fields), in order. Every field of [`FIELDS`] is either here
+/// once or in [`TOP_LEVEL_FIELDS`].
+pub const FIELD_GROUPS: &[(&str, &[&str])] = &[
+    ("Source", &["album", "virtualCopy"]),
+    ("File", &["fileName", "filePath", "kind", "format"]),
+    ("Date", &["captureDate", "importDate", "editDate"]),
+    ("Keywords & People", &["keywords"]),
+    ("Description", &["title", "caption", "creator", "copyright", "copyrightStatus"]),
+    ("Camera Info", &["camera", "lens", "focalLength", "aperture", "iso"]),
+    ("Location", &["location", "hasGps"]),
+    ("Size", &["megapixels"]),
+    ("Develop", &["edited"]),
+    ("Assisted Culling", &["sharpness", "bestOfGroup"]),
+];
+
+/// The field-menu group `field` sits in; `None` for a top-level or unknown field.
+pub fn field_group(field: &str) -> Option<&'static str> {
+    FIELD_GROUPS.iter().find(|g| g.1.contains(&field)).map(|g| g.0)
+}
+
+/// The display label of `field`; `None` for an unknown field.
+pub fn field_label(field: &str) -> Option<&'static str> {
+    FIELDS.iter().find(|f| f.0 == field).map(|f| f.1)
+}
 
 /// The operators for a field kind: (id, label).
 pub fn ops_for(kind: Kind) -> &'static [(&'static str, &'static str)] {
@@ -399,7 +438,7 @@ impl RuleSet {
             .map(|r| match r {
                 Rule::Group { group } => format!("({})", group.describe()),
                 Rule::Field { field, op, value } => {
-                    let label = FIELDS.iter().find(|f| f.0 == field).map_or(field.as_str(), |f| f.1).to_lowercase();
+                    let label = field_label(field).unwrap_or(field).to_lowercase();
                     let op = field_kind(field).and_then(|k| ops_for(k).iter().find(|o| o.0 == op)).map_or(op.as_str(), |o| o.1);
                     let v = match value {
                         Value::String(s) => s.clone(),
@@ -513,5 +552,43 @@ mod tests {
         for (f, _, k) in FIELDS {
             assert!(!ops_for(*k).is_empty(), "{f}");
         }
+    }
+
+    /// The field menu shows every rule field once: at the top level or in exactly one group,
+    /// and [`FIELDS`] lists them in menu order.
+    #[test]
+    fn every_field_is_in_the_menu_exactly_once() {
+        let menu: Vec<&str> = TOP_LEVEL_FIELDS.iter().chain(FIELD_GROUPS.iter().flat_map(|g| g.1.iter())).copied().collect();
+        let fields: Vec<&str> = FIELDS.iter().map(|f| f.0).collect();
+        assert_eq!(menu, fields, "the menu and FIELDS list the same fields in the same order");
+        for (label, group) in FIELD_GROUPS {
+            assert!(!group.is_empty(), "group {label} is empty");
+        }
+        let mut labels: Vec<&str> = FIELD_GROUPS.iter().map(|g| g.0).collect();
+        labels.dedup();
+        assert_eq!(labels.len(), FIELD_GROUPS.len(), "group labels are unique");
+    }
+
+    /// Related fields sit together: all the file fields, all the camera (EXIF) fields, all the
+    /// dates, all the keyword fields.
+    #[test]
+    fn related_fields_share_a_group() {
+        let same = |fields: &[&str], group: &str| {
+            for f in fields {
+                assert_eq!(field_group(f), Some(group), "{f}");
+            }
+        };
+        same(&["fileName", "filePath", "kind", "format"], "File");
+        same(&["camera", "lens", "focalLength", "aperture", "iso"], "Camera Info");
+        same(&["captureDate", "importDate", "editDate"], "Date");
+        same(&["keywords"], "Keywords & People");
+        same(&["title", "caption", "creator", "copyright", "copyrightStatus"], "Description");
+        same(&["location", "hasGps"], "Location");
+        for f in ["rating", "flag", "label", "text"] {
+            assert_eq!(field_group(f), None, "{f} stays at the top level");
+        }
+        assert_eq!(field_group("nope"), None);
+        assert_eq!(field_label("filePath"), Some("File Path"));
+        assert_eq!(field_label("nope"), None);
     }
 }
