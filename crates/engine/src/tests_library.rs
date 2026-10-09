@@ -265,6 +265,20 @@ fn smart_album_rule_sets() {
         &serde_json::json!({"name": "Bad", "rules": {"ruleSet": {"rules": [{"field": "rating", "op": "contains", "value": 1}]}}}),
     );
     assert!(bad.is_err(), "operators are checked");
+    // yes/no values: "false" means no, anything unreadable is an error rather than a silent yes
+    let maybe = s.execute(
+        "album.createSmart",
+        &serde_json::json!({"name": "Maybe", "rules": {"ruleSet": {"rules": [{"field": "edited", "op": "is", "value": "maybe"}]}}}),
+    );
+    assert!(maybe.is_err_and(|e| e.to_string().contains("yes or no")), "unreadable yes/no value");
+    let r = s
+        .execute(
+            "album.createSmart",
+            &serde_json::json!({"name": "Unedited", "rules": {"ruleSet": {"rules": [{"field": "edited", "op": "is", "value": "false"}]}}}),
+        )
+        .unwrap();
+    let unedited = s.catalog.photos().filter(|p| !p.deleted && !p.is_edited()).count();
+    assert_eq!(r["count"].as_u64(), Some(unedited as u64));
     let r = s
         .execute(
             "album.createSmart",

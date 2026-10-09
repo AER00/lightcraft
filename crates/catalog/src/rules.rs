@@ -146,6 +146,31 @@ pub fn field_group(field: &str) -> Option<&'static str> {
     FIELD_GROUPS.iter().find(|g| g.1.contains(&field)).map(|g| g.0)
 }
 
+/// What a yes/no rule's value means: `true`, `"yes"`, `1` or no value is yes; `false`, `"no"`, `0`
+/// is no (strings in any case); `None` for anything else, which matches nothing.
+pub fn bool_value(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(b) => Some(*b),
+        Value::Null => Some(true),
+        Value::Number(n) => match n.as_u64() {
+            Some(1) => Some(true),
+            Some(0) => Some(false),
+            _ => None,
+        },
+        Value::String(s) => match s.trim().to_lowercase().as_str() {
+            "true" | "yes" | "1" => Some(true),
+            "false" | "no" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The display label of a yes/no value.
+pub fn bool_label(b: bool) -> &'static str {
+    if b { "Yes" } else { "No" }
+}
+
 /// The display label of choice `id` of `field` ("Public Domain" for `publicDomain`); `None` when
 /// `field` isn't a choice field or has no such choice.
 pub fn choice_label(field: &str, id: &str) -> Option<&'static str> {
@@ -377,6 +402,7 @@ impl Rule {
         let m = &p.meta;
         let want = lower(value);
         let text = |have: &str| text_op(op, have, &want);
+        let yes = |have: bool| bool_value(value).is_some_and(|b| have == b);
         match field {
             "rating" => num_op(op, Some(p.rating as f64), value),
             "flag" => {
@@ -390,12 +416,12 @@ impl Rule {
                 (l == want || named) == (op == "is")
             }
             "kind" => (format!("{:?}", p.kind).to_lowercase() == want) == (op == "is"),
-            "edited" => p.is_edited() == value.as_bool().unwrap_or(true),
-            "hasGps" => m.gps.is_some() == value.as_bool().unwrap_or(true),
-            "virtualCopy" => p.copy_of.is_some() == value.as_bool().unwrap_or(true),
+            "edited" => yes(p.is_edited()),
+            "hasGps" => yes(m.gps.is_some()),
+            "virtualCopy" => yes(p.copy_of.is_some()),
             "copyName" => text(p.copy_name.as_deref().unwrap_or("")),
-            "stacked" => cat.stack_of(p.id).is_some() == value.as_bool().unwrap_or(true),
-            "cropped" => p.is_cropped() == value.as_bool().unwrap_or(true),
+            "stacked" => yes(cat.stack_of(p.id).is_some()),
+            "cropped" => yes(p.is_cropped()),
             "treatment" => {
                 let t = if p.develop.treatment == lightcraft_develop::Treatment::Bw { "monochrome" } else { "color" };
                 (t == want) == (op == "is")
@@ -471,7 +497,7 @@ impl Rule {
             "aspect" => (aspect(p.shown_size()) == Some(want.as_str())) == (op == "is"),
             "megapixels" => num_op(op, Some(p.width as f64 * p.height as f64 / 1e6), value),
             "sharpness" => num_op(op, p.analysis.map(|a| a.sharpness as f64), value),
-            "bestOfGroup" => p.analysis.is_some_and(|a| a.best || a.group.is_none()) == value.as_bool().unwrap_or(true),
+            "bestOfGroup" => yes(p.analysis.is_some_and(|a| a.best || a.group.is_none())),
             "album" => {
                 let id = number(value).map(|v| crate::AlbumId(v as u64));
                 id.is_some_and(|a| cat.album(a).is_some_and(|al| !al.is_smart()) && cat.album_contains(a, p)) == (op == "is")
@@ -508,9 +534,10 @@ impl RuleSet {
         for r in &self.rules {
             match r {
                 Rule::Group { group } => out.extend(group.problems()),
-                Rule::Field { field, op, .. } => match field_kind(field) {
+                Rule::Field { field, op, value } => match field_kind(field) {
                     None => out.push(format!("unknown field `{field}`")),
                     Some(k) if !ops_for(k).iter().any(|o| o.0 == op) => out.push(format!("`{field}` has no operator `{op}`")),
+                    Some(Kind::Bool) if bool_value(value).is_none() => out.push(format!("`{field}` is yes or no, not {value}")),
                     _ => {}
                 },
             }
@@ -534,6 +561,9 @@ impl RuleSet {
                     let label = field_label(field).unwrap_or(field).to_lowercase();
                     let op = field_kind(field).and_then(|k| ops_for(k).iter().find(|o| o.0 == op)).map_or(op.as_str(), |o| o.1);
                     let v = match value {
+                        _ if field_kind(field) == Some(Kind::Bool) => {
+                            bool_value(value).map_or_else(|| value.to_string(), |b| bool_label(b).to_lowercase())
+                        }
                         Value::String(s) => choice_label(field, s).map_or_else(|| s.clone(), str::to_lowercase),
                         Value::Null => String::new(),
                         Value::Object(o) => format!(
@@ -870,6 +900,35 @@ mod tests {
         let mut p = photo(1);
         p.meta.copyright_status = crate::CopyrightStatus::PublicDomain;
         assert!(r.matches(&p, &Catalog::new()), "ids still match");
+    }
+
+    /// Yes/no fields read "Yes" / "No", and a value means the same to matching and to every
+    /// summary: `false`, `"false"`, `"no"` and `0` are no; `true`, `"yes"`, `1` and a missing value
+    /// are yes. Anything else is reported, not silently taken as yes.
+    #[test]
+    fn yes_no_values() {
+        for v in [json!(true), json!("true"), json!("Yes"), json!(1), json!(null)] {
+            assert_eq!(bool_value(&v), Some(true), "{v}");
+        }
+        for v in [json!(false), json!("false"), json!(" NO "), json!(0)] {
+            assert_eq!(bool_value(&v), Some(false), "{v}");
+        }
+        for v in [json!("maybe"), json!(2), json!([true]), json!({"x": 1})] {
+            assert_eq!(bool_value(&v), None, "{v}");
+        }
+        assert_eq!((bool_label(true), bool_label(false)), ("Yes", "No"));
+        let cat = Catalog::new();
+        let p = photo(1); // unedited
+        assert!(rs(json!({"rules": [{"field": "edited", "op": "is", "value": "false"}]})).matches(&p, &cat), "\"false\" means no");
+        assert!(
+            !rs(json!({"rules": [{"field": "edited", "op": "is", "value": "false"}, {"field": "hasGps", "op": "is", "value": "yes"}]}))
+                .matches(&p, &cat)
+        );
+        assert!(!rs(json!({"rules": [{"field": "edited", "op": "is", "value": "maybe"}]})).matches(&p, &cat), "an unreadable value matches nothing");
+        let r = rs(json!({"rules": [{"field": "edited", "op": "is", "value": true}, {"field": "cropped", "op": "is", "value": "false"}]}));
+        assert_eq!(r.describe(), "has edits is yes and cropped is no");
+        let bad = rs(json!({"rules": [{"field": "edited", "op": "is", "value": "maybe"}]}));
+        assert_eq!(bad.problems(), vec!["`edited` is yes or no, not \"maybe\"".to_string()]);
     }
 
     /// The field menu shows every rule field once: at the top level or in exactly one group,

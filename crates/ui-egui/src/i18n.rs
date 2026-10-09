@@ -328,6 +328,15 @@ fn choice_text_in<'a>(language: Locale, field: &str, id: &'a str) -> &'a str {
     lightcraft_catalog::rules::choice_label(field, id).map_or(id, |label| tr_in(language, label))
 }
 
+/// What people read for a smart-album yes/no value ("Ja" / "Nein" in German).
+pub fn bool_text(b: bool) -> &'static str {
+    bool_text_in(language(), b)
+}
+
+fn bool_text_in(language: Locale, b: bool) -> &'static str {
+    tr_in(language, lightcraft_catalog::rules::bool_label(b))
+}
+
 /// A rule summary for display, keeping free-text rule values verbatim.
 pub fn rules_label(rules: &lightcraft_catalog::RuleSet) -> String {
     fn describe(rules: &lightcraft_catalog::RuleSet, depth: usize) -> String {
@@ -348,7 +357,7 @@ pub fn rules_label(rules: &lightcraft_catalog::RuleSet) -> String {
                     let operator = ops_for(*kind).iter().find(|entry| entry.0 == op).map_or(op.as_str(), |entry| entry.1);
                     let text = match kind {
                         Kind::Choice(_) => value.as_str().map_or_else(|| value.to_string(), |id| choice_text(field, id).to_string()),
-                        Kind::Bool => tr(if value.as_bool() == Some(true) { "true" } else { "false" }).to_string(),
+                        Kind::Bool => lightcraft_catalog::rules::bool_value(value).map_or_else(|| value.to_string(), |b| bool_text(b).to_string()),
                         _ if matches!(op.as_str(), "inLast" | "notInLast") => format!(
                             "{} {}",
                             value.get("n").unwrap_or(&serde_json::Value::Null),
@@ -649,6 +658,14 @@ mod tests {
         assert_eq!(choice_text_in(Locale::ZhHans, "treatment", "color"), "彩色", "in colour, not the colour noun");
         assert_eq!(choice_text_in(Locale::Ru, "treatment", "color"), "Цветное");
         assert_eq!(choice_text_in(Locale::Es, "label", "none"), "Sin etiqueta");
+        // yes/no fields read Yes / No, never true / false
+        assert_eq!((bool_text_in(Locale::En, true), bool_text_in(Locale::En, false)), ("Yes", "No"));
+        assert_eq!(bool_text_in(Locale::De, false), "Nein");
+        for language in Locale::ALL.iter().filter(|language| **language != Locale::En) {
+            for label in [lightcraft_catalog::rules::bool_label(true), lightcraft_catalog::rules::bool_label(false)] {
+                assert!(language.catalog().contains_key(label), "{} lacks {label:?}", language.code());
+            }
+        }
         for language in Locale::ALL {
             for (field, _, kind) in FIELDS {
                 let Kind::Choice(choices) = kind else { continue };
@@ -750,6 +767,13 @@ mod tests {
             }],
         };
         assert!(rules_label(&rules).ends_with(" Gemeinfrei"), "{}", rules_label(&rules));
+        for value in [serde_json::json!(false), serde_json::json!("false")] {
+            let rules = lightcraft_catalog::RuleSet {
+                mode: lightcraft_catalog::Match::All,
+                rules: vec![lightcraft_catalog::Rule::Field { field: "edited".into(), op: "is".into(), value }],
+            };
+            assert!(rules_label(&rules).ends_with(" Nein"), "{}", rules_label(&rules));
+        }
         let filter = lightcraft_catalog::Filter {
             labels: vec![lightcraft_catalog::ColorLabel::Red, lightcraft_catalog::ColorLabel::Blue],
             ..Default::default()

@@ -2,7 +2,7 @@
 //! value), with nested groups. Field and operator lists come from `lightcraft_catalog::rules`.
 
 use egui::RichText;
-use lightcraft_catalog::rules::{FIELD_GROUPS, Kind, TOP_LEVEL_FIELDS, field_kind, field_label, ops_for};
+use lightcraft_catalog::rules::{FIELD_GROUPS, Kind, TOP_LEVEL_FIELDS, bool_value, field_kind, field_label, ops_for};
 use lightcraft_catalog::{Match, Rule, RuleSet};
 use serde_json::{Value, json};
 
@@ -131,14 +131,12 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
             );
         }
         (Some(Kind::Bool), _) => {
-            let mut b = v.as_bool().unwrap_or(true);
-            egui::ComboBox::from_id_salt(format!("{salt}-bool"))
-                .width(60.0)
-                .selected_text(crate::i18n::tr(if b { "true" } else { "false" }))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut b, true, crate::i18n::tr("true"));
-                    ui.selectable_value(&mut b, false, crate::i18n::tr("false"));
-                });
+            // the catalog's reading of the value ("false" is no), stored back as a plain boolean
+            let mut b = bool_value(v).unwrap_or(true);
+            egui::ComboBox::from_id_salt(format!("{salt}-bool")).width(60.0).selected_text(crate::i18n::bool_text(b)).show_ui(ui, |ui| {
+                ui.selectable_value(&mut b, true, crate::i18n::bool_text(true));
+                ui.selectable_value(&mut b, false, crate::i18n::bool_text(false));
+            });
             *v = json!(b);
         }
         (Some(Kind::Date), _) => text_value(ui, v, 120.0, "2026-04 or 2026-04-12", salt),
