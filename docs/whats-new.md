@@ -7,7 +7,8 @@
   keyword only some of them have is marked with an asterisk (hover: how many). Only the × removes a keyword, from
   every selected photo; a chip's menu acts on the selection (add to all, remove, show photos, edit) and no longer
   deletes a keyword from the whole library.
-- Switch to Will Export to see the keywords exported files will carry for the selection.
+- Switch to & Containing to see the keywords with the keywords containing them, or to Will Export to see what
+  exported files will carry for the selection.
 - The keyword set's buttons and the suggestions follow the selection too; the typing boxes get the Cut / Copy / Paste
   menu, and Return in the painter's box starts painting.
 
