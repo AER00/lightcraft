@@ -1407,5 +1407,9 @@
   "Pending photo action cancelled": "Pending photo action cancelled",
   "Pending photo action cancelled because its library or photo changed": "Pending photo action cancelled because its library or photo changed",
   "ONNX model": "ONNX model",
-  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions"
+  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
+  "Keyword List": "Список ключевых слов",
+  "Filter Keywords": "Фильтр ключевых слов",
+  "No keywords yet": "Ключевых слов пока нет",
+  "No keywords match": "Нет подходящих ключевых слов"
 }

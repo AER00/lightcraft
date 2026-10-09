@@ -674,7 +674,7 @@ fn date_row(app: &mut LightcraftApp, ui: &mut egui::Ui, key: &str, label: &str, 
 /// By Date and Keywords count every photo in the library, so choosing a row shows those photos
 /// from All Photos, not from whatever album or folder happened to be open, where they could be
 /// missing (issue #341). Only when choosing (`on`), not when clearing the row again.
-fn browse_all_photos(app: &mut LightcraftApp, on: bool) {
+pub(crate) fn browse_all_photos(app: &mut LightcraftApp, on: bool) {
     if on && app.session.source != LibrarySource::All {
         let _ = app.run("library.source", json!({"kind": "all"}));
     }

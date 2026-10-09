@@ -1,0 +1,285 @@
+//! The Keyword List (Lightroom Classic's Keyword List panel), in the right panel's Keywords: every
+//! keyword of the library, those without photos too, as a tree with photo counts. A tick box per
+//! keyword gives it to the selected photos or takes it away; the arrow shows the photos with it.
+
+use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
+use lightcraft_catalog::keywords::{KeywordNode, same};
+use lightcraft_catalog::{Catalog, PhotoId};
+use serde_json::json;
+
+use crate::LightcraftApp;
+use crate::theme::Tokens;
+use crate::widgets::register;
+
+/// Rows are this tall; each level is indented this much.
+const ROW_H: f32 = 24.0;
+const INDENT: f32 = 14.0;
+
+/// The Keyword List section: a filter box, then the rows.
+pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let t = Tokens::get(ui.ctx());
+    crate::widgets::divider(ui);
+    super::right::header(ui, "Keyword List");
+    let fid = egui::Id::new("keyword-list-filter");
+    let mut filter: String = ui.data(|d| d.get_temp(fid)).unwrap_or_default();
+    ui.horizontal(|ui| {
+        ui.add_space(24.0);
+        crate::text_field::TextField::singleline("field:keywordFilter", &mut filter)
+            .hint(crate::i18n::tr("Filter Keywords"))
+            .width(ui.available_width() - 22.0)
+            .show(ui);
+    });
+    ui.data_mut(|d| d.insert_temp(fid, filter.clone()));
+    ui.add_space(6.0);
+    let tree = app.caches.keyword_tree(&app.session.catalog);
+    let open = app.ui.keyword_list_open.clone();
+    let rows = rows(&tree, &filter, &|p| open.iter().any(|o| same(o, p)));
+    if rows.is_empty() {
+        let none = if filter.trim().is_empty() { "No keywords yet" } else { "No keywords match" };
+        ui.horizontal(|ui| {
+            ui.add_space(24.0);
+            ui.label(egui::RichText::new(crate::i18n::tr(none)).color(t.text_dim));
+        });
+    }
+    let selection = app.session.selection.ids.clone();
+    for r in &rows {
+        row(app, ui, r, &selection, filter.trim().is_empty());
+    }
+    ui.add_space(12.0);
+}
+
+/// One keyword's row: the triangle, the tick box, the name, the count, and on hover the arrow.
+/// `can_fold`: the triangle opens and closes the level (not while a filter opens it).
+fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId], can_fold: bool) {
+    let t = Tokens::get(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+    register(ui.ctx(), format!("keywordRow:{}", r.path), rect);
+    let picked = app.ui.keyword_list_selected.as_deref().is_some_and(|k| same(k, &r.path));
+    let inner = Rect::from_min_max(rect.min + vec2(16.0, 0.0), rect.max - vec2(16.0, 0.0));
+    if picked {
+        ui.painter().rect_filled(inner, 4.0, t.canvas);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(inner, 4.0, t.hover.gamma_multiply(0.6));
+    }
+    let x = inner.left() + 4.0 + r.depth as f32 * INDENT;
+    let cy = rect.center().y;
+    // the triangle
+    if r.has_children {
+        let c = pos2(x + 6.0, cy);
+        let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
+        let tr = ui.interact(tri, egui::Id::new(("keyword-list-tri", r.path.to_lowercase())), Sense::click());
+        register(ui.ctx(), format!("keywordRowToggle:{}", r.path), tri);
+        let pts = if r.open {
+            vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
+        } else {
+            vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
+        };
+        ui.painter().add(egui::Shape::convex_polygon(pts, if tr.hovered() { t.text } else { t.text_dim }, Stroke::NONE));
+        if tr.clicked() && can_fold {
+            let key = r.path.to_lowercase();
+            if r.open {
+                app.ui.keyword_list_open.retain(|o| !same(o, &key));
+            } else {
+                app.ui.keyword_list_open.push(key);
+            }
+        }
+    }
+    // the tick box: does the selection have it?
+    let state = tick(&app.session.catalog, selection, &r.path);
+    let boxr = Rect::from_center_size(pos2(x + 22.0, cy), vec2(13.0, 13.0));
+    let on = !selection.is_empty();
+    let tb =
+        ui.interact(boxr.expand(3.0), egui::Id::new(("keyword-list-tick", r.path.to_lowercase())), if on { Sense::click() } else { Sense::hover() });
+    register(ui.ctx(), format!("keywordCheck:{}", r.path), boxr);
+    let edge = if on { t.text_label } else { t.text_dim.gamma_multiply(0.5) };
+    match state {
+        Tick::All => {
+            ui.painter().rect_filled(boxr, 2.0, t.accent);
+            let pts = vec![boxr.left_center() + vec2(2.5, 0.0), boxr.center_bottom() + vec2(-1.0, -3.0), boxr.right_top() + vec2(-2.5, 3.0)];
+            ui.painter().add(egui::Shape::line(pts, Stroke::new(1.6, Color32::WHITE)));
+        }
+        Tick::Some => {
+            ui.painter().rect_stroke(boxr, 2.0, Stroke::new(1.0, edge), StrokeKind::Inside);
+            ui.painter().line_segment([boxr.left_center() + vec2(3.0, 0.0), boxr.right_center() - vec2(3.0, 0.0)], Stroke::new(1.6, t.text));
+        }
+        Tick::No => {
+            ui.painter().rect_stroke(boxr, 2.0, Stroke::new(1.0, edge), StrokeKind::Inside);
+        }
+    }
+    let tb = tb.on_hover_text(crate::i18n::tr(match state {
+        Tick::All => "Remove from Selected Photos",
+        _ => "Add to Selected Photos",
+    }));
+    if tb.clicked() {
+        let key = if state == Tick::All { "removeKeywords" } else { "addKeywords" };
+        let _ = app.run("photo.setMeta", json!({key: [r.path]}));
+    }
+    // the count, then the arrow left of it (shown on hover)
+    let count = ui.painter().layout_no_wrap(r.count.to_string(), t.font(12.0), t.text_dim);
+    let count_rect = Rect::from_min_size(pos2(inner.right() - 6.0 - count.size().x, cy - count.size().y / 2.0), count.size());
+    register(ui.ctx(), format!("keywordCount:{}", r.path), count_rect);
+    ui.painter().galley(count_rect.min, count, t.text_dim);
+    let arrow = Rect::from_center_size(pos2(count_rect.left() - 12.0, cy), vec2(16.0, 16.0));
+    let ar = ui.interact(arrow, egui::Id::new(("keyword-list-show", r.path.to_lowercase())), Sense::click());
+    register(ui.ctx(), format!("keywordShow:{}", r.path), arrow);
+    if resp.hovered() || ar.hovered() {
+        ui.painter().text(arrow.center(), Align2::CENTER_CENTER, "→", t.font(13.0), if ar.hovered() { t.text } else { t.text_dim });
+    }
+    if ar.on_hover_text(crate::i18n::tr("Show Photos with Keyword")).clicked() {
+        super::left::browse_all_photos(app, true);
+        let _ = app.run("library.filter", json!({"keyword": r.path}));
+    }
+    // the name, cut short before the arrow
+    let room = (arrow.left() - 4.0 - (x + 34.0)).max(0.0);
+    let font = t.font(13.0);
+    let measure = |s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), t.text_label).size().x;
+    let name = if measure(&r.name) <= room { r.name.clone() } else { crate::widgets::elide_head(&r.name, room, measure) };
+    ui.painter().text(pos2(x + 34.0, cy), Align2::LEFT_CENTER, name, font.clone(), if picked { t.text } else { t.text_label });
+    let resp = resp.on_hover_text(r.path.replace('|', " › "));
+    if resp.clicked() {
+        app.ui.keyword_list_selected = Some(r.path.clone());
+    }
+}
+
+/// One row of the Keyword List as drawn.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Row {
+    pub path: String,
+    pub name: String,
+    /// Levels below the top (0 = a top-level keyword).
+    pub depth: usize,
+    pub count: usize,
+    pub has_children: bool,
+    /// Its children are shown.
+    pub open: bool,
+}
+
+/// The rows to draw: the tree with its levels open as `open` says (by path, any case). With a
+/// `filter`, the keywords whose name contains it (any case) and the keywords containing them,
+/// opened so that they show.
+pub(crate) fn rows(tree: &[KeywordNode], filter: &str, open: &dyn Fn(&str) -> bool) -> Vec<Row> {
+    let filter = filter.trim().to_lowercase();
+    let mut out = Vec::new();
+    add_rows(tree, 0, &filter, open, &mut out);
+    out
+}
+
+/// A node holds a match: its name, or a name below it.
+fn holds(n: &KeywordNode, filter: &str) -> bool {
+    n.name.to_lowercase().contains(filter) || n.children.iter().any(|c| holds(c, filter))
+}
+
+fn add_rows(nodes: &[KeywordNode], depth: usize, filter: &str, open: &dyn Fn(&str) -> bool, out: &mut Vec<Row>) {
+    for n in nodes {
+        // filtering: a match, or a keyword containing one, opened down to it
+        let below = n.children.iter().any(|c| holds(c, filter));
+        if !filter.is_empty() && !below && !n.name.to_lowercase().contains(filter) {
+            continue;
+        }
+        let is_open = if filter.is_empty() { open(&n.path) } else { below };
+        out.push(Row { path: n.path.clone(), name: n.name.clone(), depth, count: n.count, has_children: !n.children.is_empty(), open: is_open });
+        if is_open {
+            add_rows(&n.children, depth + 1, filter, open, out);
+        }
+    }
+}
+
+/// Whether the selected photos have a keyword: the tick box's state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Tick {
+    /// None of them (or nothing is selected).
+    No,
+    /// Some of them: the box shows a dash.
+    Some,
+    /// All of them.
+    All,
+}
+
+/// The tick box of `path` for `photos`: a photo counts when it has the keyword itself (any case);
+/// one with only a keyword below it doesn't.
+pub(crate) fn tick(catalog: &Catalog, photos: &[PhotoId], path: &str) -> Tick {
+    let path = lightcraft_catalog::keywords::clean(path);
+    let has = photos
+        .iter()
+        .filter(|id| {
+            catalog
+                .photo(**id)
+                .is_some_and(|p| p.meta.keywords.iter().any(|k| lightcraft_catalog::keywords::same(&lightcraft_catalog::keywords::clean(k), &path)))
+        })
+        .count();
+    match has {
+        0 => Tick::No,
+        n if n == photos.len() => Tick::All,
+        _ => Tick::Some,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lightcraft_catalog::{Op, Photo, Source};
+
+    use super::*;
+
+    fn library(keywords: &[&[&str]]) -> (Catalog, Vec<PhotoId>) {
+        let mut c = Catalog::new();
+        let mut ids = Vec::new();
+        for k in keywords {
+            let id = c.alloc_photo_id();
+            let mut p = Photo::new(id, Source::Demo { scene: 1 }, "a.jpg", "JPEG", 3, 2, "2026-01-01");
+            p.meta.keywords = k.iter().map(|s| s.to_string()).collect();
+            c.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+            ids.push(id);
+        }
+        (c, ids)
+    }
+
+    fn shown(rows: &[Row]) -> Vec<(String, usize, usize)> {
+        rows.iter().map(|r| (r.path.clone(), r.depth, r.count)).collect()
+    }
+
+    /// The list shows the top level, and the keywords below a level once it is open.
+    #[test]
+    fn the_list_shows_the_levels_that_are_open() {
+        let (c, _) = library(&[&["travel|Italy|Rome", "beach"], &["travel|Spain"]]);
+        let tree = c.keyword_tree();
+        let closed = rows(&tree, "", &|_| false);
+        assert_eq!(shown(&closed), [("beach".to_string(), 0, 1), ("travel".to_string(), 0, 2)]);
+        assert!(closed[1].has_children && !closed[1].open && !closed[0].has_children);
+        let open = rows(&tree, "", &|p| p.eq_ignore_ascii_case("TRAVEL"));
+        assert_eq!(
+            shown(&open),
+            [("beach".to_string(), 0, 1), ("travel".to_string(), 0, 2), ("travel|Italy".to_string(), 1, 1), ("travel|Spain".to_string(), 1, 1)]
+        );
+    }
+
+    /// Filtering shows the keywords whose name holds the text, whatever its case, with the keywords
+    /// containing them opened down to them; keywords below a match aren't shown unless they match.
+    #[test]
+    fn filtering_shows_the_matches_with_their_parents() {
+        let (c, _) = library(&[&["travel|Italy|Rome", "travel|Spain|Ronda", "beach"]]);
+        let tree = c.keyword_tree();
+        let found = rows(&tree, "RO", &|_| false);
+        assert_eq!(
+            found.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+            ["travel", "travel|Italy", "travel|Italy|Rome", "travel|Spain", "travel|Spain|Ronda"]
+        );
+        assert!(found.iter().filter(|r| r.has_children).all(|r| r.open));
+        assert_eq!(rows(&tree, "italy", &|_| false).iter().map(|r| r.path.as_str()).collect::<Vec<_>>(), ["travel", "travel|Italy"]);
+        assert!(rows(&tree, "lisbon", &|_| false).is_empty());
+    }
+
+    /// The tick box: ticked when every selected photo has the keyword itself, a dash when some do,
+    /// empty when none do or nothing is selected.
+    #[test]
+    fn the_tick_box_says_how_many_selected_photos_have_the_keyword() {
+        let (c, ids) = library(&[&["Travel|Italy"], &["travel|italy", "beach"], &["travel|spain"]]);
+        assert_eq!(tick(&c, &ids[..2], "travel|Italy"), Tick::All, "whatever the case");
+        assert_eq!(tick(&c, &ids, "travel|Italy"), Tick::Some);
+        assert_eq!(tick(&c, &ids, "travel"), Tick::No, "a keyword below doesn't tick its parent");
+        assert_eq!(tick(&c, &[], "beach"), Tick::No);
+        assert_eq!(tick(&c, &ids[2..], "beach"), Tick::No);
+        // any letter's case, not only ASCII
+        let (c, ids) = library(&[&["Ärzte"]]);
+        assert_eq!(tick(&c, &ids, "ärzte"), Tick::All);
+    }
+}

@@ -449,6 +449,11 @@ pub struct UiState {
     /// The keyword painter: clicking a photo in the grid toggles this keyword on it.
     #[serde(skip)]
     pub keyword_painter: Option<String>,
+    /// The Keyword List's open levels (lower-case paths).
+    pub keyword_list_open: Vec<String>,
+    /// The keyword picked in the Keyword List (− deletes it, Edit edits it).
+    #[serde(skip)]
+    pub keyword_list_selected: Option<String>,
     /// A running slideshow (full screen): seconds per photo, when the next one is due (egui
     /// time), paused.
     #[serde(skip)]
@@ -757,6 +762,8 @@ impl Default for UiState {
             slideshow: None,
             second_window: false,
             keyword_painter: None,
+            keyword_list_open: Vec::new(),
+            keyword_list_selected: None,
             info_overlay: InfoOverlay::Off,
             navigator: true,
             settings: AppSettings::default(),

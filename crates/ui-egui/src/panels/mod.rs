@@ -12,6 +12,7 @@ pub mod faces;
 pub mod filterbar;
 pub mod grid;
 pub mod keymap;
+pub mod keyword_list;
 pub mod left;
 pub mod library_problem;
 pub mod masking;

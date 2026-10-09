@@ -42,6 +42,8 @@ mod tests_grid;
 #[cfg(test)]
 mod tests_keymap;
 #[cfg(test)]
+mod tests_keyword_list;
+#[cfg(test)]
 mod tests_labels;
 #[cfg(test)]
 mod tests_library_problem;
