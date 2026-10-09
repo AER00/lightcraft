@@ -651,7 +651,9 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
             let open_id = egui::Id::new(("folder-open", a.id.0));
             let open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(true);
             let resp = row(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, false, indent);
-            if resp.clicked() {
+            // a folder is no source, so its row folds it too; the triangle is the same click, aimed
+            let tri = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("album-tri", a.id.0)), format!("albumToggle:{}", a.id.0));
+            if resp.clicked() || tri.clicked() {
                 ui.data_mut(|d| d.insert_temp(open_id, !open));
             }
             folder_menu(app, &resp, a);

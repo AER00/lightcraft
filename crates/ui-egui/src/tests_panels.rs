@@ -220,6 +220,42 @@ fn sidebar_sections_collapse_and_remember_it() {
     assert!(!h.app.ui.sidebar_section_collapsed("albums"), "the plus does not fold Albums");
 }
 
+/// Albums nest in folders like the other sidebar trees: a folder row has a disclosure triangle
+/// (`albumToggle:<id>`), plain albums have none, and folding a folder hides what is inside it.
+#[test]
+fn album_folders_have_a_disclosure_triangle() {
+    let mut h = demo([1400.0, 900.0], json!({"view": "photoGrid", "leftPanel": true}));
+    let make = |h: &mut Headless, params: serde_json::Value| h.app.session.execute("album.create", &params).unwrap()["id"].as_u64().unwrap();
+    let trips = make(&mut h, json!({"name": "Trips", "folder": true}));
+    let europe = make(&mut h, json!({"name": "Europe", "folder": true, "parent": trips}));
+    let best = make(&mut h, json!({"name": "Best", "parent": europe}));
+    let loose = make(&mut h, json!({"name": "Loose"}));
+    h.step();
+    h.step();
+    let has = |h: &Headless, id: &str| h.app.widgets.iter().any(|(w, _)| w == id);
+    let toggle = |h: &mut Headless, id: u64| {
+        let r = h.request("ui.clickWidget", json!({"id": format!("albumToggle:{id}")}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+    };
+    // folders start open and show their albums; only folders get a triangle
+    assert!(has(&h, &format!("source:album:{best}")), "open by default");
+    assert!(has(&h, &format!("albumToggle:{trips}")) && has(&h, &format!("albumToggle:{europe}")));
+    assert!(!has(&h, &format!("albumToggle:{best}")) && !has(&h, &format!("albumToggle:{loose}")), "albums have no triangle");
+    // folding the outer folder hides everything inside it, the inner triangle included
+    toggle(&mut h, trips);
+    assert!(!has(&h, &format!("source:folder:{europe}")) && !has(&h, &format!("source:album:{best}")));
+    assert!(has(&h, &format!("source:album:{loose}")), "siblings stay");
+    // opening it again leaves the inner folder as it was
+    toggle(&mut h, trips);
+    assert!(has(&h, &format!("source:album:{best}")));
+    toggle(&mut h, europe);
+    assert!(!has(&h, &format!("source:album:{best}")) && has(&h, &format!("source:folder:{europe}")));
+    // the triangle is not the row: clicking it does not make the folder the source
+    assert_ne!(h.app.session.source, lightcraft_engine::LibrarySource::Album(lightcraft_catalog::AlbumId(europe)));
+}
+
 /// A headless app over a library of file-backed photos that exist only in the catalog.
 fn folders_app(paths: &[&str]) -> Headless {
     folders_app_sized(paths, [1400.0, 900.0])
