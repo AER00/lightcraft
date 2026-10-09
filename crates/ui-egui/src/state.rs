@@ -372,6 +372,9 @@ pub struct UiState {
     /// Photos being dragged from the grid (dropped on an album to add them).
     #[serde(skip)]
     pub dragging_photos: Option<Vec<u64>>,
+    /// An album just made: the Albums tree opens the folders down to it, once.
+    #[serde(skip)]
+    pub reveal_album: Option<u64>,
     /// Selected curve channel in the Curve flyout.
     pub curve_channel: String,
     /// Selected mixer mode: "hue" | "saturation" | "luminance" | "all".
@@ -465,9 +468,12 @@ impl Dialog {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Dialog {
+    /// `parent`: the folder to create it in (none: the top level).
     NewAlbum {
         name: String,
         folder: bool,
+        #[serde(default)]
+        parent: Option<u64>,
     },
     RenameAlbum {
         id: u64,
@@ -525,6 +531,8 @@ pub enum Dialog {
     /// Save the current view (source + filter) as a smart album.
     NewSmartAlbum {
         name: String,
+        #[serde(default)]
+        parent: Option<u64>,
     },
     /// Help ▸ What's New.
     WhatsNew,
@@ -549,6 +557,9 @@ pub enum Dialog {
         id: Option<u64>,
         name: String,
         rules: lightcraft_catalog::RuleSet,
+        /// The folder a new smart album is created in (ignored when editing).
+        #[serde(default)]
+        parent: Option<u64>,
     },
     /// `groups`: the settings groups the preset includes (`SettingsGroup` ids).
     CreatePreset {
@@ -663,6 +674,7 @@ impl Default for UiState {
             renaming_component: None,
             quit: false,
             dragging_photos: None,
+            reveal_album: None,
             curve_channel: "parametric".into(),
             mixer_mode: "hue".into(),
             grading_mode: "3way".into(),

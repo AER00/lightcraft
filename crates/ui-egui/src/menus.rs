@@ -230,6 +230,11 @@ fn adjust_brush(app: &mut LightcraftApp, k: f32, df: f32) -> Value {
 }
 
 /// An sRGB colour from `"#rrggbb"` or `[r, g, b]` (0..255).
+/// The `parent` folder id of a `dialog.new*` command (none: the top level).
+fn parent_param(p: &Value) -> Option<u64> {
+    p.get("parent").and_then(Value::as_u64)
+}
+
 pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
     if let Some(s) = v.as_str() {
         let h = s.strip_prefix('#').unwrap_or(s);
@@ -807,11 +812,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "dialog.newFolder" => {
-            app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: true });
+            app.ui.dialog =
+                Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: true, parent: parent_param(p) });
             Ok(Value::Null)
         }
         "dialog.newAlbum" => {
-            app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: false });
+            app.ui.dialog =
+                Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: false, parent: parent_param(p) });
             Ok(Value::Null)
         }
         "dialog.autoStack" => {
@@ -838,17 +845,19 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                     id: Some(a.id.0),
                     name: a.name.clone(),
                     rules: a.smart.as_ref().and_then(|f| f.rule_set.clone()).unwrap_or_default(),
+                    parent: None,
                 },
                 None => Dialog::SmartRules {
                     id: None,
                     name: p.get("name").and_then(Value::as_str).unwrap_or("").into(),
                     rules: lightcraft_catalog::RuleSet { rules: vec![crate::panels::rules_editor::new_rule()], ..Default::default() },
+                    parent: parent_param(p),
                 },
             });
             Ok(Value::Null)
         }
         "dialog.newSmartAlbum" => {
-            app.ui.dialog = Some(Dialog::NewSmartAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into() });
+            app.ui.dialog = Some(Dialog::NewSmartAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), parent: parent_param(p) });
             Ok(Value::Null)
         }
         "dialog.captureTime" => {

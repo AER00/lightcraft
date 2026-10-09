@@ -256,6 +256,69 @@ fn album_folders_have_a_disclosure_triangle() {
     assert_ne!(h.app.session.source, lightcraft_engine::LibrarySource::Album(lightcraft_catalog::AlbumId(europe)));
 }
 
+/// Creating from a folder's menu: every `dialog.new*` command takes the folder to create in, the
+/// dialog remembers it, and the new row shows up even when that folder (and the one holding it)
+/// was folded shut.
+#[test]
+fn albums_are_created_inside_the_chosen_folder() {
+    let mut h = demo([1400.0, 900.0], json!({"view": "photoGrid", "leftPanel": true}));
+    let make = |h: &mut Headless, params: serde_json::Value| h.app.session.execute("album.create", &params).unwrap()["id"].as_u64().unwrap();
+    let trips = make(&mut h, json!({"name": "Trips", "folder": true}));
+    let europe = make(&mut h, json!({"name": "Europe", "folder": true, "parent": trips}));
+    h.step();
+    h.step();
+    let has = |h: &Headless, id: &str| h.app.widgets.iter().any(|(w, _)| w == id);
+    let create = |h: &mut Headless, command: &str, name: &str, parent: Option<u64>| -> u64 {
+        let before: Vec<u64> = h.app.session.catalog.albums().map(|a| a.id.0).collect();
+        let mut params = json!({"name": name});
+        if let Some(p) = parent {
+            params["parent"] = json!(p);
+        }
+        let r = h.request("engine.execute", json!({"command": command, "params": params}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        let r = h.request("ui.dialog.confirm", json!({}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+        let new: Vec<u64> = h.app.session.catalog.albums().map(|a| a.id.0).filter(|i| !before.contains(i)).collect();
+        assert_eq!(new.len(), 1, "{command} made exactly one album: {new:?}");
+        new[0]
+    };
+    let parent_of = |h: &Headless, id: u64| h.app.session.catalog.album(lightcraft_catalog::AlbumId(id)).unwrap().parent.map(|p| p.0);
+    // fold both folders: the new rows must still be visible afterwards
+    for f in [europe, trips] {
+        let r = h.request("ui.clickWidget", json!({"id": format!("albumToggle:{f}")}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+    }
+    assert!(!has(&h, &format!("source:folder:{europe}")), "Trips is folded");
+    let album = create(&mut h, "dialog.newAlbum", "Day 1", Some(europe));
+    assert_eq!(parent_of(&h, album), Some(europe));
+    assert!(has(&h, &format!("source:album:{album}")), "the new album is shown, its folders opened to it");
+    let folder = create(&mut h, "dialog.newFolder", "Italy", Some(europe));
+    assert_eq!(parent_of(&h, folder), Some(europe));
+    assert!(h.app.session.catalog.album(lightcraft_catalog::AlbumId(folder)).unwrap().folder);
+    let smart = create(&mut h, "dialog.smartAlbum", "Rated", Some(folder));
+    assert_eq!(parent_of(&h, smart), Some(folder));
+    assert!(h.app.session.catalog.album(lightcraft_catalog::AlbumId(smart)).unwrap().is_smart());
+    let from_view = create(&mut h, "dialog.newSmartAlbum", "From view", Some(trips));
+    assert_eq!(parent_of(&h, from_view), Some(trips));
+    // without a folder they are still made at the top level
+    let top = create(&mut h, "dialog.newAlbum", "Loose", None);
+    assert_eq!(parent_of(&h, top), None);
+}
+
+/// Saved or scripted dialogs from before the folder parameter still load.
+#[test]
+fn album_dialogs_without_a_parent_still_deserialize() {
+    use crate::state::Dialog;
+    let d: Dialog = serde_json::from_value(json!({"kind": "newAlbum", "name": "x", "folder": false})).unwrap();
+    assert!(matches!(d, Dialog::NewAlbum { parent: None, .. }));
+    let d: Dialog = serde_json::from_value(json!({"kind": "newSmartAlbum", "name": "x"})).unwrap();
+    assert!(matches!(d, Dialog::NewSmartAlbum { parent: None, .. }));
+}
+
 /// A headless app over a library of file-backed photos that exist only in the catalog.
 fn folders_app(paths: &[&str]) -> Headless {
     folders_app_sized(paths, [1400.0, 900.0])

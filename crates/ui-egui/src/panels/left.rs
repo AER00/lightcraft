@@ -201,25 +201,34 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let plus = icon_button(&mut hdr, "albumNew", Icon::Plus, vec2(26.0, 26.0), false, true, "Create Album");
             egui::Popup::menu(&plus).show(|ui| {
                 if ui.button(crate::i18n::tr("Create Album…")).clicked() {
-                    app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: false });
+                    app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: false, parent: None });
                 }
                 if ui.button(crate::i18n::tr("Create Smart Album…")).clicked() {
                     app.ui.dialog = Some(crate::state::Dialog::SmartRules {
                         id: None,
                         name: String::new(),
                         rules: lightcraft_catalog::RuleSet { rules: vec![crate::panels::rules_editor::new_rule()], ..Default::default() },
+                        parent: None,
                     });
                 }
                 if ui.button(crate::i18n::tr("Create Smart Album from Filter…")).clicked() {
-                    app.ui.dialog = Some(crate::state::Dialog::NewSmartAlbum { name: String::new() });
+                    app.ui.dialog = Some(crate::state::Dialog::NewSmartAlbum { name: String::new(), parent: None });
                 }
                 if ui.button(crate::i18n::tr("Create Folder…")).clicked() {
-                    app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: true });
+                    app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: true, parent: None });
                 }
             });
             if albums_open {
                 let albums: Vec<Album> = app.session.catalog.albums().cloned().collect();
-                albums_tree(app, ui, &albums, None, 0.0);
+                // the album just made: the folders down to it open, once
+                let reveal = app.ui.reveal_album.take();
+                let mut open_to = Vec::new();
+                let mut cur = reveal.map(AlbumId).and_then(|id| albums.iter().find(|a| a.id == id)).and_then(|a| a.parent);
+                while let Some(p) = cur.filter(|p| !open_to.contains(p) && open_to.len() < 64) {
+                    open_to.push(p);
+                    cur = albums.iter().find(|a| a.id == p).and_then(|a| a.parent);
+                }
+                albums_tree(app, ui, &albums, None, 0.0, &open_to);
             }
             ui.add_space(10.0);
             local_section(app, ui);
@@ -643,13 +652,18 @@ fn browse_all_photos(app: &mut LightcraftApp, on: bool) {
     }
 }
 
-fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent: Option<AlbumId>, indent: f32) {
+/// `open_to`: folders forced open this frame (the way down to an album that was just made).
+fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent: Option<AlbumId>, indent: f32, open_to: &[AlbumId]) {
     let mut kids: Vec<&Album> = all.iter().filter(|a| a.parent == parent).collect();
     kids.sort_by_key(|a| (!a.folder, a.name.to_lowercase()));
     for a in kids {
         if a.folder {
             let open_id = egui::Id::new(("folder-open", a.id.0));
-            let open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(true);
+            let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(true);
+            if open_to.contains(&a.id) && !open {
+                open = true;
+                ui.data_mut(|d| d.insert_temp(open_id, true));
+            }
             let resp = row(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, false, indent);
             // a folder is no source, so its row folds it too; the triangle is the same click, aimed
             let tri = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("album-tri", a.id.0)), format!("albumToggle:{}", a.id.0));
@@ -658,7 +672,7 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
             }
             folder_menu(app, &resp, a);
             if open {
-                albums_tree(app, ui, all, Some(a.id), indent + 16.0);
+                albums_tree(app, ui, all, Some(a.id), indent + 16.0, open_to);
             }
         } else {
             let sel = app.session.source == LibrarySource::Album(a.id);
@@ -707,6 +721,23 @@ fn drop_target(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response
 
 fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
     resp.context_menu(|ui| {
+        if a.folder {
+            // the same commands as File ▸ New…, aimed at this folder
+            ui.menu_button(crate::i18n::tr("New"), |ui| {
+                for (label, command) in [
+                    ("Album…", "dialog.newAlbum"),
+                    ("Smart Album…", "dialog.smartAlbum"),
+                    ("Smart Album from Filter…", "dialog.newSmartAlbum"),
+                    ("Folder…", "dialog.newFolder"),
+                ] {
+                    if ui.button(crate::i18n::tr(label)).clicked() {
+                        let _ = app.run(command, json!({"parent": a.id.0}));
+                        ui.close();
+                    }
+                }
+            });
+            ui.separator();
+        }
         if !a.folder && !a.is_smart() && ui.button(crate::i18n::tr("Add Selected Photos")).clicked() {
             let _ = app.run("album.addPhotos", json!({"id": a.id.0}));
         }
@@ -725,7 +756,7 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
         if a.is_smart() && ui.button(crate::i18n::tr("Edit Smart Album…")).clicked() {
             // older smart albums keep their filter fields; the editor works on the rule set
             let rules = a.smart.as_ref().and_then(|f| f.rule_set.clone()).unwrap_or_default();
-            app.ui.dialog = Some(crate::state::Dialog::SmartRules { id: Some(a.id.0), name: a.name.clone(), rules });
+            app.ui.dialog = Some(crate::state::Dialog::SmartRules { id: Some(a.id.0), name: a.name.clone(), rules, parent: None });
         }
         if a.is_smart() && ui.button(crate::i18n::tr("Update Rules from Current Filter")).clicked() {
             let _ = app.run("album.setRules", json!({"id": a.id.0, "fromView": true}));

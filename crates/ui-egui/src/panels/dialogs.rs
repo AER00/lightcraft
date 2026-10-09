@@ -231,7 +231,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         }
                     });
                 }
-                Dialog::SmartRules { id, name, rules } => {
+                Dialog::SmartRules { id, name, rules, .. } => {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
                     crate::widgets::register(ui.ctx(), "field:smartName", r.rect);
                     ui.add_space(6.0);
@@ -252,7 +252,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         .color(t.text_dim),
                     );
                 }
-                Dialog::NewSmartAlbum { name } => {
+                Dialog::NewSmartAlbum { name, .. } => {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
                     r.request_focus();
                     if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -979,6 +979,13 @@ fn sam_model_body(app: &mut LightcraftApp, ui: &mut egui::Ui, error: Option<&str
     }
 }
 
+/// Runs a command that creates an album and asks the Albums tree to open the folders down to it.
+fn created_in(app: &mut LightcraftApp, command: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+    let r = app.run(command, params)?;
+    app.ui.reveal_album = r.get("id").and_then(serde_json::Value::as_u64);
+    Ok(r)
+}
+
 pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_json::Value, String> {
     match dlg {
         Dialog::SamModel { then, .. } => {
@@ -995,7 +1002,9 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }
             r
         }
-        Dialog::NewAlbum { name, folder } => app.run("album.create", json!({"name": name, "folder": folder, "addSelected": !folder})),
+        Dialog::NewAlbum { name, folder, parent } => {
+            created_in(app, "album.create", json!({"name": name, "folder": folder, "addSelected": !folder, "parent": parent}))
+        }
         Dialog::RenameAlbum { id, name } => app.run("album.rename", json!({"id": id, "name": name})),
         Dialog::TextPrompt { value, command, params, key, .. } => {
             let mut p = params.clone();
@@ -1033,7 +1042,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }
             app.run("photo.analyze", p)
         }
-        Dialog::SmartRules { id, name, rules } => {
+        Dialog::SmartRules { id, name, rules, parent } => {
             let name = if name.trim().is_empty() { "Smart Album".to_string() } else { name.trim().to_string() };
             match id {
                 Some(id) => {
@@ -1042,10 +1051,12 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
                     }
                     app.run("album.setRules", json!({"id": id, "replace": true, "rules": {"ruleSet": rules}}))
                 }
-                None => app.run("album.createSmart", json!({"name": name, "rules": {"ruleSet": rules}})),
+                None => created_in(app, "album.createSmart", json!({"name": name, "rules": {"ruleSet": rules}, "parent": parent})),
             }
         }
-        Dialog::NewSmartAlbum { name } => app.run("album.createSmart", json!({"name": if name.trim().is_empty() { "Smart Album" } else { name }})),
+        Dialog::NewSmartAlbum { name, parent } => {
+            created_in(app, "album.createSmart", json!({"name": if name.trim().is_empty() { "Smart Album" } else { name }, "parent": parent}))
+        }
         Dialog::CreatePreset { name, group, groups } => app.run(
             "preset.create",
             json!({
