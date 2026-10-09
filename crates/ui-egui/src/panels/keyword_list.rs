@@ -51,7 +51,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         if plus.clicked() {
             app.ui.dialog = Some(create_dialog(app));
         }
-        let picked = app.ui.keyword_list_selected.clone().filter(|k| app.session.catalog.has_keyword(k));
+        let picked = app.ui.keyword_list_selected.clone().filter(|k| in_tree(&app.caches.keyword_tree(&app.session.catalog), k));
         let minus = ui.add_enabled(picked.is_some(), egui::Button::new("−")).on_hover_text(crate::i18n::tr("Delete Keyword"));
         register(ui.ctx(), "keywordList:delete", minus.rect);
         if minus.clicked()
@@ -73,8 +73,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         });
     }
     let selection = app.session.selection.ids.clone();
+    let ticks = app.caches.keyword_ticks(&app.session.catalog, &selection);
     for r in &rows {
-        row(app, ui, r, &selection, filter.trim().is_empty());
+        row(app, ui, r, &selection, &ticks, filter.trim().is_empty());
     }
     ui.add_space(12.0);
     // the drag ends with the button's release, wherever it is
@@ -125,7 +126,7 @@ fn drop_keyword(app: &mut LightcraftApp, ctx: &egui::Context, keyword: &str, par
 
 /// One keyword's row: the triangle, the tick box, the name, the count, and on hover the arrow.
 /// `can_fold`: the triangle opens and closes the level (not while a filter opens it).
-fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId], can_fold: bool) {
+fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId], ticks: &Ticks, can_fold: bool) {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click_and_drag());
     register(ui.ctx(), format!("keywordRow:{}", r.path), rect);
@@ -164,7 +165,7 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId
         }
     }
     // the tick box: does the selection have it?
-    let state = tick(&app.session.catalog, selection, &r.path);
+    let state = ticks.tick(&r.path);
     let boxr = Rect::from_center_size(pos2(x + 22.0, cy), vec2(13.0, 13.0));
     let on = !selection.is_empty();
     let tb =
@@ -417,23 +418,47 @@ pub(crate) enum Tick {
     All,
 }
 
-/// The tick box of `path` for `photos`: a photo counts when it has the keyword itself (any case);
-/// one with only a keyword below it doesn't.
-pub(crate) fn tick(catalog: &Catalog, photos: &[PhotoId], path: &str) -> Tick {
-    let path = lightcraft_catalog::keywords::clean(path);
-    let has = photos
-        .iter()
-        .filter(|id| {
-            catalog
-                .photo(**id)
-                .is_some_and(|p| p.meta.keywords.iter().any(|k| lightcraft_catalog::keywords::same(&lightcraft_catalog::keywords::clean(k), &path)))
-        })
-        .count();
-    match has {
-        0 => Tick::No,
-        n if n == photos.len() => Tick::All,
-        _ => Tick::Some,
+/// How many of a selection's photos have each keyword itself, counted once per selection (and
+/// library change) rather than per row and frame: a long list with thousands of photos selected
+/// stays fast.
+#[derive(Debug, Default)]
+pub(crate) struct Ticks {
+    photos: usize,
+    /// Photos with it, by cleaned lower-case keyword.
+    counts: std::collections::HashMap<String, usize>,
+}
+
+impl Ticks {
+    pub(crate) fn of(catalog: &Catalog, photos: &[PhotoId]) -> Ticks {
+        let mut counts: std::collections::HashMap<String, usize> = Default::default();
+        let mut seen = std::collections::HashSet::new();
+        for id in photos {
+            let Some(p) = catalog.photo(*id) else { continue };
+            seen.clear();
+            for k in &p.meta.keywords {
+                let key = lightcraft_catalog::keywords::clean(k).to_lowercase();
+                if seen.insert(key.clone()) {
+                    *counts.entry(key).or_default() += 1;
+                }
+            }
+        }
+        Ticks { photos: photos.len(), counts }
     }
+
+    /// The tick box of `path`: a photo counts when it has the keyword itself (any case); one with
+    /// only a keyword below it doesn't.
+    pub(crate) fn tick(&self, path: &str) -> Tick {
+        match self.counts.get(&lightcraft_catalog::keywords::clean(path).to_lowercase()).copied().unwrap_or(0) {
+            0 => Tick::No,
+            n if n >= self.photos => Tick::All,
+            _ => Tick::Some,
+        }
+    }
+}
+
+/// The keyword is in the tree (any case).
+fn in_tree(tree: &[KeywordNode], path: &str) -> bool {
+    tree.iter().any(|n| same(&n.path, path) || (lightcraft_catalog::keywords::is_under(path, &n.path) && in_tree(&n.children, path)))
 }
 
 #[cfg(test)]
@@ -491,17 +516,18 @@ mod tests {
     }
 
     /// The tick box: ticked when every selected photo has the keyword itself, a dash when some do,
-    /// empty when none do or nothing is selected.
+    /// empty when none do or nothing is selected. Counted once per selection.
     #[test]
     fn the_tick_box_says_how_many_selected_photos_have_the_keyword() {
         let (c, ids) = library(&[&["Travel|Italy"], &["travel|italy", "beach"], &["travel|spain"]]);
-        assert_eq!(tick(&c, &ids[..2], "travel|Italy"), Tick::All, "whatever the case");
-        assert_eq!(tick(&c, &ids, "travel|Italy"), Tick::Some);
-        assert_eq!(tick(&c, &ids, "travel"), Tick::No, "a keyword below doesn't tick its parent");
-        assert_eq!(tick(&c, &[], "beach"), Tick::No);
-        assert_eq!(tick(&c, &ids[2..], "beach"), Tick::No);
-        // any letter's case, not only ASCII
-        let (c, ids) = library(&[&["Ärzte"]]);
-        assert_eq!(tick(&c, &ids, "ärzte"), Tick::All);
+        assert_eq!(Ticks::of(&c, &ids[..2]).tick("travel|Italy"), Tick::All, "whatever the case");
+        let all = Ticks::of(&c, &ids);
+        assert_eq!(all.tick("travel|Italy"), Tick::Some);
+        assert_eq!(all.tick("travel"), Tick::No, "a keyword below doesn't tick its parent");
+        assert_eq!(Ticks::of(&c, &[]).tick("beach"), Tick::No);
+        assert_eq!(Ticks::of(&c, &ids[2..]).tick("beach"), Tick::No);
+        // any letter's case, not only ASCII; a photo with it twice counts once
+        let (c, ids) = library(&[&["Ärzte", "ÄRZTE"], &[]]);
+        assert_eq!(Ticks::of(&c, &ids).tick("ärzte"), Tick::Some);
     }
 }

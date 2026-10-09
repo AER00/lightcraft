@@ -1077,6 +1077,8 @@ mod drop_tests {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
+    /// The Keyword List's tick boxes, by library revision and selection.
+    keyword_ticks: Option<(u64, u64, std::sync::Arc<panels::keyword_list::Ticks>)>,
     folder_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::FolderNode>>)>,
     people: Option<(u64, lightcraft_catalog::Filter, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
@@ -1159,6 +1161,22 @@ impl Caches {
             _ => {
                 let t = std::sync::Arc::new(cat.keyword_tree());
                 self.keyword_tree = Some((cat.revision, t.clone()));
+                t
+            }
+        }
+    }
+    /// How many selected photos have each keyword (the Keyword List's tick boxes).
+    pub(crate) fn keyword_ticks(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+        selection: &[lightcraft_catalog::PhotoId],
+    ) -> std::sync::Arc<panels::keyword_list::Ticks> {
+        let key = key_of(selection);
+        match &self.keyword_ticks {
+            Some((r, k, t)) if *r == cat.revision && *k == key => t.clone(),
+            _ => {
+                let t = std::sync::Arc::new(panels::keyword_list::Ticks::of(cat, selection));
+                self.keyword_ticks = Some((cat.revision, key, t.clone()));
                 t
             }
         }
