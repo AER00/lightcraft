@@ -37,6 +37,10 @@
   belonged to another command moves to the new one. Menus show the new keys; agents use `app.setShortcut`.
 
 ### RAW decoding
+- Olympus ORF raws get the starting look fitted to the camera's own JPEG too, instead of opening flat and grey (the
+  E-1, E-400 and XZ-2 corpus files: all accepted), with white balance relative to the as-shot look as for the other
+  formats. On an E-1 photo the starting render moved from ΔE00 11.3 to 8.3 against Lightroom's. Photos already
+  imported pick it up when re-rendered.
 - Samsung SRW files without compression now open as raws: NX5, NX10, NX11, NX20, NX200, NX210, NX1000, NX1100, EX1
   and WB2000. The compressed ones (NX1, NX30, NX300, NX500, NX2000, NX3000, NX3300, NX mini) still open from their
   camera JPEG. Photos already imported pick the change up on Reload.

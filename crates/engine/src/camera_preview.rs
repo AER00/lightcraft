@@ -1,5 +1,5 @@
 //! Estimate the starting look of a raw without a camera colour matrix (Sony ARW, Nikon NEF, Panasonic
-//! RW2, Fujifilm RAF, Canon CR3) from its own JPEG. Colour and luminance are fitted separately; the JPEG supplies correspondences only,
+//! RW2, Fujifilm RAF, Canon CR2/CR3, Pentax PEF, Samsung SRW, Olympus ORF) from its own JPEG. Colour and luminance are fitted separately; the JPEG supplies correspondences only,
 //! never output pixels or a replacement for RAW editing.
 //! A global matrix can't follow the camera's hue-dependent rendering (the best matrix rendered a
 //! lime shirt olive that the camera kept lime): a hue/saturation table fitted to the residuals
@@ -42,6 +42,7 @@ pub(crate) fn file_local_look(format: RawFormat) -> bool {
             | RawFormat::Cr2
             | RawFormat::Pef
             | RawFormat::Srw
+            | RawFormat::Orf
     )
 }
 
@@ -1115,6 +1116,7 @@ mod tests {
             RawFormat::Cr2,
             RawFormat::Pef,
             RawFormat::Srw,
+            RawFormat::Orf,
         ];
         assert!(local.into_iter().all(file_local_look));
         // DNG carries its own colour model

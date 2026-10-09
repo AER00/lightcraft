@@ -48,8 +48,8 @@ Priorities, in order. Each points at tracker rows in [`docs/parity.md`](docs/par
 
 1. **Camera colour calibration of our own** (LR-PROF-CAMERACOLOR, P0): fit each camera to its own embedded JPEG, use
    matrices the files carry themselves, then chart shots. Sony ARW, Nikon NEF, Panasonic RW2, Fujifilm RAF, Canon CR3/CR2,
-   Pentax PEF and Samsung SRW have the file-local fit (matrix + tone curve from their own JPEG; CR2 and PEF since issue #310, not yet
-   checked on the corpus); then ORF, then validate fidelity.
+   Pentax PEF, Samsung SRW and Olympus ORF have the file-local fit (matrix + tone curve from their own JPEG; CR2 and PEF
+   since issue #310, not yet checked on the corpus); then validate fidelity.
 2. **Raw formats, clean-room** (LR-IMP-FORMATS, P0): Remaining **unverified CR3 CRX** variants, compressed ORF, NEF
    lossy-after-split, sRAW. Decided 2026-10-05: write our own decoders from prose descriptions (never decoder source,
    no LGPL dependency); compressed NEF (#86) is the template.
@@ -188,7 +188,7 @@ Not decoded yet — preview only (no permissively licensed description; black-bo
   alignment or reset predictors at the split row). The other Nikon Huffman variants are decoded (`crates/raw/src/vendor/nefc.rs` documents the analysis).
 - **Olympus compressed ORF**, **Canon CR3 unverified CRX variants** (M11.1), **Canon sRAW/mRAW**.
 
-**Camera colour matrices:** ARW, NEF, RW2, RAF, CR3, CR2, PEF and Samsung SRW files can use guarded, separate chromaticity and tone estimates from their own embedded JPEG (see `docs/camera-preview-colour.md`); this is a per-file camera-look estimate with relative WB, not measured calibration or absolute-Kelvin WB. Other non-DNG raws and rejected fits use the documented neutral fallback (camera RGB ≈ linear sRGB, flagged
+**Camera colour matrices:** ARW, NEF, RW2, RAF, CR3, CR2, PEF, Samsung SRW and Olympus ORF files can use guarded, separate chromaticity and tone estimates from their own embedded JPEG (see `docs/camera-preview-colour.md`); this is a per-file camera-look estimate with relative WB, not measured calibration or absolute-Kelvin WB. Other non-DNG raws and rejected fits use the documented neutral fallback (camera RGB ≈ linear sRGB, flagged
 `matrix_is_fallback`) with the file's as-shot white-balance multipliers. Clean sources to evaluate next: manufacturer
 matrices stored in the files themselves (Olympus ImageProcessing `ColorMatrix`, Pentax equivalents; Panasonic RW2 files carry none) and our
 own chart-based calibration (M11.4). Adobe matrices are never used.

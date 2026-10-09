@@ -1,6 +1,6 @@
-# Sony ARW, Nikon NEF, Panasonic RW2, Fujifilm RAF, Canon CR3/CR2 and Pentax PEF starting look
+# Sony ARW, Nikon NEF, Panasonic RW2, Fujifilm RAF, Canon CR3/CR2, Pentax PEF, Samsung SRW and Olympus ORF starting look
 
-ARW, NEF, RW2, RAF, CR3, CR2, PEF and SRW decoding supply sensor data and camera white-balance multipliers, but currently no measured camera colour matrix. Treating camera RGB as linear sRGB produces a dark, muted default rendering. The loader now estimates a file-local starting look from that file's embedded camera JPEG, only when a usable camera matrix is absent. All output pixels still come from the RAW sensor data; there is no JPEG replacement or uniform saturation boost.
+ARW, NEF, RW2, RAF, CR3, CR2, PEF, SRW and ORF decoding supply sensor data and camera white-balance multipliers, but currently no measured camera colour matrix. Treating camera RGB as linear sRGB produces a dark, muted default rendering. The loader now estimates a file-local starting look from that file's embedded camera JPEG, only when a usable camera matrix is absent. All output pixels still come from the RAW sensor data; there is no JPEG replacement or uniform saturation boost.
 
 ## Colour and tone are separate
 
@@ -96,3 +96,13 @@ CR2 and PEF decode without a camera colour matrix too, but were left out of the 
 flat and desaturated: the camera's preview first, then the neutral fallback). They now use the same fit, gates and
 relative white balance. This change was not measured on the corpus: the gates keep the fallback for any file whose fit
 doesn't pass, so a file can only stay as before or move closer to its camera JPEG. Per-model numbers are still to come.
+
+### Olympus ORF
+
+The ORF decoder (uncompressed files) supplies the as-shot white balance (ImageProcessing `WB_RBLevels`) and no colour
+matrix, so ORF takes the same fit, gates and relative white balance. The reference is the camera's preview JPEG (on the
+E-1 the 1280 × 960 one the maker note points to). All three decodable corpus files are accepted (held-out RMS against
+the neutral fallback): E-1 0.126 → 0.014, E-400 0.087 → 0.022, XZ-2 0.061 → 0.023. Compressed ORFs (E-M1, E-M10 III)
+still open from their embedded JPEG. Against Lightroom Classic's render of a CC0 E-1 photo (2000 px, ΔE00 of the
+unedited render) the starting look moved from 11.25 to 8.30. Lightroom frames that E-1 file about 4 × 11 sensor pixels
+differently from the crop the file records (`CropLeft`/`CropTop` 36, 34); the file's own crop is kept.
