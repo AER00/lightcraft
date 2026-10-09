@@ -154,7 +154,7 @@ fn token_matches(p: &Photo, tok: &str) -> bool {
 /// Whether `p` has a named face region called `name` (case-insensitive).
 fn has_person(p: &Photo, name: &str) -> bool {
     let name = name.trim().to_lowercase();
-    p.meta.regions.iter().any(|r| r.kind == lightcraft_meta::RegionKind::Face && r.name.as_deref().is_some_and(|n| n.to_lowercase() == name))
+    p.people().iter().any(|n| n.to_lowercase() == name)
 }
 
 impl Filter {

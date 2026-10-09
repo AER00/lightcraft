@@ -365,6 +365,26 @@ impl Photo {
         }
         d
     }
+    /// How many keywords the photo has: a hierarchical keyword (`travel|italy|rome`) is one, and
+    /// the same keyword in different case or with stray spaces counts once; blank ones don't count.
+    pub fn keyword_count(&self) -> usize {
+        let mut seen: Vec<String> = self.meta.keywords.iter().map(|k| k.trim().to_lowercase()).filter(|k| !k.is_empty()).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        seen.len()
+    }
+    /// The people in the photo: the names on its face regions, trimmed, each once (names that
+    /// differ only in case are one person, as first seen). Pets and unnamed faces are not people.
+    pub fn people(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = Vec::new();
+        for r in self.meta.regions.iter().filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
+            let Some(name) = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else { continue };
+            if !out.iter().any(|o| o.to_lowercase() == name.to_lowercase()) {
+                out.push(name);
+            }
+        }
+        out
+    }
     /// In the library: not deleted and not only browsed (Local).
     pub fn in_library(&self) -> bool {
         !self.deleted && !self.local

@@ -43,7 +43,8 @@ pub enum Rule {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Text,
-    /// Keywords: text ops over each keyword (any keyword matches; `isEmpty` = none).
+    /// A list of names (keywords, people): text ops over each name (any name matches; `isEmpty` =
+    /// none).
     Keywords,
     Number,
     Date,
@@ -73,6 +74,9 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     ("editDate", "Edit Date", Kind::Date),
     // Keywords & People
     ("keywords", "Keywords", Kind::Keywords),
+    ("keywordCount", "Keyword Count", Kind::Number),
+    ("person", "People", Kind::Keywords),
+    ("personCount", "People Count", Kind::Number),
     // Description
     ("title", "Title", Kind::Text),
     ("caption", "Caption", Kind::Text),
@@ -106,7 +110,7 @@ pub const FIELD_GROUPS: &[(&str, &[&str])] = &[
     ("Source", &["album", "virtualCopy"]),
     ("File", &["fileName", "filePath", "kind", "format"]),
     ("Date", &["captureDate", "importDate", "editDate"]),
-    ("Keywords & People", &["keywords"]),
+    ("Keywords & People", &["keywords", "keywordCount", "person", "personCount"]),
     ("Description", &["title", "caption", "creator", "copyright", "copyrightStatus"]),
     ("Camera Info", &["camera", "lens", "focalLength", "aperture", "iso"]),
     ("Location", &["location", "hasGps"]),
@@ -212,6 +216,18 @@ fn text_op(op: &str, have: &str, want: &str) -> bool {
         "isEmpty" => have.is_empty(),
         "isNotEmpty" => !have.is_empty(),
         _ => false,
+    }
+}
+
+/// A [`Kind::Keywords`] op over a list of names: any name matches (none for `notContains`); `is`
+/// also matches one level of a hierarchical keyword (`italy` in `travel|italy|rome`).
+fn names_op<S: AsRef<str>>(op: &str, names: &[S], want: &str) -> bool {
+    let names = names.iter().map(AsRef::as_ref);
+    match op {
+        "isEmpty" => names.clone().all(|n| n.trim().is_empty()),
+        "isNotEmpty" => names.clone().any(|n| !n.trim().is_empty()),
+        "notContains" => !names.clone().any(|n| text_op("contains", n, want)),
+        _ => names.clone().any(|n| text_op(op, n, want) || (op == "is" && n.to_lowercase().split('|').any(|part| part.trim() == want))),
     }
 }
 
@@ -321,12 +337,10 @@ impl Rule {
             "edited" => p.is_edited() == value.as_bool().unwrap_or(true),
             "hasGps" => m.gps.is_some() == value.as_bool().unwrap_or(true),
             "virtualCopy" => p.copy_of.is_some() == value.as_bool().unwrap_or(true),
-            "keywords" => match op {
-                "isEmpty" => m.keywords.is_empty(),
-                "isNotEmpty" => !m.keywords.is_empty(),
-                "notContains" => !m.keywords.iter().any(|k| text_op("contains", k, &want)),
-                _ => m.keywords.iter().any(|k| text_op(op, k, &want) || (op == "is" && k.to_lowercase().split('|').any(|part| part == want))),
-            },
+            "keywords" => names_op(op, &m.keywords, &want),
+            "keywordCount" => num_op(op, Some(p.keyword_count() as f64), value),
+            "person" => names_op(op, &p.people(), &want),
+            "personCount" => num_op(op, Some(p.people().len() as f64), value),
             "text" => {
                 let all = [
                     p.file_name.as_str(),
@@ -554,6 +568,57 @@ mod tests {
         }
     }
 
+    /// Keyword Count: a photo with 2 keywords is in "≥ 2", "≤ 2" and "is 2"; a hierarchical path
+    /// (travel|italy|rome) is one keyword, and the same keyword twice in different case is one.
+    #[test]
+    fn keyword_count_rules() {
+        let cat = Catalog::new();
+        let mut p = photo(1); // travel|italy|rome, food
+        let m = |p: &Photo, op: &str, value: serde_json::Value| {
+            rs(json!({"rules": [{"field": "keywordCount", "op": op, "value": value}]})).matches(p, &cat)
+        };
+        assert!(m(&p, "gte", json!(2)) && m(&p, "lte", json!(2)) && m(&p, "is", json!(2)));
+        assert!(!m(&p, "gte", json!(3)) && !m(&p, "lt", json!(2)) && m(&p, "between", json!([1, 2])));
+        p.meta.keywords.push("Food".into());
+        assert!(m(&p, "is", json!(2)), "Food and food are one keyword");
+        p.meta.keywords.clear();
+        assert!(m(&p, "is", json!(0)) && m(&p, "lte", json!(2)));
+        assert_eq!(field_group("keywordCount"), Some("Keywords & People"));
+    }
+
+    /// People: the names on face regions. "People contains ana" finds Ana Lima; pets and unnamed
+    /// faces are not people; People Count counts each person once.
+    #[test]
+    fn people_rules() {
+        use lightcraft_meta::{Rect, Region, RegionKind};
+        let cat = Catalog::new();
+        let region = |name: Option<&str>, kind: RegionKind| Region {
+            rect: Rect { x0: 0.4, y0: 0.4, x1: 0.6, y1: 0.6 },
+            kind,
+            name: name.map(str::to_string),
+            description: None,
+        };
+        let mut p = photo(1);
+        let m = |p: &Photo, field: &str, op: &str, value: serde_json::Value| {
+            rs(json!({"rules": [{"field": field, "op": op, "value": value}]})).matches(p, &cat)
+        };
+        assert!(m(&p, "person", "isEmpty", json!(null)) && m(&p, "personCount", "is", json!(0)));
+        p.meta.regions = vec![
+            region(Some("Ana Lima"), RegionKind::Face),
+            region(Some(" ana lima "), RegionKind::Face),
+            region(Some("Rex"), RegionKind::Pet),
+            region(None, RegionKind::Face),
+            region(Some("Bo"), RegionKind::Face),
+        ];
+        assert!(m(&p, "person", "contains", json!("ana")));
+        assert!(m(&p, "person", "is", json!("ANA LIMA")));
+        assert!(!m(&p, "person", "is", json!("rex")), "a pet isn't a person");
+        assert!(m(&p, "person", "notContains", json!("rex")));
+        assert!(m(&p, "person", "isNotEmpty", json!(null)));
+        assert!(m(&p, "personCount", "is", json!(2)), "Ana Lima once, Bo; not the pet or the unnamed face");
+        assert_eq!(field_group("person"), Some("Keywords & People"));
+    }
+
     /// The field menu shows every rule field once: at the top level or in exactly one group,
     /// and [`FIELDS`] lists them in menu order.
     #[test]
@@ -581,7 +646,7 @@ mod tests {
         same(&["fileName", "filePath", "kind", "format"], "File");
         same(&["camera", "lens", "focalLength", "aperture", "iso"], "Camera Info");
         same(&["captureDate", "importDate", "editDate"], "Date");
-        same(&["keywords"], "Keywords & People");
+        same(&["keywords", "keywordCount", "person", "personCount"], "Keywords & People");
         same(&["title", "caption", "creator", "copyright", "copyrightStatus"], "Description");
         same(&["location", "hasGps"], "Location");
         for f in ["rating", "flag", "label", "text"] {
