@@ -33,7 +33,7 @@ commands:
   web [--serve [port]] [--dev]
                   build the browser app (apps/lightcraft-web) into <target>/web/;
                   --serve serves it on http://127.0.0.1:<port> (default 8080)
-  ci              fmt --check, clippy -D warnings, test, parity refs, layers, assets, wasm (stops at first failure)
+  ci              fmt --check, clippy -D warnings, heif, test, parity refs, layers, assets, wasm (stops at first failure)
   corpus [--download]
                   show where test corpora live; --download fetches PngSuite and CC0 raw samples (raw.pixls.us) into corpus/
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
@@ -260,6 +260,18 @@ fn cmd_ci() -> Result<(), String> {
             }),
         ),
         (
+            "heif",
+            Box::new(|| {
+                // the optional HEIC/HEIF decoder is off in the workspace build above
+                let mut c = cargo();
+                c.args(["clippy", "-p", "lightcraft-codecs", "--features", "heif", "--all-targets", "--", "-D", "warnings"]);
+                run(c, "cargo clippy -p lightcraft-codecs --features heif --all-targets -- -D warnings")?;
+                let mut c = cargo();
+                c.args(["test", "-p", "lightcraft-codecs", "-p", "lightcraft-heif", "--features", "lightcraft-codecs/heif"]);
+                run(c, "cargo test -p lightcraft-codecs -p lightcraft-heif --features lightcraft-codecs/heif")
+            }),
+        ),
+        (
             "test",
             Box::new(|| {
                 let mut c = cargo();
@@ -341,6 +353,9 @@ const RAW_SAMPLES: &[(&str, &str)] = &[
         "dng-adobe-canon-5d3-lossy.dng",
         "https://raw.pixls.us/getfile.php/1023/nice/Adobe%20DNG%20Converter%20-%20Canon%20EOS%205D%20Mark%20III%20-%20Lossy%20JPEG%20compression%20%283:2%29.DNG",
     ),
+    // Apple ProRAW (iPhone 12 Pro, iOS 14.3): LinearRaw LJ92 tiles, ProfileToneCurve, ProfileGainTableMap, a sky matte.
+    // sha256 e91e77a4533ed7cce551d83330676ea5c47dd5e55fb38adda7819366afdbdfc2
+    ("dng-apple-iphone12pro-proraw.dng", "https://raw.pixls.us/data/Apple/iPhone%2012%20Pro/IMG_1361.DNG"),
     (
         "dng-canon-5d3-14bit-small.dng",
         "https://raw.pixls.us/getfile.php/2204/nice/Canon%20-%20EOS%205D%20Mark%20III%20-%2014bit%2014bit%20%282.3471882640587%29.dng",

@@ -10,15 +10,26 @@
 //! run them off the UI thread.
 #![forbid(unsafe_code)]
 
+// Model/cache types remain available without linking the optional inference crate.
+#[cfg(not(feature = "denoise"))]
+extern crate lightcraft_denoise_core as lightcraft_denoise;
+
 pub mod availability;
 mod camera_preview;
 pub mod camera_profiles;
 pub mod cmd;
+pub mod config;
 pub mod crs;
 pub mod crs_masks;
 pub mod demo;
+pub mod denoise;
 pub mod devices;
 pub mod export;
+pub mod face_download;
+#[cfg(not(target_arch = "wasm32"))]
+mod faces_index;
+#[cfg(not(target_arch = "wasm32"))]
+mod faces_worker;
 pub mod files;
 pub mod fonts;
 pub mod guard;
@@ -33,6 +44,7 @@ pub mod logging;
 pub mod media;
 pub mod memory;
 pub mod merge;
+mod model_download;
 pub mod originals;
 pub mod preset_import;
 pub mod preset_luminar;
@@ -132,8 +144,10 @@ pub struct Interaction {
 
 /// Source of [`Session::visible_shared`] generations (process-wide, so two sessions never share one).
 static VISIBLE_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static LIBRARY_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 pub struct Session {
+    library_generation: u64,
     /// Auto Sync: edits to the active photo also change the other selected photos (the settings
     /// that changed, nothing else).
     pub auto_sync: bool,
@@ -157,6 +171,17 @@ pub struct Session {
     /// Set by a command whose change must not rewrite the photo's XMP sidecar even with auto-write on
     /// (a catalog-only edit of data the sidecar writer does not emit); consumed when the command ends.
     pub(crate) skip_auto_write: bool,
+    /// AI denoise: the model in use, the photos that have their picture and the work in progress.
+    pub(crate) denoise: denoise::State,
+    /// Where the host keeps face models (one folder each); `None` where there is no file system (the web).
+    pub face_models_dir: Option<std::path::PathBuf>,
+    /// Face model downloads started this session (the staged files wait in `<face_models_dir>/.downloads`).
+    pub face_downloads: face_download::Downloads,
+    /// The user's own list of models to download (`catalog.json` in the models folder), as last read.
+    pub(crate) face_catalog: lightcraft_faces::catalog::Catalog,
+    /// The loaded recognition model and the face embeddings made with it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) faces: faces_index::FacesState,
     /// Copied develop settings (partial JSON) for Paste.
     pub clipboard: Option<Value>,
     /// The folder on disk the [`LibrarySource::Folder`] view browses.
@@ -247,8 +272,13 @@ impl Default for Session {
 }
 
 impl Session {
+    pub fn library_generation(&self) -> u64 {
+        self.library_generation
+    }
+
     pub fn new() -> Session {
         Session {
+            library_generation: LIBRARY_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             auto_sync: false,
             catalog: Catalog::new(),
             source: LibrarySource::All,
@@ -263,6 +293,12 @@ impl Session {
             redo: Vec::new(),
             interaction: None,
             skip_auto_write: false,
+            denoise: Default::default(),
+            face_models_dir: None,
+            face_downloads: Default::default(),
+            face_catalog: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            faces: Default::default(),
             clipboard: None,
             meta_clipboard: None,
             browse: None,
@@ -400,6 +436,27 @@ impl Session {
         if let Some(e) = self.undo.last_mut() {
             e.folder = Some(folder);
         }
+        Ok(())
+    }
+
+    /// The box to cut a face's picture from: the detector's, when the scan has looked at the face (every face is then shown
+    /// equally close, however loosely or tightly its own region was drawn), else the region's own box.
+    pub fn face_view(&self, id: PhotoId, rect: lightcraft_geom::Rect) -> lightcraft_geom::Rect {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(v) = self.faces.index.view(id.0, &rect) {
+            return v;
+        }
+        let _ = id;
+        rect
+    }
+
+    /// Apply an op that is LightCraft's own bookkeeping rather than something the user did (faces found by the background
+    /// scan): journaled like any op, but not an undo step, and it leaves the redo stack alone.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn apply_system(&mut self, op: Op) -> Result<()> {
+        let fwd = op.clone();
+        self.catalog.apply(op)?;
+        self.pending_log.push(fwd);
         Ok(())
     }
 
@@ -781,9 +838,18 @@ pub fn json_delta(old: &Value, new: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_album_order;
+#[cfg(test)]
 mod tests_color;
 #[cfg(test)]
+mod tests_denoise;
+#[cfg(test)]
 mod tests_export;
+#[cfg(test)]
+mod tests_face_models;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_face_recognize;
 #[cfg(test)]
 mod tests_folders;
 #[cfg(test)]

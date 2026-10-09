@@ -85,13 +85,26 @@ scissor clipping as egui's GPU backends, so the image matches the window (minus 
 - **In the running app:** `{"method": "ui.screenshot", "params": {"path": "a.png", "headless": true}}`.
   The UI is drawn into an offscreen context from the app's logic tick, which keeps running when the
   window is occluded or the display sleeps/locks. Windowed screenshots fall back to this after 2 s.
-- **Without any app window:** `lightcraft-cli snapshot` runs a whole app session headlessly and
-  answers the same control requests (same handler) from a JSON-lines script:
+- **Without any app window:** `lightcraft-cli snapshot` runs a whole app session headlessly.
+  Photo development also defaults to the CPU, so the initial frames do not discover a GPU adapter
+  or load a graphics driver. `LIGHTCRAFT_GPU=1` does not opt snapshots back into GPU rendering.
+  This applies only to the snapshot session: even `--library DIR` leaves the desktop app's saved
+  `ui.json` preferences untouched. It answers the same control requests (same handler) from a JSON-lines script:
 
 ```text
 lightcraft-cli snapshot --demo -o grid.png --size 1600x1000 [--scale 2]
 lightcraft-cli snapshot --library DIR --script tour.jsonl -o shot.png
 ```
+
+Headless screenshot dimensions must be finite and at least one logical point, with a finite,
+positive scale. Rounded output must be at least one pixel per edge, at most 16,384 pixels
+per edge and 64 million pixels in total. `snapshot` and `ui.resize` reject requests outside
+these limits before layout or rasterization; supplied resize dimensions must be numbers.
+UI zoom changes text and control sizes while preserving the snapshot viewport's requested
+physical pixel dimensions. Later `ui.resize` requests use current egui points; validation
+and rasterization both convert them to native viewport points before rounding the output
+pixels. A native edge below one point after zooming out is valid if it rounds to at least
+one pixel.
 
   `tour.jsonl` holds one request per line (`#` comments allowed), e.g.
   `{"method": "ui.set", "params": {"view": "detail", "right": "edit", "openSections": ["optics"]}}`

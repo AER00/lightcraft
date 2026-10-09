@@ -120,10 +120,17 @@ pub fn auto_wb(src: &Rgb32f, info: &SourceInfo) -> (f64, f64) {
         return (info.as_shot_temp, info.as_shot_tint);
     }
     let avg = acc.map(|v| v / wsum);
-    let xyz = REC2020.to_xyz().apply(avg);
-    let shot = lightcraft_color::cct::temp_tint_to_xy(info.as_shot_temp, info.as_shot_tint);
-    let seen = bradford(REC2020.white, shot).apply(xyz);
-    let (t, tint) = xy_to_temp_tint(Xy::from_xyz(seen));
+    // the white that makes `avg` neutral, through the same model the white balance renders with
+    // (`local::wb_matrix_for`): the camera's own colour model, else a Bradford adaptation
+    let camera = info.camera_color.as_deref().filter(|_| info.raw && !info.relative_wb);
+    let seen = match camera.and_then(|cc| lightcraft_raw::color::neutral_white(&cc.tags, cc.developed_for, avg)) {
+        Some(white) => white,
+        None => {
+            let shot = lightcraft_color::cct::temp_tint_to_xy(info.as_shot_temp, info.as_shot_tint);
+            Xy::from_xyz(bradford(REC2020.white, shot).apply(REC2020.to_xyz().apply(avg)))
+        }
+    };
+    let (t, tint) = xy_to_temp_tint(seen);
     (t.clamp(2000.0, 50000.0).round(), tint.clamp(-150.0, 150.0).round())
 }
 

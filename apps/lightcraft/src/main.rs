@@ -125,7 +125,7 @@ fn gpu_crash_notice(what: &str) -> String {
 }
 
 fn config_dir() -> Option<std::path::PathBuf> {
-    lightcraft_engine::camera_profiles::config_dir()
+    lightcraft_engine::config::config_dir()
 }
 
 /// `<config>/ui.json`, the saved UI state and app settings — `None` when nothing is read or
@@ -387,6 +387,13 @@ fn services(ctx: egui::Context, log_file: Option<&std::path::Path>) -> Services 
                 .map(|p| p.to_string_lossy().to_string())
                 .collect()
         })),
+        pick_denoise_model: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .add_filter_nocase(lightcraft_ui_egui::i18n::tr("ONNX model"), &["onnx"])
+                .pick_file()
+                .map(|p| vec![p.to_string_lossy().into_owned()])
+                .unwrap_or_default()
+        })),
         pick_preset_files: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .set_title(lightcraft_ui_egui::i18n::tr("Import Presets"))
@@ -399,6 +406,14 @@ fn services(ctx: egui::Context, log_file: Option<&std::path::Path>) -> Services 
                 .into_iter()
                 .map(|p| p.to_string_lossy().to_string())
                 .collect()
+        })),
+        pick_model_file: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .set_title(lightcraft_ui_egui::i18n::tr("Add a Face Recognition Model"))
+                .add_filter_nocase(lightcraft_ui_egui::i18n::tr("Face models (ONNX)"), &["onnx"])
+                .pick_file()
+                .map(|p| vec![p.to_string_lossy().to_string()])
+                .unwrap_or_default()
         })),
         pick_tracklog: Some(Box::new(|| {
             rfd::FileDialog::new()
@@ -446,22 +461,29 @@ fn services(ctx: egui::Context, log_file: Option<&std::path::Path>) -> Services 
     }
 }
 
+/// The library session with the folder face models are kept in (`<config>/models`).
+fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: bool) -> (Session, Option<LibraryProblem>) {
+    let (mut s, problem) = open_library_session(in_memory, dir, seed_demo);
+    s.face_models_dir = lightcraft_engine::config::default_face_models_dir();
+    (s, problem)
+}
+
 /// The persistent library session, or with `--memory` an in-memory one (demo photos).
 ///
 /// If the library can't be opened the session is empty and in memory — never seeded with the
 /// demo photos, never written anywhere — and the problem is returned: the window then says so
 /// and offers Try Again / Choose Another Library… / Continue Without Saving / Quit (issue #100).
-fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: bool) -> (Session, Option<LibraryProblem>) {
+fn open_library_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: bool) -> (Session, Option<LibraryProblem>) {
     if in_memory {
-        return (if seed_demo { Session::with_demo() } else { Session::new() }.with_fs().with_system_clock(), None);
+        return (if seed_demo { Session::with_demo() } else { Session::new() }.with_fs().with_default_denoise_models().with_system_clock(), None);
     }
-    let unopened = || Session::new().with_fs().with_system_clock();
+    let unopened = || Session::new().with_fs().with_default_denoise_models().with_system_clock();
     let Some(dir) = dir else {
         log::warn!("no library location (set --library or LIGHTCRAFT_LIBRARY)");
         return (unopened(), Some(LibraryProblem::new("", "There is no home folder to keep the library in. Choose a folder for it.")));
     };
     let t0 = std::time::Instant::now();
-    let mut s = Session::new().with_fs().with_system_clock();
+    let mut s = Session::new().with_fs().with_default_denoise_models().with_system_clock();
     match s.open_library(&dir, seed_demo) {
         Ok(r) => {
             let (replayed, torn) = (r.replayed, r.torn_bytes);

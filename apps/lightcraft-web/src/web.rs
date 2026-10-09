@@ -205,10 +205,13 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
             open_picker(originals.clone(), backend.clone(), ctx.clone());
             Vec::new() // files arrive asynchronously and are imported on a later frame
         })),
+        pick_denoise_model: None,
         // Preset files: browser pickers are asynchronous; not wired on the web yet.
         pick_preset_files: None,
         pick_tracklog: None,
         pick_lightroom_catalog: None,
+        // Face models need a folder to live in; the web has none.
+        pick_model_file: None,
         save_preset_file: None,
         pick_curve_preset_files: None,
         save_curve_preset_file: None,

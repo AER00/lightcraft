@@ -152,8 +152,11 @@ pub(crate) fn stage_trim_order(sizes: &[(Slot, usize)], budget: usize) -> Vec<Sl
 /// engine's own caches do not count.
 const STAGE_BUDGET_SHARE: usize = 4;
 
-/// Variant thumbnails kept as textures (LRU).
+/// Variant thumbnails kept as textures (LRU), when nothing asks for more.
 pub const VARIANT_TEXTURES: usize = 96;
+/// The most a view can raise that to ([`Renderer::want_variants`]): a screenful of small faces is a few hundred pictures of
+/// a few tens of kilobytes each.
+pub const MAX_VARIANT_TEXTURES: usize = 800;
 /// Priority of variant thumbnail jobs: below on-screen grid thumbnails and the loupe.
 const VARIANT_PRIORITY: u32 = 6;
 
@@ -199,6 +202,8 @@ pub struct Renderer {
     prefetched: HashMap<Slot, u64>,
     /// Variant key → frame it was last asked for (LRU of [`Slot::Variant`] textures).
     variant_used: HashMap<u64, u64>,
+    /// How many variants the last frame's views showed at once (see [`Self::want_variants`]).
+    variant_want: usize,
     /// Frames polled so far.
     frame: u64,
     /// Stage caches cleared to stay in budget (see [`stage_trim_order`]).
@@ -258,6 +263,7 @@ impl Renderer {
             catalog_rev: 0,
             prefetched: HashMap::new(),
             variant_used: HashMap::new(),
+            variant_want: 0,
             frame: 0,
             stages_trimmed: 0,
             #[cfg(test)]
@@ -460,6 +466,19 @@ impl Renderer {
         self.textures.get(&slot)
     }
 
+    /// A view that shows `n` variants at once (the People view's faces) says so each frame, so the cache holds them all:
+    /// with a fixed budget a screen of more than [`VARIANT_TEXTURES`] pictures evicts, and re-requests, the same few every
+    /// frame, and those tiles stay blank. The budget is the most asked for in the last frame, a quarter more, up to
+    /// [`MAX_VARIANT_TEXTURES`].
+    pub fn want_variants(&mut self, n: usize) {
+        self.variant_want = self.variant_want.max(n);
+    }
+
+    /// How many variant textures are kept now.
+    fn variant_budget(&self) -> usize {
+        VARIANT_TEXTURES.max(self.variant_want + self.variant_want / 4).min(MAX_VARIANT_TEXTURES)
+    }
+
     /// Variant thumbnail textures currently loaded.
     pub fn variant_textures(&self) -> usize {
         self.textures.keys().filter(|s| matches!(s, Slot::Variant(_))).count()
@@ -489,20 +508,22 @@ impl Renderer {
             }
             _ => true,
         });
+        let budget = self.variant_budget();
+        self.variant_want = 0;
         let n = self.variant_textures();
-        if n > VARIANT_TEXTURES {
+        if n > budget {
             let mut have: Vec<(u64, u64)> = self
                 .textures
                 .keys()
                 .filter_map(|s| if let Slot::Variant(k) = s { Some((self.variant_used.get(k).copied().unwrap_or(0), *k)) } else { None })
                 .collect();
             have.sort_unstable();
-            for (_, k) in have.into_iter().take(n - VARIANT_TEXTURES) {
+            for (_, k) in have.into_iter().take(n - budget) {
                 self.textures.remove(&Slot::Variant(k));
                 self.variant_used.remove(&k);
             }
         }
-        if self.variant_used.len() > 4 * VARIANT_TEXTURES {
+        if self.variant_used.len() > 4 * budget {
             let textures = &self.textures;
             let pending = &self.pending;
             self.variant_used.retain(|k, _| textures.contains_key(&Slot::Variant(*k)) || pending.contains_key(&Slot::Variant(*k)));
