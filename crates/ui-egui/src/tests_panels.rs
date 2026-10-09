@@ -383,13 +383,9 @@ impl AlbumTree {
         let name = ["source:folder:", "source:album:"].iter().map(|p| format!("{p}{id}")).find(|n| h.app.widgets.iter().any(|(w, _)| w == n));
         widget(h, &name.unwrap_or_else(|| panic!("no row for album {id}")))
     }
-    /// The middle of the row just under the last row of the Albums tree (where the top-level drop zone is).
-    fn below_tree(&self) -> egui::Pos2 {
-        let bottom = (self.h.app.widgets.iter())
-            .filter(|(w, r)| (w.starts_with("source:album:") || w.starts_with("source:folder:")) && r.left() < 300.0)
-            .map(|(_, r)| r.bottom())
-            .fold(0.0, f32::max);
-        egui::pos2(100.0, bottom + 14.5)
+    /// The middle of the "Albums" header, where an album is dropped to take it to the top level.
+    fn albums_header(&self) -> egui::Pos2 {
+        widget(&self.h, "sidebarSection:albums").center()
     }
     fn parent(&self, id: u64) -> Option<u64> {
         self.h.app.session.catalog.album(lightcraft_catalog::AlbumId(id)).unwrap().parent.map(|p| p.0)
@@ -600,22 +596,23 @@ fn folders_are_placed_by_their_edges_and_entered_by_their_middle() {
     assert!(!t.h.app.session.catalog.album_children_are_ordered(None), "Travel 2026 already sits right before Trips");
 }
 
-/// Dragging out of a folder: the drop zone under the tree puts the album back at the top level;
-/// it only shows when there is somewhere to go, and the move is one undo step.
+/// Dragging out of a folder: the "Albums" header is the way back to the top level (it stays in
+/// view however long the tree is), only offered for an album that sits in a folder, and the move
+/// is one undo step. The drop does not fold the section.
 #[test]
-fn dragging_an_album_to_the_top_level() {
+fn dragging_an_album_to_the_albums_header_takes_it_to_the_top_level() {
     let mut t = album_tree();
     let has = |t: &AlbumTree, id: &str| t.h.app.widgets.iter().any(|(w, _)| w == id);
-    assert!(!has(&t, "albumDrop:top"), "no zone unless an album is being dragged");
-    // below the last row of the tree, where the zone appears once an album with a folder is dragged
-    let below = t.below_tree();
-    let from = t.row(t.best).center();
-    t.drag(from, &[(below, 3)]);
+    assert!(!has(&t, "albumDrop:top"), "no target unless an album is being dragged");
+    let (from, header) = (t.row(t.best).center(), t.albums_header());
+    t.drag(from, &[(header, 3)]);
     assert_eq!(t.parent(t.best), None, "moved out of Trips");
-    // a top-level album has nowhere to go: dropping it there does nothing
-    let (from, below) = (t.row(t.best).center(), t.below_tree());
-    t.drag(from, &[(below, 3)]);
+    assert!(!t.h.app.ui.sidebar_section_collapsed("albums"), "dropping on the header does not fold it");
+    // a top-level album has nowhere to go: dropping it on the header does nothing
+    let (from, header) = (t.row(t.best).center(), t.albums_header());
+    t.drag(from, &[(header, 3)]);
     assert_eq!(t.parent(t.best), None);
+    assert!(!t.h.app.ui.sidebar_section_collapsed("albums"));
     t.h.app.session.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(t.parent(t.best), Some(t.trips), "one undo puts it back");
 }

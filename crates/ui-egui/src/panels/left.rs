@@ -208,6 +208,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.add_space(10.0);
             // Albums header
             let (ar, albums_open) = sidebar_section_header(app, ui, "albums", "Albums");
+            top_level_drop_target(app, ui, ar);
             // the + stays at the visible edge when the sidebar is scrolled sideways
             let plus_right = (ar.left() + viewport.max.x).min(ar.right());
             let mut hdr = ui.new_child(
@@ -255,7 +256,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     cur = cat.album(p).and_then(|a| a.parent);
                 }
                 albums_tree(app, ui, &kids, None, 0.0, &open_to);
-                top_level_drop_zone(app, ui);
             }
             ui.add_space(10.0);
             local_section(app, ui);
@@ -904,20 +904,22 @@ fn album_drag_over(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Resp
     opened
 }
 
-/// While an album that sits in a folder is dragged: a row under the tree that takes it back to the
-/// top level.
-fn top_level_drop_zone(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+/// While an album that sits in a folder is dragged: the "Albums" header takes it back to the top
+/// level (outlined, with a hint). The header stays in view however long the tree is, and nothing
+/// moves when it appears.
+fn top_level_drop_target(app: &mut LightcraftApp, ui: &mut egui::Ui, header: Rect) {
     let Some(dragged) = app.ui.dragging_album.map(AlbumId) else { return };
     if !can_drop_album(app, dragged, None) {
         return;
     }
     let t = Tokens::get(ui.ctx());
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 29.0), Sense::hover());
-    register(ui.ctx(), "albumDrop:top", r);
-    let over = pointer_over(ui, r);
+    register(ui.ctx(), "albumDrop:top", header);
+    let over = pointer_over(ui, header);
     let stroke = if over { egui::Stroke::new(1.5, t.accent) } else { egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.5)) };
-    ui.painter().rect_stroke(r.shrink2(vec2(8.0, 1.0)), 4.0, stroke, egui::StrokeKind::Inside);
-    ui.painter().text(pos2(r.left() + 18.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Top Level"), t.font(13.5), t.text_dim);
+    ui.painter().rect_stroke(header.shrink2(vec2(8.0, 3.0)), 4.0, stroke, egui::StrokeKind::Inside);
+    // right-aligned, left of the + button
+    let edge = header.right().min(ui.clip_rect().right());
+    ui.painter().text(pos2(edge - 56.0, header.center().y), Align2::RIGHT_CENTER, crate::i18n::tr("Top Level"), t.font(12.5), t.text_dim);
     if over && ui.input(|i| i.pointer.primary_released()) {
         drop_album(app, ui, dragged, None);
     }
