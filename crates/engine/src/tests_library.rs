@@ -637,3 +637,26 @@ fn rules_from_the_view_cant_loop() {
     assert_eq!(s.catalog.album(lightcraft_catalog::AlbumId(b)).unwrap().smart, before, "B unchanged");
     assert!(s.catalog.smart_album_problems(lightcraft_catalog::AlbumId(b)).is_empty());
 }
+
+/// A rule that stops checking later (the album it tests is deleted) doesn't lock up what doesn't
+/// touch it: the filter bar keeps working, and an album's other settings can still be edited. A
+/// change to the rules themselves is still checked.
+#[test]
+fn a_stale_rule_doesnt_block_other_changes() {
+    let mut s = crate::Session::with_demo();
+    let trip = s.execute("album.create", &serde_json::json!({"name": "Trip", "addSelected": false})).unwrap()["id"].as_u64().unwrap();
+    let rules = serde_json::json!({"rules": [{"field": "album", "op": "isNot", "value": trip}]});
+    s.execute("library.filter", &serde_json::json!({"ruleSet": rules})).unwrap();
+    let smart =
+        s.execute("album.createSmart", &serde_json::json!({"name": "Not Trip", "rules": {"ruleSet": rules}})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.delete", &serde_json::json!({"id": trip})).unwrap();
+    // the filter bar: a rating still applies on top of the stale rule
+    s.execute("library.filter", &serde_json::json!({"rating": 3})).unwrap();
+    assert_eq!(s.filter.rating, 3);
+    // the album: a partial edit that leaves its rules alone
+    s.execute("album.setRules", &serde_json::json!({"id": smart, "rules": {"rating": 2}})).unwrap();
+    // changing the rules is still checked
+    let bad = serde_json::json!({"ruleSet": {"rules": [{"field": "rating", "op": "gte", "value": 9}]}});
+    assert!(s.execute("library.filter", &bad).is_err());
+    assert!(s.execute("album.setRules", &serde_json::json!({"id": smart, "rules": bad})).is_err());
+}

@@ -330,11 +330,14 @@ pub fn specs() -> Vec<CommandSpec> {
                 if f.library_folder.is_some() && s.source == LibrarySource::LibraryFolder {
                     return Err(bad("library.filter", "a folder is already shown (library.source): show another source first"));
                 }
-                // checked like a smart album's rules: an unknown field or a value that can't match is an error, not an empty grid
+                // checked like a smart album's rules when this call sets them: an unknown field or a value
+                // that can't match is an error, not an empty grid. Rules that stopped checking since
+                // (their album was deleted) don't block other filter changes.
                 if let Some(rules) = f.rule_set.as_mut() {
                     rules.upgrade();
                 }
-                if let Some(problems) = f.rule_set.as_ref().map(|rs| rs.check(&s.catalog)).filter(|p| !p.is_empty()) {
+                let sets_rules = p.get("ruleSet").is_some_and(|r| !r.is_null());
+                if let Some(problems) = f.rule_set.as_ref().filter(|_| sets_rules).map(|rs| rs.check(&s.catalog)).filter(|p| !p.is_empty()) {
                     return Err(bad("library.filter", problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")));
                 }
                 s.filter = f;
@@ -1315,7 +1318,7 @@ fn merge_filter(base: &lightcraft_catalog::Filter, patch: &Value, c: &str) -> Re
     Ok(f)
 }
 
-/// `patch` merged onto `base`, refused when its rule set has problems (`RuleSet::check_for`;
+/// `patch` merged onto `base`, refused when the rule set it sets has problems (`RuleSet::check_for`;
 /// `owner` is the smart album the rules are for, so testing an album that leads back to it is a
 /// problem too).
 fn merge_rules(
@@ -1326,7 +1329,10 @@ fn merge_rules(
     owner: Option<AlbumId>,
 ) -> Result<lightcraft_catalog::Filter> {
     let f = merge_filter(base, patch, c)?;
-    let problems = f.rule_set.as_ref().map(|r| r.check_for(cat, owner)).unwrap_or_default();
+    // only rules this change sets are checked: one that stopped checking since (its album was
+    // deleted) doesn't block editing the album's other settings
+    let sets_rules = patch.get("ruleSet").is_some_and(|r| !r.is_null());
+    let problems = f.rule_set.as_ref().filter(|_| sets_rules).map(|r| r.check_for(cat, owner)).unwrap_or_default();
     if !problems.is_empty() {
         return Err(bad(c, problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")));
     }
