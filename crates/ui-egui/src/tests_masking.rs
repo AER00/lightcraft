@@ -39,6 +39,99 @@ fn develop(h: &Headless) -> lightcraft_develop::DevelopSettings {
     (*h.app.session.develop_of(id).unwrap_or_default()).clone()
 }
 
+fn click(h: &mut Headless, id: &str) {
+    let r = h.request("ui.clickWidget", json!({"id": id}), T);
+    assert_eq!(r["ok"], true, "{id}: {r}");
+}
+
+fn brush_at(h: &mut Headless, x: f64, y: f64) {
+    pointer(h, json!([{"kind": "down", "x": x, "y": y}, {"kind": "up", "x": x, "y": y}]));
+}
+
+/// Evaluate the real composite, with a deterministic embedded sky matte (no AI model required).
+fn mask_coverage(h: &Headless, mask: usize, x: usize, y: usize) -> f32 {
+    use lightcraft_pipeline::{
+        geometry::Frame,
+        masks::{MatteKind, Mattes, evaluate_one},
+    };
+    use lightcraft_raster::{Image, Plane, Rgb32f};
+    let d = develop(h);
+    let mut sky = Image::<u8>::new(100, 100);
+    sky.data.fill(255);
+    let mut mattes = Mattes::default();
+    mattes.push(MatteKind::Sky, sky);
+    let a = evaluate_one(
+        &d.masks[mask],
+        &Frame::new(100, 100, &Default::default(), true),
+        100,
+        100,
+        &Rgb32f::new(100, 100),
+        &Plane::new(100, 100),
+        0.0,
+        Some(&mattes),
+    );
+    a.get(x, y)
+}
+
+#[test]
+fn subtract_brush_removes_sky_coverage_and_add_restores_it() {
+    let mut h = detail("panel.masking");
+    exec(&mut h, "mask.add", json!({"kind": "sky"}));
+    let r = h.request("ui.set", json!({"brushSize": 0.15, "brushFeather": 0.0, "brushFlow": 100.0}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    click(&mut h, "button:maskMinus:1");
+    click(&mut h, "maskComp:subtract:brush");
+    brush_at(&mut h, 0.5, 0.5);
+    assert!(mask_coverage(&h, 0, 50, 50) < 0.01, "Subtract > Brush must remove sky coverage");
+    assert!(mask_coverage(&h, 0, 10, 10) > 0.99, "unpainted sky stays selected");
+    let subtracted = develop(&h);
+    exec(&mut h, "edit.undo", json!({}));
+    assert!(mask_coverage(&h, 0, 50, 50) > 0.99);
+    exec(&mut h, "edit.redo", json!({}));
+    assert_eq!(develop(&h).masks, subtracted.masks);
+
+    // Renaming must not detach subsequent strokes from the subtract component.
+    exec(&mut h, "mask.component", json!({"component": 1, "action": "rename", "name": "Sky cleanup"}));
+    brush_at(&mut h, 0.25, 0.5);
+    assert!(mask_coverage(&h, 0, 25, 50) < 0.01);
+    assert_eq!(develop(&h).masks[0].components.len(), 2);
+
+    // Erase removes paint from the subtract component, restoring the underlying sky.
+    h.app.ui.brush_erase = true;
+    brush_at(&mut h, 0.5, 0.5);
+    assert!(mask_coverage(&h, 0, 50, 50) > 0.99);
+    click(&mut h, "button:maskPlus:1");
+    click(&mut h, "maskComp:add:brush");
+    brush_at(&mut h, 0.25, 0.5);
+    assert!(mask_coverage(&h, 0, 25, 50) > 0.99, "Add must be composed after Subtract");
+    assert_eq!(develop(&h).masks[0].components.len(), 3);
+    h.settle(SETTLE);
+}
+
+#[test]
+fn new_brush_starts_a_separate_mask_in_paint_mode() {
+    let mut h = detail("panel.masking");
+    exec(&mut h, "mask.add", json!({"kind": "sky"}));
+    let original = develop(&h).masks[0].clone();
+    h.app.ui.brush_erase = true;
+    h.app.ui.mask_overlay = false;
+    click(&mut h, "maskNew:brush");
+    assert_eq!(h.app.session.active_mask, Some(2));
+    assert!(!h.app.ui.brush_erase);
+    assert!(h.app.ui.mask_overlay);
+    let r = h.request("ui.set", json!({"brushSize": 0.15, "brushFeather": 0.0, "brushFlow": 100.0}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    brush_at(&mut h, 0.5, 0.5);
+    assert!(mask_coverage(&h, 1, 50, 50) > 0.99);
+    h.app.ui.brush_erase = true;
+    brush_at(&mut h, 0.5, 0.5);
+    assert!(mask_coverage(&h, 1, 50, 50) < 0.01);
+    exec(&mut h, "edit.undo", json!({}));
+    assert!(mask_coverage(&h, 1, 50, 50) > 0.99);
+    assert_eq!(develop(&h).masks[0], original);
+    h.settle(SETTLE);
+}
+
 #[test]
 fn mask_overlay_keys_and_pins() {
     use lightcraft_pipeline::{MaskView, Overlay};

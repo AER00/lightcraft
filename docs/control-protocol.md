@@ -55,6 +55,12 @@ scrolling pans in both axes and respects the operating system's scrolling direct
 These gestures work in Detail (including editing tools and full-screen preview), Compare and Reference
 views, and only apply over their image areas. Panning stops at the image edges.
 
+Mask brushing uses the UI command `tool.brush` through `engine.execute`. With `{}` it activates
+painting on the current mask. `{"new": true}` creates a separate brush mask; `{"op": "add"}` or
+`{"op": "subtract"}` appends a brush component to the selected mask. Creating either starts in
+paint mode with the overlay visible. Brush Erase (or Alt while painting) removes strokes' coverage
+within that brush component; it is distinct from subtracting the component from the whole mask.
+
 ### When the library can't be saved
 
 With a persistent library, every command that changes something is written to the catalog journal (fsynced) before
