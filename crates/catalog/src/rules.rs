@@ -179,7 +179,6 @@ pub enum Issue {
     NeedsNumber,
     NeedsShutterSpeed,
     NeedsDate,
-    DateWithZone,
     DatesReversed,
     NeedsTwoValues,
     NeedsCount,
@@ -200,14 +199,13 @@ pub enum Issue {
 }
 
 impl Issue {
-    pub const ALL: [Issue; 23] = [
+    pub const ALL: [Issue; 22] = [
         Issue::UnknownField,
         Issue::NoSuchOperator,
         Issue::NotYesNo,
         Issue::NeedsNumber,
         Issue::NeedsShutterSpeed,
         Issue::NeedsDate,
-        Issue::DateWithZone,
         Issue::DatesReversed,
         Issue::NeedsTwoValues,
         Issue::NeedsCount,
@@ -235,7 +233,6 @@ impl Issue {
             Issue::NeedsNumber => "needs a number",
             Issue::NeedsShutterSpeed => "needs a time like 1/250 or 2",
             Issue::NeedsDate => "needs a date like 2026, 2026-08 or 2026-08-14",
-            Issue::DateWithZone => "can't have a time zone or fractions of a second",
             Issue::DatesReversed => "has the first date after the second",
             Issue::NeedsTwoValues => "needs two values",
             Issue::NeedsCount => "needs a number more than 0",
@@ -336,10 +333,10 @@ fn album_problem(v: &Value, cat: &Catalog, owner: Option<crate::AlbumId>) -> Fou
 }
 
 /// A rule date in its one reading: `2026`, `2026-08`, `2026-08-14`, then optionally `T10`,
-/// `T10:00` or `T10:00:00` (a space works as the `T`), and a real date and time (no month 13, no
-/// 30 February, no 25 o'clock). Capture times are local and to the second, so a time zone or
-/// fractions of a second ([`Issue::DateWithZone`]) could never match; anything else is
-/// [`Issue::NeedsDate`]. The check and the matcher both read dates this way.
+/// `T10:00` or `T10:00:00` (a space works as the `T`), and after whole seconds a fraction and a
+/// time zone as imported capture times carry them (`.250`, `+02:00`, `Z`); a real date and time
+/// (no month 13, no 30 February, no 25 o'clock). Anything else is [`Issue::NeedsDate`]. The check
+/// and the matcher both read dates this way.
 pub fn rule_date(s: &str) -> Result<String, Issue> {
     const PATTERN: &str = "dddd-dd-ddTdd:dd:dd";
     let s: String = s.trim().char_indices().map(|(i, c)| if i == 10 && c == ' ' { 'T' } else { c }).collect();
@@ -347,17 +344,31 @@ pub fn rule_date(s: &str) -> Result<String, Issue> {
         matches!(t.len(), 4 | 7 | 10 | 13 | 16 | 19)
             && t.chars().zip(PATTERN.chars()).all(|(c, p)| if p == 'd' { c.is_ascii_digit() } else { c == p })
     };
-    if !shaped(&s) {
-        // a whole date and time with something after it: a zone (+02:00, -05:00, Z) or a fraction
-        let zoned = [19, 16, 13, 10].iter().any(|&n| {
-            s.get(..n).is_some_and(shaped)
-                && s.get(n..).and_then(|rest| rest.chars().next()).is_some_and(|c| matches!(c, '+' | '-' | 'Z' | 'z' | '.'))
-        });
-        return Err(if zoned { Issue::DateWithZone } else { Issue::NeedsDate });
+    // after whole seconds, a fraction and a zone as imports write them (.250, +02:00 or Z)
+    let tail_ok = |rest: &str| {
+        let after_fraction = match rest.strip_prefix('.') {
+            Some(f) => {
+                let digits = f.bytes().take_while(u8::is_ascii_digit).count();
+                if !(1..=9).contains(&digits) {
+                    return false;
+                }
+                f.get(digits..).unwrap_or("")
+            }
+            None => rest,
+        };
+        let zone = after_fraction.as_bytes();
+        match zone {
+            [] | [b'Z' | b'z'] => true,
+            [b'+' | b'-', h1, h2, b':', m1, m2] => [h1, h2, m1, m2].iter().all(|c| c.is_ascii_digit()),
+            _ => false,
+        }
+    };
+    if !shaped(&s) && !(s.get(..19).is_some_and(shaped) && s.get(19..).is_some_and(tail_ok)) {
+        return Err(Issue::NeedsDate);
     }
     let part = |a: usize, b: usize| s.get(a..b).and_then(|t| t.parse::<u32>().ok());
     let time_ok = part(11, 13).is_none_or(|h| h < 24) && part(14, 16).is_none_or(|m| m < 60) && part(17, 19).is_none_or(|x| x < 60);
-    let day = match s.len() {
+    let day = match s.len().min(19) {
         4 => format!("{s}-01-01"),
         7 => format!("{s}-01"),
         _ => s.get(..10).unwrap_or("").to_string(),
@@ -368,7 +379,6 @@ pub fn rule_date(s: &str) -> Result<String, Issue> {
 fn date_problem(field: &str, op: &str, value: &Value) -> Found {
     let date = |v: &Value| match v.as_str().map(rule_date) {
         Some(Ok(_)) => None,
-        Some(Err(Issue::DateWithZone)) => Some((Issue::DateWithZone, format!("`{field}` can't have a time zone or fractions of a second, not {v}"))),
         _ => Some((Issue::NeedsDate, format!("`{field}` needs a date like 2026, 2026-08 or 2026-08-14, not {v}"))),
     };
     match op {
@@ -1570,9 +1580,9 @@ mod tests {
     }
 
     /// A rule date reads one way for the check and the matcher: a space works as the "T"
-    /// ("2026-10-01 10:00" matches a photo taken then); a time zone or fractions of a second can
-    /// never match a capture time (stored local, to the second), so they are refused with their
-    /// own issue rather than accepted and silently matching nothing.
+    /// ("2026-10-01 10:00" matches a photo taken then). Imported capture times can carry fractions
+    /// of a second and a time zone (EXIF SubSecTime / OffsetTime: "…T10:00:00.250+02:00"), so a
+    /// rule may too, after the seconds; anywhere else they are no date.
     #[test]
     fn rule_dates_have_one_reading() {
         let cat = Catalog::new();
@@ -1588,11 +1598,25 @@ mod tests {
             let r = rule(op, v.clone());
             assert!(r.check(&cat).is_empty() && r.matches(&p, &cat), "{op} {v}");
         }
-        for v in ["2026-08-14T10:00:00+02:00", "2026-08-14T10:00:00Z", "2026-08-14T10:00:00.25", "2026-08-14 10:00-05:00", "2026-08-14Z"] {
-            let p = rule("is", json!(v)).check(&cat);
-            assert_eq!(p.first().map(|p| p.issue), Some(Issue::DateWithZone), "{v}");
+        // a capture time with a fraction and a zone, as imports write it
+        let mut zoned = photo(2);
+        zoned.captured = Some("2026-08-14T10:00:00.250+02:00".into());
+        for v in ["2026-08-14T10:00:00.250", "2026-08-14T10:00:00.250+02:00", "2026-08-14T10:00:00"] {
+            let r = rule("is", json!(v));
+            assert!(r.check(&cat).is_empty() && r.matches(&zoned, &cat), "{v}");
         }
-        for v in ["2026-8-14", "2026-08-14T1", "2026-08-14X10", "26-08-14", "2026-08-14T25:00"] {
+        assert!(rule("is", json!("2026-08-14T10:00:00Z")).check(&cat).is_empty());
+        for v in [
+            "2026-8-14",
+            "2026-08-14T1",
+            "2026-08-14X10",
+            "26-08-14",
+            "2026-08-14T25:00",
+            "2026-08-14Z",
+            "2026-08-14 10:00-05:00",
+            "2026-08-14T10:00:00.",
+            "2026-08-14T10:00:00+2",
+        ] {
             let p = rule("is", json!(v)).check(&cat);
             assert_eq!(p.first().map(|p| p.issue), Some(Issue::NeedsDate), "{v}");
         }

@@ -25,7 +25,7 @@
 - Date rules have a calendar button: pick a day, a month or a whole year (Year / Month / Day), in your language; the
   two dates of a "between" can't be picked out of order; Esc closes just the calendar. It picks dates, not times (a
   time is typed, and picking a day replaces one). Typing still works, and "2026-10-01 10:00" (a space for the
-  T) now matches; a time zone is refused, since capture times are local.
+  T) now matches.
 - Rule problems are shown in your language and name the field the way the menu does ("Title: needs something to look
   for").
 - A smart album whose rules no longer check (an album they test was deleted) is marked ⚠ in the sidebar; its tooltip
