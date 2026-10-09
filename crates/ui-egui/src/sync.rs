@@ -192,17 +192,21 @@ pub fn confirm(app: &mut LightcraftApp, dlg: &Dialog) -> Result<Value, String> {
         }
     };
     let progress = Arc::new(SyncProgress::default());
+    let crashed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (tx, rx) = std::sync::mpsc::channel();
-    let p = progress.clone();
+    let (p, c) = (progress.clone(), crashed.clone());
     let job = move || {
-        // (a panic in the work ends it; what was handed over is still committed)
-        let _ = lightcraft_engine::guard::catch("synchronize", || work.run(&p, |step| tx.send(step).is_ok()));
+        // (a panic in the work ends it; what was handed over is still committed, and the end
+        // says it failed)
+        if lightcraft_engine::guard::catch("synchronize", || work.run(&p, |step| tx.send(step).is_ok())).is_err() {
+            c.store(true, Ordering::Relaxed);
+        }
     };
     #[cfg(not(target_arch = "wasm32"))]
     std::thread::spawn(job);
     #[cfg(target_arch = "wasm32")]
     job();
-    app.sync_run = Some(SyncRun { name: name.clone(), progress, rx, commit: Some(commit), stopping: false });
+    app.sync_run = Some(SyncRun { name: name.clone(), progress, crashed, rx, commit: Some(commit), stopping: false, not_saved: Vec::new() });
     Ok(json!({"started": true}))
 }
 
@@ -211,7 +215,11 @@ pub fn confirm(app: &mut LightcraftApp, dlg: &Dialog) -> Result<Value, String> {
 pub struct SyncRun {
     name: String,
     progress: Arc<SyncProgress>,
+    /// The work ended in a panic (logged).
+    crashed: Arc<std::sync::atomic::AtomicBool>,
     rx: std::sync::mpsc::Receiver<SyncStep>,
+    /// Steps that went into the catalog but could not be saved (a full disk…), and why.
+    not_saved: Vec<String>,
     commit: Option<SyncCommit>,
     /// Cancel was pressed: nothing new is started; what was readied is still committed.
     stopping: bool,
@@ -250,36 +258,60 @@ pub fn poll_run(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
     };
     let Some(mut commit) = run.commit.take() else { return };
+    let mut not_saved = Vec::new();
     for step in steps {
-        let _ = app.session.execute_fn("folder.synchronize", |s| {
+        // (a step that went in but couldn't be saved — a full disk — is said at the end)
+        if let Err(e) = app.session.execute_fn("folder.synchronize", |s| {
             commit.apply(s, step);
             Ok(Value::Null)
-        });
-    }
-    if !finished {
-        if let Some(run) = app.sync_run.as_mut() {
-            run.commit = Some(commit);
+        }) {
+            not_saved.push(e.to_string());
         }
+    }
+    let Some(run) = app.sync_run.as_mut() else { return };
+    run.not_saved.extend(not_saved);
+    if !finished {
+        run.commit = Some(commit);
         return;
     }
-    let name = app.sync_run.take().map(|r| r.name.clone()).unwrap_or_default();
+    let (name, stopped, crashed, mut not_saved) =
+        (run.name.clone(), run.stopping, run.crashed.load(Ordering::Relaxed), std::mem::take(&mut run.not_saved));
+    app.sync_run = None;
     let mut report = None;
-    let _ = app.session.execute_fn("folder.synchronize", |s| {
+    if let Err(e) = app.session.execute_fn("folder.synchronize", |s| {
         report = Some(commit.finish(s));
         Ok(Value::Null)
-    });
-    let Some(r) = report else { return };
+    }) {
+        not_saved.push(e.to_string());
+    }
+    let r = report.unwrap_or_default();
     for (path, e) in &r.failed {
         log::warn!("synchronize {name}: {path}: {e}");
     }
-    let parts: Vec<String> =
+    for e in &not_saved {
+        log::warn!("synchronize {name}: not saved: {e}");
+    }
+    let mut parts: Vec<String> =
         [("Imported", r.imported), ("Relinked", r.relinked), ("Removed", r.removed), ("Metadata read", r.read), ("Failed", r.failed.len())]
             .into_iter()
             .filter(|(_, n)| *n > 0)
             .map(|(what, n)| format!("{} {n}", crate::i18n::tr(what)))
             .collect();
+    // how it ended comes first: never "up to date" for a run that was stopped or failed
+    if crashed {
+        parts.insert(0, crate::i18n::tr("Stopped by an error (see the log)").to_string());
+    } else if stopped {
+        parts.insert(0, crate::i18n::tr("Stopped").to_string());
+    }
+    if let Some(e) = not_saved.first() {
+        parts.push(format!("{}: {e}", crate::i18n::tr("Not saved")));
+    }
     let text = if parts.is_empty() { crate::i18n::tr("The library is up to date with this folder.").to_string() } else { parts.join(" · ") };
-    app.toast(ctx, format!("{name}: {text}"));
+    if not_saved.is_empty() && !crashed {
+        app.toast(ctx, format!("{name}: {text}"));
+    } else {
+        app.toast_for(ctx, format!("{name}: {text}"), 12.0);
+    }
 }
 
 /// The progress window while a synchronize runs, with Cancel (what was done stays, as one undo

@@ -1756,5 +1756,8 @@
   "Relinked": "Revinculadas",
   "Removed": "Quitadas",
   "Metadata read": "Metadatos leídos",
-  "Failed": "Con errores"
+  "Failed": "Con errores",
+  "Stopped": "Detenido",
+  "Stopped by an error (see the log)": "Detenido por un error (ver el registro)",
+  "Not saved": "Sin guardar"
 }

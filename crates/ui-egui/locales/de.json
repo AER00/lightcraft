@@ -1911,5 +1911,8 @@
   "Relinked": "Neu verknüpft",
   "Removed": "Entfernt",
   "Metadata read": "Metadaten gelesen",
-  "Failed": "Fehlgeschlagen"
+  "Failed": "Fehlgeschlagen",
+  "Stopped": "Angehalten",
+  "Stopped by an error (see the log)": "Durch einen Fehler angehalten (siehe Protokoll)",
+  "Not saved": "Nicht gespeichert"
 }

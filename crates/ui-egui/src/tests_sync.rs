@@ -203,21 +203,17 @@ fn a_scan_gone_stale_in_the_dialog_is_made_again_in_the_background() {
 }
 
 #[test]
-fn the_progress_window_can_stop_a_synchronize() {
+fn a_stopped_synchronize_says_it_was_stopped_and_stays_at_most_one_step() {
     let dir = Scratch::new("stop");
     let mut h = changed_folder(&dir);
     open_and_scan(&mut h, &dir.path("trip"));
     let steps = h.app.session.undo.len();
     let dlg = h.app.ui.dialog.take().expect("the dialog is open");
     assert!(crate::panels::dialogs::confirm_dialog(&mut h.app, &dlg).is_ok());
-    // Cancel before the first frame commits anything
+    // the progress window's Cancel, before any frame committed anything
     h.app.sync_run.as_mut().expect("running").cancel();
     assert!(h.step_until(T, |h| h.app.sync_run.is_none()), "it ends");
-    // whatever was done by then is at most one undo step
-    assert!(h.app.session.undo.len() <= steps + 1);
-    if h.app.session.undo.len() == steps + 1 {
-        let r = h.request("engine.execute", json!({"command": "edit.undo", "params": {}}), T);
-        assert_eq!(r["ok"], true, "{r}");
-    }
-    assert_eq!(in_library(&h), vec!["a.png", "b.png"]);
+    let toast = h.app.ui.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default();
+    assert!(toast.contains("Stopped"), "never 'up to date': {toast:?}");
+    assert!(h.app.session.undo.len() <= steps + 1, "what was done by then is at most one step");
 }

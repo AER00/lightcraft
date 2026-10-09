@@ -1756,5 +1756,8 @@
   "Relinked": "Revinculadas",
   "Removed": "Removidas",
   "Metadata read": "Metadados lidos",
-  "Failed": "Com falha"
+  "Failed": "Com falha",
+  "Stopped": "Interrompido",
+  "Stopped by an error (see the log)": "Interrompido por um erro (veja o log)",
+  "Not saved": "Não salvo"
 }

@@ -1430,5 +1430,8 @@
   "Relinked": "Связано заново",
   "Removed": "Убрано",
   "Metadata read": "Метаданные прочитаны",
-  "Failed": "Ошибки"
+  "Failed": "Ошибки",
+  "Stopped": "Остановлено",
+  "Stopped by an error (see the log)": "Остановлено из-за ошибки (см. журнал)",
+  "Not saved": "Не сохранено"
 }

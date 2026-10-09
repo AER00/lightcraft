@@ -1756,5 +1756,8 @@
   "Relinked": "已重新連結",
   "Removed": "已移除",
   "Metadata read": "已讀取中繼資料",
-  "Failed": "失敗"
+  "Failed": "失敗",
+  "Stopped": "已停止",
+  "Stopped by an error (see the log)": "因錯誤而停止（請見記錄）",
+  "Not saved": "未儲存"
 }

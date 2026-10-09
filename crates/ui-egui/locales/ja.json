@@ -1756,5 +1756,8 @@
   "Relinked": "リンクし直し",
   "Removed": "除去",
   "Metadata read": "メタデータ読み込み",
-  "Failed": "失敗"
+  "Failed": "失敗",
+  "Stopped": "停止しました",
+  "Stopped by an error (see the log)": "エラーで停止しました（ログを参照）",
+  "Not saved": "保存されていません"
 }
