@@ -11,6 +11,8 @@
   Edge, Short Edge, Aspect Ratio (landscape / portrait / square), Cropped and Treatment (in color / black & white).
 - Choice values read as words in every language: "Public Domain", "Picked", "Black & White" rather than ids like
   `publicDomain` (rules and agents keep using the ids; `album.ruleFields` adds `choiceLabels`).
+- Yes/no fields (Has Edits, Cropped, Has GPS…) read Yes / No instead of true / false. A rule sent as `"false"` now
+  means no (it used to count as yes), and a value that is neither yes nor no is refused.
 - Any Searchable Text also finds the state / province, alt text, people and a virtual copy's name.
 
 ### Albums tree
