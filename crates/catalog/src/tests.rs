@@ -58,12 +58,22 @@ fn albums_and_folders() {
     let a = photo(&mut c, "a.jpg", "2026-04-01");
     let f = c.alloc_album_id();
     c.apply(Op::AddAlbum {
-        album: Album { id: f, name: "Trips".into(), parent: None, folder: true, photos: vec![], cover: None, smart: None, quick: false },
+        album: Album { id: f, name: "Trips".into(), parent: None, folder: true, photos: vec![], cover: None, smart: None, quick: false, order: None },
     })
     .unwrap();
     let al = c.alloc_album_id();
     c.apply(Op::AddAlbum {
-        album: Album { id: al, name: "Alps".into(), parent: Some(f), folder: false, photos: vec![a], cover: None, smart: None, quick: false },
+        album: Album {
+            id: al,
+            name: "Alps".into(),
+            parent: Some(f),
+            folder: false,
+            photos: vec![a],
+            cover: None,
+            smart: None,
+            quick: false,
+            order: None,
+        },
     })
     .unwrap();
     assert_eq!(c.albums_of(a), vec![al]);
