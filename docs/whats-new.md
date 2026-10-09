@@ -15,7 +15,7 @@
   `publicDomain` (rules and agents keep using the ids; `album.ruleFields` adds `choiceLabels`).
 - Rule values are checked: a rating of 9, a date like 2026-13 or "banana", a "between" whose dates are the wrong
   way round, "in the last 0 days", a colour label that doesn't exist, "contains" with nothing to look for, an
-  album that is gone or smart, or an empty group is reported with its rule ("rule 2.1: rating is 0–5, not 9")
+  album that is gone, or an empty group is reported with its rule ("rule 2.1: rating is 0–5, not 9")
   instead of quietly matching nothing or everything. New date rules start at the current year.
 - A smart album can include or exclude another smart album: "Keywords contain travel" and "Album isn't Excluded Photos"
   leaves out whatever Excluded Photos matches, as its rules change. The album list offers smart albums under their own
