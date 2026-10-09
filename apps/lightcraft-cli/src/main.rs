@@ -391,7 +391,7 @@ fn merge(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
-    let mut s = Session::new().with_fs();
+    let mut s = Session::new().with_fs().with_default_denoise_models();
     let paths = expand_paths(&files);
     let r = s.execute("library.import", &json!({"paths": paths})).map_err(|e| e.to_string())?;
     let mut ids: Vec<u64> = r["imported"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
@@ -652,7 +652,7 @@ fn render(args: &[String]) -> Result<(), String> {
     }
     let input = input.ok_or("render: missing input file")?;
     let output = output.ok_or("render: missing -o OUTPUT")?;
-    let mut s = Session::new().with_fs();
+    let mut s = Session::new().with_fs().with_default_denoise_models();
     let abs = expand_paths(std::slice::from_ref(&input));
     let r = s.execute("library.import", &json!({"paths": abs})).map_err(|e| e.to_string())?;
     let id = r["imported"][0].as_u64().ok_or_else(|| format!("{input}: not a readable photo"))?;
@@ -728,19 +728,19 @@ fn snapshot(args: &[String]) -> Result<(), String> {
     if script.is_none() && output.is_none() {
         return Err("snapshot: give -o OUT.png and/or --script FILE".into());
     }
-    if !(scale > 0.0 && size[0] >= 1.0 && size[1] >= 1.0) {
-        return Err("snapshot: bad --size/--scale".into());
-    }
+    lightcraft_ui_egui::headless::viewport_pixels(size, scale).map_err(|e| format!("snapshot: bad --size/--scale: {e}"))?;
     let t0 = Instant::now();
     let mut session = match &library {
         Some(dir) => {
-            let mut s = Session::new().with_fs();
+            let mut s = Session::new().with_fs().with_default_denoise_models().with_default_face_models();
             s.open_library(dir, false).map_err(|e| library_error(dir, e))?;
             s
         }
-        None if files.is_empty() => Session::with_demo().with_fs(),
-        None => Session::new().with_fs(),
+        None if files.is_empty() => Session::with_demo().with_fs().with_default_denoise_models().with_default_face_models(),
+        None => Session::new().with_fs().with_default_denoise_models().with_default_face_models(),
     };
+    // Apply compute policy before imports or the first scripted query can discover an adapter.
+    session.execute("app.gpu", &json!({"enabled": false})).map_err(|e| e.to_string())?;
     if !files.is_empty() {
         let ti = Instant::now();
         let r = session.execute("library.import", &json!({"paths": expand_paths(&files)})).map_err(|e| e.to_string())?;
@@ -755,7 +755,11 @@ fn snapshot(args: &[String]) -> Result<(), String> {
         })),
         ..Default::default()
     };
-    let app = lightcraft_ui_egui::LightcraftApp::new(session, services);
+    let mut app = lightcraft_ui_egui::LightcraftApp::new(session, services);
+    // Snapshot sessions promise no GPU: disable photo compute as well as the compositor
+    // before the first frame can start background adapter discovery.
+    // This UI state is session-local: the CLI neither loads nor saves desktop ui.json.
+    app.ui.settings.gpu = false;
     let mut h = Headless::new(app, size, scale);
     let timeout = Duration::from_secs(60);
     let mut shots = 0usize;

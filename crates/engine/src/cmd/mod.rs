@@ -10,9 +10,13 @@ mod color;
 pub(crate) mod convert;
 mod cull;
 pub mod curves;
+pub(crate) mod denoise;
 mod develop;
 mod edit;
 mod export;
+pub(crate) mod face_detect;
+mod face_models;
+mod face_recognize;
 pub mod filters;
 pub mod keywords;
 pub mod library;
@@ -140,6 +144,10 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(missing::specs());
         v.extend(metadata::specs());
         v.extend(filters::specs());
+        v.extend(denoise::specs());
+        v.extend(face_models::specs());
+        v.extend(face_detect::specs());
+        v.extend(face_recognize::specs());
         v
     })
 }

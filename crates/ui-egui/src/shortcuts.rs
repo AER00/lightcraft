@@ -286,7 +286,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         app.recording_shortcut = None;
     }
     // don't steal keys from text fields or from the keymap editor recording a shortcut
-    if ctx.egui_wants_keyboard_input() || app.recording_shortcut.is_some() {
+    if ctx.egui_wants_keyboard_input() || app.recording_shortcut.is_some() || app.ui.name_edit.is_some() {
         return;
     }
     let mut fire: Vec<String> = Vec::new();

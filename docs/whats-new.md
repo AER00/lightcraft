@@ -2,6 +2,23 @@
 
 ## October 2026
 
+### Albums tree
+- Album folders fold with the same disclosure triangle as Local, By Date, Folders and Keywords.
+- Right-click a folder ▸ New ▸ Create Album… / Create Smart Album… / Create Smart Album from Filter… / Create Folder…
+  makes it inside that folder (`dialog.newAlbum`, `dialog.newFolder`, `dialog.smartAlbum`, `dialog.newSmartAlbum` take `parent`).
+- Drag an album or folder onto a folder to move it there (a closed folder opens after 0.6 s under the pointer; a
+  "Albums" header takes it back to the top level; Esc cancels; holding a dragged album or photos near the top or bottom edge of the sidebar scrolls it). Drop on the top or bottom half of another album,
+  or the edge of another folder, to place it before or after it: that folder is then ordered by hand. Right-click ▸
+  Sort Contents A–Z (or ＋ ▸ Sort Albums A–Z at the top level) goes back to by name. To put a folder after an open
+  folder, fold that folder first (the bottom of an open folder means "inside"). Agents use `album.reorder`
+  (`id`, `parent?`, `before?`) and `album.sort`.
+- The catalog format is now version 3 (`Album.order`, `Op::SetAlbumOrder`). Once this version has opened a library,
+  older versions refuse it, as with every format change.
+
+### AI RAW denoise
+- Detail has a per-photo AI Denoise switch and Amount. Bayer RAW photos use a disposable cache, with matching previews and exports and pure-Rust CPU/GPU inference.
+- Models are installed separately after accepting their terms; no weights are bundled. See [setup and limitations](denoise.md).
+
 ### Library keyboard culling
 - Colour labels tint thumbnail surrounds in Square Grid and the Detail filmstrip, and a translucent footer along the bottom of the photo in Photo Grid. Label confirmations use a matching pale colour.
 - Setting or clearing a colour label shows a brief bottom confirmation, like rating a photo; custom label names appear in the message too.
@@ -17,6 +34,14 @@
 ### RAW decoding
 - Canon CR2 and Pentax PEF raws get the same starting look fitted to the camera's own JPEG as ARW, NEF, RW2, RAF
   and CR3, instead of opening flat and desaturated (issue #310). Photos already imported pick it up when re-rendered.
+- JPEG XL compressed DNGs (DNG 1.7) now open: lossless tiles decode sample for sample (checked on synthetic files);
+  lossy tiles decode too, but no real file has checked them yet. A JPEG XL preview stored in the DNG is used like an
+  embedded JPEG.
+- Apple ProRAW's gain table map (its local tone mapping, `ProfileGainTableMap`) is now read and kept when a photo is
+  exported or converted to DNG. It is not applied to the render: Lightroom Classic renders ProRAW without it.
+- iPhone ProRAW and other DNGs that carry their own segmentation mattes (DNG semantic masks) use them for the Select
+  Sky, Subject and Background masks instead of our heuristics, so the sky is selected where the camera found it
+  (checked on one CC0 iPhone 12 Pro ProRAW). Photos without mattes are unchanged.
 - Panasonic and Leica raws (RW2, RWL) are now corrected for lens distortion the way the camera corrects its own JPEG
   (issue #256): the correction the camera records in the file is applied under Lens Corrections ▸ Enable Profile
   Corrections, on by default for newly imported photos, with the same framing as the camera's JPEG. At 12 mm the
@@ -41,6 +66,11 @@
   existing LightCraft edits are preserved by default. Source settings/history are archived, unsupported
   fields are reported, and the original Lightroom database stays read-only. Rendering is approximate.
 
+### Formats
+- HEIC / HEIF photos (iPhone and Mac) open now: the optional `lightcraft-heif` crate (heic-rs, pure Rust) behind
+  codecs' `heif` feature — 8- and 10-bit, alpha, grid tiles, the container's rotation/mirror/crop, ICC, EXIF and XMP.
+  Off by default (HEVC patents are the distributor's call, same as PhotoCraft); official builds pass `--features heif`.
+
 ### Presets and profiles
 - Import presets from other editors: XMP presets, classic `.lrtemplate` files, "DNG presets" from mobile apps and `.zip`
   bundles of any of these — whole folders at once, grouped by pack. Masks inside presets come along.
@@ -59,6 +89,10 @@
 - The Tint slider works the right way round (issues #188, #321): left adds green, right adds magenta, as its track
   shows and as in Lightroom, and Tint values in Lightroom XMP sidecars now render as they do there. A custom Tint
   saved in an earlier version now shifts the other way; set it again (or re-run Auto / the white-balance picker).
+- White balance on DNGs (and other raws with a colour matrix) re-develops the photo for the new white through the
+  camera's own colour matrices, as Lightroom does, instead of shifting the colours of the as-shot rendering: a grey
+  lit by the chosen white comes out grey and saturated colours move as the camera records them. The eyedropper and
+  Auto use the same model. Custom white balances on these photos render slightly differently than before.
 - Crop (issue #295): a Lock toggle keeps the aspect ratio on every handle, Custom takes your own ratio (Apply), and
   dragging a handle into the image edge stops there instead of pushing the crop out of shape.
 
@@ -230,6 +264,9 @@
   lost everything at quit; a temporary session shows a banner the whole time and never writes to your library.
 
 ### Editing
+- Optional remote SAM 3: keep the native editor local and run Object, Describe, and detail
+  inference on a Mac through SSH. Saved masks still render and export offline.
+  See [remote Metal inference](ai-masks.md#remote-metal-inference).
 - AI masks with SAM 3 (Object and Describe in the Masking panel): click an object to select it (⌥-click leaves a
   part out), or type what to select ("sky", "the red car", "car, road"); both combine with other masks, have an
   Edge setting, and get a sharper zoomed-in pass in the background. The model runs inside LightCraft in pure Rust

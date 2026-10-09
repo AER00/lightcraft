@@ -47,6 +47,7 @@ pub fn language_from_command(id: &str) -> Option<crate::i18n::Locale> {
 }
 
 pub const UI_COMMANDS: &[UiCommand] = &[
+    ("modelSetup.cancel", "Cancel Pending Photo Action", None, ""),
     ("view.photoGrid", "Photo Grid", None, "View"),
     ("view.squareGrid", "Square Grid", None, "View"),
     // G: Photo Grid ↔ Square Grid (from other views: the photo grid)
@@ -56,6 +57,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.compare", "Compare", Some("Shift+C"), "View"),
     ("view.survey", "Survey", Some("N"), "View"),
     ("view.people", "People", None, "View"),
+    ("view.person", "Show Person", None, ""),
     ("view.faceBoxes", "Face Boxes", None, "View"),
     ("view.reference", "Reference View", Some("Shift+R"), "View"),
     ("photo.setReference", "Set as Reference Photo", None, ""),
@@ -135,6 +137,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("tool.keywordPainter", "Keyword Painter", None, ""),
     ("view.gridInfo", "Grid Info", None, ""),
     ("dialog.allMetadata", "All Metadata…", None, "Photo"),
+    ("dialog.faceModel", "Add Face Model…", None, ""),
     ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
     ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
     ("dialog.autoStack", "Auto-Stack by Capture Time…", None, "Photo>Stack"),
@@ -230,6 +233,11 @@ fn adjust_brush(app: &mut LightcraftApp, k: f32, df: f32) -> Value {
     }
 }
 
+/// The `parent` folder id of a `dialog.new*` command (none: the top level).
+fn parent_param(p: &Value) -> Option<u64> {
+    p.get("parent").and_then(Value::as_u64)
+}
+
 /// An sRGB colour from `"#rrggbb"` or `[r, g, b]` (0..255).
 pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
     if let Some(s) = v.as_str() {
@@ -316,8 +324,23 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(json!({"show": app.ui.face_boxes}))
         }
         "view.people" => {
+            // Everyone; the page just left stays one click away (the chip next to the title)
+            if let Some(name) = app.ui.person_page.take() {
+                app.ui.last_person = Some(name);
+            }
+            app.ui.person_from = None;
             app.ui.view = ViewMode::People;
             Ok(json!({"people": app.session.catalog.people().len()}))
+        }
+        "view.person" => {
+            // {name}: one person's page in the People view: their faces, and the faces that look like them
+            let Some(name) = p.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()) else {
+                return Some(Err("view.person: missing `name`".into()));
+            };
+            app.ui.view = ViewMode::People;
+            app.ui.person_from = None;
+            app.ui.person_page = Some(name.to_string());
+            Ok(json!({"person": name}))
         }
         "view.survey" => {
             app.ui.view = ViewMode::Survey;
@@ -364,10 +387,19 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 app.ui.slideshow = None;
             } else if !app.ui.tool.is_empty() {
                 app.ui.tool.clear();
+            } else if app.ui.view == ViewMode::People && app.ui.person_page.is_some() {
+                app.ui.person_page = None;
             } else if matches!(app.ui.view, ViewMode::Compare | ViewMode::Survey) {
                 app.ui.view = ViewMode::Detail;
             } else if app.ui.view == ViewMode::Detail {
-                app.ui.view = ViewMode::PhotoGrid;
+                // a photo opened from a person's page goes back to that page, any other to the grid
+                match app.ui.person_from.take() {
+                    Some((name, photo)) if app.session.active().is_some_and(|a| a.0 == photo) => {
+                        app.ui.view = ViewMode::People;
+                        app.ui.person_page = Some(name);
+                    }
+                    _ => app.ui.view = ViewMode::PhotoGrid,
+                }
             }
             Ok(Value::Null)
         }
@@ -433,7 +465,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "app.settings" => {
             let tab = p.get("tab").and_then(Value::as_str).unwrap_or("general");
             if !crate::panels::settings::TABS.iter().any(|(id, _)| *id == tab) {
-                return Some(Err(format!("unknown settings tab `{tab}` (general|import|performance|interface)")));
+                let tabs: Vec<&str> = crate::panels::settings::TABS.iter().map(|(id, _)| *id).collect();
+                return Some(Err(format!("unknown settings tab `{tab}` ({})", tabs.join("|"))));
             }
             app.ui.dialog = Some(Dialog::Settings { tab: tab.into() });
             Ok(Value::Null)
@@ -808,11 +841,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "dialog.newFolder" => {
-            app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: true });
+            app.ui.dialog =
+                Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: true, parent: parent_param(p) });
             Ok(Value::Null)
         }
         "dialog.newAlbum" => {
-            app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: false });
+            app.ui.dialog =
+                Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: false, parent: parent_param(p) });
             Ok(Value::Null)
         }
         "dialog.autoStack" => {
@@ -839,17 +874,19 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                     id: Some(a.id.0),
                     name: a.name.clone(),
                     rules: a.smart.as_ref().and_then(|f| f.rule_set.clone()).unwrap_or_default(),
+                    parent: None,
                 },
                 None => Dialog::SmartRules {
                     id: None,
                     name: p.get("name").and_then(Value::as_str).unwrap_or("").into(),
                     rules: lightcraft_catalog::RuleSet { rules: vec![crate::panels::rules_editor::new_rule()], ..Default::default() },
+                    parent: parent_param(p),
                 },
             });
             Ok(Value::Null)
         }
         "dialog.newSmartAlbum" => {
-            app.ui.dialog = Some(Dialog::NewSmartAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into() });
+            app.ui.dialog = Some(Dialog::NewSmartAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), parent: parent_param(p) });
             Ok(Value::Null)
         }
         "dialog.captureTime" => {
@@ -906,6 +943,16 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "merge.panoramaLast" => crate::merge::start_last(app, "merge.panorama"),
         "merge.hdrPanoramaLast" => crate::merge::start_last(app, "merge.hdrPanorama"),
         "dialog.mergeHdr" => crate::merge::open(app, "merge.hdr"),
+        "dialog.faceModel" => {
+            let path = match p.get("path").and_then(Value::as_str) {
+                Some(x) => Some(x.to_string()),
+                None => app.services.pick_model_file.as_mut().and_then(|f| f().into_iter().next()),
+            };
+            match path {
+                Some(path) => crate::panels::faces::open_dialog(app, &path),
+                None => Ok(Value::Null),
+            }
+        }
         "dialog.mergePanorama" => crate::merge::open(app, "merge.panorama"),
         "dialog.mergeHdrPanorama" => crate::merge::open(app, "merge.hdrPanorama"),
         "app.about" => {

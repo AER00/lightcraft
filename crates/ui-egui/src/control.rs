@@ -105,6 +105,8 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "status": app.ui.status,
         "notices": app.notices,
         "quitPrompt": app.quit_prompt,
+        // how hard the background face scan may work right now, and why it is judged so (see `panels::faces::scan_pace`)
+        "faceScan": {"pace": app.caches.faces_pace, "focused": app.caches.faces_in_front, "pending": app.caches.faces_pending, "indexed": app.caches.faces_indexed},
         "unsaved": app.session.unsaved().map(|(n, e)| json!({"ops": n, "error": e})),
         "libraryProblem": app.library_problem.as_ref().map(crate::panels::library_problem::LibraryProblem::to_json),
         "scan": app.scan.as_ref().map(crate::import::ScanTask::status),
@@ -323,8 +325,18 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
             ok(Value::Null)
         }
         "ui.resize" => {
+            for name in ["width", "height"] {
+                if p.get(name).is_some() && f(name).is_none() {
+                    return err(format!("ui.resize: {name} must be a number"));
+                }
+            }
             let w = f("width").unwrap_or(1600.0) as f32;
             let h = f("height").unwrap_or(1000.0) as f32;
+            let zoom = ctx.zoom_factor();
+            let native_scale = ctx.input(|i| i.viewport().native_pixels_per_point).unwrap_or_else(|| ctx.pixels_per_point() / zoom);
+            if let Err(e) = crate::headless::resized_viewport([w, h], native_scale, zoom) {
+                return err(e);
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
             ok(Value::Null)
         }
