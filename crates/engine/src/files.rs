@@ -358,11 +358,22 @@ fn load_bytes_now(
             Arc::new(lightcraft_pipeline::CameraColor { tags, developed_for: xy })
         });
         let camera_tone = camera_look.as_ref().map(|p| p.tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));
+        let local_tone = local_tone(&raw);
         let (temp, tint) = if relative { (6500.0, 0.0) } else { (temp.round(), tint.round()) };
         return Ok((
             img,
             twin,
-            SourceInfo { raw: true, as_shot_temp: temp, as_shot_tint: tint, lens, relative_wb: relative, camera_color, camera_tone, mattes },
+            SourceInfo {
+                raw: true,
+                as_shot_temp: temp,
+                as_shot_tint: tint,
+                lens,
+                relative_wb: relative,
+                camera_color,
+                camera_tone,
+                mattes,
+                local_tone,
+            },
         ));
     }
     let d = lightcraft_codecs::decode(&bytes, fit_box(max_edge)).map_err(|e| e.to_string())?;
@@ -370,6 +381,18 @@ fn load_bytes_now(
     let img = d.to_working();
     let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
     Ok((img.into_oriented(Orientation::from_exif(d.orientation)), None, SourceInfo::default()))
+}
+
+/// The raw's gain table map with where its developed picture (the default crop, oriented) sits in
+/// the active area: rendered when the photo's "Camera local tone mapping" option is on.
+fn local_tone(raw: &lightcraft_raw::RawImage) -> Option<Arc<lightcraft_pipeline::local_tone::LocalTone>> {
+    let map = raw.color.profile.gain_table_map.clone()?;
+    let a = raw.active_area;
+    let (aw, ah) = (a.width.max(1) as f64, a.height.max(1) as f64);
+    let c = raw.develop_crop(a.width, a.height);
+    let rect = [c.x as f64 / aw, c.y as f64 / ah, c.width as f64 / aw, c.height as f64 / ah];
+    let placement = lightcraft_raw::gaintable::SourcePlacement { rect, orientation: raw.orientation };
+    Some(Arc::new(lightcraft_pipeline::local_tone::LocalTone { map, placement }))
 }
 
 /// The semantic masks of a DNG that AI masks understand, over the developed image (default crop,
@@ -956,6 +979,59 @@ mod tests {
         assert!(lightcraft_raw::decode(&with_map).unwrap().color.profile.gain_table_map.is_some(), "the map is kept");
         let (after, _) = load_bytes(&with_map, 64).unwrap();
         assert_eq!(before.data, after.data);
+    }
+
+    /// The Profile option "Camera local tone mapping" renders the map by position (in the raw's
+    /// active area, whatever the photo's orientation), and only when it's on.
+    #[test]
+    fn dng_gain_table_map_renders_when_asked() {
+        use lightcraft_pipeline::{RenderRequest, render};
+        use lightcraft_raw::gaintable::GainTableMap;
+        let plain = crate::tests_xmp::synthetic_dng_with(None, Default::default());
+        let mut raw = lightcraft_raw::decode(&plain).unwrap();
+        // ×1 at the active area's left edge rising to ×4 at its right edge, whatever the colour
+        raw.color.profile.gain_table_map = Some(GainTableMap {
+            points_v: 1,
+            points_h: 2,
+            points_n: 1,
+            spacing_v: 1.0,
+            spacing_h: 1.0,
+            origin_v: 0.0,
+            origin_h: 0.0,
+            weights: [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0, 0.0, 0.0],
+            gamma: 1.0,
+            gains: vec![1.0, 4.0],
+        });
+        let with_map = lightcraft_raw::write_dng(&raw, &Default::default()).unwrap();
+        let (img, info) = load_bytes(&with_map, 64).unwrap();
+        let (_, plain_info) = load_bytes(&plain, 64).unwrap();
+        assert!(info.local_tone.is_some() && plain_info.local_tone.is_none());
+        let req = RenderRequest::fit(64, 64);
+        let mut s = lightcraft_develop::DevelopSettings::default();
+        // (darker, so that ×4 never reaches white)
+        s.light.exposure = -3.0;
+        let off = render(&img, &info, &s, &req).image;
+        assert_eq!(off.data, render(&img, &plain_info, &s, &req).image.data, "off: the map changes nothing");
+        s.profile.camera_local_tone = true;
+        assert!(s.to_json().to_string().contains("camera_local_tone"), "the option is part of the settings (and their hash)");
+        let on = render(&img, &info, &s, &req).image;
+        // brightness gained, per column: none at the left edge, most at the right
+        let column = |im: &lightcraft_raster::Rgba8, x: usize| (0..im.height).map(|y| im.data[y * im.width + x][1] as f32).sum::<f32>();
+        let gain = |x: usize| column(&on, x) / column(&off, x).max(1.0);
+        let last = on.width - 1;
+        assert!((gain(0) - 1.0).abs() < 0.08, "left ×{}", gain(0));
+        assert!(gain(last) > 1.4 && gain(last) > gain(last / 2) && gain(last / 2) > gain(0), "{} {} {}", gain(0), gain(last / 2), gain(last));
+        // the photo turned upside down: the map follows the raw, so the brightened side swaps
+        s.orientation = lightcraft_geom::Orientation::Rotate180;
+        s.profile.camera_local_tone = false;
+        let off = render(&img, &info, &s, &req).image;
+        s.profile.camera_local_tone = true;
+        let on = render(&img, &info, &s, &req).image;
+        let gain = |x: usize| column(&on, x) / column(&off, x).max(1.0);
+        assert!(gain(0) > 1.4 && (gain(last) - 1.0).abs() < 0.08, "rotated: {} … {}", gain(0), gain(last));
+        // a rendered (non-raw) source never gets it
+        let jpeg = SourceInfo { raw: false, ..info.clone() };
+        assert!(!lightcraft_pipeline::local_tone::enabled(&jpeg, &s));
     }
 
     #[test]

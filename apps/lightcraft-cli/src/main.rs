@@ -342,7 +342,7 @@ fn mcp(args: &[String]) -> Result<(), String> {
     eprintln!("lightcraft-cli mcp: serving MCP on stdio ({})", backend.describe());
     let mut server = Server::new(backend).with_command_tools(!compact);
     let stdin = std::io::stdin();
-    server.serve(BufReader::new(stdin.lock()), std::io::stdout().lock()).map_err(|e| e.to_string())
+    server.serve(BufReader::new(stdin), std::io::stdout()).map_err(|e| e.to_string())
 }
 
 fn merge(args: &[String]) -> Result<(), String> {
