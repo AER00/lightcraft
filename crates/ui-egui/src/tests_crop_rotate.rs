@@ -99,3 +99,18 @@ fn the_angle_reads_like_the_straighten_value() {
     assert_eq!(crop_angle_label(-12.254), "-12.25°");
     assert_eq!(crop_angle_label(-0.001), "0.00°", "no minus zero, and every zero the same");
 }
+
+/// Hovering the Straighten value says that a value can be typed there.
+#[test]
+fn the_straighten_value_says_it_can_be_typed() {
+    let mut h = crop_tool();
+    let r = h.request("ui.hoverWidget", json!({"id": "sliderValue:crop.angle"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    // tooltips wait for the pointer to rest
+    let _ = h.step_until(Duration::from_secs(5), |h| h.painted_text().iter().any(|t| t.contains("type")));
+    assert!(
+        h.painted_text().iter().any(|t| t == "Click to type a value"),
+        "{:?}",
+        h.painted_text().iter().filter(|t| t.contains("lick")).collect::<Vec<_>>()
+    );
+}
