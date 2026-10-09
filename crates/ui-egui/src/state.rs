@@ -581,6 +581,10 @@ pub enum Dialog {
         pick_best: bool,
     },
     /// Help ▸ System Info: (label, value) rows.
+    DenoiseModel {
+        info: serde_json::Value,
+        accepted: bool,
+    },
     /// A face model file the user chose: what it is, its licence terms, and the "I accept" box.
     FaceModel {
         path: String,
