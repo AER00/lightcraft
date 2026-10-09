@@ -789,7 +789,7 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
         super::keywording::chip_row(app, ui);
         ui.add_space(10.0);
-        keyword_set(app, ui, &p.meta.keywords);
+        keyword_set(app, ui);
         ui.add_space(8.0);
         // the painter: click photos in the grid to give them (or take away) a keyword
         ui.horizontal(|ui| {
@@ -838,7 +838,10 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 
 /// The keyword set: pick a set, then nine buttons (⌥1–⌥9) that toggle its keywords on the
 /// selected photos; "Save as Set…" keeps the current nine under a name.
-fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui, have: &[String]) {
+fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    // on: every selected photo has it (⌥1–⌥9 then take it off them); partly on: only some do
+    let selection = app.session.selection.ids.clone();
+    let chips = app.caches.keyword_chips(&app.session.catalog, &selection);
     let t = Tokens::get(ui.ctx());
     let sets = lightcraft_engine::cmd::keywords::keyword_sets_json(&app.session);
     let current = sets["current"].as_str().unwrap_or_default().to_string();
@@ -882,8 +885,10 @@ fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui, have: &[String]) {
     let bw = ((ui.available_width() - 8.0) / 3.0).floor().max(40.0);
     egui::Grid::new("kw-set-grid").num_columns(3).spacing([4.0, 4.0]).show(ui, |ui| {
         for (i, k) in kws.iter().enumerate() {
-            let on = have.iter().any(|x| x.eq_ignore_ascii_case(k));
-            let short = k.rsplit('|').next().unwrap_or(k);
+            let chip = chips.iter().find(|c| lightcraft_catalog::keywords::same(&c.path, &lightcraft_catalog::keywords::clean(k)));
+            let on = chip.is_some_and(|c| c.on_all());
+            let some = chip.is_some() && !on;
+            let short = format!("{}{}", k.rsplit('|').next().unwrap_or(k), if some { " *" } else { "" });
             let r = ui
                 .add_sized(
                     [bw, 22.0],
@@ -891,6 +896,11 @@ fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui, have: &[String]) {
                 )
                 .on_hover_text(format!("{} — ⌥{}", k.replace('|', " › "), i + 1));
             register(ui.ctx(), format!("kwSet:{}", i + 1), r.rect);
+            if on {
+                register(ui.ctx(), format!("kwSetOn:{}", i + 1), r.rect);
+            } else if some {
+                register(ui.ctx(), format!("kwSetSome:{}", i + 1), r.rect);
+            }
             if r.clicked() {
                 let _ = app.run("keyword.toggleFromSet", json!({"index": i + 1}));
             }

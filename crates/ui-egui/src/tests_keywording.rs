@@ -107,3 +107,15 @@ fn the_add_keyword_box_pastes_adds_and_gives_up() {
     ask(&mut h, "ui.key", json!({"key": "Enter"}));
     assert!(ids.iter().all(|id| !keywords_of(&h, *id).contains(&"harbour".to_string())), "Esc gave it up");
 }
+
+/// The keyword set's buttons say whether the selection has each keyword, as their ⌥1–⌥9 toggle it
+/// on the selection: on when every selected photo has it, partly on when only some do.
+#[test]
+fn keyword_set_buttons_reflect_the_selection() {
+    let (mut h, _) = two_selected();
+    let sets = h.app.session.execute("keyword.sets", &json!({})).unwrap();
+    let at = |k: &str| sets["keywords"].as_array().unwrap().iter().position(|x| x == k).map(|i| i + 1).unwrap_or_else(|| panic!("{k} in {sets}"));
+    assert!(has(&h, &format!("kwSetOn:{}", at("beach"))), "both have beach");
+    assert!(has(&h, &format!("kwSetSome:{}", at("Weddings"))), "only the active one has Weddings");
+    assert!(!has(&h, &format!("kwSetOn:{}", at("Weddings"))));
+}
