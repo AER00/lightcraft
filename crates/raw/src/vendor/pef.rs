@@ -15,12 +15,12 @@
 //!   (starting at 0). Found by trying candidate predictors and checking the decoded rows are continuous.
 //! - Maker note `0x0038`/`0x0039`: the image area's left/top and width/height (verified against the data).
 
-use super::{black_from_columns, white_from_data};
+use super::{black_from_columns, cfa_from_exif, white_from_data};
 
 use crate::tiffraw::{Packing, read_image_in};
 use crate::{BlackLevel, Cfa, ColorData, Mode, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
 use lightcraft_geom::Orientation;
-use lightcraft_tiff::image::chunk_bytes;
+use lightcraft_tiff::image::{ImageInfo, chunk_bytes};
 use lightcraft_tiff::{ByteOrder, Tiff, makernote, tags as t};
 
 const CROP_ORIGIN: u16 = 0x0038;
@@ -188,6 +188,19 @@ fn dark_trimmed(d: &[u16], w: usize, h: usize) -> Rect {
     Rect::new(left, 0, (right - left) & !1, h)
 }
 
+/// Whether every strip or tile of a one-sample-per-pixel image holds exactly the bytes that its rows need when
+/// the samples are packed MSB-first at the declared bit depth, rows starting on byte boundaries (TIFF 6.0
+/// section 7). A real PackBits stream of such an image has a different length (almost always shorter), so the
+/// exact match is what tells plain samples under a compression tag that says otherwise.
+fn is_exactly_packed(info: &ImageInfo, file_len: u64) -> bool {
+    let bits = u64::from(info.bits());
+    if info.samples_per_pixel != 1 || info.planar != 1 || !(1..=16).contains(&bits) || info.byte_counts.len() != info.offsets.len() {
+        return false;
+    }
+    let chunks = info.chunks(file_len);
+    !chunks.is_empty() && chunks.iter().all(|c| c.len == (u64::from(c.width) * bits).div_ceil(8) * u64::from(c.height))
+}
+
 pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
@@ -226,6 +239,12 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
             let packing = if strip >= (w * hgt * 2) as u64 { Packing::Word16 } else { Packing::Msb };
             read_image_in(read, bytes, &info, tiff.order, packing)?
         }
+        // Some bodies tag plain packed samples as PackBits (32773). Only a strip that holds exactly the packed
+        // size of its rows is read, as the uncompressed MSB-first samples it is; any other size stays unsupported.
+        32773 if is_exactly_packed(&info, bytes.len() as u64) => {
+            let packed = ImageInfo { compression: 1, ..info.clone() };
+            read_image_in(read, bytes, &packed, tiff.order, Packing::Msb)?
+        }
         c => return Err(RawError::Unsupported(format!("PEF compression {c}"))),
     };
     let RawData::U16(ref samples) = data else { return Err(RawError::Unsupported("float PEF".into())) };
@@ -236,6 +255,11 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     };
     let cfa = match (ifd0.u64s(t::CFA_REPEAT_PATTERN_DIM).as_deref(), ifd0.bytes(t::CFA_PATTERN_EP)) {
         (Some([2, 2]), Some(p)) if p.len() == 4 && p.iter().all(|&c| c <= 2) => Cfa { width: 2, height: 2, pattern: p.to_vec() },
+        // The uncompressed bodies state their pattern in the Exif `CFAPattern`, read from the first sample of the
+        // stored array, not of the image area: the *ist D (area origin 19, 11) says RGGB and measures RGGB there. A
+        // pattern shifted by an odd origin would exchange red and blue. (The Huffman-compressed bodies keep the
+        // assumed layout here.)
+        _ if matches!(info.compression, 1 | 32773) => cfa_from_exif(&tiff).unwrap_or_else(|| Cfa::bayer_static("BGGR")),
         _ => Cfa::bayer_static("BGGR"),
     };
     let black = match mn.as_ref().and_then(|m| m.ifd.f64s(BLACK_POINT)).as_deref() {
@@ -342,5 +366,106 @@ mod tests {
         // truncated data is reported, not a panic
         assert!(decode_huffman(&src[..src.len() / 3], &h, w, hgt, 14).is_err());
         assert!(table(&tb[..20], ByteOrder::Big).is_err());
+    }
+
+    /// A big-endian one-strip PEF-style TIFF of `w × h` 12-bit samples with the given compression tag and strip
+    /// byte count, around `payload`.
+    fn tiny_pef(w: u16, h: u16, compression: u16, strip_len: u32, payload: &[u8]) -> Vec<u8> {
+        let entries: [(u16, u16, u32); 9] = [
+            (0x0100, 3, w as u32 * 0x1_0000),           // ImageWidth
+            (0x0101, 3, h as u32 * 0x1_0000),           // ImageLength
+            (0x0102, 3, 12 * 0x1_0000),                 // BitsPerSample
+            (0x0103, 3, compression as u32 * 0x1_0000), // Compression
+            (0x0106, 3, 32803 * 0x1_0000),              // Photometric: CFA
+            (0x0111, 4, 8 + 2 + 9 * 12 + 4),            // StripOffsets
+            (0x0115, 3, 0x1_0000),                      // SamplesPerPixel
+            (0x0116, 3, h as u32 * 0x1_0000),           // RowsPerStrip
+            (0x0117, 4, strip_len),                     // StripByteCounts
+        ];
+        let mut f = b"MM\0*\0\0\0\x08".to_vec();
+        f.extend_from_slice(&9u16.to_be_bytes());
+        for (tag, ty, val) in entries {
+            f.extend_from_slice(&tag.to_be_bytes());
+            f.extend_from_slice(&ty.to_be_bytes());
+            f.extend_from_slice(&1u32.to_be_bytes());
+            f.extend_from_slice(&val.to_be_bytes());
+        }
+        f.extend_from_slice(&0u32.to_be_bytes()); // no next IFD
+        f.extend_from_slice(payload);
+        f
+    }
+
+    /// Eight 12-bit samples, two rows of four, packed MSB-first: 0x123 0x456 0x789 0xabc / 0xdef 0x012 0x345 0x678.
+    const PACKED: [u8; 12] = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78];
+
+    #[test]
+    fn packed_samples_under_the_packbits_tag_are_read_when_the_strip_has_exactly_the_packed_size() {
+        let file = tiny_pef(4, 2, 32773, 12, &PACKED);
+        let img = decode(&file, Mode::Full).unwrap();
+        let RawData::U16(v) = &img.data else { panic!("integer samples") };
+        assert_eq!(v, &[0x123, 0x456, 0x789, 0xabc, 0xdef, 0x012, 0x345, 0x678]);
+        assert_eq!((img.width, img.height, img.bits), (4, 2, 12));
+        // the same bytes tagged as plain uncompressed give the same samples
+        let plain = decode(&tiny_pef(4, 2, 1, 12, &PACKED), Mode::Full).unwrap();
+        assert_eq!(plain.data, img.data);
+        // header-only mode accepts it too
+        assert!(decode(&file, Mode::Header).is_ok());
+    }
+
+    #[test]
+    fn a_packbits_tagged_strip_of_any_other_size_stays_unsupported() {
+        for len in [11u32, 13, 6, 24] {
+            let mut payload = PACKED.to_vec();
+            payload.resize(24, 0x55);
+            let file = tiny_pef(4, 2, 32773, len, &payload);
+            let err = decode(&file, Mode::Full).unwrap_err();
+            assert!(matches!(&err, RawError::Unsupported(m) if m.contains("32773")), "strip of {len} bytes: {err:?}");
+        }
+    }
+
+    /// A 16 x 8 big-endian 12-bit PEF-style file with a 12 x 6 image area at the odd origin (3, 1) and the Exif
+    /// `CFAPattern` `pattern`; the samples are plain 16-bit words (compression 1) or packed 12-bit (32773).
+    fn pef_with_pattern(compression: u16, pattern: [u8; 4]) -> Vec<u8> {
+        use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value};
+        let px: Vec<u16> = (0..16 * 8).map(|i| ((i * 37) % 900 + 100) as u16).collect();
+        let strip: Vec<u8> = if compression == 1 {
+            px.iter().flat_map(|v| v.to_be_bytes()).collect()
+        } else {
+            px.chunks(2).flat_map(|p| [(p[0] >> 4) as u8, ((p[0] & 15) << 4 | p[1] >> 8) as u8, p[1] as u8]).collect()
+        };
+        let mut ifd = IfdBuilder::new();
+        ifd.set(0x0100, Value::Long(vec![16]));
+        ifd.set(0x0101, Value::Long(vec![8]));
+        ifd.set(0x0102, Value::Short(vec![12]));
+        ifd.set(0x0103, Value::Short(vec![compression]));
+        ifd.set(0x0106, Value::Short(vec![32803]));
+        ifd.set(0x010f, Value::Ascii("PENTAX Corporation".into()));
+        ifd.set_image(ImageData::Strips { rows_per_strip: 8, strips: vec![strip] });
+        // AOC + "MM", then one IFD: area origin and size (inline), next-IFD 0
+        let mut note = b"AOC MM".to_vec();
+        note.extend_from_slice(&2u16.to_be_bytes());
+        for (tag, val) in [(0x0038u16, [0u8, 3, 0, 1]), (0x0039, [0, 12, 0, 6])] {
+            note.extend_from_slice(&tag.to_be_bytes());
+            note.extend_from_slice(&3u16.to_be_bytes());
+            note.extend_from_slice(&2u32.to_be_bytes());
+            note.extend_from_slice(&val);
+        }
+        note.extend_from_slice(&0u32.to_be_bytes());
+        let mut exif = IfdBuilder::new();
+        exif.set(0xa302, Value::Undefined([&[0, 2, 0, 2][..], &pattern[..]].concat()));
+        exif.set(0x927c, Value::Undefined(note));
+        ifd.set_child(0x8769, exif);
+        TiffWriter::new(ByteOrder::Big, false).write(&[ifd]).unwrap()
+    }
+
+    #[test]
+    fn uncompressed_files_use_the_exif_pattern_from_the_array_origin_not_the_area_origin() {
+        for compression in [1u16, 32773] {
+            for (p, name) in [([0u8, 1, 1, 2], "RGGB"), ([2, 1, 1, 0], "BGGR"), ([1, 0, 2, 1], "GRBG"), ([1, 2, 0, 1], "GBRG")] {
+                let img = decode(&pef_with_pattern(compression, p), Mode::Full).unwrap();
+                assert_eq!(img.active_area, Rect::new(3, 1, 12, 6), "compression {compression}");
+                assert_eq!(img.cfa, Some(Cfa::bayer_static(name)), "compression {compression}, Exif {name}");
+            }
+        }
     }
 }
