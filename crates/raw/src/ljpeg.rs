@@ -325,8 +325,11 @@ fn parse_header(d: &[u8]) -> Result<Header, RawError> {
                 }
                 h.predictor = seg[1 + 2 * ns];
                 h.pt = seg[3 + 2 * ns] & 15;
-                if !(0..=7).contains(&h.predictor) {
-                    return Err(err("bad predictor"));
+                if h.predictor > 7 {
+                    return Err(RawError::Unsupported(format!(
+                        "lossless JPEG scan with predictor selection value {} (T.81 defines 0 to 7)",
+                        h.predictor
+                    )));
                 }
                 if h.pt >= h.precision {
                     return Err(err("bad point transform"));
