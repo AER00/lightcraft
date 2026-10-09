@@ -5,6 +5,12 @@ The CR3 adapter reads the CRX Bayer track, `CMP1` compression descriptor,
 black/white levels and the default crop come from the file. A Dual Pixel delta
 track is never substituted for the primary Bayer track.
 
+The in-camera aspect ratio (3:2, 4:3, 16:9, 1:1) is not applied to the sensor data. The maker note's
+`AspectInfo` (tag `0x009a`: aspect code, cropped width, height, left, top) gives the shot's rectangle inside the
+recommended crop, and the decoder uses it as the default crop, so the developed image has the shape the photographer
+framed (PowerShot SX70 HS, EOS 250D, PowerShot G5 X Mark II, EOS M6 Mark II and EOS M50 samples). A rectangle that
+is missing or does not fit inside the crop is ignored. The embedded JPEG still shows the whole frame.
+
 The decoder is independent Rust code shared by desktop, CLI and WebAssembly;
 it has no operating-system imaging dependency or external decoder. Its sources
 are the public prose descriptions and patents cited in
