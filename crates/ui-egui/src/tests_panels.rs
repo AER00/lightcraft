@@ -354,6 +354,143 @@ fn album_dialogs_without_a_parent_still_deserialize() {
     assert!(matches!(d, Dialog::SmartRules { parent: None, .. }));
 }
 
+/// An album tree to drag in: `Archive` (empty folder), `Trips` ⊃ `Sub` (folder) + `Best`, `Loose`.
+struct AlbumTree {
+    h: Headless,
+    archive: u64,
+    trips: u64,
+    sub: u64,
+    best: u64,
+    loose: u64,
+}
+
+fn album_tree() -> AlbumTree {
+    let mut h = demo([1400.0, 900.0], json!({"view": "photoGrid", "leftPanel": true}));
+    let make = |h: &mut Headless, params: serde_json::Value| h.app.session.execute("album.create", &params).unwrap()["id"].as_u64().unwrap();
+    let archive = make(&mut h, json!({"name": "Archive", "folder": true}));
+    let trips = make(&mut h, json!({"name": "Trips", "folder": true}));
+    let sub = make(&mut h, json!({"name": "Sub", "folder": true, "parent": trips}));
+    let best = make(&mut h, json!({"name": "Best", "parent": trips}));
+    let loose = make(&mut h, json!({"name": "Loose"}));
+    h.step();
+    h.step();
+    AlbumTree { h, archive, trips, sub, best, loose }
+}
+
+impl AlbumTree {
+    fn row(&self, id: u64) -> egui::Rect {
+        let h = &self.h;
+        let name = ["source:folder:", "source:album:"].iter().map(|p| format!("{p}{id}")).find(|n| h.app.widgets.iter().any(|(w, _)| w == n));
+        widget(h, &name.unwrap_or_else(|| panic!("no row for album {id}")))
+    }
+    /// The middle of the row just under the last row of the Albums tree (where the top-level drop zone is).
+    fn below_tree(&self) -> egui::Pos2 {
+        let bottom = (self.h.app.widgets.iter())
+            .filter(|(w, r)| (w.starts_with("source:album:") || w.starts_with("source:folder:")) && r.left() < 300.0)
+            .map(|(_, r)| r.bottom())
+            .fold(0.0, f32::max);
+        egui::pos2(100.0, bottom + 14.5)
+    }
+    fn parent(&self, id: u64) -> Option<u64> {
+        self.h.app.session.catalog.album(lightcraft_catalog::AlbumId(id)).unwrap().parent.map(|p| p.0)
+    }
+    /// Press at `from`, move through each `(point, frames held there)`, release at the last one.
+    fn drag(&mut self, from: egui::Pos2, path: &[(egui::Pos2, usize)]) {
+        let mut ev = |e| self.h.app.synthetic.push(e);
+        ev(egui::Event::PointerMoved(from));
+        ev(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+        let mut at = from;
+        for (to, hold) in path {
+            for i in 1..=8 {
+                at = from + (*to - from) * (i as f32 / 8.0);
+                ev(egui::Event::PointerMoved(at));
+            }
+            for _ in 0..*hold {
+                ev(egui::Event::PointerMoved(*to));
+            }
+            at = *to;
+        }
+        ev(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+        for _ in 0..400 {
+            if self.h.app.synthetic.is_empty() {
+                break;
+            }
+            self.h.step();
+        }
+        self.h.step();
+        self.h.step();
+    }
+    fn drag_row(&mut self, id: u64, onto: u64) {
+        let (from, to) = (self.row(id).center(), self.row(onto).center());
+        self.drag(from, &[(to, 3)]);
+    }
+}
+
+/// Given albums and folders in the sidebar, when an album or folder is dragged onto a folder,
+/// then it moves into it (as Move to does); onto a plain album, itself or something inside it, it
+/// stays where it was.
+#[test]
+fn dragging_an_album_onto_a_folder_moves_it() {
+    let mut t = album_tree();
+    t.drag_row(t.loose, t.archive);
+    assert_eq!(t.parent(t.loose), Some(t.archive), "an album into a folder");
+    assert!(t.h.app.ui.dragging_album.is_none(), "the drag ended");
+    // it is shown inside its new folder, which opened for it
+    assert!(t.h.app.widgets.iter().any(|(w, _)| *w == format!("source:album:{}", t.loose)));
+    t.drag_row(t.sub, t.archive);
+    assert_eq!(t.parent(t.sub), Some(t.archive), "a folder into a folder");
+    // refused: onto a plain album, onto itself, into its own subfolder
+    t.drag_row(t.best, t.loose);
+    assert_eq!(t.parent(t.best), Some(t.trips), "a plain album is no destination");
+    let (from, aside) = (t.row(t.archive).center(), t.row(t.archive).center() + egui::vec2(40.0, 0.0));
+    t.drag(from, &[(aside, 3)]);
+    assert_eq!(t.parent(t.archive), None, "not onto itself");
+    t.drag_row(t.archive, t.sub);
+    assert_eq!(t.parent(t.archive), None, "not into something inside it");
+    assert!(t.h.app.ui.dragging_album.is_none());
+    // a plain click still only opens the album
+    let c = t.row(t.best).center();
+    t.drag(c, &[(c, 0)]);
+    assert_eq!(t.h.app.session.source, lightcraft_engine::LibrarySource::Album(lightcraft_catalog::AlbumId(t.best)));
+}
+
+/// Dragging out of a folder: the drop zone under the tree puts the album back at the top level;
+/// it only shows when there is somewhere to go, and the move is one undo step.
+#[test]
+fn dragging_an_album_to_the_top_level() {
+    let mut t = album_tree();
+    let has = |t: &AlbumTree, id: &str| t.h.app.widgets.iter().any(|(w, _)| w == id);
+    assert!(!has(&t, "albumDrop:top"), "no zone unless an album is being dragged");
+    // below the last row of the tree, where the zone appears once an album with a folder is dragged
+    let below = t.below_tree();
+    let from = t.row(t.best).center();
+    t.drag(from, &[(below, 3)]);
+    assert_eq!(t.parent(t.best), None, "moved out of Trips");
+    // a top-level album has nowhere to go: dropping it there does nothing
+    let (from, below) = (t.row(t.best).center(), t.below_tree());
+    t.drag(from, &[(below, 3)]);
+    assert_eq!(t.parent(t.best), None);
+    t.h.app.session.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(t.parent(t.best), Some(t.trips), "one undo puts it back");
+}
+
+/// Holding a dragged album over a closed folder opens it, so the drop can go into a subfolder.
+#[test]
+fn a_dragged_album_opens_the_folder_it_hovers_over() {
+    let mut t = album_tree();
+    let r = t.h.request("ui.clickWidget", json!({"id": format!("albumToggle:{}", t.trips)}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    t.h.step();
+    t.h.step();
+    assert!(!t.h.app.widgets.iter().any(|(w, _)| *w == format!("source:folder:{}", t.sub)), "Trips is folded");
+    // where Sub's row will be once Trips is open: one row below it
+    let trips = t.row(t.trips);
+    let inside = trips.center() + egui::vec2(0.0, trips.height());
+    let from = t.row(t.loose).center();
+    t.drag(from, &[(trips.center(), 90), (inside, 3)]);
+    assert_eq!(t.parent(t.loose), Some(t.sub), "dropped on Sub, which was only there after the hover");
+}
+
 /// A headless app over a library of file-backed photos that exist only in the catalog.
 fn folders_app(paths: &[&str]) -> Headless {
     folders_app_sized(paths, [1400.0, 900.0])

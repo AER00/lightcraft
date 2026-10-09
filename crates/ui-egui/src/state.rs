@@ -375,6 +375,9 @@ pub struct UiState {
     /// An album just made: the Albums tree opens the folders down to it, once.
     #[serde(skip)]
     pub reveal_album: Option<u64>,
+    /// An album or folder row being dragged in the sidebar (dropped on a folder to move it there).
+    #[serde(skip)]
+    pub dragging_album: Option<u64>,
     /// Selected curve channel in the Curve flyout.
     pub curve_channel: String,
     /// Selected mixer mode: "hue" | "saturation" | "luminance" | "all".
@@ -675,6 +678,7 @@ impl Default for UiState {
             quit: false,
             dragging_photos: None,
             reveal_album: None,
+            dragging_album: None,
             curve_channel: "parametric".into(),
             mixer_mode: "hue".into(),
             grading_mode: "3way".into(),
