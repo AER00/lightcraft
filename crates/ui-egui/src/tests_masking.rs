@@ -8,6 +8,7 @@ use serde_json::json;
 use crate::headless::Headless;
 use crate::state::RightPanel;
 use crate::{LightcraftApp, Services};
+use lightcraft_catalog::Rule;
 
 const T: Duration = Duration::from_secs(20);
 const SETTLE: Duration = Duration::from_secs(120);
@@ -293,6 +294,33 @@ fn smart_album_rule_editor_creates_and_edits() {
     let n3 = h.app.session.catalog.photos().filter(|p| !p.deleted && p.rating >= 3).count();
     assert_eq!(h.app.session.catalog.album_count(a.id), n3);
     h.settle(SETTLE);
+}
+
+/// Given the rule editor, the field menu shows the top-level fields and one submenu per group;
+/// picking a field from a submenu changes the rule and gives it an operator of that field.
+#[test]
+fn smart_album_field_menu_groups_fields_in_submenus() {
+    let mut h = detail("panel.edit");
+    exec(&mut h, "dialog.smartAlbum", json!({"name": "Grouped"}));
+    let has = |h: &Headless, id: &str| h.app.widgets.iter().any(|(w, _)| w == id);
+    let r = h.request("ui.clickWidget", json!({"id": "ruleField:rules-0"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(has(&h, "ruleFieldItem:rating:rules-0"), "top-level fields are in the menu itself");
+    for (group, _) in lightcraft_catalog::rules::FIELD_GROUPS {
+        assert!(has(&h, &format!("ruleFieldGroup:{group}:rules-0")), "no {group} submenu");
+    }
+    assert!(!has(&h, "ruleFieldItem:filePath:rules-0"), "grouped fields wait in their submenu");
+    let r = h.request("ui.hoverWidget", json!({"id": "ruleFieldGroup:File:rules-0"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let r = h.request("ui.clickWidget", json!({"id": "ruleFieldItem:filePath:rules-0"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let Some(crate::state::Dialog::SmartRules { rules, .. }) = &h.app.ui.dialog else { panic!("no rule editor") };
+    let Rule::Field { field, op, .. } = &rules.rules[0] else { panic!("not a field rule") };
+    assert_eq!((field.as_str(), op.as_str()), ("filePath", "contains"), "Rating's ≥ isn't a text operator");
+    assert!(!has(&h, "ruleFieldItem:rating:rules-0") && !has(&h, "ruleFieldItem:filePath:rules-0"), "picking a field closes the menu");
 }
 
 #[test]

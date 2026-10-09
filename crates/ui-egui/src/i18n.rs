@@ -640,6 +640,7 @@ mod tests {
             labels.push(label);
             labels.extend(lightcraft_catalog::rules::ops_for(*kind).iter().map(|(_, label)| *label));
         }
+        labels.extend(lightcraft_catalog::rules::FIELD_GROUPS.iter().map(|group| group.0));
         labels.extend(lightcraft_engine::rename::TOKENS.iter().map(|token| token.meaning));
         labels.extend(lightcraft_engine::rename::TEMPLATE_NOTES);
         let ui_labels = labels.len();

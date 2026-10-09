@@ -2,7 +2,7 @@
 //! value), with nested groups. Field and operator lists come from `lightcraft_catalog::rules`.
 
 use egui::RichText;
-use lightcraft_catalog::rules::{FIELDS, Kind, field_kind, ops_for};
+use lightcraft_catalog::rules::{FIELD_GROUPS, Kind, TOP_LEVEL_FIELDS, field_kind, field_label, ops_for};
 use lightcraft_catalog::{Match, Rule, RuleSet};
 use serde_json::{Value, json};
 
@@ -133,6 +133,56 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
     }
 }
 
+/// The field menu of one rule: the top-level fields, then one submenu per field group. Picking a
+/// field keeps the operator when the new field has it, else takes the field's first operator.
+fn field_menu(ui: &mut egui::Ui, salt: &str, field: &mut String, op: &mut String, value: &mut Value) {
+    let label = field_label(field).unwrap_or(field.as_str()).to_string();
+    let current = field.clone();
+    let r =
+        egui::ComboBox::from_id_salt(format!("{salt}-field")).width(150.0).height(400.0).selected_text(crate::i18n::tr(&label)).show_ui(ui, |ui| {
+            let mut pick = None;
+            let mut item = |ui: &mut egui::Ui, id: &'static str| {
+                let r = ui.selectable_label(current == id, crate::i18n::tr(field_label(id).unwrap_or(id)));
+                register(ui.ctx(), format!("ruleFieldItem:{id}:{salt}"), r.rect);
+                if r.clicked() {
+                    pick = Some(id);
+                    ui.close();
+                }
+            };
+            for id in TOP_LEVEL_FIELDS {
+                item(ui, id);
+            }
+            ui.separator();
+            // submenu rows look like the items above them; the one holding the current field stands out
+            // (a transparent frame, not none: a frameless button drops its padding and hover fill)
+            let inactive = &mut ui.visuals_mut().widgets.inactive;
+            inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+            inactive.bg_stroke = egui::Stroke::NONE;
+            for (group, ids) in FIELD_GROUPS {
+                let text = RichText::new(crate::i18n::tr(group));
+                let text = if ids.contains(&current.as_str()) { text.strong() } else { text };
+                let r = ui.menu_button(text, |ui| {
+                    for id in *ids {
+                        item(ui, id);
+                    }
+                });
+                register(ui.ctx(), format!("ruleFieldGroup:{group}:{salt}"), r.response.rect);
+            }
+            pick
+        });
+    register(ui.ctx(), format!("ruleField:{salt}"), r.response.rect);
+    let Some(Some(id)) = r.inner else { return };
+    if field == id {
+        return;
+    }
+    *field = id.to_string();
+    let ops = ops_for(field_kind(id).unwrap_or(Kind::Text));
+    if !ops.iter().any(|o| o.0 == op.as_str()) {
+        *op = ops.first().map_or("is", |o| o.0).to_string();
+    }
+    *value = default_value(field, op);
+}
+
 /// Edit `rs` in place; `salt` keeps widget ids apart between groups.
 pub fn edit(ui: &mut egui::Ui, rs: &mut RuleSet, salt: &str, depth: usize) {
     let t = Tokens::get(ui.ctx());
@@ -158,21 +208,7 @@ pub fn edit(ui: &mut egui::Ui, rs: &mut RuleSet, salt: &str, depth: usize) {
             }
             Rule::Field { field, op, value } => {
                 ui.horizontal(|ui| {
-                    let label = FIELDS.iter().find(|f| f.0 == field.as_str()).map_or(field.as_str(), |f| f.1).to_string();
-                    egui::ComboBox::from_id_salt(format!("{rsalt}-field")).width(150.0).height(400.0).selected_text(crate::i18n::tr(&label)).show_ui(
-                        ui,
-                        |ui| {
-                            for (id, l, k) in FIELDS {
-                                if ui.selectable_label(field == id, crate::i18n::tr(l)).clicked() && field != id {
-                                    *field = id.to_string();
-                                    if !ops_for(*k).iter().any(|o| o.0 == op.as_str()) {
-                                        *op = ops_for(*k)[0].0.to_string();
-                                    }
-                                    *value = default_value(field, op);
-                                }
-                            }
-                        },
-                    );
+                    field_menu(ui, &rsalt, field, op, value);
                     let kind = field_kind(field).unwrap_or(Kind::Text);
                     let op_label = ops_for(kind).iter().find(|o| o.0 == op.as_str()).map_or(op.as_str(), |o| o.1).to_string();
                     egui::ComboBox::from_id_salt(format!("{rsalt}-op")).width(110.0).selected_text(crate::i18n::tr(&op_label)).show_ui(ui, |ui| {
