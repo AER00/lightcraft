@@ -107,6 +107,25 @@ fn row_named(
     resp
 }
 
+/// The disclosure triangle at the left of a tree row (`indent` is the row's): right-pointing
+/// when closed, down when open, registered as widget `widget` for the control channel. Returns
+/// its response: the caller flips the open state on `clicked()`.
+fn disclosure_triangle(ui: &mut egui::Ui, row: &egui::Response, indent: f32, open: bool, id: egui::Id, widget: String) -> egui::Response {
+    let t = Tokens::get(ui.ctx());
+    let c = pos2(row.rect.left() + 10.0 + indent, row.rect.center().y);
+    let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
+    let tr = ui.interact(tri, id, Sense::click());
+    register(ui.ctx(), widget, tri);
+    let col = if tr.hovered() { t.text } else { t.text_dim };
+    let pts = if open {
+        vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
+    } else {
+        vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+    tr
+}
+
 /// A collapsible section header (Albums, Local, By Date, Keywords): the bold title with a
 /// disclosure chevron after it; a click folds or unfolds the section (kept in the UI state, so it
 /// survives restarts). Returns the header's rect and whether the section is now open.
@@ -516,7 +535,6 @@ fn folder_tree(
     reveal: bool,
     transient: bool,
 ) {
-    let t = Tokens::get(ui.ctx());
     let open_id = egui::Id::new(("folder-open", path.to_string()));
     let sel = current.is_some_and(|c| same_folder(c, path));
     let on_the_way = !sel && current.is_some_and(|c| lightcraft_catalog::query::folder_within(c, path));
@@ -534,17 +552,7 @@ fn folder_tree(
         }
     }
     let resp = row(app, ui, &format!("local:{path}"), Icon::Folder, name, None, sel, indent + 12.0).on_hover_text(path);
-    let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
-    let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
-    let tr = ui.interact(tri, egui::Id::new(("folder-tri", path.to_string())), Sense::click());
-    register(ui.ctx(), format!("folderToggle:{path}"), tri);
-    let col = if tr.hovered() { t.text } else { t.text_dim };
-    let pts = if open {
-        vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
-    } else {
-        vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
-    };
-    ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+    let tr = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("folder-tri", path.to_string())), format!("folderToggle:{path}"));
     if tr.clicked() {
         open = !open;
         ui.data_mut(|d| d.insert_temp(open_id, open));
@@ -607,23 +615,12 @@ fn folder_tree(
 
 /// One By Date row (`key`: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`); returns whether it is open.
 fn date_row(app: &mut LightcraftApp, ui: &mut egui::Ui, key: &str, label: &str, count: usize, indent: f32) -> bool {
-    let t = Tokens::get(ui.ctx());
     let open_id = egui::Id::new(("date-open", key.to_string()));
     let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(false);
     let sel = app.session.filter.date.as_deref() == Some(key);
     let resp = row(app, ui, &format!("date:{key}"), Icon::Clock, label, Some(count), sel, indent);
     if key.len() < 10 {
-        let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
-        let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
-        let tr = ui.interact(tri, egui::Id::new(("date-tri", key.to_string())), Sense::click());
-        register(ui.ctx(), format!("dateToggle:{key}"), tri);
-        let col = if tr.hovered() { t.text } else { t.text_dim };
-        let pts = if open {
-            vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
-        } else {
-            vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
-        };
-        ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+        let tr = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("date-tri", key.to_string())), format!("dateToggle:{key}"));
         if tr.clicked() {
             open = !open;
             ui.data_mut(|d| d.insert_temp(open_id, open));
@@ -838,7 +835,6 @@ fn reveal_chosen(app: &LightcraftApp, ui: &egui::Ui, tree: &[FolderNode]) {
 }
 
 fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode], indent: f32) {
-    let t = Tokens::get(ui.ctx());
     for n in nodes {
         let key = lightcraft_catalog::query::folder_key(&n.path);
         let open_id = egui::Id::new(("libfolder-open", key.clone()));
@@ -855,18 +851,7 @@ fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode],
         let resp = row_named(app, ui, &format!("libfolder:{}", n.path), Icon::Folder, &name, Some(&name), Some(n.count), sel, indent);
         let mut toggled = false;
         if !n.children.is_empty() {
-            // disclosure triangle left of the icon
-            let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
-            let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
-            let tr = ui.interact(tri, egui::Id::new(("libfolder-tri", key)), Sense::click());
-            register(ui.ctx(), format!("libraryFolderToggle:{}", n.path), tri);
-            let col = if tr.hovered() { t.text } else { t.text_dim };
-            let pts = if open {
-                vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
-            } else {
-                vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
-            };
-            ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+            let tr = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("libfolder-tri", key)), format!("libraryFolderToggle:{}", n.path));
             toggled = tr.clicked();
             tr.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, true, if open { crate::i18n::tr("Collapse") } else { crate::i18n::tr("Expand") })
@@ -977,25 +962,14 @@ fn keywords_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 }
 
 fn keyword_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[KeywordNode], indent: f32) {
-    let t = Tokens::get(ui.ctx());
     for n in nodes {
         let open_id = egui::Id::new(("kw-open", n.path.to_lowercase()));
         let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(false);
         let sel = app.session.filter.keyword.as_deref().is_some_and(|k| k.eq_ignore_ascii_case(&n.path));
         let resp = row(app, ui, &format!("keyword:{}", n.path), Icon::Tag, &n.name, Some(n.count), sel, indent);
         if !n.children.is_empty() {
-            // disclosure triangle left of the icon
-            let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
-            let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
-            let tr = ui.interact(tri, egui::Id::new(("kw-tri", n.path.to_lowercase())), Sense::click());
-            register(ui.ctx(), format!("keywordToggle:{}", n.path), tri);
-            let col = if tr.hovered() { t.text } else { t.text_dim };
-            let pts = if open {
-                vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
-            } else {
-                vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
-            };
-            ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+            let tr =
+                disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("kw-tri", n.path.to_lowercase())), format!("keywordToggle:{}", n.path));
             if tr.clicked() {
                 open = !open;
                 ui.data_mut(|d| d.insert_temp(open_id, open));
