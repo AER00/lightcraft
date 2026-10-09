@@ -1105,3 +1105,17 @@ fn folder_import_picks_up_undecodable_raw_containers_as_preview_only() {
     assert!(s.catalog.photos().all(|p| p.preview_only.is_some() && p.kind == lightcraft_catalog::MediaKind::Raw && (p.width, p.height) == (40, 30)));
     let _ = std::fs::remove_dir_all(&src);
 }
+
+#[test]
+fn a_file_gone_since_the_import_review_is_not_imported() {
+    let src = temp_dir("gone-since-review");
+    write_png(&src.join("a.png"), 1);
+    write_png(&src.join("b.png"), 2);
+    let mut s = Session::new().with_fs();
+    s.execute("library.importPreview", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    std::fs::remove_file(src.join("b.png")).unwrap();
+    let r = s.execute("library.import", &json!({"paths": [src.join("a.png").to_string_lossy(), src.join("b.png").to_string_lossy()]})).unwrap();
+    assert_eq!((ids(&r, "imported"), ids(&r, "failed")), (1, 1), "{r}");
+    assert_eq!(s.catalog.len(), 1, "no photo for a file that isn't there");
+    let _ = std::fs::remove_dir_all(&src);
+}
