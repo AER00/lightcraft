@@ -148,11 +148,15 @@ pub fn field_group(field: &str) -> Option<&'static str> {
     FIELD_GROUPS.iter().find(|g| g.1.contains(&field)).map(|g| g.0)
 }
 
-/// A rule that can't mean anything ([`RuleSet::check`]): where it is and what is wrong.
+/// A rule that can't mean anything ([`RuleSet::check`]): where it is, what is wrong in English
+/// (for agents and logs), and the field and kind of issue, so the editor can say it in any language.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Problem {
     /// Positions from the top rule list down: `[1, 0]` is the first rule of the second rule's group.
     pub path: Vec<usize>,
+    /// The rule's field; `None` for a group.
+    pub field: Option<String>,
+    pub issue: Issue,
     pub message: String,
 }
 
@@ -164,28 +168,109 @@ impl std::fmt::Display for Problem {
     }
 }
 
+/// What kind of thing is wrong with a rule ([`Problem`]); [`Issue::text`] says it after the
+/// field's name ("Title: needs something to look for").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Issue {
+    UnknownField,
+    NoSuchOperator,
+    NotYesNo,
+    NeedsNumber,
+    NeedsShutterSpeed,
+    NeedsDate,
+    DatesReversed,
+    NeedsTwoValues,
+    NeedsCount,
+    UnknownUnit,
+    NotAChoice,
+    NeedsTextOrEmpty,
+    NeedsTextOrNotEmpty,
+    NeedsText,
+    NoRatingMatches,
+    ChooseAlbum,
+    NoSuchAlbum,
+    SmartAlbum,
+    FolderAlbum,
+    EmptyGroup,
+}
+
+impl Issue {
+    pub const ALL: [Issue; 20] = [
+        Issue::UnknownField,
+        Issue::NoSuchOperator,
+        Issue::NotYesNo,
+        Issue::NeedsNumber,
+        Issue::NeedsShutterSpeed,
+        Issue::NeedsDate,
+        Issue::DatesReversed,
+        Issue::NeedsTwoValues,
+        Issue::NeedsCount,
+        Issue::UnknownUnit,
+        Issue::NotAChoice,
+        Issue::NeedsTextOrEmpty,
+        Issue::NeedsTextOrNotEmpty,
+        Issue::NeedsText,
+        Issue::NoRatingMatches,
+        Issue::ChooseAlbum,
+        Issue::NoSuchAlbum,
+        Issue::SmartAlbum,
+        Issue::FolderAlbum,
+        Issue::EmptyGroup,
+    ];
+
+    /// The issue in a few words, to follow the field's name; a message for translation catalogs.
+    pub fn text(self) -> &'static str {
+        match self {
+            Issue::UnknownField => "isn't a field rules know",
+            Issue::NoSuchOperator => "can't be tested that way",
+            Issue::NotYesNo => "is yes or no",
+            Issue::NeedsNumber => "needs a number",
+            Issue::NeedsShutterSpeed => "needs a time like 1/250 or 2",
+            Issue::NeedsDate => "needs a date like 2026, 2026-08 or 2026-08-14",
+            Issue::DatesReversed => "has the first date after the second",
+            Issue::NeedsTwoValues => "needs two values",
+            Issue::NeedsCount => "needs a number more than 0",
+            Issue::UnknownUnit => "needs hours, days, weeks, months or years",
+            Issue::NotAChoice => "isn't one of the choices",
+            Issue::NeedsTextOrEmpty => "needs something to look for (or use “is empty”)",
+            Issue::NeedsTextOrNotEmpty => "needs something to look for (or use “isn't empty”)",
+            Issue::NeedsText => "needs text",
+            Issue::NoRatingMatches => "can't match any rating from 0 to 5",
+            Issue::ChooseAlbum => "needs an album",
+            Issue::NoSuchAlbum => "names an album that no longer exists",
+            Issue::SmartAlbum => "can't test a smart album; choose a plain album",
+            Issue::FolderAlbum => "can't test a folder; choose an album in it",
+            Issue::EmptyGroup => "This group is empty: add a rule or remove it.",
+        }
+    }
+}
+
+/// An issue with its English message, or nothing wrong.
+type Found = Option<(Issue, String)>;
+
 /// What is wrong with one rule, if anything ([`RuleSet::check`]).
-fn field_problem(field: &str, op: &str, value: &Value, cat: &Catalog) -> Option<String> {
-    let Some(kind) = field_kind(field) else { return Some(format!("unknown field `{field}`")) };
+fn field_problem(field: &str, op: &str, value: &Value, cat: &Catalog) -> Found {
+    let Some(kind) = field_kind(field) else { return Some((Issue::UnknownField, format!("unknown field `{field}`"))) };
     if !ops_for(kind).iter().any(|o| o.0 == op) {
-        return Some(format!("`{field}` has no operator `{op}`"));
+        return Some((Issue::NoSuchOperator, format!("`{field}` has no operator `{op}`")));
     }
     if matches!(op, "isEmpty" | "isNotEmpty") {
         return None;
     }
     match kind {
-        Kind::Bool => bool_value(value).is_none().then(|| format!("`{field}` is yes or no, not {value}")),
+        Kind::Bool => bool_value(value).is_none().then(|| (Issue::NotYesNo, format!("`{field}` is yes or no, not {value}"))),
         Kind::Album => album_problem(value, cat),
         Kind::Number => {
             let each = match value {
                 Value::Array(a) if op == "between" && a.len() == 2 => a.iter().find_map(|v| number_problem(field, v)),
-                _ if op == "between" => Some(format!("`{field}` between needs two values, not {value}")),
+                _ if op == "between" => Some((Issue::NeedsTwoValues, format!("`{field}` between needs two values, not {value}"))),
                 v => number_problem(field, v),
             };
             // a rating rule no rating could meet ("is 9", "≥ 7"); "< 6" is fine, if broad
             each.or_else(|| {
                 let label = ops_for(kind).iter().find(|o| o.0 == op).map_or(op, |o| o.1);
-                (field == "rating" && !(0..=5).any(|r| num_op(op, Some(f64::from(r)), value))).then(|| format!("no rating 0–5 {label} {value}"))
+                (field == "rating" && !(0..=5).any(|r| num_op(op, Some(f64::from(r)), value)))
+                    .then(|| (Issue::NoRatingMatches, format!("no rating 0–5 {label} {value}")))
             })
         }
         Kind::Date => date_problem(field, op, value),
@@ -193,20 +278,24 @@ fn field_problem(field: &str, op: &str, value: &Value, cat: &Catalog) -> Option<
         Kind::Text | Kind::Keywords => match value {
             Value::String(s) if !s.trim().is_empty() => None,
             Value::String(_) | Value::Null => {
-                let instead = if matches!(op, "isNot" | "notContains") { "isn't empty" } else { "is empty" };
-                Some(format!("`{field}` needs something to look for (or use “{instead}”)"))
+                let (issue, instead) = if matches!(op, "isNot" | "notContains") {
+                    (Issue::NeedsTextOrNotEmpty, "isn't empty")
+                } else {
+                    (Issue::NeedsTextOrEmpty, "is empty")
+                };
+                Some((issue, format!("`{field}` needs something to look for (or use “{instead}”)")))
             }
             Value::Number(_) => None,
-            other => Some(format!("`{field}` needs text, not {other}")),
+            other => Some((Issue::NeedsText, format!("`{field}` needs text, not {other}"))),
         },
     }
 }
 
-fn number_problem(field: &str, v: &Value) -> Option<String> {
+fn number_problem(field: &str, v: &Value) -> Found {
     if field == "shutterSpeed" {
-        return shutter_value(v).is_null().then(|| format!("`shutterSpeed` needs a time like 1/250 or 2, not {v}"));
+        return shutter_value(v).is_null().then(|| (Issue::NeedsShutterSpeed, format!("`shutterSpeed` needs a time like 1/250 or 2, not {v}")));
     }
-    number(v).filter(|n| n.is_finite()).is_none().then(|| format!("`{field}` needs a number, not {v}"))
+    number(v).filter(|n| n.is_finite()).is_none().then(|| (Issue::NeedsNumber, format!("`{field}` needs a number, not {v}")))
 }
 
 /// The album an Album rule names: its id as a whole number, written as a number (`3`, `3.0`) or a
@@ -217,14 +306,14 @@ pub fn album_rule_id(value: &Value) -> Option<crate::AlbumId> {
 
 /// An Album rule's value: an album that exists and holds photos itself (not a smart album, not a
 /// folder of albums).
-fn album_problem(v: &Value, cat: &Catalog) -> Option<String> {
+fn album_problem(v: &Value, cat: &Catalog) -> Found {
     if v.is_null() {
-        return Some("choose an album".into());
+        return Some((Issue::ChooseAlbum, "choose an album".into()));
     }
     match album_rule_id(v).and_then(|id| cat.album(id)) {
-        None => Some(format!("no album {v}")),
-        Some(a) if a.is_smart() => Some(format!("album {v} is a smart album; only plain albums can be tested")),
-        Some(a) if a.folder => Some(format!("album {v} is a folder; choose an album in it")),
+        None => Some((Issue::NoSuchAlbum, format!("no album {v}"))),
+        Some(a) if a.is_smart() => Some((Issue::SmartAlbum, format!("album {v} is a smart album; only plain albums can be tested"))),
+        Some(a) if a.folder => Some((Issue::FolderAlbum, format!("album {v} is a folder; choose an album in it"))),
         Some(_) => None,
     }
 }
@@ -241,10 +330,10 @@ fn is_rule_date(s: &str) -> bool {
     s.len() >= 4 && crate::dates::normalize_iso(&full).is_some()
 }
 
-fn date_problem(field: &str, op: &str, value: &Value) -> Option<String> {
+fn date_problem(field: &str, op: &str, value: &Value) -> Found {
     let date = |v: &Value| match v.as_str() {
         Some(s) if is_rule_date(s) => None,
-        _ => Some(format!("`{field}` needs a date like 2026, 2026-08 or 2026-08-14, not {v}")),
+        _ => Some((Issue::NeedsDate, format!("`{field}` needs a date like 2026, 2026-08 or 2026-08-14, not {v}"))),
     };
     match op {
         "inLast" | "notInLast" => {
@@ -253,23 +342,23 @@ fn date_problem(field: &str, op: &str, value: &Value) -> Option<String> {
                 v => (number(v), Value::Null),
             };
             if !n.is_some_and(|n| n.is_finite() && n > 0.0) {
-                return Some(format!("`{field}` needs a number of hours, days, weeks, months or years more than 0"));
+                return Some((Issue::NeedsCount, format!("`{field}` needs a number of hours, days, weeks, months or years more than 0")));
             }
-            unit_secs(&unit).is_none().then(|| format!("`{field}`: unknown unit {unit} (hours, days, weeks, months or years)"))
+            unit_secs(&unit).is_none().then(|| (Issue::UnknownUnit, format!("`{field}`: unknown unit {unit} (hours, days, weeks, months or years)")))
         }
         "between" => match value {
             Value::Array(a) if a.len() == 2 => a.iter().find_map(date).or_else(|| {
                 let bound = |i: usize| a.get(i).and_then(Value::as_str).unwrap_or("").trim();
                 let (from, to) = (bound(0), bound(1));
-                (from > to && !from.starts_with(to)).then(|| format!("`{field}`: the first date is after the second"))
+                (from > to && !from.starts_with(to)).then(|| (Issue::DatesReversed, format!("`{field}`: the first date is after the second")))
             }),
-            _ => Some(format!("`{field}` between needs two dates, not {value}")),
+            _ => Some((Issue::NeedsTwoValues, format!("`{field}` between needs two dates, not {value}"))),
         },
         _ => date(value),
     }
 }
 
-fn choice_problem(field: &str, value: &Value, choices: &[(&str, &str)], cat: &Catalog) -> Option<String> {
+fn choice_problem(field: &str, value: &Value, choices: &[(&str, &str)], cat: &Catalog) -> Found {
     let known = value.as_str().is_some_and(|s| {
         choices.iter().any(|c| c.0.eq_ignore_ascii_case(s.trim()))
             || match field {
@@ -281,7 +370,7 @@ fn choice_problem(field: &str, value: &Value, choices: &[(&str, &str)], cat: &Ca
             }
     });
     let ids: Vec<&str> = choices.iter().map(|c| c.0).collect();
-    (!known).then(|| format!("`{field}` is one of {}, not {value}", ids.join(", ")))
+    (!known).then(|| (Issue::NotAChoice, format!("`{field}` is one of {}, not {value}", ids.join(", "))))
 }
 
 /// What a yes/no rule's value means: `true`, `"yes"`, `1` (or `1.0`) or no value is yes; `false`,
@@ -719,11 +808,13 @@ impl RuleSet {
         for (i, rule) in self.rules.iter().enumerate() {
             path.push(i);
             match rule {
-                Rule::Group { group } if group.rules.is_empty() => out.push(Problem { path: path.clone(), message: "an empty group".into() }),
+                Rule::Group { group } if group.rules.is_empty() => {
+                    out.push(Problem { path: path.clone(), field: None, issue: Issue::EmptyGroup, message: "an empty group".into() })
+                }
                 Rule::Group { group } => group.check_into(cat, path, out),
                 Rule::Field { field, op, value } => {
-                    if let Some(message) = field_problem(field, op, value, cat) {
-                        out.push(Problem { path: path.clone(), message });
+                    if let Some((issue, message)) = field_problem(field, op, value, cat) {
+                        out.push(Problem { path: path.clone(), field: Some(field.clone()), issue, message });
                     }
                 }
             }
@@ -1304,6 +1395,31 @@ mod tests {
         assert!(ops.contains(r#""field":"album","op":"is","value":1"#), "{ops}");
         assert!(ops.contains(r#""field":"rating","op":"gte""#), "other fields keep theirs: {ops}");
         assert!(ops.contains(r#""field":"album","op":"isNot","value":[1,2]"#), "inside groups too: {ops}");
+    }
+
+    /// Besides its English message (for agents), a problem names its field and the kind of issue,
+    /// so the editor can show "Title: needs something to look for" in any language. Every issue
+    /// has its own short text.
+    #[test]
+    fn problems_name_their_field_and_issue() {
+        let cat = Catalog::new();
+        let check = |rules: serde_json::Value| rs(json!({"rules": rules})).check(&cat);
+        let p = check(json!([{"field": "title", "op": "contains", "value": ""}]));
+        assert_eq!((p[0].field.as_deref(), p[0].issue), (Some("title"), Issue::NeedsTextOrEmpty));
+        let p = check(json!([{"field": "title", "op": "isNot", "value": ""}]));
+        assert_eq!(p[0].issue, Issue::NeedsTextOrNotEmpty);
+        let p = check(json!([{"field": "rating", "op": "is", "value": 9}, {"group": {"rules": []}}]));
+        assert_eq!((p[0].field.as_deref(), p[0].issue), (Some("rating"), Issue::NoRatingMatches));
+        assert_eq!((p[1].field.as_deref(), p[1].issue), (None, Issue::EmptyGroup));
+        let p = check(json!([{"field": "captureDate", "op": "between", "value": ["2026-12", "2026-01"]}]));
+        assert_eq!(p[0].issue, Issue::DatesReversed);
+        let p = check(json!([{"field": "album", "op": "is", "value": null}]));
+        assert_eq!(p[0].issue, Issue::ChooseAlbum);
+        let mut texts: Vec<&str> = Issue::ALL.iter().map(|i| i.text()).collect();
+        assert!(texts.iter().all(|t| !t.is_empty()));
+        texts.sort_unstable();
+        texts.dedup();
+        assert_eq!(texts.len(), Issue::ALL.len(), "each issue reads differently");
     }
 
     /// The field menu shows every rule field once: at the top level or in exactly one group,
