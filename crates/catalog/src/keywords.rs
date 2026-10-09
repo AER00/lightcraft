@@ -63,21 +63,34 @@ pub const MAX_LEVELS: usize = 64;
 pub fn parse_keyword_list(text: &str) -> Result<Vec<(String, KeywordInfo)>> {
     let bad = |n: usize, why: &str| CatalogError::Invalid(format!("line {n}: {why}"));
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    // Windows, Unix and classic Mac line ends alike
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
     let mut out: Vec<(String, KeywordInfo)> = Vec::new();
     // the keyword at each level above the line: its path and where it is in `out`
     let mut above: Vec<(String, usize)> = Vec::new();
-    for (i, line) in text.lines().enumerate() {
+    for (i, line) in text.split('\n').enumerate() {
         let n = i + 1;
         if line.trim().is_empty() {
             continue;
         }
         let depth = line.chars().take_while(|c| *c == '\t').count();
-        let body = line.trim_start_matches('\t').trim();
+        let rest = line.trim_start_matches('\t');
+        // levels are tabs: spaces would flatten the hierarchy without a word
+        if rest.starts_with(' ') {
+            return Err(bad(n, "keywords are indented with tabs, one per level, not spaces"));
+        }
+        if rest.chars().any(char::is_control) {
+            return Err(bad(n, "a control character in a keyword"));
+        }
+        let body = rest.trim();
         if let Some(synonym) = body.strip_prefix('{').and_then(|b| b.strip_suffix('}')) {
             let Some(at) = depth.checked_sub(1).and_then(|d| above.get(d)).map(|(_, at)| *at) else {
                 return Err(bad(n, "a synonym (in braces) goes one tab under its keyword"));
             };
             let synonym = synonym.trim();
+            if synonym.contains(SEP) {
+                return Err(bad(n, "“|” separates a keyword's levels: a synonym can't hold one"));
+            }
             if let Some((_, info)) = out.get_mut(at)
                 && !synonym.is_empty()
                 && !info.synonyms.iter().any(|s| same(s, synonym))
@@ -117,7 +130,9 @@ pub fn parse_keyword_list(text: &str) -> Result<Vec<(String, KeywordInfo)>> {
         if left_out && let Some((_, info)) = out.get_mut(at) {
             info.include_on_export = false;
         }
-        above.push((path, at));
+        // as first spelled: the keywords inside a repeat take that spelling
+        let spelled = out.get(at).map_or(path, |(p, _)| p.clone());
+        above.push((spelled, at));
     }
     Ok(out)
 }
@@ -1222,6 +1237,28 @@ mod tests {
         assert!(err("Events\nTravel|Lisbon\n").contains("line 2"), "“|” separates levels here");
         let deep: String = (0..70).map(|i| format!("{}k{i}\n", "\t".repeat(i))).collect();
         assert!(err(&deep).contains("line 65"), "a file is input: 64 levels at most");
+    }
+
+    /// Files from elsewhere read as they were meant or say why not: classic Mac line ends (a lone
+    /// carriage return) are lines; indenting with spaces, which would flatten the hierarchy, is
+    /// refused at its line; so are control characters in a name and "|" in a synonym.
+    #[test]
+    fn a_keyword_list_from_elsewhere_reads_or_says_why_not() {
+        let paths = |text: &str| parse_keyword_list(text).unwrap().into_iter().map(|(p, _)| p).collect::<Vec<_>>();
+        assert_eq!(paths("Events\r\tWeddings\rPlaces\r"), ["Events", "Events|Weddings", "Places"]);
+        let err = |text: &str| parse_keyword_list(text).unwrap_err().to_string();
+        assert!(err("Events\n    Weddings\n").contains("line 2"), "space indentation");
+        assert!(err("Events\n\t Weddings\n").contains("line 2"), "a space after the tabs");
+        assert!(err("Events\nx\u{0}y\n").contains("line 2"), "a control character");
+        assert!(err("Events\n\t{sea|shore}\n").contains("line 2"), "“|” in a synonym");
+    }
+
+    /// A keyword repeated in another case is one keyword, and the keywords inside either take the
+    /// first spelling.
+    #[test]
+    fn a_repeated_keyword_keeps_its_first_spelling() {
+        let read = parse_keyword_list("Events\n\tWeddings\nevents\n\tBirthdays\n").unwrap();
+        assert_eq!(read.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["Events", "Events|Weddings", "Events|Birthdays"]);
     }
 
     /// Importing a list adds the keywords the library doesn't have, with their attributes, and gives
