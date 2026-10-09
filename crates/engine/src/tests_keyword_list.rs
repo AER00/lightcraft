@@ -142,3 +142,18 @@ fn the_filter_follows_a_keyword_moved_into_a_new_parent() {
     assert_eq!(keywords_of(&s, id), ["Italy|Rome"]);
     assert_eq!(s.filter.keyword.as_deref(), Some("Italy|Rome"));
 }
+
+/// Keywords given to photos are stored cleaned (" beach " is "beach", "Travel | Italy" is
+/// "Travel|Italy"), so the list's actions find them; one a photo has already, whatever the case of
+/// any letter, isn't added twice.
+#[test]
+fn keywords_given_to_photos_are_stored_cleaned() {
+    let mut s = Session::with_demo();
+    let id = s.visible_cloned()[0].0;
+    s.execute("photo.setMeta", &json!({"ids": [id], "keywords": [" beach ", "Travel | Italy", "Ärzte"]})).unwrap();
+    s.execute("photo.setMeta", &json!({"ids": [id], "addKeywords": [" sea ", "ÄRZTE", " "]})).unwrap();
+    assert_eq!(keywords_of(&s, id), ["beach", "Travel|Italy", "Ärzte", "sea"]);
+    s.execute("photo.setMeta", &json!({"ids": [id], "removeKeywords": ["travel | italy"]})).unwrap();
+    assert_eq!(keywords_of(&s, id), ["beach", "Ärzte", "sea"]);
+    assert!(s.execute("keyword.info", &json!({"keyword": "beach"})).is_ok());
+}
