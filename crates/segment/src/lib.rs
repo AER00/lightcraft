@@ -32,13 +32,13 @@ mod clip;
 mod detector;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod fetch;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod remote;
 pub mod mask;
 #[cfg(not(target_arch = "wasm32"))]
 mod neck;
 #[cfg(not(target_arch = "wasm32"))]
 mod nn;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod remote;
 pub mod tokenizer;
 #[cfg(not(target_arch = "wasm32"))]
 mod tracker;
