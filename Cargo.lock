@@ -2882,6 +2882,7 @@ dependencies = [
  "lightcraft-codecs",
  "lightcraft-color",
  "lightcraft-develop",
+ "lightcraft-faces",
  "lightcraft-geom",
  "lightcraft-gpu",
  "lightcraft-merge",
@@ -2901,6 +2902,17 @@ dependencies = [
  "thiserror 2.0.21",
  "unicode-segmentation",
  "web-time",
+]
+
+[[package]]
+name = "lightcraft-faces"
+version = "0.4.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3084,6 +3096,7 @@ dependencies = [
  "lightcraft-color",
  "lightcraft-develop",
  "lightcraft-engine",
+ "lightcraft-faces",
  "lightcraft-geom",
  "lightcraft-meta",
  "lightcraft-pipeline",

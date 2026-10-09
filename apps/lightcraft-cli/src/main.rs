@@ -732,12 +732,12 @@ fn snapshot(args: &[String]) -> Result<(), String> {
     let t0 = Instant::now();
     let mut session = match &library {
         Some(dir) => {
-            let mut s = Session::new().with_fs();
+            let mut s = Session::new().with_fs().with_default_face_models();
             s.open_library(dir, false).map_err(|e| library_error(dir, e))?;
             s
         }
-        None if files.is_empty() => Session::with_demo().with_fs(),
-        None => Session::new().with_fs(),
+        None if files.is_empty() => Session::with_demo().with_fs().with_default_face_models(),
+        None => Session::new().with_fs().with_default_face_models(),
     };
     // Apply compute policy before imports or the first scripted query can discover an adapter.
     session.execute("app.gpu", &json!({"enabled": false})).map_err(|e| e.to_string())?;

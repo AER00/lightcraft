@@ -14,6 +14,7 @@ pub mod availability;
 mod camera_preview;
 pub mod camera_profiles;
 pub mod cmd;
+pub mod config;
 pub mod crs;
 pub mod crs_masks;
 pub mod demo;
@@ -157,6 +158,8 @@ pub struct Session {
     /// Set by a command whose change must not rewrite the photo's XMP sidecar even with auto-write on
     /// (a catalog-only edit of data the sidecar writer does not emit); consumed when the command ends.
     pub(crate) skip_auto_write: bool,
+    /// Where the host keeps face models (one folder each); `None` where there is no file system (the web).
+    pub face_models_dir: Option<std::path::PathBuf>,
     /// Copied develop settings (partial JSON) for Paste.
     pub clipboard: Option<Value>,
     /// The folder on disk the [`LibrarySource::Folder`] view browses.
@@ -263,6 +266,7 @@ impl Session {
             redo: Vec::new(),
             interaction: None,
             skip_auto_write: false,
+            face_models_dir: None,
             clipboard: None,
             meta_clipboard: None,
             browse: None,
@@ -784,6 +788,8 @@ mod tests;
 mod tests_color;
 #[cfg(test)]
 mod tests_export;
+#[cfg(test)]
+mod tests_face_models;
 #[cfg(test)]
 mod tests_folders;
 #[cfg(test)]
