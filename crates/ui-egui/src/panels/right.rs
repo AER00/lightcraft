@@ -864,7 +864,7 @@ fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let current = sets["current"].as_str().unwrap_or_default().to_string();
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(crate::i18n::tr("Keyword Set")).color(t.text_dim));
-        egui::ComboBox::from_id_salt("kw-set")
+        let combo = egui::ComboBox::from_id_salt("kw-set")
             .selected_text(crate::i18n::builtin_label(&current, current == lightcraft_engine::cmd::keywords::RECENT))
             .show_ui(ui, |ui| {
                 for set in sets["sets"].as_array().into_iter().flatten() {
@@ -877,6 +877,20 @@ fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     }
                 }
                 ui.separator();
+                // Edit Set…: the current nine, slot by slot (named, Recent Keywords becomes a set)
+                let edit = ui.button(crate::i18n::tr("Edit Set…"));
+                register(ui.ctx(), "keywordSetMenu:edit", edit.rect);
+                if edit.clicked() {
+                    let mut slots: Vec<String> =
+                        sets["keywords"].as_array().into_iter().flatten().filter_map(|k| k.as_str().map(str::to_string)).collect();
+                    slots.resize(9, String::new());
+                    let named = current != lightcraft_engine::cmd::keywords::RECENT;
+                    app.ui.dialog = Some(crate::state::Dialog::KeywordSet {
+                        replaces: named.then(|| current.clone()),
+                        name: if named { current.clone() } else { String::new() },
+                        slots,
+                    });
+                }
                 if ui.button(crate::i18n::tr("Save Current Keywords as Set…")).clicked() {
                     app.ui.dialog = Some(crate::state::Dialog::TextPrompt {
                         title: "Save Keyword Set".into(),
@@ -893,6 +907,7 @@ fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     let _ = app.run("keyword.deleteSet", json!({"name": current}));
                 }
             });
+        register(ui.ctx(), "keywordSetCombo", combo.response.rect);
     });
     let kws: Vec<String> = sets["keywords"].as_array().into_iter().flatten().filter_map(|k| k.as_str().map(str::to_string)).collect();
     if kws.is_empty() {
@@ -902,6 +917,15 @@ fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let bw = ((ui.available_width() - 8.0) / 3.0).floor().max(40.0);
     egui::Grid::new("kw-set-grid").num_columns(3).spacing([4.0, 4.0]).show(ui, |ui| {
         for (i, k) in kws.iter().enumerate() {
+            // an empty slot: an idle button, so the others keep their ⌥ keys
+            if k.is_empty() {
+                let r = ui.add_enabled_ui(false, |ui| ui.add_sized([bw, 22.0], egui::Button::new(""))).inner;
+                register(ui.ctx(), format!("kwSetEmpty:{}", i + 1), r.rect);
+                if i % 3 == 2 {
+                    ui.end_row();
+                }
+                continue;
+            }
             let chip = chips.iter().find(|c| lightcraft_catalog::keywords::same(&c.path, &lightcraft_catalog::keywords::clean(k)));
             let on = chip.is_some_and(|c| c.on_all());
             let some = chip.is_some() && !on;

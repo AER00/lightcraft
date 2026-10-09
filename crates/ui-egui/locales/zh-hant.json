@@ -1760,5 +1760,9 @@
   "Add to All Selected Photos": "加入所有選取的照片",
   "Will Export": "將匯出",
   "No keywords are exported": "沒有要匯出的關鍵字",
-  "& Containing": "及上層"
+  "& Containing": "及上層",
+  "Edit Set…": "編輯集…",
+  "Edit Keyword Set": "編輯關鍵字集",
+  "Keywords (⌥1–⌥9)": "關鍵字 (⌥1–⌥9)",
+  "A keyword set needs a name": "關鍵字集需要名稱"
 }

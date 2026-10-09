@@ -1760,5 +1760,9 @@
   "Add to All Selected Photos": "添加到所有所选照片",
   "Will Export": "将导出",
   "No keywords are exported": "没有要导出的关键字",
-  "& Containing": "及上级"
+  "& Containing": "及上级",
+  "Edit Set…": "编辑集…",
+  "Edit Keyword Set": "编辑关键字集",
+  "Keywords (⌥1–⌥9)": "关键字 (⌥1–⌥9)",
+  "A keyword set needs a name": "关键字集需要名称"
 }

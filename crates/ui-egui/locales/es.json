@@ -1760,5 +1760,9 @@
   "Add to All Selected Photos": "Añadir a todas las fotos seleccionadas",
   "Will Export": "Se exportará",
   "No keywords are exported": "No se exporta ninguna palabra clave",
-  "& Containing": "y contenedoras"
+  "& Containing": "y contenedoras",
+  "Edit Set…": "Editar conjunto…",
+  "Edit Keyword Set": "Editar conjunto de palabras clave",
+  "Keywords (⌥1–⌥9)": "Palabras clave (⌥1–⌥9)",
+  "A keyword set needs a name": "Un conjunto de palabras clave necesita un nombre"
 }

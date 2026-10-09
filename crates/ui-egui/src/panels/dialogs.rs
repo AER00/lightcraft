@@ -86,6 +86,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::KeywordTag { .. } => "Edit Keyword Tag",
         Dialog::DeleteKeyword { .. } => "Delete Keyword",
         Dialog::MoveKeyword { .. } => "Merge Keywords",
+        Dialog::KeywordSet { .. } => "Edit Keyword Set",
         Dialog::MergeKeywords { .. } => "Merge Keywords",
         Dialog::NewSmartAlbum { .. } => "Create Smart Album",
         Dialog::AllMetadata { .. } => "All Metadata",
@@ -772,6 +773,38 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         crate::widgets::register(ui.ctx(), id, r.rect);
                     }
                 }
+                Dialog::KeywordSet { name, slots, .. } => {
+                    ui.label(egui::RichText::new(crate::i18n::tr("Set name")).color(t.text_dim));
+                    let r = crate::text_field::TextField::singleline("field:keywordSetName", name)
+                        .hint(crate::i18n::tr("Set name"))
+                        .width(f32::INFINITY)
+                        .select_on_focus(true)
+                        .show(ui);
+                    if just_opened(ui, "keyword-set") {
+                        r.response.request_focus();
+                    }
+                    let mut returned = r.ending == Some(crate::text_field::Ending::Return);
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(crate::i18n::tr("Keywords (⌥1–⌥9)")).color(t.text_dim));
+                    slots.resize(9, String::new());
+                    let w = ((ui.available_width() - 8.0) / 3.0).floor().max(60.0);
+                    egui::Grid::new("keyword-set-slots").num_columns(3).spacing([4.0, 4.0]).show(ui, |ui| {
+                        for (i, slot) in slots.iter_mut().enumerate() {
+                            let r = crate::text_field::TextField::singleline(&format!("field:keywordSetSlot:{}", i + 1), slot)
+                                .hint(format!("⌥{}", i + 1))
+                                .width(w)
+                                .show(ui);
+                            returned |= r.ending == Some(crate::text_field::Ending::Return);
+                            if i % 3 == 2 {
+                                ui.end_row();
+                            }
+                        }
+                    });
+                    // Return in any field saves the set
+                    if returned {
+                        confirm = true;
+                    }
+                }
                 Dialog::MoveKeyword { keyword, parent } => {
                     let name = keyword.rsplit('|').next().unwrap_or(keyword);
                     match parent {
@@ -906,6 +939,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     Dialog::ConfirmDelete { .. } | Dialog::DeleteKeyword { .. } => "Delete",
                     // (not "Merge": that is photo merging, HDR / panorama, in some languages)
                     Dialog::MoveKeyword { .. } => "Merge Keywords",
+                    Dialog::KeywordSet { .. } => "Save",
                     Dialog::KeywordTag { editing: None, .. } => "Create",
                     Dialog::KeywordTag { .. } => "Save",
                     Dialog::RemoveFolder { .. } => "Remove",
@@ -955,6 +989,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         | Dialog::NewSmartAlbum { .. }
                         | Dialog::SmartRules { .. }
                         | Dialog::KeywordTag { .. }
+                        | Dialog::KeywordSet { .. }
                 ) =>
             {
                 app.toast(ctx, e)
@@ -1189,6 +1224,16 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }
         }
         Dialog::DeleteKeyword { keyword, .. } => app.run("keyword.delete", json!({"keyword": keyword})),
+        Dialog::KeywordSet { replaces, name, slots } => {
+            if name.trim().is_empty() {
+                return Err(crate::i18n::tr("A keyword set needs a name").to_string());
+            }
+            let mut params = json!({"name": name.trim(), "keywords": slots});
+            if let Some(old) = replaces {
+                params["replace"] = json!(old);
+            }
+            app.run("keyword.saveSet", params)
+        }
         Dialog::MoveKeyword { keyword, parent } => {
             let r = app.run("keyword.move", json!({"keyword": keyword, "parent": parent, "merge": true}));
             if r.is_ok() {

@@ -598,6 +598,10 @@ mod tests {
             "Will Export",
             "No keywords are exported",
             "Add to All Selected Photos",
+            "Set name",
+            "Edit Set…",
+            "Edit Keyword Set",
+            "A keyword set needs a name",
         ];
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("locales");
         for code in ["de", "es", "pt-br", "ru", "ja", "zh-hans", "zh-hant"] {
