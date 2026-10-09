@@ -198,6 +198,8 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                         .speed(0.05)
                         .fixed_decimals(2)
                         .suffix("°")
+                        // read as the Straighten value reads a typed one: "-3,25" too
+                        .custom_parser(|text| crate::widgets::typed_value(&spec, text.trim().trim_end_matches('°')))
                         // a typed angle applies on Return (or leaving the field), not keystroke by
                         // keystroke: no half-typed angles, one undo step
                         .update_while_editing(false),

@@ -329,3 +329,25 @@ fn a_rotation_cut_short_leaves_nothing_behind() {
     assert!(!has(&h, "cropAngleReadout"), "no angle");
     assert!(!has(&h, "cropRotateCursor"), "no rotation glyph");
 }
+
+/// The Angle field reads a typed angle as the Straighten value does: a decimal comma, a degree
+/// sign, and an angle past ±45° held at the limit.
+#[test]
+fn the_angle_field_reads_angles_as_people_type_them() {
+    let mut h = crop_tool();
+    for (typed, want) in [("-3,25", -3.25), ("1.5°", 1.5), ("60", 45.0)] {
+        let r = h.request("ui.clickWidget", json!({"id": "cropAngleField"}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        for key in ["a", "Backspace"] {
+            let r = h.request("ui.key", json!({"key": key, "cmd": key == "a"}), T);
+            assert_eq!(r["ok"], true, "{r}");
+        }
+        let r = h.request("ui.text", json!({"text": typed}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        let r = h.request("ui.key", json!({"key": "Enter"}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert!((angle(&h) - want).abs() < 1e-9, "{typed:?}: want {want}, got {}", angle(&h));
+    }
+}
