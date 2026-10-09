@@ -2,6 +2,18 @@
 
 ## October 2026
 
+### Keyword List
+- The Keywords panel ends with a Keyword List, as in Lightroom Classic: every keyword with its photo count, those no
+  photo has yet too. Filter it, tick a keyword to give it to the selected photos (a dash: only some have it), or click
+  the arrow to see its photos.
+- Create keywords with + (inside the one you picked, with synonyms, and given to the selection if you like), edit one
+  by double-clicking it, delete one with − after a confirmation. Right-click for more: create inside, Put New Keywords
+  Inside This Keyword, Purge Unused Keywords.
+- Drag a keyword onto another to nest it, or onto the list's title to bring it back to the top level; photos dragged
+  from the grid onto a keyword get it.
+- Keyword tag options decide what exported files carry: Include on Export, Export Containing Keywords, Export
+  Synonyms. Exports now write keyword names to `dc:subject` and their paths to `lr:hierarchicalSubject`.
+
 ### Text fields
 - Right-click Search Photos, a slider's typed value, the Info panel's fields, the name field of New Album, Rename
   Album, New Smart Album, Rename Keyword, Merge Keywords and similar dialogs, or the name field under unnamed faces for
