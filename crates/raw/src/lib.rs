@@ -552,7 +552,8 @@ pub struct ColorData {
     pub baseline_sharpness: Option<f64>,
     /// The file's own camera-profile look (`ProfileHueSatMap*`, `ProfileLookTable*`,
     /// `ProfileToneCurve`), applied by [`color`]'s users at render time, and its
-    /// `ProfileGainTableMap*`, kept (a DNG export writes it back) but not rendered.
+    /// `ProfileGainTableMap*`, kept (a DNG export writes it back) and rendered only when a photo's
+    /// "Camera local tone mapping" option asks for it (`lightcraft_pipeline::local_tone`).
     #[serde(default)]
     pub profile: profile::ProfileLook,
 }
