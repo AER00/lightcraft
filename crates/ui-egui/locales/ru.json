@@ -1578,5 +1578,6 @@
   "Show less": "Свернуть",
   "Quit while tasks are running?": "Выйти, пока выполняются задачи?",
   "Exporting contact sheet": "Экспорт контрольного листа",
-  "Reading folder": "Чтение папки"
+  "Reading folder": "Чтение папки",
+  "Scanning folder": "Сканирование папки"
 }

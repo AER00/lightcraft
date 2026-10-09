@@ -1865,5 +1865,6 @@
   "Show less": "收起",
   "Quit while tasks are running?": "要在任务运行时退出吗？",
   "Exporting contact sheet": "正在导出联系表",
-  "Reading folder": "正在读取文件夹"
+  "Reading folder": "正在读取文件夹",
+  "Scanning folder": "正在扫描文件夹"
 }

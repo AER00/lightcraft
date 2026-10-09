@@ -394,6 +394,14 @@ pub struct ScanTask {
     browse: bool,
     /// What is being scanned (the review's source).
     sources: Vec<String>,
+    /// The scan's row in the activity stack (its ✕ and `activity.cancel` set `progress.cancel`).
+    guard: lightcraft_engine::activity::TaskGuard,
+}
+
+/// The activity row of a scan: the review's ("Scanning folder") or the Local view's ("Reading folder").
+fn scan_guard(app: &LightcraftApp, progress: &ScanProgress, browse: bool) -> lightcraft_engine::activity::TaskGuard {
+    let label = if browse { "Reading folder" } else { "Scanning folder" };
+    app.session.activity.start("scan", label, lightcraft_engine::activity::Cancel::Flag(progress.cancel.clone()))
 }
 
 /// An import and a Synchronize Folder never run at once: each readies its files against the
@@ -419,7 +427,8 @@ pub fn open(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String
     std::thread::spawn(job);
     #[cfg(target_arch = "wasm32")]
     job();
-    app.scan = Some(ScanTask { progress, rx, copy: false, browse: false, sources });
+    let guard = scan_guard(app, &progress, false);
+    app.scan = Some(ScanTask { progress, rx, copy: false, browse: false, sources, guard });
     Ok(json!({"scanning": true}))
 }
 
@@ -480,7 +489,8 @@ pub fn browse(app: &mut LightcraftApp, path: &str, subfolders: Option<bool>) -> 
     std::thread::spawn(job);
     #[cfg(target_arch = "wasm32")]
     job();
-    app.scan = Some(ScanTask { progress, rx, copy: false, browse: true, sources: Vec::new() });
+    let guard = scan_guard(app, &progress, true);
+    app.scan = Some(ScanTask { progress, rx, copy: false, browse: true, sources: Vec::new(), guard });
     app.renderer.forget_imports();
     Ok(json!({"path": dir_s, "subfolders": subfolders, "scanning": true}))
 }
@@ -491,7 +501,18 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
     ctx.request_repaint_after(std::time::Duration::from_millis(100));
     let out = match task.rx.try_recv() {
         Ok(o) => o,
-        Err(std::sync::mpsc::TryRecvError::Empty) => return,
+        Err(std::sync::mpsc::TryRecvError::Empty) => {
+            if task.guard.is_cancelled() {
+                // ✕: the worker stops at its next file; don't wait for it (a NAS read can take a while)
+                app.scan = None;
+                return;
+            }
+            let (total, done) = (task.progress.total.load(Ordering::Relaxed), task.progress.done.load(Ordering::Relaxed));
+            task.guard.progress(done as u64, total as u64);
+            // while the folders are listed the total isn't known: say what is happening instead
+            task.guard.detail(if total == 0 { crate::i18n::tr("Looking for photos…") } else { "" });
+            return;
+        }
         Err(_) => {
             app.scan = None;
             app.toast(ctx, crate::i18n::tr("Scan failed"));
@@ -532,37 +553,6 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
     d.copy = task.copy;
     d.sources = task.sources;
     app.ui.dialog = Some(crate::state::Dialog::Import { opts: Box::new(d) });
-}
-
-/// The progress window while a folder is being scanned.
-pub fn scan_progress(app: &mut LightcraftApp, ctx: &egui::Context) {
-    let Some(task) = &app.scan else { return };
-    let t = Tokens::get(ctx);
-    let total = task.progress.total.load(Ordering::Relaxed);
-    let done = task.progress.done.load(Ordering::Relaxed);
-    let text = if total == 0 {
-        if task.browse { "Reading folder…" } else { "Looking for photos…" }.to_string()
-    } else {
-        crate::i18n::tr_format!("Reading photos… {done} of {total}", done = done, total = total)
-    };
-    let mut cancel = false;
-    egui::Window::new(crate::i18n::tr("Scanning"))
-        .title_bar(false)
-        .resizable(false)
-        .anchor(Align2::CENTER_BOTTOM, [0.0, -80.0])
-        .fixed_size([340.0, 80.0])
-        .show(ctx, |ui| {
-            ui.label(egui::RichText::new(text).color(t.text));
-            ui.add(egui::ProgressBar::new(done as f32 / total.max(1) as f32).desired_width(320.0));
-            let r = ui.button(crate::i18n::tr("Cancel"));
-            register(ui.ctx(), "button:scanCancel", r.rect);
-            cancel = r.clicked();
-        });
-    if cancel {
-        // the worker stops at its next file; don't wait for it (a NAS read can take a while)
-        task.progress.cancel.store(true, Ordering::Relaxed);
-        app.scan = None;
-    }
 }
 
 impl ScanTask {

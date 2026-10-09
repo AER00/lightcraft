@@ -1867,5 +1867,6 @@
   "Show less": "表示を減らす",
   "Quit while tasks are running?": "タスクの実行中に終了しますか？",
   "Exporting contact sheet": "コンタクトシートを書き出し中",
-  "Reading folder": "フォルダーを読み込み中"
+  "Reading folder": "フォルダーを読み込み中",
+  "Scanning folder": "フォルダーをスキャン中"
 }

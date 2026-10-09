@@ -263,3 +263,22 @@ fn import_cancelled_by_command_reports_cancelled() {
     assert_eq!(h.app.session.undo.len(), undo0 + 1, "one undo step");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn scan_shows_a_row_and_cancel_closes_it() {
+    let (mut h, dir) = slow_import("scan", 120);
+    crate::import::open(&mut h.app, vec![dir.to_string_lossy().to_string()]).unwrap();
+    h.step();
+    let tasks = h.app.session.activity.list();
+    assert_eq!(tasks.first().map(|t| t.kind), Some("scan"), "{tasks:?}");
+    assert!(tasks[0].cancellable);
+    h.app.session.activity.cancel(tasks[0].id).unwrap();
+    // like the old Cancel: the scan is dropped at once, without waiting for the file being read
+    assert!(h.step_until(Duration::from_secs(10), |h| h.app.scan.is_none()));
+    assert!(h.app.session.activity.list().is_empty());
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(h.app.ui.dialog.is_none(), "no review opened");
+    let _ = std::fs::remove_dir_all(&dir);
+}
