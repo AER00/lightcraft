@@ -53,10 +53,11 @@ fn row_named(
     selected: bool,
     indent: f32,
 ) -> egui::Response {
-    row_sensed(app, ui, id, icon, label, spoken, count, selected, indent, Sense::click())
+    row_sensed(app, ui, id, icon, label, spoken, count, selected, indent, Sense::click(), None)
 }
 
-/// [`row_named`] with the given `sense` (rows that can be dragged add `drag`).
+/// [`row_named`] with the given `sense` (rows that can be dragged add `drag`) and a colour
+/// label's dot (`mark`) before the count.
 #[allow(clippy::too_many_arguments)]
 fn row_sensed(
     app: &mut LightcraftApp,
@@ -69,6 +70,7 @@ fn row_sensed(
     selected: bool,
     indent: f32,
     sense: Sense,
+    mark: Option<egui::Color32>,
 ) -> egui::Response {
     let label = if matches!(id, "all" | "recentlyAdded" | "picks" | "missing" | "recentlyDeleted") { crate::i18n::tr(label) } else { label };
     let t = Tokens::get(ui.ctx());
@@ -102,8 +104,15 @@ fn row_sensed(
     let count_galley = count.filter(|_| app.ui.show_counts).map(|n| ui.painter().layout_no_wrap(n.to_string(), t.font(12.5), t.text_dim));
     let label_left = r.left() + 42.0 + indent;
     let count_left = count_galley.as_ref().map_or(edge - 18.0, |g| edge - 18.0 - g.size().x);
+    // a label's dot sits just before the count
+    let mark_w = if mark.is_some() { MARK_W } else { 0.0 };
+    if let Some(c) = mark {
+        let dot = Rect::from_center_size(pos2(count_left - MARK_W / 2.0, r.center().y), vec2(8.0, 8.0));
+        ui.painter().circle_filled(dot.center(), 4.0, c);
+        register(ui.ctx(), format!("labelMark:{id}"), dot);
+    }
     // the name gives way to the count: cut with an ellipsis, in full on hover
-    let room = count_left - 8.0 - label_left;
+    let room = count_left - mark_w - 8.0 - label_left;
     let measure = |s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), color).size().x;
     let full_w = measure(label);
     let shown = if full_w <= room { label.to_string() } else { crate::widgets::elide_head(label, room.max(0.0), measure) };
@@ -112,7 +121,7 @@ fn row_sensed(
     let resp = if shown != label { resp.on_hover_text(label) } else { resp };
     // a row asks for room for its name up to a share of a panel, so one very long name does not
     // make everything scroll: depth does that
-    let mut needed = 42.0 + indent + full_w.min(MAX_NAME_NEED) + 18.0;
+    let mut needed = 42.0 + indent + full_w.min(MAX_NAME_NEED) + 18.0 + mark_w;
     if let Some(galley) = count_galley {
         let rect = Rect::from_min_size(pos2(edge - 18.0 - galley.size().x, r.center().y - galley.size().y / 2.0), galley.size());
         needed += rect.width() + 16.0;
@@ -694,7 +703,8 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
                 open = true;
                 ui.data_mut(|d| d.insert_temp(open_id, true));
             }
-            let resp = row_sensed(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, None, false, indent, Sense::click_and_drag());
+            let resp =
+                row_sensed(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, None, false, indent, Sense::click_and_drag(), None);
             // a folder is no source, so its row folds it too; the triangle is the same click, aimed
             let has_children = all.get(&Some(a.id)).is_some_and(|v| !v.is_empty());
             if resp.drag_started() {
@@ -727,7 +737,7 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             let target =
                 app.session.target_album.filter(|t| app.session.catalog.album(*t).is_some()).or_else(|| app.session.catalog.quick_collection());
             let label = if target == Some(a.id) { format!("{} +", a.name) } else { a.name.clone() };
-            let mut resp = row_sensed(app, ui, &format!("album:{}", a.id.0), icon, &label, None, Some(n), sel, indent, Sense::click_and_drag());
+            let mut resp = row_sensed(app, ui, &format!("album:{}", a.id.0), icon, &label, None, Some(n), sel, indent, Sense::click_and_drag(), None);
             if resp.drag_started() {
                 app.ui.dragging_album = Some(a.id.0);
             }
@@ -781,6 +791,9 @@ fn drag_auto_scroll(app: &LightcraftApp, ui: &egui::Ui) {
         ui.ctx().request_repaint();
     }
 }
+
+/// Room a colour label's dot takes before a row's count.
+const MARK_W: f32 = 12.0;
 
 /// How long a dragged album must rest on a closed folder before it opens.
 const HOVER_OPEN_SECS: f64 = 0.6;
@@ -1165,7 +1178,14 @@ fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode],
             && app.session.source == LibrarySource::LibraryFolder
             && app.session.library_folder.as_deref().is_some_and(|f| same_folder(f, &n.path));
         let name = if selectable { n.name.clone() } else { crate::i18n::tr("This Computer").to_string() };
-        let resp = row_named(app, ui, &format!("libfolder:{}", n.path), Icon::Folder, &name, Some(&name), Some(n.count), sel, indent);
+        // the label is said with the name, as it is shown beside it
+        let spoken = match n.label {
+            Some(l) => format!("{name}, {}", crate::i18n::color_label(&app.session.catalog, l)),
+            None => name.clone(),
+        };
+        let mark = n.label.map(crate::theme::label_color);
+        let id = format!("libfolder:{}", n.path);
+        let resp = row_sensed(app, ui, &id, Icon::Folder, &name, Some(&spoken), Some(n.count), sel, indent, Sense::click(), mark);
         let mut toggled = false;
         if !n.children.is_empty() {
             let tr = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("libfolder-tri", key)), format!("libraryFolderToggle:{}", n.path));
@@ -1204,6 +1224,8 @@ fn row_menu(app: &mut LightcraftApp, resp: &egui::Response, n: &FolderNode) {
         folder_menu_for_library(app, resp, n);
     } else if n.path != "/" {
         resp.context_menu(|ui| {
+            folder_label_menu(app, ui, n);
+            ui.separator();
             if ui
                 .button(crate::i18n::tr("Remove Disk from Library…"))
                 .on_hover_text(crate::i18n::tr("Moves every photo imported from this disk to Recently Deleted; no file is touched"))
@@ -1214,6 +1236,20 @@ fn row_menu(app: &mut LightcraftApp, resp: &egui::Response, n: &FolderNode) {
             }
         });
     }
+}
+
+/// Set Color Label ▸ of a Folders row (`folder.label`; the submenu is widget `folderLabelMenu`,
+/// its colours `folderLabel:<colour>`).
+fn folder_label_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, n: &FolderNode) {
+    let menu = ui.menu_button(crate::i18n::tr("Set Color Label"), |ui| {
+        if let Some(l) = crate::panels::grid::label_items(app, ui, n.label, "folderLabel") {
+            if let Err(e) = app.run("folder.label", json!({"path": n.path, "label": crate::panels::grid::label_param(l)})) {
+                app.toast(ui.ctx(), e);
+            }
+            ui.close();
+        }
+    });
+    register(ui.ctx(), "folderLabelMenu", menu.response.rect);
 }
 
 /// The context menu of a folder row: the folder's disk actions (the same as Local's, photos
@@ -1252,6 +1288,7 @@ fn folder_menu_for_library(app: &mut LightcraftApp, resp: &egui::Response, n: &F
             let _ = f(path);
             ui.close();
         }
+        folder_label_menu(app, ui, n);
         ui.separator();
         if ui
             .button(crate::i18n::tr("Remove from Library…"))
