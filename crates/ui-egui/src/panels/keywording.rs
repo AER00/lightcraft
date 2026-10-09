@@ -179,9 +179,9 @@ impl Chip {
 /// for the selected `photos`, as the keyword tag options say, each with how many of them carry it;
 /// by name.
 pub(crate) fn will_export(catalog: &Catalog, photos: &[PhotoId]) -> Vec<Chip> {
+    let photos = distinct(catalog, photos);
     let mut have: std::collections::BTreeMap<String, (String, usize)> = Default::default();
-    for id in photos {
-        let Some(p) = catalog.photo(*id) else { continue };
+    for p in &photos {
         for name in catalog.export_keywords(&p.meta.keywords).flat {
             have.entry(name.to_lowercase()).or_insert_with(|| (name.clone(), 0)).1 += 1;
         }
@@ -189,15 +189,21 @@ pub(crate) fn will_export(catalog: &Catalog, photos: &[PhotoId]) -> Vec<Chip> {
     have.into_values().map(|(path, have)| Chip { path, have, of: photos.len() }).collect()
 }
 
+/// The selected photos, each once, those the library has: what "N of M" counts.
+pub(crate) fn distinct<'a>(catalog: &'a Catalog, photos: &[PhotoId]) -> Vec<&'a lightcraft_catalog::Photo> {
+    let mut seen = std::collections::HashSet::new();
+    photos.iter().filter(|id| seen.insert(**id)).filter_map(|id| catalog.photo(*id).map(|p| &**p)).collect()
+}
+
 /// The keywords of the selected `photos`, each once whatever its case, with how many of them have
 /// it; by name.
 pub(crate) fn chips(catalog: &Catalog, photos: &[PhotoId]) -> Vec<Chip> {
     use lightcraft_catalog::keywords::clean;
-    // by lower-case keyword: the photos with it (each once)
+    let photos = distinct(catalog, photos);
+    // by lower-case keyword: as first seen, and the photos with it (each once)
     let mut have: std::collections::BTreeMap<String, (String, usize)> = Default::default();
     let mut seen = std::collections::HashSet::new();
-    for id in photos {
-        let Some(p) = catalog.photo(*id) else { continue };
+    for p in &photos {
         seen.clear();
         for k in &p.meta.keywords {
             let k = clean(k);
@@ -207,7 +213,8 @@ pub(crate) fn chips(catalog: &Catalog, photos: &[PhotoId]) -> Vec<Chip> {
             have.entry(k.to_lowercase()).or_insert_with(|| (k.clone(), 0)).1 += 1;
         }
     }
-    have.into_values().map(|(k, n)| Chip { path: catalog.keyword_path(&k).unwrap_or(k), have: n, of: photos.len() }).collect()
+    // spelled as the keyword list spells it, else as first seen (no scan of the library)
+    have.into_values().map(|(k, n)| Chip { path: catalog.listed_path(&k).map(str::to_string).unwrap_or(k), have: n, of: photos.len() }).collect()
 }
 
 #[cfg(test)]
@@ -281,5 +288,27 @@ mod tests {
         assert_eq!(cut, "…Lisbon › Belém tower *");
         assert!(chars(&cut) <= 24.0);
         assert!(chip_label("Places|Lisbon", false, 4.0, chars).starts_with('…'), "even with hardly any room");
+    }
+
+    /// A photo listed twice in the selection counts once, and one that isn't in the library not at
+    /// all: "On 1 of 2", not "On 2 of 4".
+    #[test]
+    fn the_counts_are_of_photos_not_ids() {
+        let (c, ids) = library(&[&["beach"], &["sea"]]);
+        let selection = [ids[0], ids[0], ids[1], PhotoId(999)];
+        assert_eq!(shown(&chips(&c, &selection)), [("beach", 1, 2), ("sea", 1, 2)]);
+        assert_eq!(shown(&will_export(&c, &selection)), [("beach", 1, 2), ("sea", 1, 2)]);
+        let ticks = crate::panels::keyword_list::Ticks::of(&c, &selection);
+        assert_eq!(ticks.tick("beach"), crate::panels::keyword_list::Tick::Some);
+        assert_eq!(crate::panels::keyword_list::Ticks::of(&c, &[ids[0], ids[0]]).tick("beach"), crate::panels::keyword_list::Tick::All);
+    }
+
+    /// A keyword the Keyword List has is spelled as it spells it.
+    #[test]
+    fn a_listed_keyword_is_spelled_as_listed() {
+        use lightcraft_catalog::keywords::KeywordInfo;
+        let (mut c, ids) = library(&[&["beach"]]);
+        c.apply(Op::SetKeyword { path: "Beach".into(), info: Some(KeywordInfo::default()) }).unwrap();
+        assert_eq!(shown(&chips(&c, &ids)), [("Beach", 1, 1)]);
     }
 }

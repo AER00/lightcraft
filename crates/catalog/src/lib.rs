@@ -382,6 +382,10 @@ impl Catalog {
     pub fn keyword_info(&self, path: &str) -> Option<&keywords::KeywordInfo> {
         self.keyword_list.get(&keywords::clean(path).to_lowercase()).map(|k| &k.info)
     }
+    /// How the keyword list spells a listed keyword (any case), `None` when it isn't listed.
+    pub fn listed_path(&self, path: &str) -> Option<&str> {
+        self.keyword_list.get(&keywords::clean(path).to_lowercase()).map(|k| k.path.as_str())
+    }
     /// The keyword list: keywords listed on their own or given attributes, by path.
     pub fn listed_keywords(&self) -> impl Iterator<Item = &keywords::ListedKeyword> {
         self.keyword_list.values()
