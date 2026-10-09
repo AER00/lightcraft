@@ -340,7 +340,12 @@ fn shutter_value(value: &Value) -> Value {
     }
 }
 
-/// `value` for in-the-last rules: `{n, unit: days|weeks|months|years}` or a number of days.
+/// The longest "in the last…" span: 10,000 years, beyond any capture date ("ever").
+const MAX_LAST_SECS: f64 = 10_000.0 * 365.25 * 86_400.0;
+
+/// `value` for in-the-last rules: `{n, unit: days|weeks|months|years}` or a number of days, in
+/// seconds. `None` for a zero, negative or unreadable `n`; a longer span than [`MAX_LAST_SECS`]
+/// is that (so the arithmetic on it can't overflow).
 fn last_secs(value: &Value) -> Option<i64> {
     let (n, unit) = match value {
         Value::Object(o) => (o.get("n").and_then(number)?, o.get("unit").and_then(Value::as_str).unwrap_or("days")),
@@ -354,7 +359,11 @@ fn last_secs(value: &Value) -> Option<i64> {
         "years" => 365.25 * day,
         _ => day,
     };
-    Some((n * per) as i64)
+    let secs = n * per;
+    if secs.is_nan() || secs <= 0.0 {
+        return None;
+    }
+    Some(secs.min(MAX_LAST_SECS) as i64)
 }
 
 fn date_op(op: &str, have: Option<&str>, value: &Value) -> bool {
@@ -386,7 +395,8 @@ fn date_op(op: &str, have: Option<&str>, value: &Value) -> bool {
         },
         "inLast" | "notInLast" => {
             let Some(secs) = last_secs(value) else { return false };
-            let from = crate::dates::shift_iso(&now(), -secs).unwrap_or_default();
+            // a span reaching before year 0 is "ever": every dated photo is in it
+            let Some(from) = crate::dates::shift_iso(&now(), -secs) else { return op == "inLast" };
             (h >= from.as_str()) == (op == "inLast")
         }
         _ => false,
@@ -936,6 +946,30 @@ mod tests {
         assert_eq!(r.describe(), "has edits is yes and cropped is no");
         let bad = rs(json!({"rules": [{"field": "edited", "op": "is", "value": "maybe"}]}));
         assert_eq!(bad.problems(), vec!["`edited` is yes or no, not \"maybe\"".to_string()]);
+    }
+
+    /// "In the last N" never overflows, whatever N an agent or a saved file holds: a zero,
+    /// negative or unreadable N matches nothing (either way round); an N beyond 10,000 years means
+    /// "ever", so every dated photo is in it and none is outside it.
+    #[test]
+    fn in_the_last_survives_hostile_counts() {
+        set_now(Some("2026-09-01T00:00:00".into()));
+        let cat = Catalog::new();
+        let p = photo(1); // captured 2026-08-14
+        let m = |op: &str, n: serde_json::Value, unit: &str| {
+            rs(json!({"rules": [{"field": "captureDate", "op": op, "value": {"n": n, "unit": unit}}]})).matches(&p, &cat)
+        };
+        for n in [json!(0), json!(-5), json!(-1e30), json!(-9.3e18), json!("soon")] {
+            for op in ["inLast", "notInLast"] {
+                assert!(!m(op, n.clone(), "years"), "{op} {n}");
+            }
+        }
+        for n in [json!(1e30), json!(9.3e18), json!(u64::MAX), json!(20_000)] {
+            assert!(m("inLast", n.clone(), "years"), "{n} years is ever");
+            assert!(!m("notInLast", n.clone(), "years"), "{n}");
+        }
+        assert!(m("inLast", json!(1e30), "hours") && m("inLast", json!(30), "days"));
+        set_now(None);
     }
 
     /// The field menu shows every rule field once: at the top level or in exactly one group,
