@@ -212,28 +212,15 @@ pub fn scan_with(input: SyncInput, progress: &SyncProgress) -> FolderChanges {
             Check::Nothing => {}
         }
     }
-    // a missing photo's content found under another name in the folder: the file was renamed or
-    // moved, and the photo (with its edits) follows it rather than going missing
-    let mut gone_by_hash: HashMap<&str, &str> = HashMap::new();
-    for m in &changes.missing {
-        if let Some(h) = labels.photo(PhotoId(m.id)).and_then(|p| p.content_hash.as_deref()) {
-            gone_by_hash.entry(h).or_insert(m.path.as_str());
-        }
-    }
-    let mut moved_from: HashMap<String, String> = HashMap::new();
+    let moved_from = match_moved(&changes.missing, &out.candidates, &out.probes, &labels);
     for c in out.candidates {
-        let hash = out.probes.get(&c.path).and_then(|i| i.content_hash.as_deref());
-        if c.error.is_none()
-            && c.duplicate.as_deref() != Some("path")
-            && let Some(from) = hash.and_then(|h| gone_by_hash.remove(h))
-        {
-            moved_from.insert(from.to_string(), c.path.clone());
+        if moved_from.values().any(|to| *to == c.path) {
             continue;
         }
         let browsed = c.existing.and_then(|id| labels.photo(PhotoId(id))).is_some_and(|p| p.local && !p.deleted);
         match (c.duplicate.as_deref(), &c.error) {
             // a file only looked at in Local is not in the library yet: it is new
-            (Some("path"), _) if browsed => changes.new.push(c),
+            (Some("path"), _) if browsed => changes.new.push(ImportCandidate { duplicate: None, existing: None, ..c }),
             (Some("path"), _) => {}
             (Some(_), _) => changes.duplicates += 1,
             (None, Some(_)) => changes.unreadable.push(c),
@@ -249,6 +236,68 @@ pub fn scan_with(input: SyncInput, progress: &SyncProgress) -> FolderChanges {
     }
     changes.probes = out.probes;
     changes
+}
+
+/// The content a hash stands for: a Duplicate's own hash is the original's plus `:dup<id>`.
+fn base_hash(h: &str) -> &str {
+    h.split(':').next().unwrap_or(h)
+}
+
+/// Missing photos' files found elsewhere in the folder (old path → new path): the file was
+/// renamed or moved, and the photo (with its edits) follows it rather than going missing.
+///
+/// By content first: each missing file's hash claims one file with that content (two missing
+/// files with the same content claim two). A photo with no hash on record (taken over from a
+/// Lightroom catalog) is matched by file size and dimensions, and only when exactly one missing
+/// file and exactly one unclaimed file of the folder agree on them.
+fn match_moved(
+    missing: &[FolderPhoto],
+    candidates: &[ImportCandidate],
+    probes: &HashMap<String, ProbeInfo>,
+    labels: &Catalog,
+) -> HashMap<String, String> {
+    // distinct missing files (a photo's virtual copies share its file), with what is known of them
+    let mut files: Vec<(&str, Option<&Photo>)> = Vec::new();
+    for m in missing {
+        if !files.iter().any(|(p, _)| *p == m.path) {
+            files.push((m.path.as_str(), labels.photo(PhotoId(m.id)).map(|p| &**p)));
+        }
+    }
+    let mut by_hash: HashMap<&str, std::collections::VecDeque<&str>> = HashMap::new();
+    for (path, p) in &files {
+        if let Some(h) = p.and_then(|p| p.content_hash.as_deref()) {
+            by_hash.entry(base_hash(h)).or_default().push_back(path);
+        }
+    }
+    let usable = |c: &&ImportCandidate| c.error.is_none() && c.duplicate.as_deref() != Some("path");
+    let mut moved: HashMap<String, String> = HashMap::new();
+    for c in candidates.iter().filter(usable) {
+        let hash = probes.get(&c.path).and_then(|i| i.content_hash.as_deref());
+        if let Some(from) = hash.and_then(|h| by_hash.get_mut(base_hash(h))).and_then(std::collections::VecDeque::pop_front) {
+            moved.insert(from.to_string(), c.path.clone());
+        }
+    }
+    let key = |size: u64, w: u32, h: u32| (size > 0 && w > 0 && h > 0).then_some((size, w, h));
+    let mut hashless: HashMap<(u64, u32, u32), Vec<&str>> = HashMap::new();
+    for (path, p) in &files {
+        if let Some(p) = p.filter(|p| p.content_hash.is_none())
+            && let Some(k) = key(p.file_size, p.width, p.height)
+        {
+            hashless.entry(k).or_default().push(path);
+        }
+    }
+    let mut found: HashMap<(u64, u32, u32), Vec<&str>> = HashMap::new();
+    for c in candidates.iter().filter(usable).filter(|c| !moved.values().any(|to| *to == c.path)) {
+        if let Some(k) = key(c.file_size, c.width, c.height) {
+            found.entry(k).or_default().push(c.path.as_str());
+        }
+    }
+    for (k, from) in hashless {
+        if let ([from], Some([to])) = (from.as_slice(), found.get(&k).map(Vec::as_slice)) {
+            moved.insert(from.to_string(), to.to_string());
+        }
+    }
+    moved
 }
 
 /// What checking one photo of the folder found.

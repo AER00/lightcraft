@@ -419,3 +419,35 @@ fn a_sidecar_the_library_wrote_itself_is_no_update() {
     let r = scan(&mut s, &dir.path("trip"));
     assert!(paths(&r, "metadata").is_empty(), "{r}");
 }
+
+#[test]
+fn a_renamed_photo_with_no_content_hash_is_relinked_when_its_file_is_unmistakable() {
+    // as photos taken over from a Lightroom catalog are: no hash on record
+    let dir = Scratch::new("nohash");
+    let mut s = library(&dir);
+    let a = s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
+    let mut p = (**s.catalog.photo(a).unwrap()).clone();
+    p.content_hash = None;
+    s.catalog.apply(lightcraft_catalog::Op::RemovePhoto { id: a }).unwrap();
+    s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    std::fs::rename(dir.path("trip/a.png"), dir.path("trip/a-renamed.png")).unwrap();
+    let r = scan(&mut s, &dir.path("trip"));
+    assert_eq!(r["moved"][0]["to"], dir.path("trip/a-renamed.png"), "{r}");
+    assert!(paths(&r, "missing").is_empty() && paths(&r, "new").is_empty(), "{r}");
+}
+
+#[test]
+fn renamed_duplicates_are_each_relinked() {
+    let dir = Scratch::new("dups");
+    let mut s = library(&dir);
+    let a = s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
+    s.execute("photo.duplicate", &json!({"ids": [a.0]})).unwrap();
+    assert!(Path::new(&dir.path("trip/a-copy.png")).exists());
+    std::fs::rename(dir.path("trip/a.png"), dir.path("trip/one.png")).unwrap();
+    std::fs::rename(dir.path("trip/a-copy.png"), dir.path("trip/two.png")).unwrap();
+    let r = scan(&mut s, &dir.path("trip"));
+    assert_eq!(r["moved"].as_array().map(Vec::len), Some(2), "{r}");
+    assert!(paths(&r, "missing").is_empty(), "{r}");
+    let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip")})).unwrap();
+    assert_eq!(r["relinked"], 2, "{r}");
+}
