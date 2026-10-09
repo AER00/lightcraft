@@ -340,6 +340,73 @@ fn smart_album_editor_keeps_an_unreadable_yes_no_value() {
     assert!(h.app.session.catalog.albums().all(|a| a.name != "Odd"), "OK refuses it: {r}");
 }
 
+/// The rule editor marks each rule that can't mean anything, inside groups too, and keeps OK
+/// disabled until they are fixed; the control channel's confirm is refused the same way.
+#[test]
+fn smart_album_editor_marks_bad_rules_and_blocks_ok() {
+    let mut h = detail("panel.edit");
+    exec(&mut h, "dialog.smartAlbum", json!({"name": "Checked"}));
+    let set = |h: &mut Headless, rules: serde_json::Value| {
+        let Some(crate::state::Dialog::SmartRules { rules: r, .. }) = &mut h.app.ui.dialog else { panic!("no rule editor") };
+        *r = serde_json::from_value(json!({"rules": rules})).unwrap();
+        h.settle(SETTLE);
+    };
+    let has = |h: &Headless, id: &str| h.app.widgets.iter().any(|(w, _)| w == id);
+    set(
+        &mut h,
+        json!([
+            {"field": "rating", "op": "gte", "value": 3},
+            {"field": "captureDate", "op": "is", "value": "banana"},
+            {"group": {"match": "any", "rules": [{"field": "iso", "op": "is", "value": 100}, {"field": "rating", "op": "is", "value": 9}]}}
+        ]),
+    );
+    assert!(!has(&h, "ruleProblem:rules-0"), "a good rule isn't marked");
+    assert!(has(&h, "ruleProblem:rules-1"), "the bad date is marked");
+    assert!(has(&h, "ruleProblem:rules-2-1") && !has(&h, "ruleProblem:rules-2-0"), "inside a group, the bad rule itself");
+    let Some(crate::state::Dialog::SmartRules { rules, .. }) = &h.app.ui.dialog else { panic!("no rule editor") };
+    assert!(serde_json::to_string(rules).unwrap().contains(r#""value":9"#), "drawing doesn't clamp the rating to 5");
+    let r = h.request("ui.clickWidget", json!({"id": "button:dialogOk"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(h.app.session.catalog.albums().all(|a| a.name != "Checked"), "OK is disabled");
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert!(h.app.session.catalog.albums().all(|a| a.name != "Checked"), "confirm refuses too: {r}");
+    assert!(h.app.ui.dialog.is_some(), "and the dialog stays open with the rules");
+    // fixed, the marks go and OK saves
+    set(&mut h, json!([{"field": "rating", "op": "gte", "value": 3}, {"field": "captureDate", "op": "is", "value": "2026"}]));
+    assert!(!h.app.widgets.iter().any(|(w, _)| w.starts_with("ruleProblem:")));
+    let r = h.request("ui.clickWidget", json!({"id": "button:dialogOk"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(h.app.session.catalog.albums().any(|a| a.name == "Checked"));
+}
+
+/// An Album rule picks its album from a list of the plain albums, not by typing an id.
+#[test]
+fn smart_album_editor_picks_an_album_from_a_list() {
+    let mut h = detail("panel.edit");
+    let trip = exec(&mut h, "album.create", json!({"name": "Trip", "addSelected": false}))["id"].as_u64().unwrap();
+    let smart = exec(&mut h, "album.createSmart", json!({"name": "Fives", "rules": {"rating": 5}}))["id"].as_u64().unwrap();
+    exec(&mut h, "dialog.smartAlbum", json!({"name": "In Trip"}));
+    let Some(crate::state::Dialog::SmartRules { rules, .. }) = &mut h.app.ui.dialog else { panic!("no rule editor") };
+    rules.rules[0] = serde_json::from_value(json!({"field": "album", "op": "is", "value": 0})).unwrap();
+    h.settle(SETTLE);
+    assert!(h.app.widgets.iter().any(|(w, _)| w == "ruleProblem:rules-0"), "no album chosen yet");
+    let r = h.request("ui.clickWidget", json!({"id": "ruleAlbum:rules-0"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let has = |h: &Headless, id: String| h.app.widgets.iter().any(|(w, _)| *w == id);
+    assert!(has(&h, format!("ruleAlbumItem:{trip}:rules-0")), "plain albums are offered");
+    assert!(!has(&h, format!("ruleAlbumItem:{smart}:rules-0")), "smart albums can't be tested");
+    let r = h.request("ui.clickWidget", json!({"id": format!("ruleAlbumItem:{trip}:rules-0")}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let Some(crate::state::Dialog::SmartRules { rules, .. }) = &h.app.ui.dialog else { panic!("no rule editor") };
+    let Rule::Field { value, .. } = &rules.rules[0] else { panic!("not a field rule") };
+    assert_eq!(value, &json!(trip));
+    assert!(!h.app.widgets.iter().any(|(w, _)| w == "ruleProblem:rules-0"));
+}
+
 #[test]
 fn g_toggles_grids_and_shift_g_starts_guided_upright() {
     let mut h = detail("panel.edit");

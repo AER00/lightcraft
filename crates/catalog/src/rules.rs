@@ -48,6 +48,8 @@ pub enum Kind {
     Keywords,
     Number,
     Date,
+    /// A plain album, by id: in it or not.
+    Album,
     /// One of a fixed set: (id, label). Rules store the id; people see the label.
     Choice(&'static [(&'static str, &'static str)]),
     Bool,
@@ -65,7 +67,7 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     ),
     ("text", "Any Searchable Text", Kind::Text),
     // Source
-    ("album", "Album", Kind::Number),
+    ("album", "Album", Kind::Album),
     ("virtualCopy", "Virtual Copy", Kind::Bool),
     ("copyName", "Copy Name", Kind::Text),
     ("stacked", "In a Stack", Kind::Bool),
@@ -173,11 +175,12 @@ fn field_problem(field: &str, op: &str, value: &Value, cat: &Catalog) -> Option<
     }
     match kind {
         Kind::Bool => bool_value(value).is_none().then(|| format!("`{field}` is yes or no, not {value}")),
+        Kind::Album => album_problem(value, cat),
         Kind::Number => {
             let each = match value {
-                Value::Array(a) if op == "between" && a.len() == 2 => a.iter().find_map(|v| number_problem(field, v, cat)),
+                Value::Array(a) if op == "between" && a.len() == 2 => a.iter().find_map(|v| number_problem(field, v)),
                 _ if op == "between" => Some(format!("`{field}` between needs two values, not {value}")),
-                v => number_problem(field, v, cat),
+                v => number_problem(field, v),
             };
             // a rating rule no rating could meet ("is 9", "≥ 7"); "< 6" is fine, if broad
             each.or_else(|| {
@@ -199,21 +202,23 @@ fn field_problem(field: &str, op: &str, value: &Value, cat: &Catalog) -> Option<
     }
 }
 
-fn number_problem(field: &str, v: &Value, cat: &Catalog) -> Option<String> {
+fn number_problem(field: &str, v: &Value) -> Option<String> {
     if field == "shutterSpeed" {
         return shutter_value(v).is_null().then(|| format!("`shutterSpeed` needs a time like 1/250 or 2, not {v}"));
     }
-    let Some(n) = number(v).filter(|n| n.is_finite()) else { return Some(format!("`{field}` needs a number, not {v}")) };
-    match field {
-        "album" => {
-            let album = (n >= 0.0 && n.fract() == 0.0).then(|| cat.album(crate::AlbumId(n as u64))).flatten();
-            match album {
-                None => Some(format!("no album {v}")),
-                Some(a) if a.is_smart() => Some(format!("album {v} is a smart album; only plain albums can be tested")),
-                Some(_) => None,
-            }
-        }
-        _ => None,
+    number(v).filter(|n| n.is_finite()).is_none().then(|| format!("`{field}` needs a number, not {v}"))
+}
+
+/// An Album rule's value: an album that exists and holds photos itself (not a smart album).
+fn album_problem(v: &Value, cat: &Catalog) -> Option<String> {
+    if v.is_null() {
+        return Some("choose an album".into());
+    }
+    let id = number(v).filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0);
+    match id.and_then(|n| cat.album(crate::AlbumId(n as u64))) {
+        None => Some(format!("no album {v}")),
+        Some(a) if a.is_smart() => Some(format!("album {v} is a smart album; only plain albums can be tested")),
+        Some(_) => None,
     }
 }
 
@@ -342,7 +347,7 @@ pub fn ops_for(kind: Kind) -> &'static [(&'static str, &'static str)] {
             ("notInLast", "isn't in the last"),
             ("isEmpty", "is unknown"),
         ],
-        Kind::Choice(_) => &[("is", "is"), ("isNot", "isn't")],
+        Kind::Choice(_) | Kind::Album => &[("is", "is"), ("isNot", "isn't")],
         Kind::Bool => &[("is", "is")],
     }
 }
@@ -1233,6 +1238,16 @@ mod tests {
         assert!(hint("isNot").contains("isn't empty"), "{}", hint("isNot"));
         assert!(hint("contains").contains("“is empty”"), "{}", hint("contains"));
         set_now(None);
+    }
+
+    /// An album is in it or not: Album offers "is" and "isn't", never "≥" or "between".
+    #[test]
+    fn album_rules_are_is_or_isnt() {
+        assert_eq!(field_kind("album"), Some(Kind::Album));
+        let ops: Vec<&str> = ops_for(Kind::Album).iter().map(|o| o.0).collect();
+        assert_eq!(ops, ["is", "isNot"]);
+        let r = rs(json!({"rules": [{"field": "album", "op": "gte", "value": 1}]}));
+        assert_eq!(r.check(&Catalog::new()).first().map(|p| p.message.as_str()), Some("`album` has no operator `gte`"));
     }
 
     /// The field menu shows every rule field once: at the top level or in exactly one group,

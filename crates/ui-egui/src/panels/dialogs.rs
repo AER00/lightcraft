@@ -242,22 +242,28 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
                     crate::widgets::register(ui.ctx(), "field:smartName", r.rect);
                     ui.add_space(6.0);
+                    // checked before drawing, so each row marks its own problem
+                    let env = crate::panels::rules_editor::Env {
+                        problems: rules.check(&app.session.catalog),
+                        albums: app.session.catalog.albums().filter(|a| !a.is_smart() && !a.folder).map(|a| (a.id.0, a.name.clone())).collect(),
+                    };
                     egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
-                        crate::panels::rules_editor::edit(ui, rules, "rules", 0);
+                        crate::panels::rules_editor::edit(ui, rules, "rules", 0, &[], &env);
                     });
-                    let problems: Vec<String> = rules.check(&app.session.catalog).iter().map(ToString::to_string).collect();
+                    let problems = rules.check(&app.session.catalog);
                     // the folder an album made from a folder view carries is not in the editor, but it counts
                     let folder = id.and_then(|id| app.session.catalog.album(lightcraft_catalog::AlbumId(id))).and_then(|a| a.smart.as_deref().and_then(|f| f.library_folder.clone()));
                     let f = lightcraft_catalog::Filter { rule_set: Some(rules.clone()), library_folder: folder, ..Default::default() };
                     let n = if problems.is_empty() { app.session.catalog.query(&f, &Default::default()).len() } else { 0 };
                     ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new(match problems.first() {
-                            Some(p) => p.clone(),
-                            None => crate::i18n::tr_format!("{n} photo{} match · updates automatically as photos change", if n == 1 { "" } else { "s" }, n = n),
-                        })
-                        .color(t.text_dim),
-                    );
+                    if problems.is_empty() {
+                        ui.label(
+                            egui::RichText::new(crate::i18n::tr_format!("{n} photo{} match · updates automatically as photos change", if n == 1 { "" } else { "s" }, n = n))
+                                .color(t.text_dim),
+                        );
+                    } else {
+                        ui.label(egui::RichText::new(crate::i18n::tr("Fix the marked rules to save this album.")).color(t.caution));
+                    }
                 }
                 Dialog::NewSmartAlbum { name, .. } => {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
@@ -833,7 +839,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     _ => "OK",
                 };
                 // installing waits for the licence to be accepted
-                let can_confirm = informational || !matches!(&dlg, Dialog::DenoiseModel { accepted: false, .. } | Dialog::FaceModel { accepted: false, .. });
+                let can_confirm = informational
+                    || !matches!(&dlg, Dialog::DenoiseModel { accepted: false, .. } | Dialog::FaceModel { accepted: false, .. })
+                        // smart-album rules that can't mean anything wait to be fixed
+                        && !matches!(&dlg, Dialog::SmartRules { rules, .. } if !rules.check(&app.session.catalog).is_empty());
                 let r = (!ok.is_empty()).then(|| ui.add_enabled(can_confirm, egui::Button::new(crate::i18n::tr(ok))));
                 if let Some(r) = &r {
                     crate::widgets::register(ui.ctx(), "button:dialogOk", r.rect);
@@ -1075,6 +1084,10 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             app.run("photo.analyze", p)
         }
         Dialog::SmartRules { id, name, rules, parent } => {
+            // refused before anything changes (not even the name)
+            if let Some(problem) = rules.check(&app.session.catalog).first() {
+                return Err(problem.to_string());
+            }
             let name = if name.trim().is_empty() { "Smart Album".to_string() } else { name.trim().to_string() };
             match id {
                 Some(id) => {

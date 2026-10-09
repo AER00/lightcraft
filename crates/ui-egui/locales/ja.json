@@ -1745,5 +1745,8 @@
   "smart album value|Yes": "あり",
   "smart album value|No": "なし",
   "In a Stack": "スタック",
-  "Cropped": "切り抜き"
+  "Cropped": "切り抜き",
+  "Choose an album…": "アルバムを選択…",
+  "No albums yet": "アルバムはまだありません",
+  "Fix the marked rules to save this album.": "このアルバムを保存するには、印の付いた条件を修正してください。"
 }

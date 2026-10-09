@@ -260,6 +260,8 @@ fn smart_album_rule_sets() {
     let flag = fields.as_array().unwrap().iter().find(|f| f["field"] == "copyrightStatus").unwrap();
     assert_eq!(flag["choices"], serde_json::json!(["copyrighted", "publicDomain", "unknown"]));
     assert_eq!(flag["choiceLabels"]["publicDomain"], "Public Domain");
+    let album = fields.as_array().unwrap().iter().find(|f| f["field"] == "album").unwrap();
+    assert_eq!((album["kind"].as_str(), album["ops"].as_array().map(Vec::len)), (Some("album"), Some(2)), "an album id, is / isn't");
     let bad = s.execute(
         "album.createSmart",
         &serde_json::json!({"name": "Bad", "rules": {"ruleSet": {"rules": [{"field": "rating", "op": "contains", "value": 1}]}}}),

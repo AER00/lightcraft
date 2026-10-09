@@ -1413,5 +1413,8 @@
   "Portrait (tall)": "Книжная",
   "Square": "Квадратная",
   "In Color": "Цветное",
-  "No Label": "Без метки"
+  "No Label": "Без метки",
+  "Choose an album…": "Выберите альбом…",
+  "No albums yet": "Альбомов пока нет",
+  "Fix the marked rules to save this album.": "Исправьте отмеченные условия, чтобы сохранить альбом."
 }

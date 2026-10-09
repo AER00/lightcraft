@@ -1741,5 +1741,8 @@
   "Portrait (tall)": "Vertical (retrato)",
   "Square": "Cuadrada",
   "In Color": "En color",
-  "No Label": "Sin etiqueta"
+  "No Label": "Sin etiqueta",
+  "Choose an album…": "Elige un álbum…",
+  "No albums yet": "Aún no hay álbumes",
+  "Fix the marked rules to save this album.": "Corrige las reglas marcadas para guardar este álbum."
 }

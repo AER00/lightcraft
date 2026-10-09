@@ -1741,5 +1741,8 @@
   "Portrait (tall)": "纵向",
   "Square": "正方形",
   "In Color": "彩色",
-  "No Label": "无标签"
+  "No Label": "无标签",
+  "Choose an album…": "选择相册…",
+  "No albums yet": "还没有相册",
+  "Fix the marked rules to save this album.": "请修正标记的规则以保存此相册。"
 }

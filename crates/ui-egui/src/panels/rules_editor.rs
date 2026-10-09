@@ -2,7 +2,7 @@
 //! value), with nested groups. Field and operator lists come from `lightcraft_catalog::rules`.
 
 use egui::RichText;
-use lightcraft_catalog::rules::{FIELD_GROUPS, Kind, TOP_LEVEL_FIELDS, bool_value, field_kind, field_label, ops_for};
+use lightcraft_catalog::rules::{FIELD_GROUPS, Kind, Problem, TOP_LEVEL_FIELDS, bool_value, field_kind, field_label, ops_for};
 use lightcraft_catalog::{Match, Rule, RuleSet};
 use serde_json::{Value, json};
 
@@ -27,6 +27,8 @@ pub fn default_value(field: &str, op: &str) -> Value {
         (Some(Kind::Number), _) => json!(if field == "rating" { 3 } else { 0 }),
         (Some(Kind::Choice(c)), _) => json!(c.first().map_or("", |c| c.0)),
         (Some(Kind::Bool), _) => json!(true),
+        // picked from the list
+        (Some(Kind::Album), _) => Value::Null,
         _ => json!(""),
     }
 }
@@ -77,18 +79,49 @@ fn number_value(ui: &mut egui::Ui, v: &mut Value, field: &str) {
         "longEdge" | "shortEdge" => (0.0, 100_000.0, 10.0),
         _ => (0.0, 100_000.0, 0.5),
     };
-    let whole = matches!(field, "rating" | "iso" | "album" | "keywordCount" | "personCount" | "longEdge" | "shortEdge");
-    let dv = egui::DragValue::new(&mut n).range(lo..=hi).speed(speed);
+    let whole = matches!(field, "rating" | "iso" | "keywordCount" | "personCount" | "longEdge" | "shortEdge");
+    // the range limits dragging; a stored value outside it (a rating of 9 from an agent) is shown
+    // as it is, marked by the check, not quietly clamped to something that matches
+    let dv = egui::DragValue::new(&mut n).range(lo..=hi).clamp_existing_to_range(false).speed(speed);
     let dv = if whole { dv.fixed_decimals(0) } else { dv.max_decimals(2) };
     if ui.add(dv).changed() {
         *v = if whole { json!(n.round() as i64) } else { json!(n) };
     }
 }
 
+/// What the editor shows besides the rules: the problems `RuleSet::check` found in them (each
+/// row marks its own) and the albums an Album rule can test.
+#[derive(Default)]
+pub struct Env {
+    pub problems: Vec<Problem>,
+    /// The plain albums: (id, name), in the sidebar's order.
+    pub albums: Vec<(u64, String)>,
+}
+
+/// An Album rule's value: one of the plain albums, picked by name.
+fn album_value(ui: &mut egui::Ui, v: &mut Value, salt: &str, env: &Env) {
+    let cur = v.as_u64();
+    let text = env.albums.iter().find(|a| Some(a.0) == cur).map_or_else(|| crate::i18n::tr("Choose an album…").to_string(), |a| a.1.clone());
+    let r = egui::ComboBox::from_id_salt(format!("{salt}-album")).width(160.0).selected_text(text).show_ui(ui, |ui| {
+        for (id, name) in &env.albums {
+            let r = ui.selectable_label(cur == Some(*id), name);
+            register(ui.ctx(), format!("ruleAlbumItem:{id}:{salt}"), r.rect);
+            if r.clicked() {
+                *v = json!(id);
+            }
+        }
+        if env.albums.is_empty() {
+            ui.label(crate::i18n::tr("No albums yet"));
+        }
+    });
+    register(ui.ctx(), format!("ruleAlbum:{salt}"), r.response.rect);
+}
+
 /// The value editor for one rule.
-fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &str) {
+fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &str, env: &Env) {
     match (field_kind(field), op) {
         (_, "isEmpty" | "isNotEmpty") => {}
+        (Some(Kind::Album), _) => album_value(ui, v, salt, env),
         (Some(Kind::Date), "inLast" | "notInLast") => {
             if !v.is_object() {
                 *v = default_value(field, op);
@@ -209,8 +242,18 @@ fn field_menu(ui: &mut egui::Ui, salt: &str, field: &mut String, op: &mut String
     *value = default_value(field, op);
 }
 
-/// Edit `rs` in place; `salt` keeps widget ids apart between groups.
-pub fn edit(ui: &mut egui::Ui, rs: &mut RuleSet, salt: &str, depth: usize) {
+/// A rule's problem, shown under it in the caution colour (`ruleProblem:<salt>` for tests and
+/// agents).
+fn problem_note(ui: &mut egui::Ui, problem: Option<&Problem>, salt: &str) {
+    let Some(p) = problem else { return };
+    let t = Tokens::get(ui.ctx());
+    let r = ui.label(RichText::new(format!("⚠ {}", p.message)).color(t.caution).small());
+    register(ui.ctx(), format!("ruleProblem:{salt}"), r.rect);
+}
+
+/// Edit `rs` in place; `salt` keeps widget ids apart between groups, `path` is where `rs` sits
+/// (empty at the top) so each row finds its own problem in `env`.
+pub fn edit(ui: &mut egui::Ui, rs: &mut RuleSet, salt: &str, depth: usize, path: &[usize], env: &Env) {
     let t = Tokens::get(ui.ctx());
     ui.horizontal(|ui| {
         ui.label(RichText::new(crate::i18n::tr("Match")).color(t.text_label));
@@ -221,6 +264,8 @@ pub fn edit(ui: &mut egui::Ui, rs: &mut RuleSet, salt: &str, depth: usize) {
     let mut insert: Option<(usize, Rule)> = None;
     for (i, rule) in rs.rules.iter_mut().enumerate() {
         let rsalt = format!("{salt}-{i}");
+        let here: Vec<usize> = path.iter().copied().chain([i]).collect();
+        let problem = env.problems.iter().find(|p| p.path == here);
         match rule {
             Rule::Group { group } => {
                 egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -228,8 +273,9 @@ pub fn edit(ui: &mut egui::Ui, rs: &mut RuleSet, salt: &str, depth: usize) {
                         if ui.small_button("−").on_hover_text(crate::i18n::tr("Remove this group")).clicked() {
                             remove = Some(i);
                         }
-                        ui.vertical(|ui| edit(ui, group, &rsalt, depth + 1));
+                        ui.vertical(|ui| edit(ui, group, &rsalt, depth + 1, &here, env));
                     });
+                    problem_note(ui, problem, &rsalt);
                 });
             }
             Rule::Field { field, op, value } => {
@@ -248,7 +294,7 @@ pub fn edit(ui: &mut egui::Ui, rs: &mut RuleSet, salt: &str, depth: usize) {
                             }
                         }
                     });
-                    value_editor(ui, field, op, value, &rsalt);
+                    value_editor(ui, field, op, value, &rsalt, env);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let add = ui.small_button("+").on_hover_text(crate::i18n::tr("Add a rule (⌥-click: a group)"));
                         register(ui.ctx(), format!("button:ruleAdd-{rsalt}"), add.rect);
@@ -266,6 +312,7 @@ pub fn edit(ui: &mut egui::Ui, rs: &mut RuleSet, salt: &str, depth: usize) {
                         }
                     });
                 });
+                problem_note(ui, problem, &rsalt);
             }
         }
     }
@@ -320,6 +367,7 @@ mod tests {
                     Kind::Number if *field == "shutterSpeed" => v.as_str().and_then(lightcraft_catalog::parse_shutter_seconds).is_some(),
                     Kind::Number => v.is_number(),
                     Kind::Bool => v.is_boolean(),
+                    Kind::Album => v.is_null(),
                     Kind::Text | Kind::Keywords | Kind::Date => v.is_string(),
                 };
                 match *op {
