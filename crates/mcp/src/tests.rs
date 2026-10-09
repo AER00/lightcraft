@@ -139,6 +139,19 @@ fn export_refuses_unknown_params_and_bad_values() {
     assert!(e.contains("did you mean `quality`"), "{e}");
 }
 
+/// Every option the `export` tool advertises reaches `app.export` (they were accepted, then dropped).
+#[test]
+fn export_tool_forwards_its_advertised_options() {
+    let mut b = Headless::demo();
+    let base = std::env::temp_dir().join(format!("lc-mcp-export-fwd-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let r = call_tool(&mut b, "export", &json!({"dir": base.to_string_lossy(), "subfolder": "sub", "longEdge": 64, "format": "png"}));
+    assert!(!r.is_error, "{r:?}");
+    let files: Vec<_> = std::fs::read_dir(base.join("sub")).unwrap().collect();
+    assert_eq!(files.len(), 1, "written into the subfolder");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// The `import` helper moves: renamed into the folder template, the source removed.
 #[test]
 fn import_tool_moves_with_a_folder_template() {

@@ -729,6 +729,13 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
                         "watermark",
                         "colorSpace",
                         "bitDepth",
+                        "preset",
+                        "background",
+                        "resize",
+                        "subfolder",
+                        "conflict",
+                        "tiffCompression",
+                        "dngCompression",
                     ],
                 ),
             )
