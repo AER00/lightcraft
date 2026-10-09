@@ -252,8 +252,37 @@ fn album_folders_have_a_disclosure_triangle() {
     assert!(has(&h, &format!("source:album:{best}")));
     toggle(&mut h, europe);
     assert!(!has(&h, &format!("source:album:{best}")) && has(&h, &format!("source:folder:{europe}")));
-    // the triangle is not the row: clicking it does not make the folder the source
-    assert_ne!(h.app.session.source, lightcraft_engine::LibrarySource::Album(lightcraft_catalog::AlbumId(europe)));
+    // an empty folder has nothing to open: no triangle until it holds something
+    let empty = make(&mut h, json!({"name": "Empty", "folder": true}));
+    h.step();
+    h.step();
+    assert!(has(&h, &format!("source:folder:{empty}")) && !has(&h, &format!("albumToggle:{empty}")));
+    make(&mut h, json!({"name": "First", "parent": empty}));
+    h.step();
+    h.step();
+    assert!(has(&h, &format!("albumToggle:{empty}")), "it gets one with its first child");
+}
+
+/// A dialog that cannot do its job (here: the chosen parent is a plain album, as when the folder
+/// was deleted or turned out not to be one) stays open with the error shown, the typed name kept.
+#[test]
+fn creating_in_a_non_folder_keeps_the_dialog_open() {
+    let mut h = demo([1400.0, 900.0], json!({"view": "photoGrid", "leftPanel": true}));
+    let plain = h.app.session.execute("album.create", &json!({"name": "Plain"})).unwrap()["id"].as_u64().unwrap();
+    let before = h.app.session.catalog.albums().count();
+    let r = h.request("engine.execute", json!({"command": "dialog.newAlbum", "params": {"name": "Kept", "parent": plain}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    let r = h.request("ui.clickWidget", json!({"id": "button:dialogOk"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    h.step();
+    assert_eq!(h.app.session.catalog.albums().count(), before, "nothing was made");
+    assert!(
+        matches!(&h.app.ui.dialog, Some(crate::state::Dialog::NewAlbum { name, .. }) if name == "Kept"),
+        "the dialog stays, with its text: {:?}",
+        h.app.ui.dialog
+    );
 }
 
 /// Creating from a folder's menu: every `dialog.new*` command takes the folder to create in, the
@@ -265,6 +294,7 @@ fn albums_are_created_inside_the_chosen_folder() {
     let make = |h: &mut Headless, params: serde_json::Value| h.app.session.execute("album.create", &params).unwrap()["id"].as_u64().unwrap();
     let trips = make(&mut h, json!({"name": "Trips", "folder": true}));
     let europe = make(&mut h, json!({"name": "Europe", "folder": true, "parent": trips}));
+    make(&mut h, json!({"name": "Seed", "parent": europe}));
     h.step();
     h.step();
     let has = |h: &Headless, id: &str| h.app.widgets.iter().any(|(w, _)| w == id);
@@ -317,6 +347,11 @@ fn album_dialogs_without_a_parent_still_deserialize() {
     assert!(matches!(d, Dialog::NewAlbum { parent: None, .. }));
     let d: Dialog = serde_json::from_value(json!({"kind": "newSmartAlbum", "name": "x"})).unwrap();
     assert!(matches!(d, Dialog::NewSmartAlbum { parent: None, .. }));
+    let mut v = serde_json::to_value(Dialog::SmartRules { id: None, name: "x".into(), rules: Default::default(), parent: Some(3) }).unwrap();
+    assert_eq!(v["parent"], 3);
+    v.as_object_mut().unwrap().remove("parent");
+    let d: Dialog = serde_json::from_value(v).unwrap();
+    assert!(matches!(d, Dialog::SmartRules { parent: None, .. }));
 }
 
 /// A headless app over a library of file-backed photos that exist only in the catalog.

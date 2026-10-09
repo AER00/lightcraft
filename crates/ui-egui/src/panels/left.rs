@@ -218,10 +218,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: true, parent: None });
                 }
             });
+            // the album just made: the folders down to it open, once (also when the section is shut)
+            let reveal = app.ui.reveal_album.take();
             if albums_open {
                 let albums: Vec<Album> = app.session.catalog.albums().cloned().collect();
-                // the album just made: the folders down to it open, once
-                let reveal = app.ui.reveal_album.take();
                 let mut open_to = Vec::new();
                 let mut cur = reveal.map(AlbumId).and_then(|id| albums.iter().find(|a| a.id == id)).and_then(|a| a.parent);
                 while let Some(p) = cur.filter(|p| !open_to.contains(p) && open_to.len() < 64) {
@@ -666,8 +666,15 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
             }
             let resp = row(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, false, indent);
             // a folder is no source, so its row folds it too; the triangle is the same click, aimed
-            let tri = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("album-tri", a.id.0)), format!("albumToggle:{}", a.id.0));
-            if resp.clicked() || tri.clicked() {
+            let has_children = all.iter().any(|c| c.parent == Some(a.id));
+            let mut toggled = resp.clicked();
+            if has_children {
+                let tri = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("album-tri", a.id.0)), format!("albumToggle:{}", a.id.0));
+                toggled |= tri.clicked();
+                // the triangle sits on the row and takes its clicks: the menu opens from it too
+                folder_menu(app, &tri, a);
+            }
+            if toggled {
                 ui.data_mut(|d| d.insert_temp(open_id, !open));
             }
             folder_menu(app, &resp, a);
@@ -725,10 +732,10 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
             // the same commands as File ▸ New…, aimed at this folder
             ui.menu_button(crate::i18n::tr("New"), |ui| {
                 for (label, command) in [
-                    ("Album…", "dialog.newAlbum"),
-                    ("Smart Album…", "dialog.smartAlbum"),
-                    ("Smart Album from Filter…", "dialog.newSmartAlbum"),
-                    ("Folder…", "dialog.newFolder"),
+                    ("Create Album…", "dialog.newAlbum"),
+                    ("Create Smart Album…", "dialog.smartAlbum"),
+                    ("Create Smart Album from Filter…", "dialog.newSmartAlbum"),
+                    ("Create Folder…", "dialog.newFolder"),
                 ] {
                     if ui.button(crate::i18n::tr(label)).clicked() {
                         let _ = app.run(command, json!({"parent": a.id.0}));

@@ -229,12 +229,12 @@ fn adjust_brush(app: &mut LightcraftApp, k: f32, df: f32) -> Value {
     }
 }
 
-/// An sRGB colour from `"#rrggbb"` or `[r, g, b]` (0..255).
 /// The `parent` folder id of a `dialog.new*` command (none: the top level).
 fn parent_param(p: &Value) -> Option<u64> {
     p.get("parent").and_then(Value::as_u64)
 }
 
+/// An sRGB colour from `"#rrggbb"` or `[r, g, b]` (0..255).
 pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
     if let Some(s) = v.as_str() {
         let h = s.strip_prefix('#').unwrap_or(s);

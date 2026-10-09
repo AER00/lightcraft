@@ -847,7 +847,18 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         match confirm_dialog(app, &dlg) {
             // the import review stays open on an error (e.g. an unusable folder template), and so
             // does Export (e.g. no folder chosen) so the choices aren't lost
-            Err(e) if matches!(dlg, Dialog::Import { .. } | Dialog::Export { .. }) => app.toast(ctx, e),
+            Err(e)
+                if matches!(
+                    dlg,
+                    Dialog::Import { .. }
+                        | Dialog::Export { .. }
+                        | Dialog::NewAlbum { .. }
+                        | Dialog::NewSmartAlbum { .. }
+                        | Dialog::SmartRules { .. }
+                ) =>
+            {
+                app.toast(ctx, e)
+            }
             // the SAM 3 dialog stays open to show the download (or why it can't start)
             Err(e) if matches!(dlg, Dialog::SamModel { .. }) => {
                 if let Dialog::SamModel { error, .. } = &mut dlg {
