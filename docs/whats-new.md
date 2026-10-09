@@ -3,8 +3,9 @@
 ## October 2026
 
 ### Text fields
-- Right-click Search Photos, a slider's typed value or the name field under unnamed faces for Cut, Copy, Paste and
-  Select All. Esc in them gives back the text from before you started typing. More fields will follow.
+- Right-click Search Photos, a slider's typed value, the Info panel's fields, Rename Keyword or the name field under
+  unnamed faces for Cut, Copy, Paste and Select All. Esc in them gives back the text from before you started typing (in
+  the Info panel it no longer saves it). Return renames a keyword. More fields will follow.
 - On Windows and Linux, Ctrl+C outside a text field copies edit settings and Ctrl+V pastes them (⇧Ctrl+V: Paste
   Selected Settings). Ctrl+V only reaches LightCraft while the system clipboard holds text; otherwise use Edit ▸ Paste Edit
   Settings.
