@@ -1242,7 +1242,8 @@ fn parse_shutter(s: &str) -> Option<f64> {
 }
 
 /// The metadata to embed for `photo` under `o.metadata` / `o.remove_location`. `None` = embed nothing.
-pub fn export_metadata(photo: &lightcraft_catalog::Photo, o: &ExportOptions) -> Option<Metadata> {
+/// Keywords follow the catalog's keyword list (`Catalog::export_keywords`).
+pub fn export_metadata(photo: &lightcraft_catalog::Photo, catalog: &lightcraft_catalog::Catalog, o: &ExportOptions) -> Option<Metadata> {
     let m = &photo.meta;
     let text = |s: &str| (!s.trim().is_empty()).then(|| s.to_string());
     // copyright info (also under "copyright only"): notice, creator, status, usage terms, info URL
@@ -1270,7 +1271,9 @@ pub fn export_metadata(photo: &lightcraft_catalog::Photo, o: &ExportOptions) -> 
         out.state = text(&m.state);
         out.country = text(&m.country);
     }
-    out.keywords = m.keywords.clone();
+    let keywords = catalog.export_keywords(&m.keywords);
+    out.keywords = keywords.flat;
+    out.hierarchical_keywords = keywords.hierarchical;
     out.capture_time = photo.captured.as_deref().and_then(DateTime::parse_iso);
     out.rating = (photo.rating > 0).then_some(photo.rating as i8);
     // Pixels are exported upright: orientation is baked in.
@@ -1375,7 +1378,7 @@ fn prepare_guarded(
     let file_name = o.file_name_for(p, seq);
     let work = if o.format.is_rendered() {
         let (w, h) = output_size(p, o);
-        let meta = export_metadata(p, o);
+        let meta = export_metadata(p, &session.catalog, o);
         let job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
         Work::Render(Box::new(RenderWork { job, meta, opts: o.clone() }))
     } else {
@@ -1626,9 +1629,28 @@ mod tests {
         assert!(img.data[3][0] < 80 && img.data[4][0] > 170);
     }
 
+    /// Exported files carry keywords as Lightroom Classic writes them: names flat in `dc:subject`
+    /// (with the keywords containing them), full paths in `lr:hierarchicalSubject`, and nothing of
+    /// a keyword left out of export. They used to carry the `a|b` paths in `dc:subject`.
+    #[test]
+    fn exported_keywords_follow_their_options() {
+        use lightcraft_catalog::{Catalog, Op, Photo, PhotoId, Source, keywords::KeywordInfo};
+        let mut c = Catalog::new();
+        c.apply(Op::SetKeyword { path: "Places".into(), info: Some(KeywordInfo { include_on_export: false, ..KeywordInfo::default() }) }).unwrap();
+        c.apply(Op::SetKeyword { path: "draft".into(), info: Some(KeywordInfo { include_on_export: false, ..KeywordInfo::default() }) }).unwrap();
+        let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.jpg", "jpeg", 10, 10, "2026-09-30T00:00:00");
+        p.meta.keywords = vec!["Places|Lisbon".into(), "travel|Italy".into(), "draft".into()];
+        let m = export_metadata(&p, &c, &ExportOptions::default()).unwrap();
+        assert_eq!(m.keywords, ["Lisbon", "Italy", "travel"]);
+        assert_eq!(m.hierarchical_keywords, ["Places|Lisbon", "travel|Italy"]);
+        let jpg = encode_with_metadata(&test_image(), &ExportOptions::default(), Some(&m)).unwrap();
+        let back = lightcraft_meta::extract(&jpg);
+        assert_eq!((back.keywords, back.hierarchical_keywords), (m.keywords.clone(), m.hierarchical_keywords.clone()));
+    }
+
     #[test]
     fn metadata_policies() {
-        use lightcraft_catalog::{Photo, PhotoId, Source};
+        use lightcraft_catalog::{Catalog, Photo, PhotoId, Source};
         let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.jpg", "jpeg", 10, 10, "2026-09-30T00:00:00");
         p.meta.camera = "Synthetic X2".into();
         p.meta.copyright = "(c) Me".into();
@@ -1637,21 +1659,21 @@ mod tests {
         p.meta.copyright_url = "https://example.com/rights".into();
         p.meta.shutter = "1/250".into();
         p.meta.gps = Some((43.0, -110.0));
-        let all = export_metadata(&p, &ExportOptions::default()).unwrap();
+        let all = export_metadata(&p, &Catalog::new(), &ExportOptions::default()).unwrap();
         assert_eq!(all.model.as_deref(), Some("Synthetic X2"));
         assert!((all.exposure_time.unwrap() - 0.004).abs() < 1e-9);
         assert!(all.gps.is_some());
         let o = ExportOptions { metadata: MetadataPolicy::AllExceptCamera, remove_location: true, ..Default::default() };
-        let m = export_metadata(&p, &o).unwrap();
+        let m = export_metadata(&p, &Catalog::new(), &o).unwrap();
         assert!(m.model.is_none() && m.gps.is_none() && m.copyright.is_some());
-        let c = export_metadata(&p, &ExportOptions { metadata: MetadataPolicy::Copyright, ..Default::default() }).unwrap();
+        let c = export_metadata(&p, &Catalog::new(), &ExportOptions { metadata: MetadataPolicy::Copyright, ..Default::default() }).unwrap();
         assert!(c.model.is_none() && c.gps.is_none() && c.copyright.as_deref() == Some("(c) Me"));
         // "copyright only" keeps all the copyright info: status, usage terms, info URL
         assert_eq!(
             (c.copyright_marked, c.usage_terms.as_deref(), c.copyright_url.as_deref()),
             (Some(true), Some("Editorial use only"), Some("https://example.com/rights"))
         );
-        assert!(export_metadata(&p, &ExportOptions { metadata: MetadataPolicy::None, ..Default::default() }).is_none());
+        assert!(export_metadata(&p, &Catalog::new(), &ExportOptions { metadata: MetadataPolicy::None, ..Default::default() }).is_none());
         // embedded and readable back from the JPEG
         let jpg = encode_with_metadata(&test_image(), &ExportOptions::default(), Some(&all)).unwrap();
         let back = lightcraft_meta::extract(&jpg);
