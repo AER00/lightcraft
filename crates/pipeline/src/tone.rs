@@ -65,7 +65,11 @@ const NO_CHROMA: [f32; CHROMA_N] = [1.0; CHROMA_N];
 /// against the colourfulness the luminance curve gives, averaged into these eight bins (the five
 /// images agree to within a few percent of each other, so this is a property of the curve, not of a
 /// photo). They are why [`ToneMap::new`] is punchy in the shadows and clean in the highlights.
-const DEFAULT_CHROMA: [f32; CHROMA_N] = [1.431, 1.308, 1.164, 1.040, 0.955, 0.778, 0.593, 0.400];
+///
+/// A camera's own [`CameraTone`] curve carries its own chroma curve, fitted alongside it. A DNG
+/// `ProfileToneCurve` has no such fit — it *is* the reference's curve — so it takes these factors
+/// too, for the same reason: on its own the luminance curve renders the file flat.
+pub const DEFAULT_CHROMA: [f32; CHROMA_N] = [1.431, 1.308, 1.164, 1.040, 0.955, 0.778, 0.593, 0.400];
 
 /// A file-local camera look, fitted independently of the scene-linear colour transform.
 /// Knots are scene/display-linear luminance pairs. Keeping this in the finish stage preserves
