@@ -133,7 +133,8 @@ pub fn parse_sidecar(xmp: &str, raw: bool) -> std::result::Result<SidecarData, S
         country: m.country.clone(),
         alt_text: m.alt_text.clone(),
         extended_description: m.extended_description.clone(),
-        keywords: (!m.keywords.is_empty()).then(|| m.keywords.clone()),
+        keywords: (!m.keywords.is_empty() || !m.hierarchical_keywords.is_empty())
+            .then(|| lightcraft_catalog::keywords::from_file(&m.keywords, &m.hierarchical_keywords)),
         // A sidecar that has `mwg-rs:Regions` at all (even an empty list) was written by an app that
         // knows about regions, so it's authoritative: its list, empty or not, replaces the catalog's.
         // One without it (most writers, LightCraft's own included, which keeps another app's
@@ -515,6 +516,19 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    /// A sidecar written by Lightroom Classic (names flat, paths in `lr:hierarchicalSubject`)
+    /// gives the photo its keywords as paths.
+    #[test]
+    fn sidecar_keywords_keep_their_hierarchy() {
+        let m = lightcraft_meta::Metadata {
+            keywords: vec!["Lisbon".into(), "Places".into()],
+            hierarchical_keywords: vec!["Places|Lisbon".into()],
+            ..Default::default()
+        };
+        let sc = super::parse_sidecar(&lightcraft_meta::write_xmp(&m, None), false).unwrap();
+        assert_eq!(sc.keywords, Some(vec!["Places|Lisbon".to_string()]));
+    }
+
     use super::*;
     use lightcraft_catalog::Meta;
 

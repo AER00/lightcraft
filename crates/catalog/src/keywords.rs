@@ -43,6 +43,16 @@ pub fn reparent(k: &str, from: &str, to: &str) -> String {
     std::iter::once(to).filter(|t| !t.is_empty()).chain(rest).collect::<Vec<_>>().join("|")
 }
 
+/// A file's keywords as a photo carries them: the paths of `lr:hierarchicalSubject`, then the
+/// names of `dc:subject` that aren't levels of those paths (Lightroom Classic writes each keyword's
+/// name, its parents' and synonyms flat besides its path). Each once, cleaned.
+pub fn from_file(flat: &[String], hierarchical: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = hierarchical.iter().map(|k| clean(k)).collect();
+    out.extend(flat.iter().map(|k| clean(k)).filter(|k| !hierarchical.iter().any(|h| h.split(SEP).any(|level| same(level.trim(), k)))));
+    dedupe(&mut out);
+    out
+}
+
 /// The keyword of `from` that `k` is under, the closest one when several are (`a|b` before `a`).
 pub fn closest<'a>(k: &str, from: &'a [String]) -> Option<&'a String> {
     from.iter().filter(|f| is_under(k, f)).max_by_key(|f| f.split(SEP).count())
@@ -922,6 +932,18 @@ mod tests {
         assert_eq!(op, Op::Batch { ops: vec![] }, "none to clear");
         c.apply(undo).unwrap();
         assert_eq!(c.default_keyword_parent(), None, "undo of the first: none was");
+    }
+
+    /// A file's keywords as a photo carries them: the paths of `lr:hierarchicalSubject`, and the
+    /// names of `dc:subject` that aren't levels of those paths (an exported `travel|Italy` comes
+    /// back as one keyword, not three). Without paths, the names as they are.
+    #[test]
+    fn a_files_keywords_keep_their_hierarchy() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(from_file(&v(&["Rome", "Italy", "travel", "beach"]), &v(&["travel|Italy|Rome"])), ["travel|Italy|Rome", "beach"]);
+        assert_eq!(from_file(&v(&["ROME"]), &v(&["travel|Rome", " travel | rome "])), ["travel|Rome"], "each once, cleaned");
+        assert_eq!(from_file(&v(&["beach", " sea "]), &[]), ["beach", "sea"]);
+        assert_eq!(from_file(&v(&["a|b"]), &[]), ["a|b"], "LightCraft's own sidecars write paths flat");
     }
 
     #[test]
