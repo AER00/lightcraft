@@ -260,24 +260,31 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
 }
 
 fn matches(i: &egui::InputState, m: Modifiers, k: Key) -> bool {
-    i.events.iter().any(|e| match e {
-        egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } => {
-            // `Ctrl` is the physical Control key (on macOS distinct from Cmd; elsewhere Cmd = Ctrl);
-            // "Delete" (⌫ = Backspace) also matches forward-delete
-            let ctrl_ok = if m.ctrl { modifiers.ctrl } else { !modifiers.ctrl || modifiers.command };
-            let cmd_ok = m.ctrl || modifiers.command == m.command;
-            // winit can report shifted digits as punctuation (Shift+1 = `!`). Recognize the
-            // physical number key for culling, without changing layout-aware letter shortcuts.
-            let shifted_digit = m.shift
-                && *physical_key == Some(k)
-                && matches!(k, Key::Num0 | Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::Num6 | Key::Num7 | Key::Num8 | Key::Num9);
-            (*key == k || shifted_digit || (k == Key::Backspace && *key == Key::Delete))
-                && ctrl_ok
-                && cmd_ok
-                && modifiers.shift == m.shift
-                && modifiers.alt == m.alt
-        }
-        _ => false,
+    // the windowing layer turns ⌘C / ⌘X / ⌘V (with any other modifiers held) and the keyboard's
+    // Copy / Cut / Paste keys into these on Windows and Linux (macOS's menu bar takes them first)
+    let clipboard = Modifiers { command: true, ..i.modifiers };
+    i.events.iter().any(|e| {
+        let (key, physical_key, modifiers) = match e {
+            egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } => (key, physical_key, modifiers),
+            egui::Event::Copy => (&Key::C, &None, &clipboard),
+            egui::Event::Cut => (&Key::X, &None, &clipboard),
+            egui::Event::Paste(_) => (&Key::V, &None, &clipboard),
+            _ => return false,
+        };
+        // `Ctrl` is the physical Control key (on macOS distinct from Cmd; elsewhere Cmd = Ctrl);
+        // "Delete" (⌫ = Backspace) also matches forward-delete
+        let ctrl_ok = if m.ctrl { modifiers.ctrl } else { !modifiers.ctrl || modifiers.command };
+        let cmd_ok = m.ctrl || modifiers.command == m.command;
+        // winit can report shifted digits as punctuation (Shift+1 = `!`). Recognize the
+        // physical number key for culling, without changing layout-aware letter shortcuts.
+        let shifted_digit = m.shift
+            && *physical_key == Some(k)
+            && matches!(k, Key::Num0 | Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::Num6 | Key::Num7 | Key::Num8 | Key::Num9);
+        (*key == k || shifted_digit || (k == Key::Backspace && *key == Key::Delete))
+            && ctrl_ok
+            && cmd_ok
+            && modifiers.shift == m.shift
+            && modifiers.alt == m.alt
     })
 }
 

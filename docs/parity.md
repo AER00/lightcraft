@@ -650,7 +650,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-GRID | Grid — G | P0 | ✅ | `cmd:view.gridToggle`, `cmd:view.photoGrid` | G toggles Photo Grid ↔ Square Grid |
 | KEY-INFO | Info — I | P0 | ✅ | `cmd:panel.info` | |
 | KEY-KEYWORDS | Keywords — K | P0 | ✅ | `cmd:panel.keywords` | |
-| KEY-CLIPBOARD | Copy / paste edit settings — ⌘C / ⌘V | P0 | ✅ | `cmd:develop.copy`, `cmd:develop.paste` | ⌘X has nothing to cut outside text fields |
+| KEY-CLIPBOARD | Copy / paste edit settings — ⌘C / ⌘V | P0 | ✅ | `cmd:develop.copy`, `cmd:develop.paste`, `crates/ui-egui/src/shortcuts.rs` (`matches`) | ⌘X has nothing to cut outside text fields; on Windows and Linux, where the windowing layer sends Ctrl+C / Ctrl+V as clipboard events rather than key presses, those run the shortcuts too |
 | KEY-UNDOREDO | Undo / redo — ⌘Z / ⇧⌘Z | P0 | ✅ | `cmd:edit.undo`, `cmd:edit.redo` | |
 | KEY-MINIMIZE | Minimize — ⌘M | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | native Window ▸ Minimize |
 | KEY-AUTO | Auto — ⇧A | P0 | ✅ | `cmd:develop.auto` | |
