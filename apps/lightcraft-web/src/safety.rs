@@ -14,7 +14,7 @@ use wasm_bindgen_futures::JsFuture;
 use crate::backend::Backend;
 use crate::backup::{
     ACTIVE_LIBRARY, README, ZipWriter, data_offset, find_central, original_entry, parse_central, restore_key, restored_dir_name, tail_len,
-    valid_hash, verify,
+    valid_hash, verify, verify_original,
 };
 use crate::files::{Files, LIBRARY_FILES};
 use crate::store::storage_key;
@@ -224,6 +224,9 @@ pub async fn restore(file: web_sys::File, backend: Backend) -> Result<String, St
         let start = data_offset(e, &local)?;
         let data = read_range(&file, start, start + e.size).await?;
         verify(e, &data)?;
+        if let Some(hash) = key.strip_prefix("originals/") {
+            verify_original(e, hash, &data)?;
+        }
         backend.write(&key, &data).await.map_err(|err| format!("storing {}: {err}", e.name))?;
         written += 1;
     }

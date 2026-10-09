@@ -661,9 +661,19 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         // ---- delete / restore
         cmd!("photo.delete", "Delete Photo", ["Photo"], Some("Delete"), "{ids?} — moves to Recently Deleted", has_selection, |s, p| {
+            let before = s.visible_cloned();
+            let at = before.iter().position(|id| Some(*id) == s.selection.active);
             let v = for_targets(s, p, "Delete", |id| Some(Op::SetDeleted { id, deleted: true }))?;
-            let vis = s.visible_cloned();
-            s.selection = vis.first().map(|f| Selection::single(*f)).unwrap_or_default();
+            let remaining: std::collections::HashSet<_> = s.visible_cloned().into_iter().collect();
+            s.selection.ids.retain(|id| remaining.contains(id));
+            s.selection.active = s.selection.active.filter(|id| remaining.contains(id)).or_else(|| s.selection.ids.first().copied());
+            if s.selection.active.is_none()
+                && let Some(at) = at
+            {
+                // Keep culling near the deleted photo: next visible survivor, or the previous one at the end.
+                let neighbour = before.iter().skip(at.saturating_add(1)).chain(before.iter().take(at).rev()).find(|id| remaining.contains(id));
+                s.selection = neighbour.map(|id| Selection::single(*id)).unwrap_or_default();
+            }
             Ok(v)
         }),
         cmd!("photo.restore", "Restore", ["Photo"], None, "{ids?}", has_selection, |s, p| for_targets(s, p, "Restore", |id| Some(Op::SetDeleted {
