@@ -37,7 +37,6 @@ pub fn entries_from(cat: &lightcraft_catalog::Catalog, blocked: impl Fn(&lightcr
     let kids = cat.album_children_by_parent();
     let mut out = Vec::new();
     // depth-first, guarded against a parent loop in a damaged catalog
-    let mut stack: Vec<(Option<lightcraft_catalog::AlbumId>, usize)> = vec![(None, 0)];
     let mut seen = std::collections::HashSet::new();
     fn walk(
         parent: Option<lightcraft_catalog::AlbumId>,
@@ -68,14 +67,43 @@ pub fn entries_from(cat: &lightcraft_catalog::Catalog, blocked: impl Fn(&lightcr
             }
         }
     }
-    stack.clear();
     walk(None, &kids, &blocked, &mut seen, &mut out, 0);
     out
 }
 
+/// Where each id sits in `entries`, so walking up the folders costs their depth, not a scan.
+fn index(entries: &[AlbumEntry]) -> std::collections::HashMap<u64, usize> {
+    entries.iter().enumerate().map(|(i, e)| (e.id, i)).collect()
+}
+
+/// [`ancestors`] with a prebuilt [`index`].
+fn ancestors_in(entries: &[AlbumEntry], by_id: &std::collections::HashMap<u64, usize>, id: u64) -> Vec<u64> {
+    let mut out = Vec::new();
+    let mut at = by_id.get(&id).and_then(|&i| entries.get(i)).and_then(|e| e.parent);
+    while let Some(p) = at {
+        // a parent loop in a damaged catalog ends the walk
+        if out.contains(&p) || out.len() > 64 {
+            break;
+        }
+        out.push(p);
+        at = by_id.get(&p).and_then(|&i| entries.get(i)).and_then(|e| e.parent);
+    }
+    out
+}
+
+/// [`path_label`] with a prebuilt [`index`].
+fn path_in(entries: &[AlbumEntry], by_id: &std::collections::HashMap<u64, usize>, id: u64) -> String {
+    let Some(entry) = by_id.get(&id).and_then(|&i| entries.get(i)) else { return String::new() };
+    let mut parts: Vec<&str> =
+        ancestors_in(entries, by_id, id).iter().rev().filter_map(|p| by_id.get(p).and_then(|&i| entries.get(i))).map(|e| e.name.as_str()).collect();
+    parts.push(&entry.name);
+    parts.join(" / ")
+}
+
 /// Fill in each entry's depth from its parents (for lists built by hand).
 pub fn set_depths(entries: &mut [AlbumEntry]) {
-    let depths: Vec<usize> = entries.iter().map(|e| ancestors(entries, e.id).len()).collect();
+    let by_id = index(entries);
+    let depths: Vec<usize> = entries.iter().map(|e| ancestors_in(entries, &by_id, e.id).len()).collect();
     for (e, d) in entries.iter_mut().zip(depths) {
         e.depth = d;
     }
@@ -83,30 +111,19 @@ pub fn set_depths(entries: &mut [AlbumEntry]) {
 
 /// The folders holding album `id`, nearest first; empty at the top level or for an unknown id.
 pub fn ancestors(entries: &[AlbumEntry], id: u64) -> Vec<u64> {
-    let mut out = Vec::new();
-    let mut at = entries.iter().find(|e| e.id == id).and_then(|e| e.parent);
-    while let Some(p) = at {
-        if out.contains(&p) || out.len() > 64 {
-            break;
-        }
-        out.push(p);
-        at = entries.iter().find(|e| e.id == p).and_then(|e| e.parent);
-    }
-    out
+    ancestors_in(entries, &index(entries), id)
 }
 
 /// "Folder / Sub / Name" for album `id`; empty for an unknown id.
 pub fn path_label(entries: &[AlbumEntry], id: u64) -> String {
-    let Some(entry) = entries.iter().find(|e| e.id == id) else { return String::new() };
-    let mut parts: Vec<&str> =
-        ancestors(entries, id).iter().rev().filter_map(|p| entries.iter().find(|e| e.id == *p)).map(|e| e.name.as_str()).collect();
-    parts.push(&entry.name);
-    parts.join(" / ")
+    path_in(entries, &index(entries), id)
 }
 
 /// The rows a tree shows with the folders in `open` open: indexes into `entries`.
 pub fn visible_tree(entries: &[AlbumEntry], open: &[u64]) -> Vec<usize> {
-    (0..entries.len()).filter(|&i| ancestors(entries, entries[i].id).iter().all(|a| open.contains(a))).collect()
+    let by_id = index(entries);
+    let open: std::collections::HashSet<u64> = open.iter().copied().collect();
+    (0..entries.len()).filter(|&i| ancestors_in(entries, &by_id, entries[i].id).iter().all(|a| open.contains(a))).collect()
 }
 
 /// The albums (not folders) whose path holds every word of `query`, any case: those whose own
@@ -117,10 +134,11 @@ pub fn search(entries: &[AlbumEntry], query: &str) -> Vec<usize> {
     if words.is_empty() {
         return Vec::new();
     }
+    let by_id = index(entries);
     let hits: Vec<usize> = (0..entries.len())
         .filter(|&i| !entries[i].folder)
         .filter(|&i| {
-            let path = path_label(entries, entries[i].id).to_lowercase();
+            let path = path_in(entries, &by_id, entries[i].id).to_lowercase();
             words.iter().all(|w| path.contains(w))
         })
         .collect();
@@ -201,7 +219,9 @@ impl<'a> AlbumPicker<'a> {
                 state.highlight = 0;
             }
             let t = crate::theme::Tokens::get(ui.ctx());
-            let row = |ui: &mut Ui, e: &AlbumEntry, label: &str, indent: f32, highlighted: bool, picked: &mut Option<u64>| {
+            // `scroll`: bring the row into view (the arrow keys just moved to it); never every frame,
+            // which would fight the mouse wheel
+            let row = |ui: &mut Ui, e: &AlbumEntry, label: &str, indent: f32, highlighted: bool, scroll: bool, picked: &mut Option<u64>| {
                 ui.horizontal(|ui| {
                     ui.add_space(indent);
                     let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::hover());
@@ -216,7 +236,7 @@ impl<'a> AlbumPicker<'a> {
                     if resp.clicked() {
                         *picked = Some(e.id);
                     }
-                    if highlighted {
+                    if scroll {
                         resp.scroll_to_me(None);
                     }
                 });
@@ -246,7 +266,12 @@ impl<'a> AlbumPicker<'a> {
                                 t.text_label,
                             );
                             register(ui.ctx(), format!("albumPickerFolder:{}:{id}", e.id), r.rect);
+                            // what assistive tools announce: the folder, and whether it is open
+                            let name = e.name.clone();
+                            r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, open, &name));
                             if r.clicked() {
+                                // the click took the keyboard from the search box: give it back
+                                state.focus = true;
                                 if open {
                                     state.open.retain(|o| *o != e.id);
                                 } else {
@@ -255,7 +280,7 @@ impl<'a> AlbumPicker<'a> {
                             }
                         } else {
                             // past the triangle column, so names line up with folder names
-                            row(ui, e, &e.name, indent + 14.0, false, &mut picked);
+                            row(ui, e, &e.name, indent + 14.0, false, false, &mut picked);
                         }
                     }
                     if entries.iter().all(|e| e.folder) {
@@ -279,12 +304,25 @@ impl<'a> AlbumPicker<'a> {
                         state.highlight = state.highlight.saturating_sub(1);
                     }
                     let highlighted = pickable.get(state.highlight).copied();
-                    if enter && let Some(i) = highlighted {
-                        picked = Some(entries[i].id);
+                    if enter {
+                        match highlighted {
+                            Some(i) => picked = Some(entries[i].id),
+                            // Enter took the keyboard from the search box and picked nothing: give it back
+                            None => state.focus = true,
+                        }
                     }
+                    let by_id = index(entries);
                     for i in &hits {
                         let e = &entries[*i];
-                        row(ui, e, &path_label(entries, e.id), 0.0, highlighted == Some(*i), &mut picked);
+                        row(
+                            ui,
+                            e,
+                            &path_in(entries, &by_id, e.id),
+                            0.0,
+                            highlighted == Some(*i),
+                            (up || down) && highlighted == Some(*i),
+                            &mut picked,
+                        );
                     }
                     if hits.is_empty() {
                         ui.label(RichText::new(crate::i18n::tr("No albums match")).weak());
@@ -350,6 +388,28 @@ mod tests {
         assert_eq!(ids(&[]), vec![1, 4, 5], "folders closed: only the top level");
         assert_eq!(ids(&[1]), vec![1, 2, 3, 4, 5]);
         assert_eq!(ids(&[1, 5]), vec![1, 2, 3, 4, 5, 6]);
+    }
+
+    /// Big libraries stay quick: 20,000 albums in nested folders are laid out and searched in well
+    /// under a second (folder paths are worked out once, not per row by scanning every album).
+    #[test]
+    fn many_albums_stay_quick() {
+        let mut v = Vec::new();
+        let mut paths = Vec::new();
+        for f in 0..200u64 {
+            v.push(e(f * 101 + 1, &format!("Folder {f}"), None, true, false));
+            for a in 0..100u64 {
+                v.push(e(f * 101 + 2 + a, &format!("Wedding {f}-{a}"), Some(f * 101 + 1), false, a % 2 == 0));
+                paths.push(format!("folder {f} / wedding {f}-{a}"));
+            }
+        }
+        let want = paths.iter().filter(|p| ["folder", "7", "wedding"].iter().all(|w| p.contains(w))).count();
+        let start = std::time::Instant::now();
+        set_depths(&mut v);
+        let open: Vec<u64> = (0..200u64).map(|f| f * 101 + 1).collect();
+        assert_eq!(visible_tree(&v, &open).len(), v.len());
+        assert_eq!(search(&v, "folder 7 wedding").len(), want);
+        assert!(start.elapsed() < std::time::Duration::from_secs(1), "took {:?}", start.elapsed());
     }
 
     /// Every word typed is in the album's path (folders included), in any case; names that start

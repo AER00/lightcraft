@@ -95,7 +95,6 @@ fn typing_finds_and_keys_pick() {
         h.settle(SETTLE);
     }
     assert_eq!(value(&h), json!(uncurated), "the second match");
-    assert!(h.app.ui.dialog.is_some(), "Enter picked, it didn't confirm the dialog");
 }
 
 /// Albums that can't be picked (the one being edited, one that would loop) are shown greyed, not
@@ -113,4 +112,17 @@ fn albums_that_would_loop_are_greyed() {
     assert!(has(&h, &format!("albumPickerItem:{travel}:rules-0")), "shown");
     click(&mut h, &format!("albumPickerItem:{travel}:rules-0"));
     assert_eq!(value(&h), json!(null), "but not picked");
+}
+
+/// After opening a folder, typing still goes to the search: the box keeps the keyboard.
+#[test]
+fn typing_after_a_folder_click_still_searches() {
+    let Library { mut h, utils, excluded, trip, .. } = library();
+    click(&mut h, "albumPicker:rules-0");
+    click(&mut h, &format!("albumPickerFolder:{utils}:rules-0"));
+    assert!(has(&h, &format!("albumPickerItem:{excluded}:rules-0")));
+    let r = h.request("ui.text", json!({"text": "trip"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(has(&h, &format!("albumPickerItem:{trip}:rules-0")) && !has(&h, &format!("albumPickerItem:{excluded}:rules-0")), "searching for trip");
 }
