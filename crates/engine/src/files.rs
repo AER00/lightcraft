@@ -151,8 +151,9 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         });
     }
     let fmt = lightcraft_codecs::sniff(bytes).ok_or("unrecognized file format")?;
-    if !fmt.can_decode() {
-        return Err(format!("{fmt:?} files are not supported yet"));
+    if let Some(why) = fmt.not_decodable() {
+        // e.g. "Heif files can't be opened: HEIC/HEIF support isn't included in this build of LightCraft"
+        return Err(format!("{fmt:?} files can't be opened: {why}"));
     }
     // headers only (issue #367: decoding the pixels was nearly all of an import's CPU time)
     let header = lightcraft_codecs::read_header(bytes).map_err(|e| e.to_string())?;

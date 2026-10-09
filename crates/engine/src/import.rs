@@ -33,7 +33,10 @@ use crate::media::ProbeInfo;
 /// File extensions LightCraft imports (lower case).
 pub const EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "cr3", "nef", "nrw", "arw", "raf", "orf", "rw2", "rwl", "raw", "pef", "srw", "psd",
-    "jxl", "gif", "bmp", "heic", "avif", // containers LightCraft cannot decode but imports as preview only (their embedded JPEG)
+    "jxl", "gif", "bmp",
+    // Decoded when built with the codecs' `heif` feature; otherwise the import reports them as
+    // failed with the reason ("HEIC/HEIF support isn't included in this build").
+    "heic", "heif", "avif", // no AV1 decoder yet: reported as failed, like a HEIC without the feature
     "iiq", "crw", "mrw", "x3f", "kdc", "mos", "erf", "3fr", "fff",
 ];
 

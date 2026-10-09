@@ -3118,6 +3118,7 @@ dependencies = [
  "lightcraft-fetch",
  "lightcraft-geom",
  "lightcraft-gpu",
+ "lightcraft-heif",
  "lightcraft-merge",
  "lightcraft-meta",
  "lightcraft-pipeline",
@@ -3192,6 +3193,7 @@ name = "lightcraft-heif"
 version = "0.4.0"
 dependencies = [
  "heic-rs",
+ "rayon",
 ]
 
 [[package]]
