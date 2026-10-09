@@ -209,16 +209,27 @@ pub fn specs() -> Vec<CommandSpec> {
                 }
                 let mut ops = Vec::new();
                 let mut out = Vec::new();
+                let mut out_of_range = 0usize;
                 for id in &targets {
-                    let new = match &each {
-                        Some(t) => shift_iso(t, delta),
-                        None => shift_iso(&base(s, *id), delta),
+                    let from = match &each {
+                        Some(t) => t.clone(),
+                        None => base(s, *id),
                     };
-                    let Some(new) = new else { continue };
+                    let Some(new) = shift_iso(&from, delta) else {
+                        // a date that reads but would leave years 0000–9999 is refused below; one
+                        // that doesn't read is skipped, as before
+                        if iso_seconds(&from).is_some() {
+                            out_of_range += 1;
+                        }
+                        continue;
+                    };
                     out.push(json!(new));
                     if s.catalog.photo(*id).and_then(|p| p.captured.as_deref()) != Some(new.as_str()) {
                         ops.push(Op::SetCaptured { id: *id, captured: Some(new) });
                     }
+                }
+                if out_of_range > 0 {
+                    return Err(bad(c, format!("the shift would take {out_of_range} photo(s) outside the years 0000–9999; nothing was changed")));
                 }
                 let n = ops.len();
                 if n > 0 {

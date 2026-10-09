@@ -492,6 +492,11 @@ fn capture_time_shift_is_bounded() {
     }
     s.execute("photo.setCaptureTime", &serde_json::json!({"ids": [id.0], "hours": 1})).unwrap();
     assert_ne!(s.catalog.photo(id).unwrap().captured, before);
+    // a shift that would take a photo past year 9999 says so, rather than skipping it quietly
+    s.execute("photo.setCaptureTime", &serde_json::json!({"ids": [id.0], "time": "9999-12-31T12:00:00"})).unwrap();
+    let r = s.execute("photo.setCaptureTime", &serde_json::json!({"ids": [id.0], "hours": 24}));
+    assert!(r.as_ref().is_err_and(|e| e.to_string().contains("9999")), "{r:?}");
+    assert_eq!(s.catalog.photo(id).unwrap().captured.as_deref(), Some("9999-12-31T12:00:00"), "unchanged");
 }
 
 /// Values are checked too: an agent's rule set with a date that isn't one, or a rating of 9, is
