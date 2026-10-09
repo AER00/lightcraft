@@ -1,6 +1,11 @@
 //! JSON-RPC 2.0 framing and the MCP lifecycle / tools / resources methods.
 
 use std::io::{BufRead, Write};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[path = "progress.rs"]
+mod progress;
 
 use serde_json::{Value, json};
 
@@ -40,6 +45,9 @@ pub struct Server {
     backend: Box<dyn Backend>,
     initialized: bool,
     command_tools: bool,
+    wire: Option<progress::Wire>,
+    current: Option<(Value, Option<Value>)>,
+    suppress: Arc<AtomicBool>,
 }
 
 fn response(id: Value, result: Value) -> Value {
@@ -56,7 +64,7 @@ fn resource(uri: &str, name: &str, title: &str, description: &str) -> Value {
 
 impl Server {
     pub fn new(backend: Box<dyn Backend>) -> Self {
-        Self { backend, initialized: false, command_tools: true }
+        Self { backend, initialized: false, command_tools: true, wire: None, current: None, suppress: Arc::new(AtomicBool::new(false)) }
     }
 
     /// Whether `tools/list` includes one `cmd_*` tool per registered command (default true).
@@ -77,16 +85,8 @@ impl Server {
 
     /// Serve newline-delimited JSON-RPC until `input` closes. Logs go to stderr only (stdout is
     /// the protocol stream).
-    pub fn serve(&mut self, input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
-        for line in input.lines() {
-            let line = line?;
-            if let Some(reply) = self.handle_line(&line) {
-                output.write_all(reply.as_bytes())?;
-                output.write_all(b"\n")?;
-                output.flush()?;
-            }
-        }
-        Ok(())
+    pub fn serve(&mut self, input: impl BufRead + Send, output: impl Write + Send) -> std::io::Result<()> {
+        self.serve_wire(input, output)
     }
 
     /// Handle one line; returns the reply line (None for notifications and blank lines).
@@ -133,7 +133,15 @@ impl Server {
         if !(params.is_object() || params.is_null()) {
             return Some(error(id, INVALID_PARAMS, "`params` must be an object"));
         }
-        Some(match self.request(method, &params) {
+        let token = params.get("_meta").and_then(|m| m.get("progressToken")).filter(|t| t.is_string() || t.is_number()).cloned();
+        self.current = Some((id.clone(), token));
+        self.suppress.store(false, Ordering::Relaxed);
+        let result = self.request(method, &params);
+        self.current = None;
+        if self.suppress.swap(false, Ordering::Relaxed) {
+            return None;
+        }
+        Some(match result {
             Ok(mut r) => {
                 modern_result_fields(method, &params, &mut r);
                 response(id, r)
@@ -172,7 +180,20 @@ impl Server {
                 let name = params.get("name").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing tool `name`".to_string()))?;
                 let args = params.get("arguments").cloned().unwrap_or(Value::Null);
                 check_args(name, &args).map_err(|e| (INVALID_PARAMS, e))?;
-                Ok(self.guarded(|b| call_tool(b, name, &args)).unwrap_or_else(ToolResult::error).to_value())
+                let long = matches!(name, "export" | "cmd_app_export")
+                    || (name == "command_run" && args["id"] == "app.export")
+                    || (name == "run_command" && args["command"] == "app.export");
+                let hook = if long && !self.backend.has_ui() { self.progress_hook() } else { None };
+                let result = self.guarded(|b| {
+                    b.set_progress(hook);
+                    call_tool(b, name, &args)
+                });
+                let clear = self.guarded(|b| b.set_progress(None));
+                let result = match (result, clear) {
+                    (Ok(result), Ok(())) => result,
+                    (Err(error), _) | (_, Err(error)) => ToolResult::error(error),
+                };
+                Ok(result.to_value())
             }
             "resources/list" => Ok(json!({"resources": [
                 resource(DOCUMENT_URI, "document", "Library document", "Library state and counts (same as doc_inspect)"),

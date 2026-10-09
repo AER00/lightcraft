@@ -8,7 +8,7 @@ use lightcraft_engine::catalog::PhotoId;
 use lightcraft_raster::Rgba8;
 use serde_json::{Value, json};
 
-use crate::backend::Backend;
+use crate::backend::{Backend, ProgressHook};
 
 /// File extensions recognised as photos when expanding folders.
 pub const PHOTO_EXTENSIONS: &[&str] = &[
@@ -20,6 +20,7 @@ pub const PHOTO_EXTENSIONS: &[&str] = &[
 /// Headless backend: a [`Session`] with filesystem hooks.
 pub struct Headless {
     pub session: Session,
+    progress: Option<ProgressHook>,
 }
 
 impl Drop for Headless {
@@ -37,7 +38,7 @@ impl Default for Headless {
 
 impl Headless {
     pub fn new(session: Session) -> Self {
-        Self { session }
+        Self { session, progress: None }
     }
 
     /// A headless session with the procedurally generated demo library.
@@ -60,7 +61,7 @@ impl Headless {
     /// (see `lightcraft_engine::export::ExportOptions::from_json`, plus `ids`, `dir`, `path`).
     /// With `path` and no `format`, the format follows the path's extension.
     fn export(&mut self, p: &Value) -> Result<Value, String> {
-        use lightcraft_engine::export::{Destination, ExportFormat, ExportOptions, Resize, export_batch};
+        use lightcraft_engine::export::{Destination, ExportFormat, ExportOptions, Resize, prepare_batch, run_batch};
         let p = &self.session.export_params(p)?;
         let mut opts = ExportOptions::from_params(p).map_err(|e| e.to_string())?;
         if !ExportOptions::has_size_param(p) {
@@ -82,10 +83,28 @@ impl Headless {
         };
         let dir = p.get("dir").and_then(Value::as_str).unwrap_or("");
         let write = &mut lightcraft_engine::export::write_file;
-        let files =
-            export_batch(&mut self.session, &ids, &opts, &Destination { dir: dir.to_string(), exact: exact.map(str::to_string) }, write, &|path| {
-                Path::new(path).exists()
-            })?;
+        let items = prepare_batch(&mut self.session, &ids, &opts)?;
+        let total = items.len();
+        let mut hook = self.progress.take();
+        let mut cancelled = false;
+        let files = run_batch(
+            items,
+            &opts,
+            &Destination { dir: dir.to_string(), exact: exact.map(str::to_string) },
+            write,
+            &|path| Path::new(path).exists(),
+            true,
+            &mut |done, name| {
+                cancelled = hook.as_mut().is_some_and(|h| !h(done, total, name));
+                !cancelled
+            },
+        )?;
+        if !cancelled && let Some(hook) = hook.as_mut() {
+            cancelled = !hook(total, total, "");
+        }
+        if cancelled {
+            return Err("cancelled".into());
+        }
         // Single-photo exports also report path/width/height at the top level (back-compat).
         let mut out = files.first().cloned().unwrap_or_else(|| json!({}));
         out["files"] = json!(files);
@@ -94,6 +113,10 @@ impl Headless {
 }
 
 impl Backend for Headless {
+    fn set_progress(&mut self, hook: Option<ProgressHook>) {
+        self.progress = hook;
+    }
+
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let p = if params.is_null() { json!({}) } else { params };
         match method {

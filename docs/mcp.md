@@ -219,3 +219,20 @@ lightcraft-cli calibrate --max 300 ~/Pictures/2026   # camera colour profiles (d
   (`Remote`) against a stand-in control server; also import → render → JPEG export of a real file.
 - `apps/lightcraft-cli/tests/cli.rs` — spawns `lightcraft-cli mcp` with real pipes; `render`;
   `commands`.
+
+## Export progress and cancellation
+
+Headless direct `export`, `command_run` / `run_command` with `app.export`, and `cmd_app_export`
+calls report photo-count progress when `params._meta.progressToken` is a string or number.
+Notifications are strictly increasing, at most ten per second plus the final total. No token
+means no notifications. `ping` is answered at photo boundaries; other requests wait in order
+until the export ends. EOF lets a pending export finish and preserves queued requests.
+
+`notifications/cancelled` with `params.requestId` stops the matching export before its next
+photo, suppressing its response. Unknown/completed request ids are ignored. A photo already
+being processed finishes first: completed photos remain, each written with the existing atomic
+file writer, and there are no partial files to delete. Unrelated outputs and earlier exports
+are untouched. A failed export is an `isError` tool result. Transport mutexes recover poisoning.
+
+Connect mode and exports inside `command_batch` remain synchronous and do not report MCP
+progress or cancellation. Use a direct headless export call for this behavior.
