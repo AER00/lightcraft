@@ -1426,5 +1426,7 @@
   "Edit Keyword Tag…": "Изменить ключевое слово…",
   "Put New Keywords Inside This Keyword": "Помещать новые ключевые слова в это",
   "Purge Unused Keywords": "Удалить неиспользуемые ключевые слова",
-  "Delete Keyword…": "Удалить ключевое слово…"
+  "Delete Keyword…": "Удалить ключевое слово…",
+  "Drop here for the top level": "Отпустите здесь для верхнего уровня",
+  "Their photos and the keywords below them come together under one keyword.": "Их фото и вложенные ключевые слова объединятся под одним ключевым словом."
 }

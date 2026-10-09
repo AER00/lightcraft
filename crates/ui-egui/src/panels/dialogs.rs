@@ -85,6 +85,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::KeywordTag { editing: None, .. } => "Create Keyword Tag",
         Dialog::KeywordTag { .. } => "Edit Keyword Tag",
         Dialog::DeleteKeyword { .. } => "Delete Keyword",
+        Dialog::MoveKeyword { .. } => "Merge Keywords",
         Dialog::MergeKeywords { .. } => "Merge Keywords",
         Dialog::NewSmartAlbum { .. } => "Create Smart Album",
         Dialog::AllMetadata { .. } => "All Metadata",
@@ -767,6 +768,18 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         crate::widgets::register(ui.ctx(), id, r.rect);
                     }
                 }
+                Dialog::MoveKeyword { keyword, parent } => {
+                    let name = keyword.rsplit('|').next().unwrap_or(keyword);
+                    match parent {
+                        Some(p) => ui.label(crate::i18n::tr_format!(
+                            "“{parent}” has a “{name}” already. Merge the two?",
+                            parent = p.replace('|', " › "),
+                            name = name
+                        )),
+                        None => ui.label(crate::i18n::tr_format!("There is a “{name}” at the top level already. Merge the two?", name = name)),
+                    };
+                    ui.label(egui::RichText::new(crate::i18n::tr("Their photos and the keywords below them come together under one keyword.")).color(t.text_dim));
+                }
                 Dialog::DeleteKeyword { keyword, count } => {
                     let name = keyword.replace('|', " › ");
                     ui.label(crate::i18n::tr_format!("Delete the keyword “{name}”?", name = name));
@@ -887,6 +900,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     Dialog::FaceModel { info, .. } if !informational && info["download"].is_string() => "Download",
                     Dialog::FaceModel { .. } if !informational => "Install",
                     Dialog::ConfirmDelete { .. } | Dialog::DeleteKeyword { .. } => "Delete",
+                    Dialog::MoveKeyword { .. } => "Merge",
                     Dialog::KeywordTag { editing: None, .. } => "Create",
                     Dialog::KeywordTag { .. } => "Save",
                     Dialog::RemoveFolder { .. } => "Remove",
@@ -1162,6 +1176,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }
         }
         Dialog::DeleteKeyword { keyword, .. } => app.run("keyword.delete", json!({"keyword": keyword})),
+        Dialog::MoveKeyword { keyword, parent } => app.run("keyword.move", json!({"keyword": keyword, "parent": parent, "merge": true})),
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),
         Dialog::DenoiseModel { info, accepted } => crate::panels::denoise::install(app, info, *accepted),

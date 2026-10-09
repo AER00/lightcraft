@@ -1753,5 +1753,7 @@
   "Edit Keyword Tag…": "編輯關鍵字標記…",
   "Put New Keywords Inside This Keyword": "將新關鍵字放入此關鍵字中",
   "Purge Unused Keywords": "清除未使用的關鍵字",
-  "Delete Keyword…": "刪除關鍵字…"
+  "Delete Keyword…": "刪除關鍵字…",
+  "Drop here for the top level": "拖放到此處以移至最上層",
+  "Their photos and the keywords below them come together under one keyword.": "它們的照片與下層關鍵字將合併到同一個關鍵字下。"
 }

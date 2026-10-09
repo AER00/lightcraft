@@ -454,6 +454,9 @@ pub struct UiState {
     /// The keyword picked in the Keyword List (− deletes it, Edit edits it).
     #[serde(skip)]
     pub keyword_list_selected: Option<String>,
+    /// A keyword being dragged in the Keyword List (onto another to nest it).
+    #[serde(skip)]
+    pub dragging_keyword: Option<String>,
     /// A running slideshow (full screen): seconds per photo, when the next one is due (egui
     /// time), paused.
     #[serde(skip)]
@@ -579,6 +582,12 @@ pub enum Dialog {
         person: bool,
         /// A new keyword is given to the selected photos.
         add_to_selected: bool,
+    },
+    /// Move a keyword inside `parent` (`None`: the top level) where one of its name is already:
+    /// asks before merging the two.
+    MoveKeyword {
+        keyword: String,
+        parent: Option<String>,
     },
     /// Delete a keyword from every photo and the keyword list, after asking.
     DeleteKeyword {
@@ -788,6 +797,7 @@ impl Default for UiState {
             keyword_painter: None,
             keyword_list_open: Vec::new(),
             keyword_list_selected: None,
+            dragging_keyword: None,
             info_overlay: InfoOverlay::Off,
             navigator: true,
             settings: AppSettings::default(),

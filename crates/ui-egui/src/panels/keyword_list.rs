@@ -20,7 +20,23 @@ const INDENT: f32 = 14.0;
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     crate::widgets::divider(ui);
-    super::right::header(ui, "Keyword List");
+    // the title, where a dragged keyword goes back to the top level
+    let (title, _) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::hover());
+    register(ui.ctx(), "keywordList:topLevel", title);
+    let dragging = app.ui.dragging_keyword.clone();
+    let (pointer, released) = ui.input(|i| (i.pointer.latest_pos(), i.pointer.any_released()));
+    let over_title = pointer.is_some_and(|p| title.contains(p));
+    if dragging.is_some() && over_title {
+        ui.painter().rect_stroke(title.shrink2(vec2(16.0, 6.0)), 4.0, Stroke::new(1.5, t.accent), StrokeKind::Inside);
+    }
+    let heading = if dragging.is_some() { crate::i18n::tr("Drop here for the top level") } else { crate::i18n::tr("Keyword List") };
+    ui.painter().text(pos2(title.left() + 24.0, title.center().y + 2.0), Align2::LEFT_CENTER, heading, t.semibold(15.0), t.text);
+    if released
+        && over_title
+        && let Some(k) = dragging.clone()
+    {
+        drop_keyword(app, ui.ctx(), &k, None);
+    }
     let fid = egui::Id::new("keyword-list-filter");
     let mut filter: String = ui.data(|d| d.get_temp(fid)).unwrap_or_default();
     ui.horizontal(|ui| {
@@ -61,14 +77,62 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         row(app, ui, r, &selection, filter.trim().is_empty());
     }
     ui.add_space(12.0);
+    // the drag ends with the button's release, wherever it is
+    if app.ui.dragging_keyword.is_some() {
+        let (released, down) = ui.input(|i| (i.pointer.any_released(), i.pointer.any_down()));
+        if released || !down {
+            app.ui.dragging_keyword = None;
+        } else if let (Some(k), Some(p)) = (app.ui.dragging_keyword.clone(), pointer) {
+            drag_label(ui.ctx(), &k, p);
+        }
+    }
+}
+
+/// The dragged keyword's name, following the pointer.
+fn drag_label(ctx: &egui::Context, keyword: &str, at: egui::Pos2) {
+    let t = Tokens::get(ctx);
+    ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+    let name = keyword.rsplit('|').next().unwrap_or(keyword).to_string();
+    egui::Area::new(egui::Id::new("drag-keyword")).order(egui::Order::Tooltip).interactable(false).fixed_pos(at + vec2(14.0, 10.0)).show(ctx, |ui| {
+        egui::Frame::NONE.fill(t.accent).corner_radius(10.0).inner_margin(egui::Margin::symmetric(9, 3)).show(ui, |ui| {
+            ui.label(egui::RichText::new(name).color(Color32::WHITE).font(t.semibold(12.0)));
+        });
+    });
+}
+
+/// Drop the dragged `keyword` inside `parent` (`None`: the top level). Where one of its name is
+/// already, ask before merging the two; where it is already, nothing happens.
+fn drop_keyword(app: &mut LightcraftApp, ctx: &egui::Context, keyword: &str, parent: Option<&str>) {
+    app.ui.dragging_keyword = None;
+    let cat = &app.session.catalog;
+    let leaf = keyword.rsplit('|').next().unwrap_or(keyword);
+    let parent = parent.map(|p| cat.keyword_path(p).unwrap_or_else(|| p.to_string()));
+    if parent.as_deref().is_some_and(|p| lightcraft_catalog::keywords::is_under(p, keyword)) {
+        return;
+    }
+    let to = parent.as_deref().map_or_else(|| leaf.to_string(), |p| format!("{p}|{leaf}"));
+    if same(&to, keyword) {
+        return;
+    }
+    if cat.has_keyword(&to) {
+        app.ui.dialog = Some(Dialog::MoveKeyword { keyword: keyword.to_string(), parent });
+        return;
+    }
+    if let Err(e) = app.run("keyword.move", json!({"keyword": keyword, "parent": parent})) {
+        app.toast(ctx, e);
+    }
 }
 
 /// One keyword's row: the triangle, the tick box, the name, the count, and on hover the arrow.
 /// `can_fold`: the triangle opens and closes the level (not while a filter opens it).
 fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId], can_fold: bool) {
     let t = Tokens::get(ui.ctx());
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click_and_drag());
     register(ui.ctx(), format!("keywordRow:{}", r.path), rect);
+    if resp.drag_started() {
+        app.ui.dragging_keyword = Some(r.path.clone());
+    }
+    drop_target(app, ui, rect, &r.path);
     let picked = app.ui.keyword_list_selected.as_deref().is_some_and(|k| same(k, &r.path));
     let inner = Rect::from_min_max(rect.min + vec2(16.0, 0.0), rect.max - vec2(16.0, 0.0));
     if picked {
@@ -164,6 +228,45 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId
         app.ui.dialog = Some(edit_dialog(app, &r.path));
     }
     resp.context_menu(|ui| menu(app, ui, &r.path, selection));
+}
+
+/// A row while a keyword or photos are dragged: outlined under the pointer when the drop would
+/// do something (a keyword never goes inside itself), and a release there does it: nests the
+/// keyword inside this one, or gives this keyword to the photos.
+fn drop_target(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, path: &str) {
+    let (pointer, released) = ui.input(|i| (i.pointer.latest_pos(), i.pointer.any_released()));
+    if !pointer.is_some_and(|p| rect.contains(p)) {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    let outline = |ui: &egui::Ui| ui.painter().rect_stroke(rect.shrink2(vec2(16.0, 1.0)), 4.0, Stroke::new(1.5, t.accent), StrokeKind::Inside);
+    if let Some(k) = app.ui.dragging_keyword.clone() {
+        if lightcraft_catalog::keywords::is_under(path, &k) {
+            return;
+        }
+        outline(ui);
+        if released {
+            drop_keyword(app, ui.ctx(), &k, Some(path));
+        }
+    } else if let Some(ids) = app.ui.dragging_photos.clone() {
+        outline(ui);
+        if released {
+            let n = ids.len();
+            app.ui.dragging_photos = None;
+            match app.run("photo.setMeta", json!({"ids": ids, "addKeywords": [path]})) {
+                Ok(_) => app.toast(
+                    ui.ctx(),
+                    crate::i18n::tr_format!(
+                        "Added “{keyword}” to {n} photo{}",
+                        if n == 1 { "" } else { "s" },
+                        keyword = path.replace('|', " › "),
+                        n = n
+                    ),
+                ),
+                Err(e) => app.toast(ui.ctx(), e),
+            }
+        }
+    }
 }
 
 /// A keyword's context menu.

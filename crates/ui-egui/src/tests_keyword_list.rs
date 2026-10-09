@@ -13,8 +13,13 @@ const SETTLE: Duration = Duration::from_secs(120);
 
 /// The demo library in the Library grid with the Keywords panel open, two photos selected.
 fn keywords_panel() -> (Headless, Vec<u64>) {
+    keywords_panel_at([1400.0, 1000.0])
+}
+
+/// [`keywords_panel`] in a window of `size` (tall enough, every keyword row is on screen).
+fn keywords_panel_at(size: [f32; 2]) -> (Headless, Vec<u64>) {
     let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), Services { png: None, ..Default::default() });
-    let mut h = Headless::new(app, [1400.0, 1000.0], 1.0);
+    let mut h = Headless::new(app, size, 1.0);
     let ids: Vec<u64> = h.app.session.visible_cloned().iter().take(2).map(|p| p.0).collect();
     for (method, params) in [
         ("ui.set", json!({"view": "photoGrid", "right": "keywords"})),
@@ -203,4 +208,65 @@ fn a_keywords_menu_offers_its_actions() {
     ask(&mut h, "ui.clickWidget", json!({"id": "keywordMenu:purge"}));
     assert!(!h.app.session.catalog.has_keyword("Events"));
     assert_eq!(h.app.session.keyword_parent, None, "gone with it");
+}
+
+fn center(h: &Headless, id: &str) -> egui::Pos2 {
+    h.app.widgets.iter().rev().find(|(w, _)| w == id).map(|(_, r)| r.center()).unwrap_or_else(|| panic!("no {id} on screen"))
+}
+
+/// Drag the widget `from` and drop it on the widget `onto`.
+fn drag(h: &mut Headless, from: &str, onto: &str) {
+    let to = center(h, onto);
+    ask(h, "ui.dragWidget", json!({"id": from, "toX": to.x, "toY": to.y, "steps": 12}));
+}
+
+/// Dragging a keyword onto another nests it there, with its photos; dropping it on the Keyword
+/// List's title takes it back to the top level.
+#[test]
+fn dragging_a_keyword_nests_it_and_back() {
+    let (mut h, ids) = keywords_panel_at([1400.0, 2400.0]);
+    run(&mut h, "photo.setMeta", json!({"ids": [ids[0]], "keywords": ["Lisbon"]}));
+    run(&mut h, "keyword.create", json!({"name": "Portugal"}));
+    drag(&mut h, "keywordRow:Lisbon", "keywordRow:Portugal");
+    assert_eq!(keywords_of(&h, ids[0]), ["Portugal|Lisbon"]);
+    assert!(h.app.ui.dragging_keyword.is_none(), "the drag ended");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRowToggle:Portugal"}));
+    drag(&mut h, "keywordRow:Portugal|Lisbon", "keywordList:topLevel");
+    assert_eq!(keywords_of(&h, ids[0]), ["Lisbon"]);
+}
+
+/// A keyword can't be dropped inside itself or one of its own children: nothing changes.
+#[test]
+fn a_keyword_cant_be_dropped_inside_itself() {
+    let (mut h, ids) = keywords_panel_at([1400.0, 2400.0]);
+    run(&mut h, "photo.setMeta", json!({"ids": [ids[0]], "keywords": ["Portugal|Lisbon"]}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRowToggle:Portugal"}));
+    let undo = h.app.session.undo.len();
+    drag(&mut h, "keywordRow:Portugal", "keywordRow:Portugal|Lisbon");
+    assert_eq!((keywords_of(&h, ids[0]), h.app.session.undo.len()), (vec!["Portugal|Lisbon".to_string()], undo));
+    assert_eq!(h.app.ui.dialog, None);
+}
+
+/// Dropping a keyword where one of that name is already (Italy has a Rome) asks before merging
+/// the two; Merge does it.
+#[test]
+fn dropping_onto_a_taken_name_asks_before_merging() {
+    let (mut h, ids) = keywords_panel_at([1400.0, 2400.0]);
+    run(&mut h, "photo.setMeta", json!({"ids": [ids[0]], "keywords": ["Rome"]}));
+    run(&mut h, "photo.setMeta", json!({"ids": [ids[1]], "keywords": ["Italy|Rome"]}));
+    drag(&mut h, "keywordRow:Rome", "keywordRow:Italy");
+    assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::MoveKeyword { .. })), "{:?}", h.app.ui.dialog);
+    assert_eq!(keywords_of(&h, ids[0]), ["Rome"], "nothing yet");
+    ask(&mut h, "ui.clickWidget", json!({"id": "button:dialogOk"}));
+    assert_eq!((keywords_of(&h, ids[0]), keywords_of(&h, ids[1])), (vec!["Italy|Rome".to_string()], vec!["Italy|Rome".to_string()]));
+}
+
+/// Photos dragged from the grid onto a keyword get it.
+#[test]
+fn dropping_photos_on_a_keyword_tags_them() {
+    let (mut h, ids) = keywords_panel_at([1400.0, 2400.0]);
+    run(&mut h, "keyword.create", json!({"name": "Portugal"}));
+    drag(&mut h, &format!("thumb:{}", ids[0]), "keywordRow:Portugal");
+    assert!(ids.iter().all(|id| keywords_of(&h, *id).contains(&"Portugal".to_string())), "the selection got it");
+    assert!(h.app.ui.dragging_photos.is_none());
 }
