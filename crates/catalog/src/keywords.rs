@@ -53,6 +53,75 @@ pub fn from_file(flat: &[String], hierarchical: &[String]) -> Vec<String> {
     out
 }
 
+/// The deepest a keyword list file may nest keywords: a file is input, so its nesting is bounded.
+pub const MAX_LEVELS: usize = 64;
+
+/// Read a keyword list file (Lightroom Classic's format): a keyword a line, those inside it
+/// indented one tab more, a synonym in braces on a line of its own under its keyword, a keyword
+/// left out of export in square brackets. Gives each keyword's path and attributes, in the order of
+/// the file; a keyword twice is one. A line it can't read is an error that says which.
+pub fn parse_keyword_list(text: &str) -> Result<Vec<(String, KeywordInfo)>> {
+    let bad = |n: usize, why: &str| CatalogError::Invalid(format!("line {n}: {why}"));
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut out: Vec<(String, KeywordInfo)> = Vec::new();
+    // the keyword at each level above the line: its path and where it is in `out`
+    let mut above: Vec<(String, usize)> = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let n = i + 1;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let depth = line.chars().take_while(|c| *c == '\t').count();
+        let body = line.trim_start_matches('\t').trim();
+        if let Some(synonym) = body.strip_prefix('{').and_then(|b| b.strip_suffix('}')) {
+            let Some(at) = depth.checked_sub(1).and_then(|d| above.get(d)).map(|(_, at)| *at) else {
+                return Err(bad(n, "a synonym (in braces) goes one tab under its keyword"));
+            };
+            let synonym = synonym.trim();
+            if let Some((_, info)) = out.get_mut(at)
+                && !synonym.is_empty()
+                && !info.synonyms.iter().any(|s| same(s, synonym))
+            {
+                info.synonyms.push(synonym.to_string());
+            }
+            continue;
+        }
+        if depth > above.len() {
+            return Err(bad(n, "indented more than one tab below the keyword above it"));
+        }
+        if depth >= MAX_LEVELS {
+            return Err(bad(n, &format!("keywords nest {MAX_LEVELS} levels deep at most")));
+        }
+        let (name, left_out) = match body.strip_prefix('[').and_then(|b| b.strip_suffix(']')) {
+            Some(name) => (name.trim(), true),
+            None => (body, false),
+        };
+        if name.is_empty() {
+            return Err(bad(n, "a keyword needs a name"));
+        }
+        if name.contains(SEP) {
+            return Err(bad(n, "“|” separates a keyword's levels: a name can't hold one"));
+        }
+        above.truncate(depth);
+        let path = match above.last() {
+            Some((parent, _)) => format!("{parent}{SEP}{name}"),
+            None => name.to_string(),
+        };
+        let at = match out.iter().position(|(p, _)| same(p, &path)) {
+            Some(at) => at,
+            None => {
+                out.push((path.clone(), KeywordInfo::default()));
+                out.len() - 1
+            }
+        };
+        if left_out && let Some((_, info)) = out.get_mut(at) {
+            info.include_on_export = false;
+        }
+        above.push((path, at));
+    }
+    Ok(out)
+}
+
 /// The keyword of `from` that `k` is under, the closest one when several are (`a|b` before `a`).
 pub fn closest<'a>(k: &str, from: &'a [String]) -> Option<&'a String> {
     from.iter().filter(|f| is_under(k, f)).max_by_key(|f| f.split(SEP).count())
@@ -337,6 +406,67 @@ impl Catalog {
             push(&mut out.hierarchical, &path);
         }
         out
+    }
+
+    /// The keyword list as a file (Lightroom Classic's format, [`parse_keyword_list`]): every
+    /// keyword of the tree, those inside one indented a tab more, synonyms in braces under their
+    /// keyword, a keyword left out of export in square brackets; by name.
+    pub fn keyword_list_text(&self) -> String {
+        fn write(c: &Catalog, nodes: &[KeywordNode], depth: usize, out: &mut String) {
+            let tabs = "\t".repeat(depth);
+            for n in nodes {
+                let info = c.keyword_info(&n.path).cloned().unwrap_or_default();
+                if info.include_on_export {
+                    out.push_str(&format!("{tabs}{}\n", n.name));
+                } else {
+                    out.push_str(&format!("{tabs}[{}]\n", n.name));
+                }
+                for s in &info.synonyms {
+                    out.push_str(&format!("{tabs}\t{{{s}}}\n"));
+                }
+                write(c, &n.children, depth + 1, out);
+            }
+        }
+        let mut out = String::new();
+        write(self, &self.keyword_tree(), 0, &mut out);
+        out
+    }
+
+    /// Import a keyword list (read with [`parse_keyword_list`]) — one batch: the keywords the
+    /// library doesn't have are added with the list's attributes, in the library's spelling of the
+    /// levels it has; those it has keep their attributes and gain the list's synonyms. Also says how
+    /// many keywords were added and how many gained synonyms.
+    pub fn import_keywords_ops(&self, entries: &[(String, KeywordInfo)]) -> (Op, usize, usize) {
+        let (mut added, mut updated) = (0, 0);
+        let ops = self.list_ops(|list| {
+            for (path, info) in entries {
+                let path = self.spelled(&clean(path));
+                let key = path.to_lowercase();
+                if path.is_empty() {
+                    continue;
+                }
+                let known = list.contains_key(&key) || self.has_keyword(&path);
+                if !known {
+                    list.insert(key, ListedKeyword { path, info: KeywordInfo { new_keywords_inside: false, ..info.clone() } });
+                    added += 1;
+                    continue;
+                }
+                // one the library has: the list's synonyms join its own (listed only if it gains some)
+                let mut info_now = list.get(&key).map(|l| l.info.clone()).unwrap_or_default();
+                let before = info_now.synonyms.len();
+                for s in &info.synonyms {
+                    if !info_now.synonyms.iter().any(|x| same(x, s)) {
+                        info_now.synonyms.push(s.clone());
+                    }
+                }
+                if info_now.synonyms.len() > before {
+                    let path = list.get(&key).map_or(path, |l| l.path.clone());
+                    list.insert(key, ListedKeyword { path, info: info_now });
+                    updated += 1;
+                }
+            }
+        });
+        (Op::Batch { ops }, added, updated)
     }
 
     /// The keyword is in the tree: listed or on a library photo (not one in Recently Deleted or
@@ -1034,6 +1164,70 @@ mod tests {
         assert_eq!(c.typed_keyword("Weddings"), "Events|Weddings");
         assert_eq!(c.typed_keyword("BEACH"), "BEACH", "the library has it");
         assert_eq!(c.typed_keyword("Places|Lisbon"), "Places|Lisbon");
+    }
+
+    /// The keyword list as a text file, as Lightroom Classic writes one: a keyword a line, the
+    /// keywords inside it indented one tab more, a synonym in braces on a line of its own under its
+    /// keyword, a keyword left out of export in square brackets; by name.
+    #[test]
+    fn the_keyword_list_is_written_as_tab_indented_text() {
+        let (mut c, _) = lib(&[&["Places|Lisbon", "beach"]]);
+        c.apply(Op::SetKeyword { path: "Places".into(), info: Some(KeywordInfo { include_on_export: false, ..KeywordInfo::default() }) }).unwrap();
+        c.apply(Op::SetKeyword { path: "Places|Lisbon".into(), info: Some(with_synonyms(&["Lisboa"])) }).unwrap();
+        c.apply(Op::SetKeyword { path: "Events|Weddings".into(), info: Some(KeywordInfo::default()) }).unwrap();
+        assert_eq!(c.keyword_list_text(), "beach\nEvents\n\tWeddings\n[Places]\n\tLisbon\n\t\t{Lisboa}\n");
+    }
+
+    /// Reading a list gives each keyword's path and attributes: what was written comes back, and a
+    /// file from elsewhere (Windows line ends, a byte-order mark, blank lines) reads too.
+    #[test]
+    fn a_keyword_list_reads_back() {
+        let read = parse_keyword_list("\u{feff}beach\r\n\r\nEvents\r\n\tWeddings\r\n\t\t{marriage}\r\n[Places]\r\n\tLisbon\r\n").unwrap();
+        let out = KeywordInfo { include_on_export: false, ..KeywordInfo::default() };
+        assert_eq!(
+            read,
+            [
+                ("beach".to_string(), KeywordInfo::default()),
+                ("Events".to_string(), KeywordInfo::default()),
+                ("Events|Weddings".to_string(), with_synonyms(&["marriage"])),
+                ("Places".to_string(), out),
+                ("Places|Lisbon".to_string(), KeywordInfo::default()),
+            ]
+        );
+    }
+
+    /// A list that can't be read says which line and why, and nothing of it is taken.
+    #[test]
+    fn a_bad_keyword_list_says_which_line() {
+        let err = |text: &str| parse_keyword_list(text).unwrap_err().to_string();
+        assert!(err("Events\n\t\tWeddings\n").contains("line 2"), "two levels down at once");
+        assert!(err("{marriage}\n").contains("line 1"), "a synonym of nothing");
+        assert!(err("Events\nTravel|Lisbon\n").contains("line 2"), "“|” separates levels here");
+        let deep: String = (0..70).map(|i| format!("{}k{i}\n", "\t".repeat(i))).collect();
+        assert!(err(&deep).contains("line 65"), "a file is input: 64 levels at most");
+    }
+
+    /// Importing a list adds the keywords the library doesn't have, with their attributes, and gives
+    /// those it has the list's synonyms (their own attributes stay), in one undo step.
+    #[test]
+    fn importing_a_keyword_list_adds_what_is_missing() {
+        let (mut c, _) = lib(&[&["Events|Weddings"]]);
+        c.apply(Op::SetKeyword { path: "Events|Weddings".into(), info: Some(KeywordInfo { person: true, ..with_synonyms(&["marriage"]) }) }).unwrap();
+        let before = c.to_snapshot();
+        let read = parse_keyword_list("events\n\tweddings\n\t\t{nuptials}\n\tBirthdays\n[Drafts]\n").unwrap();
+        let (op, added, updated) = c.import_keywords_ops(&read);
+        assert_eq!((added, updated), (2, 1));
+        let undo = c.apply(op).unwrap();
+        assert_eq!(c.keyword_info("Events|Weddings"), Some(&KeywordInfo { person: true, ..with_synonyms(&["marriage", "nuptials"]) }));
+        assert!(c.has_keyword("Events|Birthdays"));
+        assert_eq!(
+            listed(&c).iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
+            ["Drafts", "Events|Birthdays", "Events|Weddings"],
+            "in the library's spelling"
+        );
+        assert!(!c.keyword_info("Drafts").unwrap().include_on_export);
+        c.apply(undo).unwrap();
+        assert_eq!(c.to_snapshot(), before);
     }
 
     #[test]
