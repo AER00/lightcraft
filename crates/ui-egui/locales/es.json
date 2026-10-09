@@ -1126,6 +1126,8 @@
   "Remove (H)": "Eliminar (H)",
   "Remove CA": "Eliminar AC",
   "Remove Chromatic Aberration": "Eliminar aberración cromática",
+  "Camera local tone mapping": "Mapeo tonal local de la cámara",
+  "Apply the local tone mapping stored in the raw (Apple ProRAW), as the camera renders it": "Aplicar el mapeo tonal local guardado en el raw (Apple ProRAW), como lo renderiza la cámara",
   "Remove Disk from Library": "Quitar disco de la biblioteca",
   "Remove Disk from Library…": "Quitar disco de la biblioteca…",
   "Remove Face Box": "Quitar recuadro de cara",

@@ -1087,6 +1087,8 @@
   "Remove (H)": "除去（H）",
   "Remove CA": "色収差を除去",
   "Remove Chromatic Aberration": "色収差を除去",
+  "Camera local tone mapping": "カメラのローカルトーンマッピング",
+  "Apply the local tone mapping stored in the raw (Apple ProRAW), as the camera renders it": "RAW に保存されたローカルトーンマッピング（Apple ProRAW）をカメラと同じように適用",
   "Remove from Album": "アルバムから削除",
   "Remove from Favorites": "お気に入りから削除",
   "Remove from Local": "ローカルから除く",
