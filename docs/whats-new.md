@@ -17,6 +17,9 @@
   way round, "in the last 0 days", a colour label that doesn't exist, "contains" with nothing to look for, an
   album that is gone or smart, or an empty group is reported with its rule ("rule 2.1: rating is 0–5, not 9")
   instead of quietly matching nothing or everything. New date rules start at the current year.
+- Date rules have a calendar button: pick a day, a month or a whole year (Year / Month / Day), in your language; the
+  two dates of a "between" can't be picked out of order. Typing still works, and "2026-10-01 10:00" (a space for the
+  T) now matches; a time zone is refused, since capture times are local.
 - Rule problems are shown in your language and name the field the way the menu does ("Title: needs something to look
   for").
 - A smart album whose rules no longer check (an album they test was deleted) is marked ⚠ in the sidebar; its tooltip
