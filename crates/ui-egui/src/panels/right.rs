@@ -778,10 +778,8 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let mut text = ui.data_mut(|d| d.get_temp::<String>(kid).unwrap_or_default());
         let r =
             crate::text_field::TextField::singleline("field:keyword", &mut text).hint(crate::i18n::tr("Add keyword")).width(f32::INFINITY).show(ui);
-        // Return gives the keywords to the selected photos; Esc gives up what was typed
-        if r.cancelled() {
-            text.clear();
-        }
+        // Return gives the keywords to the selected photos; Esc gives back what was there before
+        // this edit (the shared field does)
         if r.ending == Some(crate::text_field::Ending::Return) && !text.trim().is_empty() {
             // a new name goes inside the default parent (Put New Keywords Inside This Keyword)
             let kws: Vec<String> = text.split(',').map(|s| app.session.catalog.typed_keyword(s)).filter(|s| !s.is_empty()).collect();

@@ -195,3 +195,21 @@ fn the_active_photo_alone_is_the_selection() {
     assert_eq!(ticks.tick("Weddings"), crate::panels::keyword_list::Tick::All);
     assert!(has(&h, "keywordCheck:beach"));
 }
+
+/// Esc in the Add keyword box gives back what it held before this edit, as every text field does:
+/// text left there by an earlier edit stays.
+#[test]
+fn escape_gives_back_the_text_from_before_the_edit() {
+    let (mut h, ids) = two_selected();
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keyword"}));
+    ask(&mut h, "ui.text", json!({"text": "harbour"}));
+    ask(&mut h, "ui.key", json!({"key": "Tab"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keyword"}));
+    ask(&mut h, "ui.key", json!({"key": "End"}));
+    ask(&mut h, "ui.text", json!({"text": ", sea"}));
+    ask(&mut h, "ui.key", json!({"key": "Escape"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keyword"}));
+    ask(&mut h, "ui.key", json!({"key": "Enter"}));
+    let k = keywords_of(&h, ids[0]);
+    assert!(k.contains(&"harbour".to_string()) && !k.contains(&"sea".to_string()), "{k:?}");
+}
