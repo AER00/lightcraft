@@ -47,10 +47,10 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | X. Cross-cutting behaviours (BEHAV) | 18 | 5 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 82 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 75 | 3 | 3 | 1 | 49/52 (94%) | 23/24 (96%) |
-| Lightroom Classic extras | 32 | 11 | 39 | 9 | — | 22/24 (92%) |
-| **Total** | 394 | 38 | 84 | 36 | 193/200 (97%) | 142/152 (93%) |
+| Lightroom Classic extras | 33 | 11 | 39 | 9 | — | 23/25 (92%) |
+| **Total** | 395 | 38 | 84 | 36 | 193/200 (97%) | 143/153 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.0%** of 516 in-scope rows — P0 98.2% of 200 · P1 95.7% of 152 · P2 42.9% of 163.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.1%** of 517 in-scope rows — P0 98.2% of 200 · P1 95.8% of 153 · P2 42.9% of 163.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -71,7 +71,8 @@ Take the first one nobody is working on.
 3. **LR-IMP-CAMERA-COVERAGE** (P0): per-model verification; grow the CC0 corpus and fix per-model bugs (like the CR2
    colour-filter layout, fixed in #85 by reading the file's own tag).
 4. **LR-BEHAV-RENDER-FIDELITY** (P1): a side-by-side fidelity suite against Lightroom renders (kept local in `plan/`),
-   then tune tone, highlights, texture/clarity/dehaze, NR and sharpening against it.
+   then tune tone, highlights, texture/clarity/dehaze, NR and sharpening against it. A retune that changes how existing
+   settings render ships as a new process version, so existing edits keep their look (`docs/process-versions.md`).
 4b. **LR-VIEW-ZOOM** (P0): finish the sharp zoomed views of issue #323: windows for compare, overlays and soft proofing
    (Before/After has them); check sharpness and the wide-stage margin on real raw photos (only synthetic scenes so far).
 5. **LR-EDIT-OPTICS-PROFILE** (P1): a lens-profile database of our own (corrections embedded in DNG files and the
@@ -517,7 +518,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-OFFLINE | Offline editing | P1 | ✅ | | local-first: everything works offline |
 | LR-BEHAV-WEB-SAFETY | Library safety in the browser build | P1 | 🟡 | `cmd:file.backupLibrary`, `cmd:file.restoreLibrary`, `apps/lightcraft-web/src/safety.rs`, `apps/lightcraft-web/src/backup.rs`, `apps/lightcraft-web/src/files.rs` | web only (experimental): Back Up Library (zip of the catalog and every stored original) and a non-destructive Restore; failed saves show as unsaved and are retried; a photo that can't be stored isn't added; one tab per library (Web Locks); notices for storage that isn't persistent and for a library that can't open; `?reset` asks first; a panic shows a message. Missing: `?safe` start, deleting originals of removed photos, zip64 (backups > 4 GB) |
 | LR-BEHAV-GPU | GPU acceleration | P0 | ✅ | `crates/gpu/src/render.rs`, `cmd:app.gpu`, `docs/gpu-pipeline.md` | CPU fallback per render on device limits, out of memory, device errors / loss, incomplete or black results (`perf.gpuReason`, `perf.gpuFallback`); short submissions for slow iGPUs; backend choice (DX12 only on Windows, `LIGHTCRAFT_GPU_BACKEND` / `WGPU_BACKEND`), device created after the window opens, crash sentinel (issue #136); no tiling beyond the buffer limit (CPU) |
-| LR-BEHAV-RENDER-FIDELITY | Rendering matches Lightroom | P1 | 🟡 | `crates/pipeline/src/lib.rs`, `crates/pipeline/src/tone.rs` | every slider exists and works, but the character of the result (tone curve shape, highlight recovery, texture / clarity / dehaze, noise reduction, sharpening, default look) is tuned by eye; there is no systematic side-by-side comparison against Lightroom on the same CC0 raws. Needs a fidelity suite: Lightroom reference renders kept only in the local `plan/` (never committed), compared per slider and preset with a perceptual metric |
+| LR-BEHAV-RENDER-FIDELITY | Rendering matches Lightroom | P1 | 🟡 | `crates/pipeline/src/lib.rs`, `crates/pipeline/src/tone.rs` | every slider exists and works, but the character of the result (tone curve shape, highlight recovery, texture / clarity / dehaze, noise reduction, sharpening, default look) is tuned by eye; there is no systematic side-by-side comparison against Lightroom on the same CC0 raws. Needs a fidelity suite: Lightroom reference renders kept only in the local `plan/` (never committed), compared per slider and preset with a perceptual metric. Tuning that changes how existing settings render ships as a new process version (LRC-DEV-PROCESS, `docs/process-versions.md`) |
 | LR-BEHAV-DRAGDROP | Drag and drop | P1 | ✅ | `crates/ui-egui/src/lib.rs`, `crates/ui-egui/src/panels/grid.rs` (`drag_feedback`), `crates/ui-egui/src/panels/left.rs` (`drop_target`, `album_drag_over`, `top_level_drop_target`, `drag_auto_scroll`) | files → app (import); grid photos → an album row (adds the selection, with a count badge while dragging); sidebar album / folder rows → a folder (moves it; its name follows the pointer); a drag of albums or grid photos near the top or bottom edge of the sidebar scrolls it (faster nearer the edge, only while the pointer is over the sidebar) |
 | LR-BEHAV-TOAST | Toast notifications | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` | |
 | LR-BEHAV-SIDEBAR-COLLAPSE | Collapsible left-sidebar sections | P2 | ✅ | `crates/ui-egui/src/panels/left.rs` (`sidebar_section_header`), `crates/ui-egui/src/state.rs` (`collapsed_sidebar`), `crates/ui-egui/src/tests_panels.rs` | click the Albums, Local, By Date or Keywords header (or drive `ui.clickWidget` `sidebarSection:<albums\|local\|byDate\|keywords>`) to fold or unfold the section; a chevron after the title shows the state; the choice is kept across restarts (`collapsedSidebar` in the UI state). UI-only (no command), like the By Date / Keywords disclosure triangles; photos dropped on a folded Albums section have no target |
@@ -768,6 +769,7 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-DEV-CALIB | Calibration panel | P1 | ✅ | `ctl:calibration.*` | |
 | LRC-DEV-TAT | Targeted adjustment tools | P1 | ✅ | `cmd:develop.targeted` (`target`: curve / hue / sat / lum) | |
 | LRC-DEV-DEFAULTS | Per-camera raw defaults | P1 | ✅ | `cmd:library.preferences` (`camera`, `import.perCamera`), `crates/ui-egui/src/panels/settings.rs` | Settings → Import: raw default and per-camera presets |
+| LRC-DEV-PROCESS | Process versions, Update to Current Process | P1 | ✅ | `cmd:develop.updateProcess`, `cmd:develop.reset`, `cmd:develop.get`, `crates/develop/src/settings.rs`, `crates/pipeline/src/finish.rs`, `docs/process-versions.md` | each photo records the rendering process its settings are interpreted by: settings saved before this existed load as V1, new photos and Reset get the latest, virtual copies inherit, copy / paste / sync / presets keep each photo's own; Photo ▸ Update to Current Process (one undo step, enabled while a selected photo is on an older process); a number from a newer LightCraft is kept and renders with the newest known process. Only V1 exists so far: this is what lets a retuned default tone (#146) or stronger Light sliders (#196) ship without changing existing edits |
 | LRC-DEV-VIEWOPTIONS | Develop view options | P2 | ⬜ | | |
 | LRC-DEV-VIDEO | Video frame capture | P2 | ⬜ | | |
 | LRC-MAP-VIEW | Map view | P2 | ⬜ | | |

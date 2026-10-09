@@ -38,7 +38,9 @@ WITHOUT ROWID or virtual table produces an explicit error, handled as a warning 
 Develop settings reuse the existing XMP/preset mapper. Supported sliders, curves and supported
 mask structures remain editable, but this is approximate rendering: camera profiles, Adobe AI
 models, some masking/retouch fields and process-version algorithms are not reproduced. Unmapped
-fields are reported. When a recovery archive is saved, it retains source settings/history/snapshots
+fields are reported. Lightroom's `ProcessVersion` is not mapped: newly imported photos are on
+LightCraft's latest rendering process, and photos already in the library keep theirs
+([process-versions.md](process-versions.md)). When a recovery archive is saved, it retains source settings/history/snapshots
 and original smart-collection rules. Smart collections become regular albums with current
 membership. Archived history and snapshots are source data, not native LightCraft history yet.
 Lightroom's `-999999` deferred-adjustment sentinel is omitted from both catalog and XMP mappings;
