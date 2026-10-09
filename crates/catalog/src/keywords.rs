@@ -311,10 +311,9 @@ impl Catalog {
         out
     }
 
-    /// The keyword is in the tree: listed, or on a photo (itself or one below it).
+    /// The keyword is in the tree: listed or on a photo, itself or one below it.
     pub fn has_keyword(&self, path: &str) -> bool {
-        let k = clean(path);
-        !k.is_empty() && (self.keyword_info(&k).is_some() || self.photos().any(|p| p.meta.keywords.iter().any(|x| is_under(x, &k))))
+        self.keyword_path(path).is_some()
     }
 
     /// The keyword as written in the library (whatever the case of `path`): its listing, or the
@@ -327,9 +326,11 @@ impl Catalog {
         if let Some(l) = self.keyword_list.get(&k.to_lowercase()) {
             return Some(l.path.clone());
         }
+        // the levels of a listed keyword below it, or of a photo's
         let levels = k.split(SEP).count();
-        self.photos()
-            .flat_map(|p| p.meta.keywords.iter())
+        let listed = self.keyword_list.values().map(|l| &l.path);
+        listed
+            .chain(self.photos().flat_map(|p| p.meta.keywords.iter()))
             .find(|x| is_under(x, &k))
             .map(|x| x.split(SEP).map(str::trim).filter(|s| !s.is_empty()).take(levels).collect::<Vec<_>>().join("|"))
     }
@@ -797,6 +798,19 @@ mod tests {
         c.apply(op).unwrap();
         assert_eq!(kws(&c, ids[0]), ["Ärzte|Wien"]);
         assert!(c.create_keyword_ops("ärzte", KeywordInfo::default(), &[]).is_err(), "exists");
+    }
+
+    /// A keyword that is only the parent of a listed one ("Events" of "Events|Weddings") is a
+    /// keyword like any other: it is in the tree, so it can be found, moved and renamed.
+    #[test]
+    fn the_parent_of_a_listed_keyword_is_a_keyword() {
+        let mut c = Catalog::new();
+        c.apply(Op::SetKeyword { path: "Events|Weddings".into(), info: Some(KeywordInfo::default()) }).unwrap();
+        assert!(c.has_keyword("events"));
+        assert_eq!(c.keyword_path("EVENTS").as_deref(), Some("Events"));
+        let op = c.edit_keyword_ops("events", "Occasions", KeywordInfo::default()).unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(listed(&c).iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["Occasions", "Occasions|Weddings"]);
     }
 
     #[test]
