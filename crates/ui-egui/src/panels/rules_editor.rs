@@ -266,7 +266,7 @@ fn field_menu(ui: &mut egui::Ui, salt: &str, field: &mut String, op: &mut String
 fn problem_note(ui: &mut egui::Ui, problem: Option<&Problem>, salt: &str) {
     let Some(p) = problem else { return };
     let t = Tokens::get(ui.ctx());
-    let r = ui.label(RichText::new(format!("⚠ {}", p.message)).color(t.caution).small());
+    let r = ui.label(RichText::new(format!("⚠ {}", crate::i18n::problem_text(p))).color(t.caution).small());
     register(ui.ctx(), format!("ruleProblem:{salt}"), r.rect);
 }
 

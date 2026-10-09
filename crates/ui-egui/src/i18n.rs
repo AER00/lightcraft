@@ -328,9 +328,29 @@ pub fn filter_label(filter: &lightcraft_catalog::Filter, catalog: &lightcraft_ca
     }
 }
 
-/// What people read for a smart-album rule problem (`rule 2: …`).
+/// What people read for a smart-album rule's problem, under its row: the field's name and the
+/// issue, in the current language ("Title: needs something to look for").
 pub fn problem_text(problem: &lightcraft_catalog::rules::Problem) -> String {
-    problem.to_string()
+    problem_text_in(language(), problem)
+}
+
+/// [`problem_text`] with the rule's position first ("#2.1 Rating: …"), for lists away from the
+/// editor (the sidebar's tooltip).
+pub fn problem_line(problem: &lightcraft_catalog::rules::Problem) -> String {
+    problem_line_in(language(), problem)
+}
+
+fn problem_text_in(language: Locale, problem: &lightcraft_catalog::rules::Problem) -> String {
+    let issue = tr_in(language, problem.issue.text());
+    match problem.field.as_deref() {
+        Some(field) => format!("{}: {issue}", tr_in(language, lightcraft_catalog::rules::field_label(field).unwrap_or(field))),
+        None => issue.to_string(),
+    }
+}
+
+fn problem_line_in(language: Locale, problem: &lightcraft_catalog::rules::Problem) -> String {
+    let at: Vec<String> = problem.path.iter().map(|i| i.saturating_add(1).to_string()).collect();
+    format!("#{} {}", at.join("."), problem_text_in(language, problem))
 }
 
 /// What people read for smart-album choice `id` of `field` ("Gemeinfrei" for `publicDomain` in
@@ -717,6 +737,29 @@ mod tests {
                         assert!(language.catalog().contains_key(*label), "{} lacks {label:?}", language.code());
                     }
                 }
+            }
+        }
+    }
+
+    /// A rule's problem reads as the field's name and the issue, in the editor's language ("Titel:
+    /// braucht einen Suchbegriff …"); the sidebar's list puts the rule's position first. Every issue
+    /// is translated in every language: an English one would stand out in a translated editor.
+    #[test]
+    fn problems_read_in_every_language() {
+        use lightcraft_catalog::rules::Issue;
+        let cat = lightcraft_catalog::Catalog::new();
+        let problems = |rules: serde_json::Value| {
+            serde_json::from_value::<lightcraft_catalog::RuleSet>(serde_json::json!({"rules": rules})).unwrap().check(&cat)
+        };
+        let p = problems(serde_json::json!([{"field": "rating", "op": "gte", "value": 3}, {"field": "title", "op": "contains", "value": ""}]));
+        assert_eq!(problem_text_in(Locale::En, &p[0]), "Title: needs something to look for (or use “is empty”)");
+        assert_eq!(problem_text_in(Locale::De, &p[0]), "Titel: braucht einen Suchbegriff (oder „ist leer“)");
+        assert_eq!(problem_line_in(Locale::En, &p[0]), "#2 Title: needs something to look for (or use “is empty”)");
+        let g = problems(serde_json::json!([{"group": {"rules": []}}]));
+        assert_eq!(problem_text_in(Locale::En, &g[0]), "This group is empty: add a rule or remove it.");
+        for language in Locale::ALL.iter().filter(|l| **l != Locale::En) {
+            for issue in Issue::ALL {
+                assert!(language.catalog().contains_key(issue.text()), "{} lacks {:?}", language.code(), issue.text());
             }
         }
     }

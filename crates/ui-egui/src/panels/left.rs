@@ -749,7 +749,7 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
                     tip.push_str(crate::i18n::tr("Some rules need fixing (Edit Smart Album…):"));
                     for p in &problems {
                         tip.push('\n');
-                        tip.push_str(&crate::i18n::problem_text(p));
+                        tip.push_str(&crate::i18n::problem_line(p));
                     }
                 }
                 resp = resp.on_hover_text(tip);
