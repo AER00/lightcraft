@@ -528,6 +528,63 @@ fn corpus_orf_cfa_patterns() {
     eprintln!("ORF CFA layouts checked on {seen} files");
 }
 
+/// Samsung SRW (`crates/raw/src/vendor/srw.rs`): the 12-bit packings of the NX10 and NX20 generations (opposite bit
+/// orders, told apart from the samples) and the 16-bit words of the EX1 and WB2000 decode to the image of the camera's own
+/// JPEG, with the layout, framing, levels and white balance the file's maker note states.
+#[test]
+fn corpus_samsung_srw() {
+    let dir = corpus_root().join("raw");
+    // (file, bits, active area width x height, crop width x height, CFA layout, JPEG shows the whole active area)
+    let cases = [
+        ("srw-samsung-nx10.srw", 12, (4592, 3056), (4592, 3056), "BGGR", true),
+        ("srw-samsung-nx20.srw", 12, (5472, 3648), (5472, 3648), "GRBG", true),
+        ("srw-samsung-ex1.srw", 14, (3648, 2736), (3648, 2736), "RGGB", true),
+    ];
+    let mut seen = 0;
+    for (name, bits, active, crop, cfa, whole) in cases {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            eprintln!("skip: {name} absent");
+            continue;
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(img.format, RawFormat::Srw, "{name}");
+        assert_eq!(img.bits, bits, "{name}: bits");
+        assert_eq!((img.active_area.width, img.active_area.height), active, "{name}: active area");
+        assert_eq!((img.crop.width, img.crop.height), crop, "{name}: crop");
+        assert_eq!(img.cfa.as_ref().map(|c| c.name()).as_deref(), Some(cfa), "{name}: CFA layout");
+        let wb = img.wb_multipliers.unwrap_or_else(|| panic!("{name}: no as-shot white balance"));
+        assert!(wb[0] > 1.0 && wb[1] == 1.0 && wb[2] > 0.5, "{name}: white balance {wb:?}");
+        assert!(img.white_at(0) > (1u32 << bits) as f32 * 0.9 && img.white_at(0) <= ((1u32 << bits) - 1) as f32, "{name}: white {}", img.white_at(0));
+        assert!(img.black.mean() < 8.0, "{name}: black {}", img.black.mean());
+        // the mosaic inside the framing holds no marker or padding values above the saturation level
+        let lightcraft_raw::RawData::U16(d) = &img.data else { panic!("float data") };
+        let a = img.active_area;
+        let above = (a.y..a.y + a.height)
+            .map(|y| d[y * img.width + a.x..y * img.width + a.x + a.width].iter().filter(|&&v| f32::from(v) > ((1u32 << bits) - 1) as f32).count())
+            .sum::<usize>();
+        assert_eq!(above, 0, "{name}: samples above the saturation level in the active area");
+        if whole {
+            let jpeg = embedded_preview(&bytes).unwrap_or_else(|| panic!("{name}: no embedded preview"));
+            let (gw, gh) = (24, 18);
+            let (sites, jpeg) = (raw_sites(&img, gw, gh), jpeg_cells(&jpeg, gw, gh));
+            let layout = img.cfa.clone().unwrap_or_else(|| panic!("{name}: no CFA"));
+            let green: Vec<f64> = sites.iter().map(|s| (0..4).filter(|&i| layout.pattern[i] == 1).map(|i| s[i]).sum::<f64>()).collect();
+            let rho = correlation(&ranks(&green), &ranks(&jpeg.iter().map(|j| j[1]).collect::<Vec<_>>()));
+            let agree = |l: &str| chroma_agreement(&sites, &jpeg, &lightcraft_raw::Cfa::bayer(l).unwrap().pattern);
+            let best_other = ["RGGB", "GRBG", "GBRG", "BGGR"].into_iter().filter(|l| *l != cfa).map(agree).fold(f64::MIN, f64::max);
+            let own = agree(cfa);
+            eprintln!(
+                "{name:26} {}x{} {bits}-bit: green rank correlation {rho:.3}, colour agreement {own:.3} (others <= {best_other:.3})",
+                img.width, img.height
+            );
+            assert!(rho > 0.9, "{name}: rank correlation with the camera JPEG {rho}");
+            assert!(own > 0.5 && own > best_other, "{name}: colours follow the JPEG better with another layout ({own} vs {best_other})");
+        }
+        seen += 1;
+    }
+    eprintln!("Samsung SRW checked on {seen} files");
+}
+
 /// Reference sensor sums and position-weighted sums from black-box decoding, independent
 /// of this implementation. These cover complete images, padding, stripe boundaries and
 /// lossy block quantizer changes; the source files are CC0, fetched by `xtask corpus`.
@@ -598,6 +655,7 @@ fn corpus_raws_keep_their_container_and_are_not_thumbnail_shells() {
             "orf" => RawFormat::Orf,
             "pef" => RawFormat::Pef,
             "raf" => RawFormat::Raf,
+            "srw" => RawFormat::Srw,
             "rw2" | "rwl" | "raw" => RawFormat::Rw2,
             _ => continue,
         };

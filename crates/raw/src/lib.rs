@@ -96,6 +96,10 @@ pub enum RawFormat {
     Mrw,
     /// Sigma / Foveon X3F (`FOVb`).
     X3f,
+    /// A TIFF-based raw that has no DNG version tag but describes itself the way DNG does (a
+    /// full-resolution CFA image with black/white levels, a default crop and `AsShotNeutral`):
+    /// Hasselblad 3FR and FFF. Read by the DNG reader.
+    CfaTiff,
     /// Another TIFF-based raw (3FR, IIQ, ERF, KDC, DCR, MOS, …).
     OtherTiff,
 }
@@ -114,6 +118,8 @@ impl RawFormat {
                 | RawFormat::Raf
                 | RawFormat::Rw2
                 | RawFormat::Pef
+                | RawFormat::CfaTiff
+                | RawFormat::Srw
         )
     }
 }
@@ -171,6 +177,9 @@ pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
     }
     if make.starts_with("SAMSUNG") {
         return Some(RawFormat::Srw);
+    }
+    if dng::is_plain_cfa_tiff(&t, bytes) {
+        return Some(RawFormat::CfaTiff);
     }
     if has_cfa || thumbnail_shell(&t, bytes.len()).is_some() || is_preview_container(ifd0) {
         return Some(RawFormat::OtherTiff);
@@ -266,6 +275,15 @@ fn thumbnail_shell(t: &Tiff, len: usize) -> Option<ThumbnailShell> {
 /// Why [`decode`] gives up on a file [`probe`] called [`RawFormat::OtherTiff`].
 fn other_tiff_reason(bytes: &[u8]) -> String {
     let t = Tiff::parse_with(bytes, &lightcraft_tiff::ParseOptions { max_ifds: 256, ..Default::default() }).ok();
+    // a DNG-style CFA IFD whose lossless JPEG the lossless decoder rejects: say why
+    if let Some(t) = &t
+        && let Some(info) = dng::raw_ifd(t).and_then(|i| i.image().ok())
+        && info.compression == lightcraft_tiff::tags::compression::JPEG
+        && let Some(src) = info.chunks(bytes.len() as u64).first().and_then(|c| lightcraft_tiff::image::chunk_bytes(bytes, c))
+        && let Err(e) = ljpeg::frame_info(src)
+    {
+        return format!("raw image coded as lossless JPEG that is not decoded yet ({e})");
+    }
     match t.as_ref().filter(|t| !has_raw_ifd(t)).and_then(|t| thumbnail_shell(t, bytes.len())) {
         Some(s) => format!(
             "{}x{} raw image in a private block, not decoded yet (the file's first image is a {}x{} reduced copy)",
@@ -315,6 +333,8 @@ fn decode_with(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         RawFormat::Rw2 => vendor::rw2::decode(bytes, mode),
         RawFormat::Pef => vendor::pef::decode(bytes, mode),
         RawFormat::Orf => vendor::orf::decode(bytes, mode),
+        RawFormat::CfaTiff => dng::decode_as(bytes, mode, RawFormat::CfaTiff),
+        RawFormat::Srw => vendor::srw::decode(bytes, mode),
         RawFormat::OtherTiff => Err(RawError::Unsupported(other_tiff_reason(bytes))),
         other => Err(RawError::Unsupported(format!("{other:?} files are not decoded yet"))),
     }
@@ -532,7 +552,8 @@ pub struct ColorData {
     pub baseline_sharpness: Option<f64>,
     /// The file's own camera-profile look (`ProfileHueSatMap*`, `ProfileLookTable*`,
     /// `ProfileToneCurve`), applied by [`color`]'s users at render time, and its
-    /// `ProfileGainTableMap*`, kept (a DNG export writes it back) but not rendered.
+    /// `ProfileGainTableMap*`, kept (a DNG export writes it back) and rendered only when a photo's
+    /// "Camera local tone mapping" option asks for it (`lightcraft_pipeline::local_tone`).
     #[serde(default)]
     pub profile: profile::ProfileLook,
 }
@@ -927,6 +948,125 @@ mod tests {
         let mut ifd = rgb_ifd(16, 12);
         ifd.set(t::COMPRESSION, Value::Short(vec![99]));
         assert_eq!(probe(&write(&[ifd])), Some(RawFormat::OtherTiff));
+    }
+
+    // --- TIFF raws that describe their raw IFD the way DNG does but carry no DNG version tag ---
+
+    /// 8 x 6 samples, 16 bits, value `1000 + 100 y + x`.
+    fn cfa_samples() -> Vec<u16> {
+        (0..48u16).map(|i| 1000 + 100 * (i / 8) + i % 8).collect()
+    }
+
+    /// A small raw in the layout of the Hasselblad 3FR/FFF family: IFD0 is a reduced RGB image with the
+    /// colour tags, a SubIFD holds the full-resolution CFA image (no `CFAPattern`, DNG-style levels and
+    /// crop). `strip` is the CFA image's data and `compression` its coding.
+    fn plain_cfa_tiff(compression: u16, strip: Vec<u8>, pattern: Option<[u8; 4]>) -> Vec<u8> {
+        let mut raw = IfdBuilder::new();
+        raw.set(t::NEW_SUBFILE_TYPE, Value::Long(vec![0]));
+        raw.set(t::IMAGE_WIDTH, Value::Long(vec![8]));
+        raw.set(t::IMAGE_LENGTH, Value::Long(vec![6]));
+        raw.set(t::BITS_PER_SAMPLE, Value::Short(vec![16]));
+        raw.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
+        raw.set(t::PHOTOMETRIC, Value::Short(vec![t::photometric::CFA]));
+        raw.set(t::COMPRESSION, Value::Short(vec![compression]));
+        raw.set(t::BLACK_LEVEL, Value::Rational(vec![(256, 1)]));
+        raw.set(t::WHITE_LEVEL, Value::Long(vec![60000]));
+        raw.set(t::DEFAULT_CROP_ORIGIN, Value::Short(vec![2, 2]));
+        raw.set(t::DEFAULT_CROP_SIZE, Value::Short(vec![4, 2]));
+        if let Some(p) = pattern {
+            raw.set(t::CFA_REPEAT_PATTERN_DIM, Value::Short(vec![2, 2]));
+            raw.set(t::CFA_PATTERN_EP, Value::Byte(p.to_vec()));
+        }
+        raw.set_image(ImageData::Strips { rows_per_strip: 6, strips: vec![strip] });
+        let mut ifd0 = rgb_ifd(4, 3);
+        ifd0.set(t::MAKE, Value::Ascii("Hasselblad".into()));
+        ifd0.set(t::COLOR_MATRIX_1, Value::SRational(vec![(5, 10), (-1, 10), (0, 10), (-5, 10), (12, 10), (3, 10), (-1, 10), (2, 10), (6, 10)]));
+        ifd0.set(t::AS_SHOT_NEUTRAL, Value::Rational(vec![(2, 5), (1, 1), (3, 5)]));
+        ifd0.add_sub_ifd(raw);
+        write(&[ifd0])
+    }
+
+    fn le_words(v: &[u16]) -> Vec<u8> {
+        v.iter().flat_map(|x| x.to_le_bytes()).collect()
+    }
+
+    /// Known answer: samples, black and white level, crop and colour come from the file's own tags; the
+    /// layout it does not state is RGGB.
+    #[test]
+    fn uncompressed_cfa_tiff_without_a_dng_version_decodes() {
+        let bytes = plain_cfa_tiff(1, le_words(&cfa_samples()), None);
+        assert_eq!(probe(&bytes), Some(RawFormat::CfaTiff));
+        let r = decode(&bytes).unwrap();
+        assert_eq!((r.format, r.width, r.height, r.bits), (RawFormat::CfaTiff, 8, 6, 16));
+        assert_eq!(r.data, RawData::U16(cfa_samples()));
+        assert_eq!(r.cfa.as_ref().unwrap().name(), "RGGB");
+        assert_eq!((r.black.mean(), r.white.clone()), (256.0, vec![60000.0]));
+        assert_eq!(r.crop, Rect::new(2, 2, 4, 2));
+        assert!(color::has_matrix(&r.color));
+        assert_eq!(r.color.as_shot_neutral, Some([0.4, 1.0, 0.6]));
+        // headers only: the same description without samples
+        let i = probe_info(&bytes).unwrap();
+        assert_eq!((i.format, i.cfa.as_ref().map(Cfa::name), i.crop), (RawFormat::CfaTiff, Some("RGGB".to_string()), Rect::new(2, 2, 4, 2)));
+    }
+
+    /// Without DNG's white-balance tag the file is left alone (a Kodak or Sinar TIFF with a CFA IFD, say).
+    #[test]
+    fn cfa_tiff_without_a_white_balance_tag_is_not_claimed() {
+        let mut raw = IfdBuilder::new();
+        raw.set(t::IMAGE_WIDTH, Value::Long(vec![8]));
+        raw.set(t::IMAGE_LENGTH, Value::Long(vec![6]));
+        raw.set(t::BITS_PER_SAMPLE, Value::Short(vec![16]));
+        raw.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
+        raw.set(t::PHOTOMETRIC, Value::Short(vec![t::photometric::CFA]));
+        raw.set(t::COMPRESSION, Value::Short(vec![1]));
+        raw.set_image(ImageData::Strips { rows_per_strip: 6, strips: vec![le_words(&cfa_samples())] });
+        let mut ifd0 = rgb_ifd(4, 3);
+        ifd0.add_sub_ifd(raw);
+        assert_eq!(probe(&write(&[ifd0])), Some(RawFormat::OtherTiff));
+    }
+
+    /// A stated `CFAPattern` wins over the RGGB default.
+    #[test]
+    fn cfa_tiff_keeps_a_stated_pattern() {
+        let bytes = plain_cfa_tiff(1, le_words(&cfa_samples()), Some([2, 1, 1, 0]));
+        assert_eq!(decode(&bytes).unwrap().cfa.unwrap().name(), "BGGR");
+    }
+
+    /// The lossless-JPEG coding of the same layout goes through the lossless decoder (one strip for the
+    /// whole image, as the 3FR/FFF files have it).
+    #[test]
+    fn lossless_jpeg_cfa_tiff_decodes() {
+        let strip = ljpeg::encode(&cfa_samples(), 8, 6, 1, 16, 1, 0);
+        let bytes = plain_cfa_tiff(7, strip, None);
+        assert_eq!(probe(&bytes), Some(RawFormat::CfaTiff));
+        let r = decode(&bytes).unwrap();
+        assert_eq!(r.data, RawData::U16(cfa_samples()));
+        assert_eq!(r.cfa.unwrap().name(), "RGGB");
+    }
+
+    /// A lossless-JPEG scan whose predictor selection value is outside 0 to 7 (the 3FR/FFF files use 8) is
+    /// not a coding the lossless decoder knows: the file stays an undecodable raw, with that as the reason,
+    /// and keeps the stand-in preview an unsupported container gets.
+    #[test]
+    fn cfa_tiff_with_an_unknown_predictor_stays_undecodable() {
+        let mut strip = ljpeg::encode(&cfa_samples(), 8, 6, 1, 16, 1, 0);
+        let sos = strip.windows(2).position(|w| w == [0xff, 0xda]).unwrap();
+        let ss = sos + 2 + 2 + 1 + 2;
+        assert_eq!(strip[ss], 1, "selection value byte");
+        strip[ss] = 8;
+        assert!(matches!(ljpeg::decode(&strip, 1 << 20), Err(RawError::Unsupported(w)) if w.contains("selection value 8")));
+        let bytes = plain_cfa_tiff(7, strip, None);
+        assert_eq!(probe(&bytes), Some(RawFormat::OtherTiff));
+        assert!(!RawFormat::OtherTiff.is_supported());
+        let Err(RawError::Unsupported(why)) = decode(&bytes) else { panic!("expected Unsupported") };
+        assert!(why.contains("lossless JPEG") && why.contains("selection value 8"), "{why}");
+    }
+
+    /// Other codings of a CFA IFD (here Deflate) are not claimed by the plain reader.
+    #[test]
+    fn cfa_tiff_with_another_coding_is_not_claimed() {
+        let bytes = plain_cfa_tiff(8, vec![0; 96], None);
+        assert_eq!(probe(&bytes), Some(RawFormat::OtherTiff));
     }
 
     /// A Samsung-branded body whose maker note has a Pentax layout is read by the Pentax reader; another
