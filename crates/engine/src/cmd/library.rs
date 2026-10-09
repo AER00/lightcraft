@@ -1278,10 +1278,16 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// `base` with a partial Filter (JSON) merged on top.
-fn merge_rules(base: &lightcraft_catalog::Filter, patch: &Value, c: &str, cat: &lightcraft_catalog::Catalog) -> Result<lightcraft_catalog::Filter> {
+/// `patch` merged onto `base`, unchecked (see [`merge_rules`]).
+fn merge_filter(base: &lightcraft_catalog::Filter, patch: &Value, c: &str) -> Result<lightcraft_catalog::Filter> {
     let mut v = serde_json::to_value(base).unwrap_or_default();
     lightcraft_develop::presets::deep_merge(&mut v, patch);
-    let f: lightcraft_catalog::Filter = serde_json::from_value(v).map_err(|e| bad(c, e.to_string()))?;
+    serde_json::from_value(v).map_err(|e| bad(c, e.to_string()))
+}
+
+/// `patch` merged onto `base`, refused when its rule set has problems (`RuleSet::check`).
+fn merge_rules(base: &lightcraft_catalog::Filter, patch: &Value, c: &str, cat: &lightcraft_catalog::Catalog) -> Result<lightcraft_catalog::Filter> {
+    let f = merge_filter(base, patch, c)?;
     let problems = f.rule_set.as_ref().map(|r| r.check(cat)).unwrap_or_default();
     if !problems.is_empty() {
         return Err(bad(c, problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")));
@@ -1320,7 +1326,9 @@ fn view_rules(s: &Session) -> lightcraft_catalog::Filter {
                     }
                 }
             }
-            merge_rules(&base, &Value::Object(patch), "", &s.catalog).unwrap_or(base)
+            // the view as it is: a rule that no longer checks (its album was deleted) just matches
+            // nothing there, and mustn't cost the filter bar's settings
+            merge_filter(&base, &Value::Object(patch), "").unwrap_or(base)
         }
         None => {
             let mut f = s.source.to_filter(&s.filter, &s.catalog);
