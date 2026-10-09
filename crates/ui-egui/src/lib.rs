@@ -28,6 +28,7 @@ pub mod shortcuts;
 pub mod softpaint;
 pub mod state;
 pub mod tasks;
+pub mod text_field;
 pub mod theme;
 pub mod titlebar;
 pub mod widgets;
