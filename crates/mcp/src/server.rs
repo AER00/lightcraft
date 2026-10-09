@@ -5,7 +5,7 @@ use std::io::{BufRead, Write};
 use serde_json::{Value, json};
 
 use crate::backend::Backend;
-use crate::tools::{call_tool, tool_definitions};
+use crate::tools::{ToolResult, call_tool, check_args, doc_inspect, tool_definitions};
 
 /// The MCP revision we implement.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -22,11 +22,13 @@ const RESOURCE_NOT_FOUND: i64 = -32002;
 const INSTRUCTIONS: &str = "LightCraft is a non-destructive photo library and raw developer (a Lightroom alternative). \
 Photos have integer ids; most editing acts on the *active* photo (tools that take `id` make that photo active first). \
 Typical loop: query_photos → select_photos (or pass id) → list_controls → set_develop {values: {\"light.exposure\": 0.5}} → \
-render_photo to look at the result → export. Positions (crop rects, mask points, brush strokes) are normalized image \
-coordinates 0..1 with the origin at the top-left. Every action is a command: list_commands shows ids and parameter \
-docs; run_command runs any of them. Edits are undoable (undo / redo).";
+render_preview to look at the result → export. Positions (crop rects, mask points, brush strokes) are normalized image \
+coordinates 0..1 with the origin at the top-left. Every action is a command: command_list shows ids and parameter \
+docs; command_run {id, params} runs any of them; command_batch runs steps in order. Inspect with doc_inspect. Edits are undoable (undo / redo).";
 
 /// Resource URIs.
+pub const DOCUMENT_URI: &str = "lightcraft://document";
+pub const COMMANDS_URI: &str = "lightcraft://commands";
 pub const LIBRARY_URI: &str = "lightcraft://library";
 pub const PHOTOS_URI: &str = "lightcraft://photos";
 pub const PHOTO_URI: &str = "lightcraft://photo/active";
@@ -132,7 +134,10 @@ impl Server {
             return Some(error(id, INVALID_PARAMS, "`params` must be an object"));
         }
         Some(match self.request(method, &params) {
-            Ok(r) => response(id, r),
+            Ok(mut r) => {
+                modern_result_fields(method, &params, &mut r);
+                response(id, r)
+            }
             Err((code, m)) => error(id, code, m),
         })
     }
@@ -158,13 +163,20 @@ impl Server {
                 }))
             }
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({"tools": tool_definitions(self.backend.as_mut(), self.command_tools)})),
+            "tools/list" => {
+                let command_tools = self.command_tools;
+                let tools = self.guarded(|b| tool_definitions(b, command_tools)).map_err(|e| (INTERNAL_ERROR, e))?;
+                Ok(json!({"tools": tools}))
+            }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing tool `name`".to_string()))?;
                 let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-                Ok(call_tool(self.backend.as_mut(), name, &args).to_value())
+                check_args(name, &args).map_err(|e| (INVALID_PARAMS, e))?;
+                Ok(self.guarded(|b| call_tool(b, name, &args)).unwrap_or_else(ToolResult::error).to_value())
             }
             "resources/list" => Ok(json!({"resources": [
+                resource(DOCUMENT_URI, "document", "Library document", "Library state and counts (same as doc_inspect)"),
+                resource(COMMANDS_URI, "commands", "Command catalog", "Every command (same as command_list)"),
                 resource(LIBRARY_URI, "library", "Library state", "Current source, filter, sort, selection, active photo/mask and undo/redo labels (library.state)"),
                 resource(PHOTOS_URI, "photos", "Photos in view", "The photos in the current view with ids, ratings, flags and metadata (catalog.query)"),
                 resource(PHOTO_URI, "active-photo", "Active photo", "Everything about the active photo: file, metadata, develop settings, albums, history (photo.inspect)"),
@@ -175,6 +187,7 @@ impl Server {
             "resources/read" => {
                 let uri = params.get("uri").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing `uri`".to_string()))?;
                 let cmd = match uri {
+                    DOCUMENT_URI | COMMANDS_URI => "",
                     LIBRARY_URI => "library.state",
                     PHOTOS_URI => "catalog.query",
                     PHOTO_URI => "photo.inspect",
@@ -182,10 +195,47 @@ impl Server {
                     CONTROLS_URI => "develop.controls",
                     _ => return Err((RESOURCE_NOT_FOUND, format!("resource not found: {uri}"))),
                 };
-                let v = self.backend.call("engine.execute", json!({"command": cmd, "params": {}})).map_err(|e| (INTERNAL_ERROR, e))?;
+                let v = self
+                    .guarded(|b| match uri {
+                        DOCUMENT_URI => doc_inspect(b),
+                        COMMANDS_URI => b.call("engine.commands", json!({})),
+                        _ => b.call("engine.execute", json!({"command": cmd, "params": {}})),
+                    })
+                    .and_then(|v| v)
+                    .map_err(|e| (INTERNAL_ERROR, e))?;
                 Ok(json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": serde_json::to_string_pretty(&v).unwrap_or_default()}]}))
             }
             other => Err((METHOD_NOT_FOUND, format!("method not found: {other}"))),
         }
+    }
+}
+
+impl Server {
+    /// Escaped backend panics become errors; subsequent requests can keep using the session.
+    fn guarded<T>(&mut self, f: impl FnOnce(&mut dyn Backend) -> T) -> Result<T, String> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self.backend.as_mut()))).map_err(|p| {
+            let message =
+                p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into());
+            format!("internal error: {message}")
+        })
+    }
+}
+
+/// Per-request protocol metadata leaves initialize-based clients' result shapes unchanged.
+fn modern_result_fields(method: &str, params: &Value, result: &mut Value) {
+    let modern = params.pointer("/_meta/io.modelcontextprotocol~1protocolVersion").and_then(Value::as_str).is_some_and(|v| v >= "2026-07-28");
+    let ttl = match method {
+        "tools/list" | "resources/list" | "resources/templates/list" => Some(600_000),
+        "resources/read" => Some(0),
+        "tools/call" => None,
+        _ => return,
+    };
+    let Some(obj) = result.as_object_mut().filter(|_| modern) else {
+        return;
+    };
+    obj.insert("resultType".into(), json!("complete"));
+    if let Some(ttl) = ttl {
+        obj.insert("ttlMs".into(), json!(ttl));
+        obj.insert("cacheScope".into(), json!("private"));
     }
 }
