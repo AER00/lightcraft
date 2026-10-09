@@ -271,6 +271,14 @@ fn smart_album_rule_sets() {
         &serde_json::json!({"name": "Maybe", "rules": {"ruleSet": {"rules": [{"field": "edited", "op": "is", "value": "maybe"}]}}}),
     );
     assert!(maybe.is_err_and(|e| e.to_string().contains("yes or no")), "unreadable yes/no value");
+    // the library filter checks a rule set the same way, instead of quietly showing nothing
+    for rules in [serde_json::json!([{"field": "edited", "op": "is", "value": "maybe"}]), serde_json::json!([{"field": "nope", "op": "is"}])] {
+        let r = s.execute("library.filter", &serde_json::json!({"ruleSet": {"rules": rules}}));
+        assert!(r.is_err(), "{rules}");
+    }
+    assert!(s.filter.rule_set.is_none(), "a refused filter isn't applied");
+    s.execute("library.filter", &serde_json::json!({"ruleSet": {"rules": [{"field": "edited", "op": "is", "value": "no"}]}})).unwrap();
+    s.execute("library.filter", &serde_json::json!({"ruleSet": null})).unwrap();
     let r = s
         .execute(
             "album.createSmart",

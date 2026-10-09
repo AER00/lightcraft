@@ -330,6 +330,10 @@ pub fn specs() -> Vec<CommandSpec> {
                 if f.library_folder.is_some() && s.source == LibrarySource::LibraryFolder {
                     return Err(bad("library.filter", "a folder is already shown (library.source): show another source first"));
                 }
+                // checked like a smart album's rules: an unknown field or a value that can't match is an error, not an empty grid
+                if let Some(problems) = f.rule_set.as_ref().map(|rs| rs.problems()).filter(|p| !p.is_empty()) {
+                    return Err(bad("library.filter", problems.join("; ")));
+                }
                 s.filter = f;
                 Ok(json!({"count": s.visible().len()}))
             }
