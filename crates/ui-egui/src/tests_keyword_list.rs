@@ -195,7 +195,7 @@ fn a_keywords_menu_offers_its_actions() {
         assert!(has(&h, &format!("keywordMenu:{item}")), "{item}");
     }
     ask(&mut h, "ui.clickWidget", json!({"id": "keywordMenu:defaultParent"}));
-    assert_eq!(h.app.session.keyword_parent.as_deref(), Some("Events"));
+    assert_eq!(h.app.session.catalog.default_keyword_parent().as_deref(), Some("Events"));
     assert!(has(&h, "keywordDefault:Events"), "the list marks where new keywords go");
     // Create inside it
     ask(&mut h, "ui.clickWidget", json!({"id": "keywordRow:Events", "button": "right"}));
@@ -207,7 +207,7 @@ fn a_keywords_menu_offers_its_actions() {
     ask(&mut h, "ui.clickWidget", json!({"id": "keywordRow:Events", "button": "right"}));
     ask(&mut h, "ui.clickWidget", json!({"id": "keywordMenu:purge"}));
     assert!(!h.app.session.catalog.has_keyword("Events"));
-    assert_eq!(h.app.session.keyword_parent, None, "gone with it");
+    assert_eq!(h.app.session.catalog.default_keyword_parent(), None, "gone with it");
 }
 
 fn center(h: &Headless, id: &str) -> egui::Pos2 {

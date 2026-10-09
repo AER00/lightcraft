@@ -55,8 +55,8 @@ fn creating_a_keyword_with_attributes_and_the_selection() {
 }
 
 /// "Put new keywords inside this keyword": new keywords go inside the default parent unless the
-/// command says otherwise (`parent: null` = the top level). It follows the parent's rename, goes
-/// when the parent is deleted, and is kept with the library.
+/// command says otherwise (`parent: null` = the top level). It belongs to its keyword in the
+/// library: it follows a rename, goes with a delete, and undo and redo bring it back with them.
 #[test]
 fn new_keywords_go_inside_the_default_parent() {
     let dir = temp_dir("default-parent");
@@ -64,17 +64,26 @@ fn new_keywords_go_inside_the_default_parent() {
     s.open_library(&dir, true).unwrap();
     s.execute("keyword.create", &json!({"name": "Events"})).unwrap();
     s.execute("keyword.setDefaultParent", &json!({"keyword": "events"})).unwrap();
-    assert_eq!(s.keyword_parent.as_deref(), Some("Events"));
+    assert_eq!(s.catalog.default_keyword_parent().as_deref(), Some("Events"));
     assert_eq!(s.execute("keyword.create", &json!({"name": "Birthdays"})).unwrap()["keyword"], "Events|Birthdays");
     assert_eq!(s.execute("keyword.create", &json!({"name": "Travel", "parent": null})).unwrap()["keyword"], "Travel");
     s.execute("keyword.rename", &json!({"from": "Events", "to": "Occasions"})).unwrap();
-    assert_eq!(s.keyword_parent.as_deref(), Some("Occasions"), "follows the rename");
+    assert_eq!(s.catalog.default_keyword_parent().as_deref(), Some("Occasions"), "follows the rename");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.default_keyword_parent().as_deref(), Some("Events"), "undo takes it back");
+    s.execute("edit.redo", &json!({})).unwrap();
     drop(s);
     let mut s = Session::new();
     s.open_library(&dir, false).unwrap();
-    assert_eq!(s.keyword_parent.as_deref(), Some("Occasions"), "kept with the library");
+    assert_eq!(s.catalog.default_keyword_parent().as_deref(), Some("Occasions"), "kept with the library");
     s.execute("keyword.delete", &json!({"keyword": "occasions"})).unwrap();
-    assert_eq!(s.keyword_parent, None, "gone with its keyword");
+    assert_eq!(s.catalog.default_keyword_parent(), None, "gone with its keyword");
+    assert_eq!(s.execute("keyword.create", &json!({"name": "Graduations"})).unwrap()["keyword"], "Graduations", "at the top level");
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.default_keyword_parent().as_deref(), Some("Occasions"), "undoing the delete brings it back");
+    s.execute("keyword.setDefaultParent", &json!({"keyword": null})).unwrap();
+    assert_eq!(s.catalog.default_keyword_parent(), None);
     assert!(s.execute("keyword.setDefaultParent", &json!({"keyword": "lisbon"})).is_err(), "no such keyword");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -15,8 +15,8 @@ fn strs(p: &Value, key: &str) -> Vec<String> {
     }
 }
 
-/// Commit a keyword batch; returns how many changes it made. The keyword filter and the default
-/// parent follow a renamed keyword and are cleared when their keyword is deleted.
+/// Commit a keyword batch; returns how many changes it made. The keyword filter follows a renamed
+/// keyword and is cleared when its keyword is deleted.
 fn commit_keywords(s: &mut Session, label: &str, op: lightcraft_catalog::Op, follow: impl Fn(&str) -> Option<String>) -> Result<Value> {
     let n = match &op {
         lightcraft_catalog::Op::Batch { ops } => ops.len(),
@@ -27,13 +27,6 @@ fn commit_keywords(s: &mut Session, label: &str, op: lightcraft_catalog::Op, fol
     }
     if let Some(k) = s.filter.keyword.clone() {
         s.filter.keyword = follow(&k);
-    }
-    if let Some(k) = s.keyword_parent.clone() {
-        let followed = follow(&k).filter(|k| s.catalog.has_keyword(k));
-        if followed.as_deref() != Some(k.as_str()) {
-            s.keyword_parent = followed;
-            let _ = s.save_prefs();
-        }
     }
     Ok(json!({"changed": n}))
 }
@@ -50,6 +43,7 @@ fn info_from(p: &Value, base: KeywordInfo) -> KeywordInfo {
         export_containing: bool_or(p, "exportContaining", base.export_containing),
         export_synonyms: bool_or(p, "exportSynonyms", base.export_synonyms),
         person: bool_or(p, "person", base.person),
+        new_keywords_inside: base.new_keywords_inside,
     }
 }
 
@@ -254,7 +248,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let parent = match p.get("parent") {
                     Some(Value::String(k)) => Some(s.catalog.keyword_path(k).unwrap_or_else(|| clean(k))),
                     Some(_) => None,
-                    None => s.keyword_parent.clone(),
+                    None => s.catalog.default_keyword_parent(),
                 };
                 let path = clean(&match parent {
                     Some(parent) => format!("{parent}|{name}"),
@@ -340,12 +334,13 @@ pub fn specs() -> Vec<CommandSpec> {
             "{keyword: keyword | null} — the parent keyword.create puts new keywords inside (null: the top level)",
             always,
             |s, p| {
-                s.keyword_parent = match p.get("keyword") {
+                let keyword = match p.get("keyword") {
                     Some(Value::Null) | None => None,
                     Some(_) => Some(named_keyword(s, p, "keyword.setDefaultParent")?),
                 };
-                let _ = s.save_prefs();
-                Ok(json!({"keyword": s.keyword_parent}))
+                let op = s.catalog.set_default_parent_ops(keyword.as_deref()).map_err(|e| bad("keyword.setDefaultParent", e.to_string()))?;
+                commit_keywords(s, "Put New Keywords Inside", op, |k| Some(k.to_string()))?;
+                Ok(json!({"keyword": s.catalog.default_keyword_parent()}))
             }
         ),
         cmd!(

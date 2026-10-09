@@ -74,6 +74,10 @@ pub struct KeywordInfo {
     /// The keyword names a person.
     #[serde(default)]
     pub person: bool,
+    /// New keywords go inside this one (Put New Keywords Inside This Keyword): one keyword at
+    /// most, see [`Catalog::default_keyword_parent`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub new_keywords_inside: bool,
 }
 
 fn yes() -> bool {
@@ -82,7 +86,14 @@ fn yes() -> bool {
 
 impl Default for KeywordInfo {
     fn default() -> Self {
-        KeywordInfo { synonyms: Vec::new(), include_on_export: true, export_containing: true, export_synonyms: true, person: false }
+        KeywordInfo {
+            synonyms: Vec::new(),
+            include_on_export: true,
+            export_containing: true,
+            export_synonyms: true,
+            person: false,
+            new_keywords_inside: false,
+        }
     }
 }
 
@@ -215,6 +226,7 @@ impl Catalog {
                 let path = reparent(&l.path, f, to);
                 match list.get_mut(&path.to_lowercase()) {
                     Some(there) => {
+                        there.info.new_keywords_inside |= l.info.new_keywords_inside;
                         for s in l.info.synonyms {
                             if !there.info.synonyms.iter().any(|x| same(x, &s)) {
                                 there.info.synonyms.push(s);
@@ -321,6 +333,31 @@ impl Catalog {
     /// only browsed), itself or one below it.
     pub fn has_keyword(&self, path: &str) -> bool {
         self.keyword_path(path).is_some()
+    }
+
+    /// The keyword new keywords go inside (Put New Keywords Inside This Keyword), if any.
+    pub fn default_keyword_parent(&self) -> Option<String> {
+        self.keyword_list.values().find(|l| l.info.new_keywords_inside).map(|l| l.path.clone())
+    }
+
+    /// Make `keyword` the one new keywords go inside (`None`: none) — one batch. It is listed if it
+    /// wasn't, keeping the attributes it has.
+    pub fn set_default_parent_ops(&self, keyword: Option<&str>) -> Result<Op> {
+        let path = match keyword {
+            Some(k) => Some(self.keyword_path(k).ok_or_else(|| CatalogError::Invalid(format!("no keyword “{}”", clean(k))))?),
+            None => None,
+        };
+        Ok(Op::Batch {
+            ops: self.list_ops(|list| {
+                for l in list.values_mut() {
+                    l.info.new_keywords_inside = false;
+                }
+                if let Some(path) = path {
+                    let l = list.entry(path.to_lowercase()).or_insert_with(|| ListedKeyword { path, info: KeywordInfo::default() });
+                    l.info.new_keywords_inside = true;
+                }
+            }),
+        })
     }
 
     /// The keyword as written in the library (whatever the case of `path`): its listing, or the
@@ -857,6 +894,34 @@ mod tests {
         };
         assert_eq!(merged(["a", "a|b"]), merged(["a|b", "a"]));
         assert_eq!(merged(["a", "a|b"]), ["x|c", "x|d"]);
+    }
+
+    /// One keyword at most is where new keywords go (Put New Keywords Inside This Keyword). Making
+    /// another one so is one undo step; the mark moves with its keyword (also into a merge) and
+    /// goes with it.
+    #[test]
+    fn one_keyword_is_where_new_keywords_go() {
+        let (mut c, _) = lib(&[&["Events|Weddings"], &["Travel"]]);
+        let op = c.set_default_parent_ops(Some("events")).unwrap();
+        let undo = c.apply(op).unwrap();
+        assert_eq!(c.default_keyword_parent().as_deref(), Some("Events"));
+        let op = c.set_default_parent_ops(Some("travel")).unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(c.default_keyword_parent().as_deref(), Some("Travel"), "only one");
+        assert!(c.set_default_parent_ops(Some("lisbon")).is_err());
+        let op = c.rename_keyword_ops("travel", "Trips").unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(c.default_keyword_parent().as_deref(), Some("Trips"));
+        let op = c.merge_keywords_ops(&["trips".into()], "Events").unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(c.default_keyword_parent().as_deref(), Some("Events"), "into the merge");
+        let op = c.delete_keyword_ops("events").unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(c.default_keyword_parent(), None);
+        let op = c.set_default_parent_ops(None).unwrap();
+        assert_eq!(op, Op::Batch { ops: vec![] }, "none to clear");
+        c.apply(undo).unwrap();
+        assert_eq!(c.default_keyword_parent(), None, "undo of the first: none was");
     }
 
     #[test]

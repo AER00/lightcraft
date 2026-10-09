@@ -215,7 +215,7 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId
     let name = if measure(&r.name) <= room { r.name.clone() } else { crate::widgets::elide_head(&r.name, room, measure) };
     let label = ui.painter().text(pos2(x + 34.0, cy), Align2::LEFT_CENTER, name, font.clone(), if picked { t.text } else { t.text_label });
     // where new keywords go (Put New Keywords Inside This Keyword): a dot after the name
-    if app.session.keyword_parent.as_deref().is_some_and(|k| same(k, &r.path)) {
+    if app.session.catalog.default_keyword_parent().as_deref().is_some_and(|k| same(k, &r.path)) {
         let dot = Rect::from_center_size(pos2(label.right() + 7.0, cy), vec2(6.0, 6.0));
         ui.painter().circle_filled(dot.center(), 3.0, t.accent);
         register(ui.ctx(), format!("keywordDefault:{}", r.path), dot);
@@ -288,7 +288,7 @@ fn menu(app: &mut LightcraftApp, ui: &mut egui::Ui, path: &str, selection: &[Pho
     if item(ui, "edit", crate::i18n::tr("Edit Keyword Tag…"), true) {
         app.ui.dialog = Some(edit_dialog(app, path));
     }
-    let is_default = app.session.keyword_parent.as_deref().is_some_and(|k| same(k, path));
+    let is_default = app.session.catalog.default_keyword_parent().as_deref().is_some_and(|k| same(k, path));
     let label = format!("{}{}", if is_default { "✓ " } else { "" }, crate::i18n::tr("Put New Keywords Inside This Keyword"));
     if item(ui, "defaultParent", &label, true) {
         let _ = app.run("keyword.setDefaultParent", json!({"keyword": if is_default { serde_json::Value::Null } else { json!(path) }}));
@@ -316,7 +316,8 @@ fn menu(app: &mut LightcraftApp, ui: &mut egui::Ui, path: &str, selection: &[Pho
 
 /// Create Keyword Tag: inside the keyword picked in the list, else the default parent.
 pub(crate) fn create_dialog(app: &LightcraftApp) -> Dialog {
-    let parent = app.ui.keyword_list_selected.clone().filter(|k| app.session.catalog.has_keyword(k)).or_else(|| app.session.keyword_parent.clone());
+    let parent =
+        app.ui.keyword_list_selected.clone().filter(|k| app.session.catalog.has_keyword(k)).or_else(|| app.session.catalog.default_keyword_parent());
     let d = KeywordInfo::default();
     Dialog::KeywordTag {
         editing: None,
