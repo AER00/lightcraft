@@ -324,6 +324,22 @@ fn smart_album_field_menu_groups_fields_in_submenus() {
     assert!(!has(&h, "ruleFieldItem:rating:rules-0") && !has(&h, "ruleFieldItem:filePath:rules-0"), "picking a field closes the menu");
 }
 
+/// A yes/no rule whose value isn't yes or no (written by an agent or an older version) stays as
+/// it is in the editor: the dialog shows the problem and OK doesn't quietly save it as Yes.
+#[test]
+fn smart_album_editor_keeps_an_unreadable_yes_no_value() {
+    let mut h = detail("panel.edit");
+    exec(&mut h, "dialog.smartAlbum", json!({"name": "Odd"}));
+    let Some(crate::state::Dialog::SmartRules { rules, .. }) = &mut h.app.ui.dialog else { panic!("no rule editor") };
+    rules.rules[0] = serde_json::from_value(json!({"field": "edited", "op": "is", "value": "maybe"})).unwrap();
+    h.settle(SETTLE);
+    let Some(crate::state::Dialog::SmartRules { rules, .. }) = &h.app.ui.dialog else { panic!("no rule editor") };
+    let Rule::Field { value, .. } = &rules.rules[0] else { panic!("not a field rule") };
+    assert_eq!(value, &json!("maybe"), "drawing the editor doesn't rewrite the value");
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert!(h.app.session.catalog.albums().all(|a| a.name != "Odd"), "OK refuses it: {r}");
+}
+
 #[test]
 fn g_toggles_grids_and_shift_g_starts_guided_upright() {
     let mut h = detail("panel.edit");

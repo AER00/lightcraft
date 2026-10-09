@@ -131,13 +131,17 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
             );
         }
         (Some(Kind::Bool), _) => {
-            // the catalog's reading of the value ("false" is no), stored back as a plain boolean
-            let mut b = bool_value(v).unwrap_or(true);
-            egui::ComboBox::from_id_salt(format!("{salt}-bool")).width(60.0).selected_text(crate::i18n::bool_text(b)).show_ui(ui, |ui| {
-                ui.selectable_value(&mut b, true, crate::i18n::bool_text(true));
-                ui.selectable_value(&mut b, false, crate::i18n::bool_text(false));
+            // the catalog's reading of the value ("false" is no); one that is neither yes nor no is
+            // shown as written and kept until a choice replaces it, so the dialog reports it
+            let cur = bool_value(v);
+            let text = cur.map_or_else(|| v.to_string(), |b| crate::i18n::bool_text(b).to_string());
+            egui::ComboBox::from_id_salt(format!("{salt}-bool")).width(60.0).selected_text(text).show_ui(ui, |ui| {
+                for b in [true, false] {
+                    if ui.selectable_label(cur == Some(b), crate::i18n::bool_text(b)).clicked() {
+                        *v = json!(b);
+                    }
+                }
             });
-            *v = json!(b);
         }
         (Some(Kind::Date), _) => text_value(ui, v, 120.0, "2026-04 or 2026-04-12", salt),
         _ => text_value(ui, v, 140.0, "", salt),
