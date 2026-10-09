@@ -289,10 +289,15 @@ fn exporting_keywords_names_what_the_list_cant_hold() {
     let mut s = Session::with_demo();
     let id = s.visible_cloned()[0].0;
     s.execute("photo.setMeta", &json!({"ids": [id], "keywords": ["Travel|[draft]", "Travel|Lisbon"]})).unwrap();
+    let before = s.execute("keyword.export", &json!({})).unwrap()["keywords"].as_u64().unwrap();
+    // a name starting with a brace is written, counted and checked for Capture One like any other
+    s.execute("photo.setMeta", &json!({"ids": [id], "addKeywords": ["{draft, notes"]})).unwrap();
     let r = s.execute("keyword.export", &json!({})).unwrap();
+    assert_eq!(r["keywords"].as_u64(), Some(before + 1), "{r}");
+    assert_eq!(r["captureOneRefuses"], json!(["{draft, notes"]), "{r}");
     assert_eq!(r["unwritable"], json!(["Travel|[draft]"]), "{r}");
     let text = r["text"].as_str().unwrap();
-    assert!(text.contains("Travel\n\tLisbon\n") && !text.contains("draft"), "{text}");
+    assert!(text.contains("Travel\n\tLisbon\n") && !text.contains("[draft]"), "{text}");
     s.execute("keyword.import", &json!({"text": text})).unwrap();
 }
 
