@@ -1862,5 +1862,6 @@
   "Not saved": "未保存",
   "A folder is being synchronized": "正在同步文件夹",
   "Wait for the import to finish": "请等待导入完成",
-  "Show less": "收起"
+  "Show less": "收起",
+  "Quit while tasks are running?": "要在任务运行时退出吗？"
 }

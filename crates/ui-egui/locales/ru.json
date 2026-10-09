@@ -1575,5 +1575,6 @@
   "Not saved": "Не сохранено",
   "A folder is being synchronized": "Идёт синхронизация папки",
   "Wait for the import to finish": "Дождитесь окончания импорта",
-  "Show less": "Свернуть"
+  "Show less": "Свернуть",
+  "Quit while tasks are running?": "Выйти, пока выполняются задачи?"
 }

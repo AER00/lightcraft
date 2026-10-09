@@ -225,5 +225,7 @@
   "{done} of {total}": "{done} de {total}",
   "{done} of {total} MB": "{done} de {total} MB",
   "{pct} %": "{pct}%",
-  "+{n} more": "+{n} mais"
+  "+{n} more": "+{n} mais",
+  "1 task is still running: {names}. Quitting stops it.": "1 tarefa ainda está em andamento: {names}. Sair a interrompe.",
+  "{n} tasks are still running: {names}. Quitting stops them.": "{n} tarefas ainda estão em andamento: {names}. Sair as interrompe."
 }

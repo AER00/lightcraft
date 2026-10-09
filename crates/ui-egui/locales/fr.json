@@ -1862,5 +1862,6 @@
   "Not saved": "Non enregistré",
   "A folder is being synchronized": "Un dossier est en cours de synchronisation",
   "Wait for the import to finish": "Attendez la fin de l'importation",
-  "Show less": "Afficher moins"
+  "Show less": "Afficher moins",
+  "Quit while tasks are running?": "Quitter pendant que des tâches sont en cours ?"
 }

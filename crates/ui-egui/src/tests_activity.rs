@@ -130,3 +130,34 @@ fn long_detail_stays_inside_the_stack() {
     let row = rect(&h, &format!("activity:row:{}", g.id()));
     assert!(row.width() <= WIDTH + 1.0, "{row:?}");
 }
+
+#[test]
+fn quit_with_a_running_task_asks_and_quit_anyway_cancels() {
+    let mut h = demo();
+    let g = h.app.session.activity.start("export", "Exporting", Cancel::Yes);
+    wait_visible(&mut h);
+    assert!(!crate::panels::notices::may_close(&mut h.app));
+    assert!(matches!(h.app.quit_prompt, Some(crate::QuitPrompt::Tasks(_))), "{:?}", h.app.quit_prompt);
+    h.step();
+    assert!(!has(&h, "button:quitRetry"));
+    click(&mut h, "button:quitAnyway");
+    assert!(g.is_cancelled() && h.quit_requested());
+}
+
+#[test]
+fn quit_cancel_keeps_the_task_running() {
+    let mut h = demo();
+    let g = h.app.session.activity.start("import", "Importing", Cancel::Yes);
+    assert!(!crate::panels::notices::may_close(&mut h.app));
+    click(&mut h, "button:quitCancel");
+    assert!(!g.is_cancelled() && h.app.quit_prompt.is_none() && !h.app.quit_confirmed);
+}
+
+#[test]
+fn cancelling_task_does_not_block_quit() {
+    let mut h = demo();
+    let g = h.app.session.activity.start("export", "Exporting", Cancel::Yes);
+    h.app.session.activity.cancel(g.id()).unwrap();
+    let _f = h.app.session.activity.start("faces", "Finding faces", Cancel::No);
+    assert!(crate::panels::notices::may_close(&mut h.app));
+}
