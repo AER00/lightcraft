@@ -9,8 +9,8 @@
 
 ### Crop rotation
 - Outside the crop box, where dragging rotates the photo, the pointer is a curved double arrow, and the angle is shown
-  next to it while you rotate (issue #534). For an exact angle, click the Straighten value and type it; hovering any
-  slider's value now says it can be typed.
+  next to it while you rotate (issue #534). For an exact angle, type it in the new Angle field under Straighten (or click
+  the Straighten value); hovering any slider's value now says it can be typed.
 
 ### Albums tree
 - Album folders fold with the same disclosure triangle as Local, By Date, Folders and Keywords.
