@@ -186,7 +186,9 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId
         } else {
             vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
         };
-        ui.painter().add(egui::Shape::convex_polygon(pts, if tr.hovered() { t.text } else { t.text_dim }, Stroke::NONE));
+        // while a filter opens the levels the triangle does nothing: it doesn't light up either
+        let lit = tr.hovered() && can_fold;
+        ui.painter().add(egui::Shape::convex_polygon(pts, if lit { t.text } else { t.text_dim }, Stroke::NONE));
         if tr.clicked() && can_fold {
             let key = r.path.to_lowercase();
             if r.open {
@@ -219,10 +221,15 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId
             ui.painter().rect_stroke(boxr, 2.0, Stroke::new(1.0, edge), StrokeKind::Inside);
         }
     }
-    let tb = tb.on_hover_text(crate::i18n::tr(match state {
-        Tick::All => "Remove from Selected Photos",
-        _ => "Add to Selected Photos",
-    }));
+    // (with nothing selected it does nothing, and says nothing)
+    let tb = if on {
+        tb.on_hover_text(crate::i18n::tr(match state {
+            Tick::All => "Remove from Selected Photos",
+            _ => "Add to Selected Photos",
+        }))
+    } else {
+        tb
+    };
     if tb.clicked() {
         let key = if state == Tick::All { "removeKeywords" } else { "addKeywords" };
         let _ = app.run("photo.setMeta", json!({key: [r.path]}));
