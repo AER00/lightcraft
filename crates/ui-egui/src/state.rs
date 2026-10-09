@@ -562,6 +562,30 @@ pub enum Dialog {
         from: String,
         to: String,
     },
+    /// Create a keyword, or edit one (`editing`): Lightroom Classic's Create / Edit Keyword Tag.
+    KeywordTag {
+        /// The keyword being edited; `None`: a new one.
+        editing: Option<String>,
+        name: String,
+        /// A new keyword goes inside this one when `inside` is on (the keyword picked in the
+        /// list, or the default parent).
+        parent: Option<String>,
+        inside: bool,
+        /// Comma-separated.
+        synonyms: String,
+        include_on_export: bool,
+        export_containing: bool,
+        export_synonyms: bool,
+        person: bool,
+        /// A new keyword is given to the selected photos.
+        add_to_selected: bool,
+    },
+    /// Delete a keyword from every photo and the keyword list, after asking.
+    DeleteKeyword {
+        keyword: String,
+        /// Photos that have it (or one below it).
+        count: usize,
+    },
     /// Merge keywords into another one on every photo.
     MergeKeywords {
         from: Vec<String>,

@@ -1738,5 +1738,16 @@
   "Keyword List": "Lista de palabras clave",
   "Filter Keywords": "Filtrar palabras clave",
   "No keywords yet": "Aún no hay palabras clave",
-  "No keywords match": "Ninguna palabra clave coincide"
+  "No keywords match": "Ninguna palabra clave coincide",
+  "Keyword Name": "Nombre de la palabra clave",
+  "Synonyms": "Sinónimos",
+  "Separated by commas": "Separados por comas",
+  "Keyword Tag Options": "Opciones de palabra clave",
+  "Include on Export": "Incluir al exportar",
+  "Export Containing Keywords": "Exportar palabras clave contenedoras",
+  "Export Synonyms": "Exportar sinónimos",
+  "Create Keyword Tag": "Crear palabra clave",
+  "Edit Keyword Tag": "Editar palabra clave",
+  "Create": "Crear",
+  "No photo has it; the keywords below it go too.": "Ninguna foto la tiene; las palabras clave que contiene también se eliminan."
 }

@@ -98,3 +98,82 @@ fn the_arrow_shows_the_photos_with_the_keyword() {
     ask(&mut h, "ui.clickWidget", json!({"id": "keywordShow:mountains"}));
     assert_eq!(h.app.session.filter.keyword.as_deref(), Some("mountains"));
 }
+
+fn find(h: &mut Headless, text: &str) {
+    ask(h, "ui.clickWidget", json!({"id": "field:keywordFilter"}));
+    ask(h, "ui.key", json!({"key": "A", "cmd": true}));
+    ask(h, "ui.text", json!({"text": text}));
+}
+
+fn info(h: &mut Headless, keyword: &str) -> serde_json::Value {
+    h.app.session.execute("keyword.info", &json!({"keyword": keyword})).unwrap_or(serde_json::Value::Null)
+}
+
+/// The + button creates a keyword (Create Keyword Tag): inside the keyword picked in the list, with
+/// synonyms, and given to the selected photos when asked; Return creates it.
+#[test]
+fn plus_creates_a_keyword_inside_the_picked_one() {
+    let (mut h, ids) = keywords_panel();
+    find(&mut h, "mountains");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRow:mountains"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordList:create"}));
+    assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::KeywordTag { editing: None, .. })), "{:?}", h.app.ui.dialog);
+    ask(&mut h, "ui.text", json!({"text": "Alps"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keywordSynonyms"}));
+    ask(&mut h, "ui.text", json!({"text": "peaks, summits"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "check:keywordAddToSelected"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keywordTagName"}));
+    ask(&mut h, "ui.key", json!({"key": "Enter"}));
+    assert_eq!(h.app.ui.dialog, None);
+    let i = info(&mut h, "mountains|Alps");
+    assert_eq!((i["listed"].as_bool(), i["synonyms"].clone()), (Some(true), json!(["peaks", "summits"])), "{i}");
+    assert!(ids.iter().all(|id| keywords_of(&h, *id).contains(&"mountains|Alps".to_string())), "given to the selection");
+}
+
+/// Double-clicking a keyword edits it (Edit Keyword Tag): the dialog shows what it is, and a new
+/// name and an option change apply together, in one undo step.
+#[test]
+fn double_clicking_a_keyword_edits_it() {
+    let (mut h, _) = keywords_panel();
+    run(&mut h, "keyword.create", json!({"name": "Weddings", "synonyms": ["marriage"]}));
+    find(&mut h, "wedd");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRow:Weddings", "count": 2}));
+    let Some(crate::state::Dialog::KeywordTag { editing, name, synonyms, .. }) = h.app.ui.dialog.clone() else { panic!("{:?}", h.app.ui.dialog) };
+    assert_eq!((editing.as_deref(), name.as_str(), synonyms.as_str()), (Some("Weddings"), "Weddings", "marriage"));
+    let undo = h.app.session.undo.len();
+    ask(&mut h, "ui.text", json!({"text": "Marriages"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "check:keywordIncludeOnExport"}));
+    ask(&mut h, "ui.dialog.confirm", json!({}));
+    let i = info(&mut h, "Marriages");
+    assert_eq!((i["includeOnExport"].as_bool(), i["synonyms"].clone()), (Some(false), json!(["marriage"])), "{i}");
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one undo step");
+}
+
+/// The − button deletes the picked keyword after asking how many photos lose it; Cancel keeps it, and undo
+/// brings a deleted one back.
+#[test]
+fn minus_deletes_a_keyword_after_asking() {
+    let (mut h, _) = keywords_panel();
+    find(&mut h, "mountains");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRow:mountains"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordList:delete"}));
+    assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::DeleteKeyword { .. })), "{:?}", h.app.ui.dialog);
+    ask(&mut h, "ui.dialog.cancel", json!({}));
+    assert!(h.app.session.catalog.has_keyword("mountains"), "Cancel kept it");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordList:delete"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "button:dialogOk"}));
+    assert!(!h.app.session.catalog.has_keyword("mountains"));
+    run(&mut h, "edit.undo", json!({}));
+    assert!(h.app.session.catalog.has_keyword("mountains"));
+}
+
+/// Creating a keyword that exists says so, and the dialog stays open with what was typed.
+#[test]
+fn creating_a_keyword_that_exists_keeps_the_dialog() {
+    let (mut h, _) = keywords_panel();
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordList:create"}));
+    ask(&mut h, "ui.text", json!({"text": "mountains"}));
+    ask(&mut h, "ui.key", json!({"key": "Enter"}));
+    assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::KeywordTag { .. })), "still open");
+    assert!(h.app.ui.toast.as_ref().is_some_and(|t| t.0.contains("already")), "{:?}", h.app.ui.toast);
+}

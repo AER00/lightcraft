@@ -206,5 +206,8 @@
   "In line for AI Denoise ({ahead} ahead)…": "In line for AI Denoise ({ahead} ahead)…",
   "Running on {}.": "Running on {}.",
   "{file} · {size}": "{file} · {size}",
-  "•  {assumption}": "•  {assumption}"
+  "•  {assumption}": "•  {assumption}",
+  "Put inside “{parent}”": "放入“{parent}”中",
+  "Delete the keyword “{name}”?": "要删除关键字“{name}”吗？",
+  "It is taken off {count} photo{}, with the keywords below it. Undo brings it back.": "将从 {count} 张照片中移除，其下的关键字也一并移除。撤销可恢复。{:.0}"
 }

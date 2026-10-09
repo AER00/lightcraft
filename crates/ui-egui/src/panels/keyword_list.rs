@@ -3,11 +3,12 @@
 //! keyword gives it to the selected photos or takes it away; the arrow shows the photos with it.
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
-use lightcraft_catalog::keywords::{KeywordNode, same};
+use lightcraft_catalog::keywords::{KeywordInfo, KeywordNode, same};
 use lightcraft_catalog::{Catalog, PhotoId};
 use serde_json::json;
 
 use crate::LightcraftApp;
+use crate::state::Dialog;
 use crate::theme::Tokens;
 use crate::widgets::register;
 
@@ -26,8 +27,22 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ui.add_space(24.0);
         crate::text_field::TextField::singleline("field:keywordFilter", &mut filter)
             .hint(crate::i18n::tr("Filter Keywords"))
-            .width(ui.available_width() - 22.0)
+            .width(ui.available_width() - 82.0)
             .show(ui);
+        // + creates a keyword (inside the picked one), − deletes the picked one
+        let plus = ui.button("+").on_hover_text(crate::i18n::tr("Create Keyword Tag"));
+        register(ui.ctx(), "keywordList:create", plus.rect);
+        if plus.clicked() {
+            app.ui.dialog = Some(create_dialog(app));
+        }
+        let picked = app.ui.keyword_list_selected.clone().filter(|k| app.session.catalog.has_keyword(k));
+        let minus = ui.add_enabled(picked.is_some(), egui::Button::new("−")).on_hover_text(crate::i18n::tr("Delete Keyword"));
+        register(ui.ctx(), "keywordList:delete", minus.rect);
+        if minus.clicked()
+            && let Some(k) = picked
+        {
+            app.ui.dialog = Some(delete_dialog(app, &k));
+        }
     });
     ui.data_mut(|d| d.insert_temp(fid, filter.clone()));
     ui.add_space(6.0);
@@ -139,6 +154,57 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId
     if resp.clicked() {
         app.ui.keyword_list_selected = Some(r.path.clone());
     }
+    if resp.double_clicked() {
+        app.ui.dialog = Some(edit_dialog(app, &r.path));
+    }
+}
+
+/// Create Keyword Tag: inside the keyword picked in the list, else the default parent.
+pub(crate) fn create_dialog(app: &LightcraftApp) -> Dialog {
+    let parent = app.ui.keyword_list_selected.clone().filter(|k| app.session.catalog.has_keyword(k)).or_else(|| app.session.keyword_parent.clone());
+    let d = KeywordInfo::default();
+    Dialog::KeywordTag {
+        editing: None,
+        name: String::new(),
+        inside: parent.is_some(),
+        parent,
+        synonyms: String::new(),
+        include_on_export: d.include_on_export,
+        export_containing: d.export_containing,
+        export_synonyms: d.export_synonyms,
+        person: d.person,
+        add_to_selected: false,
+    }
+}
+
+/// Edit Keyword Tag for `path`, showing its name and attributes.
+pub(crate) fn edit_dialog(app: &LightcraftApp, path: &str) -> Dialog {
+    let path = app.session.catalog.keyword_path(path).unwrap_or_else(|| path.to_string());
+    let info = app.session.catalog.keyword_info(&path).cloned().unwrap_or_default();
+    Dialog::KeywordTag {
+        name: path.rsplit('|').next().unwrap_or(&path).to_string(),
+        editing: Some(path),
+        parent: None,
+        inside: false,
+        synonyms: info.synonyms.join(", "),
+        include_on_export: info.include_on_export,
+        export_containing: info.export_containing,
+        export_synonyms: info.export_synonyms,
+        person: info.person,
+        add_to_selected: false,
+    }
+}
+
+/// Delete Keyword, saying how many photos have it.
+pub(crate) fn delete_dialog(app: &LightcraftApp, path: &str) -> Dialog {
+    let keyword = app.session.catalog.keyword_path(path).unwrap_or_else(|| path.to_string());
+    let count = app
+        .session
+        .catalog
+        .photos()
+        .filter(|p| p.in_library() && p.meta.keywords.iter().any(|k| lightcraft_catalog::keywords::is_under(k, &keyword)))
+        .count();
+    Dialog::DeleteKeyword { keyword, count }
 }
 
 /// One row of the Keyword List as drawn.

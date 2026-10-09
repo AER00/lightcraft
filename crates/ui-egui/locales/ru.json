@@ -1411,5 +1411,16 @@
   "Keyword List": "Список ключевых слов",
   "Filter Keywords": "Фильтр ключевых слов",
   "No keywords yet": "Ключевых слов пока нет",
-  "No keywords match": "Нет подходящих ключевых слов"
+  "No keywords match": "Нет подходящих ключевых слов",
+  "Keyword Name": "Название ключевого слова",
+  "Synonyms": "Синонимы",
+  "Separated by commas": "Через запятую",
+  "Keyword Tag Options": "Параметры ключевого слова",
+  "Include on Export": "Включать при экспорте",
+  "Export Containing Keywords": "Экспортировать родительские ключевые слова",
+  "Export Synonyms": "Экспортировать синонимы",
+  "Create Keyword Tag": "Создать ключевое слово",
+  "Edit Keyword Tag": "Изменить ключевое слово",
+  "Create": "Создать",
+  "No photo has it; the keywords below it go too.": "Ни у одного фото его нет; вложенные ключевые слова тоже будут удалены."
 }

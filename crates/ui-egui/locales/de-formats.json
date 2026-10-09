@@ -206,5 +206,8 @@
   "In line for AI Denoise ({ahead} ahead)…": "In line for AI Denoise ({ahead} ahead)…",
   "Running on {}.": "Running on {}.",
   "{file} · {size}": "{file} · {size}",
-  "•  {assumption}": "•  {assumption}"
+  "•  {assumption}": "•  {assumption}",
+  "Put inside “{parent}”": "In „{parent}“ einfügen",
+  "Delete the keyword “{name}”?": "Das Stichwort „{name}“ löschen?",
+  "It is taken off {count} photo{}, with the keywords below it. Undo brings it back.": "Es wird von {count} Foto{} entfernt, mit den Stichwörtern darunter. Rückgängig stellt es wieder her."
 }

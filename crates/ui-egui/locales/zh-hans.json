@@ -1738,5 +1738,16 @@
   "Keyword List": "关键字列表",
   "Filter Keywords": "过滤关键字",
   "No keywords yet": "还没有关键字",
-  "No keywords match": "没有匹配的关键字"
+  "No keywords match": "没有匹配的关键字",
+  "Keyword Name": "关键字名称",
+  "Synonyms": "同义词",
+  "Separated by commas": "用逗号分隔",
+  "Keyword Tag Options": "关键字标记选项",
+  "Include on Export": "导出时包含",
+  "Export Containing Keywords": "导出包含的关键字",
+  "Export Synonyms": "导出同义词",
+  "Create Keyword Tag": "创建关键字标记",
+  "Edit Keyword Tag": "编辑关键字标记",
+  "Create": "创建",
+  "No photo has it; the keywords below it go too.": "没有照片使用它；其下的关键字也会一并删除。"
 }

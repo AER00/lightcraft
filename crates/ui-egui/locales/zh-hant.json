@@ -1738,5 +1738,16 @@
   "Keyword List": "關鍵字清單",
   "Filter Keywords": "篩選關鍵字",
   "No keywords yet": "尚無關鍵字",
-  "No keywords match": "沒有符合的關鍵字"
+  "No keywords match": "沒有符合的關鍵字",
+  "Keyword Name": "關鍵字名稱",
+  "Synonyms": "同義詞",
+  "Separated by commas": "以逗號分隔",
+  "Keyword Tag Options": "關鍵字標記選項",
+  "Include on Export": "轉存時包含",
+  "Export Containing Keywords": "轉存包含的關鍵字",
+  "Export Synonyms": "轉存同義詞",
+  "Create Keyword Tag": "建立關鍵字標記",
+  "Edit Keyword Tag": "編輯關鍵字標記",
+  "Create": "建立",
+  "No photo has it; the keywords below it go too.": "沒有照片使用它；其下的關鍵字也會一併刪除。"
 }
