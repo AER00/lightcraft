@@ -299,6 +299,7 @@ impl Op {
             | Op::SetAlbumRules { .. }
             | Op::RemoveStack { .. }
             | Op::SetLabelName { .. }
+            | Op::SetKeyword { .. }
             | Op::SetBrowsed { .. } => {}
         }
     }

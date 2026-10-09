@@ -217,6 +217,12 @@ pub enum Op {
         folder: String,
         at: Option<String>,
     },
+    /// List a keyword in the library's keyword list with these attributes, or take it off the list
+    /// (`None`; photos that carry it keep it). Format version 4.
+    SetKeyword {
+        path: String,
+        info: Option<keywords::KeywordInfo>,
+    },
     /// Several ops as one step (undo applies the inverses in reverse).
     Batch {
         ops: Vec<Op>,
@@ -239,6 +245,9 @@ pub struct Catalog {
     /// When each Local folder was last browsed (folder path → ISO 8601), see [`local`].
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     browsed: BTreeMap<String, String>,
+    /// Keywords listed on their own or given attributes, by lower-case path (see [`keywords`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    keyword_list: BTreeMap<String, keywords::ListedKeyword>,
     /// Increments on every applied op.
     #[serde(skip)]
     pub revision: u64,
@@ -365,6 +374,14 @@ impl Catalog {
     /// The name of a colour label: its custom name, else the colour (`Red`).
     pub fn label_name(&self, l: ColorLabel) -> String {
         self.label_names.get(&l).cloned().unwrap_or_else(|| format!("{l:?}"))
+    }
+    /// A listed keyword's attributes (any case), `None` when it isn't listed.
+    pub fn keyword_info(&self, path: &str) -> Option<&keywords::KeywordInfo> {
+        self.keyword_list.get(&keywords::clean(path).to_lowercase()).map(|k| &k.info)
+    }
+    /// The keyword list: keywords listed on their own or given attributes, by path.
+    pub fn listed_keywords(&self) -> impl Iterator<Item = &keywords::ListedKeyword> {
+        self.keyword_list.values()
     }
     /// The custom name of a colour label, if any.
     pub fn custom_label_name(&self, l: ColorLabel) -> Option<&str> {
@@ -611,6 +628,21 @@ impl Catalog {
                     None => self.label_names.remove(&label),
                 };
                 Op::SetLabelName { label, name: old }
+            }
+            Op::SetKeyword { path, info } => {
+                let path = keywords::clean(&path);
+                if path.is_empty() {
+                    return Err(CatalogError::Invalid("keyword names can't be empty".into()));
+                }
+                let key = path.to_lowercase();
+                let old = match info {
+                    Some(info) => self.keyword_list.insert(key, keywords::ListedKeyword { path: path.clone(), info }),
+                    None => self.keyword_list.remove(&key),
+                };
+                match old {
+                    Some(old) => Op::SetKeyword { path: old.path, info: Some(old.info) },
+                    None => Op::SetKeyword { path, info: None },
+                }
             }
             Op::SetBrowsed { folder, at } => {
                 let folder = crate::query::folder_key(&folder);

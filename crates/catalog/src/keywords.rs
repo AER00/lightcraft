@@ -5,8 +5,12 @@
 //! changes — so they are a single undo step and replay from the op log like any other edit.
 //! Keyword names compare case-insensitively; renaming a keyword renames its children too
 //! (`travel|italy` → `trips|italy`).
+//!
+//! The **keyword list** holds keywords on their own ([`Op::SetKeyword`]): created before any
+//! photo has them, or given attributes ([`KeywordInfo`]: synonyms, export options, person). The
+//! tree is the keyword list together with the keywords photos carry.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{Catalog, CatalogError, Meta, Op, Result};
 
@@ -36,6 +40,45 @@ fn dedupe(v: &mut Vec<String>) {
     v.retain(|k| !k.is_empty() && seen.insert(k.to_lowercase()));
 }
 
+/// What the keyword list knows about a keyword besides the photos that carry it: Lightroom
+/// Classic's keyword tag options. A keyword is listed when it was created on its own or given
+/// attributes; one that only photos carry has the defaults.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeywordInfo {
+    /// Other words for it, exported with it (when `export_synonyms`) and found by search.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub synonyms: Vec<String>,
+    /// Written into exported files at all.
+    #[serde(default = "yes")]
+    pub include_on_export: bool,
+    /// The keywords containing it are exported with it (`travel|italy` also gives `travel`).
+    #[serde(default = "yes")]
+    pub export_containing: bool,
+    #[serde(default = "yes")]
+    pub export_synonyms: bool,
+    /// The keyword names a person.
+    #[serde(default)]
+    pub person: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for KeywordInfo {
+    fn default() -> Self {
+        KeywordInfo { synonyms: Vec::new(), include_on_export: true, export_containing: true, export_synonyms: true, person: false }
+    }
+}
+
+/// A keyword in the library's keyword list: its path as written and its attributes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListedKeyword {
+    pub path: String,
+    pub info: KeywordInfo,
+}
+
 /// One node of the keyword tree.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct KeywordNode {
@@ -63,9 +106,12 @@ impl Catalog {
         }
         let mut levels: HashMap<String, Level> = HashMap::new();
         let mut this_photo: HashSet<String> = HashSet::new();
-        for p in self.photos().filter(|p| p.in_library()) {
+        // the keyword list first (no photos counted): a listed keyword is there without photos
+        let listed: Vec<String> = self.listed_keywords().map(|k| k.path.clone()).collect();
+        let photos = self.photos().filter(|p| p.in_library()).map(|p| (true, p.meta.keywords.as_slice()));
+        for (counts, keywords) in std::iter::once((false, listed.as_slice())).chain(photos) {
             this_photo.clear();
-            for k in &p.meta.keywords {
+            for k in keywords {
                 let mut path = String::new();
                 let mut lower = String::new();
                 let mut parent: Option<String> = None;
@@ -82,7 +128,7 @@ impl Catalog {
                         count: 0,
                         parent: parent.clone(),
                     });
-                    if this_photo.insert(lower.clone()) {
+                    if counts && this_photo.insert(lower.clone()) {
                         l.count += 1;
                     }
                     parent = Some(lower.clone());
@@ -261,6 +307,52 @@ mod tests {
         assert!(c.rename_keyword_ops("a", "a|b").is_err());
         assert!(c.merge_keywords_ops(&["a".into()], "a|b").is_err());
         assert_eq!(clean(" a | |b "), "a|b");
+    }
+
+    fn tree_paths(nodes: &[KeywordNode]) -> Vec<(String, usize)> {
+        let mut out = Vec::new();
+        for n in nodes {
+            out.push((n.path.clone(), n.count));
+            out.extend(tree_paths(&n.children));
+        }
+        out
+    }
+
+    /// A keyword can be listed before any photo has it (Lightroom Classic's Create Keyword Tag):
+    /// it is in the tree with no photos, its parents too, and undo takes it away.
+    #[test]
+    fn a_keyword_listed_with_no_photos_is_in_the_tree() {
+        let (mut c, _) = lib(&[&["travel|France"]]);
+        let undo = c.apply(Op::SetKeyword { path: " travel | Italy ".into(), info: Some(KeywordInfo::default()) }).unwrap();
+        assert_eq!(tree_paths(&c.keyword_tree()), [("travel".to_string(), 1), ("travel|France".to_string(), 1), ("travel|Italy".to_string(), 0)]);
+        assert_eq!(c.keyword_info("TRAVEL|italy"), Some(&KeywordInfo::default()), "found whatever the case");
+        c.apply(undo).unwrap();
+        assert_eq!(tree_paths(&c.keyword_tree()), [("travel".to_string(), 1), ("travel|France".to_string(), 1)]);
+        assert_eq!(c.keyword_info("travel|Italy"), None);
+    }
+
+    /// A listed keyword needs a name, and its attributes start as Lightroom Classic's do: exported,
+    /// with the keywords containing it and its synonyms; not a person.
+    #[test]
+    fn a_listed_keyword_needs_a_name_and_starts_exported() {
+        let mut c = Catalog::new();
+        assert!(c.apply(Op::SetKeyword { path: " | ".into(), info: Some(KeywordInfo::default()) }).is_err());
+        let info = KeywordInfo::default();
+        assert!(info.include_on_export && info.export_containing && info.export_synonyms && !info.person && info.synonyms.is_empty());
+    }
+
+    /// Changing a listed keyword's attributes is undone to the attributes it had, under the name as
+    /// it was written.
+    #[test]
+    fn changing_a_listed_keyword_is_undone_to_what_it_was() {
+        let mut c = Catalog::new();
+        c.apply(Op::SetKeyword { path: "Weddings".into(), info: Some(KeywordInfo::default()) }).unwrap();
+        let person = KeywordInfo { person: true, synonyms: vec!["Marriage".into()], ..KeywordInfo::default() };
+        let undo = c.apply(Op::SetKeyword { path: "weddings".into(), info: Some(person.clone()) }).unwrap();
+        assert_eq!(c.keyword_info("Weddings"), Some(&person));
+        assert_eq!(undo, Op::SetKeyword { path: "Weddings".into(), info: Some(KeywordInfo::default()) });
+        c.apply(undo).unwrap();
+        assert_eq!(c.keyword_info("weddings"), Some(&KeywordInfo::default()));
     }
 
     #[test]
