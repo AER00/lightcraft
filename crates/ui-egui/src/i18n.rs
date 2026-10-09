@@ -342,8 +342,10 @@ pub fn problem_line(problem: &lightcraft_catalog::rules::Problem) -> String {
 
 fn problem_text_in(language: Locale, problem: &lightcraft_catalog::rules::Problem) -> String {
     let issue = tr_in(language, problem.issue.text());
+    // Japanese and Chinese catalogs join a label and its text with a full-width colon
+    let colon = if matches!(language.script(), "Jpan" | "Hans" | "Hant") { "：" } else { ": " };
     match problem.field.as_deref() {
-        Some(field) => format!("{}: {issue}", tr_in(language, lightcraft_catalog::rules::field_label(field).unwrap_or(field))),
+        Some(field) => format!("{}{colon}{issue}", tr_in(language, lightcraft_catalog::rules::field_label(field).unwrap_or(field))),
         None => issue.to_string(),
     }
 }
@@ -755,11 +757,19 @@ mod tests {
         assert_eq!(problem_text_in(Locale::En, &p[0]), "Title: needs something to look for (or use “is empty”)");
         assert_eq!(problem_text_in(Locale::De, &p[0]), "Titel: braucht einen Suchbegriff (oder „ist leer“)");
         assert_eq!(problem_line_in(Locale::En, &p[0]), "#2 Title: needs something to look for (or use “is empty”)");
+        // Japanese and Chinese join with a full-width colon, as their catalogs do
+        assert_eq!(problem_text_in(Locale::Ja, &p[0]), "タイトル：検索する語句が必要です（または「が空」を使用）");
         let g = problems(serde_json::json!([{"group": {"rules": []}}]));
         assert_eq!(problem_text_in(Locale::En, &g[0]), "This group is empty: add a rule or remove it.");
+        // the issues, and the operators their hints name, in every language
         for language in Locale::ALL.iter().filter(|l| **l != Locale::En) {
             for issue in Issue::ALL {
                 assert!(language.catalog().contains_key(issue.text()), "{} lacks {:?}", language.code(), issue.text());
+            }
+            for (_, _, kind) in lightcraft_catalog::rules::FIELDS {
+                for (_, op) in lightcraft_catalog::rules::ops_for(*kind) {
+                    assert!(language.catalog().contains_key(*op), "{} lacks the operator {op:?}", language.code());
+                }
             }
         }
     }

@@ -1765,5 +1765,7 @@
   "names an album that no longer exists": "indica un álbum que ya no existe",
   "can't test a smart album; choose a plain album": "no puede comprobar un álbum inteligente; elige un álbum normal",
   "can't test a folder; choose an album in it": "no puede comprobar una carpeta; elige un álbum dentro",
-  "This group is empty: add a rule or remove it.": "Este grupo está vacío: añade una regla o quítalo."
+  "This group is empty: add a rule or remove it.": "Este grupo está vacío: añade una regla o quítalo.",
+  "needs something to look for (or use “are empty”)": "necesita algo que buscar (o usa «están vacíos»)",
+  "needs something to look for (or use “aren't empty”)": "necesita algo que buscar (o usa «no están vacíos»)"
 }

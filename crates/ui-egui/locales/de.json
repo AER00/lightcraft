@@ -1920,5 +1920,7 @@
   "names an album that no longer exists": "nennt ein Album, das es nicht mehr gibt",
   "can't test a smart album; choose a plain album": "kann kein Smart-Album prüfen; wähle ein normales Album",
   "can't test a folder; choose an album in it": "kann keinen Ordner prüfen; wähle ein Album darin",
-  "This group is empty: add a rule or remove it.": "Diese Gruppe ist leer: Füge eine Regel hinzu oder entferne sie."
+  "This group is empty: add a rule or remove it.": "Diese Gruppe ist leer: Füge eine Regel hinzu oder entferne sie.",
+  "needs something to look for (or use “are empty”)": "braucht einen Suchbegriff (oder „sind leer“)",
+  "needs something to look for (or use “aren't empty”)": "braucht einen Suchbegriff (oder „sind nicht leer“)"
 }

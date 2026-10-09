@@ -185,6 +185,9 @@ pub enum Issue {
     NotAChoice,
     NeedsTextOrEmpty,
     NeedsTextOrNotEmpty,
+    /// Keywords and People: their operators say "are empty".
+    NeedsNamesOrEmpty,
+    NeedsNamesOrNotEmpty,
     NeedsText,
     NoRatingMatches,
     ChooseAlbum,
@@ -195,7 +198,7 @@ pub enum Issue {
 }
 
 impl Issue {
-    pub const ALL: [Issue; 20] = [
+    pub const ALL: [Issue; 22] = [
         Issue::UnknownField,
         Issue::NoSuchOperator,
         Issue::NotYesNo,
@@ -209,6 +212,8 @@ impl Issue {
         Issue::NotAChoice,
         Issue::NeedsTextOrEmpty,
         Issue::NeedsTextOrNotEmpty,
+        Issue::NeedsNamesOrEmpty,
+        Issue::NeedsNamesOrNotEmpty,
         Issue::NeedsText,
         Issue::NoRatingMatches,
         Issue::ChooseAlbum,
@@ -234,6 +239,8 @@ impl Issue {
             Issue::NotAChoice => "isn't one of the choices",
             Issue::NeedsTextOrEmpty => "needs something to look for (or use “is empty”)",
             Issue::NeedsTextOrNotEmpty => "needs something to look for (or use “isn't empty”)",
+            Issue::NeedsNamesOrEmpty => "needs something to look for (or use “are empty”)",
+            Issue::NeedsNamesOrNotEmpty => "needs something to look for (or use “aren't empty”)",
             Issue::NeedsText => "needs text",
             Issue::NoRatingMatches => "can't match any rating from 0 to 5",
             Issue::ChooseAlbum => "needs an album",
@@ -278,10 +285,13 @@ fn field_problem(field: &str, op: &str, value: &Value, cat: &Catalog) -> Found {
         Kind::Text | Kind::Keywords => match value {
             Value::String(s) if !s.trim().is_empty() => None,
             Value::String(_) | Value::Null => {
-                let (issue, instead) = if matches!(op, "isNot" | "notContains") {
-                    (Issue::NeedsTextOrNotEmpty, "isn't empty")
-                } else {
-                    (Issue::NeedsTextOrEmpty, "is empty")
+                // the hint names the operator as the menu does: Keywords and People say "are empty"
+                let not = matches!(op, "isNot" | "notContains");
+                let (issue, instead) = match (kind, not) {
+                    (Kind::Keywords, false) => (Issue::NeedsNamesOrEmpty, "are empty"),
+                    (Kind::Keywords, true) => (Issue::NeedsNamesOrNotEmpty, "aren't empty"),
+                    (_, false) => (Issue::NeedsTextOrEmpty, "is empty"),
+                    (_, true) => (Issue::NeedsTextOrNotEmpty, "isn't empty"),
                 };
                 Some((issue, format!("`{field}` needs something to look for (or use “{instead}”)")))
             }
@@ -1408,6 +1418,10 @@ mod tests {
         assert_eq!((p[0].field.as_deref(), p[0].issue), (Some("title"), Issue::NeedsTextOrEmpty));
         let p = check(json!([{"field": "title", "op": "isNot", "value": ""}]));
         assert_eq!(p[0].issue, Issue::NeedsTextOrNotEmpty);
+        // keywords and people say "are empty", and so does their hint
+        let p = check(json!([{"field": "keywords", "op": "contains", "value": ""}, {"field": "person", "op": "notContains", "value": " "}]));
+        assert_eq!((p[0].issue, p[1].issue), (Issue::NeedsNamesOrEmpty, Issue::NeedsNamesOrNotEmpty));
+        assert!(p[0].issue.text().contains("“are empty”") && p[0].message.contains("“are empty”"));
         let p = check(json!([{"field": "rating", "op": "is", "value": 9}, {"group": {"rules": []}}]));
         assert_eq!((p[0].field.as_deref(), p[0].issue), (Some("rating"), Issue::NoRatingMatches));
         assert_eq!((p[1].field.as_deref(), p[1].issue), (None, Issue::EmptyGroup));

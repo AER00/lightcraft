@@ -1765,5 +1765,7 @@
   "names an album that no longer exists": "指定的相册已不存在",
   "can't test a smart album; choose a plain album": "无法判断智能相册；请选择普通相册",
   "can't test a folder; choose an album in it": "无法判断文件夹；请选择其中的相册",
-  "This group is empty: add a rule or remove it.": "此组为空：请添加规则或将其删除。"
+  "This group is empty: add a rule or remove it.": "此组为空：请添加规则或将其删除。",
+  "needs something to look for (or use “are empty”)": "需要要查找的内容（或使用“为空”）",
+  "needs something to look for (or use “aren't empty”)": "需要要查找的内容（或使用“不为空”）"
 }
