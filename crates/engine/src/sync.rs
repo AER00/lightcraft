@@ -19,10 +19,19 @@
 //! The scan runs without the session ([`SyncInput`] + [`scan_with`]), so the app can run it on a
 //! worker thread: a folder on a sleeping network share must never stall a frame.
 //!
-//! Limits: a sidecar the library itself wrote (auto-write on) agrees with it and is never an
-//! update; one written here before auto-write was turned off, followed by changes made only in
-//! the library, is listed as an update even though the library is newer (there is no record of
-//! when a photo's metadata last changed here). Reading updates is therefore never the default.
+//! Limits of telling an update from a sidecar that is merely older:
+//! - a sidecar the library itself wrote (auto-write on) agrees with it and is never an update;
+//! - the library records when a photo came in and when its develop settings last changed, not
+//!   when its rating, flag, label or metadata did: a sidecar another app saved, followed by such
+//!   a change made here (with auto-write off), is listed as an update, and reading it puts the
+//!   older value back. Reading updates is therefore never the default;
+//! - times are compared as the clock the session runs with; headless sessions (CLI, MCP) start
+//!   with a fixed clock, so their own times say little;
+//! - a sidecar is found as Read Metadata from File finds it, including the other naming
+//!   scheme's file (`IMG_1.xmp` for `IMG_1.JPG` beside `IMG_1.CR3`).
+//!
+//! The walk for new files stops at the import's limits on depth and entries (logged), and is
+//! not cancelled midway.
 
 use std::collections::HashMap;
 use std::path::Path;

@@ -406,3 +406,16 @@ fn the_progress_counts_the_photos_checked_too() {
     let (done, total) = progress.counts();
     assert!(done == total && total >= 2, "{done}/{total}");
 }
+
+#[test]
+fn a_sidecar_the_library_wrote_itself_is_no_update() {
+    let dir = Scratch::new("autowrite");
+    let mut s = library(&dir);
+    s.execute("library.xmpPreferences", &json!({"autoWrite": true})).unwrap();
+    let a = s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
+    s.execute("photo.rate", &json!({"ids": [a.0], "rating": 3})).unwrap();
+    s.execute("photo.label", &json!({"ids": [a.0], "label": "green"})).unwrap();
+    assert!(Path::new(&dir.path("trip/a.xmp")).exists(), "auto-write wrote the sidecar");
+    let r = scan(&mut s, &dir.path("trip"));
+    assert!(paths(&r, "metadata").is_empty(), "{r}");
+}
