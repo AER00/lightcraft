@@ -239,3 +239,47 @@ fn placing_the_readout_never_panics() {
     let r = readout_rect(egui::pos2(f32::NAN, 5.0), size, egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 100.0)));
     assert_eq!(r.size(), size);
 }
+
+/// Esc in the Angle field gives up the typed angle and keeps the old one, as in the slider's value.
+#[test]
+fn escape_in_the_angle_field_keeps_the_angle() {
+    let mut h = crop_tool();
+    let r = h.request("ui.clickWidget", json!({"id": "cropAngleField"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    for key in ["a", "Backspace"] {
+        let r = h.request("ui.key", json!({"key": key, "cmd": key == "a"}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    }
+    let r = h.request("ui.text", json!({"text": "7"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let (before, undo) = (angle(&h), h.app.session.undo.len());
+    let r = h.request("ui.key", json!({"key": "Escape"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!((angle(&h), h.app.session.undo.len()), (before, undo), "Esc applied nothing");
+    assert_eq!(h.app.ui.right, crate::state::RightPanel::Crop, "and only left the field");
+}
+
+/// Leaving the Angle field another way than Esc (Tab here) applies the typed angle, as Return does.
+#[test]
+fn leaving_the_angle_field_applies_the_angle() {
+    let mut h = crop_tool();
+    let r = h.request("ui.clickWidget", json!({"id": "cropAngleField"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    for key in ["a", "Backspace"] {
+        let r = h.request("ui.key", json!({"key": key, "cmd": key == "a"}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    }
+    let r = h.request("ui.text", json!({"text": "4.5"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let undo = h.app.session.undo.len();
+    let r = h.request("ui.key", json!({"key": "Tab"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!((angle(&h) - 4.5).abs() < 1e-9, "applied on leaving: {}", angle(&h));
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+}

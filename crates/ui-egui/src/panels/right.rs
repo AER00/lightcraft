@@ -190,6 +190,7 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ui.horizontal(|ui| {
                 ui.label(crate::i18n::tr("Angle"));
                 let mut angle = d.crop.geometry.angle;
+                let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
                 let r = ui.add(
                     egui::DragValue::new(&mut angle)
                         .range(spec.min..=spec.max)
@@ -208,7 +209,14 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 }
                 // egui reports a change while text is typed even when the value isn't updated yet:
                 // apply only a new angle
-                if r.changed() && angle.is_finite() && angle != d.crop.geometry.angle {
+                // Esc keeps the old angle, but egui applies the typed text on the frame after the
+                // one where Esc took the focus away: remember the Esc for that frame
+                let cancel = egui::Id::new("cropAngleFieldEscaped");
+                let escaped = ui.data_mut(|m| m.remove_temp::<bool>(cancel)).unwrap_or(false);
+                if escape && r.lost_focus() {
+                    ui.data_mut(|m| m.insert_temp(cancel, true));
+                }
+                if r.changed() && !escaped && angle.is_finite() && angle != d.crop.geometry.angle {
                     let _ = app.run("crop.straighten", json!({"angle": (angle.clamp(spec.min, spec.max) * 100.0).round() / 100.0}));
                 }
                 if r.drag_stopped() {
