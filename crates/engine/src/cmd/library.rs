@@ -7,6 +7,20 @@ use serde_json::{Value, json};
 use super::{CommandSpec, always, bad, bool_or, cmd, has_active, has_selection, ok, str_param};
 use crate::{LibrarySource, Result, Selection, Session};
 
+fn select_after_deletion(s: &mut Session, before: &[PhotoId]) {
+    let at = before.iter().position(|id| Some(*id) == s.selection.active);
+    let remaining: std::collections::HashSet<_> = s.visible_cloned().into_iter().collect();
+    s.selection.ids.retain(|id| remaining.contains(id));
+    s.selection.active = s.selection.active.filter(|id| remaining.contains(id)).or_else(|| s.selection.ids.first().copied());
+    if s.selection.active.is_none()
+        && let Some(at) = at
+    {
+        // Keep culling near the deleted photo: next visible survivor, or the previous one at the end.
+        let neighbour = before.iter().skip(at.saturating_add(1)).chain(before.iter().take(at).rev()).find(|id| remaining.contains(id));
+        s.selection = neighbour.map(|id| Selection::single(*id)).unwrap_or_default();
+    }
+}
+
 /// The auto-import folder's visible files with their sizes (the file-system half of
 /// `library.autoImportScan`; the app lists on a worker thread and passes `listing`).
 pub fn list_auto_import_folder(folder: &str) -> std::result::Result<Vec<(String, u64)>, String> {
@@ -662,18 +676,8 @@ pub fn specs() -> Vec<CommandSpec> {
         // ---- delete / restore
         cmd!("photo.delete", "Delete Photo", ["Photo"], Some("Delete"), "{ids?} — moves to Recently Deleted", has_selection, |s, p| {
             let before = s.visible_cloned();
-            let at = before.iter().position(|id| Some(*id) == s.selection.active);
             let v = for_targets(s, p, "Delete", |id| Some(Op::SetDeleted { id, deleted: true }))?;
-            let remaining: std::collections::HashSet<_> = s.visible_cloned().into_iter().collect();
-            s.selection.ids.retain(|id| remaining.contains(id));
-            s.selection.active = s.selection.active.filter(|id| remaining.contains(id)).or_else(|| s.selection.ids.first().copied());
-            if s.selection.active.is_none()
-                && let Some(at) = at
-            {
-                // Keep culling near the deleted photo: next visible survivor, or the previous one at the end.
-                let neighbour = before.iter().skip(at.saturating_add(1)).chain(before.iter().take(at).rev()).find(|id| remaining.contains(id));
-                s.selection = neighbour.map(|id| Selection::single(*id)).unwrap_or_default();
-            }
+            select_after_deletion(s, &before);
             Ok(v)
         }),
         cmd!("photo.restore", "Restore", ["Photo"], None, "{ids?}", has_selection, |s, p| for_targets(s, p, "Restore", |id| Some(Op::SetDeleted {
@@ -699,10 +703,11 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!("photo.deletePermanently", "Delete Permanently", ["Photo"], None, "{ids?}", has_selection, |s, p| {
+            let before = s.visible_cloned();
             let t = s.targets(p);
             let op = s.catalog.delete_photos_permanently_ops(&t);
             s.commit("Delete Permanently", op)?;
-            s.selection = Selection::default();
+            select_after_deletion(s, &before);
             Ok(json!({"deleted": t.len()}))
         }),
         // ---- metadata

@@ -974,8 +974,27 @@ fn emptying_trashed_photos_of_one_album_and_stack_leaves_nothing_dangling() {
 fn deleting_several_photos_permanently_leaves_nothing_dangling() {
     let (mut s, src, ids, al) = two_trashed_in_album_and_stack("trash-perm-refs");
     s.execute("library.select", &json!({"ids": ids})).unwrap();
+    let files = [src.join("a.png"), src.join("b.png")].map(|path| {
+        let bytes = std::fs::read(&path).unwrap();
+        (path, bytes)
+    });
+    let snapshot = s.catalog.to_snapshot();
+    s.drain_log();
     s.execute("photo.deletePermanently", &json!({"ids": ids})).unwrap();
     assert!(s.catalog.album(lightcraft_catalog::AlbumId(al)).unwrap().photos.is_empty());
+    assert!(ids.iter().all(|i| s.catalog.photo(lightcraft_catalog::PhotoId(*i)).is_none()));
+    let removed = s.catalog.to_snapshot();
+    let log: String = s.drain_log().iter().map(lightcraft_catalog::Catalog::op_to_log_line).collect();
+    let mut reopened = lightcraft_catalog::Catalog::from_snapshot(&snapshot).unwrap();
+    reopened.replay(&log).unwrap();
+    assert_eq!(reopened.to_snapshot(), removed);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.to_snapshot(), snapshot, "one undo restores photos, album and stack");
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.catalog.to_snapshot(), removed);
+    for (path, bytes) in files {
+        assert_eq!(std::fs::read(path).unwrap(), bytes, "permanent deletion only removes catalog records");
+    }
     let _ = std::fs::remove_dir_all(&src);
 }
 

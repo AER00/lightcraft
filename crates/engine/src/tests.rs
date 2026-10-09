@@ -199,6 +199,60 @@ fn deleting_explicit_targets_keeps_the_surviving_selection() {
 }
 
 #[test]
+fn permanently_deleting_photos_selects_a_neighbour_in_recently_deleted() {
+    for params in [json!({}), json!({"key": "fileName", "ascending": false}), json!({"key": "random", "seed": 123})] {
+        for at_end in [false, true] {
+            let mut s = demo();
+            s.execute("library.selectAll", &json!({})).unwrap();
+            s.execute("photo.delete", &json!({})).unwrap();
+            s.execute("library.source", &json!({"kind": "recentlyDeleted"})).unwrap();
+            s.execute("library.sort", &params).unwrap();
+            s.execute("library.filter", &json!({"rating": 2})).unwrap();
+            let visible = s.visible_cloned();
+            assert!(visible.len() > 5);
+            let at = if at_end { visible.len() - 2 } else { visible.len() / 2 };
+            let deleted = &visible[at..at + 2];
+            s.execute("library.select", &json!({"ids": deleted, "active": deleted[0]})).unwrap();
+            let snapshot = s.catalog.to_snapshot();
+            let undo_len = s.undo.len();
+            let r = s.execute("photo.deletePermanently", &json!({})).unwrap();
+            assert_eq!(r["deleted"], 2);
+            let expected = if at_end { visible[at - 1] } else { visible[at + 2] };
+            assert_eq!(s.selection, Selection::single(expected), "sort {params}, end {at_end}");
+            assert!(deleted.iter().all(|id| s.catalog.photo(*id).is_none()));
+            assert_eq!(s.undo.len(), undo_len + 1);
+            let removed = s.catalog.to_snapshot();
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(s.catalog.to_snapshot(), snapshot);
+            s.execute("edit.redo", &json!({})).unwrap();
+            assert_eq!(s.catalog.to_snapshot(), removed);
+        }
+    }
+    let mut s = demo();
+    s.execute("library.selectAll", &json!({})).unwrap();
+    s.execute("photo.deletePermanently", &json!({})).unwrap();
+    assert!(s.visible().is_empty());
+    assert_eq!(s.selection, Selection::default());
+}
+
+#[test]
+fn permanently_deleting_explicit_targets_keeps_the_surviving_selection() {
+    let mut s = demo();
+    let visible = s.visible_cloned();
+    s.execute("library.select", &json!({"ids": [visible[8], visible[9]], "active": visible[9]})).unwrap();
+    let before = s.selection.clone();
+    s.execute("photo.deletePermanently", &json!({"ids": [visible[3]]})).unwrap();
+    assert_eq!(s.selection, before, "deleting an unselected photo doesn't change selection");
+    s.execute("photo.deletePermanently", &json!({"ids": [visible[9]]})).unwrap();
+    assert_eq!(s.selection, Selection::single(visible[8]), "partial deletion retains a selected survivor");
+    let before = s.selection.clone();
+    let snapshot = s.catalog.to_snapshot();
+    assert!(s.execute("photo.deletePermanently", &json!({"ids": [999_999]})).is_err());
+    assert_eq!(s.selection, before, "a refused deletion doesn't change selection");
+    assert_eq!(s.catalog.to_snapshot(), snapshot);
+}
+
+#[test]
 fn masks_crop_and_render() {
     let mut s = demo();
     s.execute("mask.add", &json!({"kind": "radial", "center": [0.5, 0.5]})).unwrap();
