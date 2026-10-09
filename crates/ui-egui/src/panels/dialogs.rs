@@ -245,7 +245,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
                         crate::panels::rules_editor::edit(ui, rules, "rules", 0);
                     });
-                    let problems = rules.problems();
+                    let problems: Vec<String> = rules.check(&app.session.catalog).iter().map(ToString::to_string).collect();
                     // the folder an album made from a folder view carries is not in the editor, but it counts
                     let folder = id.and_then(|id| app.session.catalog.album(lightcraft_catalog::AlbumId(id))).and_then(|a| a.smart.as_deref().and_then(|f| f.library_folder.clone()));
                     let f = lightcraft_catalog::Filter { rule_set: Some(rules.clone()), library_folder: folder, ..Default::default() };

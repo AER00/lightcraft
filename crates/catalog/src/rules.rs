@@ -146,6 +146,130 @@ pub fn field_group(field: &str) -> Option<&'static str> {
     FIELD_GROUPS.iter().find(|g| g.1.contains(&field)).map(|g| g.0)
 }
 
+/// A rule that can't mean anything ([`RuleSet::check`]): where it is and what is wrong.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    /// Positions from the top rule list down: `[1, 0]` is the first rule of the second rule's group.
+    pub path: Vec<usize>,
+    pub message: String,
+}
+
+impl std::fmt::Display for Problem {
+    /// `rule 2.1: rating is 0–5, not 9` (counting from 1, as people do).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let at: Vec<String> = self.path.iter().map(|i| (i.saturating_add(1)).to_string()).collect();
+        write!(f, "rule {}: {}", at.join("."), self.message)
+    }
+}
+
+/// What is wrong with one rule, if anything ([`RuleSet::check`]).
+fn field_problem(field: &str, op: &str, value: &Value, cat: &Catalog) -> Option<String> {
+    let Some(kind) = field_kind(field) else { return Some(format!("unknown field `{field}`")) };
+    if !ops_for(kind).iter().any(|o| o.0 == op) {
+        return Some(format!("`{field}` has no operator `{op}`"));
+    }
+    if matches!(op, "isEmpty" | "isNotEmpty") {
+        return None;
+    }
+    match kind {
+        Kind::Bool => bool_value(value).is_none().then(|| format!("`{field}` is yes or no, not {value}")),
+        Kind::Number if op == "between" => match value {
+            Value::Array(a) if a.len() == 2 => a.iter().find_map(|v| number_problem(field, v, cat)),
+            _ => Some(format!("`{field}` between needs two values, not {value}")),
+        },
+        Kind::Number => number_problem(field, value, cat),
+        Kind::Date => date_problem(field, op, value),
+        Kind::Choice(choices) => choice_problem(field, value, choices, cat),
+        Kind::Text | Kind::Keywords => match value {
+            Value::String(s) if s.trim().is_empty() => Some(format!("`{field}` needs something to look for (or use “is empty”)")),
+            Value::Null => Some(format!("`{field}` needs something to look for (or use “is empty”)")),
+            Value::String(_) | Value::Number(_) => None,
+            other => Some(format!("`{field}` needs text, not {other}")),
+        },
+    }
+}
+
+fn number_problem(field: &str, v: &Value, cat: &Catalog) -> Option<String> {
+    if field == "shutterSpeed" {
+        return shutter_value(v).is_null().then(|| format!("`shutterSpeed` needs a time like 1/250 or 2, not {v}"));
+    }
+    let Some(n) = number(v).filter(|n| n.is_finite()) else { return Some(format!("`{field}` needs a number, not {v}")) };
+    match field {
+        "rating" if !(0.0..=5.0).contains(&n) => Some(format!("rating is 0–5, not {v}")),
+        "album" => {
+            let album = (n >= 0.0 && n.fract() == 0.0).then(|| cat.album(crate::AlbumId(n as u64))).flatten();
+            match album {
+                None => Some(format!("no album {v}")),
+                Some(a) if a.is_smart() => Some(format!("album {v} is a smart album; only plain albums can be tested")),
+                Some(_) => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// A date as rules take it: `2026`, `2026-08`, `2026-08-14` or a full ISO time, and a real one
+/// (no month 13, no 30 February).
+fn is_rule_date(s: &str) -> bool {
+    let s = s.trim();
+    let full = match s.len() {
+        4 => format!("{s}-01-01"),
+        7 => format!("{s}-01"),
+        _ => s.to_string(),
+    };
+    s.len() >= 4 && crate::dates::normalize_iso(&full).is_some()
+}
+
+fn date_problem(field: &str, op: &str, value: &Value) -> Option<String> {
+    let date = |v: &Value| match v.as_str() {
+        Some(s) if is_rule_date(s) => None,
+        _ => Some(format!("`{field}` needs a date like 2026, 2026-08 or 2026-08-14, not {v}")),
+    };
+    match op {
+        "inLast" | "notInLast" => {
+            let (n, unit) = match value {
+                Value::Object(o) => (o.get("n").and_then(number), o.get("unit").cloned().unwrap_or(json_str("days"))),
+                v => (number(v), json_str("days")),
+            };
+            if !n.is_some_and(|n| n.is_finite() && n > 0.0) {
+                return Some(format!("`{field}` needs a number of hours, days, weeks, months or years more than 0"));
+            }
+            match unit.as_str() {
+                Some("hours" | "days" | "weeks" | "months" | "years") => None,
+                _ => Some(format!("`{field}`: unknown unit {unit} (hours, days, weeks, months or years)")),
+            }
+        }
+        "between" => match value {
+            Value::Array(a) if a.len() == 2 => a.iter().find_map(date).or_else(|| {
+                let bound = |i: usize| a.get(i).and_then(Value::as_str).unwrap_or("").trim();
+                let (from, to) = (bound(0), bound(1));
+                (from > to && !from.starts_with(to)).then(|| format!("`{field}`: the first date is after the second"))
+            }),
+            _ => Some(format!("`{field}` between needs two dates, not {value}")),
+        },
+        _ => date(value),
+    }
+}
+
+fn json_str(s: &str) -> Value {
+    Value::String(s.to_string())
+}
+
+fn choice_problem(field: &str, value: &Value, choices: &[(&str, &str)], cat: &Catalog) -> Option<String> {
+    let known = value.as_str().is_some_and(|s| {
+        choices.iter().any(|c| c.0.eq_ignore_ascii_case(s.trim()))
+            || match field {
+                "flag" => matches!(s.trim().to_lowercase().as_str(), "picked" | "rejected"),
+                // a colour's name or the custom name given to it
+                "label" => cat.label_from_name(s).is_some(),
+                "copyrightStatus" => crate::CopyrightStatus::parse(s).is_some(),
+                _ => false,
+            }
+    });
+    let ids: Vec<&str> = choices.iter().map(|c| c.0).collect();
+    (!known).then(|| format!("`{field}` is one of {}, not {value}", ids.join(", ")))
+}
+
 /// What a yes/no rule's value means: `true`, `"yes"`, `1` (or `1.0`) or no value is yes; `false`,
 /// `"no"`, `0` is no (strings in any case); `None` for anything else, which matches nothing.
 pub fn bool_value(value: &Value) -> Option<bool> {
@@ -541,21 +665,30 @@ impl RuleSet {
         })
     }
 
-    /// Unknown fields or operators (for command validation), as readable messages.
-    pub fn problems(&self) -> Vec<String> {
+    /// The rules that can't mean anything, in order: an unknown field, an operator the field
+    /// doesn't have, a value that isn't one of the field's (a number, a date, a choice, yes or
+    /// no, a plain album…), text with nothing to look for, an empty group. Commands refuse a rule
+    /// set with problems; the editor shows them. `cat` knows the albums and colour-label names.
+    pub fn check(&self, cat: &Catalog) -> Vec<Problem> {
         let mut out = Vec::new();
-        for r in &self.rules {
-            match r {
-                Rule::Group { group } => out.extend(group.problems()),
-                Rule::Field { field, op, value } => match field_kind(field) {
-                    None => out.push(format!("unknown field `{field}`")),
-                    Some(k) if !ops_for(k).iter().any(|o| o.0 == op) => out.push(format!("`{field}` has no operator `{op}`")),
-                    Some(Kind::Bool) if bool_value(value).is_none() => out.push(format!("`{field}` is yes or no, not {value}")),
-                    _ => {}
-                },
-            }
-        }
+        self.check_into(cat, &mut Vec::new(), &mut out);
         out
+    }
+
+    fn check_into(&self, cat: &Catalog, path: &mut Vec<usize>, out: &mut Vec<Problem>) {
+        for (i, rule) in self.rules.iter().enumerate() {
+            path.push(i);
+            match rule {
+                Rule::Group { group } if group.rules.is_empty() => out.push(Problem { path: path.clone(), message: "an empty group".into() }),
+                Rule::Group { group } => group.check_into(cat, path, out),
+                Rule::Field { field, op, value } => {
+                    if let Some(message) = field_problem(field, op, value, cat) {
+                        out.push(Problem { path: path.clone(), message });
+                    }
+                }
+            }
+            path.pop();
+        }
     }
 
     /// A short readable summary ("rating is ≥ 3 and keywords contains travel").
@@ -679,7 +812,8 @@ mod tests {
     #[test]
     fn problems_and_description() {
         let r = rs(json!({"rules": [{"field": "rating", "op": "contains", "value": 1}, {"group": {"rules": [{"field": "nope", "op": "is"}]}}]}));
-        assert_eq!(r.problems(), vec!["`rating` has no operator `contains`".to_string(), "unknown field `nope`".to_string()]);
+        let messages: Vec<String> = r.check(&Catalog::new()).into_iter().map(|p| p.message).collect();
+        assert_eq!(messages, vec!["`rating` has no operator `contains`".to_string(), "unknown field `nope`".to_string()]);
         let r = rs(
             json!({"match": "any", "rules": [{"field": "rating", "op": "gte", "value": 3}, {"field": "captureDate", "op": "inLast", "value": {"n": 2, "unit": "weeks"}}]}),
         );
@@ -945,7 +1079,8 @@ mod tests {
         let r = rs(json!({"rules": [{"field": "edited", "op": "is", "value": true}, {"field": "cropped", "op": "is", "value": "false"}]}));
         assert_eq!(r.describe(), "has edits is yes and cropped is no");
         let bad = rs(json!({"rules": [{"field": "edited", "op": "is", "value": "maybe"}]}));
-        assert_eq!(bad.problems(), vec!["`edited` is yes or no, not \"maybe\"".to_string()]);
+        let messages: Vec<String> = bad.check(&cat).into_iter().map(|p| p.message).collect();
+        assert_eq!(messages, vec!["`edited` is yes or no, not \"maybe\"".to_string()]);
     }
 
     /// "In the last N" never overflows, whatever N an agent or a saved file holds: a zero,
@@ -970,6 +1105,78 @@ mod tests {
         }
         assert!(m("inLast", json!(1e30), "hours") && m("inLast", json!(30), "days"));
         set_now(None);
+    }
+
+    /// Every rule's value is checked against its field, so a rule that can't mean anything is
+    /// reported instead of quietly matching nothing (or everything). Each problem says which rule
+    /// it is about: "rule 2", or "rule 2.1" inside a group.
+    #[test]
+    fn values_are_checked_against_their_field() {
+        use crate::{Album, AlbumId, Op};
+        let mut cat = Catalog::new();
+        cat.apply(Op::AddAlbum { album: Album::new(AlbumId(1), "Trip") }).unwrap();
+        let smart = Album { smart: Some(Box::default()), ..Album::new(AlbumId(2), "Best") };
+        cat.apply(Op::AddAlbum { album: smart }).unwrap();
+        cat.apply(Op::SetLabelName { label: crate::ColorLabel::Red, name: Some("Client".into()) }).unwrap();
+        let check = |rule: serde_json::Value| rs(json!({"rules": [rule]})).check(&cat);
+        let ok = |rule: serde_json::Value| assert!(check(rule.clone()).is_empty(), "{rule}: {:?}", check(rule.clone()));
+        let bad = |rule: serde_json::Value, want: &str| {
+            let p = check(rule.clone());
+            assert!(p.iter().any(|p| p.message.contains(want)), "{rule}: wanted {want:?}, got {p:?}");
+        };
+        let r = |field: &str, op: &str, value: serde_json::Value| json!({"field": field, "op": op, "value": value});
+        // numbers
+        ok(r("rating", "gte", json!(3)));
+        ok(r("rating", "gte", json!("4")));
+        ok(r("rating", "between", json!([1, 5])));
+        ok(r("aperture", "lte", json!("f/4")));
+        ok(r("focalLength", "is", json!("50mm")));
+        bad(r("rating", "gte", json!("abc")), "needs a number");
+        bad(r("rating", "gte", json!(7)), "0–5");
+        bad(r("iso", "between", json!([100])), "two");
+        bad(r("iso", "between", json!("100")), "two");
+        ok(r("shutterSpeed", "lte", json!("1/60")));
+        bad(r("shutterSpeed", "lte", json!("fast")), "1/250");
+        // dates
+        for d in ["2026", "2026-08", "2026-08-14", "2026-08-14T10:00:00"] {
+            ok(r("captureDate", "is", json!(d)));
+        }
+        ok(r("captureDate", "between", json!(["2026-01", "2026-12"])));
+        for d in [json!("banana"), json!("2026-13"), json!("2026-02-30"), json!(""), json!(2026)] {
+            bad(r("captureDate", "after", d), "needs a date");
+        }
+        bad(r("captureDate", "between", json!(["2026-12", "2026-01"])), "after the second");
+        bad(r("captureDate", "between", json!(["", "2026"])), "needs a date");
+        ok(r("captureDate", "inLast", json!({"n": 2, "unit": "weeks"})));
+        ok(r("captureDate", "inLast", json!(7)));
+        bad(r("captureDate", "inLast", json!({"n": 0, "unit": "days"})), "more than 0");
+        bad(r("captureDate", "notInLast", json!({"n": 3, "unit": "fortnights"})), "fortnights");
+        ok(r("captureDate", "isEmpty", json!(null)));
+        // choices: the ids, the flag's aliases and a colour label's custom name
+        ok(r("kind", "is", json!("raw")));
+        ok(r("flag", "is", json!("picked")));
+        ok(r("label", "is", json!("client")));
+        bad(r("label", "is", json!("pink")), "pink");
+        bad(r("kind", "isNot", json!("photo")), "photo");
+        // text needs something to look for
+        ok(r("title", "contains", json!("kite")));
+        ok(r("title", "isEmpty", json!(null)));
+        bad(r("title", "contains", json!("  ")), "something to look for");
+        bad(r("keywords", "startsWith", json!("")), "something to look for");
+        // albums: a plain album that exists
+        ok(r("album", "is", json!(1)));
+        bad(r("album", "is", json!(999)), "no album 999");
+        bad(r("album", "is", json!(2)), "smart album");
+        // groups: an empty one is a mistake; problems inside one say where they are
+        let p = rs(json!({"rules": [r("rating", "gte", json!(3)), {"group": {"match": "any", "rules": []}}]})).check(&cat);
+        assert_eq!(p.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["rule 2: an empty group".to_string()]);
+        let p = rs(json!({"rules": [r("rating", "gte", json!(3)), {"group": {"rules": [r("iso", "is", json!(100)), r("rating", "is", json!(9))]}}]}))
+            .check(&cat);
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].path, vec![1, 1]);
+        assert_eq!(p[0].to_string(), "rule 2.2: rating is 0–5, not 9");
+        // an empty rule list at the top is "all photos" (or none, for any), not a mistake
+        assert!(rs(json!({"rules": []})).check(&cat).is_empty());
     }
 
     /// The field menu shows every rule field once: at the top level or in exactly one group,

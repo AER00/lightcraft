@@ -14,7 +14,13 @@ pub fn default_value(field: &str, op: &str) -> Value {
     match (field_kind(field), op) {
         (_, "isEmpty" | "isNotEmpty") => Value::Null,
         (Some(Kind::Date), "inLast" | "notInLast") => json!({"n": 30, "unit": "days"}),
-        (Some(Kind::Date), "between") => json!(["", ""]),
+        // this year (the catalog's clock): a date that means something, not an empty one that
+        // matches nothing ("is") or every date ("between")
+        (Some(Kind::Date), "between") => {
+            let year = this_year();
+            json!([format!("{year}-01"), format!("{year}-12")])
+        }
+        (Some(Kind::Date), _) => json!(this_year()),
         (Some(Kind::Number), "between") if field == "shutterSpeed" => json!(["1/1000", "1/125"]),
         (Some(Kind::Number), _) if field == "shutterSpeed" => json!("1/250"),
         (Some(Kind::Number), "between") => json!([0, 0]),
@@ -23,6 +29,11 @@ pub fn default_value(field: &str, op: &str) -> Value {
         (Some(Kind::Bool), _) => json!(true),
         _ => json!(""),
     }
+}
+
+/// The current year, `2026`.
+fn this_year() -> String {
+    lightcraft_catalog::rules::now().get(..4).unwrap_or("2026").to_string()
 }
 
 /// A new rule (Rating ≥ 3).
@@ -297,7 +308,11 @@ mod tests {
                     mode: Match::All,
                     rules: vec![Rule::Field { field: field.to_string(), op: op.to_string(), value: default_value(field, op) }],
                 };
-                assert!(rs.problems().is_empty(), "{field} {op}: {:?}", rs.problems());
+                // only a text rule (nothing to look for yet) and Album (no album picked yet) wait for
+                // input; every other default is a rule that means something
+                let problems = rs.check(&cat);
+                let waits = matches!(kind, Kind::Text | Kind::Keywords) || *field == "album";
+                assert!(problems.is_empty() || waits && !matches!(*op, "isEmpty" | "isNotEmpty"), "{field} {op}: {problems:?}");
                 let _ = rs.matches(&p, &cat);
                 let v = default_value(field, op);
                 let one = |v: &Value| match kind {
@@ -315,6 +330,11 @@ mod tests {
                 }
             }
         }
+        // a new date rule starts at this year, not at "" (and a between doesn't match every date)
+        lightcraft_catalog::rules::set_now(Some("2026-10-09T12:00:00".into()));
+        assert_eq!(default_value("captureDate", "is"), json!("2026"));
+        assert_eq!(default_value("captureDate", "between"), json!(["2026-01", "2026-12"]));
+        lightcraft_catalog::rules::set_now(None);
         assert_eq!(default_value("shutterSpeed", "gte"), json!("1/250"));
         assert_eq!(default_value("shutterSpeed", "between"), json!(["1/1000", "1/125"]));
     }

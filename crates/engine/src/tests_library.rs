@@ -491,3 +491,25 @@ fn capture_time_shift_is_bounded() {
     s.execute("photo.setCaptureTime", &serde_json::json!({"ids": [id.0], "hours": 1})).unwrap();
     assert_ne!(s.catalog.photo(id).unwrap().captured, before);
 }
+
+/// Values are checked too: an agent's rule set with a date that isn't one, or a rating of 9, is
+/// refused with the rule's position, by album.createSmart and library.filter alike.
+#[test]
+fn smart_rule_values_are_checked_by_commands() {
+    let mut s = crate::Session::with_demo();
+    let r = s.execute(
+        "album.createSmart",
+        &serde_json::json!({"name": "Odd", "rules": {"ruleSet": {"rules": [
+            {"field": "rating", "op": "gte", "value": 3},
+            {"field": "captureDate", "op": "is", "value": "banana"}
+        ]}}}),
+    );
+    let e = r.expect_err("a date that isn't one").to_string();
+    assert!(e.contains("rule 2:") && e.contains("needs a date"), "{e}");
+    assert!(s.catalog.albums().all(|a| a.name != "Odd"));
+    let e = s
+        .execute("library.filter", &serde_json::json!({"ruleSet": {"rules": [{"field": "rating", "op": "gte", "value": 9}]}}))
+        .expect_err("rating 9")
+        .to_string();
+    assert!(e.contains("rule 1: rating is 0–5, not 9"), "{e}");
+}

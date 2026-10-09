@@ -331,8 +331,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     return Err(bad("library.filter", "a folder is already shown (library.source): show another source first"));
                 }
                 // checked like a smart album's rules: an unknown field or a value that can't match is an error, not an empty grid
-                if let Some(problems) = f.rule_set.as_ref().map(|rs| rs.problems()).filter(|p| !p.is_empty()) {
-                    return Err(bad("library.filter", problems.join("; ")));
+                if let Some(problems) = f.rule_set.as_ref().map(|rs| rs.check(&s.catalog)).filter(|p| !p.is_empty()) {
+                    return Err(bad("library.filter", problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")));
                 }
                 s.filter = f;
                 Ok(json!({"count": s.visible().len()}))
@@ -813,7 +813,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     return Err(bad("album.createSmart", "empty name"));
                 }
                 let rules = match p.get("rules") {
-                    Some(r) => merge_rules(&lightcraft_catalog::Filter::default(), r, "album.createSmart")?,
+                    Some(r) => merge_rules(&lightcraft_catalog::Filter::default(), r, "album.createSmart", &s.catalog)?,
                     None => view_rules(s),
                 };
                 let parent = p.get("parent").and_then(Value::as_u64).map(AlbumId);
@@ -861,7 +861,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     let replace = bool_or(p, "replace", false);
                     let folder = cur.library_folder.clone();
                     let base = if replace { Default::default() } else { cur };
-                    let mut r = merge_rules(&base, p.get("rules").unwrap_or(&Value::Null), "album.setRules")?;
+                    let mut r = merge_rules(&base, p.get("rules").unwrap_or(&Value::Null), "album.setRules", &s.catalog)?;
                     // the rules dialog has no folder field: replacing its rules keeps the folder
                     // unless the call says (`libraryFolder: null`) to drop it
                     if replace && p.get("rules").and_then(|r| r.get("libraryFolder")).is_none() {
@@ -1278,12 +1278,13 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// `base` with a partial Filter (JSON) merged on top.
-fn merge_rules(base: &lightcraft_catalog::Filter, patch: &Value, c: &str) -> Result<lightcraft_catalog::Filter> {
+fn merge_rules(base: &lightcraft_catalog::Filter, patch: &Value, c: &str, cat: &lightcraft_catalog::Catalog) -> Result<lightcraft_catalog::Filter> {
     let mut v = serde_json::to_value(base).unwrap_or_default();
     lightcraft_develop::presets::deep_merge(&mut v, patch);
     let f: lightcraft_catalog::Filter = serde_json::from_value(v).map_err(|e| bad(c, e.to_string()))?;
-    if let Some(problem) = f.rule_set.as_ref().and_then(|r| r.problems().into_iter().next()) {
-        return Err(bad(c, problem));
+    let problems = f.rule_set.as_ref().map(|r| r.check(cat)).unwrap_or_default();
+    if !problems.is_empty() {
+        return Err(bad(c, problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")));
     }
     Ok(f)
 }
@@ -1319,7 +1320,7 @@ fn view_rules(s: &Session) -> lightcraft_catalog::Filter {
                     }
                 }
             }
-            merge_rules(&base, &Value::Object(patch), "").unwrap_or(base)
+            merge_rules(&base, &Value::Object(patch), "", &s.catalog).unwrap_or(base)
         }
         None => {
             let mut f = s.source.to_filter(&s.filter, &s.catalog);
