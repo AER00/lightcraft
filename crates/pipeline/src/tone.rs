@@ -31,6 +31,17 @@ pub const BASE_SLOPE: f32 = 1.56;
 
 /// Base shoulder position: scene EV above grey at which the default curve reaches half display.
 pub const BASE_WHITE_EV: f32 = 1.30;
+
+/// EV the white point moves per 100 of Whites, up and down.
+///
+/// Lightroom lifts the upper tones far harder than it trims them, so one
+/// symmetric gain cannot express it: with a single 1.6 the Whites slider was
+/// 2.4x too strong on the way down. These two come from the same measurement as
+/// [`BASE_SLOPE`] -- Lightroom's own response columns, at ±50 and ±100, against
+/// this formula -- and cut its mean error from 20.2/255 to 8.3.
+pub const WHITES_UP: f32 = 1.00;
+pub const WHITES_DOWN: f32 = 0.42;
+
 /// The tone LUT spans `LUT_MIN_EV..LUT_MAX_EV` around grey in `LUT_N` steps.
 pub const LUT_MIN_EV: f32 = -14.0;
 pub const LUT_MAX_EV: f32 = 10.0;
@@ -132,8 +143,9 @@ impl ToneMap {
     pub fn new(contrast: f64, whites: f64, blacks: f64) -> ToneMap {
         let c = (contrast / 100.0) as f32;
         let slope = BASE_SLOPE + if c >= 0.0 { 0.55 * c } else { 0.4 * c };
+        let w = (whites / 100.0) as f32;
         // Shoulder: scene luminance (after contrast) that maps to half display.
-        let white_ev = BASE_WHITE_EV - 1.6 * (whites as f32 / 100.0);
+        let white_ev = BASE_WHITE_EV - if w >= 0.0 { WHITES_UP * w } else { WHITES_DOWN * w };
         let wl = GREY * 2f32.powf(white_ev);
         let pre = 1.0 + GREY / wl; // keep grey near grey
         let b = (blacks / 100.0) as f32;
