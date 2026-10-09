@@ -211,3 +211,45 @@ fn dead_export_worker_leaves_no_row() {
     assert!(h.step_until(Duration::from_secs(60), |h| h.app.export.is_none()));
     assert!(h.app.session.activity.list().is_empty());
 }
+
+/// A folder of `n` stand-in JPEGs and an app whose file probe takes 100 ms each (a slow drive).
+fn slow_import(tag: &str, n: usize) -> (Headless, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("lc-activity-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 0..n {
+        std::fs::write(dir.join(format!("IMG_{i:03}.jpg")), format!("not really a jpeg {i}")).unwrap();
+    }
+    let mut s = lightcraft_engine::Session::new();
+    s.media.file_probe = Some(std::sync::Arc::new(|p: &str| {
+        std::thread::sleep(Duration::from_millis(100));
+        Ok(lightcraft_engine::media::ProbeInfo {
+            width: 60,
+            height: 40,
+            format: "JPEG".into(),
+            content_hash: Some(p.to_string()),
+            ..Default::default()
+        })
+    }));
+    let mut h = Headless::new(LightcraftApp::new(s, Services { png: None, ..Default::default() }), [1200.0, 800.0], 1.0);
+    h.step();
+    (h, dir)
+}
+
+#[test]
+fn import_cancelled_by_command_reports_cancelled() {
+    let n = 40;
+    let (mut h, dir) = slow_import("cancel", n);
+    let undo0 = h.app.session.undo.len();
+    crate::import::start_paths(&mut h.app, vec![dir.to_string_lossy().to_string()]).unwrap();
+    assert!(h.step_until(Duration::from_secs(60), |h| h.app.import.as_ref().is_some_and(|t| t.imported >= 2)));
+    let tasks = h.app.session.activity.list();
+    assert_eq!(tasks.first().map(|t| t.kind), Some("import"), "{tasks:?}");
+    h.app.session.activity.cancel(tasks[0].id).unwrap();
+    assert!(h.step_until(Duration::from_secs(60), |h| h.app.import.is_none()));
+    assert!(h.app.session.activity.list().is_empty());
+    assert!(h.app.ui.toast.as_ref().is_some_and(|t| t.0.starts_with("Import cancelled")), "{:?}", h.app.ui.toast);
+    assert!(h.app.session.catalog.len() < n, "stopped part-way");
+    assert_eq!(h.app.session.undo.len(), undo0 + 1, "one undo step");
+    let _ = std::fs::remove_dir_all(&dir);
+}

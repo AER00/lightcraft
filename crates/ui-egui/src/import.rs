@@ -5,7 +5,8 @@
 //! chosen folder, filed by day, by month, into one folder or by a custom folder template,
 //! optionally renamed), an album (existing or new), a preset and keywords to apply. Importing
 //! runs on a worker thread (files are probed, copied or moved there) and its batches join the
-//! catalog between frames, with a progress window and Cancel; the whole import is one undo step.
+//! catalog between frames, with a row and ✕ in the activity stack (issue #345); the whole import is
+//! one undo step.
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use lightcraft_engine::import::{ImportCandidate, ScanInput, ScanOutput, ScanProgress, scan_with};
@@ -235,6 +236,8 @@ pub struct ImportTask {
     /// Auto Import: the selection to keep.
     keep_selection: Option<lightcraft_engine::Selection>,
     run: Option<ImportRun>,
+    /// The import's row in the activity stack (its ✕ and `activity.cancel` set the run's cancel flag).
+    guard: Option<lightcraft_engine::activity::TaskGuard>,
 }
 
 impl ImportTask {
@@ -648,7 +651,11 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
             task.keep_selection = Some(app.session.selection.clone());
         }
         match started {
-            Ok(run) => task.run = Some(run),
+            Ok(run) => {
+                let label = if task.browse { "Reading folder" } else { "Importing" };
+                task.guard = Some(app.session.activity.start("import", label, lightcraft_engine::activity::Cancel::Flag(run.cancel.clone())));
+                task.run = Some(run);
+            }
             Err(e) => {
                 log::warn!("import: {e}");
                 app.toast(ctx, crate::i18n::tr_format!("Import failed: {e}", e = e));
@@ -670,6 +677,13 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
     if let Some(run) = &task.run {
         task.total = run.total.load(Ordering::Relaxed).max(task.total);
         task.done = run.done.load(Ordering::Relaxed);
+    }
+    if let Some(guard) = &task.guard {
+        guard.progress(task.done as u64, task.total as u64);
+        // ✕ in the stack (or `activity.cancel`): no further files are started
+        if guard.is_cancelled() {
+            task.cancelled = true;
+        }
     }
     if !finished {
         app.import = Some(task);
@@ -810,40 +824,6 @@ fn show_existing(app: &mut LightcraftApp, ctx: &egui::Context, existing: &[u64])
     };
     app.toast_for(ctx, msg, 6.0);
     true
-}
-
-/// The progress window while an import runs, with Cancel (files already copied or added stay;
-/// nothing new is started).
-pub fn progress(app: &mut LightcraftApp, ctx: &egui::Context) {
-    let Some(task) = &app.import else { return };
-    let t = Tokens::get(ctx);
-    let frac = task.done as f32 / task.total.max(1) as f32;
-    let text = if task.cancelled {
-        crate::i18n::tr("Stopping…").to_string()
-    } else if task.browse {
-        crate::i18n::tr_format!("Reading photos… {} of {}", task.done, task.total)
-    } else {
-        crate::i18n::tr_format!("Adding photos… {} of {}", task.done, task.total)
-    };
-    let mut cancel = false;
-    egui::Window::new(crate::i18n::tr("Importing"))
-        .title_bar(false)
-        .resizable(false)
-        .anchor(Align2::CENTER_BOTTOM, [0.0, -80.0])
-        .fixed_size([340.0, 80.0])
-        .show(ctx, |ui| {
-            ui.label(egui::RichText::new(text).color(t.text));
-            ui.add(egui::ProgressBar::new(frac).desired_width(320.0));
-            let r = ui.add_enabled(!task.cancelled, egui::Button::new(crate::i18n::tr("Cancel")));
-            register(ui.ctx(), "button:importCancel", r.rect);
-            cancel = r.clicked();
-        });
-    if cancel && let Some(task) = app.import.as_mut() {
-        task.cancelled = true;
-        if let Some(run) = &task.run {
-            run.cancel.store(true, Ordering::Relaxed);
-        }
-    }
 }
 
 /// The dialog body: options, then the candidate grid.

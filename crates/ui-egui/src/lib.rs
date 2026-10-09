@@ -1072,7 +1072,6 @@ impl LightcraftApp {
         panels::notices::show(self, &ctx);
         panels::dialogs::show(self, &ctx);
         panels::library_problem::show(self, &ctx);
-        import::progress(self, &ctx);
         sync::progress_window(self, &ctx);
         import::scan_progress(self, &ctx);
         lightroom_import::progress(self, &ctx);

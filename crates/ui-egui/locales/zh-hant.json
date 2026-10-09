@@ -1864,5 +1864,6 @@
   "Wait for the import to finish": "請等待匯入完成",
   "Show less": "收合",
   "Quit while tasks are running?": "要在工作執行時結束嗎？",
-  "Exporting contact sheet": "正在匯出聯絡表"
+  "Exporting contact sheet": "正在匯出聯絡表",
+  "Reading folder": "正在讀取檔案夾"
 }

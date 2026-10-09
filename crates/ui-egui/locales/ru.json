@@ -1577,5 +1577,6 @@
   "Wait for the import to finish": "Дождитесь окончания импорта",
   "Show less": "Свернуть",
   "Quit while tasks are running?": "Выйти, пока выполняются задачи?",
-  "Exporting contact sheet": "Экспорт контрольного листа"
+  "Exporting contact sheet": "Экспорт контрольного листа",
+  "Reading folder": "Чтение папки"
 }
