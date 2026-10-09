@@ -200,6 +200,8 @@ pub mod compression {
     /// DNG lossy JPEG (baseline DCT, 8-bit).
     pub const LOSSY_JPEG: u16 = 34892;
     pub const JPEG_XL: u16 = 52546;
+    /// SMPTE ST 2073 (VC-5) as written by GoPro's GPR files (the value measured in them).
+    pub const VC5: u16 = 9;
     /// Nikon NEF Huffman compression.
     pub const NIKON: u16 = 34713;
     /// Sony ARW compressed (the value used by ARW files).
