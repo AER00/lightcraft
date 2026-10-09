@@ -239,3 +239,14 @@ fn renaming_a_set_alone_keeps_its_keywords() {
     s.execute("keyword.saveSet", &json!({"name": "Ceremonies", "replace": "Weddings"})).unwrap();
     assert_eq!(set_named(&mut s, "Ceremonies")["keywords"], json!(["ceremony"]));
 }
+
+/// A new set (`new: true`, what Edit Set… on Recent Keywords saves) never takes another set's
+/// name: saving over it silently is refused.
+#[test]
+fn a_new_set_doesnt_take_a_sets_name() {
+    let mut s = Session::with_demo();
+    s.execute("keyword.saveSet", &json!({"name": "Travel", "keywords": ["harbour", "lisbon"]})).unwrap();
+    let err = s.execute("keyword.saveSet", &json!({"name": "travel", "new": true, "keywords": ["x"]})).unwrap_err().to_string();
+    assert!(err.contains("already"), "{err}");
+    assert_eq!(set_named(&mut s, "Travel")["keywords"], json!(["harbour", "lisbon"]), "left as it was");
+}

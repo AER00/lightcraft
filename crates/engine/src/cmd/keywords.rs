@@ -145,7 +145,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save Keyword Set",
             [],
             None,
-            "{name, keywords?: [up to 9, \"\" = an empty slot] (default: the renamed set's, else the current nine), replace?: the set it renames} — replaces a set of that name (or `replace`, in its place) and makes it current",
+            "{name, keywords?: [up to 9, \"\" = an empty slot] (default: the renamed set's, else the current nine), replace?: the set it renames, new?: refuse a name another set has} — replaces a set of that name (or `replace`, in its place) and makes it current",
             always,
             |s, p| {
                 let name = str_param(p, "name")
@@ -183,6 +183,10 @@ pub fn specs() -> Vec<CommandSpec> {
                         if let Some(x) = s.keyword_sets.get_mut(at) {
                             *x = set;
                         }
+                    }
+                    // a new set (`new`) never takes another set's name
+                    None if bool_or(p, "new", false) && s.keyword_sets.iter().any(|x| same_name(x, &name)) => {
+                        return Err(bad("keyword.saveSet", format!("there is a keyword set “{name}” already")));
                     }
                     None => match s.keyword_sets.iter_mut().find(|x| same_name(x, &name)) {
                         Some(x) => *x = set,
