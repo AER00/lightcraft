@@ -311,7 +311,8 @@ fn smart_album_field_menu_groups_fields_in_submenus() {
         assert!(has(&h, &format!("ruleFieldGroup:{group}:rules-0")), "no {group} submenu");
     }
     assert!(!has(&h, "ruleFieldItem:filePath:rules-0"), "grouped fields wait in their submenu");
-    let r = h.request("ui.hoverWidget", json!({"id": "ruleFieldGroup:File:rules-0"}), T);
+    // clicking a group row (a touch, or a click faster than hover) opens it, not closes the menu
+    let r = h.request("ui.clickWidget", json!({"id": "ruleFieldGroup:File:rules-0"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
     let r = h.request("ui.clickWidget", json!({"id": "ruleFieldItem:filePath:rules-0"}), T);

@@ -279,8 +279,9 @@ mod tests {
     use lightcraft_catalog::rules::FIELDS;
     use lightcraft_catalog::{Catalog, Photo, PhotoId, Source};
 
-    /// Every field × operator starts with a value the rule accepts; a new shutter-speed rule starts
-    /// at a real time in camera notation.
+    /// Every field × operator starts with a known operator and a value of the right shape: none for
+    /// the empty tests, a pair for "between", one of the choices, a number for number fields (a
+    /// real time in camera notation for shutter speed); and evaluating it never panics.
     #[test]
     fn default_values_make_valid_rules() {
         let cat = Catalog::new();
@@ -293,6 +294,20 @@ mod tests {
                 };
                 assert!(rs.problems().is_empty(), "{field} {op}: {:?}", rs.problems());
                 let _ = rs.matches(&p, &cat);
+                let v = default_value(field, op);
+                let one = |v: &Value| match kind {
+                    Kind::Choice(c) => v.as_str().is_some_and(|s| c.contains(&s)),
+                    Kind::Number if *field == "shutterSpeed" => v.as_str().and_then(lightcraft_catalog::parse_shutter_seconds).is_some(),
+                    Kind::Number => v.is_number(),
+                    Kind::Bool => v.is_boolean(),
+                    Kind::Text | Kind::Keywords | Kind::Date => v.is_string(),
+                };
+                match *op {
+                    "isEmpty" | "isNotEmpty" => assert!(v.is_null(), "{field} {op}: {v}"),
+                    "between" => assert!(v.as_array().is_some_and(|a| a.len() == 2 && a.iter().all(one)), "{field} {op}: {v}"),
+                    "inLast" | "notInLast" => assert!(v["n"].is_number(), "{field} {op}: {v}"),
+                    _ => assert!(one(&v), "{field} {op}: {v}"),
+                }
             }
         }
         assert_eq!(default_value("shutterSpeed", "gte"), json!("1/250"));
