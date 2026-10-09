@@ -360,8 +360,7 @@ impl NativeMenu {
         lightcraft_ui_egui::i18n::set_language(app.ui.language);
         while let Ok(key) = self.rx.try_recv() {
             if key == QUIT {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                continue;
+                std::process::exit(0);
             }
             if key == "app.about" || key == SETTINGS {
                 let _ = app.run(&key, serde_json::json!({}));
