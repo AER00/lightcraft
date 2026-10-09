@@ -209,6 +209,7 @@ impl DecodedSource {
     /// Cache cost: the picture, its segmentation mattes, its denoised twin and room for the lazy mix.
     pub fn bytes(&self) -> usize {
         let mattes = self.info.as_ref().and_then(|i| i.mattes.as_ref()).map_or(0, |m| m.bytes());
+        let mattes = mattes + self.info.as_ref().and_then(|i| i.local_tone.as_ref()).map_or(0, |t| t.map.gains.len() * 4);
         self.image.data.len() * 12 + 64 + std::mem::size_of::<SourceInfo>() + mattes + self.denoised.as_ref().map_or(0, |t| t.bytes())
     }
 

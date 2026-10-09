@@ -88,11 +88,16 @@ pub struct Profile {
     pub id: String,
     /// Creative profile amount 0..200 (%).
     pub amount: f64,
+    /// Render the raw's own local tone mapping (DNG `ProfileGainTableMap`, Apple ProRAW), as the
+    /// camera does. Off: rendered as Lightroom Classic does, without it. Omitted when off, so
+    /// settings without it keep their JSON (and hash).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub camera_local_tone: bool,
 }
 
 impl Default for Profile {
     fn default() -> Self {
-        Self { id: "lc.color".into(), amount: 100.0 }
+        Self { id: "lc.color".into(), amount: 100.0, camera_local_tone: false }
     }
 }
 
