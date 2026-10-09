@@ -197,6 +197,8 @@ pub struct LightcraftApp {
     shadow: Option<headless::HeadlessView>,
     /// Synthetic input events (from the control channel) injected one step per frame.
     pub synthetic: Vec<egui::Event>,
+    /// The text the UI last put on the clipboard (`ui.inspect` → `copied`).
+    pub copied: Option<String>,
     /// Native file dialogs up for commands (`pick`): each command runs again when its closes.
     pub(crate) pending_picks: Vec<pick::Pending>,
     /// Modifiers announced for synthetic input (held from a button down to its release).
@@ -289,6 +291,7 @@ impl LightcraftApp {
             screenshot_token: 0,
             shadow: None,
             synthetic: vec![],
+            copied: None,
             pending_picks: vec![],
             synthetic_mods: egui::Modifiers::NONE,
             synthetic_mods_release: false,
@@ -883,7 +886,14 @@ impl LightcraftApp {
     }
 
     /// Frame timings once layout is done (`t0`: when layout started).
-    fn end_frame(&mut self, t0: f64) {
+    fn end_frame(&mut self, ctx: &egui::Context, t0: f64) {
+        ctx.output(|o| {
+            for c in &o.commands {
+                if let egui::OutputCommand::CopyText(text) = c {
+                    self.copied = Some(text.clone());
+                }
+            }
+        });
         self.perf.frame_ms = now_ms() - t0;
         self.perf.update_ms = self.perf.logic_ms + self.perf.frame_ms;
         self.perf.max_update_ms = self.perf.max_update_ms.max(self.perf.update_ms);
@@ -913,7 +923,7 @@ impl LightcraftApp {
             panels::library_problem::show(self, &ctx);
             panels::toast(self, &ctx);
             self.widgets = widgets::take_registry(&ctx);
-            self.end_frame(t0);
+            self.end_frame(&ctx, t0);
             return;
         }
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
@@ -959,7 +969,7 @@ impl LightcraftApp {
         panels::left::album_drag_feedback(self, &ctx);
         panels::toast(self, &ctx);
         self.widgets = widgets::take_registry(&ctx);
-        self.end_frame(t0);
+        self.end_frame(&ctx, t0);
     }
 }
 

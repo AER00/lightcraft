@@ -103,6 +103,7 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         })),
         "hoverPreview": app.hover_preview.as_ref().map(|h| h.label.clone()),
         "status": app.ui.status,
+        "copied": app.copied,
         "notices": app.notices,
         "quitPrompt": app.quit_prompt,
         // how hard the background face scan may work right now, and why it is judged so (see `panels::faces::scan_pace`)
@@ -270,6 +271,21 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
         }
         "ui.text" => {
             app.synthetic.push(egui::Event::Text(s("text").unwrap_or("").to_string()));
+            ctx.request_repaint();
+            ok(Value::Null)
+        }
+        // what the system does for ⌘X / ⌘C / ⌘V in a text field: paste `text`, or (without it)
+        // what the system clipboard holds
+        "ui.clipboard" => {
+            match s("action") {
+                Some("cut") => app.synthetic.push(egui::Event::Cut),
+                Some("copy") => app.synthetic.push(egui::Event::Copy),
+                Some("paste") => match s("text") {
+                    Some(text) => app.synthetic.push(egui::Event::Paste(text.to_string())),
+                    None => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
+                },
+                _ => return err("ui.clipboard: `action` is cut, copy or paste"),
+            }
             ctx.request_repaint();
             ok(Value::Null)
         }
