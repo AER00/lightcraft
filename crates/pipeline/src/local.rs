@@ -328,6 +328,15 @@ pub(crate) fn prepare(img: Arc<Rgb32f>, s: &DevelopSettings, frame: &Frame, px_p
     Prepared { img, log_l, base, clarity_blur, texture_blur, dark, chroma_blur, air, masks, px_per_long }
 }
 
+/// The airlight of the whole output frame, estimated on a small render of it (`proxy_w` px wide):
+/// a windowed render must dehaze with the frame's airlight, not that of the pixels it holds.
+pub(crate) fn frame_airlight(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, frame: &Frame, proxy_w: usize, proxy_h: usize) -> f32 {
+    let mut img = frame.sample(src, proxy_w, proxy_h);
+    white_balance(&mut img, info, s);
+    let sigma = (0.02 * frame.px_per_long(proxy_w)).max(1.0) as f32;
+    airlight(&gaussian(&img.map(dark_of), sigma))
+}
+
 /// The airlight is estimated from every `AIRLIGHT_STEP`-th value of the dark channel.
 pub const AIRLIGHT_STEP: usize = 7;
 

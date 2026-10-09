@@ -22,7 +22,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let people = app.caches.people(&app.session.catalog, &app.session.filter);
     let (head, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
-    ui.painter().text(pos2(head.left() + PAD, head.center().y), Align2::LEFT_CENTER, "Named People", t.semibold(15.0), t.text);
+    ui.painter().text(pos2(head.left() + PAD, head.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Named People"), t.semibold(15.0), t.text);
     ui.painter().text(pos2(head.right() - PAD, head.center().y), Align2::RIGHT_CENTER, people.len().to_string(), t.font(13.0), t.text_dim);
     // the filters narrowing the list (a date, a keyword…), removable here
     let chips = lightcraft_engine::filter_chips(&app.session.filter, &app.session.catalog);
@@ -78,9 +78,9 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, person: &Person, r: Rect, pp
     let name =
         if person.name.chars().count() > 19 { format!("{}…", person.name.chars().take(18).collect::<String>()) } else { person.name.clone() };
     p.text(pos2(r.left() + 2.0, face.bottom() + 14.0), Align2::LEFT_CENTER, name, t.semibold(13.0), t.text);
-    let photos = if person.count == 1 { "1 photo".to_string() } else { format!("{} photos", person.count) };
+    let photos = crate::i18n::tr_format!("{n} photo{}", if person.count == 1 { "" } else { "s" }, n = person.count);
     p.text(pos2(r.left() + 2.0, face.bottom() + 32.0), Align2::LEFT_CENTER, photos, t.font(12.0), t.text_dim);
-    if resp.on_hover_text(format!("{} — show their photos", person.name)).clicked() {
+    if resp.on_hover_text(crate::i18n::tr_format!("{} — show their photos", person.name)).clicked() {
         let _ = app.run("library.filter", json!({"person": person.name}));
         let _ = app.run("view.photoGrid", json!({}));
     }

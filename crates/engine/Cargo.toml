@@ -30,6 +30,9 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 ab_glyph = { workspace = true }
+# Apply the font’s vertical substitutions and origins to Japanese watermarks.
+harfrust = { version = "0.12", default-features = false, features = ["std"] }
+unicode-segmentation = "1.13"
 lightcraft-segment = { workspace = true, optional = true }
 
 [features]
@@ -38,3 +41,4 @@ sam = ["dep:lightcraft-segment"]
 
 [dev-dependencies]
 libc = { workspace = true }
+lightcraft-tiff = { workspace = true }

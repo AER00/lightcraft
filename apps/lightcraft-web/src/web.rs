@@ -168,6 +168,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
     let (backup_backend, backup_files) = (backend.clone(), files);
     let restore_backend = backend.clone();
     Services {
+        picker: None,
         backup_library: Some(Box::new(move |session: &mut Session| {
             let Some(b) = backup_backend.clone() else { return Err("nothing is stored in this browser session (?store=memory)".into()) };
             // the photos' own names for the originals in the zip
@@ -207,6 +208,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         // Preset files: browser pickers are asynchronous; not wired on the web yet.
         pick_preset_files: None,
         pick_tracklog: None,
+        pick_lightroom_catalog: None,
         save_preset_file: None,
         pick_curve_preset_files: None,
         save_curve_preset_file: None,
@@ -217,6 +219,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),
         reveal: None,
+        log_file: None,
         open_with: None,
         open_url: Some(Box::new(|url: &str| {
             let w = web_sys::window().ok_or("no window")?;
@@ -429,8 +432,17 @@ impl WebApp {
             cores.saturating_sub(1).clamp(1, 4)
         });
         let cache = app.session.media.rendered.clone();
-        let workers =
-            (n > 0).then(|| Workers::start(n, backend.as_ref().map_or("memory", |b| b.kind()), backend.clone(), index, &cache, cc.egui_ctx.clone()));
+        let workers = (n > 0).then(|| {
+            Workers::start(
+                n,
+                backend.as_ref().map_or("memory", |b| b.kind()),
+                backend.clone(),
+                index,
+                &cache,
+                app.session.cache_bytes(),
+                cc.egui_ctx.clone(),
+            )
+        });
         if let Some(w) = &workers {
             app.renderer.set_offload(Box::new(w.clone()));
         }
@@ -601,11 +613,16 @@ impl eframe::App for WebApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         for text in safety::take_notices() {
             let now = ctx.input(|i| i.time);
-            self.app.ui.toast = Some((text, now + NOTICE_SECS));
+            self.app.ui.toast = Some((text, now + NOTICE_SECS, None));
         }
         self.run_inbox();
         self.import_dropped(ctx);
         self.load_originals(ctx);
+        if let Some(w) = &self.workers {
+            // `library.preferences ▸ cacheMb` is read by the session; the worker index prunes on
+            // its own thread, so it gets the budget every frame and applies it on the next store.
+            w.set_budget(self.app.session.cache_bytes());
+        }
         self.app.logic(ctx);
         self.save();
         if let Some(b) = self.bench.as_mut()
