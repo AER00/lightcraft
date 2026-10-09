@@ -511,5 +511,5 @@ fn smart_rule_values_are_checked_by_commands() {
         .execute("library.filter", &serde_json::json!({"ruleSet": {"rules": [{"field": "rating", "op": "gte", "value": 9}]}}))
         .expect_err("rating 9")
         .to_string();
-    assert!(e.contains("rule 1: rating is 0–5, not 9"), "{e}");
+    assert!(e.contains("rule 1: no rating 0–5 is ≥ 9"), "{e}");
 }

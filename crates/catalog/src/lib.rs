@@ -373,7 +373,9 @@ impl Catalog {
     /// The label a name stands for: a custom name first, then a colour's own name (any case).
     pub fn label_from_name(&self, name: &str) -> Option<ColorLabel> {
         let name = name.trim();
-        self.label_names.iter().find(|(_, n)| n.trim().eq_ignore_ascii_case(name)).map(|(l, _)| *l).or_else(|| ColorLabel::parse(name))
+        // any case, accents included (Été / été), as rules compare names
+        let name_lower = name.to_lowercase();
+        self.label_names.iter().find(|(_, n)| n.trim().to_lowercase() == name_lower).map(|(l, _)| *l).or_else(|| ColorLabel::parse(name))
     }
 
     // ---- writes

@@ -173,17 +173,27 @@ fn field_problem(field: &str, op: &str, value: &Value, cat: &Catalog) -> Option<
     }
     match kind {
         Kind::Bool => bool_value(value).is_none().then(|| format!("`{field}` is yes or no, not {value}")),
-        Kind::Number if op == "between" => match value {
-            Value::Array(a) if a.len() == 2 => a.iter().find_map(|v| number_problem(field, v, cat)),
-            _ => Some(format!("`{field}` between needs two values, not {value}")),
-        },
-        Kind::Number => number_problem(field, value, cat),
+        Kind::Number => {
+            let each = match value {
+                Value::Array(a) if op == "between" && a.len() == 2 => a.iter().find_map(|v| number_problem(field, v, cat)),
+                _ if op == "between" => Some(format!("`{field}` between needs two values, not {value}")),
+                v => number_problem(field, v, cat),
+            };
+            // a rating rule no rating could meet ("is 9", "≥ 7"); "< 6" is fine, if broad
+            each.or_else(|| {
+                let label = ops_for(kind).iter().find(|o| o.0 == op).map_or(op, |o| o.1);
+                (field == "rating" && !(0..=5).any(|r| num_op(op, Some(f64::from(r)), value))).then(|| format!("no rating 0–5 {label} {value}"))
+            })
+        }
         Kind::Date => date_problem(field, op, value),
         Kind::Choice(choices) => choice_problem(field, value, choices, cat),
         Kind::Text | Kind::Keywords => match value {
-            Value::String(s) if s.trim().is_empty() => Some(format!("`{field}` needs something to look for (or use “is empty”)")),
-            Value::Null => Some(format!("`{field}` needs something to look for (or use “is empty”)")),
-            Value::String(_) | Value::Number(_) => None,
+            Value::String(s) if !s.trim().is_empty() => None,
+            Value::String(_) | Value::Null => {
+                let instead = if matches!(op, "isNot" | "notContains") { "isn't empty" } else { "is empty" };
+                Some(format!("`{field}` needs something to look for (or use “{instead}”)"))
+            }
+            Value::Number(_) => None,
             other => Some(format!("`{field}` needs text, not {other}")),
         },
     }
@@ -195,7 +205,6 @@ fn number_problem(field: &str, v: &Value, cat: &Catalog) -> Option<String> {
     }
     let Some(n) = number(v).filter(|n| n.is_finite()) else { return Some(format!("`{field}` needs a number, not {v}")) };
     match field {
-        "rating" if !(0.0..=5.0).contains(&n) => Some(format!("rating is 0–5, not {v}")),
         "album" => {
             let album = (n >= 0.0 && n.fract() == 0.0).then(|| cat.album(crate::AlbumId(n as u64))).flatten();
             match album {
@@ -228,16 +237,13 @@ fn date_problem(field: &str, op: &str, value: &Value) -> Option<String> {
     match op {
         "inLast" | "notInLast" => {
             let (n, unit) = match value {
-                Value::Object(o) => (o.get("n").and_then(number), o.get("unit").cloned().unwrap_or(json_str("days"))),
-                v => (number(v), json_str("days")),
+                Value::Object(o) => (o.get("n").and_then(number), o.get("unit").cloned().unwrap_or(Value::Null)),
+                v => (number(v), Value::Null),
             };
             if !n.is_some_and(|n| n.is_finite() && n > 0.0) {
                 return Some(format!("`{field}` needs a number of hours, days, weeks, months or years more than 0"));
             }
-            match unit.as_str() {
-                Some("hours" | "days" | "weeks" | "months" | "years") => None,
-                _ => Some(format!("`{field}`: unknown unit {unit} (hours, days, weeks, months or years)")),
-            }
+            unit_secs(&unit).is_none().then(|| format!("`{field}`: unknown unit {unit} (hours, days, weeks, months or years)"))
         }
         "between" => match value {
             Value::Array(a) if a.len() == 2 => a.iter().find_map(date).or_else(|| {
@@ -249,10 +255,6 @@ fn date_problem(field: &str, op: &str, value: &Value) -> Option<String> {
         },
         _ => date(value),
     }
-}
-
-fn json_str(s: &str) -> Value {
-    Value::String(s.to_string())
 }
 
 fn choice_problem(field: &str, value: &Value, choices: &[(&str, &str)], cat: &Catalog) -> Option<String> {
@@ -464,6 +466,26 @@ fn shutter_value(value: &Value) -> Value {
     }
 }
 
+/// Seconds in one "in the last…" unit: hours, days, weeks, months or years, in any case, singular
+/// or plural; none means days. `None` for anything else, which the check refuses and the matcher
+/// matches nothing with.
+fn unit_secs(unit: &Value) -> Option<f64> {
+    let day = 86_400.0;
+    let name = match unit {
+        Value::Null => return Some(day),
+        Value::String(s) => s.trim().to_lowercase(),
+        _ => return None,
+    };
+    match name.strip_suffix('s').unwrap_or(&name) {
+        "hour" => Some(3600.0),
+        "day" => Some(day),
+        "week" => Some(7.0 * day),
+        "month" => Some(30.4375 * day),
+        "year" => Some(365.25 * day),
+        _ => None,
+    }
+}
+
 /// The longest "in the last…" span: 10,000 years, beyond any capture date ("ever").
 const MAX_LAST_SECS: f64 = 10_000.0 * 365.25 * 86_400.0;
 
@@ -472,17 +494,10 @@ const MAX_LAST_SECS: f64 = 10_000.0 * 365.25 * 86_400.0;
 /// is that (so the arithmetic on it can't overflow).
 fn last_secs(value: &Value) -> Option<i64> {
     let (n, unit) = match value {
-        Value::Object(o) => (o.get("n").and_then(number)?, o.get("unit").and_then(Value::as_str).unwrap_or("days")),
-        v => (number(v)?, "days"),
+        Value::Object(o) => (o.get("n").and_then(number)?, o.get("unit").unwrap_or(&Value::Null)),
+        v => (number(v)?, &Value::Null),
     };
-    let day = 86_400.0;
-    let per = match unit {
-        "hours" => 3600.0,
-        "weeks" => 7.0 * day,
-        "months" => 30.4375 * day,
-        "years" => 365.25 * day,
-        _ => day,
-    };
+    let per = unit_secs(unit)?;
     let secs = n * per;
     if secs.is_nan() || secs <= 0.0 {
         return None;
@@ -1132,7 +1147,7 @@ mod tests {
         ok(r("aperture", "lte", json!("f/4")));
         ok(r("focalLength", "is", json!("50mm")));
         bad(r("rating", "gte", json!("abc")), "needs a number");
-        bad(r("rating", "gte", json!(7)), "0–5");
+        bad(r("rating", "gte", json!(7)), "no rating 0–5 is ≥ 7");
         bad(r("iso", "between", json!([100])), "two");
         bad(r("iso", "between", json!("100")), "two");
         ok(r("shutterSpeed", "lte", json!("1/60")));
@@ -1174,9 +1189,50 @@ mod tests {
             .check(&cat);
         assert_eq!(p.len(), 1);
         assert_eq!(p[0].path, vec![1, 1]);
-        assert_eq!(p[0].to_string(), "rule 2.2: rating is 0–5, not 9");
+        assert_eq!(p[0].to_string(), "rule 2.2: no rating 0–5 is 9");
         // an empty rule list at the top is "all photos" (or none, for any), not a mistake
         assert!(rs(json!({"rules": []})).check(&cat).is_empty());
+    }
+
+    /// The check and the matcher agree. Units are any case, singular or plural, and missing means
+    /// days; an unknown unit is refused and matches nothing (it used to count as days, so "week" was
+    /// one day). A rating rule is refused only when no rating 0–5 could meet it. A colour label's
+    /// custom name matches in any case, accents included. Empty text hints at the right operator.
+    #[test]
+    fn check_and_matcher_agree() {
+        use crate::Op;
+        set_now(Some("2026-09-01T00:00:00".into()));
+        let mut cat = Catalog::new();
+        cat.apply(Op::SetLabelName { label: crate::ColorLabel::Red, name: Some("Été".into()) }).unwrap();
+        let p = photo(1); // captured 2026-08-14 (18 days before now), red label, rating 4
+        let rule = |field: &str, op: &str, value: serde_json::Value| rs(json!({"rules": [{"field": field, "op": op, "value": value}]}));
+        let valid = |r: &RuleSet| r.check(&cat).is_empty();
+        for unit in [json!("Days"), json!("DAY"), json!("days"), json!(null)] {
+            let r = rule("captureDate", "inLast", json!({"n": 30, "unit": unit}));
+            assert!(valid(&r) && r.matches(&p, &cat), "{unit}");
+        }
+        let r = rule("captureDate", "inLast", json!({"n": 30}));
+        assert!(valid(&r) && r.matches(&p, &cat), "no unit is days");
+        let week = rule("captureDate", "inLast", json!({"n": 1, "unit": "week"}));
+        assert!(valid(&week) && !week.matches(&p, &cat), "a week, not a day: 18 days ago is outside it");
+        assert!(rule("captureDate", "inLast", json!({"n": 3, "unit": "Weeks"})).matches(&p, &cat));
+        let odd = rule("captureDate", "inLast", json!({"n": 30, "unit": "fortnights"}));
+        assert!(!valid(&odd) && !odd.matches(&p, &cat), "an unknown unit is refused and matches nothing");
+        // rating: only a rule no rating could meet
+        for (op, v) in [("lt", json!(6)), ("gt", json!(-1)), ("isNot", json!(9)), ("between", json!([3, 8]))] {
+            assert!(valid(&rule("rating", op, v.clone())), "{op} {v}");
+        }
+        for (op, v) in [("is", json!(9)), ("gte", json!(7)), ("gt", json!(5)), ("lt", json!(0)), ("between", json!([6, 9]))] {
+            assert!(!valid(&rule("rating", op, v.clone())), "{op} {v}");
+        }
+        // a custom label name, any case, accents too
+        let r = rule("label", "is", json!("été"));
+        assert!(valid(&r) && r.matches(&p, &cat));
+        // "isn't" with nothing points at "isn't empty", the others at "is empty"
+        let hint = |op: &str| rule("title", op, json!("")).check(&cat).first().map(|p| p.message.clone()).unwrap_or_default();
+        assert!(hint("isNot").contains("isn't empty"), "{}", hint("isNot"));
+        assert!(hint("contains").contains("“is empty”"), "{}", hint("contains"));
+        set_now(None);
     }
 
     /// The field menu shows every rule field once: at the top level or in exactly one group,
