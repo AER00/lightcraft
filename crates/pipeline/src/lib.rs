@@ -30,6 +30,7 @@ pub mod dust;
 pub mod finish;
 pub mod geometry;
 pub mod local;
+pub mod local_tone;
 pub mod lut;
 pub mod masks;
 pub mod optics;
@@ -83,6 +84,9 @@ pub struct SourceInfo {
     pub camera_tone: Option<tone::CameraTone>,
     /// Segmentation mattes stored in the file (DNG semantic masks): AI masks use them.
     pub mattes: Option<Arc<masks::Mattes>>,
+    /// The raw's own local tone mapping (DNG `ProfileGainTableMap`), rendered only when the
+    /// photo's Profile option asks for it ([`local_tone`]).
+    pub local_tone: Option<Arc<local_tone::LocalTone>>,
 }
 
 impl Default for SourceInfo {
@@ -96,6 +100,7 @@ impl Default for SourceInfo {
             camera_color: None,
             camera_tone: None,
             mattes: None,
+            local_tone: None,
         }
     }
 }
@@ -416,6 +421,8 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         format!("{eyes:?}"),
         // defringe runs in this stage
         format!("{:?}", s.optics),
+        // and the local tone mapping
+        local_tone::enabled(info, s),
         [d.nr_luminance, d.nr_detail, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits),
         src_long,
     ));
@@ -423,16 +430,18 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
 }
 
 /// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal).
-pub fn lin_needs_cpu(s: &DevelopSettings) -> bool {
+pub fn lin_needs_cpu(s: &DevelopSettings, info: &SourceInfo) -> bool {
     let o = &s.optics;
     let defringe = s.section_enabled("optics") && (o.defringe_purple_amount > 0.0 || o.defringe_green_amount > 0.0);
-    defringe || !s.spots.is_empty()
+    defringe || !s.spots.is_empty() || local_tone::enabled(info, s)
 }
 
 /// The white-balanced, defringed, retouched image (before noise reduction): the CPU part of the
 /// scene-linear stage, in place.
 pub fn lin_cpu(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
     let s = &*p.settings;
+    // (before the white balance: the gain's input is the as-shot development, as in the file)
+    local_tone::apply(img, info, p);
     local::white_balance(img, info, s);
     optics::defringe(img, s, p.px_per_long / optics::DEFRINGE_REF_LONG);
     spots::apply(img, &s.spots, &p.frame, p.px_per_long);

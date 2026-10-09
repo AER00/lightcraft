@@ -939,6 +939,8 @@
   "Remove (H)": "Удалить (H)",
   "Remove CA": "Убрать ХА",
   "Remove Chromatic Aberration": "Убрать хроматические аберрации",
+  "Camera local tone mapping": "Локальная тональная коррекция камеры",
+  "Apply the local tone mapping stored in the raw (Apple ProRAW), as the camera renders it": "Применить локальную тональную коррекцию, сохранённую в raw (Apple ProRAW), как её рендерит камера",
   "Remove from Album": "Удалить из альбома",
   "Remove from Favorites": "Удалить из избранного",
   "Remove from Local": "Убрать из «Локального»",

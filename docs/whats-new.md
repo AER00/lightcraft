@@ -38,7 +38,9 @@
   lossy tiles decode too, but no real file has checked them yet. A JPEG XL preview stored in the DNG is used like an
   embedded JPEG.
 - Apple ProRAW's gain table map (its local tone mapping, `ProfileGainTableMap`) is now read and kept when a photo is
-  exported or converted to DNG. It is not applied to the render: Lightroom Classic renders ProRAW without it.
+  exported or converted to DNG. It is not applied by default: Lightroom Classic renders ProRAW without it. To see a
+  ProRAW the way the iPhone renders it, turn on Profile ▸ Camera local tone mapping (shown for photos that carry the
+  map); the option is per photo, so presets and Copy Settings carry it.
 - iPhone ProRAW and other DNGs that carry their own segmentation mattes (DNG semantic masks) use them for the Select
   Sky, Subject and Background masks instead of our heuristics, so the sky is selected where the camera found it
   (checked on one CC0 iPhone 12 Pro ProRAW). Photos without mattes are unchanged.
