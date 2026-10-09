@@ -1,4 +1,4 @@
-//! The Settings dialog (⌘,): General, Import, Performance, Interface, AI Denoise.
+//! The Settings dialog (⌘,): General, Import, Performance, Interface, Faces, AI Denoise.
 //!
 //! Changes apply immediately (no OK/Cancel). Where they are stored:
 //! - **app settings** ([`crate::state::AppSettings`]: startup view, delete confirmation, GPU,
@@ -17,8 +17,14 @@ use crate::theme::Tokens;
 use crate::widgets::register;
 
 /// (id, label) of the tabs, in order.
-pub const TABS: &[(&str, &str)] =
-    &[("general", "General"), ("import", "Import"), ("performance", "Performance"), ("interface", "Interface"), ("denoise", "AI Denoise")];
+pub const TABS: &[(&str, &str)] = &[
+    ("general", "General"),
+    ("import", "Import"),
+    ("performance", "Performance"),
+    ("interface", "Interface"),
+    ("faces", "Faces"),
+    ("denoise", "AI Denoise"),
+];
 
 /// Thumbnail cache sizes offered (MB).
 const CACHE_SIZES: [u32; 5] = [512, 1024, 2048, 4096, 8192];
@@ -44,6 +50,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
         "import" => import_tab(app, ui, &t),
         "performance" => performance_tab(app, ui, &t),
         "interface" => interface_tab(app, ui, &t),
+        "faces" => super::faces::settings_tab(app, ui, &t),
         "denoise" => super::denoise::settings_tab(app, ui, &t),
         _ => general_tab(app, ui, &t),
     }

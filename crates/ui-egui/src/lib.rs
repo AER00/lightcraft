@@ -109,6 +109,8 @@ pub struct Services {
     pub pick_files: Option<PickFiles>,
     /// Local ONNX model; a manifest must accompany it.
     pub pick_denoise_model: Option<PickFiles>,
+    /// Open dialog for a face model (`.onnx`; Settings ▸ Faces ▸ Add a model file…).
+    pub pick_model_file: Option<PickFiles>,
     /// Open dialog for preset files (`.lcpreset`, `.xmp`, `.lrtemplate`, `.zip`, `.dng`, Luminar `.lmp` / `.mplumpack`).
     pub pick_preset_files: Option<PickFiles>,
     /// Open dialog for a GPS track log (`.gpx`; Photo ▸ Auto-Tag from Tracklog…).
@@ -350,9 +352,17 @@ impl LightcraftApp {
             let now = self.tasks.repaint.as_ref().map(|ctx| ctx.input(|i| i.time)).unwrap_or(self.last_time);
             self.ui.toast = Some((text, now + TOAST_SECONDS, label));
         }
-        if let Err(e) = &r {
-            log::warn!("{id}: {e}");
-            self.ui.status = e.clone();
+        match &r {
+            Err(e) => {
+                log::warn!("{id}: {e}");
+                self.ui.status = e.clone();
+                // no detector yet: offer it (its terms first) instead of only saying so
+                if id == "faces.detect" && e.contains("Settings > Faces") {
+                    panels::faces::offer_detector(self);
+                }
+            }
+            Ok(v) if id == "faces.detect" => self.ui.status = detect_summary(v),
+            Ok(_) => {}
         }
         r
     }
@@ -614,7 +624,10 @@ impl LightcraftApp {
         let mut view = self.shadow.take().unwrap_or_default();
         let size = main.input(|i| i.content_rect()).size();
         let size = if size.x >= 1.0 && size.y >= 1.0 { size } else { egui::vec2(1600.0, 1000.0) };
-        let ppp = main.pixels_per_point();
+        // Feed native viewport points; the shadow context applies the copied UI zoom.
+        let zoom = main.zoom_factor();
+        let size = size * zoom;
+        let ppp = main.pixels_per_point() / zoom;
         let time = main.input(|i| i.time);
         if view.frames() == 0 {
             // warm-up pass: activates our fonts (pending font definitions live in `Memory`, which
@@ -716,6 +729,7 @@ impl LightcraftApp {
         self.preview_build_status(ctx);
         self.save_status(ctx);
         self.slideshow_tick(ctx);
+        panels::faces::pump(self, ctx);
         // back from an external editor: pick up the files it saved
         let focused = ctx.input(|i| i.focused);
         if focused && !self.ui.was_focused && !self.ui.external_edits.is_empty() {
@@ -761,6 +775,7 @@ impl LightcraftApp {
         self.session.persist_if_dirty();
         panels::denoise::pump(self, ctx);
         model_setup::pump(self, ctx);
+        panels::faces::pump(self, ctx);
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);
         if self.fonts_ready {
@@ -771,6 +786,13 @@ impl LightcraftApp {
             let dropped: Vec<String> =
                 ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_string_lossy().to_string()).filter(|p| !p.is_empty()).collect());
             // preset files import as presets, everything else as photos
+            // a dropped face model opens its licence dialog; presets and photos as before
+            let (models, dropped): (Vec<String>, Vec<String>) = dropped.into_iter().partition(|p| is_model_file(p));
+            if let Some(model) = models.first()
+                && let Err(e) = panels::faces::open_dialog(self, model)
+            {
+                self.toast(ctx, e);
+            }
             let (presets, photos): (Vec<String>, Vec<String>) = dropped.into_iter().partition(|p| is_preset_file(p));
             if !presets.is_empty() {
                 let _ = self.run("file.importPresets", serde_json::json!({"paths": presets}));
@@ -966,6 +988,25 @@ pub fn is_bw(d: &lightcraft_develop::DevelopSettings) -> bool {
     d.treatment == lightcraft_develop::Treatment::Bw || d.profile.id == "lc.mono" || d.profile.id.starts_with("lc.bw.")
 }
 
+/// "Found 3 faces in 2 photos" for a `faces.detect` result.
+fn detect_summary(v: &Value) -> String {
+    let photos = v["photos"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let counts: Vec<usize> = photos.iter().map(|p| p["faces"].as_array().map_or(0, Vec::len)).collect();
+    let (faces, with) = (counts.iter().sum::<usize>(), counts.iter().filter(|n| **n > 0).count());
+    let plural = |n: usize, w: &str| format!("{n} {w}{}", if n == 1 { "" } else { "s" });
+    match (faces, photos.len()) {
+        (0, 1) => "No faces found".into(),
+        (0, n) => format!("No faces found in {}", plural(n, "photo")),
+        (f, 1) => format!("Found {}", plural(f, "face")),
+        (f, _) => format!("Found {} in {}", plural(f, "face"), plural(with, "photo")),
+    }
+}
+
+/// A dropped face model file (`.onnx`).
+pub fn is_model_file(path: &str) -> bool {
+    std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("onnx"))
+}
+
 /// Files dropped on the window that are presets rather than photos.
 pub fn is_preset_file(path: &str) -> bool {
     let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
@@ -974,6 +1015,28 @@ pub fn is_preset_file(path: &str) -> bool {
 
 #[cfg(test)]
 mod drop_tests {
+    #[test]
+    fn detection_results_are_summarised_in_words() {
+        let r =
+            |counts: &[usize]| serde_json::json!({"photos": counts.iter().map(|n| serde_json::json!({"faces": vec![0; *n]})).collect::<Vec<_>>()});
+        assert_eq!(super::detect_summary(&r(&[0])), "No faces found");
+        assert_eq!(super::detect_summary(&r(&[1])), "Found 1 face");
+        assert_eq!(super::detect_summary(&r(&[3])), "Found 3 faces");
+        assert_eq!(super::detect_summary(&r(&[0, 0])), "No faces found in 2 photos");
+        assert_eq!(super::detect_summary(&r(&[2, 0, 1])), "Found 3 faces in 2 photos");
+        assert_eq!(super::detect_summary(&serde_json::json!({})), "No faces found in 0 photos");
+    }
+
+    #[test]
+    fn dropped_face_models_are_told_apart() {
+        for p in ["/a/model.onnx", "/a/dir/M.ONNX"] {
+            assert!(super::is_model_file(p), "{p}");
+        }
+        for p in ["/a/model.onnx.jpg", "/a/onnx", "/a/b.png"] {
+            assert!(!super::is_model_file(p), "{p}");
+        }
+    }
+
     #[test]
     fn dropped_presets_are_told_apart_from_photos() {
         for p in ["/a/Look.lrtemplate", "/a/b.XMP", "/a/pack.zip", "/a/x.lcpreset", "/a/Magic Hour.mplumpack", "/a/Pop.lmp", "/a/Bundle.LMP"] {
@@ -1000,9 +1063,31 @@ pub struct Caches {
     pub album_count_scans: usize,
     /// AI denoise: what the pump last saw, the model list and the downloads being watched.
     pub denoise: panels::denoise::Ui,
+    /// Bumped when a face model is installed, removed or chosen, so Settings re-reads the list at once.
+    pub faces_epoch: u64,
+    /// Face model downloads the user started, followed until installed (see `panels::faces::pump`).
+    pub faces_dl_watch: Vec<String>,
+    /// Whether the background face indexer is running, how many faces it has embedded, how many photos are left, and
+    /// when to ask it again.
+    pub faces_active: bool,
+    pub faces_indexed: u64,
+    pub faces_pending: u64,
+    pub faces_next_pump: f64,
     /// When the user last dragged, typed or scrolled, and when they last moved the pointer (egui time).
     pub last_input: f64,
+    /// The pace the face scan was last given, and whether the window was in front then (for `ui.inspect`).
+    pub faces_pace: &'static str,
+    pub faces_in_front: bool,
     pub last_move: f64,
+    /// Name suggestions for the photo in the loupe: (photo, catalog revision, faces indexed, suggestions by region).
+    pub face_hints: Option<(u64, u64, u64, std::sync::Arc<panels::faces::Hints>)>,
+    /// The open person page: (name, catalog revision, faces indexed, when it was asked for, the page).
+    pub person_page: Option<(String, u64, u64, f64, std::sync::Arc<panels::person::PersonPage>)>,
+    /// The unnamed faces: (catalog revision, faces indexed, when it was asked for, the list).
+    pub unnamed: Option<(u64, u64, f64, std::sync::Arc<panels::unnamed::Unnamed>)>,
+    /// The most photos the face scan has had left at once since it last finished (the progress bar's whole).
+    pub faces_peak: u64,
+    person_names: Option<(u64, std::sync::Arc<Vec<String>>)>,
     /// The grid's date runs, layout and indexes (by the visible list's generation).
     pub grid: panels::grid::GridCache,
     /// What the grid did on its frames (benchmarks and tests check unchanged frames stay cheap).
@@ -1090,6 +1175,17 @@ impl Caches {
         }
         self.counts = Some((cat.revision, c));
         c
+    }
+    /// Everyone named on a face in the library (for completing a name as it is typed).
+    pub fn person_names(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<String>> {
+        match &self.person_names {
+            Some((r, v)) if *r == cat.revision => v.clone(),
+            _ => {
+                let v = std::sync::Arc::new(cat.people().into_iter().map(|p| p.name).collect::<Vec<_>>());
+                self.person_names = Some((cat.revision, v.clone()));
+                v
+            }
+        }
     }
     /// The By Date tree.
     pub fn date_groups(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::DateGroup>> {

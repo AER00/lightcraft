@@ -332,6 +332,31 @@ pub struct UiState {
     /// Left-sidebar sections folded shut by their header (`albums`, `local`, `byDate`,
     /// `keywords`); the rest are open.
     pub collapsed_sidebar: Vec<String>,
+    /// A face's name being typed in the loupe.
+    #[serde(skip)]
+    pub name_edit: Option<NameEdit>,
+    /// The person whose page the People view shows (their faces and the faces that look like them); `None`: everyone.
+    #[serde(skip)]
+    pub person_page: Option<String>,
+    /// The person page a photo in the loupe was opened from, and that photo: Escape goes back to the page (not the grid).
+    #[serde(skip)]
+    pub person_from: Option<(String, u64)>,
+    /// The last person page left: the People view offers a way back to it next to its title.
+    #[serde(skip)]
+    pub last_person: Option<String>,
+    /// "More" faces the user hid with ×, for this session: (photo, region index).
+    #[serde(skip)]
+    pub dismissed_faces: std::collections::HashSet<(u64, usize)>,
+    /// The unnamed faces selected in the People view (photo, region), the name being typed for them, the face last
+    /// clicked (Shift-click selects a range from it) and whether the name box should take the keyboard.
+    #[serde(skip)]
+    pub unnamed_selected: std::collections::HashSet<(u64, usize)>,
+    #[serde(skip)]
+    pub unnamed_name: String,
+    #[serde(skip)]
+    pub unnamed_anchor: Option<usize>,
+    #[serde(skip)]
+    pub unnamed_focus: bool,
     /// Local sidebar locations hidden with “Remove from Local” (folders on disk are untouched).
     pub hidden_locations: Vec<String>,
     /// Copies opened in an external editor this session (reloaded when the window is focused
@@ -462,6 +487,16 @@ impl Dialog {
     }
 }
 
+/// A face's name being typed in the loupe: which face, and what has been typed so far.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NameEdit {
+    pub photo: u64,
+    pub index: usize,
+    pub text: String,
+    /// Just opened: the text box takes the keyboard focus once.
+    pub fresh: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Dialog {
@@ -536,6 +571,13 @@ pub enum Dialog {
     },
     /// Help ▸ System Info: (label, value) rows.
     DenoiseModel {
+        info: serde_json::Value,
+        accepted: bool,
+    },
+    /// A face model file the user chose: what it is, its licence terms, and the "I accept" box.
+    FaceModel {
+        path: String,
+        /// The engine's `faces.models.inspect` answer.
         info: serde_json::Value,
         accepted: bool,
     },
@@ -653,6 +695,15 @@ impl Default for UiState {
             show_counts: true,
             face_boxes: true,
             collapsed_sidebar: Vec::new(),
+            name_edit: None,
+            person_page: None,
+            person_from: None,
+            last_person: None,
+            dismissed_faces: Default::default(),
+            unnamed_selected: Default::default(),
+            unnamed_name: String::new(),
+            unnamed_anchor: None,
+            unnamed_focus: false,
             hidden_locations: Vec::new(),
             dragging_control: None,
             external_edits: Vec::new(),

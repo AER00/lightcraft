@@ -62,7 +62,7 @@ impl SettingsHashes {
 }
 
 /// Bump when the pipeline's output changes, to invalidate cached thumbnails.
-pub const RENDER_CACHE_VERSION: u64 = 15;
+pub const RENDER_CACHE_VERSION: u64 = 16;
 
 /// Thumbnails render at one of these long edges (so window/cell size changes reuse the cache).
 pub const THUMB_SIZES: [usize; 4] = [128, 256, 384, 512];
@@ -206,15 +206,16 @@ impl DecodedSource {
         mixed
     }
 
-    /// Cache cost: the picture, its denoised twin and room for the lazy mix.
+    /// Cache cost: the picture, its segmentation mattes, its denoised twin and room for the lazy mix.
     pub fn bytes(&self) -> usize {
-        self.image.data.len() * 12 + 64 + std::mem::size_of::<SourceInfo>() + self.denoised.as_ref().map_or(0, |t| t.bytes())
+        let mattes = self.info.as_ref().and_then(|i| i.mattes.as_ref()).map_or(0, |m| m.bytes());
+        self.image.data.len() * 12 + 64 + std::mem::size_of::<SourceInfo>() + mattes + self.denoised.as_ref().map_or(0, |t| t.bytes())
     }
 
     /// What to render these pixels against: the decoder's facts, else `header` (the catalog's)
     /// with any stored camera tone curve.
     pub fn info_or(&self, header: SourceInfo) -> SourceInfo {
-        self.info.unwrap_or(SourceInfo { camera_tone: self.camera_tone.or(header.camera_tone), ..header })
+        self.info.clone().unwrap_or_else(|| SourceInfo { camera_tone: self.camera_tone.or(header.camera_tone), ..header })
     }
 }
 
@@ -1160,6 +1161,17 @@ impl crate::Session {
         }
     }
 
+    /// The camera's embedded preview of a raw file, for the face scan. Faces are read from the unedited picture, so the
+    /// photo's edits do not matter, and the camera's own JPEG (oriented, display-ready) costs a fraction of decoding the
+    /// raw. `None` for anything else, and where the host installed no loader.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn scan_preview_of(&self, p: &Photo) -> Option<(String, PreviewLoader)> {
+        match (&p.source, &self.media.preview_loader) {
+            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw => Some((path.clone(), l.clone())),
+            _ => None,
+        }
+    }
+
     /// Something to show in the loupe right away for `id` (see [`QuickJob`]): its cached view
     /// render, else the embedded preview of an unedited raw, else a cached or fresh thumbnail.
     pub fn quick_view_job(&mut self, id: PhotoId, max_edge: usize, apply_crop: bool) -> Option<QuickJob> {
@@ -1414,13 +1426,14 @@ mod tests {
         let mut s = crate::Session::with_demo();
         let id = s.active().unwrap();
         let mut job = s.render_job(id, 64, 64, false, true).unwrap();
+        let loaded_info = info.clone();
         job.source = SourceRef::File {
             path: "synthetic.arw".into(),
             max_edge: 64,
             loader: Some(Arc::new(move |_, _| {
                 let mut image = Rgb32f::new(64, 64);
                 image.data.fill([0.1; 3]);
-                Ok((image, info))
+                Ok((image, loaded_info.clone()))
             })),
             fallback: None,
             denoise: None,
@@ -1428,7 +1441,7 @@ mod tests {
         job.info = SourceInfo::default(); // Header facts cannot override decoder facts.
         job.settings = Arc::new(DevelopSettings::default());
         let r = job.clone().run();
-        assert_eq!(r.loaded.as_ref().unwrap().info, Some(info));
+        assert_eq!(r.loaded.as_ref().unwrap().info.as_ref(), Some(&info));
         let expected = lightcraft_pipeline::render(&r.loaded.as_ref().unwrap().image, &info, &job.settings, &job.request);
         assert_eq!(r.rendered.as_ref().unwrap().image.data, expected.image.data);
         s.accept(&r);
