@@ -42,6 +42,7 @@ const MAX_SIDECAR_BYTES: u64 = 16 * 1024 * 1024;
 /// What a scan of a folder needs, taken from the session so it can run on a worker thread.
 pub struct SyncInput {
     folder: String,
+    revision: u64,
     scan: ScanInput,
     /// The library's photos in the folder, each with how its sidecar is named.
     photos: Vec<(Arc<Photo>, SidecarNaming)>,
@@ -67,6 +68,9 @@ pub struct FolderChanges {
     /// The probes of the new files, kept for the import that follows.
     #[serde(skip)]
     probes: HashMap<String, ProbeInfo>,
+    /// The catalog revision the scan was made against.
+    #[serde(skip)]
+    revision: u64,
 }
 
 /// A photo of the folder and its file.
@@ -122,15 +126,15 @@ impl SyncInput {
         }
         let photos = ids.iter().filter_map(|id| s.catalog.photo(*id).map(|p| (Arc::clone(p), s.sidecar_naming(*id)))).collect();
         let (scan, _) = ScanInput::new(s, &[path.to_string()]);
-        Ok(SyncInput { folder: path.to_string(), scan, photos, labels: s.catalog.clone() })
+        Ok(SyncInput { folder: path.to_string(), revision: s.catalog.revision, scan, photos, labels: s.catalog.clone() })
     }
 }
 
 /// Find what changed in the folder (see the module docs). Reads the disk, never the session.
 pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
-    let SyncInput { folder, scan, photos, labels } = input;
+    let SyncInput { folder, revision, scan, photos, labels } = input;
     let out = crate::import::scan_with(scan, std::slice::from_ref(&folder), progress);
-    let mut changes = FolderChanges { path: folder, probes: out.probes, ..Default::default() };
+    let mut changes = FolderChanges { path: folder, probes: out.probes, revision, ..Default::default() };
     for c in out.candidates {
         match (&c.duplicate, &c.error) {
             (Some(d), _) if d == "path" => {}
@@ -157,6 +161,16 @@ pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
 pub fn scan(s: &mut Session, path: &str) -> Result<FolderChanges> {
     let input = SyncInput::new(s, path)?;
     Ok(scan_with(input, &ScanProgress::default()))
+}
+
+impl Session {
+    /// The last scan ([`Session::folder_changes`]) if it is of folder `path` and nothing changed
+    /// in the library since: what the person was shown is what gets done. Used once.
+    pub fn take_folder_changes(&mut self, path: &str) -> Option<FolderChanges> {
+        let c = self.folder_changes.take()?;
+        let same = lightcraft_catalog::query::folder_key(&c.path) == lightcraft_catalog::query::folder_key(path);
+        (same && c.revision == self.catalog.revision).then_some(c)
+    }
 }
 
 /// Whether `p`'s XMP sidecar file was saved after the library last had its say about the photo

@@ -209,3 +209,31 @@ fn only_a_folder_of_the_library_is_synchronized() {
         assert!(s.execute(cmd, &p).is_err(), "{cmd}: {why}");
     }
 }
+
+#[test]
+fn synchronizing_acts_on_the_changes_just_scanned() {
+    let dir = Scratch::new("cached");
+    let mut s = library(&dir);
+    write_png(&dir.path("trip/c.png"), 3);
+    let r = scan(&mut s, &dir.path("trip"));
+    assert_eq!(paths(&r, "new").len(), 1);
+    // arrived after the scan the person was shown: not part of what they agreed to
+    write_png(&dir.path("trip/d.png"), 4);
+    let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip")})).unwrap();
+    assert_eq!(r["imported"], 1, "{r}");
+    // the scan is used once; the next synchronize looks again
+    let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip")})).unwrap();
+    assert_eq!(r["imported"], 1, "d.png now: {r}");
+}
+
+#[test]
+fn a_scan_is_stale_once_the_library_changed() {
+    let dir = Scratch::new("stale");
+    let mut s = library(&dir);
+    write_png(&dir.path("trip/c.png"), 3);
+    scan(&mut s, &dir.path("trip"));
+    // c.png comes in some other way between the scan and the synchronize
+    s.execute("library.import", &json!({"paths": [dir.path("trip/c.png")]})).unwrap();
+    let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip")})).unwrap();
+    assert_eq!(r["imported"], 0, "the library changed: it looked again: {r}");
+}

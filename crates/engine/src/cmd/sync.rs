@@ -23,7 +23,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 const C: &str = "folder.scanChanges";
                 let path = path(p, C)?;
                 let changes = scan(s, &path).map_err(|e| bad(C, e.to_string()))?;
-                Ok(serde_json::to_value(changes).unwrap_or_default())
+                let v = serde_json::to_value(&changes).unwrap_or_default();
+                s.folder_changes = Some(changes);
+                Ok(v)
             }
         ),
         cmd!(
@@ -31,7 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Synchronize Folder",
             [],
             None,
-            "{path, importNew?: true, removeMissing?: false, readMetadata?: false} — bring a folder of the library up to date with the disk (see folder.scanChanges): import its new files in place, move photos whose file is gone to Recently Deleted, read XMP sidecars saved by other apps (the sidecar wins); one undo step, no file is touched → {imported, removed, read, failed: [[path, error]]}",
+            "{path, importNew?: true, removeMissing?: false, readMetadata?: false} — bring a folder of the library up to date with the disk (see folder.scanChanges): import its new files in place, move photos whose file is gone to Recently Deleted, read XMP sidecars saved by other apps (the sidecar wins); acts on the last folder.scanChanges of the folder while nothing changed in the library since (else scans again); one undo step, no file is touched → {imported, removed, read, failed: [[path, error]]}",
             always,
             sync
         ),
@@ -47,7 +49,10 @@ fn sync(s: &mut Session, p: &Value) -> Result<Value> {
         remove_missing: bool_or(p, "removeMissing", d.remove_missing),
         read_metadata: bool_or(p, "readMetadata", d.read_metadata),
     };
-    let changes = scan(s, &path).map_err(|e| bad(C, e.to_string()))?;
+    let changes = match s.take_folder_changes(&path) {
+        Some(c) => c,
+        None => scan(s, &path).map_err(|e| bad(C, e.to_string()))?,
+    };
     let r = synchronize(s, changes, choice)?;
     Ok(json!({"imported": r.imported, "removed": r.removed, "read": r.read, "failed": r.failed}))
 }

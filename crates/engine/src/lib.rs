@@ -253,6 +253,9 @@ pub struct Session {
     pub before: std::collections::HashMap<PhotoId, Arc<DevelopSettings>>,
     /// File probes from the last import review (`library.importPreview`), reused by the import.
     pub import_probes: std::collections::HashMap<String, media::ProbeInfo>,
+    /// The last Synchronize Folder scan, which `folder.synchronize` acts on while it is current
+    /// (see [`Session::take_folder_changes`]).
+    pub folder_changes: Option<sync::FolderChanges>,
     /// The last (or running) Build Previews.
     pub preview_build: Option<std::sync::Arc<cmd::previews::PreviewBuild>>,
     /// Develop defaults applied on import (persisted in prefs.json).
@@ -335,6 +338,7 @@ impl Session {
             recent_keywords: Vec::new(),
             before: Default::default(),
             import_probes: Default::default(),
+            folder_changes: None,
             preview_build: None,
             import_defaults: import::ImportDefaults::default(),
             cache_mb: 0,
