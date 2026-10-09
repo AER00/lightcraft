@@ -156,24 +156,29 @@ fn suggestions_follow_the_selection() {
     assert!(!has(&h, "kwSuggest:beach"), "both have it");
 }
 
-/// Chips wrap whole: each stays on one line with its ×, however many there are and however long
-/// (a chip laid out in what was left of a line used to wrap its own text, a letter a line).
+/// Chips wrap whole and stay inside the panel: none overlaps another or runs past the panel's
+/// edge, and one longer than the panel is shortened to fit (a chip laid out in what was left of a
+/// line used to wrap its own text, a letter a line, over the others).
 #[test]
-fn chips_stay_on_one_line() {
+fn chips_wrap_whole_inside_the_panel() {
     let (mut h, ids) = two_selected();
+    let long = "Places|Portugal|Lisbon|Belém tower and the old town square on the river";
     let r = h.request(
         "engine.execute",
-        json!({"command": "photo.setMeta", "params": {"ids": ids, "addKeywords": ["Events|Weddings", "sunset", "Places|Portugal|Lisbon", "harbour"]}}),
+        json!({"command": "photo.setMeta", "params": {"ids": ids, "addKeywords": ["Events|Weddings", "sunset", "Places|Portugal|Lisbon", "harbour", long]}}),
         T,
     );
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
+    let panel = h.app.widgets.iter().find(|(w, _)| w == "panel:right_panel").map(|(_, r)| *r).expect("the right panel");
     let chips: Vec<(String, egui::Rect)> = h.app.widgets.iter().filter(|(w, _)| w.starts_with("keywordChip:")).cloned().collect();
-    assert!(chips.len() >= 5, "{chips:?}");
-    for (id, r) in &chips {
-        assert!(r.height() < 30.0, "{id} spans lines: {r:?}");
-        let x = h.app.widgets.iter().find(|(w, _)| *w == id.replace("keywordChip:", "keywordChipRemove:")).map(|(_, r)| *r).unwrap();
-        assert!((x.center().y - r.center().y).abs() < 4.0, "{id}: its × is on its line");
+    assert!(chips.len() >= 6, "{chips:?}");
+    for (i, (id, r)) in chips.iter().enumerate() {
+        assert!(r.height() < 30.0, "{id} on one line: {r:?}");
+        assert!(r.left() >= panel.left() && r.right() <= panel.right(), "{id} inside the panel: {r:?} in {panel:?}");
+        for (other, o) in chips.iter().skip(i + 1) {
+            assert!(!r.intersects(o.shrink(0.5)), "{id} overlaps {other}");
+        }
     }
 }
 
