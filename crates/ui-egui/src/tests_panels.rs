@@ -427,6 +427,19 @@ impl AlbumTree {
         self.h.step();
         self.h.step();
     }
+    /// Drag `id` to `frac` of the way down the row of `onto` (0 = its top edge, 1 = its bottom edge).
+    fn drag_to(&mut self, id: u64, onto: u64, frac: f32) {
+        let (from, r) = (self.row(id).center(), self.row(onto));
+        self.drag(from, &[(egui::pos2(r.left() + 100.0, r.top() + frac * r.height()), 3)]);
+    }
+    fn id_of(&self, name: &str) -> u64 {
+        self.h.app.session.catalog.albums().find(|a| a.name == name).unwrap_or_else(|| panic!("no album {name}")).id.0
+    }
+    /// The names inside `parent`, folders or albums only.
+    fn kids(&self, parent: Option<u64>, folders: bool) -> Vec<String> {
+        let cat = &self.h.app.session.catalog;
+        cat.album_children(parent.map(lightcraft_catalog::AlbumId)).iter().filter(|a| a.folder == folders).map(|a| a.name.clone()).collect()
+    }
     fn drag_row(&mut self, id: u64, onto: u64) {
         let (from, to) = (self.row(id).center(), self.row(onto).center());
         self.drag(from, &[(to, 3)]);
@@ -446,9 +459,10 @@ fn dragging_an_album_onto_a_folder_moves_it() {
     assert!(t.h.app.widgets.iter().any(|(w, _)| *w == format!("source:album:{}", t.loose)));
     t.drag_row(t.sub, t.archive);
     assert_eq!(t.parent(t.sub), Some(t.archive), "a folder into a folder");
-    // refused: onto a plain album, onto itself, into its own subfolder
+    // refused: onto itself, into its own subfolder; onto a plain album it only goes beside it
     t.drag_row(t.best, t.loose);
-    assert_eq!(t.parent(t.best), Some(t.trips), "a plain album is no destination");
+    assert_eq!(t.parent(t.best), Some(t.archive), "a plain album is no destination: Best lands beside Loose, not inside");
+    assert_eq!(t.parent(t.loose), Some(t.archive));
     let (from, aside) = (t.row(t.archive).center(), t.row(t.archive).center() + egui::vec2(40.0, 0.0));
     t.drag(from, &[(aside, 3)]);
     assert_eq!(t.parent(t.archive), None, "not onto itself");
@@ -481,6 +495,109 @@ fn an_album_drag_ignores_other_buttons_and_esc_cancels_it() {
     // and a drag that is left alone still drops
     t.drag_row(t.loose, t.archive);
     assert_eq!(t.parent(t.loose), Some(t.archive));
+}
+
+/// Given the top-level albums Garden, Loose, Night Sky, Portfolio listed by name, when an album is
+/// dropped on the top or bottom half of another, then it is placed before or after it and the
+/// list is ordered by hand from then on.
+#[test]
+fn dropping_on_the_edge_of_an_album_places_it_there() {
+    let mut t = album_tree();
+    let id = |t: &AlbumTree, name: &str| t.h.app.session.catalog.albums().find(|a| a.name == name).unwrap().id.0;
+    let (garden, night, portfolio) = (id(&t, "Garden"), id(&t, "Night Sky"), id(&t, "Portfolio"));
+    assert_eq!(t.kids(None, false), ["Garden", "Loose", "Night Sky", "Portfolio"]);
+    t.drag_to(portfolio, garden, 0.2);
+    assert_eq!(t.kids(None, false), ["Portfolio", "Garden", "Loose", "Night Sky"], "before Garden");
+    t.drag_to(garden, night, 0.8);
+    assert_eq!(t.kids(None, false), ["Portfolio", "Loose", "Night Sky", "Garden"], "after Night Sky");
+    assert!(t.h.app.session.catalog.album_children_are_ordered(None));
+    // one undo step per drop
+    t.h.app.session.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(t.kids(None, false), ["Portfolio", "Garden", "Loose", "Night Sky"]);
+    assert!(t.h.app.ui.dragging_album.is_none());
+}
+
+/// Dropping beside an album in another folder moves the album there, at that place.
+#[test]
+fn dropping_beside_an_album_in_another_folder_moves_it_there() {
+    let mut t = album_tree();
+    t.drag_to(t.loose, t.best, 0.2);
+    assert_eq!(t.parent(t.loose), Some(t.trips));
+    assert_eq!(t.kids(Some(t.trips), false), ["Loose", "Best"]);
+}
+
+/// Where nothing would change, nothing is done: no edit, so no hand order appears.
+#[test]
+fn dropping_where_it_already_is_changes_nothing() {
+    let mut t = album_tree();
+    let garden = t.id_of("Garden");
+    assert_eq!(t.kids(None, false)[..2], ["Garden", "Loose"]);
+    t.drag_to(t.loose, garden, 0.8);
+    t.drag_to(garden, t.loose, 0.2);
+    assert!(!t.h.app.session.catalog.album_children_are_ordered(None), "Loose already follows Garden");
+    // a real placement orders the albums; the same drop again then changes nothing
+    t.drag_to(t.loose, garden, 0.2);
+    assert!(t.h.app.session.catalog.album_children_are_ordered(None));
+    let snapshot = t.h.app.session.catalog.to_snapshot();
+    t.drag_to(t.loose, garden, 0.2);
+    assert_eq!(t.h.app.session.catalog.to_snapshot(), snapshot);
+}
+
+/// The bottom of an open folder is inside it; from the bottom edge of a closed one a folder goes
+/// after it (last of the folders); a folder over an album does nothing.
+#[test]
+fn folders_go_after_a_closed_folder_and_inside_an_open_one() {
+    let mut t = album_tree();
+    t.drag_to(t.archive, t.trips, 0.9);
+    assert_eq!(t.parent(t.archive), Some(t.trips), "the bottom of an open folder is inside it");
+    let travel = t.id_of("Travel 2026");
+    assert_eq!(t.kids(None, true), ["Travel 2026", "Trips"]);
+    let r = t.h.request("ui.clickWidget", json!({"id": format!("albumToggle:{}", t.trips)}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    t.h.step();
+    t.h.step();
+    t.drag_to(travel, t.trips, 0.9);
+    assert_eq!(t.kids(None, true), ["Trips", "Travel 2026"], "after Trips, the last folder");
+    assert_eq!(t.parent(travel), None);
+    // folders are not placed among albums
+    t.drag_to(t.trips, t.loose, 0.5);
+    assert_eq!(t.kids(None, true), ["Trips", "Travel 2026"]);
+}
+
+/// Resting on a closed folder's edge (where the drop goes beside it) does not open it: the rows
+/// would shift under the pointer. Only a drop that goes inside opens it.
+#[test]
+fn hovering_a_folders_edge_does_not_open_it() {
+    let mut t = album_tree();
+    let r = t.h.request("ui.clickWidget", json!({"id": format!("albumToggle:{}", t.trips)}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    t.h.step();
+    t.h.step();
+    let (from, r) = (t.row(t.archive).center(), t.row(t.trips));
+    t.drag(from, &[(egui::pos2(r.left() + 100.0, r.top() + 0.9 * r.height()), 90)]);
+    assert_eq!(t.parent(t.archive), None, "dropped after Trips, not inside it");
+    assert_eq!(t.kids(None, true), ["Travel 2026", "Trips", "Archive"]);
+}
+
+/// Folders are placed among folders by their edges; their middle still means "inside"; an album
+/// over a folder is always "inside"; where nothing would change nothing is done or ordered.
+#[test]
+fn folders_are_placed_by_their_edges_and_entered_by_their_middle() {
+    let mut t = album_tree();
+    assert_eq!(t.kids(None, true), ["Archive", "Travel 2026", "Trips"]);
+    t.drag_to(t.trips, t.archive, 0.1);
+    assert_eq!(t.kids(None, true), ["Trips", "Archive", "Travel 2026"], "Trips before Archive");
+    assert_eq!(t.parent(t.trips), None);
+    t.drag_to(t.sub, t.archive, 0.5);
+    assert_eq!(t.parent(t.sub), Some(t.archive), "the middle of a folder is inside it");
+    // an album anywhere over a folder row goes inside, even at its edge
+    t.drag_to(t.loose, t.archive, 0.05);
+    assert_eq!(t.parent(t.loose), Some(t.archive));
+    // already in place: no change, so no hand order is made
+    let mut t = album_tree();
+    let travel = t.h.app.session.catalog.albums().find(|a| a.name == "Travel 2026").unwrap().id.0;
+    t.drag_to(travel, t.trips, 0.1);
+    assert!(!t.h.app.session.catalog.album_children_are_ordered(None), "Travel 2026 already sits right before Trips");
 }
 
 /// Dragging out of a folder: the drop zone under the tree puts the album back at the top level;
