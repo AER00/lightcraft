@@ -3,8 +3,8 @@
 //! Sources: TIFF 6.0 (the raw image is a standard CFA SubIFD), Laurent Clévy's NEF structure notes (prose: IFD
 //! layout, SubIFDs, maker note header) and the ExifTool Nikon tag-name documentation (`0x000c` WB_RBLevels,
 //! `0x003d` BlackLevel, `0x0096` NEFLinearizationTable). The Huffman-compressed data (compression 34713) is decoded
-//! by [`super::nefc`], which documents its clean-room sources; files it can't decode yet ("lossy after split")
-//! are reported as [`RawError::Unsupported`] and their embedded previews still work.
+//! by [`super::nefc`], which documents its clean-room sources; "lossy after split" files are decoded when their strip follows the
+//! rule documented there; files it can't decode are reported as [`RawError::Unsupported`] and their embedded previews still work.
 
 use super::{nefc, white_from_data};
 use crate::tiffraw::{Packing, read_image};

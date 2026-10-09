@@ -182,10 +182,6 @@ packed formats 2, 5 and 7, the 16-bit words of the 2005–2007 bodies; all recov
 118 bodies, `crates/raw/src/vendor/rw2.rs`), PEF (uncompressed and Huffman), ORF uncompressed (16-bit and 12-bit packed). Supported containers yield their embedded JPEG preview when present (including CR3). The engine uses it for RAW variants it cannot decode yet; HEVC-only CR3 previews are not decoded.
 
 Not decoded yet — preview only (no permissively licensed description; black-box analysis incomplete):
-- **Nikon "lossy after split" NEF** (non-zero split row in maker note `0x0096`, e.g. some D3400/D5000/D5200/D5500/D5600
-  files): rows above the split decode with the regular lossy table; from the split row on a different code is used
-  that our black-box analysis has not recovered yet (none of the four regular tables fits, also not with byte
-  alignment or reset predictors at the split row). The other Nikon Huffman variants are decoded (`crates/raw/src/vendor/nefc.rs` documents the analysis).
 - **Olympus compressed ORF**, **Canon CR3 unverified CRX variants** (M11.1), **Canon sRAW/mRAW**.
 
 **Camera colour matrices:** ARW, NEF, RW2, RAF, CR3, CR2, PEF and Samsung SRW files can use guarded, separate chromaticity and tone estimates from their own embedded JPEG (see `docs/camera-preview-colour.md`); this is a per-file camera-look estimate with relative WB, not measured calibration or absolute-Kelvin WB. Other non-DNG raws and rejected fits use the documented neutral fallback (camera RGB ≈ linear sRGB, flagged
