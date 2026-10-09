@@ -1759,5 +1759,6 @@
   "Select photos to give them keywords.": "Selecciona fotos para darles palabras clave.",
   "Add to All Selected Photos": "Añadir a todas las fotos seleccionadas",
   "Will Export": "Se exportará",
-  "No keywords are exported": "No se exporta ninguna palabra clave"
+  "No keywords are exported": "No se exporta ninguna palabra clave",
+  "& Containing": "y contenedoras"
 }

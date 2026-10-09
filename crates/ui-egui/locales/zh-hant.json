@@ -1759,5 +1759,6 @@
   "Select photos to give them keywords.": "選取照片以加入關鍵字。",
   "Add to All Selected Photos": "加入所有選取的照片",
   "Will Export": "將匯出",
-  "No keywords are exported": "沒有要匯出的關鍵字"
+  "No keywords are exported": "沒有要匯出的關鍵字",
+  "& Containing": "及上層"
 }

@@ -9,33 +9,39 @@ use crate::LightcraftApp;
 use crate::theme::Tokens;
 use crate::widgets::register;
 
-/// The Keywording box's view: the keywords (chips), or what exported files will carry.
+/// The Keywording box's view: the keywords (chips), them with the keywords containing them, or
+/// what exported files will carry.
 pub fn view_switch(app: &mut LightcraftApp, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        for (export, id, label) in [(false, "keywords", "Keywords"), (true, "willExport", "Will Export")] {
-            let r = ui.selectable_label(app.ui.keywording_will_export == export, crate::i18n::tr(label));
+    use crate::state::KeywordingView as V;
+    ui.horizontal_wrapped(|ui| {
+        for (view, id, label) in
+            [(V::Keywords, "keywords", "Keywords"), (V::Containing, "containing", "& Containing"), (V::WillExport, "willExport", "Will Export")]
+        {
+            let r = ui.selectable_label(app.ui.keywording_view == view, crate::i18n::tr(label));
             register(ui.ctx(), format!("keywordView:{id}"), r.rect);
             if r.clicked() {
-                app.ui.keywording_will_export = export;
+                app.ui.keywording_view = view;
             }
         }
     });
 }
 
-/// What exported files will carry for the selection, read only: one name only some of the photos
-/// carry is marked with an asterisk.
-pub fn export_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+/// A read-only view of the selection's keywords: with the keywords containing them, or what
+/// exported files will carry. One only some of the photos have is marked with an asterisk.
+pub fn names_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let selection = app.session.targets(&serde_json::Value::Null);
-    let names = app.caches.keyword_export(&app.session.catalog, &selection);
+    let export = app.ui.keywording_view == crate::state::KeywordingView::WillExport;
+    let names = app.caches.keyword_names(&app.session.catalog, &selection, export);
     if names.is_empty() {
-        ui.label(egui::RichText::new(crate::i18n::tr("No keywords are exported")).color(t.text_dim));
+        ui.label(egui::RichText::new(crate::i18n::tr(if export { "No keywords are exported" } else { "No keywords yet" })).color(t.text_dim));
         return;
     }
+    let prefix = if export { "keywordExport" } else { "keywordContaining" };
     ui.horizontal_wrapped(|ui| {
         for n in names.iter() {
             let (body, _) = chip(ui, &n.path, !n.on_all(), false);
-            register(ui.ctx(), format!("keywordExport:{}", n.path), body.rect);
+            register(ui.ctx(), format!("{prefix}:{}", n.path), body.rect);
             if n.on_all() {
                 body.on_hover_text(&n.path);
             } else {
@@ -197,6 +203,27 @@ pub(crate) fn will_export(catalog: &Catalog, photos: &[PhotoId]) -> Vec<Chip> {
     have.into_values().map(|(path, have)| Chip { path, have, of: photos.len() }).collect()
 }
 
+/// "Keywords & Containing Keywords": the names of the selection's keywords and of the keywords
+/// containing them, each with how many of the selected photos have it (itself or below it); by
+/// name.
+pub(crate) fn with_containing(catalog: &Catalog, photos: &[PhotoId]) -> Vec<Chip> {
+    use lightcraft_catalog::keywords::{SEP, clean};
+    let photos = distinct(catalog, photos);
+    let mut have: std::collections::BTreeMap<String, (String, usize)> = Default::default();
+    let mut seen = std::collections::HashSet::new();
+    for p in &photos {
+        seen.clear();
+        for k in &p.meta.keywords {
+            for name in clean(k).split(SEP) {
+                if !name.is_empty() && seen.insert(name.to_lowercase()) {
+                    have.entry(name.to_lowercase()).or_insert_with(|| (name.to_string(), 0)).1 += 1;
+                }
+            }
+        }
+    }
+    have.into_values().map(|(path, have)| Chip { path, have, of: photos.len() }).collect()
+}
+
 /// The selected photos, each once, those the library has: what "N of M" counts.
 pub(crate) fn distinct<'a>(catalog: &'a Catalog, photos: &[PhotoId]) -> Vec<&'a lightcraft_catalog::Photo> {
     let mut seen = std::collections::HashSet::new();
@@ -341,5 +368,13 @@ mod tests {
         let has = |role: &str, label: &str| found.iter().any(|(r, l)| r == role && l == label);
         assert!(has("Button", "Places › Portugal › Lisbon › Belém tower"), "{found:?}");
         assert!(has("Button", "Remove “Places › Portugal › Lisbon › Belém tower”"), "{found:?}");
+    }
+
+    /// "Keywords & Containing Keywords": every level of the selection's keywords, flat, each
+    /// counted once per photo.
+    #[test]
+    fn containing_keywords_are_every_level() {
+        let (c, ids) = library(&[&["travel|Italy|Rome", "travel|Spain"], &["travel|Italy"]]);
+        assert_eq!(shown(&with_containing(&c, &ids)), [("Italy", 2, 2), ("Rome", 1, 2), ("Spain", 1, 2), ("travel", 2, 2)]);
     }
 }

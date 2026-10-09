@@ -1759,5 +1759,6 @@
   "Select photos to give them keywords.": "写真を選択するとキーワードを付けられます。",
   "Add to All Selected Photos": "選択したすべての写真に追加",
   "Will Export": "書き出される内容",
-  "No keywords are exported": "書き出されるキーワードはありません"
+  "No keywords are exported": "書き出されるキーワードはありません",
+  "& Containing": "と親キーワード"
 }

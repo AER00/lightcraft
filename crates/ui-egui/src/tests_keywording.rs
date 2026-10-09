@@ -213,3 +213,17 @@ fn escape_gives_back_the_text_from_before_the_edit() {
     let k = keywords_of(&h, ids[0]);
     assert!(k.contains(&"harbour".to_string()) && !k.contains(&"sea".to_string()), "{k:?}");
 }
+
+/// "Keywords & Containing Keywords" lists the selection's keywords with the keywords containing
+/// them, flat (read only).
+#[test]
+fn containing_keywords_view_lists_parents_too() {
+    let (mut h, ids) = two_selected();
+    let r = h.request("engine.execute", json!({"command": "photo.setMeta", "params": {"ids": [ids[0]], "addKeywords": ["Events|Birthdays"]}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordView:containing"}));
+    for name in ["Events", "Birthdays", "beach"] {
+        assert!(has(&h, &format!("keywordContaining:{name}")), "{name}");
+    }
+    assert!(!has(&h, "keywordChip:beach"), "the chips give way");
+}

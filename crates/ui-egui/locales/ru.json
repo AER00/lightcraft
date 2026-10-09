@@ -1433,5 +1433,6 @@
   "Person": "Человек",
   "Add to All Selected Photos": "Добавить ко всем выбранным фото",
   "Will Export": "Будет экспортировано",
-  "No keywords are exported": "Ключевые слова не экспортируются"
+  "No keywords are exported": "Ключевые слова не экспортируются",
+  "& Containing": "и родительские"
 }

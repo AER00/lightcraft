@@ -594,7 +594,10 @@ mod tests {
             "Add to Selected Photos",
             "Remove from Selected Photos",
             "Keywords",
+            "& Containing",
             "Will Export",
+            "No keywords are exported",
+            "Add to All Selected Photos",
         ];
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("locales");
         for code in ["de", "es", "pt-br", "ru", "ja", "zh-hans", "zh-hant"] {
