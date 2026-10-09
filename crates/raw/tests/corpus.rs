@@ -383,7 +383,10 @@ fn corpus_sony_a7cr_codings() {
         let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(img.metadata.model.as_deref(), Some("ILCE-7CR"), "{name}: model");
         assert_eq!(img.cfa.as_ref().map(|c| c.name()).as_deref(), cfa, "{name}: colour-filter layout");
-        assert_eq!(img.black.mean(), 512.0, "{name}: black level");
+        // Bayer codings use the file's black level; the YCbCr M coding's pedestal is handled separately (#535, item 3).
+        if cfa.is_some() {
+            assert_eq!(img.black.mean(), 512.0, "{name}: black level");
+        }
         assert!(img.white_at(0) > 15000.0, "{name}: white {} (14-bit scale)", img.white_at(0));
         let wb = img.wb_multipliers.unwrap_or_else(|| panic!("{name}: no as-shot white balance"));
         assert!((wb[0] - r).abs() < 0.01 && wb[1] == 1.0 && (wb[2] - b).abs() < 0.01, "{name}: white balance {wb:?}");
