@@ -44,13 +44,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 6 | 1 | 2 | 2 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 18 | 5 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
+| X. Cross-cutting behaviours (BEHAV) | 18 | 6 | 1 | 1 | 8/8 (100%) | 6/9 (67%) |
 | Y. Menus | 82 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 75 | 3 | 3 | 1 | 49/52 (94%) | 23/24 (96%) |
 | Lightroom Classic extras | 32 | 11 | 39 | 9 | — | 22/24 (92%) |
-| **Total** | 394 | 38 | 84 | 36 | 193/200 (97%) | 142/152 (93%) |
+| **Total** | 394 | 39 | 84 | 36 | 193/200 (97%) | 142/153 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.0%** of 516 in-scope rows — P0 98.2% of 200 · P1 95.7% of 152 · P2 42.9% of 163.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.0%** of 517 in-scope rows — P0 98.2% of 200 · P1 95.4% of 153 · P2 42.9% of 163.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -525,6 +525,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-PANEL-RESIZE | Resizable side panels | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`resizable_side`), `crates/ui-egui/src/state.rs` (`LEFT_WIDTH`, `RIGHT_WIDTH`), `crates/ui-egui/src/tests_panels.rs` | drag the left sidebar's right edge (200–480 pt) or the right panel's left edge (250–520 pt); the photo area keeps ≥ 360 pt; widths are kept across panels, views and restarts (`leftWidth` / `rightWidth` in the UI state); the Presets column stays fixed |
 | LR-BEHAV-EMPTY-STATES | Empty states | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`empty_message`) | |
 | LR-BEHAV-TOOLTIPS | Tooltips with shortcuts | P0 | ✅ | `crates/ui-egui/src/panels/bottombar.rs` | |
+| LR-BEHAV-TEXTFIELD | Text fields behave alike | P1 | 🟡 | `crates/ui-egui/src/text_field.rs`, `crates/ui-egui/src/panels/topbar.rs`, `crates/ui-egui/src/widgets.rs`, `crates/ui-egui/src/panels/unnamed.rs` | one shared field: right-click Cut / Copy / Paste / Select All (no Paste in the browser), Esc gives back the text from before the edit, Return / leaving / Esc reported to the caller, optional select-on-focus; agents use `ui.clipboard` (MCP `clipboard`) and `ui.inspect` → `copied`. Used by Search Photos, slider values and the unnamed faces' name field so far; the other text fields (dialogs, import, settings, masking, keywords …) still use egui's own and have no menu |
 | LR-BEHAV-HEADLESS | Headless UI snapshots | P2 | ✅ | `apps/lightcraft-cli/src/main.rs`, `crates/ui-egui/src/headless.rs`, `docs/control-protocol.md` | `snapshot` rasterizes the UI and defaults photo development to the CPU before the first frame, without adapter discovery; scaled dimensions are validated before allocation, and UI zoom preserves the requested physical viewport; JSON-lines control scripts are supported |
 | LR-BEHAV-ACCESS | Accessibility | P2 | 🟡 | `crates/ui-egui/src/widgets.rs`, `crates/ui-egui/src/panels/grid.rs` | AccessKit (VoiceOver / Narrator / AT-SPI): sliders announce control and value, buttons / icon buttons / dropdowns / section headers / sources their labels and state, grid thumbnails file name, rating, flag and label; the canvas tools (crop, masks) are pointer-only; not audited with a screen reader |
 | LR-BEHAV-LOCALE | Language options | P2 | ✅ | `cmd:app.language.english`, `cmd:app.language.simplifiedChinese`, `cmd:app.language.traditionalChinese`, `cmd:app.language.japanese`, `cmd:app.language.portuguese`, `cmd:app.language.spanish`, `cmd:app.language.german`, `cmd:app.language.russian` | Edit > Language lists every language in the table and the active one is checked; shared with Settings > General (docs/localization.md) |

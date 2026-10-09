@@ -2,6 +2,12 @@
 
 ## October 2026
 
+### Text fields
+- Right-click Search Photos, a slider's typed value or the name field under unnamed faces for Cut, Copy, Paste and
+  Select All. Esc in them gives back the text from before you started typing. More fields will follow.
+- On Windows and Linux, Ctrl+C / Ctrl+V outside a text field copy and paste edit settings again, and ⇧Ctrl+V opens
+  Paste Selected Settings.
+
 ### Masking
 - Drag anywhere inside the selected radial gradient's ellipse to move it, including rotated
   ellipses and radial components in compound masks. Edge and rotation handles keep their existing
