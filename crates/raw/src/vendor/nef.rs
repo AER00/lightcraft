@@ -18,6 +18,14 @@ const WB_RB_LEVELS: u16 = 0x000c;
 const BLACK_LEVEL: u16 = 0x003d;
 const LINEARIZATION_TABLE: u16 = 0x0096;
 const CROP_AREA: u16 = 0x0045;
+/// Maker note `0x0014`, the "NRW" data block of Coolpix raws: `"NRW "` + a 4-character version, then fields.
+const NRW_DATA: u16 = 0x0014;
+
+/// The NRW data block, when the maker note has one.
+fn nrw_data(mn: Option<&makernote::MakerNote>) -> Option<(&[u8], ByteOrder)> {
+    let m = mn?;
+    m.ifd.bytes(NRW_DATA).filter(|b| b.starts_with(b"NRW ")).map(|b| (b, m.order))
+}
 
 /// Nikon CropArea is `[left, top, width, height]` in sensor pixels (maker-note tag documentation).
 /// Keep the active area/CFA origin unchanged: the default crop is applied after demosaicing.
@@ -65,8 +73,11 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
     let make = ifd0.string(t::MAKE).unwrap_or_default();
     let mn =
         tiff.exif().and_then(|e| e.get(t::MAKER_NOTE)).and_then(|e| makernote::parse_makernote(bytes, e.offset, e.count() as u64, tiff.order, &make));
-    let data =
-        if info.compression == t::compression::NIKON { compressed(bytes, &info, mn.as_ref())? } else { uncompressed(bytes, &info, tiff.order)? };
+    let data = if info.compression == t::compression::NIKON {
+        compressed(bytes, &info, mn.as_ref())?
+    } else {
+        uncompressed(bytes, &info, tiff.order, mn.as_ref())?
+    };
     let RawData::U16(ref samples) = data else { return Err(RawError::Unsupported("float NEF".into())) };
 
     // Maker note 0x003d is in 14-bit units whatever the sample depth: 12-bit files from the D750, D780, D850,
@@ -120,8 +131,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
     Ok(img)
 }
 
-/// Uncompressed strips: 16-bit words or 12-bit MSB-packed, told apart by the strip size.
-fn uncompressed(bytes: &[u8], info: &ImageInfo, order: ByteOrder) -> Result<RawData> {
+/// Uncompressed strips: 16-bit words or 12-bit packed, told apart by the strip size. Packed 12-bit data is an MSB-first
+/// byte stream, except in files with an NRW data block (Coolpix), where it is MSB-first inside little-endian 32-bit
+/// words (the rows are whole words).
+fn uncompressed(bytes: &[u8], info: &ImageInfo, order: ByteOrder, mn: Option<&makernote::MakerNote>) -> Result<RawData> {
     let (w, h) = (info.width as usize, info.height as usize);
     let bits = info.bits() as u32;
     let row_samples = w * info.samples_per_pixel as usize;
@@ -131,7 +144,7 @@ fn uncompressed(bytes: &[u8], info: &ImageInfo, order: ByteOrder) -> Result<RawD
     let packing = if bytes_per_row >= row_samples * 2 {
         Packing::Word16
     } else if bits == 12 && bytes_per_row * 8 >= row_samples * 12 && bytes_per_row * 8 < row_samples * 13 {
-        Packing::Msb
+        if nrw_data(mn).is_some() && bytes_per_row.is_multiple_of(4) { Packing::Words32Msb } else { Packing::Msb }
     } else if info.compression == 1 && bits != 8 && bits != 16 {
         return Err(RawError::Unsupported(format!("NEF uncompressed packing ({bytes_per_row} bytes per {row_samples}-sample row)")));
     } else {
@@ -171,6 +184,12 @@ mod tests {
 
     /// [`nef`] with an optional maker note (`Nikon\0` v2 header + embedded big-endian TIFF holding `note`).
     fn nef_with_note(compression: u16, bits: u16, strips: Vec<Vec<u8>>, w: u32, h: u32, rps: u32, note: Option<IfdBuilder>) -> Vec<u8> {
+        nef_in(ByteOrder::Big, compression, bits, strips, w, h, rps, note)
+    }
+
+    /// [`nef_with_note`] in either byte order (file and maker note).
+    #[allow(clippy::too_many_arguments)]
+    fn nef_in(order: ByteOrder, compression: u16, bits: u16, strips: Vec<Vec<u8>>, w: u32, h: u32, rps: u32, note: Option<IfdBuilder>) -> Vec<u8> {
         let mut raw = IfdBuilder::new();
         raw.set(t::NEW_SUBFILE_TYPE, Value::Long(vec![0]));
         raw.set(t::IMAGE_WIDTH, Value::Long(vec![w]));
@@ -186,13 +205,13 @@ mod tests {
         ifd0.set(t::MODEL, Value::Ascii("NIKON TEST".into()));
         if let Some(mn) = note {
             let mut bytes = b"Nikon\0\x02\x10\0\0".to_vec();
-            bytes.extend(TiffWriter::new(ByteOrder::Big, false).write(&[mn]).unwrap());
+            bytes.extend(TiffWriter::new(order, false).write(&[mn]).unwrap());
             let mut exif = IfdBuilder::new();
             exif.set(t::MAKER_NOTE, Value::Undefined(bytes));
             ifd0.set_child(t::EXIF_IFD, exif);
         }
         ifd0.add_sub_ifd(raw);
-        TiffWriter::new(ByteOrder::Big, false).write(&[ifd0]).unwrap()
+        TiffWriter::new(order, false).write(&[ifd0]).unwrap()
     }
 
     #[test]
@@ -264,6 +283,52 @@ mod tests {
         }
         let bytes = nef(1, 12, vec![packed], w as u32, h as u32, h as u32);
         assert_eq!(crate::decode(&bytes).unwrap().data, RawData::U16(px));
+    }
+
+    /// An NRW data block (`"NRW 0104"`, fields from byte 8) with `black` at byte `0x20`, as a maker note.
+    fn nrw_note(black: u32) -> IfdBuilder {
+        let mut block = b"NRW 0104".to_vec();
+        block.resize(0x20, 0);
+        block.extend_from_slice(&black.to_le_bytes());
+        block.resize(0x40, 0);
+        let mut mn = IfdBuilder::new();
+        mn.set(NRW_DATA, Value::Undefined(block));
+        mn
+    }
+
+    /// 12-bit samples as an MSB-first bit stream inside 32-bit words in `order` (rows are whole words).
+    fn words32(px: &[u16], w: usize, order: ByteOrder) -> Vec<u8> {
+        let mut out = Vec::new();
+        for row in px.chunks(w) {
+            let stream = row.iter().fold(Vec::new(), |mut bits: Vec<bool>, v| {
+                bits.extend((0..12).rev().map(|b| v >> b & 1 == 1));
+                bits
+            });
+            for word in stream.chunks(32) {
+                let v = word.iter().enumerate().fold(0u32, |a, (i, b)| a | (*b as u32) << (31 - i));
+                out.extend_from_slice(&match order {
+                    ByteOrder::Little => v.to_le_bytes(),
+                    ByteOrder::Big => v.to_be_bytes(),
+                });
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn nrw_block_selects_32_bit_word_packing() {
+        let (w, h) = (16usize, 6usize);
+        let px: Vec<u16> = (0..w * h).map(|i| (200 + i * 131 % 3800) as u16).collect();
+        let packed = words32(&px, w, ByteOrder::Little);
+        assert_eq!(packed.len(), w * h * 3 / 2);
+        let decode = |note: Option<IfdBuilder>| {
+            crate::decode(&nef_in(ByteOrder::Little, 1, 12, vec![packed.clone()], w as u32, h as u32, h as u32, note)).unwrap()
+        };
+        let r = decode(Some(nrw_note(200)));
+        assert_eq!(r.data, RawData::U16(px.clone()));
+        // without the block the same bytes are an MSB-first byte stream
+        let plain = decode(None);
+        assert_ne!(plain.data, RawData::U16(px));
     }
 
     #[test]
