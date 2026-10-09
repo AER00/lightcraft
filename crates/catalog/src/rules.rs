@@ -345,7 +345,7 @@ pub fn rule_date(s: &str) -> Result<String, Issue> {
     };
     if !shaped(&s) {
         // a whole date and time with something after it: a zone (+02:00, -05:00, Z) or a fraction
-        let zoned = [19, 16, 13].iter().any(|&n| {
+        let zoned = [19, 16, 13, 10].iter().any(|&n| {
             s.get(..n).is_some_and(shaped)
                 && s.get(n..).and_then(|rest| rest.chars().next()).is_some_and(|c| matches!(c, '+' | '-' | 'Z' | 'z' | '.'))
         });
@@ -1478,7 +1478,7 @@ mod tests {
             let r = rule(op, v.clone());
             assert!(r.check(&cat).is_empty() && r.matches(&p, &cat), "{op} {v}");
         }
-        for v in ["2026-08-14T10:00:00+02:00", "2026-08-14T10:00:00Z", "2026-08-14T10:00:00.25", "2026-08-14 10:00-05:00"] {
+        for v in ["2026-08-14T10:00:00+02:00", "2026-08-14T10:00:00Z", "2026-08-14T10:00:00.25", "2026-08-14 10:00-05:00", "2026-08-14Z"] {
             let p = rule("is", json!(v)).check(&cat);
             assert_eq!(p.first().map(|p| p.issue), Some(Issue::DateWithZone), "{v}");
         }
