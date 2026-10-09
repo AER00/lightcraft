@@ -48,7 +48,7 @@ pub enum Kind {
     Keywords,
     Number,
     Date,
-    /// A plain album, by id: in it or not.
+    /// An album or a smart album (not a folder), by id: in it or not.
     Album,
     /// One of a fixed set: (id, label). Rules store the id; people see the label.
     Choice(&'static [(&'static str, &'static str)]),
@@ -161,7 +161,7 @@ pub struct Problem {
 }
 
 impl std::fmt::Display for Problem {
-    /// `rule 2.1: rating is 0–5, not 9` (counting from 1, as people do).
+    /// `rule 2.1: no rating 0–5 is 9` (counting from 1, as people do).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let at: Vec<String> = self.path.iter().map(|i| (i.saturating_add(1)).to_string()).collect();
         // a problem with the filter around the rules (its album field) has no rule to point at
@@ -919,7 +919,7 @@ impl RuleSet {
 
     /// The rules that can't mean anything, in order: an unknown field, an operator the field
     /// doesn't have, a value that isn't one of the field's (a number, a date, a choice, yes or
-    /// no, a plain album…), text with nothing to look for, an empty group. Commands refuse a rule
+    /// no, an album that exists and isn't a folder…), text with nothing to look for, an empty group. Commands refuse a rule
     /// set with problems; the editor shows them. `cat` knows the albums and colour-label names.
     pub fn check(&self, cat: &Catalog) -> Vec<Problem> {
         self.check_for(cat, None)

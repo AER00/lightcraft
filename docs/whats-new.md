@@ -15,7 +15,7 @@
   `publicDomain` (rules and agents keep using the ids; `album.ruleFields` adds `choiceLabels`).
 - Rule values are checked: a rating of 9, a date like 2026-13 or "banana", a "between" whose dates are the wrong
   way round, "in the last 0 days", a colour label that doesn't exist, "contains" with nothing to look for, an
-  album that is gone, or an empty group is reported with its rule ("rule 2.1: rating is 0–5, not 9")
+  album that is gone, or an empty group is reported with its rule ("rule 2.1: no rating 0–5 is 9")
   instead of quietly matching nothing or everything. New date rules start at the current year.
 - A smart album can include or exclude another smart album: "Keywords contain travel" and "Album isn't Excluded Photos"
   leaves out whatever Excluded Photos matches, as its rules change. The album picker shows your albums as in the sidebar
@@ -33,7 +33,7 @@
 - Editing a smart album's name and rules is one step: both or neither, and one undo takes both back
   (`album.setRules` takes `name`).
 - The rule editor marks each rule that needs fixing right under it and keeps OK disabled until they are fixed. An
-  Album rule picks its album from a list (is / isn't) instead of taking an id.
+  Album rule is "is" or "isn't" an album, picked with the album picker.
 - Yes/no fields (Has Edits, Cropped, Has GPS…) read Yes / No instead of true / false. A rule sent as `"false"` now
   means no (it used to count as yes), and a value that is neither yes nor no is refused.
 - Any Searchable Text also finds the state / province, alt text, people and a virtual copy's name.
