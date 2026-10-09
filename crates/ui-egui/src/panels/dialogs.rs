@@ -787,8 +787,9 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new(crate::i18n::tr("Keywords (⌥1–⌥9)")).color(t.text_dim));
                     slots.resize(9, String::new());
-                    let w = ((ui.available_width() - 8.0) / 3.0).floor().max(60.0);
-                    egui::Grid::new("keyword-set-slots").num_columns(3).spacing([4.0, 4.0]).show(ui, |ui| {
+                    // equal columns of a set width (the window is still finding its own)
+                    let w = 130.0;
+                    egui::Grid::new("keyword-set-slots").num_columns(3).min_col_width(w).spacing([6.0, 4.0]).show(ui, |ui| {
                         for (i, slot) in slots.iter_mut().enumerate() {
                             let r = crate::text_field::TextField::singleline(&format!("field:keywordSetSlot:{}", i + 1), slot)
                                 .hint(format!("⌥{}", i + 1))

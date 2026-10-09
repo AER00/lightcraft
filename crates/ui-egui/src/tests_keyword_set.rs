@@ -97,3 +97,17 @@ fn an_empty_slot_is_an_idle_button() {
     h.settle(SETTLE);
     assert!(h.app.widgets.iter().any(|(w, _)| w == "kwSetEmpty:2"), "slot 2 is shown empty");
 }
+
+/// The nine fields are alike and wide enough for a keyword: a grid of equal columns, not one sized
+/// by what the window had room for while it found its size.
+#[test]
+fn the_slots_are_alike() {
+    let mut h = keywords_panel();
+    open_editor(&mut h);
+    let slots: Vec<egui::Rect> =
+        (1..=9).map(|i| h.app.widgets.iter().find(|(w, _)| *w == format!("field:keywordSetSlot:{i}")).map(|(_, r)| *r).expect("slot")).collect();
+    for r in &slots {
+        assert!(r.width() >= 100.0, "{r:?}");
+        assert!((r.width() - slots[0].width()).abs() < 1.0, "{r:?} vs {:?}", slots[0]);
+    }
+}
