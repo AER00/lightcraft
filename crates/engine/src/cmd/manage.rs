@@ -189,7 +189,13 @@ pub fn specs() -> Vec<CommandSpec> {
                 }
                 // photos without a capture time start from their import time
                 let base = |s: &crate::Session, id| s.catalog.photo(id).map(|p| p.date().to_string()).unwrap_or_default();
-                let mut delta = (f64_or(p, "shift", 0.0) + f64_or(p, "hours", 0.0) * 3600.0).round() as i64;
+                // seconds; a shift beyond 10,000 years is a mistake (and would overflow), not a date
+                const MAX_SHIFT: f64 = 10_000.0 * 365.25 * 86_400.0;
+                let shift = f64_or(p, "shift", 0.0) + f64_or(p, "hours", 0.0) * 3600.0;
+                if shift.is_nan() || shift.abs() > MAX_SHIFT {
+                    return Err(bad(c, "the shift is more than 10,000 years"));
+                }
+                let mut delta = shift.round() as i64;
                 let mut each: Option<String> = None;
                 if let Some(t) = str_param(p, "time") {
                     let t = normalize_iso(t).ok_or_else(|| bad(c, format!("`{t}` is not a date (YYYY-MM-DDTHH:MM:SS)")))?;

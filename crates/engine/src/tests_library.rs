@@ -470,3 +470,24 @@ fn a_library_open_elsewhere_is_refused() {
     assert_eq!(other.catalog.to_snapshot(), expect);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A capture-time shift from an agent can't overflow or write a date no one can read back: a
+/// shift of more than 10,000 years is refused and nothing changes; an ordinary one still works.
+#[test]
+fn capture_time_shift_is_bounded() {
+    let mut s = crate::Session::with_demo();
+    let id = s.catalog.photos().next().unwrap().id;
+    let before = s.catalog.photo(id).unwrap().captured.clone();
+    for p in [
+        serde_json::json!({"ids": [id.0], "shift": 1e30}),
+        serde_json::json!({"ids": [id.0], "hours": -1e15}),
+        serde_json::json!({"ids": [id.0], "shift": 9.3e18}),
+    ] {
+        let r = s.execute("photo.setCaptureTime", &p);
+        // a real refusal, not the panic guard catching an overflow ("failed unexpectedly")
+        assert!(r.as_ref().is_err_and(|e| e.to_string().contains("10,000 years")), "{p}: {r:?}");
+        assert_eq!(s.catalog.photo(id).unwrap().captured, before, "{p} changed nothing");
+    }
+    s.execute("photo.setCaptureTime", &serde_json::json!({"ids": [id.0], "hours": 1})).unwrap();
+    assert_ne!(s.catalog.photo(id).unwrap().captured, before);
+}
