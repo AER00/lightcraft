@@ -340,7 +340,7 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/data/Sony/ILCE-7M4/ILCE-7M4_DSC06676_FullFrame-LossLess-Compressed-Small.ARW",
         "cbbd0930c7d8706dff84c68a2004454266e6fd0d8354f5f76a106b5d776e0223",
     ),
-    // pre-2017 bodies: white balance only in the enciphered maker note, black level only in the SR2SubIFD (#148)
+    // pre-2017 bodies: white balance and black level only in the encrypted SR2SubIFD (#148)
     (
         "arw-sony-rx100m3.arw",
         "https://raw.pixls.us/data/Sony/DSC-RX100M3/DSC00734.ARW",
@@ -367,6 +367,19 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "arw-sony-a700.arw",
         "https://raw.pixls.us/data/Sony/DSLR-A700/DSC07249.ARW",
         "3159e28892bf0771d01525cd4b6190f9c15bbb19fa2fab6d2515ced0594e8f40",
+    ),
+    // SR2SubIFD white balance (#535): the A500 and A700 above, a third layout of a body that had none before
+    // (SLT-A33, 29000 bytes), and two shots whose maker-note gains differ from the preset applied (5600 K, Shade)
+    ("arw-sony-a33.arw", "https://raw.pixls.us/data/Sony/SLT-A33/DSC01867.ARW", "1a59856394f10d4fadb40f5ab9c6d1c89f473f4dbcdefd216fbbbbf1ad8d21f9"),
+    (
+        "arw-sony-a3500-5600k.arw",
+        "https://raw.pixls.us/data/Sony/ILCE-3500/DSC06923.ARW",
+        "04c4fe04425c3e6fff7c8af0f811923c35e750300373357bd54342150c5505d8",
+    ),
+    (
+        "arw-sony-a7s-shade.arw",
+        "https://raw.pixls.us/data/Sony/ILCE-7S/DSC04125.ARW",
+        "7cc338a0abc8fdad32d61006f1f8f412297b93e040c7efba572eb2bd8f8e8be2",
     ),
     // CR2 colour-filter layouts differ by model (issue #85): CR2CFAPattern 3 (GBRG) and 1 (RGGB) samples
     (
