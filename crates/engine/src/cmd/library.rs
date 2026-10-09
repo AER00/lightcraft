@@ -874,14 +874,45 @@ pub fn specs() -> Vec<CommandSpec> {
             s.commit("Rename Album", Op::RenameAlbum { id, name })?;
             ok()
         }),
-        cmd!("album.delete", "Delete Album", [], None, "{id}", always, |s, p| {
-            let id = album_param(p, "id", "album.delete")?;
-            s.commit("Delete Album", Op::RemoveAlbum { id })?;
-            if s.source == LibrarySource::Album(id) {
-                s.source = LibrarySource::All;
+        cmd!(
+            "album.delete",
+            "Delete Album",
+            [],
+            None,
+            "{id} — deletes the album or folder and its descendants, keeping photos in the library; one undo step",
+            always,
+            |s, p| {
+                let id = album_param(p, "id", "album.delete")?;
+                let folder = s.catalog.album(id).ok_or_else(|| bad("album.delete", "no such album"))?.folder;
+                let mut children = std::collections::BTreeMap::<AlbumId, Vec<AlbumId>>::new();
+                for album in s.catalog.albums() {
+                    if let Some(parent) = album.parent {
+                        children.entry(parent).or_default().push(album.id);
+                    }
+                }
+                // Iterative traversal: even a malformed cycle is rejected before any change.
+                // Reverse parent-first order removes children first; the batch inverse restores
+                // parents first, including memberships, smart rules, covers and manual ordering.
+                let mut pending = vec![id];
+                let mut order = Vec::new();
+                let mut removed = std::collections::BTreeSet::new();
+                while let Some(next) = pending.pop() {
+                    if !removed.insert(next) {
+                        return Err(bad("album.delete", "cycle in album folders"));
+                    }
+                    order.push(next);
+                    if let Some(nested) = children.remove(&next) {
+                        pending.extend(nested);
+                    }
+                }
+                let ops = order.into_iter().rev().map(|id| Op::RemoveAlbum { id }).collect();
+                s.commit(if folder { "Delete Folder" } else { "Delete Album" }, Op::Batch { ops })?;
+                if matches!(s.source, LibrarySource::Album(current) if removed.contains(&current)) {
+                    s.source = LibrarySource::All;
+                }
+                ok()
             }
-            ok()
-        }),
+        ),
         cmd!("album.move", "Move Album", [], None, "{id, parent?: folderId|null}", always, |s, p| {
             let id = album_param(p, "id", "album.move")?;
             let parent = p.get("parent").and_then(Value::as_u64).map(AlbumId);

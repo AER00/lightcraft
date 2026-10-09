@@ -1096,3 +1096,23 @@ fn date_and_keyword_rows_show_their_photos_from_any_source() {
     h.step();
     assert_eq!(h.app.session.filter, lightcraft_catalog::Filter::default(), "{key}");
 }
+
+/// Issue #501: use the actual context-menu button on the populated demo folder.
+#[test]
+fn deleting_a_populated_album_folder_from_its_menu_is_undoable() {
+    let mut h = demo([1400.0, 900.0], json!({"view": "photoGrid", "leftPanel": true}));
+    let folder = h.app.session.catalog.albums().find(|a| a.folder && a.name == "Travel 2026").unwrap().id;
+    assert!(!h.app.session.catalog.album_children(Some(folder)).is_empty());
+    let before = h.app.session.catalog.to_snapshot();
+    let photo_count = h.app.session.catalog.photos().count();
+    right_click(&mut h, &format!("source:folder:{}", folder.0));
+    click(&mut h, &format!("albumDelete:{}", folder.0));
+    assert!(h.app.session.catalog.album(folder).is_none());
+    assert_eq!(h.app.session.catalog.photos().count(), photo_count);
+    assert!(!popup_open(&h));
+    h.app.run("edit.undo", json!({})).unwrap();
+    h.step();
+    h.step();
+    assert_eq!(h.app.session.catalog.to_snapshot(), before);
+    assert!(has(&h, &format!("source:folder:{}", folder.0)));
+}

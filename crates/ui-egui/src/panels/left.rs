@@ -1087,8 +1087,15 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
         if ui.button(crate::i18n::tr("Rename…")).clicked() {
             app.ui.dialog = Some(crate::state::Dialog::RenameAlbum { id: a.id.0, name: a.name.clone() });
         }
-        if ui.button(crate::i18n::tr("Delete")).clicked() {
-            let _ = app.run("album.delete", json!({"id": a.id.0}));
+        let delete = ui.button(crate::i18n::tr("Delete"));
+        register(ui.ctx(), format!("albumDelete:{}", a.id.0), delete.rect);
+        let delete =
+            delete.on_hover_text(crate::i18n::tr("Photos stay in All Photos. Deleting a folder also deletes its albums. You can undo this."));
+        if delete.clicked() {
+            if let Err(e) = app.run("album.delete", json!({"id": a.id.0})) {
+                app.toast(ui.ctx(), e);
+            }
+            ui.close();
         }
     });
 }
