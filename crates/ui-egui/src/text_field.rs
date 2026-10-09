@@ -58,6 +58,7 @@ pub struct TextField<'a> {
     color: Option<egui::Color32>,
     align: Option<egui::Align>,
     margin: Option<egui::Margin>,
+    rows: Option<usize>,
 }
 
 /// The egui id of the field registered as `widget`, to give it the focus (⌘F to search).
@@ -80,6 +81,7 @@ impl<'a> TextField<'a> {
             color: None,
             align: None,
             margin: None,
+            rows: None,
         }
     }
 
@@ -96,6 +98,12 @@ impl<'a> TextField<'a> {
 
     pub fn width(mut self, width: f32) -> Self {
         self.width = Some(width);
+        self
+    }
+
+    /// How many lines a multi-line field shows.
+    pub fn rows(mut self, rows: usize) -> Self {
+        self.rows = Some(rows);
         self
     }
 
@@ -176,6 +184,9 @@ impl<'a> TextField<'a> {
         }
         if let Some(margin) = self.margin {
             edit = edit.margin(margin);
+        }
+        if let Some(rows) = self.rows {
+            edit = edit.desired_rows(rows);
         }
         let (escape, enter) = ui.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter)));
         // a right-click places the cursor as a left one does: the selection the menu acts on

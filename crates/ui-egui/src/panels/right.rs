@@ -734,15 +734,21 @@ fn meta_field(app: &mut LightcraftApp, ui: &mut egui::Ui, label: &str, key: &str
     ui.label(egui::RichText::new(crate::i18n::tr(label)).size(11.5).color(t.text_dim));
     let id = egui::Id::new(("info-field", key));
     let mut text: String = ui.data(|d| d.get_temp(id)).unwrap_or_else(|| value.to_string());
-    let edit = if lines > 1 { egui::TextEdit::multiline(&mut text).desired_rows(lines) } else { egui::TextEdit::singleline(&mut text) };
-    let r = ui.add(edit.desired_width(f32::INFINITY));
-    register(ui.ctx(), format!("field:{key}"), r.rect);
-    if r.has_focus() {
+    let widget = format!("field:{key}");
+    let field = if lines > 1 {
+        crate::text_field::TextField::multiline(&widget, &mut text).rows(lines)
+    } else {
+        crate::text_field::TextField::singleline(&widget, &mut text)
+    };
+    let r = field.width(f32::INFINITY).show(ui);
+    // the typed text outlives frames while it is edited (the photo's value is drawn otherwise)
+    if r.editing {
         ui.data_mut(|d| d.insert_temp(id, text.clone()));
     } else {
         ui.data_mut(|d| d.remove::<String>(id));
     }
-    if r.lost_focus() && text != value {
+    // Return (one line) or leaving saves; Esc gives the edit up
+    if r.committed() && text != value {
         let _ = app.run("photo.setMeta", json!({key: text}));
     }
     ui.add_space(6.0);

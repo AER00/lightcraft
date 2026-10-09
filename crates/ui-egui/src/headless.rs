@@ -1811,6 +1811,49 @@ mod tests {
         assert!(w["result"].to_string().contains("field:copyrightStatus"), "{w}");
     }
 
+    /// Info panel fields are shared text fields. The caption takes several lines: Return starts a
+    /// new one and only leaving the field saves it. Esc gives up an edit (the title stays as it
+    /// was, nothing saved), and right-click ▸ Paste works there too.
+    #[test]
+    fn info_fields_take_lines_esc_and_the_menu() {
+        let mut h = demo([1300.0, 1000.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "info"}), t);
+        h.settle(SETTLE);
+        let meta = |h: &Headless| h.app.session.catalog.photo(h.app.session.active().unwrap()).unwrap().meta.clone();
+        let ask = |h: &mut Headless, method: &str, params: serde_json::Value| {
+            let r = h.request(method, params.clone(), t);
+            assert_eq!(r["ok"], true, "{method} {params}: {r}");
+            h.step();
+            h.step();
+        };
+        let (title, undo) = (meta(&h).title, h.app.session.undo.len());
+        // the caption: two lines, saved on leaving
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:caption"}));
+        ask(&mut h, "ui.key", json!({"key": "A", "cmd": true}));
+        ask(&mut h, "ui.text", json!({"text": "Harbour at dusk"}));
+        ask(&mut h, "ui.key", json!({"key": "Enter"}));
+        ask(&mut h, "ui.text", json!({"text": "Lisbon, 2026"}));
+        assert_eq!(h.app.session.undo.len(), undo, "Return in the caption saves nothing yet");
+        ask(&mut h, "ui.key", json!({"key": "Tab"}));
+        assert_eq!(meta(&h).caption, "Harbour at dusk\nLisbon, 2026");
+        // the title: Esc gives the edit up
+        let undo = h.app.session.undo.len();
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:title"}));
+        ask(&mut h, "ui.text", json!({"text": " (draft)"}));
+        ask(&mut h, "ui.key", json!({"key": "Escape"}));
+        h.settle(SETTLE);
+        assert_eq!((meta(&h).title, h.app.session.undo.len()), (title, undo), "Esc saved nothing");
+        // the menu
+        h.view.clipboard = "Wedding in Sintra".into();
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:title"}));
+        ask(&mut h, "ui.key", json!({"key": "A", "cmd": true}));
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:title", "button": "right"}));
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:title:paste"}));
+        ask(&mut h, "ui.key", json!({"key": "Enter"}));
+        assert_eq!(meta(&h).title, "Wedding in Sintra");
+    }
+
     /// Local: a folder's photos show without joining the library; the breadcrumb, Include
     /// subfolders and Add to My Photos work from the grid header.
     #[test]
