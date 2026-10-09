@@ -109,6 +109,14 @@ fn synchronize(h: &mut Headless) {
     assert!(h.step_until(T, |h| h.app.sync_run.is_none()), "the work finishes");
 }
 
+/// Tick "Remove missing photos" and wait until the click has landed (a click is queued input).
+fn tick_remove_missing(h: &mut Headless) {
+    let r = h.request("ui.clickWidget", json!({"id": "syncRemoveMissing"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let ticked = h.step_until(T, |h| matches!(h.app.ui.dialog, Some(Dialog::SynchronizeFolder { remove_missing: true, .. })));
+    assert!(ticked, "ticked");
+}
+
 fn counts(h: &Headless) -> crate::state::SyncCounts {
     match &h.app.ui.dialog {
         Some(Dialog::SynchronizeFolder { counts: Some(c), .. }) => c.clone(),
@@ -140,9 +148,7 @@ fn ticking_remove_missing_also_removes_the_missing_photos() {
     let dir = Scratch::new("remove");
     let mut h = changed_folder(&dir);
     open_and_scan(&mut h, &dir.path("trip"));
-    let r = h.request("ui.clickWidget", json!({"id": "syncRemoveMissing"}), T);
-    assert_eq!(r["ok"], true, "{r}");
-    h.step();
+    tick_remove_missing(&mut h);
     synchronize(&mut h);
     assert_eq!(in_library(&h), vec!["a.png", "c.png"], "b went to Recently Deleted");
     let r = h.request("engine.execute", json!({"command": "edit.undo", "params": {}}), T);
@@ -180,9 +186,7 @@ fn a_scan_gone_stale_in_the_dialog_is_made_again_in_the_background() {
     let dir = Scratch::new("restale");
     let mut h = changed_folder(&dir);
     open_and_scan(&mut h, &dir.path("trip"));
-    let r = h.request("ui.clickWidget", json!({"id": "syncRemoveMissing"}), T);
-    assert_eq!(r["ok"], true, "{r}");
-    h.step();
+    tick_remove_missing(&mut h);
     // a photo of the folder changes while the dialog is open
     let a = h.app.session.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
     let r = h.request("engine.execute", json!({"command": "photo.rate", "params": {"ids": [a.0], "rating": 3}}), T);
