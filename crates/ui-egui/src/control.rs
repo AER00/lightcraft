@@ -323,8 +323,18 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
             ok(Value::Null)
         }
         "ui.resize" => {
+            for name in ["width", "height"] {
+                if p.get(name).is_some() && f(name).is_none() {
+                    return err(format!("ui.resize: {name} must be a number"));
+                }
+            }
             let w = f("width").unwrap_or(1600.0) as f32;
             let h = f("height").unwrap_or(1000.0) as f32;
+            let zoom = ctx.zoom_factor();
+            let native_scale = ctx.input(|i| i.viewport().native_pixels_per_point).unwrap_or_else(|| ctx.pixels_per_point() / zoom);
+            if let Err(e) = crate::headless::resized_viewport([w, h], native_scale, zoom) {
+                return err(e);
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
             ok(Value::Null)
         }

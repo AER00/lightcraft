@@ -728,9 +728,7 @@ fn snapshot(args: &[String]) -> Result<(), String> {
     if script.is_none() && output.is_none() {
         return Err("snapshot: give -o OUT.png and/or --script FILE".into());
     }
-    if !(scale > 0.0 && size[0] >= 1.0 && size[1] >= 1.0) {
-        return Err("snapshot: bad --size/--scale".into());
-    }
+    lightcraft_ui_egui::headless::viewport_pixels(size, scale).map_err(|e| format!("snapshot: bad --size/--scale: {e}"))?;
     let t0 = Instant::now();
     let mut session = match &library {
         Some(dir) => {
@@ -741,6 +739,8 @@ fn snapshot(args: &[String]) -> Result<(), String> {
         None if files.is_empty() => Session::with_demo().with_fs(),
         None => Session::new().with_fs(),
     };
+    // Apply compute policy before imports or the first scripted query can discover an adapter.
+    session.execute("app.gpu", &json!({"enabled": false})).map_err(|e| e.to_string())?;
     if !files.is_empty() {
         let ti = Instant::now();
         let r = session.execute("library.import", &json!({"paths": expand_paths(&files)})).map_err(|e| e.to_string())?;
@@ -755,7 +755,11 @@ fn snapshot(args: &[String]) -> Result<(), String> {
         })),
         ..Default::default()
     };
-    let app = lightcraft_ui_egui::LightcraftApp::new(session, services);
+    let mut app = lightcraft_ui_egui::LightcraftApp::new(session, services);
+    // Snapshot sessions promise no GPU: disable photo compute as well as the compositor
+    // before the first frame can start background adapter discovery.
+    // This UI state is session-local: the CLI neither loads nor saves desktop ui.json.
+    app.ui.settings.gpu = false;
     let mut h = Headless::new(app, size, scale);
     let timeout = Duration::from_secs(60);
     let mut shots = 0usize;

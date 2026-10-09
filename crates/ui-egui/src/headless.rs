@@ -28,13 +28,56 @@ const CLEAR: Color32 = Color32::from_rgb(12, 12, 12);
 /// Simulated frame interval (deterministic animation time).
 const FRAME_DT: f64 = 1.0 / 60.0;
 
+/// Validate the scaled screenshot dimensions before layout or pixel allocation.
+pub fn viewport_pixels(size: [f32; 2], pixels_per_point: f32) -> Result<[usize; 2], String> {
+    if size.iter().any(|edge| *edge < 1.0) {
+        return Err("viewport dimensions must be at least one logical point".into());
+    }
+    native_viewport_pixels(size, pixels_per_point)
+}
+
+fn native_viewport_pixels(size: [f32; 2], pixels_per_point: f32) -> Result<[usize; 2], String> {
+    let [width, height] = size;
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 || !pixels_per_point.is_finite() || pixels_per_point <= 0.0 {
+        return Err("viewport dimensions and scale must be finite and positive".into());
+    }
+    let axis = |value: f32| {
+        // Match egui/scissor rounding and the existing screenshot dimension contract.
+        let pixels = (value * pixels_per_point).round();
+        if !(1.0..=softpaint::MAX_IMAGE_EDGE as f32).contains(&pixels) {
+            return Err(format!("scaled viewport edges must be between 1 and {} pixels", softpaint::MAX_IMAGE_EDGE));
+        }
+        Ok(pixels as usize)
+    };
+    let (w, h) = (axis(width)?, axis(height)?);
+    if w.checked_mul(h).is_none_or(|pixels| pixels > softpaint::MAX_IMAGE_PIXELS) {
+        return Err(format!("scaled viewport exceeds {} pixels", softpaint::MAX_IMAGE_PIXELS));
+    }
+    Ok([w, h])
+}
+
+/// Convert an effective-point resize to the native viewport before validating pixel bounds.
+/// Sub-point native edges after zooming out are valid when they round to at least one pixel.
+pub fn resized_viewport(size: [f32; 2], native_pixels_per_point: f32, zoom: f32) -> Result<egui::Vec2, String> {
+    if size.iter().any(|edge| !edge.is_finite() || *edge < 1.0) || !zoom.is_finite() || zoom <= 0.0 {
+        return Err("resize dimensions must be at least one finite logical point with a positive zoom".into());
+    }
+    let native_size = egui::Vec2::from(size) * zoom;
+    native_viewport_pixels([native_size.x, native_size.y], native_pixels_per_point)?;
+    Ok(native_size)
+}
+
+fn bounded_viewport(size: egui::Vec2, scale: f32) -> (egui::Vec2, f32) {
+    if native_viewport_pixels([size.x, size.y], scale).is_ok() { (size, scale) } else { (egui::vec2(1600.0, 1000.0), 1.0) }
+}
+
 /// An offscreen egui context with our fonts and theme, and a CPU mirror of its textures.
 pub struct HeadlessView {
     pub ctx: egui::Context,
     pub textures: TextureStore,
     pub(crate) shapes: Vec<egui::epaint::ClippedShape>,
     pixels_per_point: f32,
-    size: egui::Vec2,
+    size: [usize; 2],
     frames: u64,
 }
 
@@ -49,11 +92,12 @@ impl HeadlessView {
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
         crate::theme::apply(&ctx);
-        HeadlessView { ctx, textures: TextureStore::default(), shapes: vec![], pixels_per_point: 1.0, size: egui::vec2(1600.0, 1000.0), frames: 0 }
+        HeadlessView { ctx, textures: TextureStore::default(), shapes: vec![], pixels_per_point: 1.0, size: [1600, 1000], frames: 0 }
     }
 
     /// Input for one frame of a `size` (points) viewport at `pixels_per_point`.
     pub fn raw_input(size: egui::Vec2, pixels_per_point: f32, time: f64, events: Vec<egui::Event>) -> RawInput {
+        let (size, pixels_per_point) = bounded_viewport(size, pixels_per_point);
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
         let mut raw = RawInput {
             screen_rect: Some(rect),
@@ -73,9 +117,20 @@ impl HeadlessView {
     }
 
     /// Run one frame; keeps the shapes for [`Self::paint`]. Returns the root viewport's commands.
-    pub fn run(&mut self, raw: RawInput, run_ui: impl FnMut(&mut egui::Ui)) -> Vec<ViewportCommand> {
-        if let Some(r) = raw.screen_rect {
-            self.size = r.size();
+    pub fn run(&mut self, mut raw: RawInput, run_ui: impl FnMut(&mut egui::Ui)) -> Vec<ViewportCommand> {
+        if let Some(rect) = raw.screen_rect {
+            let native_scale = raw.viewports.get(&ViewportId::ROOT).and_then(|info| info.native_pixels_per_point).unwrap_or(1.0);
+            self.size = native_viewport_pixels([rect.width(), rect.height()], native_scale).unwrap_or([0, 0]);
+            // The host viewport is measured before UI zoom. Egui lays out in zoomed points;
+            // retain the host's physical size while allowing text and controls to grow.
+            let zoom = self.ctx.zoom_factor();
+            if zoom.is_finite() && zoom > 0.0 {
+                raw.screen_rect = Some(rect / zoom);
+                if let Some(info) = raw.viewports.get_mut(&ViewportId::ROOT) {
+                    info.inner_rect = info.inner_rect.map(|rect| rect / zoom);
+                    info.outer_rect = info.outer_rect.map(|rect| rect / zoom);
+                }
+            }
         }
         let mut out = self.ctx.run_ui(raw, run_ui);
         self.frames += 1;
@@ -92,11 +147,17 @@ impl HeadlessView {
 
     /// Size in pixels of the last frame.
     pub fn size_px(&self) -> [usize; 2] {
-        [(self.size.x * self.pixels_per_point).round() as usize, (self.size.y * self.pixels_per_point).round() as usize]
+        self.size
     }
 
     /// Rasterize the last frame. `extra` textures (by id) take precedence over the context's own.
     pub fn paint(&self, extra: &HashMap<TextureId, CpuTexture>) -> ColorImage {
+        if viewport_pixels([self.size[0] as f32, self.size[1] as f32], 1.0).is_err()
+            || !self.pixels_per_point.is_finite()
+            || self.pixels_per_point <= 0.0
+        {
+            return ColorImage::new([0, 0], Vec::new());
+        }
         let prims = self.ctx.tessellate(self.shapes.clone(), self.pixels_per_point);
         softpaint::paint(&prims, &Layered { over: extra, base: &self.textures }, self.size_px(), self.pixels_per_point, CLEAR)
     }
@@ -125,7 +186,14 @@ pub struct Headless {
 
 impl Headless {
     /// Wrap `app` (its control channel is replaced by the driver's).
+    /// Invalid dimensions fall back to 1600×1000 at scale 1; external callers can use
+    /// [`viewport_pixels`] to reject them before constructing the session.
     pub fn new(app: LightcraftApp, size: [f32; 2], pixels_per_point: f32) -> Self {
+        let (size, pixels_per_point) = if viewport_pixels(size, pixels_per_point).is_ok() {
+            (egui::Vec2::from(size), pixels_per_point)
+        } else {
+            (egui::vec2(1600.0, 1000.0), 1.0)
+        };
         let (tx, rx) = std::sync::mpsc::channel();
         let mut app = app.with_control(rx);
         app.headless_host = true;
@@ -133,7 +201,7 @@ impl Headless {
             app,
             view: HeadlessView::new(),
             max_texture_side: 16384,
-            size: egui::vec2(size[0], size[1]),
+            size,
             pixels_per_point,
             time: 0.0,
             frames: 0,
@@ -156,6 +224,7 @@ impl Headless {
 
     /// Run one frame.
     pub fn step(&mut self) {
+        (self.size, self.pixels_per_point) = bounded_viewport(self.size, self.pixels_per_point);
         let mut raw = HeadlessView::raw_input(self.size, self.pixels_per_point, self.time, std::mem::take(&mut self.events));
         raw.viewports.entry(ViewportId::ROOT).or_default().maximized = Some(self.window_maximized);
         raw.max_texture_side = Some(self.max_texture_side);
@@ -173,7 +242,12 @@ impl Headless {
                     let image = Arc::new(self.paint());
                     self.events.push(egui::Event::Screenshot { viewport_id: ViewportId::ROOT, user_data, image });
                 }
-                ViewportCommand::InnerSize(s) if s.x >= 1.0 && s.y >= 1.0 => self.size = s,
+                ViewportCommand::InnerSize(size) => {
+                    // Viewport commands use current egui points, which include UI zoom.
+                    if let Ok(native_size) = resized_viewport([size.x, size.y], self.pixels_per_point, self.view.ctx.zoom_factor()) {
+                        self.size = native_size;
+                    }
+                }
                 ViewportCommand::Close => self.quit = true,
                 ViewportCommand::Maximized(on) => {
                     self.window_maximized = on;
@@ -292,6 +366,151 @@ impl Headless {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screenshot_dimensions_are_checked_before_layout() {
+        assert_eq!(viewport_pixels([1600.0, 1000.0], 2.0).unwrap(), [3200, 2000]);
+        assert_eq!(viewport_pixels([345.0, 200.0], 0.9).unwrap(), [311, 180]);
+        assert_eq!(viewport_pixels([8000.0, 8000.0], 1.0).unwrap(), [8000, 8000]);
+        for (size, scale) in [
+            ([f32::NAN, 10.0], 1.0),
+            ([10.0, f32::INFINITY], 1.0),
+            ([10.0, 10.0], f32::INFINITY),
+            ([10.0, 10.0], f32::NAN),
+            ([10.0, 10.0], 0.0),
+            ([0.0, 10.0], 1.0),
+            ([10.0, 10.0], 0.01),
+            ([9000.0, 9000.0], 1.0),
+            ([9000.0, 100.0], 2.0),
+        ] {
+            assert!(viewport_pixels(size, scale).is_err(), "{size:?} at {scale}");
+        }
+        let raw = HeadlessView::raw_input(egui::vec2(f32::INFINITY, 10.0), 1.0, 0.0, vec![]);
+        assert_eq!(raw.screen_rect.unwrap().size(), egui::vec2(1600.0, 1000.0));
+    }
+
+    #[test]
+    fn ui_zoom_preserves_host_pixels_and_scales_layout() {
+        for (size, scale, expected) in
+            [(egui::vec2(400.0, 240.0), 1.0, [400, 240]), (egui::vec2(345.0, 200.0), 0.9, [311, 180]), (egui::vec2(400.0, 240.0), 2.0, [800, 480])]
+        {
+            let mut view = HeadlessView::new();
+            for frame in 0..9 {
+                let key = match frame {
+                    1 => Some(egui::Key::Plus),
+                    5 => Some(egui::Key::Minus),
+                    _ => None,
+                };
+                let mut raw = HeadlessView::raw_input(size, scale, frame as f64 / 60.0, vec![]);
+                if let Some(key) = key {
+                    let modifiers = egui::Modifiers { command: true, ..Default::default() };
+                    raw.events.push(egui::Event::ModifiersChanged(modifiers));
+                    raw.events.extend(vec![
+                        egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers },
+                        egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers },
+                    ]);
+                }
+                view.run(raw, |ui| {
+                    ui.label("UI zoom changes layout, keeping the host viewport size");
+                });
+                assert_eq!(view.size_px(), expected, "frame {frame} at scale {scale}");
+                assert_eq!(view.paint(&HashMap::new()).size, expected);
+                if frame == 4 {
+                    assert!(view.ctx.zoom_factor() > 1.0);
+                    assert!(view.ctx.content_rect().width() < size.x);
+                }
+                if frame == 8 {
+                    assert!(view.ctx.zoom_factor() < 1.01);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shadow_screenshot_keeps_the_zoomed_hosts_size_and_scale() {
+        let mut app = LightcraftApp::new(lightcraft_engine::Session::new(), crate::Services::default());
+        app.ui.settings.gpu = false;
+        let mut h = Headless::new(app, [480.0, 320.0], 2.0);
+        let t = Duration::from_secs(5);
+        assert_eq!(h.request("ui.key", json!({"key": "Plus", "cmd": true}), t)["ok"], true);
+        assert!(h.view.ctx.zoom_factor() > 1.0);
+        let main = h.view.ctx.clone();
+        let screenshot = h.app.headless_screenshot(&main, true).unwrap();
+        assert_eq!(screenshot.size, [960, 640]);
+        let shadow = h.app.shadow.as_ref().unwrap();
+        assert!((shadow.ctx.pixels_per_point() - main.pixels_per_point()).abs() < 0.001);
+        assert!((shadow.ctx.content_rect().width() - main.content_rect().width()).abs() < 0.1);
+    }
+
+    #[test]
+    fn control_resize_uses_effective_points_after_ui_zoom() {
+        for scale in [0.9, 1.0, 2.0] {
+            let mut app = LightcraftApp::new(lightcraft_engine::Session::new(), crate::Services::default());
+            app.ui.settings.gpu = false;
+            let mut h = Headless::new(app, [480.0, 320.0], scale);
+            let t = Duration::from_secs(5);
+            assert_eq!(h.request("ui.key", json!({"key": "Plus", "cmd": true}), t)["ok"], true);
+            let native_size = resized_viewport([320.0, 240.0], scale, h.view.ctx.zoom_factor()).unwrap();
+            let expected = native_viewport_pixels([native_size.x, native_size.y], scale).unwrap();
+            assert_eq!(h.request("ui.resize", json!({"width": 320, "height": 240}), t)["ok"], true);
+            assert_eq!(h.view.size_px(), expected);
+            assert!((h.view.ctx.content_rect().width() - 320.0).abs() < 0.1);
+            let main = h.view.ctx.clone();
+            assert_eq!(h.app.headless_screenshot(&main, true).unwrap().size, expected);
+        }
+    }
+
+    #[test]
+    fn control_resize_keeps_a_minimum_width_after_zooming_out() {
+        let mut app = LightcraftApp::new(lightcraft_engine::Session::new(), crate::Services::default());
+        app.ui.settings.gpu = false;
+        let mut h = Headless::new(app, [480.0, 320.0], 1.0);
+        h.view.ctx.set_zoom_factor(0.5);
+        let t = Duration::from_secs(5);
+        assert_eq!(h.request("ui.resize", json!({"width": 1, "height": 120}), t)["ok"], true);
+        assert_eq!(h.size, egui::vec2(0.5, 60.0));
+        assert_eq!(h.view.size_px(), [1, 60]);
+        assert!((h.view.ctx.content_rect().width() - 1.0).abs() < 0.01);
+        let main = h.view.ctx.clone();
+        assert_eq!(h.app.headless_screenshot(&main, true).unwrap().size, [1, 60]);
+    }
+
+    #[test]
+    fn control_resize_rounds_in_native_points_after_a_fractional_zoom_out() {
+        let mut app = LightcraftApp::new(lightcraft_engine::Session::new(), crate::Services::default());
+        app.ui.settings.gpu = false;
+        let mut h = Headless::new(app, [480.0, 320.0], 0.9);
+        let t = Duration::from_secs(5);
+        assert_eq!(h.request("ui.key", json!({"key": "Minus", "cmd": true}), t)["ok"], true);
+        assert!((h.view.ctx.zoom_factor() - 0.9).abs() < 0.001);
+        assert_eq!(h.request("ui.resize", json!({"width": 150, "height": 150}), t)["ok"], true);
+        assert_eq!(h.size, egui::vec2(135.0, 135.0));
+        assert_eq!(h.view.size_px(), [122, 122]);
+        assert!((h.view.ctx.content_rect().width() - 150.0).abs() < 0.01);
+        let main = h.view.ctx.clone();
+        assert_eq!(h.app.headless_screenshot(&main, true).unwrap().size, [122, 122]);
+    }
+
+    #[test]
+    fn invalid_control_resize_preserves_the_headless_viewport() {
+        let app = LightcraftApp::new(lightcraft_engine::Session::new(), crate::Services::default());
+        let mut h = Headless::new(app, [480.0, 320.0], 2.0);
+        h.app.ui.settings.gpu = false;
+        h.step();
+        let size = h.size;
+        let rejected = h.request("ui.resize", json!({"width": 9000, "height": 8000}), Duration::from_secs(5));
+        assert_eq!(rejected["ok"], false, "{rejected}");
+        assert_eq!(h.size, size);
+        for bad in [json!({"width": "320", "height": 240}), json!({"width": 320, "height": null}), json!({"width": true})] {
+            let rejected = h.request("ui.resize", bad, Duration::from_secs(5));
+            assert_eq!(rejected["ok"], false, "{rejected}");
+            assert_eq!(h.size, size);
+        }
+        let accepted = h.request("ui.resize", json!({"width": 320, "height": 240}), Duration::from_secs(5));
+        assert_eq!(accepted["ok"], true, "{accepted}");
+        assert_eq!(h.size, egui::vec2(320.0, 240.0));
+        assert_eq!(h.view.size_px(), [640, 480]);
+    }
 
     /// Generous: renders are slow when the machine is loaded (parallel builds), and a timed-out
     /// settle would show a half-rendered UI.

@@ -606,7 +606,10 @@ impl LightcraftApp {
         let mut view = self.shadow.take().unwrap_or_default();
         let size = main.input(|i| i.content_rect()).size();
         let size = if size.x >= 1.0 && size.y >= 1.0 { size } else { egui::vec2(1600.0, 1000.0) };
-        let ppp = main.pixels_per_point();
+        // Feed native viewport points; the shadow context applies the copied UI zoom.
+        let zoom = main.zoom_factor();
+        let size = size * zoom;
+        let ppp = main.pixels_per_point() / zoom;
         let time = main.input(|i| i.time);
         if view.frames() == 0 {
             // warm-up pass: activates our fonts (pending font definitions live in `Memory`, which
