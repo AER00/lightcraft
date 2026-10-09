@@ -178,14 +178,17 @@ impl<'a> TextField<'a> {
             state.store(ui.ctx(), id);
         }
         crate::widgets::register(ui.ctx(), self.widget, response.rect);
+        // egui's own focus: `Response::has_focus` is also false while the window is in the
+        // background (another app in front), which neither ends nor restarts an edit
+        let focused = ui.memory(|m| m.has_focus(id));
 
         // an edit not under way (none, or one cut short when the field went away) is forgotten
         let in_menu = memo.away || memo.menu_open || memo.action.is_some();
-        if !response.has_focus() && !response.lost_focus() && !in_menu {
+        if !focused && !response.lost_focus() && !in_menu {
             memo.before = None;
         }
         // the start of an edit (not the focus coming back from the menu)
-        if response.has_focus() && memo.before.is_none() {
+        if focused && memo.before.is_none() {
             memo.before = Some(self.text.clone());
             if self.select_on_focus {
                 select_all(ui.ctx(), id, self.text);
@@ -227,17 +230,17 @@ impl<'a> TextField<'a> {
             // Esc with the focus in the menu (Tab took it there) closes only the menu
             memo.action = Some(Action::Refocus);
             memo.away = false;
-        } else if memo.away && !memo.menu_open && memo.action.is_none() && !response.has_focus() {
+        } else if memo.away && !memo.menu_open && memo.action.is_none() && !focused {
             // the menu closed without a choice: the click outside it left the field
             ending = Some(Ending::Away);
         }
-        if response.has_focus() {
+        if focused {
             memo.away = false;
         }
         if ending.is_some() {
             memo = Memo::default();
         }
-        let editing = ending.is_none() && (response.has_focus() || memo.away || memo.menu_open || memo.action.is_some());
+        let editing = ending.is_none() && (focused || memo.away || memo.menu_open || memo.action.is_some());
         ui.data_mut(|d| d.insert_temp(id.with("memo"), memo));
         TextFieldResponse { response, ending, editing }
     }
@@ -322,6 +325,10 @@ mod tests {
         select_on_focus: bool,
         /// The field is on screen (a dialog that holds it may close).
         shown: bool,
+        /// The app's window has the system's focus (the user may switch to another app).
+        window_focused: bool,
+        /// The field said an edit is under way, last frame.
+        editing: bool,
         endings: Vec<Ending>,
         widgets: Vec<(String, Rect)>,
         time: f64,
@@ -334,6 +341,8 @@ mod tests {
                 text: text.to_string(),
                 select_on_focus: false,
                 shown: true,
+                window_focused: true,
+                editing: false,
                 endings: vec![],
                 widgets: vec![],
                 time: 0.0,
@@ -344,8 +353,9 @@ mod tests {
 
         fn frame(&mut self, events: Vec<Event>) {
             self.time += 1.0 / 60.0;
-            let raw = HeadlessView::raw_input(egui::vec2(400.0, 300.0), 1.0, self.time, events);
-            let (text, select, shown, endings) = (&mut self.text, self.select_on_focus, self.shown, &mut self.endings);
+            let mut raw = HeadlessView::raw_input(egui::vec2(400.0, 300.0), 1.0, self.time, events);
+            raw.focused = self.window_focused;
+            let (text, select, shown, endings, editing) = (&mut self.text, self.select_on_focus, self.shown, &mut self.endings, &mut self.editing);
             self.view.run(raw, |ui| {
                 ui.add_space(20.0);
                 if !shown {
@@ -353,6 +363,7 @@ mod tests {
                 }
                 let r = TextField::singleline(FIELD, text).width(200.0).select_on_focus(select).show(ui);
                 endings.extend(r.ending);
+                *editing = r.editing;
             });
             self.widgets = crate::widgets::take_registry(&self.view.ctx);
         }
@@ -606,5 +617,22 @@ mod tests {
         rig.type_text("Kyoto");
         rig.key(Key::Escape, Modifiers::NONE);
         assert_eq!(rig.text, "Porto");
+    }
+
+    /// Switching to another app and back in the middle of an edit carries on with it: the field
+    /// is still being edited meanwhile, and Esc still gives back the text from before.
+    #[test]
+    fn switching_apps_carries_on_with_the_edit() {
+        let mut rig = Rig::new("Lisbon");
+        rig.select_all_by_keys();
+        rig.type_text("Rome");
+        rig.window_focused = false;
+        rig.settle();
+        assert!(rig.editing, "still being edited while the app is in the background");
+        assert_eq!(rig.endings, vec![]);
+        rig.window_focused = true;
+        rig.settle();
+        rig.key(Key::Escape, Modifiers::NONE);
+        assert_eq!((rig.text.as_str(), rig.endings.clone()), ("Lisbon", vec![Ending::Escape]));
     }
 }
