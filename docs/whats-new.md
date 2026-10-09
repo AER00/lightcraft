@@ -17,6 +17,8 @@
   way round, "in the last 0 days", a colour label that doesn't exist, "contains" with nothing to look for, an
   album that is gone or smart, or an empty group is reported with its rule ("rule 2.1: rating is 0–5, not 9")
   instead of quietly matching nothing or everything. New date rules start at the current year.
+- The rule editor marks each rule that needs fixing right under it and keeps OK disabled until they are fixed. An
+  Album rule picks its album from a list (is / isn't) instead of taking an id.
 - Yes/no fields (Has Edits, Cropped, Has GPS…) read Yes / No instead of true / false. A rule sent as `"false"` now
   means no (it used to count as yes), and a value that is neither yes nor no is refused.
 - Any Searchable Text also finds the state / province, alt text, people and a virtual copy's name.
