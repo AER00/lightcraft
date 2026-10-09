@@ -136,6 +136,11 @@ pub enum Op {
         id: AlbumId,
         parent: Option<AlbumId>,
     },
+    /// Where the album stands among its siblings (`None`: by name). Format version 3.
+    SetAlbumOrder {
+        id: AlbumId,
+        order: Option<u32>,
+    },
     SetAlbumPhotos {
         id: AlbumId,
         photos: Vec<PhotoId>,
@@ -281,6 +286,18 @@ impl Catalog {
     }
     pub fn albums(&self) -> impl Iterator<Item = &Album> {
         self.albums.values()
+    }
+    /// The albums and folders directly inside `parent` (`None`: the top level), in the order the
+    /// sidebar lists them: folders first, then by their place if the user ordered them (those
+    /// without one after, by name), else by name.
+    pub fn album_children(&self, parent: Option<AlbumId>) -> Vec<&Album> {
+        let mut kids: Vec<&Album> = self.albums.values().filter(|a| a.parent == parent).collect();
+        kids.sort_by_cached_key(|a| (!a.folder, a.order.is_none(), a.order.unwrap_or(0), a.name.to_lowercase(), a.id));
+        kids
+    }
+    /// Whether anything inside `parent` has a place of its own (the folder is ordered by hand).
+    pub fn album_children_are_ordered(&self, parent: Option<AlbumId>) -> bool {
+        self.albums.values().any(|a| a.parent == parent && a.order.is_some())
     }
     /// The Quick Collection, once something was added to it.
     pub fn quick_collection(&self) -> Option<AlbumId> {
@@ -479,7 +496,20 @@ impl Catalog {
                     }
                 }
                 let a = self.album_mut(id)?;
-                Op::MoveAlbum { id, parent: std::mem::replace(&mut a.parent, parent) }
+                if a.parent == parent {
+                    return Ok(Op::MoveAlbum { id, parent });
+                }
+                // its place belonged to the old neighbours: the undo gives it back with the folder
+                let old_order = a.order.take();
+                let old_parent = std::mem::replace(&mut a.parent, parent);
+                match old_order {
+                    Some(_) => Op::Batch { ops: vec![Op::MoveAlbum { id, parent: old_parent }, Op::SetAlbumOrder { id, order: old_order }] },
+                    None => Op::MoveAlbum { id, parent: old_parent },
+                }
+            }
+            Op::SetAlbumOrder { id, order } => {
+                let a = self.album_mut(id)?;
+                Op::SetAlbumOrder { id, order: std::mem::replace(&mut a.order, order) }
             }
             Op::SetAlbumPhotos { id, photos } => {
                 let a = self.album_mut(id)?;
@@ -670,6 +700,8 @@ impl Catalog {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_album_order;
 #[cfg(test)]
 mod tests_background;
 #[cfg(test)]

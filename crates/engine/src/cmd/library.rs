@@ -784,7 +784,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let cover = photos.first().copied();
             s.commit(
                 if folder { "New Folder" } else { "New Album" },
-                Op::AddAlbum { album: Album { id, name, parent, folder, photos, cover, smart: None, quick: false } },
+                Op::AddAlbum { album: Album { id, name, parent, folder, photos, cover, smart: None, quick: false, order: None } },
             )?;
             Ok(json!({"id": id.0}))
         }),
