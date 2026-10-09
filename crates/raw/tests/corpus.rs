@@ -357,6 +357,69 @@ fn corpus_sony_pre2017_colour_metadata() {
     eprintln!("pre-2017 Sony ARW colour metadata checked on {seen} files");
 }
 
+/// Sony ILCE-7CR (61 MP), three of the camera's raw codings of one scene on raw.pixls.us: lossless compressed L
+/// (LJ92 tiles of 2×2 cells), lossless compressed M (subsampled YCbCr, already white-balanced) and compressed
+/// (ARW2). Expected values: the files' own black level and default crop, and the as-shot gains of the camera's
+/// colour-temperature setting.
+#[test]
+fn corpus_sony_a7cr_codings() {
+    let dir = corpus_root().join("raw");
+    // (file, colour-filter layout, as-shot R and B gains, default crop x, y, width, height)
+    let cases = [
+        ("arw-sony-a7cr-lossless-l.arw", Some("RGGB"), [2.625, 1.598], (32, 20, 9504, 6336)),
+        ("arw-sony-a7cr-compressed.arw", Some("RGGB"), [2.625, 1.598], (32, 20, 9504, 6336)),
+        ("arw-sony-a7cr-lossless-m.arw", None, [1.0, 1.0], (20, 12, 6240, 4160)),
+    ];
+    let mut decoded = Vec::new();
+    for (name, cfa, [r, b], crop) in cases {
+        let bytes = match std::fs::read(dir.join(name)) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("skip: {name} absent");
+                continue;
+            }
+            Err(e) => panic!("{name}: {e}"),
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(img.metadata.model.as_deref(), Some("ILCE-7CR"), "{name}: model");
+        assert_eq!(img.cfa.as_ref().map(|c| c.name()).as_deref(), cfa, "{name}: colour-filter layout");
+        assert_eq!(img.black.mean(), 512.0, "{name}: black level");
+        assert!(img.white_at(0) > 15000.0, "{name}: white {} (14-bit scale)", img.white_at(0));
+        let wb = img.wb_multipliers.unwrap_or_else(|| panic!("{name}: no as-shot white balance"));
+        assert!((wb[0] - r).abs() < 0.01 && wb[1] == 1.0 && (wb[2] - b).abs() < 0.01, "{name}: white balance {wb:?}");
+        assert_eq!((img.crop.x, img.crop.y, img.crop.width, img.crop.height), crop, "{name}: default crop");
+        decoded.push((name, img));
+    }
+    // The lossless and compressed codings are two exposures of the same scene with the same framing: inside the
+    // default crop their mosaics must agree (up to the small differences between two exposures).
+    let crop_means = |img: &lightcraft_raw::RawImage| {
+        let lightcraft_raw::RawData::U16(d) = &img.data else { panic!("float data") };
+        let (w, c, b) = (img.width, img.crop, 32);
+        let mut out = Vec::new();
+        for by in 0..c.height / b {
+            for bx in 0..c.width / b {
+                let (x0, y0) = ((c.x + bx * b) & !1, (c.y + by * b) & !1);
+                let (mut s, mut n) = (0f64, 0f64);
+                for y in y0..y0 + b {
+                    for x in (x0..x0 + b).step_by(2) {
+                        s += d[y * w + x + 1 - (y & 1)] as f64;
+                        n += 1.0;
+                    }
+                }
+                out.push(s / n);
+            }
+        }
+        out
+    };
+    let bayer: Vec<_> = decoded.iter().filter(|(_, img)| img.cfa.is_some()).collect();
+    if let [(a_name, a), (b_name, b)] = bayer.as_slice() {
+        let r = correlation(&crop_means(a), &crop_means(b));
+        eprintln!("ILCE-7CR {a_name} vs {b_name}: green block correlation {r:.4}");
+        assert!(r > 0.98, "correlation {r}");
+    }
+    eprintln!("ILCE-7CR codings checked on {} files", decoded.len());
+}
+
 /// The embedded JPEG as linear RGB, reduced to `gw × gh` cells.
 fn jpeg_cells(jpeg: &[u8], gw: usize, gh: usize) -> Vec<[f64; 3]> {
     use zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
