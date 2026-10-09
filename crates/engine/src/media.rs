@@ -176,7 +176,7 @@ impl SourceRef {
     pub fn load_source(&self) -> Result<DecodedSource, String> {
         let image = match self {
             SourceRef::Loaded(a) => return Ok((**a).clone()),
-            SourceRef::Demo { scene, max_edge } => Arc::new(scene.render_fit(*max_edge)),
+            SourceRef::Demo { scene, max_edge } => crate::demo::scene_pixels(scene, *max_edge),
             SourceRef::File { path, max_edge, loader, fallback } => {
                 let r = match loader {
                     Some(l) => l(path, *max_edge).map(|(image, info)| DecodedSource::new(Arc::new(image), Some(info))),
