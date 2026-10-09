@@ -495,7 +495,10 @@ impl Rule {
                 num_op(op, Some(if field == "longEdge" { w.max(h) } else { w.min(h) }.round()), value)
             }
             "aspect" => (aspect(p.shown_size()) == Some(want.as_str())) == (op == "is"),
-            "megapixels" => num_op(op, Some(p.width as f64 * p.height as f64 / 1e6), value),
+            "megapixels" => {
+                let (w, h) = p.shown_size();
+                num_op(op, Some(w * h / 1e6), value)
+            }
             "sharpness" => num_op(op, p.analysis.map(|a| a.sharpness as f64), value),
             "bestOfGroup" => yes(p.analysis.is_some_and(|a| a.best || a.group.is_none())),
             "album" => {
@@ -824,7 +827,7 @@ mod tests {
     }
 
     /// Size follows the photo as shown: rotated a quarter turn a landscape frame is a portrait, and
-    /// a crop changes its edges. Long / Short Edge are in pixels.
+    /// a crop changes its edges and its megapixels. Long / Short Edge are in pixels.
     #[test]
     fn size_rules_follow_orientation_and_crop() {
         let cat = Catalog::new();
@@ -833,6 +836,7 @@ mod tests {
             rs(json!({"rules": [{"field": field, "op": op, "value": value}]})).matches(p, &cat)
         };
         assert!(m(&p, "aspect", "is", json!("landscape")) && m(&p, "longEdge", "is", json!(6000)) && m(&p, "shortEdge", "is", json!(4000)));
+        assert!(m(&p, "megapixels", "is", json!(24)));
         let mut s = (*p.develop).clone();
         s.orientation = lightcraft_geom::Orientation::Rotate90;
         p.develop = std::sync::Arc::new(s.clone());
@@ -841,11 +845,14 @@ mod tests {
         s.crop.geometry.rect = lightcraft_geom::Rect::new(0.0, 1.0 / 6.0, 1.0, 5.0 / 6.0);
         p.develop = std::sync::Arc::new(s);
         assert!(m(&p, "aspect", "is", json!("square")) && m(&p, "longEdge", "is", json!(4000)));
+        assert!(m(&p, "megapixels", "is", json!(16)), "a 4000 × 4000 crop is 16 MP, not the sensor's 24");
+        assert!(m(&p, "megapixels", "lt", json!(20)) && !m(&p, "megapixels", "gte", json!(24)));
         assert!(m(&p, "aspect", "isNot", json!("portrait")));
         let empty = Photo::new(PhotoId(9), Source::Demo { scene: 0 }, "x.jpg", "JPEG", 0, 0, "2026-09-20T10:00:00");
         assert!(
             !m(&empty, "aspect", "is", json!("landscape")) && !m(&empty, "aspect", "is", json!("square")) && m(&empty, "longEdge", "is", json!(0))
         );
+        assert!(m(&empty, "megapixels", "is", json!(0)));
     }
 
     /// Any Searchable Text also finds the state / province, the alt text, a person on a face and
