@@ -128,6 +128,25 @@ fn command_held_shows_the_straighten_crosshair() {
     assert!(!has(&h, "cropRotateCursor"));
 }
 
+/// The Crop panel has an angle field: click it, type an exact angle, Return.
+#[test]
+fn the_crop_panel_has_an_angle_field() {
+    let mut h = crop_tool();
+    let r = h.request("ui.clickWidget", json!({"id": "cropAngleField"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    for key in ["a", "Backspace"] {
+        let r = h.request("ui.key", json!({"key": key, "cmd": key == "a"}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    }
+    let r = h.request("ui.text", json!({"text": "-3.25"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let r = h.request("ui.key", json!({"key": "Enter"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!((angle(&h) + 3.25).abs() < 1e-9, "typed -3.25°, got {}", angle(&h));
+}
+
 /// Rotating with the pointer at the canvas's corner keeps the angle readout on the canvas (and so
 /// on screen), rather than spilling past its edge.
 #[test]
@@ -146,4 +165,16 @@ fn the_readout_stays_on_the_canvas() {
     h.settle(SETTLE);
     let readout = h.app.widgets.iter().find(|(w, _)| w == "cropAngleReadout").map(|(_, r)| *r).expect("the readout while rotating");
     assert!(canvas.contains_rect(readout), "{readout:?} in {canvas:?}");
+}
+
+/// Dragging the angle field changes the angle as one undo step, like the slider.
+#[test]
+fn dragging_the_angle_field_is_one_undo_step() {
+    let mut h = crop_tool();
+    let undo = h.app.session.undo.len();
+    let r = h.request("ui.dragWidget", json!({"id": "cropAngleField", "dx": 40.0, "dy": 0.0, "steps": 6}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(angle(&h) > 0.0, "dragged right: {}", angle(&h));
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one step for the whole drag");
 }

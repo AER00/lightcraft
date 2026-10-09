@@ -185,6 +185,32 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if let Some(spec) = ang {
         let out = slider(ui, &spec, d.crop.geometry.angle, true, Some("Straighten"));
         super::edit::apply_slider_out(app, &spec, out, |app, v| app.run("crop.straighten", json!({"angle": v})));
+        // an exact angle, typed (issue #534): a field of its own, besides the slider's value
+        padded(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(crate::i18n::tr("Angle"));
+                let mut angle = d.crop.geometry.angle;
+                let r = ui.add(
+                    egui::DragValue::new(&mut angle)
+                        .range(spec.min..=spec.max)
+                        .clamp_existing_to_range(false)
+                        .speed(0.05)
+                        .fixed_decimals(2)
+                        .suffix("°"),
+                );
+                crate::widgets::register(ui.ctx(), "cropAngleField", r.rect);
+                // a drag on the field is one undo step, like the slider's
+                if r.drag_started() {
+                    let _ = app.run("develop.beginInteraction", json!({"label": "Straighten"}));
+                }
+                if r.changed() && angle.is_finite() {
+                    let _ = app.run("crop.straighten", json!({"angle": (angle.clamp(spec.min, spec.max) * 100.0).round() / 100.0}));
+                }
+                if r.drag_stopped() {
+                    let _ = app.run("develop.endInteraction", json!({}));
+                }
+            });
+        });
     }
     padded(ui, |ui| {
         ui.horizontal(|ui| {
