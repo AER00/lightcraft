@@ -130,6 +130,13 @@ impl<'a> TextField<'a> {
     pub fn show(self, ui: &mut Ui) -> TextFieldResponse {
         let id = id(self.widget);
         let mut memo: Memo = ui.data_mut(|d| d.get_temp(id.with("memo"))).unwrap_or_default();
+        // a field not drawn last frame (its dialog or panel closed) starts afresh: an edit, a menu
+        // or a choice from it that was under way is gone with it
+        let pass = ui.ctx().cumulative_pass_nr();
+        if memo.pass.checked_add(1) != Some(pass) {
+            memo = Memo::default();
+        }
+        memo.pass = pass;
         // a choice from the menu last frame: the field takes the focus back and does it, with
         // egui's own handling of the clipboard events (a password is never copied)
         if let Some(action) = memo.action.take() {
@@ -238,7 +245,7 @@ impl<'a> TextField<'a> {
             memo.away = false;
         }
         if ending.is_some() {
-            memo = Memo::default();
+            memo = Memo { pass, ..Memo::default() };
         }
         let editing = ending.is_none() && (focused || memo.away || memo.menu_open || memo.action.is_some());
         ui.data_mut(|d| d.insert_temp(id.with("memo"), memo));
@@ -257,6 +264,8 @@ struct Memo {
     action: Option<Action>,
     /// The focus left for the menu: the edit ends if the menu closes without a choice.
     away: bool,
+    /// The frame (egui pass) the field was last drawn in.
+    pass: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -634,5 +643,27 @@ mod tests {
         rig.settle();
         rig.key(Key::Escape, Modifiers::NONE);
         assert_eq!((rig.text.as_str(), rig.endings.clone()), ("Lisbon", vec![Ending::Escape]));
+    }
+
+    /// A field that goes away while its menu is open starts afresh too when it comes back.
+    #[test]
+    fn a_field_gone_with_its_menu_open_starts_afresh() {
+        let mut rig = Rig::new("Lisbon");
+        rig.select_all_by_keys();
+        rig.type_text("Rome");
+        rig.click(FIELD, PointerButton::Secondary);
+        // a click on the greyed-out Cut takes the focus into the menu
+        rig.click(&format!("{FIELD}:cut"), PointerButton::Primary);
+        rig.shown = false;
+        rig.settle();
+        rig.text = "Porto".into();
+        rig.shown = true;
+        rig.settle();
+        assert!(!rig.editing, "no edit under way");
+        assert_eq!(rig.endings, vec![], "and none ended: it was cut short");
+        rig.select_all_by_keys();
+        rig.type_text("Kyoto");
+        rig.key(Key::Escape, Modifiers::NONE);
+        assert_eq!(rig.text, "Porto");
     }
 }
