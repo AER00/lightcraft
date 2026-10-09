@@ -660,3 +660,13 @@ fn a_stale_rule_doesnt_block_other_changes() {
     assert!(s.execute("library.filter", &bad).is_err());
     assert!(s.execute("album.setRules", &serde_json::json!({"id": smart, "rules": bad})).is_err());
 }
+
+/// album.setRules refuses a loop through the album filter as well as through the rules.
+#[test]
+fn an_album_filter_loop_is_refused() {
+    let mut s = crate::Session::with_demo();
+    let a = s.execute("album.createSmart", &serde_json::json!({"name": "A", "rules": {"rating": 2}})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("album.setRules", &serde_json::json!({"id": a, "rules": {"album": a}}));
+    assert!(r.is_err_and(|e| e.to_string().contains("include itself")), "refused");
+    assert_eq!(s.catalog.album(lightcraft_catalog::AlbumId(a)).unwrap().smart.as_ref().and_then(|f| f.album), None);
+}

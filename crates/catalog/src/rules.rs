@@ -164,7 +164,8 @@ impl std::fmt::Display for Problem {
     /// `rule 2.1: rating is 0–5, not 9` (counting from 1, as people do).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let at: Vec<String> = self.path.iter().map(|i| (i.saturating_add(1)).to_string()).collect();
-        write!(f, "rule {}: {}", at.join("."), self.message)
+        // a problem with the filter around the rules (its album field) has no rule to point at
+        if at.is_empty() { write!(f, "{}", self.message) } else { write!(f, "rule {}: {}", at.join("."), self.message) }
     }
 }
 

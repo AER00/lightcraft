@@ -871,9 +871,10 @@ pub fn specs() -> Vec<CommandSpec> {
                         .as_ref()
                         .map(|r| r.check_for(&s.catalog, Some(id)))
                         .unwrap_or_default()
-                        .iter()
+                        .into_iter()
+                        .chain(s.catalog.album_filter_problem(&view, Some(id)))
                         .filter(|p| p.issue == lightcraft_catalog::rules::Issue::AlbumLoop)
-                        .map(ToString::to_string)
+                        .map(|p| p.to_string())
                         .collect();
                     if !loops.is_empty() {
                         return Err(bad("album.setRules", loops.join("; ")));
@@ -1332,7 +1333,11 @@ fn merge_rules(
     // only rules this change sets are checked: one that stopped checking since (its album was
     // deleted) doesn't block editing the album's other settings
     let sets_rules = patch.get("ruleSet").is_some_and(|r| !r.is_null());
-    let problems = f.rule_set.as_ref().filter(|_| sets_rules).map(|r| r.check_for(cat, owner)).unwrap_or_default();
+    let mut problems = f.rule_set.as_ref().filter(|_| sets_rules).map(|r| r.check_for(cat, owner)).unwrap_or_default();
+    // and a loop through the album field the change sets
+    if patch.get("album").is_some_and(|a| !a.is_null()) {
+        problems.extend(cat.album_filter_problem(&f, owner));
+    }
     if !problems.is_empty() {
         return Err(bad(c, problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")));
     }

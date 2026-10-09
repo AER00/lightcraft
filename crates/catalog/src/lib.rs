@@ -341,13 +341,7 @@ impl Catalog {
             if !seen.insert(a) {
                 continue;
             }
-            let tested = self
-                .albums
-                .get(&a)
-                .and_then(|al| al.smart.as_ref())
-                .and_then(|f| f.rule_set.as_ref())
-                .map(rules::RuleSet::albums_tested)
-                .unwrap_or_default();
+            let tested = self.albums.get(&a).and_then(|al| al.smart.as_deref()).map(Filter::albums_tested).unwrap_or_default();
             if tested.contains(&to) {
                 return true;
             }
@@ -360,9 +354,25 @@ impl Catalog {
     /// `RuleSet::upgrade`): typically a rule testing an album that has since been deleted. Empty
     /// for a sound smart album, a plain album or no album.
     pub fn smart_album_problems(&self, id: AlbumId) -> Vec<rules::Problem> {
-        let Some(mut rules) = self.albums.get(&id).and_then(|a| a.smart.as_ref()).and_then(|f| f.rule_set.clone()) else { return Vec::new() };
-        rules.upgrade();
-        rules.check_for(self, Some(id))
+        let Some(filter) = self.albums.get(&id).and_then(|a| a.smart.as_deref()) else { return Vec::new() };
+        let mut out: Vec<rules::Problem> = self.album_filter_problem(filter, Some(id)).into_iter().collect();
+        if let Some(mut rules) = filter.rule_set.clone() {
+            rules.upgrade();
+            out.extend(rules.check_for(self, Some(id)));
+        }
+        out
+    }
+
+    /// A loop through `filter`'s own album field (not its rules): smart album `owner` filtered to
+    /// itself, or to an album that leads back to it.
+    pub fn album_filter_problem(&self, filter: &Filter, owner: Option<AlbumId>) -> Option<rules::Problem> {
+        let (a, owner) = (filter.album?, owner?);
+        (a == owner || self.album_reaches(a, owner)).then(|| rules::Problem {
+            path: Vec::new(),
+            field: Some("album".into()),
+            issue: rules::Issue::AlbumLoop,
+            message: format!("its album filter (album {}) would make this album include itself", a.0),
+        })
     }
 
     /// The photos of an album: the stored list, or a smart album's current matches (id order).

@@ -587,3 +587,25 @@ fn chains_of_smart_albums_stay_linear() {
     assert_eq!(c.album_count(AlbumId(26)), 20);
     assert!(start.elapsed() < std::time::Duration::from_secs(2), "took {:?}", start.elapsed());
 }
+
+/// A smart album's own album filter (not only its rules) counts in loops: A filtered to "in A" is
+/// reported, and so is A filtered to B while B's rules test A.
+#[test]
+fn an_album_filter_counts_in_loops() {
+    let mut c = Catalog::new();
+    let smart = |id: u64, f: Filter| Album { smart: Some(Box::new(f)), ..Album::new(AlbumId(id), "S") };
+    c.apply(Op::AddAlbum { album: smart(1, Filter { album: Some(AlbumId(1)), ..Default::default() }) }).unwrap();
+    let loops = |c: &Catalog, id: u64| c.smart_album_problems(AlbumId(id)).iter().any(|p| p.issue == crate::rules::Issue::AlbumLoop);
+    assert!(loops(&c, 1), "filtered to itself");
+    let tests_3: Filter = serde_json::from_value(serde_json::json!({"ruleSet": {"rules": [{"field": "album", "op": "is", "value": 3}]}})).unwrap();
+    c.apply(Op::AddAlbum { album: smart(2, Filter { album: Some(AlbumId(3)), ..Default::default() }) }).unwrap();
+    c.apply(Op::AddAlbum {
+        album: smart(3, serde_json::from_value(serde_json::json!({"ruleSet": {"rules": [{"field": "album", "op": "is", "value": 2}]}})).unwrap()),
+    })
+    .unwrap();
+    assert!(c.album_reaches(AlbumId(3), AlbumId(2)) && c.album_reaches(AlbumId(2), AlbumId(3)));
+    assert!(loops(&c, 2) && loops(&c, 3));
+    let _ = tests_3;
+    let shown: Vec<String> = c.smart_album_problems(AlbumId(1)).iter().map(ToString::to_string).collect();
+    assert!(shown.iter().all(|s| !s.starts_with("rule :")), "{shown:?}");
+}

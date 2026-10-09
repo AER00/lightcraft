@@ -221,6 +221,13 @@ impl Filter {
         if v.is_empty() { "all photos".into() } else { v.join(", ") }
     }
 
+    /// The albums this filter tests: its album field and its rules' Album rules.
+    pub fn albums_tested(&self) -> Vec<crate::AlbumId> {
+        let mut out: Vec<crate::AlbumId> = self.album.into_iter().collect();
+        out.extend(self.rule_set.as_ref().map(crate::RuleSet::albums_tested).unwrap_or_default());
+        out
+    }
+
     /// Whether matches depend on the clock (only "in the last…" rules do).
     pub fn depends_on_now(&self) -> bool {
         self.rule_set.as_ref().is_some_and(crate::RuleSet::depends_on_now)

@@ -352,6 +352,10 @@ fn problem_text_in(language: Locale, problem: &lightcraft_catalog::rules::Proble
 
 fn problem_line_in(language: Locale, problem: &lightcraft_catalog::rules::Problem) -> String {
     let at: Vec<String> = problem.path.iter().map(|i| i.saturating_add(1).to_string()).collect();
+    // a problem with the album filter around the rules has no rule to point at
+    if at.is_empty() {
+        return problem_text_in(language, problem);
+    }
     format!("#{} {}", at.join("."), problem_text_in(language, problem))
 }
 
@@ -761,6 +765,10 @@ mod tests {
         assert_eq!(problem_line_in(Locale::En, &p[0]), "#2 Title: needs something to look for (or use “is empty”)");
         // Japanese and Chinese join with a full-width colon, as their catalogs do
         assert_eq!(problem_text_in(Locale::Ja, &p[0]), "タイトル：検索する語句が必要です（または「が空」を使用）");
+        // a problem with the album filter itself has no rule position to show
+        let filter_loop =
+            lightcraft_catalog::rules::Problem { path: Vec::new(), field: Some("album".into()), issue: Issue::AlbumLoop, message: String::new() };
+        assert!(problem_line_in(Locale::En, &filter_loop).starts_with("Album: "), "{}", problem_line_in(Locale::En, &filter_loop));
         let g = problems(serde_json::json!([{"group": {"rules": []}}]));
         assert_eq!(problem_text_in(Locale::En, &g[0]), "This group is empty: add a rule or remove it.");
         // the issues, the operators their hints name and the album picker's words, in every language
