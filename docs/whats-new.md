@@ -2,6 +2,15 @@
 
 ## October 2026
 
+### Smart album rules
+- The rule editor's field menu is grouped: Rating, Pick Flag, Color Label and Any Searchable Text at the top, then
+  submenus for Source, File, Date, Keywords & People, Description, Camera Info, Location, Size, Develop and Assisted
+  Culling.
+- New fields: Keyword Count ("2 or more", "exactly 2"…), People and People Count (named faces), Shutter Speed (written
+  as 1/250), File Extension, Video Duration, Copy Name, In a Stack, Alt Text, City, State / Province, Country, Long
+  Edge, Short Edge, Aspect Ratio (landscape / portrait / square), Cropped and Treatment (color / monochrome).
+- Any Searchable Text also finds the state / province, alt text, people and a virtual copy's name.
+
 ### Albums tree
 - Album folders fold with the same disclosure triangle as Local, By Date, Folders and Keywords.
 - Right-click a folder ▸ New ▸ Create Album… / Create Smart Album… / Create Smart Album from Filter… / Create Folder…
