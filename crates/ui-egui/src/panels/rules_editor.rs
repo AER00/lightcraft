@@ -15,6 +15,8 @@ pub fn default_value(field: &str, op: &str) -> Value {
         (_, "isEmpty" | "isNotEmpty") => Value::Null,
         (Some(Kind::Date), "inLast" | "notInLast") => json!({"n": 30, "unit": "days"}),
         (Some(Kind::Date), "between") => json!(["", ""]),
+        (Some(Kind::Number), "between") if field == "shutterSpeed" => json!(["1/1000", "1/125"]),
+        (Some(Kind::Number), _) if field == "shutterSpeed" => json!("1/250"),
         (Some(Kind::Number), "between") => json!([0, 0]),
         (Some(Kind::Number), _) => json!(if field == "rating" { 3 } else { 0 }),
         (Some(Kind::Choice(c)), _) => json!(c.first().copied().unwrap_or("")),
@@ -97,7 +99,11 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
                 *v = default_value(field, op);
             }
             let Value::Array(a) = v else { return };
-            if k == Kind::Number {
+            if field == "shutterSpeed" {
+                text_value(ui, &mut a[0], 60.0, "1/1000", &format!("{salt}-a"));
+                ui.label(crate::i18n::tr("and"));
+                text_value(ui, &mut a[1], 60.0, "1/125", &format!("{salt}-b"));
+            } else if k == Kind::Number {
                 number_value(ui, &mut a[0], field);
                 ui.label(crate::i18n::tr("and"));
                 number_value(ui, &mut a[1], field);
@@ -107,6 +113,8 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
                 text_value(ui, &mut a[1], 86.0, "2026-12", &format!("{salt}-b"));
             }
         }
+        // camera notation: 1/250, 0.5, 2"
+        (Some(Kind::Number), _) if field == "shutterSpeed" => text_value(ui, v, 70.0, "1/250", salt),
         (Some(Kind::Number), _) => number_value(ui, v, field),
         (Some(Kind::Choice(c)), _) => {
             let cur = v.as_str().unwrap_or("").to_string();
@@ -261,5 +269,32 @@ pub fn edit(ui: &mut egui::Ui, rs: &mut RuleSet, salt: &str, depth: usize) {
                 rs.rules.push(Rule::Group { group: RuleSet { mode: Match::Any, rules: vec![new_rule()] } });
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lightcraft_catalog::rules::FIELDS;
+    use lightcraft_catalog::{Catalog, Photo, PhotoId, Source};
+
+    /// Every field × operator starts with a value the rule accepts; a new shutter-speed rule starts
+    /// at a real time in camera notation.
+    #[test]
+    fn default_values_make_valid_rules() {
+        let cat = Catalog::new();
+        let p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.jpg", "JPEG", 10, 10, "2026-10-01T00:00:00");
+        for (field, _, kind) in FIELDS {
+            for (op, _) in ops_for(*kind) {
+                let rs = RuleSet {
+                    mode: Match::All,
+                    rules: vec![Rule::Field { field: field.to_string(), op: op.to_string(), value: default_value(field, op) }],
+                };
+                assert!(rs.problems().is_empty(), "{field} {op}: {:?}", rs.problems());
+                let _ = rs.matches(&p, &cat);
+            }
+        }
+        assert_eq!(default_value("shutterSpeed", "gte"), json!("1/250"));
+        assert_eq!(default_value("shutterSpeed", "between"), json!(["1/1000", "1/125"]));
     }
 }

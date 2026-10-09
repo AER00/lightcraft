@@ -88,6 +88,7 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     ("lens", "Lens", Kind::Text),
     ("focalLength", "Focal Length", Kind::Number),
     ("aperture", "Aperture", Kind::Number),
+    ("shutterSpeed", "Shutter Speed", Kind::Number),
     ("iso", "ISO Speed", Kind::Number),
     // Location
     ("location", "Location", Kind::Text),
@@ -112,7 +113,7 @@ pub const FIELD_GROUPS: &[(&str, &[&str])] = &[
     ("Date", &["captureDate", "importDate", "editDate"]),
     ("Keywords & People", &["keywords", "keywordCount", "person", "personCount"]),
     ("Description", &["title", "caption", "creator", "copyright", "copyrightStatus"]),
-    ("Camera Info", &["camera", "lens", "focalLength", "aperture", "iso"]),
+    ("Camera Info", &["camera", "lens", "focalLength", "aperture", "shutterSpeed", "iso"]),
     ("Location", &["location", "hasGps"]),
     ("Size", &["megapixels"]),
     ("Develop", &["edited"]),
@@ -259,6 +260,19 @@ fn num_op(op: &str, have: Option<f64>, value: &Value) -> bool {
     }
 }
 
+/// A shutter-speed rule's value in seconds: camera notation (`1/250`) or a number; an operand
+/// that isn't a time becomes `null`, which matches nothing.
+fn shutter_value(value: &Value) -> Value {
+    let secs = |v: &Value| match v {
+        Value::String(s) => crate::parse_shutter_seconds(s).map_or(Value::Null, Value::from),
+        other => number(other).filter(|n| n.is_finite() && *n > 0.0).map_or(Value::Null, Value::from),
+    };
+    match value {
+        Value::Array(a) => Value::Array(a.iter().map(secs).collect()),
+        v => secs(v),
+    }
+}
+
 /// `value` for in-the-last rules: `{n, unit: days|weeks|months|years}` or a number of days.
 fn last_secs(value: &Value) -> Option<i64> {
     let (n, unit) = match value {
@@ -387,6 +401,7 @@ impl Rule {
             "captureDate" => date_op(op, p.captured.as_deref(), value),
             "importDate" => date_op(op, Some(&p.imported), value),
             "editDate" => date_op(op, p.edited.as_deref(), value),
+            "shutterSpeed" => num_op(op, crate::parse_shutter_seconds(&m.shutter), &shutter_value(value)),
             "iso" => num_op(op, m.iso.map(|v| v as f64), value),
             "aperture" => num_op(op, m.aperture.map(|v| v as f64), value),
             "focalLength" => num_op(op, m.focal_mm.map(|v| v as f64), value),
@@ -619,6 +634,35 @@ mod tests {
         assert_eq!(field_group("person"), Some("Keywords & People"));
     }
 
+    /// Shutter Speed compares exposure times in seconds, written as the camera shows them: a
+    /// photo at 1/250 is in "≤ 1/60" (faster) and not in "≥ 1/60"; "between 1/1000 and 1/125".
+    #[test]
+    fn shutter_speed_rules() {
+        let cat = Catalog::new();
+        let mut p = photo(1);
+        let m = |p: &Photo, op: &str, value: serde_json::Value| {
+            rs(json!({"rules": [{"field": "shutterSpeed", "op": op, "value": value}]})).matches(p, &cat)
+        };
+        assert!(!m(&p, "gte", json!(0)), "no shutter speed recorded");
+        p.meta.shutter = "1/250".into();
+        assert!(m(&p, "is", json!("1/250")) && m(&p, "lte", json!("1/60")) && !m(&p, "gte", json!("1/60")));
+        assert!(m(&p, "between", json!(["1/1000", "1/125"])) && m(&p, "lt", json!(0.01)));
+        assert!(!m(&p, "is", json!("1/0")) && !m(&p, "is", json!("fast")), "a value that isn't a time matches nothing");
+        p.meta.shutter = "2\"".into();
+        assert!(m(&p, "gte", json!("1")) && m(&p, "is", json!(2)));
+        assert_eq!(field_group("shutterSpeed"), Some("Camera Info"));
+    }
+
+    #[test]
+    fn shutter_seconds_parses_camera_notation() {
+        for (s, want) in [("1/250", Some(0.004)), (" 1/250 s", Some(0.004)), ("0.5", Some(0.5)), ("2\"", Some(2.0)), ("30s", Some(30.0))] {
+            assert_eq!(crate::parse_shutter_seconds(s), want, "{s}");
+        }
+        for s in ["", "1/0", "0", "-1/250", "fast", "inf", "NaN", "1/x"] {
+            assert_eq!(crate::parse_shutter_seconds(s), None, "{s}");
+        }
+    }
+
     /// The field menu shows every rule field once: at the top level or in exactly one group,
     /// and [`FIELDS`] lists them in menu order.
     #[test]
@@ -644,7 +688,7 @@ mod tests {
             }
         };
         same(&["fileName", "filePath", "kind", "format"], "File");
-        same(&["camera", "lens", "focalLength", "aperture", "iso"], "Camera Info");
+        same(&["camera", "lens", "focalLength", "aperture", "shutterSpeed", "iso"], "Camera Info");
         same(&["captureDate", "importDate", "editDate"], "Date");
         same(&["keywords", "keywordCount", "person", "personCount"], "Keywords & People");
         same(&["title", "caption", "creator", "copyright", "copyrightStatus"], "Description");

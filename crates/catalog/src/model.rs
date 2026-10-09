@@ -152,6 +152,17 @@ impl CopyrightStatus {
     }
 }
 
+/// A shutter speed as cameras write it (`1/250`, `0.5`, `2"`, `30s`) in seconds; `None` for
+/// anything that isn't a positive, finite time.
+pub fn parse_shutter_seconds(s: &str) -> Option<f64> {
+    let s = s.trim().trim_end_matches(['s', '"']).trim();
+    match s.split_once('/') {
+        Some((n, d)) => Some(n.trim().parse::<f64>().ok()? / d.trim().parse::<f64>().ok()?),
+        None => s.parse().ok(),
+    }
+    .filter(|v: &f64| v.is_finite() && *v > 0.0)
+}
+
 /// Descriptive + capture metadata.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
