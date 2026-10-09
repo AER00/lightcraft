@@ -1767,5 +1767,6 @@
   "can't test a folder; choose an album in it": "no puede comprobar una carpeta; elige un álbum dentro",
   "This group is empty: add a rule or remove it.": "Este grupo está vacío: añade una regla o quítalo.",
   "needs something to look for (or use “are empty”)": "necesita algo que buscar (o usa «están vacíos»)",
-  "needs something to look for (or use “aren't empty”)": "necesita algo que buscar (o usa «no están vacíos»)"
+  "needs something to look for (or use “aren't empty”)": "necesita algo que buscar (o usa «no están vacíos»)",
+  "can't have a time zone or fractions of a second": "no puede tener zona horaria ni fracciones de segundo"
 }

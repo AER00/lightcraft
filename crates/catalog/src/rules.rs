@@ -178,6 +178,7 @@ pub enum Issue {
     NeedsNumber,
     NeedsShutterSpeed,
     NeedsDate,
+    DateWithZone,
     DatesReversed,
     NeedsTwoValues,
     NeedsCount,
@@ -198,13 +199,14 @@ pub enum Issue {
 }
 
 impl Issue {
-    pub const ALL: [Issue; 22] = [
+    pub const ALL: [Issue; 23] = [
         Issue::UnknownField,
         Issue::NoSuchOperator,
         Issue::NotYesNo,
         Issue::NeedsNumber,
         Issue::NeedsShutterSpeed,
         Issue::NeedsDate,
+        Issue::DateWithZone,
         Issue::DatesReversed,
         Issue::NeedsTwoValues,
         Issue::NeedsCount,
@@ -232,6 +234,7 @@ impl Issue {
             Issue::NeedsNumber => "needs a number",
             Issue::NeedsShutterSpeed => "needs a time like 1/250 or 2",
             Issue::NeedsDate => "needs a date like 2026, 2026-08 or 2026-08-14",
+            Issue::DateWithZone => "can't have a time zone or fractions of a second",
             Issue::DatesReversed => "has the first date after the second",
             Issue::NeedsTwoValues => "needs two values",
             Issue::NeedsCount => "needs a number more than 0",
@@ -328,21 +331,40 @@ fn album_problem(v: &Value, cat: &Catalog) -> Found {
     }
 }
 
-/// A date as rules take it: `2026`, `2026-08`, `2026-08-14` or a full ISO time, and a real one
-/// (no month 13, no 30 February).
-fn is_rule_date(s: &str) -> bool {
-    let s = s.trim();
-    let full = match s.len() {
+/// A rule date in its one reading: `2026`, `2026-08`, `2026-08-14`, then optionally `T10`,
+/// `T10:00` or `T10:00:00` (a space works as the `T`), and a real date and time (no month 13, no
+/// 30 February, no 25 o'clock). Capture times are local and to the second, so a time zone or
+/// fractions of a second ([`Issue::DateWithZone`]) could never match; anything else is
+/// [`Issue::NeedsDate`]. The check and the matcher both read dates this way.
+pub fn rule_date(s: &str) -> Result<String, Issue> {
+    const PATTERN: &str = "dddd-dd-ddTdd:dd:dd";
+    let s: String = s.trim().char_indices().map(|(i, c)| if i == 10 && c == ' ' { 'T' } else { c }).collect();
+    let shaped = |t: &str| {
+        matches!(t.len(), 4 | 7 | 10 | 13 | 16 | 19)
+            && t.chars().zip(PATTERN.chars()).all(|(c, p)| if p == 'd' { c.is_ascii_digit() } else { c == p })
+    };
+    if !shaped(&s) {
+        // a whole date and time with something after it: a zone (+02:00, -05:00, Z) or a fraction
+        let zoned = [19, 16, 13].iter().any(|&n| {
+            s.get(..n).is_some_and(shaped)
+                && s.get(n..).and_then(|rest| rest.chars().next()).is_some_and(|c| matches!(c, '+' | '-' | 'Z' | 'z' | '.'))
+        });
+        return Err(if zoned { Issue::DateWithZone } else { Issue::NeedsDate });
+    }
+    let part = |a: usize, b: usize| s.get(a..b).and_then(|t| t.parse::<u32>().ok());
+    let time_ok = part(11, 13).is_none_or(|h| h < 24) && part(14, 16).is_none_or(|m| m < 60) && part(17, 19).is_none_or(|x| x < 60);
+    let day = match s.len() {
         4 => format!("{s}-01-01"),
         7 => format!("{s}-01"),
-        _ => s.to_string(),
+        _ => s.get(..10).unwrap_or("").to_string(),
     };
-    s.len() >= 4 && crate::dates::normalize_iso(&full).is_some()
+    if time_ok && crate::dates::normalize_iso(&day).is_some() { Ok(s) } else { Err(Issue::NeedsDate) }
 }
 
 fn date_problem(field: &str, op: &str, value: &Value) -> Found {
-    let date = |v: &Value| match v.as_str() {
-        Some(s) if is_rule_date(s) => None,
+    let date = |v: &Value| match v.as_str().map(rule_date) {
+        Some(Ok(_)) => None,
+        Some(Err(Issue::DateWithZone)) => Some((Issue::DateWithZone, format!("`{field}` can't have a time zone or fractions of a second, not {v}"))),
         _ => Some((Issue::NeedsDate, format!("`{field}` needs a date like 2026, 2026-08 or 2026-08-14, not {v}"))),
     };
     match op {
@@ -358,9 +380,9 @@ fn date_problem(field: &str, op: &str, value: &Value) -> Found {
         }
         "between" => match value {
             Value::Array(a) if a.len() == 2 => a.iter().find_map(date).or_else(|| {
-                let bound = |i: usize| a.get(i).and_then(Value::as_str).unwrap_or("").trim();
+                let bound = |i: usize| a.get(i).and_then(Value::as_str).and_then(|d| rule_date(d).ok()).unwrap_or_default();
                 let (from, to) = (bound(0), bound(1));
-                (from > to && !from.starts_with(to)).then(|| (Issue::DatesReversed, format!("`{field}`: the first date is after the second")))
+                (from > to && !from.starts_with(&to)).then(|| (Issue::DatesReversed, format!("`{field}`: the first date is after the second")))
             }),
             _ => Some((Issue::NeedsTwoValues, format!("`{field}` between needs two dates, not {value}"))),
         },
@@ -621,7 +643,8 @@ fn date_op(op: &str, have: Option<&str>, value: &Value) -> bool {
         return have.is_none_or(str::is_empty);
     }
     let Some(h) = have.filter(|h| !h.is_empty()) else { return op == "notInLast" };
-    let s = |v: &Value| v.as_str().map(str::trim).unwrap_or("").to_string();
+    // the rule's date as the check reads it (a space as the "T"); one it can't read as written
+    let s = |v: &Value| v.as_str().map(|d| rule_date(d).unwrap_or_else(|_| d.trim().to_string())).unwrap_or_default();
     match op {
         // a prefix: 2026, 2026-04, 2026-04-12
         "is" => {
@@ -1434,6 +1457,37 @@ mod tests {
         texts.sort_unstable();
         texts.dedup();
         assert_eq!(texts.len(), Issue::ALL.len(), "each issue reads differently");
+    }
+
+    /// A rule date reads one way for the check and the matcher: a space works as the "T"
+    /// ("2026-10-01 10:00" matches a photo taken then); a time zone or fractions of a second can
+    /// never match a capture time (stored local, to the second), so they are refused with their
+    /// own issue rather than accepted and silently matching nothing.
+    #[test]
+    fn rule_dates_have_one_reading() {
+        let cat = Catalog::new();
+        let mut p = photo(1);
+        p.captured = Some("2026-10-01T10:00:00".into());
+        let rule = |op: &str, v: serde_json::Value| rs(json!({"rules": [{"field": "captureDate", "op": op, "value": v}]}));
+        for (op, v) in [
+            ("is", json!("2026-10-01 10:00")),
+            ("is", json!(" 2026-10-01T10 ")),
+            ("between", json!(["2026-10-01 09:00", "2026-10-01 11:00"])),
+            ("after", json!("2026-10-01 09:59")),
+        ] {
+            let r = rule(op, v.clone());
+            assert!(r.check(&cat).is_empty() && r.matches(&p, &cat), "{op} {v}");
+        }
+        for v in ["2026-08-14T10:00:00+02:00", "2026-08-14T10:00:00Z", "2026-08-14T10:00:00.25", "2026-08-14 10:00-05:00"] {
+            let p = rule("is", json!(v)).check(&cat);
+            assert_eq!(p.first().map(|p| p.issue), Some(Issue::DateWithZone), "{v}");
+        }
+        for v in ["2026-8-14", "2026-08-14T1", "2026-08-14X10", "26-08-14", "2026-08-14T25:00"] {
+            let p = rule("is", json!(v)).check(&cat);
+            assert_eq!(p.first().map(|p| p.issue), Some(Issue::NeedsDate), "{v}");
+        }
+        assert_eq!(rule_date("2026-10-01 10:00"), Ok("2026-10-01T10:00".to_string()));
+        assert_eq!(rule_date("2026"), Ok("2026".to_string()));
     }
 
     /// The field menu shows every rule field once: at the top level or in exactly one group,

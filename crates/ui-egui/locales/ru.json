@@ -1459,5 +1459,6 @@
   "isn't": "не равно",
   "isn't empty": "не пусто",
   "isn't in the last": "не за последние",
-  "starts with": "начинается с"
+  "starts with": "начинается с",
+  "can't have a time zone or fractions of a second": "не может содержать часовой пояс или доли секунды"
 }
