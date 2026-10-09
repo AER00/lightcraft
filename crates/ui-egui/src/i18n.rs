@@ -164,6 +164,16 @@ pub fn tr(source: &str) -> &str {
     tr_in(language(), source)
 }
 
+/// [`tr`] for a message whose translation depends on where it appears: a catalog entry keyed
+/// `"<context>|<source>"` wins, else the plain message. A language adds the contextual entry only
+/// where its shared translation reads wrongly there (Japanese はい / いいえ as a rule's value).
+fn tr_ctx_in<'a>(language: Locale, context: &str, source: &'a str) -> &'a str {
+    match language.catalog().get(&format!("{context}|{source}")) {
+        Some(translation) => translation.as_str(),
+        None => tr_in(language, source),
+    }
+}
+
 /// Catalog values are `'static` (they live in the embedded file), so a translation can be handed
 /// out for as long as the `'static` key it was looked up by.
 fn tr_in(language: Locale, source: &str) -> &str {
@@ -333,8 +343,11 @@ pub fn bool_text(b: bool) -> &'static str {
     bool_text_in(language(), b)
 }
 
+/// The context of a smart-album yes/no value ([`tr_ctx_in`]).
+const BOOL_CONTEXT: &str = "smart album value";
+
 fn bool_text_in(language: Locale, b: bool) -> &'static str {
-    tr_in(language, lightcraft_catalog::rules::bool_label(b))
+    tr_ctx_in(language, BOOL_CONTEXT, lightcraft_catalog::rules::bool_label(b))
 }
 
 /// A rule summary for display, keeping free-text rule values verbatim.
@@ -661,6 +674,21 @@ mod tests {
         // yes/no fields read Yes / No, never true / false
         assert_eq!((bool_text_in(Locale::En, true), bool_text_in(Locale::En, false)), ("Yes", "No"));
         assert_eq!(bool_text_in(Locale::De, false), "Nein");
+        // Japanese answers はい / いいえ don't read as a rule's value: its own wording, あり / なし,
+        // through a context, while the shared Yes / No keep their meaning everywhere else
+        assert_eq!((bool_text_in(Locale::Ja, true), bool_text_in(Locale::Ja, false)), ("あり", "なし"));
+        assert_eq!((Locale::Ja.tr("Yes"), Locale::Ja.tr("No")), ("はい", "いいえ"));
+        assert_eq!(tr_ctx_in(Locale::Ja, "nope", "Yes"), "はい", "no contextual entry: the plain message");
+        assert_eq!(tr_ctx_in(Locale::En, BOOL_CONTEXT, "Yes"), "Yes");
+        // a contextual entry names a real value (a typo would silently fall back to はい / いいえ)
+        let values = [lightcraft_catalog::rules::bool_label(true), lightcraft_catalog::rules::bool_label(false)];
+        for language in Locale::ALL {
+            for key in language.catalog().keys() {
+                if let Some(value) = key.strip_prefix(BOOL_CONTEXT).and_then(|k| k.strip_prefix('|')) {
+                    assert!(values.contains(&value), "{}: {key:?} isn't a yes/no value", language.code());
+                }
+            }
+        }
         for language in Locale::ALL.iter().filter(|language| **language != Locale::En) {
             for label in [lightcraft_catalog::rules::bool_label(true), lightcraft_catalog::rules::bool_label(false)] {
                 assert!(language.catalog().contains_key(label), "{} lacks {label:?}", language.code());
