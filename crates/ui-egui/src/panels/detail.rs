@@ -1348,7 +1348,8 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
 pub(crate) fn crop_angle_label(angle: f64) -> String {
     let shown =
         lightcraft_develop::controls::find("crop.angle").map_or_else(|| format!("{angle:.2}"), |spec| crate::widgets::shown_value(spec, angle));
-    // the slider's format turns a rounded −0.00 into "0": every zero reads as the slider at rest
+    // the slider's format turns a rounded −0.00 into "0": every zero reads "0.00", the angle's
+    // usual two decimals
     let shown = if shown == "0" { "0.00".to_string() } else { shown };
     format!("{shown}°")
 }

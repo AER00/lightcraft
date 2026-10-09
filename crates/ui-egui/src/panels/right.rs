@@ -197,6 +197,8 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                         .clamp_existing_to_range(false)
                         .speed(0.05)
                         .fixed_decimals(2)
+                        // as the readout writes it: "+2.50", and every zero "0.00"
+                        .custom_formatter(|v, _| super::detail::crop_angle_label(v).trim_end_matches('°').to_string())
                         .suffix("°")
                         // read as the Straighten value reads a typed one: "-3,25" too
                         .custom_parser(|text| crate::widgets::typed_value(&spec, text.trim().trim_end_matches('°')))

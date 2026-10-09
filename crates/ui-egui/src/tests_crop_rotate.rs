@@ -94,7 +94,7 @@ fn the_straighten_value_takes_an_exact_angle() {
 #[test]
 fn the_angle_reads_like_the_straighten_value() {
     use crate::panels::detail::crop_angle_label;
-    assert_eq!(crop_angle_label(0.0), "0.00°", "as the slider shows it at rest");
+    assert_eq!(crop_angle_label(0.0), "0.00°", "as the Angle field shows it at rest");
     assert_eq!(crop_angle_label(2.5), "+2.50°");
     assert_eq!(crop_angle_label(-12.254), "-12.25°");
     assert_eq!(crop_angle_label(-0.001), "0.00°", "no minus zero, and every zero the same");
@@ -350,4 +350,17 @@ fn the_angle_field_reads_angles_as_people_type_them() {
         h.settle(SETTLE);
         assert!((angle(&h) - want).abs() < 1e-9, "{typed:?}: want {want}, got {}", angle(&h));
     }
+}
+
+/// The Angle field writes an angle as the readout does: a sign on a turned angle.
+#[test]
+fn the_angle_field_writes_the_angle_like_the_readout() {
+    let mut h = crop_tool();
+    let r = h.request("engine.execute", json!({"command": "crop.straighten", "params": {"angle": 2.5}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let texts = h.painted_text();
+    // the field's number follows its label (its "°" is painted on its own)
+    let field = texts.iter().position(|t| t == "Angle").and_then(|i| texts.get(i + 1));
+    assert_eq!(field.map(String::as_str), Some("+2.50"), "{texts:?}");
 }
