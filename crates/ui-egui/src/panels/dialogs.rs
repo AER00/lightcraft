@@ -877,8 +877,9 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         ctx.move_to_top(w.response.layer_id);
         crate::widgets::register(ctx, "dialog:window", w.response.rect);
     }
-    // (while the shortcuts editor records a key, it takes Esc itself to cancel)
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    // (while the shortcuts editor records a key, it takes Esc itself to cancel; an open popup in
+    // the dialog, such as a date picker's calendar, takes it to close itself)
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !crate::widgets::escape_taken(ctx) {
         close = true;
     }
     if confirm {

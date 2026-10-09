@@ -88,3 +88,16 @@ fn an_unreadable_date_opens_on_this_month() {
     assert!(has(&h, "datePickerCell:2026-10-09:rules-0"));
     assert_eq!(value(&h, 0), json!("banana"), "opening doesn't change the rule");
 }
+
+/// Esc closes the calendar only, not the rule editor around it (and its unsaved edits).
+#[test]
+fn escape_closes_only_the_calendar() {
+    let mut h = editor(json!([{"field": "captureDate", "op": "is", "value": "2026-01-20"}]));
+    click(&mut h, "datePicker:rules-0");
+    assert!(has(&h, "datePickerCell:2026-01-20:rules-0"));
+    let r = h.request("ui.key", json!({"key": "Escape"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(!has(&h, "datePickerCell:2026-01-20:rules-0"), "the calendar closed");
+    assert!(h.app.ui.dialog.is_some(), "the editor stays open");
+}

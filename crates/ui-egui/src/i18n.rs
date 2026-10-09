@@ -779,7 +779,7 @@ mod tests {
     #[test]
     fn date_picker_words_are_translated() {
         for language in Locale::ALL.iter().filter(|l| **l != Locale::En) {
-            for word in crate::date_picker::WEEKDAY_SHORT.iter().chain(&["Pick a date"]) {
+            for word in crate::date_picker::WEEKDAY_SHORT.iter().chain(&["Pick a date", "Year", "Month", "Day"]) {
                 assert!(language.catalog().contains_key(*word), "{} lacks {word:?}", language.code());
             }
         }

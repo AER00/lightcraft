@@ -19,6 +19,19 @@ pub fn register(ctx: &egui::Context, id: impl Into<String>, rect: Rect) {
     ctx.data_mut(|d| d.get_temp_mut_or_default::<Registry>(egui::Id::new("lc-registry")).0.push((id, rect)));
 }
 
+/// Esc was handled this frame by something nested (an open popup closed on it): containers such
+/// as dialogs shouldn't close too. Kept for the whole frame, since egui may run it in more than one
+/// pass and the popup is already closed in the later ones.
+pub fn take_escape(ctx: &egui::Context) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("lc-escape-taken"), frame));
+}
+
+/// Whether [`take_escape`] was called this frame.
+pub fn escape_taken(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<u64>(egui::Id::new("lc-escape-taken"))) == Some(ctx.cumulative_frame_nr())
+}
+
 pub fn take_registry(ctx: &egui::Context) -> Vec<(String, Rect)> {
     ctx.data_mut(|d| std::mem::take(&mut d.get_temp_mut_or_default::<Registry>(egui::Id::new("lc-registry")).0))
 }

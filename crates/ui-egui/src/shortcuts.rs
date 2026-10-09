@@ -296,11 +296,15 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     let keymap = &app.ui.settings.keymap;
     // keys the user gave to a command: the fixed bindings below (aliases, ratings) yield to them
     let taken: Vec<(Modifiers, Key)> = keymap.values().filter_map(|s| parse(s)).collect();
+    // an open popup (a menu, a date picker's calendar) closes on Esc itself: Esc's command (Back,
+    // which also closes dialogs) waits until nothing is open
+    let popup_open = egui::Popup::is_any_open(ctx);
     ctx.input(|i| {
         for b in bindable() {
             if let Some(sc) = binding(keymap, b.id, b.default)
                 && let Some((m, k)) = parse(sc)
                 && !native(sc)
+                && !(k == Key::Escape && popup_open)
                 && matches(i, m, k)
             {
                 fire.push(b.id.to_string());
@@ -308,6 +312,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
         for (sc, id, params) in ALIASES {
             if let Some((m, k)) = parse(sc).filter(|_| !native(sc))
+                && !(k == Key::Escape && popup_open)
                 && !taken.contains(&(m, k))
                 && matches(i, m, k)
             {

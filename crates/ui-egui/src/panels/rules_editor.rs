@@ -91,7 +91,8 @@ fn number_value(ui: &mut egui::Ui, v: &mut Value, field: &str) {
 }
 
 /// A rule date's calendar ([`DatePicker`]): opens on the date as written (or today), keeps its
-/// precision, and writes what is picked as `2026`, `2026-08` or `2026-08-14`.
+/// precision, and writes what is picked as `2026`, `2026-08` or `2026-08-14`. It picks dates, not
+/// times: picking a day for "2026-08-14T10:00" leaves "2026-08-14" (a time is typed).
 fn date_picker(ui: &mut egui::Ui, v: &mut Value, salt: &str, min: Option<PickedDate>, max: Option<PickedDate>, env: &Env) {
     let mut date = v.as_str().and_then(PickedDate::parse);
     let today = PickedDate::parse(&env.today);

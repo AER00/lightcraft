@@ -71,12 +71,16 @@ impl PickedDate {
             return Some(PickedDate { year, month: Some(month), day: None });
         }
         let day = u8::try_from(num(8, 10)?).ok().filter(|d| (1..=days_in_month(year, month)).contains(d))?;
-        let time = s.get(10..11);
-        (s.get(7..8) == Some("-") && (s.len() == 10 || matches!(time, Some("T" | " ")))).then_some(PickedDate {
-            year,
-            month: Some(month),
-            day: Some(day),
-        })
+        // a time after the day (read past) must be one: T10, T10:00 or T10:00:00 (or a space for the T)
+        let time_ok = match s.len() {
+            10 => true,
+            13 | 16 | 19 => {
+                matches!(s.get(10..11), Some("T" | " "))
+                    && s.char_indices().skip(11).all(|(i, c)| if i == 13 || i == 16 { c == ':' } else { c.is_ascii_digit() })
+            }
+            _ => false,
+        };
+        (s.get(7..8) == Some("-") && time_ok).then_some(PickedDate { year, month: Some(month), day: Some(day) })
     }
 
     /// `2026`, `2026-08` or `2026-08-14`.
@@ -149,6 +153,42 @@ struct View {
     month: u8,
 }
 
+impl View {
+    /// The view opened on `at`: years kept to 0000–9999 and months to 1–12, whatever a caller's
+    /// value holds.
+    fn open(at: PickedDate, precision: Precision) -> View {
+        View { precision, year: at.year.clamp(0, 9999), month: at.month.unwrap_or(1).clamp(1, 12) }
+    }
+}
+
+/// The page before (`forward` false) or after `v`: a month, a year or twelve years. Paging stops at
+/// years 0000 and 9999 rather than wrapping or leaving four-digit years.
+fn step(v: View, forward: bool) -> View {
+    let (year, month) = match v.precision {
+        Precision::Day => {
+            let m = i32::from(v.month) - 1 + if forward { 1 } else { -1 };
+            (v.year.saturating_add(m.div_euclid(12)), u8::try_from(m.rem_euclid(12) + 1).unwrap_or(1))
+        }
+        Precision::Month => (v.year.saturating_add(if forward { 1 } else { -1 }), v.month),
+        Precision::Year => {
+            // pages of twelve years (2016–2027); the first and last pages hold the ends
+            let page = v.year.div_euclid(12).saturating_add(if forward { 1 } else { -1 });
+            (page.saturating_mul(12), v.month)
+        }
+    };
+    let years = 0..=9999;
+    let fits = match v.precision {
+        Precision::Year => years.contains(&year) || years.contains(&year.saturating_add(11)),
+        _ => years.contains(&year),
+    };
+    if fits { View { year, month, ..v } } else { v }
+}
+
+/// Whether picking `cell` would cover today: its day, its month or its year.
+fn holds_today(cell: &PickedDate, today: Option<PickedDate>) -> bool {
+    today.is_some_and(|t| t.first_day() >= cell.first_day() && t.first_day() <= cell.last_day())
+}
+
 /// A calendar button that edits a [`PickedDate`]; see the module docs.
 pub struct DatePicker<'a> {
     id: String,
@@ -160,8 +200,9 @@ pub struct DatePicker<'a> {
 }
 
 impl<'a> DatePicker<'a> {
-    /// `id` keeps pickers apart (and names their widgets); `value` is what they edit (`None`: no
-    /// date yet, or one that couldn't be read).
+    /// `id` keeps pickers apart and names their widgets, so it must be unique among the pickers
+    /// on screen (two with the same id share their open page); `value` is what they edit (`None`:
+    /// no date yet, or one that couldn't be read).
     pub fn new(id: impl Into<String>, value: &'a mut Option<PickedDate>) -> Self {
         DatePicker { id: id.into(), value, precisions: &Precision::ALL, min: None, max: None, today: None }
     }
@@ -204,7 +245,7 @@ impl<'a> DatePicker<'a> {
             let at = value.or(today).unwrap_or(PickedDate::year(2026));
             let fallback = if precisions.contains(&Precision::Day) { Precision::Day } else { precisions.first().copied().unwrap_or(Precision::Day) };
             let precision = value.map(|v| v.precision()).filter(|p| precisions.contains(p)).unwrap_or(fallback);
-            ui.data_mut(|d| d.insert_temp(state, View { precision, year: at.year, month: at.month.unwrap_or(1) }));
+            ui.data_mut(|d| d.insert_temp(state, View::open(at, precision)));
         }
         let mut picked: Option<PickedDate> = None;
         let mut view = ui.data(|d| d.get_temp::<View>(state)).unwrap_or(View { precision: Precision::Day, year: 2026, month: 1 });
@@ -239,28 +280,17 @@ impl<'a> DatePicker<'a> {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let next = ui.small_button("›");
                     register(ui.ctx(), format!("datePickerNext:{id}"), next.rect);
-                    let step = |v: &mut View, forward: bool| match v.precision {
-                        Precision::Day => {
-                            let m = i32::from(v.month) - 1 + if forward { 1 } else { -1 };
-                            v.year += m.div_euclid(12);
-                            v.month = u8::try_from(m.rem_euclid(12) + 1).unwrap_or(1);
-                        }
-                        Precision::Month => v.year += if forward { 1 } else { -1 },
-                        Precision::Year => v.year += if forward { 12 } else { -12 },
-                    };
                     if next.clicked() {
-                        step(&mut view, true);
+                        view = step(view, true);
                     }
                     if prev.clicked() {
-                        step(&mut view, false);
+                        view = step(view, false);
                     }
                 });
             });
-            // four-digit years, as dates are written
-            view.year = view.year.clamp(0, 9999);
             let cell = |ui: &mut Ui, date: PickedDate, text: String, picked: &mut Option<PickedDate>| {
                 let allowed = in_bounds(&date, min.as_ref(), max.as_ref());
-                let text = if today == Some(date) { RichText::new(text).strong().underline() } else { RichText::new(text) };
+                let text = if holds_today(&date, today) { RichText::new(text).strong().underline() } else { RichText::new(text) };
                 let r = ui.add_enabled(allowed, egui::Button::selectable(*value == Some(date), text).min_size(vec2(26.0, 0.0)));
                 register(ui.ctx(), format!("datePickerCell:{}:{id}", date.iso()), r.rect);
                 if r.clicked() {
@@ -310,6 +340,11 @@ impl<'a> DatePicker<'a> {
                     }
                 }
             });
+            // Esc closes the calendar and stops there: the dialog around it keeps its edits
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                crate::widgets::take_escape(ui.ctx());
+                ui.close();
+            }
             if picked.is_some() {
                 ui.close();
             }
@@ -356,6 +391,48 @@ mod tests {
         assert_eq!(&g[..6], &[None, None, None, None, None, Some(1)]);
         assert_eq!(g.iter().flatten().count(), 31);
         assert_eq!(month_grid(2026, 6).first(), Some(&Some(1)), "June 2026 starts on a Monday");
+    }
+
+    /// Paging stops at years 0000 and 9999 instead of wrapping (‹ on January 0000 stays there),
+    /// and a view opened on a year beyond them starts at the nearest end.
+    #[test]
+    fn paging_stops_at_the_ends() {
+        let v = |precision, year, month| View { precision, year, month };
+        let at = |v: View| (v.year, v.month);
+        assert_eq!(at(step(v(Precision::Day, 2026, 12), true)), (2027, 1));
+        assert_eq!(at(step(v(Precision::Day, 2026, 1), false)), (2025, 12));
+        assert_eq!(at(step(v(Precision::Day, 0, 1), false)), (0, 1));
+        assert_eq!(at(step(v(Precision::Day, 9999, 12), true)), (9999, 12));
+        assert_eq!(at(step(v(Precision::Month, 0, 5), false)), (0, 5));
+        assert_eq!(at(step(v(Precision::Month, 9999, 5), true)), (9999, 5));
+        assert_eq!(at(step(v(Precision::Year, 5, 1), false)), (5, 1), "the first page of years");
+        assert_eq!(at(step(v(Precision::Year, 9990, 1), true)), (9996, 1), "the page holding 9996–9999");
+        assert_eq!(at(step(v(Precision::Year, 9996, 1), true)), (9996, 1), "the last page");
+        assert_eq!(at(step(v(Precision::Year, 2026, 1), false)), (2004, 1), "the page 2004–2015");
+        let huge = PickedDate { year: i32::MAX, month: Some(13), day: None };
+        assert_eq!(at(View::open(huge, Precision::Day)), (9999, 12));
+        assert_eq!(at(View::open(PickedDate { year: i32::MIN, month: Some(0), day: None }, Precision::Day)), (0, 1));
+    }
+
+    /// The picker reads a date the way the rule check does: a time after it must be a time.
+    #[test]
+    fn a_trailing_time_must_be_a_time() {
+        for ok in ["2026-08-14T10", "2026-08-14T10:00", "2026-08-14 10:00:00"] {
+            assert!(PickedDate::parse(ok).is_some(), "{ok}");
+        }
+        for bad in ["2026-08-14Tjunk", "2026-08-14T", "2026-08-14T1", "2026-08-14T10:0", "2026-08-14T10:00Z"] {
+            assert_eq!(PickedDate::parse(bad), None, "{bad}");
+        }
+    }
+
+    /// Today is marked in every view: its day, its month, its year.
+    #[test]
+    fn today_is_marked_at_every_precision() {
+        let d = |s: &str| PickedDate::parse(s).unwrap();
+        let today = Some(d("2026-10-09"));
+        assert!(holds_today(&d("2026-10-09"), today) && holds_today(&d("2026-10"), today) && holds_today(&d("2026"), today));
+        assert!(!holds_today(&d("2026-10-08"), today) && !holds_today(&d("2026-09"), today) && !holds_today(&d("2025"), today));
+        assert!(!holds_today(&d("2026"), None));
     }
 
     #[test]
