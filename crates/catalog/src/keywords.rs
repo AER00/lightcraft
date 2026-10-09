@@ -70,7 +70,7 @@ fn dedupe(v: &mut Vec<String>) {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeywordInfo {
-    /// Other words for it, exported with it (when `export_synonyms`) and found by search.
+    /// Other words for it, exported with it (when `export_synonyms`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub synonyms: Vec<String>,
     /// Written into exported files at all.

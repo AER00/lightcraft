@@ -11,8 +11,11 @@
   Inside This Keyword, Purge Unused Keywords.
 - Drag a keyword onto another to nest it, or onto the list's title to bring it back to the top level; photos dragged
   from the grid onto a keyword get it.
+- Right-click ▸ Put New Keywords Inside This Keyword: new keywords, made with + or typed in the box above, go inside
+  it. The list is there with no photo selected too, to set up keywords first.
 - Keyword tag options decide what exported files carry: Include on Export, Export Containing Keywords, Export
-  Synonyms. Exports now write keyword names to `dc:subject` and their paths to `lr:hierarchicalSubject`.
+  Synonyms. Exports now write keyword names to `dc:subject` and their paths to `lr:hierarchicalSubject`, and keywords
+  imported from files (or read from sidecars) keep the hierarchy `lr:hierarchicalSubject` gives them.
 
 ### Text fields
 - Right-click Search Photos, a slider's typed value, the Info panel's fields, the name field of New Album, Rename
