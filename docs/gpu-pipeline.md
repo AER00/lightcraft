@@ -44,6 +44,17 @@ Overrides (read once at launch):
   the compute device always used Vulkan + DX12 (+ Metal).
 - `LIGHTCRAFT_GPU=0`: GPU rendering off for the process (the window is unaffected).
 
+**DX12 shader compiler (issue #471).** Every instance (window and compute) compiles DX12 shaders with
+FXC (`d3dcompiler_47.dll`, part of Windows; `lightcraft_gpu::backend::backend_options`). wgpu's
+default, `Auto`, loads whichever `dxcompiler.dll` the DLL search path finds first. LightCraft ships
+none, so that copy belongs to another program (a Windows SDK, a folder on `PATH`). An older copy without
+`dxil.dll` beside it (e.g. DXC 1.7) warns that the DXIL is unsigned, wgpu treats the warning as a
+compile error, its indirect-validation pipelines fail, the device is lost, and the window never opened
+(`WGPU error: Parent device is lost`). `WGPU_DX12_COMPILER=dxc | auto | fxc` (wgpu's variable) still
+chooses; with `dxc`, put `dxcompiler.dll` *and* `dxil.dll` (DXC ≥ 1.8.2502) next to `lightcraft.exe`.
+FXC builds the compute kernels somewhat slower than DXC (≈ 9 s vs 7.5 s for the GPU test suite on an
+RTX 4080), off the startup path.
+
 **Off the startup path.** The compute device is created on a background thread once the window is
 up (`gpu::warm_up` from the first frame's settings), and never while GPU rendering is off: with
 Settings ▸ Performance ▸ *Use the GPU for rendering* unchecked (applied before the window opens),

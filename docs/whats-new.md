@@ -49,6 +49,8 @@
   are unchanged; photos imported before this change get it when imported again.
 - Canon CR3 raws now develop from their sensor data: lossless RAW and C-RAW, checked sample for sample on the EOS
   M50, R100 and R8. CR3 files the decoder can't read yet still open from their embedded JPEG, as before.
+- Canon EOS R7 C-RAW files develop from their sensor data too, instead of opening from their embedded JPEG. For R7
+  C-RAWs imported earlier, Photo ▸ Reload from Disk picks up the raw data.
 - Canon CRW, Minolta MRW, Sigma X3F, Kodak KDC, Leaf MOS and Epson ERF files that LightCraft can't decode yet
   now import as "preview only" with their embedded JPEG instead of failing. A raw whose data is damaged but whose
   preview is intact does the same.
@@ -149,6 +151,9 @@
   ignored before) chooses the graphics backend; `off` renders on the CPU. The GPU now starts after the window
   is up, and only when Settings ▸ Performance ▸ Use the GPU for rendering is on; if LightCraft ever dies while
   starting the GPU, the next launch starts with GPU rendering off and says how to turn it back on.
+- The Windows app no longer quits at launch with "Parent device is lost" when another program's `dxcompiler.dll` is
+  on the DLL search path without its `dxil.dll` (issue #471): DirectX 12 shaders now always compile with the
+  compiler built into Windows (FXC). `WGPU_DX12_COMPILER=dxc` uses a `dxcompiler.dll` instead.
 - Exports and renders never write over a photo's original (issue #93): exporting into the photo's own folder with
   the same name and "Overwrite" (or Export with Previous repeating it), an exact output path from the control
   channel or MCP, a merge preview path or `lightcraft-cli render IMG.jpg -o IMG.jpg` is refused with a clear
