@@ -85,6 +85,33 @@ fn grid_keeps_the_users_scroll_position() {
 }
 
 #[test]
+fn deleting_photos_does_not_jump_the_grid_to_the_top() {
+    for view in ["photoGrid", "squareGrid"] {
+        for count in [1, 3] {
+            let mut h = demo(view);
+            let ids = h.app.session.visible_cloned();
+            let at = ids.len() / 2;
+            let r = h.request("engine.execute", json!({"command": "library.select", "params": {"ids": &ids[at..at + count]}}), T);
+            assert_eq!(r["ok"], true, "{r}");
+            idle(&mut h, 30);
+            let y = grid_y(&h);
+            assert!(y > 600.0, "selection is well below the top: {view}, {y}");
+            let r = h.request("engine.execute", json!({"command": "photo.delete"}), T);
+            assert_eq!(r["ok"], true, "{r}");
+            idle(&mut h, 60);
+            let next = ids[at + count];
+            assert!(grid_y(&h) > 600.0, "deleting scrolled to the top: {view}, {} → {}", y, grid_y(&h));
+            assert_eq!(h.app.session.active(), Some(next), "{view}, count {count}");
+            let canvas = h.app.canvas_rect.unwrap();
+            assert!(widget(&h, &format!("thumb:{}", next.0)).intersects(canvas), "the next survivor is in view");
+            let after = grid_y(&h);
+            idle(&mut h, 60);
+            assert_eq!(grid_y(&h), after, "idle frames preserve the new position");
+        }
+    }
+}
+
+#[test]
 fn filmstrip_wheel_scrolls_and_keeps_its_position() {
     let mut h = demo("detail");
     let first = h.app.session.visible_cloned()[0].0;

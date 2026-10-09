@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use crate::{Session, command_specs};
+use crate::{Selection, Session, command_specs};
 
 fn demo() -> Session {
     Session::with_demo()
@@ -155,6 +155,47 @@ fn filters_and_delete_restore() {
     s.execute("photo.restore", &json!({})).unwrap();
     s.execute("library.source", &json!({"kind": "all"})).unwrap();
     assert_eq!(s.visible().len(), 24);
+}
+
+#[test]
+fn deleting_photos_selects_a_neighbour_in_the_current_view() {
+    for params in [json!({}), json!({"key": "fileName", "ascending": false}), json!({"key": "random", "seed": 123})] {
+        for at_end in [false, true] {
+            let mut s = demo();
+            s.execute("library.sort", &params).unwrap();
+            s.execute("library.filter", &json!({"rating": 2})).unwrap();
+            let visible = s.visible_cloned();
+            assert!(visible.len() > 5);
+            let at = if at_end { visible.len() - 2 } else { visible.len() / 2 };
+            let deleted = &visible[at..at + 2];
+            s.execute("library.select", &json!({"ids": deleted, "active": deleted[0]})).unwrap();
+            s.execute("photo.delete", &json!({})).unwrap();
+            let expected = if at_end { visible[at - 1] } else { visible[at + 2] };
+            assert_eq!(s.selection, Selection::single(expected), "sort {params}, end {at_end}");
+            assert!(deleted.iter().all(|id| s.catalog.photo(*id).unwrap().deleted));
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert!(deleted.iter().all(|id| !s.catalog.photo(*id).unwrap().deleted));
+            s.execute("edit.redo", &json!({})).unwrap();
+            assert!(deleted.iter().all(|id| s.catalog.photo(*id).unwrap().deleted));
+        }
+    }
+    let mut s = demo();
+    s.execute("library.selectAll", &json!({})).unwrap();
+    s.execute("photo.delete", &json!({})).unwrap();
+    assert!(s.visible().is_empty());
+    assert_eq!(s.selection, Selection::default());
+}
+
+#[test]
+fn deleting_explicit_targets_keeps_the_surviving_selection() {
+    let mut s = demo();
+    let visible = s.visible_cloned();
+    s.execute("library.select", &json!({"ids": [visible[8], visible[9]], "active": visible[9]})).unwrap();
+    let before = s.selection.clone();
+    s.execute("photo.delete", &json!({"ids": [visible[3]]})).unwrap();
+    assert_eq!(s.selection, before, "deleting an unselected photo doesn't change selection");
+    s.execute("photo.delete", &json!({"ids": [visible[9]]})).unwrap();
+    assert_eq!(s.selection, Selection::single(visible[8]), "partial deletion retains a selected survivor");
 }
 
 #[test]

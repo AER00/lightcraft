@@ -89,6 +89,39 @@ fn gain_table_map(ifd0: &Ifd, raw: &Ifd, order: ByteOrder) -> Option<GainTableMa
 }
 
 pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
+    decode_as(bytes, mode, RawFormat::Dng)
+}
+
+/// Whether a TIFF that is not a DNG describes a raw image the way DNG does: a full-resolution CFA IFD
+/// and DNG's own statement of the white balance (`AsShotNeutral`, in IFD0 or the raw IFD), in a coding
+/// [`decode_as`] reads: uncompressed, or lossless JPEG whose scan header the lossless decoder accepts.
+/// Such files (Hasselblad 3FR and FFF) carry no DNG version tag, so they are not DNGs, but nothing else
+/// in them needs a maker-specific reader. Without the white-balance tag nothing in the file says how
+/// to read its colour, and the file stays an undecodable raw.
+pub(crate) fn is_plain_cfa_tiff(tiff: &Tiff, bytes: &[u8]) -> bool {
+    let Some(raw) = raw_ifd(tiff) else { return false };
+    if !raw.contains(t::AS_SHOT_NEUTRAL) && !tiff.ifds.first().is_some_and(|i| i.contains(t::AS_SHOT_NEUTRAL)) {
+        return false;
+    }
+    let Ok(info) = raw.image() else { return false };
+    if info.samples_per_pixel != 1 || !(1..=16).contains(&info.bits()) || info.sample_format == 3 {
+        return false;
+    }
+    match info.compression {
+        t::compression::NONE => true,
+        t::compression::JPEG => info
+            .chunks(bytes.len() as u64)
+            .first()
+            .and_then(|c| lightcraft_tiff::image::chunk_bytes(bytes, c))
+            .is_some_and(|src| crate::ljpeg::frame_info(src).is_ok()),
+        _ => false,
+    }
+}
+
+/// [`decode`] for the TIFF-based raws that follow the DNG layout without being DNGs (`format` says
+/// which). They differ in one respect: when the raw IFD states no `CFAPattern`, the layout is RGGB
+/// anchored at the sensor origin.
+pub(crate) fn decode_as(bytes: &[u8], mode: Mode, format: RawFormat) -> Result<RawImage> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
     let raw = raw_ifd(&tiff).ok_or_else(|| RawError::Corrupt("DNG without a raw image IFD".into()))?;
@@ -152,7 +185,13 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
             [r, c] if (1..=16).contains(r) && (1..=16).contains(c) => (*r as usize, *c as usize),
             _ => return Err(RawError::Corrupt("bad CFARepeatPatternDim".into())),
         };
-        let pat = raw.bytes(t::CFA_PATTERN_EP).ok_or_else(|| RawError::Corrupt("missing CFAPattern".into()))?;
+        // a TIFF that is not a DNG may leave the layout out: RGGB from the sensor origin
+        let assumed = [0u8, 1, 1, 2];
+        let pat = match raw.bytes(t::CFA_PATTERN_EP) {
+            Some(p) => p,
+            None if format != RawFormat::Dng && (rows, cols) == (2, 2) => &assumed,
+            None => return Err(RawError::Corrupt("missing CFAPattern".into())),
+        };
         if pat.len() != rows * cols {
             return Err(RawError::Corrupt("CFAPattern size mismatch".into()));
         }
@@ -178,7 +217,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     metadata.width = Some(crop.width as u32);
     metadata.height = Some(crop.height as u32);
     let img = RawImage {
-        format: RawFormat::Dng,
+        format,
         width: w,
         height: h,
         cpp,

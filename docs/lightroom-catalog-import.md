@@ -42,7 +42,7 @@ fields are reported. When a recovery archive is saved, it retains source setting
 and original smart-collection rules. Smart collections become regular albums with current
 membership. Archived history and snapshots are source data, not native LightCraft history yet.
 A Custom white balance on a raw LightCraft develops relative to its as-shot look (ARW, NEF, RW2,
-RAF, CR3, CR2, PEF; Lightroom names them all `RAW`) can't be taken as Kelvin: the catalog keeps no
+RAF, CR3, CR2, PEF, SRW; Lightroom names them all `RAW`) can't be taken as Kelvin: the catalog keeps no
 as-shot white for Custom photos, so the photo stays As Shot and `Temperature, Tint` are reported
 (issue #510; a DNG keeps the Kelvin value, and an XMP packet with `crs:AsShotTemperature` is
 shifted by the same mired difference, see [xmp-interop.md](xmp-interop.md)).

@@ -1434,6 +1434,22 @@ fn moved_shape(shape: &MaskShape, handle: u8, dn: Point, at: Point, map: &Canvas
     }
 }
 
+/// Hit the geometric ellipse, independently of feather/inversion. Radii use long-edge units,
+/// so undo the same scaling and rotation used to draw its outline before testing containment.
+fn radial_body_contains(shape: &MaskShape, at: Point, map: &CanvasMap) -> bool {
+    let MaskShape::Radial { center, rx, ry, angle, .. } = shape else { return false };
+    if !rx.is_finite() || !ry.is_finite() || *rx <= 0.0 || *ry <= 0.0 {
+        return false;
+    }
+    let l = frame_long_norm(map);
+    let dx = (at.x - center.x) / l.0;
+    let dy = (at.y - center.y) / l.1;
+    let (s, co) = angle.to_radians().sin_cos();
+    let x = (dx * co + dy * s) / rx;
+    let y = (-dx * s + dy * co) / ry;
+    x * x + y * y <= 1.0
+}
+
 /// The Masking tool on the photo: outlines and handles of the selected mask, a pin per mask
 /// component (click selects its mask, drag moves the component), and brush painting. The mask
 /// itself shows as a rendered overlay ([`view_overlay`]).
@@ -1608,8 +1624,14 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         && let Some(q) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos())
     {
         let grip = hit(q).map(|(m, c, h, _)| (m, c, h)).or_else(|| {
-            // anywhere on the photo drags the selected linear gradient
             let m = d.masks.iter().find(|m| Some(m.id) == active)?;
+            // Handles take precedence; otherwise grab the selected radial component under
+            // the press, including components after the first in compound masks.
+            let at = map.norm(q);
+            if let Some(ci) = m.components.iter().position(|c| radial_body_contains(&c.shape, at, map)) {
+                return Some((m.id, ci, 0));
+            }
+            // anywhere on the photo drags the selected linear gradient
             matches!(m.components.first()?.shape, MaskShape::Linear { .. }).then_some((m.id, 0, 0))
         });
         if let Some((mask, comp, handle)) = grip
