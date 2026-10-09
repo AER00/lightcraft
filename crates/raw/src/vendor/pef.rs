@@ -255,12 +255,11 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     };
     let cfa = match (ifd0.u64s(t::CFA_REPEAT_PATTERN_DIM).as_deref(), ifd0.bytes(t::CFA_PATTERN_EP)) {
         (Some([2, 2]), Some(p)) if p.len() == 4 && p.iter().all(|&c| c <= 2) => Cfa { width: 2, height: 2, pattern: p.to_vec() },
-        // The uncompressed bodies state their pattern in the Exif `CFAPattern`, as seen from the first pixel of the
-        // image area (checked against each file's camera JPEG); the Huffman-compressed ones don't agree with their
-        // pictures (a 10 MP body says RGGB and renders correctly as BGGR), so they keep the assumed layout.
-        _ if matches!(info.compression, 1 | 32773) => {
-            cfa_from_exif(&tiff).map(|c| c.shifted(active.x, active.y)).unwrap_or_else(|| Cfa::bayer_static("BGGR"))
-        }
+        // The uncompressed bodies state their pattern in the Exif `CFAPattern`, read from the first sample of the
+        // stored array, not of the image area: the *ist D (area origin 19, 11) says RGGB and measures RGGB there. A
+        // pattern shifted by an odd origin would exchange red and blue. (The Huffman-compressed bodies keep the
+        // assumed layout here.)
+        _ if matches!(info.compression, 1 | 32773) => cfa_from_exif(&tiff).unwrap_or_else(|| Cfa::bayer_static("BGGR")),
         _ => Cfa::bayer_static("BGGR"),
     };
     let black = match mn.as_ref().and_then(|m| m.ifd.f64s(BLACK_POINT)).as_deref() {
@@ -421,6 +420,52 @@ mod tests {
             let file = tiny_pef(4, 2, 32773, len, &payload);
             let err = decode(&file, Mode::Full).unwrap_err();
             assert!(matches!(&err, RawError::Unsupported(m) if m.contains("32773")), "strip of {len} bytes: {err:?}");
+        }
+    }
+
+    /// A 16 x 8 big-endian 12-bit PEF-style file with a 12 x 6 image area at the odd origin (3, 1) and the Exif
+    /// `CFAPattern` `pattern`; the samples are plain 16-bit words (compression 1) or packed 12-bit (32773).
+    fn pef_with_pattern(compression: u16, pattern: [u8; 4]) -> Vec<u8> {
+        use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value};
+        let px: Vec<u16> = (0..16 * 8).map(|i| ((i * 37) % 900 + 100) as u16).collect();
+        let strip: Vec<u8> = if compression == 1 {
+            px.iter().flat_map(|v| v.to_be_bytes()).collect()
+        } else {
+            px.chunks(2).flat_map(|p| [(p[0] >> 4) as u8, ((p[0] & 15) << 4 | p[1] >> 8) as u8, p[1] as u8]).collect()
+        };
+        let mut ifd = IfdBuilder::new();
+        ifd.set(0x0100, Value::Long(vec![16]));
+        ifd.set(0x0101, Value::Long(vec![8]));
+        ifd.set(0x0102, Value::Short(vec![12]));
+        ifd.set(0x0103, Value::Short(vec![compression]));
+        ifd.set(0x0106, Value::Short(vec![32803]));
+        ifd.set(0x010f, Value::Ascii("PENTAX Corporation".into()));
+        ifd.set_image(ImageData::Strips { rows_per_strip: 8, strips: vec![strip] });
+        // AOC + "MM", then one IFD: area origin and size (inline), next-IFD 0
+        let mut note = b"AOC MM".to_vec();
+        note.extend_from_slice(&2u16.to_be_bytes());
+        for (tag, val) in [(0x0038u16, [0u8, 3, 0, 1]), (0x0039, [0, 12, 0, 6])] {
+            note.extend_from_slice(&tag.to_be_bytes());
+            note.extend_from_slice(&3u16.to_be_bytes());
+            note.extend_from_slice(&2u32.to_be_bytes());
+            note.extend_from_slice(&val);
+        }
+        note.extend_from_slice(&0u32.to_be_bytes());
+        let mut exif = IfdBuilder::new();
+        exif.set(0xa302, Value::Undefined([&[0, 2, 0, 2][..], &pattern[..]].concat()));
+        exif.set(0x927c, Value::Undefined(note));
+        ifd.set_child(0x8769, exif);
+        TiffWriter::new(ByteOrder::Big, false).write(&[ifd]).unwrap()
+    }
+
+    #[test]
+    fn uncompressed_files_use_the_exif_pattern_from_the_array_origin_not_the_area_origin() {
+        for compression in [1u16, 32773] {
+            for (p, name) in [([0u8, 1, 1, 2], "RGGB"), ([2, 1, 1, 0], "BGGR"), ([1, 0, 2, 1], "GRBG"), ([1, 2, 0, 1], "GBRG")] {
+                let img = decode(&pef_with_pattern(compression, p), Mode::Full).unwrap();
+                assert_eq!(img.active_area, Rect::new(3, 1, 12, 6), "compression {compression}");
+                assert_eq!(img.cfa, Some(Cfa::bayer_static(name)), "compression {compression}, Exif {name}");
+            }
         }
     }
 }
