@@ -7,7 +7,7 @@
 - Right-click a folder ▸ New ▸ Create Album… / Create Smart Album… / Create Smart Album from Filter… / Create Folder…
   makes it inside that folder (`dialog.newAlbum`, `dialog.newFolder`, `dialog.smartAlbum`, `dialog.newSmartAlbum` take `parent`).
 - Drag an album or folder onto a folder to move it there (a closed folder opens after 0.6 s under the pointer; a
-  "Top Level" strip under the tree takes it back out; Esc cancels). Drop on the top or bottom half of another album,
+  "Albums" header takes it back to the top level; Esc cancels). Drop on the top or bottom half of another album,
   or the edge of another folder, to place it before or after it: that folder is then ordered by hand. Right-click ▸
   Sort Contents A–Z (or ＋ ▸ Sort Albums A–Z at the top level) goes back to by name. To put a folder after an open
   folder, fold that folder first (the bottom of an open folder means "inside"). Agents use `album.reorder`
