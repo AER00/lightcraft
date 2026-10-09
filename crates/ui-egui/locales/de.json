@@ -2021,5 +2021,8 @@
   "Quit while tasks are running?": "Beenden, während Aufgaben laufen?",
   "Exporting contact sheet": "Kontaktabzug wird exportiert",
   "Reading folder": "Ordner wird gelesen",
-  "Scanning folder": "Ordner wird durchsucht"
+  "Scanning folder": "Ordner wird durchsucht",
+  "Building previews": "Vorschauen werden erstellt",
+  "Building smart previews": "Smart-Vorschauen werden erstellt",
+  "Discarding smart previews": "Smart-Vorschauen werden verworfen"
 }

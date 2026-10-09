@@ -1,7 +1,7 @@
 //! Build previews ahead of time: each photo's grid thumbnail and its loupe view (standard size,
 //! or 1:1), rendered into the memory + disk preview cache so browsing and the loupe are instant.
-//! Runs on a background thread (the app keeps working; progress / cancel by command), or inline
-//! with `wait` (CLI, MCP, tests).
+//! Runs on a background thread (the app keeps working; progress / cancel by command, and a row in
+//! the activity stack, issue #345), or inline with `wait` (CLI, MCP, tests).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd, str_param};
+use crate::activity::{Cancel, TaskGuard};
 use crate::media::{RenderJob, THUMB_SIZES};
 use crate::{Result, Session};
 
@@ -21,7 +22,8 @@ pub struct PreviewBuild {
     pub total: usize,
     pub done: AtomicUsize,
     pub failed: AtomicUsize,
-    pub cancel: AtomicBool,
+    /// Shared with the build's row in the activity stack (its ✕ sets it).
+    pub cancel: Arc<AtomicBool>,
     pub finished: AtomicBool,
     /// Damaged smart previews rebuilt (Build Smart Previews only).
     pub repaired: AtomicUsize,
@@ -62,7 +64,19 @@ fn jobs_for(s: &mut Session, id: lightcraft_catalog::PhotoId, edge: Option<usize
     v
 }
 
-fn run_all(jobs: Vec<Vec<RenderJob>>, state: &PreviewBuild) {
+/// The build's row in the activity stack (`what` as in [`PreviewBuild::what`]).
+fn task_for(s: &Session, state: &PreviewBuild) -> TaskGuard {
+    let (kind, label) = match state.what {
+        "" => ("previews", "Building previews"),
+        "smart previews" => ("smartPreviews", "Building smart previews"),
+        _ => ("smartPreviews", "Discarding smart previews"),
+    };
+    let task = s.activity.start(kind, label, Cancel::Flag(state.cancel.clone()));
+    task.progress(0, state.total as u64);
+    task
+}
+
+fn run_all(jobs: Vec<Vec<RenderJob>>, state: &PreviewBuild, task: &TaskGuard) {
     for photo_jobs in jobs {
         if state.cancel.load(Ordering::Relaxed) {
             break;
@@ -71,7 +85,8 @@ fn run_all(jobs: Vec<Vec<RenderJob>>, state: &PreviewBuild) {
         if !ok {
             state.failed.fetch_add(1, Ordering::Relaxed);
         }
-        state.done.fetch_add(1, Ordering::Relaxed);
+        let done = state.done.fetch_add(1, Ordering::Relaxed).saturating_add(1);
+        task.progress(done as u64, state.total as u64);
     }
     state.finished.store(true, Ordering::Relaxed);
 }
@@ -91,17 +106,19 @@ fn build(s: &mut Session, p: &Value) -> Result<Value> {
     let jobs: Vec<Vec<RenderJob>> = ids.iter().map(|id| jobs_for(s, *id, edge)).filter(|j| !j.is_empty()).collect();
     let state = Arc::new(PreviewBuild { total: jobs.len(), ..Default::default() });
     s.preview_build = Some(state.clone());
+    let task = task_for(s, &state);
     let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false) || cfg!(target_arch = "wasm32");
     if wait {
-        run_all(jobs, &state);
+        run_all(jobs, &state, &task);
         return Ok(state.json());
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // the row stays while the worker runs (it is dropped with the closure, however that ends)
         let st = state.clone();
         std::thread::Builder::new()
             .name("lc-build-previews".into())
-            .spawn(move || run_all(jobs, &st))
+            .spawn(move || run_all(jobs, &st, &task))
             .map_err(|e| bad(C, format!("could not start: {e}")))?;
     }
     Ok(state.json())
@@ -134,7 +151,7 @@ fn smart_run(
     custom: bool,
     discard: bool,
     jobs: Vec<SmartJob>,
-    state: Option<&PreviewBuild>,
+    state: Option<(&PreviewBuild, &TaskGuard)>,
 ) -> std::result::Result<SmartCounts, String> {
     let mut n = SmartCounts::default();
     if !discard {
@@ -146,7 +163,7 @@ fn smart_run(
         }
     }
     for (id, path, source) in jobs {
-        if state.is_some_and(|st| st.cancel.load(Ordering::Relaxed)) {
+        if state.is_some_and(|(st, _)| st.cancel.load(Ordering::Relaxed)) {
             break;
         }
         if discard {
@@ -173,22 +190,23 @@ fn smart_run(
                         n.built += 1;
                         if damaged {
                             n.repaired += 1;
-                            if let Some(st) = state {
+                            if let Some((st, _)) = state {
                                 st.repaired.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                     }
                     Err(e) => {
                         n.failed.push(json!([id.0, e]));
-                        if let Some(st) = state {
+                        if let Some((st, _)) = state {
                             st.failed.fetch_add(1, Ordering::Relaxed);
                         }
                     }
                 }
             }
         }
-        if let Some(st) = state {
-            st.done.fetch_add(1, Ordering::Relaxed);
+        if let Some((st, task)) = state {
+            let done = st.done.fetch_add(1, Ordering::Relaxed).saturating_add(1);
+            task.progress(done as u64, st.total as u64);
         }
     }
     Ok(n)
@@ -222,11 +240,12 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
         let what = if discard { "discarding smart previews" } else { "smart previews" };
         let state = Arc::new(PreviewBuild { total: jobs.len(), what, ..Default::default() });
         s.preview_build = Some(state.clone());
+        let task = task_for(s, &state);
         let st = state.clone();
         std::thread::Builder::new()
             .name("lc-smart-previews".into())
             .spawn(move || {
-                if let Err(e) = smart_run(&dir, custom, discard, jobs, Some(&st)) {
+                if let Err(e) = smart_run(&dir, custom, discard, jobs, Some((&st, &task))) {
                     log::warn!("{C}: {e}");
                     *st.error.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(e);
                 }

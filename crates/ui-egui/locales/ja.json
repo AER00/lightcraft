@@ -1868,5 +1868,8 @@
   "Quit while tasks are running?": "タスクの実行中に終了しますか？",
   "Exporting contact sheet": "コンタクトシートを書き出し中",
   "Reading folder": "フォルダーを読み込み中",
-  "Scanning folder": "フォルダーをスキャン中"
+  "Scanning folder": "フォルダーをスキャン中",
+  "Building previews": "プレビューを作成中",
+  "Building smart previews": "スマートプレビューを作成中",
+  "Discarding smart previews": "スマートプレビューを破棄中"
 }

@@ -477,7 +477,7 @@ impl LightcraftApp {
         ctx.request_repaint_after(std::time::Duration::from_secs_f64((due - now).clamp(0.05, interval)));
     }
 
-    /// Announce the start and end of a Build Previews run.
+    /// Announce the end of a Build Previews run.
     fn preview_build_status(&mut self, ctx: &egui::Context) {
         use std::sync::atomic::Ordering;
         let Some(b) = self.session.preview_build.clone() else { return };
@@ -500,14 +500,7 @@ impl LightcraftApp {
                 self.toast(ctx, msg);
             }
         } else {
-            if self.ui.preview_build_seen != Some((key, false)) {
-                self.ui.preview_build_seen = Some((key, false));
-                let msg = match b.what {
-                    "" => crate::i18n::tr_format!("Building previews for {} photos…", b.total),
-                    what => crate::i18n::tr_format!("Working on {what} for {} photos…", b.total, what = crate::i18n::tr(what)),
-                };
-                self.toast(ctx, msg);
-            }
+            // The activity stack shows the run while it works; poll for the end.
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
     }

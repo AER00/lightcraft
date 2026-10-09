@@ -497,6 +497,12 @@ fn damaged_smart_previews_are_rebuilt_and_failed_writes_leave_none() {
     };
     assert_eq!((r["done"].as_u64(), r["failed"].as_u64(), r["repaired"].as_u64()), (Some(1), Some(0), Some(1)), "{r}");
     assert_eq!(std::fs::read(&file).unwrap(), full, "rebuilt whole in the background");
+    // its row in the activity stack (issue #345) goes with it
+    let t0 = std::time::Instant::now();
+    while !s.activity.list().is_empty() && t0.elapsed() < std::time::Duration::from_secs(10) {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(s.activity.list().is_empty(), "{:?}", s.activity.list());
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&lib);
 }
