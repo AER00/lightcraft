@@ -97,7 +97,11 @@ pub fn plan(settings: &crate::state::AppSettings, v: ViewSizes) -> LoupePlan {
     let drawn_long = if v.drawn_long.is_finite() { v.drawn_long.max(8.0) } else { canvas_long };
     let scale = if v.draft_scale.is_finite() { v.draft_scale.clamp(0.1, 1.0) } else { 1.0 };
     if !v.windows {
-        let main_edge = settings.loupe_edge(drawn_long * scale, v.native_long, v.texture_side);
+        // the whole frame at the size it is drawn (an overlay or soft proof has no window); while a
+        // slider drags, a canvas-sized draft as with windows: a drag at 1:1 must not render the
+        // photo's every pixel each frame
+        let long = if scale < 1.0 { drawn_long.min(canvas_long) } else { drawn_long };
+        let main_edge = settings.loupe_edge(long * scale, v.native_long, v.texture_side);
         return LoupePlan { main_edge, window_edge: None };
     }
     // a user who chose a size above the preview source level (3840, 5120) means it; otherwise the
@@ -275,6 +279,18 @@ mod tests {
         let drag = plan(&auto(), ViewSizes { draft_scale: 0.6, ..sizes(24000.0, 2800.0, 6000) });
         assert!(drag.main_edge < still.main_edge, "{drag:?} vs {still:?}");
         assert_eq!(drag.window_edge, still.window_edge);
+    }
+
+    // Given no window (an overlay, soft proofing), the view at rest renders the whole frame at the
+    // size it is drawn, but a slider drag drafts at the canvas size like the windowed path
+    #[test]
+    fn without_a_window_a_drag_drafts_at_the_canvas_size() {
+        let no_window = |draft_scale: f32| ViewSizes { windows: false, draft_scale, ..sizes(24000.0, 2800.0, 6000) };
+        let still = plan(&auto(), no_window(1.0));
+        let drag = plan(&auto(), no_window(0.6));
+        assert_eq!(still.window_edge, None);
+        assert!(still.main_edge > 2800, "at rest the zoomed frame: {still:?}");
+        assert!(drag.main_edge <= 2800, "a drag drafts at most the canvas: {drag:?}");
     }
 
     // Given the user capped the preview size, the whole-frame render obeys it, and a fit view
