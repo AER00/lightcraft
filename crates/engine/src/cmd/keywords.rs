@@ -301,15 +301,16 @@ pub fn specs() -> Vec<CommandSpec> {
                     Some(Value::Null) => None,
                     _ => return Err(bad("keyword.move", "`parent` is a keyword, or null for the top level")),
                 };
+                // where it lands, as the catalog spells it: a parent that doesn't exist yet is made
+                let leaf = from.rsplit('|').next().unwrap_or(&from).to_string();
+                let to = match parent.as_deref().map(|k| s.catalog.keyword_path(k).unwrap_or_else(|| clean(k))).filter(|k| !k.is_empty()) {
+                    Some(parent) => format!("{parent}|{leaf}"),
+                    None => leaf,
+                };
                 let op = s
                     .catalog
                     .move_keyword_ops(&from, parent.as_deref(), bool_or(p, "merge", false))
                     .map_err(|e| refused("keyword.move", e, ": moving would merge the two (merge: true)"))?;
-                let leaf = from.rsplit('|').next().unwrap_or(&from).to_string();
-                let to = match parent.as_deref().and_then(|k| s.catalog.keyword_path(k)) {
-                    Some(parent) => format!("{parent}|{leaf}"),
-                    None => leaf,
-                };
                 commit_keywords(s, "Move Keyword", op, |k| Some(if is_under(k, &from) { reparent(k, &from, &to) } else { k.to_string() }))
             }
         ),

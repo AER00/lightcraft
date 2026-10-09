@@ -129,3 +129,16 @@ fn purging_unused_keywords() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(s.execute("keyword.info", &json!({"keyword": "Weddings"})).is_ok());
 }
+
+/// Moving a keyword into a parent that doesn't exist yet makes that parent, and the keyword filter
+/// follows the keyword there (the grid kept filtering by the old path, and showed nothing).
+#[test]
+fn the_filter_follows_a_keyword_moved_into_a_new_parent() {
+    let mut s = Session::with_demo();
+    let id = s.visible_cloned()[0].0;
+    s.execute("photo.setMeta", &json!({"ids": [id], "keywords": ["Rome"]})).unwrap();
+    s.execute("library.filter", &json!({"keyword": "Rome"})).unwrap();
+    s.execute("keyword.move", &json!({"keyword": "rome", "parent": "Italy"})).unwrap();
+    assert_eq!(keywords_of(&s, id), ["Italy|Rome"]);
+    assert_eq!(s.filter.keyword.as_deref(), Some("Italy|Rome"));
+}
