@@ -1096,3 +1096,20 @@ fn date_and_keyword_rows_show_their_photos_from_any_source() {
     h.step();
     assert_eq!(h.app.session.filter, lightcraft_catalog::Filter::default(), "{key}");
 }
+
+/// A menu command's toast shows, however long the app has been running: commands made their
+/// toasts with a fresh context, whose clock is at 0, so by the app's clock they were already over
+/// (Auto Advance On, Imported presets, …).
+#[test]
+fn a_menu_commands_toast_shows_after_a_while() {
+    let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), Services { png: None, ..Default::default() });
+    let mut h = crate::headless::Headless::new(app, [1000.0, 700.0], 1.0);
+    for _ in 0..600 {
+        h.step();
+    }
+    let r = h.request("engine.execute", serde_json::json!({"command": "view.autoAdvance"}), std::time::Duration::from_secs(10));
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    h.step();
+    assert!(h.app.ui.toast.as_ref().is_some_and(|t| t.0.starts_with("Auto Advance")), "{:?}", h.app.ui.toast);
+}

@@ -266,7 +266,9 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         crate::i18n::set_language(app.ui.language);
         return Some(Ok(json!(app.ui.language)));
     }
-    let ctx = egui::Context::default();
+    // the app's own context: a toast's time comes from its clock (a fresh context's clock is at 0,
+    // and a toast set by it was long over by the app's clock: it never showed)
+    let ctx = app.tasks.repaint.clone().unwrap_or_default();
     let r: Result<Value, String> = match id {
         "view.photoGrid" => {
             app.ui.view = ViewMode::PhotoGrid;
