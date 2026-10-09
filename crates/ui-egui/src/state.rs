@@ -603,6 +603,9 @@ pub enum Dialog {
         replaces: Option<String>,
         name: String,
         slots: Vec<String>,
+        /// Save as a new set, leaving the edited one (Lightroom Classic's Save as New Preset).
+        #[serde(default)]
+        as_new: bool,
     },
     /// Move a keyword inside `parent` (`None`: the top level) where one of its name is already:
     /// asks before merging the two.

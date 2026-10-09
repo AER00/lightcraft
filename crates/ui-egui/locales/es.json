@@ -1764,5 +1764,7 @@
   "Edit Set…": "Editar conjunto…",
   "Edit Keyword Set": "Editar conjunto de palabras clave",
   "Keywords (⌥1–⌥9)": "Palabras clave (⌥1–⌥9)",
-  "A keyword set needs a name": "Un conjunto de palabras clave necesita un nombre"
+  "A keyword set needs a name": "Un conjunto de palabras clave necesita un nombre",
+  "Save as a new set": "Guardar como conjunto nuevo",
+  "Recent Keywords is built in: choose another name": "“Palabras clave recientes” es fijo: elige otro nombre"
 }

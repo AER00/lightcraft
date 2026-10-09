@@ -1764,5 +1764,7 @@
   "Edit Set…": "編輯集…",
   "Edit Keyword Set": "編輯關鍵字集",
   "Keywords (⌥1–⌥9)": "關鍵字 (⌥1–⌥9)",
-  "A keyword set needs a name": "關鍵字集需要名稱"
+  "A keyword set needs a name": "關鍵字集需要名稱",
+  "Save as a new set": "另存為新關鍵字集",
+  "Recent Keywords is built in: choose another name": "「最近使用的關鍵字」為內建集：請另選名稱"
 }

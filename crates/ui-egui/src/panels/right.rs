@@ -889,6 +889,7 @@ fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                         replaces: named.then(|| current.clone()),
                         name: if named { current.clone() } else { String::new() },
                         slots,
+                        as_new: false,
                     });
                 }
                 if ui.button(crate::i18n::tr("Save Current Keywords as Set…")).clicked() {

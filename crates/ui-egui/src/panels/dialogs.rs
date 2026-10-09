@@ -773,7 +773,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         crate::widgets::register(ui.ctx(), id, r.rect);
                     }
                 }
-                Dialog::KeywordSet { name, slots, .. } => {
+                Dialog::KeywordSet { replaces, name, slots, as_new } => {
                     ui.label(egui::RichText::new(crate::i18n::tr("Set name")).color(t.text_dim));
                     let r = crate::text_field::TextField::singleline("field:keywordSetName", name)
                         .hint(crate::i18n::tr("Set name"))
@@ -801,6 +801,11 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                             }
                         }
                     });
+                    if replaces.is_some() {
+                        ui.add_space(6.0);
+                        let r = ui.checkbox(as_new, crate::i18n::tr("Save as a new set"));
+                        crate::widgets::register(ui.ctx(), "check:keywordSetAsNew", r.rect);
+                    }
                     // Return in any field saves the set
                     if returned {
                         confirm = true;
@@ -1225,13 +1230,26 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }
         }
         Dialog::DeleteKeyword { keyword, .. } => app.run("keyword.delete", json!({"keyword": keyword})),
-        Dialog::KeywordSet { replaces, name, slots } => {
-            if name.trim().is_empty() {
+        Dialog::KeywordSet { replaces, name, slots, as_new } => {
+            use lightcraft_catalog::keywords::same;
+            let name = name.trim();
+            if name.is_empty() {
                 return Err(crate::i18n::tr("A keyword set needs a name").to_string());
             }
-            let mut params = json!({"name": name.trim(), "keywords": slots});
-            if let Some(old) = replaces {
-                params["replace"] = json!(old);
+            if same(name, lightcraft_engine::cmd::keywords::RECENT) {
+                return Err(crate::i18n::tr("Recent Keywords is built in: choose another name").to_string());
+            }
+            // the set it renames: none when saving as new, or when it was deleted meanwhile (then it is
+            // saved anew rather than refused)
+            let sets = &app.session.keyword_sets;
+            let renames = replaces.as_deref().filter(|_| !as_new).filter(|old| sets.iter().any(|x| same(&x.name, old)));
+            if sets.iter().any(|x| same(&x.name, name) && !renames.is_some_and(|old| same(&x.name, old))) {
+                return Err(crate::i18n::tr_format!("There is a keyword set “{name}” already", name = name));
+            }
+            let mut params = json!({"name": name, "keywords": slots});
+            match renames {
+                Some(old) => params["replace"] = json!(old),
+                None => params["new"] = json!(true),
             }
             app.run("keyword.saveSet", params)
         }

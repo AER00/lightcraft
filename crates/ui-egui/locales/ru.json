@@ -1439,5 +1439,8 @@
   "Edit Keyword Set": "Изменить набор ключевых слов",
   "Keywords (⌥1–⌥9)": "Ключевые слова (⌥1–⌥9)",
   "A keyword set needs a name": "Набору ключевых слов нужно название",
-  "Set name": "Название набора"
+  "Set name": "Название набора",
+  "Save as a new set": "Сохранить как новый набор",
+  "Recent Keywords is built in: choose another name": "«Недавние ключевые слова» — встроенный набор: выберите другое название",
+  "Recent Keywords": "Недавние ключевые слова"
 }

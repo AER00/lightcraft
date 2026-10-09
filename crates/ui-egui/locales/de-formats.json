@@ -215,5 +215,6 @@
   "There is a “{name}” at the top level already. Merge the two?": "Auf der obersten Ebene gibt es bereits „{name}“. Beide zusammenführen?",
   "Added “{keyword}” to {n} photo{}": "„{keyword}“ zu {n} Foto{} hinzugefügt",
   "On {have} of {of} selected photos": "Auf {have} von {of} ausgewählten Fotos",
-  "Remove “{name}”": "„{name}“ entfernen"
+  "Remove “{name}”": "„{name}“ entfernen",
+  "There is a keyword set “{name}” already": "Es gibt bereits einen Stichwortsatz „{name}“"
 }

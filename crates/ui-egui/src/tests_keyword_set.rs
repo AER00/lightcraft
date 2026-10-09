@@ -49,7 +49,7 @@ fn editing_recent_keywords_saves_them_as_a_set() {
     let mut h = keywords_panel();
     let recent = sets(&mut h)["keywords"].clone();
     open_editor(&mut h);
-    let Some(crate::state::Dialog::KeywordSet { replaces, name, slots }) = h.app.ui.dialog.clone() else { panic!("{:?}", h.app.ui.dialog) };
+    let Some(crate::state::Dialog::KeywordSet { replaces, name, slots, .. }) = h.app.ui.dialog.clone() else { panic!("{:?}", h.app.ui.dialog) };
     assert_eq!((replaces, name.as_str()), (None, ""));
     assert_eq!(json!(slots.iter().filter(|k| !k.is_empty()).collect::<Vec<_>>()), recent, "the current nine");
     ask(&mut h, "ui.text", json!({"text": "Beach Weddings"}));
@@ -110,4 +110,53 @@ fn the_slots_are_alike() {
         assert!(r.width() >= 100.0, "{r:?}");
         assert!((r.width() - slots[0].width()).abs() < 1.0, "{r:?} vs {:?}", slots[0]);
     }
+}
+
+/// Naming Recent Keywords like a set that exists says so, in the user's words, and keeps the
+/// dialog (and that set) as they were.
+#[test]
+fn a_taken_name_says_so() {
+    let mut h = keywords_panel();
+    h.app.session.execute("keyword.saveSet", &json!({"name": "Travel", "keywords": ["harbour"]})).unwrap();
+    h.app.session.execute("keyword.useSet", &json!({"name": "Recent Keywords"})).unwrap();
+    h.settle(SETTLE);
+    open_editor(&mut h);
+    ask(&mut h, "ui.text", json!({"text": "travel"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "button:dialogOk"}));
+    assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::KeywordSet { .. })), "still open");
+    let toast = h.app.ui.toast.clone().map(|t| t.0).unwrap_or_default();
+    assert!(toast.starts_with("There is a keyword set"), "{toast}");
+    let s = sets(&mut h);
+    let travel = s["sets"].as_array().unwrap().iter().find(|x| x["name"] == "Travel").cloned().unwrap();
+    assert_eq!(travel["keywords"], json!(["harbour"]), "left alone");
+}
+
+/// A set deleted while its dialog was open is saved again, as a new set, rather than refused.
+#[test]
+fn a_set_deleted_meanwhile_is_saved_anew() {
+    let mut h = keywords_panel();
+    h.app.session.execute("keyword.saveSet", &json!({"name": "Weddings", "keywords": ["ceremony"]})).unwrap();
+    h.settle(SETTLE);
+    open_editor(&mut h);
+    h.app.session.execute("keyword.deleteSet", &json!({"name": "Weddings"})).unwrap();
+    ask(&mut h, "ui.clickWidget", json!({"id": "button:dialogOk"}));
+    assert_eq!(h.app.ui.dialog, None);
+    assert_eq!(sets(&mut h)["current"], "Weddings");
+}
+
+/// Save as a new set (Lightroom Classic's Save as New Preset): the edited set stays, and the new
+/// one, under its own name, becomes current.
+#[test]
+fn save_as_a_new_set_keeps_the_original() {
+    let mut h = keywords_panel();
+    h.app.session.execute("keyword.saveSet", &json!({"name": "Weddings", "keywords": ["ceremony"]})).unwrap();
+    h.settle(SETTLE);
+    open_editor(&mut h);
+    ask(&mut h, "ui.text", json!({"text": "Ceremonies"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "check:keywordSetAsNew"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "button:dialogOk"}));
+    let s = sets(&mut h);
+    let names: Vec<&str> = s["sets"].as_array().unwrap().iter().map(|x| x["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Recent Keywords", "Weddings", "Ceremonies"]);
+    assert_eq!(s["current"], "Ceremonies");
 }
