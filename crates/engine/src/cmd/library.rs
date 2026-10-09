@@ -119,6 +119,14 @@ fn album_param(p: &Value, key: &str, c: &str) -> Result<AlbumId> {
     p.get(key).and_then(Value::as_u64).map(AlbumId).ok_or_else(|| bad(c, format!("missing album `{key}`")))
 }
 
+/// An optional album id: absent or `null` is `None`, anything but a number is an error.
+fn opt_album_param(p: &Value, key: &str, c: &str) -> Result<Option<AlbumId>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_u64().map(|n| Some(AlbumId(n))).ok_or_else(|| bad(c, format!("`{key}` must be an album id or null"))),
+    }
+}
+
 fn strs(p: &Value, key: &str) -> Vec<String> {
     p.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
 }
@@ -880,6 +888,76 @@ pub fn specs() -> Vec<CommandSpec> {
             s.commit("Move Album", Op::MoveAlbum { id, parent })?;
             ok()
         }),
+        cmd!(
+            "album.reorder",
+            "Reorder Album",
+            [],
+            None,
+            "{id, parent?: folderId|null, before?: albumId|null} — places the album (or folder) in `parent` (default: where it is; null: the top level) before the sibling `before` of the same kind, or last of its kind; the folder is then ordered by hand. One undo step. → {changed}",
+            always,
+            |s, p| {
+                let id = album_param(p, "id", "album.reorder")?;
+                let me = s.catalog.album(id).ok_or_else(|| bad("album.reorder", "no such album"))?;
+                let parent = if p.get("parent").is_some() { opt_album_param(p, "parent", "album.reorder")? } else { me.parent };
+                let before = opt_album_param(p, "before", "album.reorder")?;
+                let mut order: Vec<AlbumId> = s.catalog.album_children(parent).into_iter().filter(|a| a.id != id).map(|a| a.id).collect();
+                let at = match before {
+                    Some(b) => {
+                        let at = order.iter().position(|x| *x == b).ok_or_else(|| bad("album.reorder", "`before` is not inside that folder"))?;
+                        if s.catalog.album(b).is_none_or(|x| x.folder != me.folder) {
+                            return Err(bad("album.reorder", "folders are placed among folders and albums among albums"));
+                        }
+                        at
+                    }
+                    None if me.folder => order.iter().take_while(|x| s.catalog.album(**x).is_some_and(|a| a.folder)).count(),
+                    None => order.len(),
+                };
+                order.insert(at.min(order.len()), id);
+                let moved = me.parent != parent;
+                let mut ops = Vec::new();
+                if moved {
+                    ops.push(Op::MoveAlbum { id, parent });
+                }
+                for (i, aid) in order.iter().enumerate() {
+                    let want = u32::try_from(i).ok();
+                    // a moved album starts without a place in its new folder
+                    let have = if moved && *aid == id { None } else { s.catalog.album(*aid).and_then(|a| a.order) };
+                    if have != want {
+                        ops.push(Op::SetAlbumOrder { id: *aid, order: want });
+                    }
+                }
+                if ops.is_empty() {
+                    return Ok(json!({"changed": 0}));
+                }
+                let changed = ops.len();
+                s.commit("Reorder Album", Op::Batch { ops })?;
+                Ok(json!({"changed": changed}))
+            }
+        ),
+        cmd!(
+            "album.sort",
+            "Sort Albums by Name",
+            [],
+            None,
+            "{parent?: folderId|null} — drops the hand order of the albums inside the folder (default: the top level), so they are listed by name → {changed}",
+            always,
+            |s, p| {
+                let parent = opt_album_param(p, "parent", "album.sort")?;
+                let ops: Vec<Op> = s
+                    .catalog
+                    .album_children(parent)
+                    .into_iter()
+                    .filter(|a| a.order.is_some())
+                    .map(|a| Op::SetAlbumOrder { id: a.id, order: None })
+                    .collect();
+                if ops.is_empty() {
+                    return Ok(json!({"changed": 0}));
+                }
+                let changed = ops.len();
+                s.commit("Sort Albums by Name", Op::Batch { ops })?;
+                Ok(json!({"changed": changed}))
+            }
+        ),
         cmd!("album.addPhotos", "Add to Album", ["Photo"], None, "{id: albumId, ids?: [photoIds]} (default: selection)", has_selection, |s, p| {
             let id = album_param(p, "id", "album.addPhotos")?;
             let targets = ids_param(p).unwrap_or_else(|| s.targets(&Value::Null));
