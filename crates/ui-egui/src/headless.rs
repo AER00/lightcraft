@@ -1663,6 +1663,14 @@ mod tests {
         assert_eq!(h.request("ui.clickWidget", json!({"id": "button:addToLibrary"}), t)["ok"], true);
         h.settle(SETTLE);
         assert_eq!(h.app.session.catalog.photos().filter(|p| !p.local).count(), library_before + 2);
+        // Truncated ancestors remain clickable and still open the original, unabridged path.
+        let inner = dir.join("inner");
+        h.request("engine.execute", json!({"command": "library.browse", "params": {"path": inner.to_string_lossy()}}), t);
+        h.settle(SETTLE);
+        let parent_index = dir.to_string_lossy().split(['/', '\\']).filter(|p| !p.is_empty()).count() - 1;
+        assert_eq!(h.request("ui.clickWidget", json!({"id": format!("crumb:{parent_index}")}), t)["ok"], true);
+        h.settle(SETTLE);
+        assert_eq!(h.app.session.browse.as_ref().unwrap().path, dir.to_string_lossy().replace('\\', "/"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
