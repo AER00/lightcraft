@@ -83,6 +83,16 @@ pub struct ListedKeyword {
     pub info: KeywordInfo,
 }
 
+/// A photo's keywords as an exported file carries them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExportKeywords {
+    /// Names, flat (`dc:subject`): each keyword's own, the keywords containing it and synonyms, as
+    /// their options say.
+    pub flat: Vec<String>,
+    /// Full paths (`lr:hierarchicalSubject`).
+    pub hierarchical: Vec<String>,
+}
+
 /// One node of the keyword tree.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct KeywordNode {
@@ -248,6 +258,52 @@ impl Catalog {
         });
         ops.extend(self.list_move_ops(&from, &into));
         Ok(Op::Batch { ops })
+    }
+
+    /// What exported files carry for a photo with these keywords (Lightroom Classic's keyword tag
+    /// options, [`KeywordInfo`]): a keyword left out of export goes nowhere; otherwise its name
+    /// and full path, the keywords containing it that are exported themselves (unless "export
+    /// containing keywords" is off) and synonyms (unless "export synonyms" is off). Each name once,
+    /// whatever its case.
+    pub fn export_keywords(&self, keywords: &[String]) -> ExportKeywords {
+        let defaults = KeywordInfo::default();
+        let info = |path: &str| self.keyword_info(path).unwrap_or(&defaults);
+        let mut out = ExportKeywords::default();
+        let push = |v: &mut Vec<String>, s: &str| {
+            if !s.is_empty() && !v.iter().any(|x| x.eq_ignore_ascii_case(s)) {
+                v.push(s.to_string());
+            }
+        };
+        for k in keywords {
+            let path = clean(k);
+            let me = info(&path);
+            if path.is_empty() || !me.include_on_export {
+                continue;
+            }
+            let levels: Vec<&str> = path.split(SEP).collect();
+            let mut names = |at: usize, i: &KeywordInfo| {
+                if let Some(name) = levels.get(at) {
+                    push(&mut out.flat, name);
+                }
+                if i.export_synonyms {
+                    for s in &i.synonyms {
+                        push(&mut out.flat, s.trim());
+                    }
+                }
+            };
+            names(levels.len().saturating_sub(1), me);
+            if me.export_containing {
+                for at in (0..levels.len().saturating_sub(1)).rev() {
+                    let parent = levels.get(..=at).map(|l| l.join("|")).unwrap_or_default();
+                    let pi = info(&parent);
+                    if pi.include_on_export {
+                        names(at, pi);
+                    }
+                }
+            }
+            push(&mut out.hierarchical, &path);
+        }
+        out
     }
 
     /// The keyword is in the tree: listed, or on a photo (itself or one below it).
@@ -680,6 +736,47 @@ mod tests {
         let op = c.rename_keyword_ops("ẞA", "Weg").unwrap();
         c.apply(op).unwrap();
         assert_eq!(kws(&c, ids[1]), ["Weg|ü"]);
+    }
+
+    fn exported(c: &Catalog, keywords: &[&str]) -> (Vec<String>, Vec<String>) {
+        let e = c.export_keywords(&keywords.iter().map(|k| k.to_string()).collect::<Vec<_>>());
+        (e.flat, e.hierarchical)
+    }
+
+    /// By default a keyword is exported as its name together with the keywords containing it (flat,
+    /// `dc:subject`), and as its full path (`lr:hierarchicalSubject`); each name once.
+    #[test]
+    fn a_keyword_exports_its_name_its_parents_and_its_path() {
+        let c = Catalog::new();
+        let (flat, paths) = exported(&c, &["travel|Italy|Rome", "Travel|Spain", "beach"]);
+        assert_eq!(flat, ["Rome", "Italy", "travel", "Spain", "beach"]);
+        assert_eq!(paths, ["travel|Italy|Rome", "Travel|Spain", "beach"]);
+    }
+
+    /// A keyword not included on export is left out, path and all; a parent left out (a keyword that
+    /// only organizes others) isn't exported as a containing keyword, but its children are.
+    #[test]
+    fn keywords_left_out_of_export_stay_out() {
+        let mut c = Catalog::new();
+        let out = KeywordInfo { include_on_export: false, ..KeywordInfo::default() };
+        c.apply(Op::SetKeyword { path: "Places".into(), info: Some(out.clone()) }).unwrap();
+        c.apply(Op::SetKeyword { path: "draft".into(), info: Some(out) }).unwrap();
+        let (flat, paths) = exported(&c, &["Places|Lisbon", "draft"]);
+        assert_eq!(flat, ["Lisbon"]);
+        assert_eq!(paths, ["Places|Lisbon"]);
+    }
+
+    /// Without "export containing keywords" only the keyword's own name goes out flat; synonyms go
+    /// out with it unless "export synonyms" is off.
+    #[test]
+    fn containing_keywords_and_synonyms_follow_their_options() {
+        let mut c = Catalog::new();
+        let alone = KeywordInfo { export_containing: false, ..with_synonyms(&["Lisboa"]) };
+        c.apply(Op::SetKeyword { path: "Places|Lisbon".into(), info: Some(alone) }).unwrap();
+        let quiet = KeywordInfo { export_synonyms: false, ..with_synonyms(&["marriage"]) };
+        c.apply(Op::SetKeyword { path: "Events|Weddings".into(), info: Some(quiet) }).unwrap();
+        let (flat, _) = exported(&c, &["Places|Lisbon", "Events|Weddings"]);
+        assert_eq!(flat, ["Lisbon", "Lisboa", "Weddings", "Events"]);
     }
 
     #[test]
