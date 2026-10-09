@@ -44,6 +44,8 @@ mod tests_keymap;
 #[cfg(test)]
 mod tests_keyword_list;
 #[cfg(test)]
+mod tests_keywording;
+#[cfg(test)]
 mod tests_labels;
 #[cfg(test)]
 mod tests_library_problem;
@@ -1078,6 +1080,8 @@ mod drop_tests {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
+    /// The Keywording box's chips, by library revision and selection.
+    keyword_chips: Option<(u64, u64, std::sync::Arc<Vec<panels::keywording::Chip>>)>,
     /// The Keyword List's tick boxes, by library revision and selection.
     keyword_ticks: Option<(u64, u64, std::sync::Arc<panels::keyword_list::Ticks>)>,
     folder_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::FolderNode>>)>,
@@ -1163,6 +1167,22 @@ impl Caches {
                 let t = std::sync::Arc::new(cat.keyword_tree());
                 self.keyword_tree = Some((cat.revision, t.clone()));
                 t
+            }
+        }
+    }
+    /// The selection's keywords (the Keywording box's chips).
+    pub(crate) fn keyword_chips(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+        selection: &[lightcraft_catalog::PhotoId],
+    ) -> std::sync::Arc<Vec<panels::keywording::Chip>> {
+        let key = key_of(selection);
+        match &self.keyword_chips {
+            Some((r, k, c)) if *r == cat.revision && *k == key => c.clone(),
+            _ => {
+                let c = std::sync::Arc::new(panels::keywording::chips(cat, selection));
+                self.keyword_chips = Some((cat.revision, key, c.clone()));
+                c
             }
         }
     }

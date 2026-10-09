@@ -783,31 +783,7 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
         ui.data_mut(|d| d.insert_temp(kid, text));
         ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            for k in &p.meta.keywords {
-                let r =
-                    ui.add(egui::Button::new(egui::RichText::new(format!("{}  ×", k.replace('|', " › "))).color(t.text_label)).corner_radius(10.0));
-                register(ui.ctx(), format!("keywordChip:{k}"), r.rect);
-                if r.clicked() {
-                    let _ = app.run("photo.setMeta", json!({"removeKeywords": [k]}));
-                }
-                r.context_menu(|ui| {
-                    if ui.button(crate::i18n::tr("Remove from Photo")).clicked() {
-                        let _ = app.run("photo.setMeta", json!({"removeKeywords": [k]}));
-                    }
-                    if ui.button(crate::i18n::tr("Show Photos with Keyword")).clicked() {
-                        let _ = app.run("library.filter", json!({"keyword": k}));
-                    }
-                    ui.separator();
-                    if ui.button(crate::i18n::tr("Rename Keyword…")).clicked() {
-                        app.ui.dialog = Some(crate::state::Dialog::RenameKeyword { from: k.clone(), to: k.clone() });
-                    }
-                    if ui.button(crate::i18n::tr("Delete Keyword")).clicked() {
-                        let _ = app.run("keyword.delete", json!({"keyword": k}));
-                    }
-                });
-            }
-        });
+        super::keywording::chip_row(app, ui);
         ui.add_space(10.0);
         keyword_set(app, ui, &p.meta.keywords);
         ui.add_space(8.0);
