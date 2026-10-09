@@ -21,6 +21,7 @@ pub mod menus;
 pub mod merge;
 pub mod panels;
 pub mod pick;
+pub mod region;
 pub mod render;
 pub mod shortcuts;
 pub mod softpaint;
@@ -53,6 +54,8 @@ mod tests_offline;
 #[cfg(test)]
 mod tests_panels;
 #[cfg(test)]
+mod tests_preview_limit;
+#[cfg(test)]
 mod tests_quit_unsaved;
 #[cfg(test)]
 mod tests_scroll;
@@ -62,6 +65,8 @@ mod tests_switch_library;
 mod tests_titlebar;
 #[cfg(test)]
 mod tests_unsaved;
+#[cfg(test)]
+mod tests_zoom;
 
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -208,6 +213,16 @@ pub struct LightcraftApp {
     /// What the loupe drew last frame: photo and source ("render", "cached", "embedded", "small",
     /// "thumb", "none").
     pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
+    /// The window render the loupe asked for last, by job key (see [`region`]); kept for the few
+    /// windows whose textures can be on screen, and for the inspector.
+    pub region_view: Option<region::RegionView>,
+    /// The same for the Before side of a Before/After view.
+    pub region_before_view: Option<region::RegionView>,
+    /// The loupe's render sizes while a pinch or two-finger scroll runs.
+    pub(crate) size_hold: region::SizeHold,
+    /// (photo, look, window frame size) a window was refused for: it reads more than one render holds.
+    pub(crate) window_refused: Option<(lightcraft_catalog::PhotoId, u64, usize)>,
+    pub(crate) region_tiles: std::collections::HashMap<(bool, u64), region::RegionView>,
     /// Photo Merge dialog previews and background merges.
     pub merge: merge::MergeState,
     /// An import in progress (the import review dialog's batches).
@@ -276,6 +291,11 @@ impl LightcraftApp {
             widgets: vec![],
             gesture: None,
             loupe_shown: None,
+            region_view: None,
+            region_before_view: None,
+            size_hold: Default::default(),
+            window_refused: None,
+            region_tiles: Default::default(),
             merge: merge::MergeState::default(),
             import: None,
             scan: None,
