@@ -551,3 +551,41 @@ fn choosing_random_starts_a_fresh_shuffle() {
     assert_eq!(s.sort.seed, 42, "an explicit seed is honoured");
     assert!(s.sort.seed < 1 << 53);
 }
+
+fn capture_time_raw_metadata_session(raw: Option<&str>) -> Session {
+    use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+    let mut s = Session::new();
+    let id = PhotoId(1);
+    let mut p = Photo::new(id, Source::Demo { scene: 0 }, "one.jpg", "JPEG", 4, 3, "2026-04-01T00:00:00");
+    p.captured = raw.map(str::to_string);
+    s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    s.selection = crate::Selection::single(id);
+    s
+}
+
+#[test]
+fn capture_time_invalid_calendar_anchor_keeps_other_targets_and_redo() {
+    use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+    for raw in ["2026-02-30T12:00:00", "2026x03x01T12:00:00"] {
+        let mut s = capture_time_raw_metadata_session(Some(raw));
+        let peer = PhotoId(2);
+        let mut p = Photo::new(peer, Source::Demo { scene: 0 }, "peer.jpg", "JPEG", 4, 3, "2026-10-09T00:00:00");
+        p.captured = Some("2026-03-01T12:00:00.25+02:00".into());
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        s.commit("Earlier rating", Op::SetRating { id: peer, rating: 4 }).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        s.selection.ids = vec![PhotoId(1), peer];
+        s.selection.active = Some(PhotoId(1));
+        let before = s.catalog.clone();
+        let selection = s.selection.clone();
+        let undo: Vec<_> = s.undo.iter().map(|e| (e.label.clone(), e.op.clone())).collect();
+        let redo: Vec<_> = s.redo.iter().map(|e| (e.label.clone(), e.op.clone())).collect();
+        let log = s.pending_log.clone();
+        assert!(s.execute("photo.setCaptureTime", &json!({"time": "2026-03-03T12:00:00"})).is_err(), "{raw}");
+        assert_eq!(s.catalog, before);
+        assert_eq!(s.selection, selection);
+        assert_eq!(s.undo.iter().map(|e| (e.label.clone(), e.op.clone())).collect::<Vec<_>>(), undo);
+        assert_eq!(s.redo.iter().map(|e| (e.label.clone(), e.op.clone())).collect::<Vec<_>>(), redo);
+        assert_eq!(s.pending_log, log);
+    }
+}
