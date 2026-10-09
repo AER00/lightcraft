@@ -52,6 +52,9 @@ pub enum CatalogError {
     NoStack(StackId),
     #[error("invalid: {0}")]
     Invalid(String),
+    /// A keyword of that name is there already: moving or renaming onto it would merge the two.
+    #[error("there is a keyword “{0}” already")]
+    KeywordExists(String),
     #[error("corrupt catalog data: {0}")]
     Corrupt(String),
     #[error("catalog storage: {0}")]

@@ -250,6 +250,106 @@ impl Catalog {
         Ok(Op::Batch { ops })
     }
 
+    /// The keyword is in the tree: listed, or on a photo (itself or one below it).
+    pub fn has_keyword(&self, path: &str) -> bool {
+        let k = clean(path);
+        !k.is_empty() && (self.keyword_info(&k).is_some() || self.photos().any(|p| p.meta.keywords.iter().any(|x| is_under(x, &k))))
+    }
+
+    /// The keyword as written in the library (whatever the case of `path`): its listing, or the
+    /// levels a photo's keyword spells it with. `None` when there is no such keyword.
+    pub fn keyword_path(&self, path: &str) -> Option<String> {
+        let k = clean(path);
+        if k.is_empty() {
+            return None;
+        }
+        if let Some(l) = self.keyword_list.get(&k.to_lowercase()) {
+            return Some(l.path.clone());
+        }
+        let levels = k.split(SEP).count();
+        self.photos()
+            .flat_map(|p| p.meta.keywords.iter())
+            .find(|x| is_under(x, &k))
+            .map(|x| x.split(SEP).map(str::trim).filter(|s| !s.is_empty()).take(levels).collect::<Vec<_>>().join("|"))
+    }
+
+    /// Create a keyword with these attributes, and give it to `photos` — one batch. A keyword that
+    /// exists already is refused.
+    pub fn create_keyword_ops(&self, path: &str, info: KeywordInfo, photos: &[crate::PhotoId]) -> Result<Op> {
+        let path = clean(path);
+        if path.is_empty() {
+            return Err(CatalogError::Invalid("keyword names can't be empty".into()));
+        }
+        if self.has_keyword(&path) {
+            return Err(CatalogError::KeywordExists(path));
+        }
+        let mut ops = vec![Op::SetKeyword { path: path.clone(), info: Some(info) }];
+        for id in photos {
+            let p = self.photo(*id).ok_or(CatalogError::NoPhoto(*id))?;
+            let mut meta = p.meta.clone();
+            meta.keywords.push(path.clone());
+            dedupe(&mut meta.keywords);
+            ops.push(Op::SetMeta { id: *id, meta: Box::new(meta) });
+        }
+        Ok(Op::Batch { ops })
+    }
+
+    /// Move `keyword` (with the keywords below it) inside `parent`, or to the top level (`None`).
+    /// It keeps its name. Onto a keyword that is there already the two merge, which only happens
+    /// with `merge`; otherwise [`CatalogError::KeywordExists`].
+    pub fn move_keyword_ops(&self, keyword: &str, parent: Option<&str>, merge: bool) -> Result<Op> {
+        let Some(from) = self.keyword_path(keyword) else {
+            return Err(CatalogError::Invalid(format!("no keyword “{}”", clean(keyword))));
+        };
+        let leaf = from.rsplit(SEP).next().unwrap_or(&from);
+        let to = match parent.map(clean).filter(|p| !p.is_empty()) {
+            Some(p) if is_under(&p, &from) => return Err(CatalogError::Invalid("can't move a keyword inside itself".into())),
+            Some(p) => format!("{}{SEP}{leaf}", self.keyword_path(&p).unwrap_or(p)),
+            None => leaf.to_string(),
+        };
+        if to.eq_ignore_ascii_case(&from) {
+            return Ok(Op::Batch { ops: vec![] });
+        }
+        if !merge && self.has_keyword(&to) {
+            return Err(CatalogError::KeywordExists(to));
+        }
+        self.rename_keyword_ops(&from, &to)
+    }
+
+    /// Rename `keyword`'s last level to `name` (it stays where it is) and set its attributes — one
+    /// batch. A name that is taken is refused ([`CatalogError::KeywordExists`]): merging is its own
+    /// action.
+    pub fn edit_keyword_ops(&self, keyword: &str, name: &str, info: KeywordInfo) -> Result<Op> {
+        let Some(from) = self.keyword_path(keyword) else {
+            return Err(CatalogError::Invalid(format!("no keyword “{}”", clean(keyword))));
+        };
+        let name = name.trim();
+        if name.is_empty() || name.contains(SEP) {
+            return Err(CatalogError::Invalid("a keyword's name is one level, without “|”".into()));
+        }
+        let to = match from.rsplit_once(SEP) {
+            Some((parent, _)) => format!("{parent}{SEP}{name}"),
+            None => name.to_string(),
+        };
+        let mut ops = Vec::new();
+        if to != from {
+            if !to.eq_ignore_ascii_case(&from) && self.has_keyword(&to) {
+                return Err(CatalogError::KeywordExists(to));
+            }
+            if let Op::Batch { ops: renamed } = self.rename_keyword_ops(&from, &to)? {
+                ops = renamed;
+            }
+        }
+        ops.push(Op::SetKeyword { path: to, info: Some(info) });
+        Ok(Op::Batch { ops })
+    }
+
+    /// Take off the keyword list the keywords no photo has, nor any keyword below them — one batch.
+    pub fn purge_unused_keywords_ops(&self) -> Op {
+        let used: Vec<&String> = self.photos().flat_map(|p| p.meta.keywords.iter()).collect();
+        Op::Batch { ops: self.list_ops(|list| list.retain(|_, l| used.iter().any(|k| is_under(k, &l.path)))) }
+    }
+
     /// Keyword suggestions for a photo that has `current` keywords: with a typed `prefix`, the
     /// library's keywords containing it (those starting with it first); otherwise keywords that
     /// appear together with `current` on other photos, then the most used ones. Most frequent
@@ -478,6 +578,95 @@ mod tests {
         assert_eq!(tree_paths(&c.keyword_tree()), [("beach".to_string(), 1)]);
         c.apply(undo).unwrap();
         assert_eq!(c.to_snapshot(), before);
+    }
+
+    /// Creating a keyword lists it with its attributes, and can tag photos with it in the same undo
+    /// step. A keyword that exists already (listed, or on a photo) isn't created again.
+    #[test]
+    fn creating_a_keyword_lists_it_and_can_tag_photos() {
+        let (mut c, ids) = lib(&[&["beach"], &[]]);
+        let before = c.to_snapshot();
+        let op = c.create_keyword_ops("Events | Weddings", with_synonyms(&["marriage"]), &[ids[1]]).unwrap();
+        let undo = c.apply(op).unwrap();
+        assert_eq!(listed(&c), [("Events|Weddings".to_string(), with_synonyms(&["marriage"]))]);
+        assert_eq!(kws(&c, ids[1]), ["Events|Weddings"]);
+        c.apply(undo).unwrap();
+        assert_eq!(c.to_snapshot(), before);
+        for exists in ["BEACH", "events|weddings"] {
+            if exists == "events|weddings" {
+                let op = c.create_keyword_ops("Events|Weddings", KeywordInfo::default(), &[]).unwrap();
+                c.apply(op).unwrap();
+            }
+            assert!(c.create_keyword_ops(exists, KeywordInfo::default(), &[]).is_err(), "{exists}");
+        }
+        assert!(c.create_keyword_ops(" | ", KeywordInfo::default(), &[]).is_err());
+    }
+
+    /// Moving a keyword nests it inside another (or takes it to the top level), with its children,
+    /// on photos and in the list. It can't go inside itself or one of its children, and moving it
+    /// where it already is changes nothing.
+    #[test]
+    fn moving_a_keyword_nests_it_inside_another() {
+        let (mut c, ids) = lib(&[&["Italy|Rome"], &["Europe"]]);
+        // typed in any case, the keywords keep the spelling the library has
+        let op = c.move_keyword_ops("italy", Some("EUROPE"), false).unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(kws(&c, ids[0]), ["Europe|Italy|Rome"]);
+        let op = c.move_keyword_ops("europe|italy", None, false).unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(kws(&c, ids[0]), ["Italy|Rome"], "back at the top level");
+        assert!(c.move_keyword_ops("italy", Some("italy|rome"), false).is_err(), "inside its own child");
+        assert!(c.move_keyword_ops("italy", Some("Italy"), false).is_err(), "inside itself");
+        assert_eq!(c.move_keyword_ops("italy|rome", Some("italy"), false).unwrap(), Op::Batch { ops: vec![] }, "already there");
+        assert!(c.move_keyword_ops("lisbon", Some("europe"), false).is_err(), "no such keyword");
+    }
+
+    /// Moving onto a name that is taken (Europe already has a Rome) merges the two, so the move
+    /// asks first: refused unless merging is allowed.
+    #[test]
+    fn moving_onto_a_taken_name_merges_only_when_allowed() {
+        let (mut c, ids) = lib(&[&["rome"], &["europe|rome"]]);
+        let err = c.move_keyword_ops("rome", Some("europe"), false).unwrap_err();
+        assert!(matches!(err, CatalogError::KeywordExists(ref k) if k == "europe|rome"), "{err:?}");
+        let op = c.move_keyword_ops("rome", Some("europe"), true).unwrap();
+        c.apply(op).unwrap();
+        assert_eq!((kws(&c, ids[0]), kws(&c, ids[1])), (vec!["europe|rome".to_string()], vec!["europe|rome".to_string()]));
+    }
+
+    /// Editing a keyword renames it (its last level: it stays where it is) and sets its attributes,
+    /// in one undo step. A name that is taken is refused: merging is its own action.
+    #[test]
+    fn editing_a_keyword_renames_it_and_sets_its_attributes() {
+        let (mut c, ids) = lib(&[&["travel|italy"], &["travel|spain"]]);
+        let before = c.to_snapshot();
+        let person = KeywordInfo { person: true, ..KeywordInfo::default() };
+        let op = c.edit_keyword_ops("travel|italy", "Italia", person.clone()).unwrap();
+        let undo = c.apply(op).unwrap();
+        assert_eq!(kws(&c, ids[0]), ["travel|Italia"]);
+        assert_eq!(c.keyword_info("travel|italia"), Some(&person));
+        c.apply(undo).unwrap();
+        assert_eq!(c.to_snapshot(), before);
+        // attributes alone
+        let op = c.edit_keyword_ops("travel", "travel", with_synonyms(&["trip"])).unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(listed(&c), [("travel".to_string(), with_synonyms(&["trip"]))]);
+        assert!(matches!(c.edit_keyword_ops("travel|italy", "Spain", KeywordInfo::default()), Err(CatalogError::KeywordExists(_))));
+        assert!(c.edit_keyword_ops("travel|italy", "a|b", KeywordInfo::default()).is_err(), "a name, not a path");
+        assert!(c.edit_keyword_ops("travel|italy", "  ", KeywordInfo::default()).is_err());
+    }
+
+    /// Purging takes off the list the keywords no photo has (nor any keyword below them), in one
+    /// undo step; keywords photos carry stay.
+    #[test]
+    fn purging_takes_unused_keywords_off_the_list() {
+        let (mut c, _) = lib(&[&["travel|italy"]]);
+        for path in ["travel", "travel|italy", "travel|spain", "weddings"] {
+            c.apply(Op::SetKeyword { path: path.into(), info: Some(KeywordInfo::default()) }).unwrap();
+        }
+        let op = c.purge_unused_keywords_ops();
+        c.apply(op).unwrap();
+        assert_eq!(listed(&c).iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["travel", "travel|italy"]);
+        assert_eq!(tree_paths(&c.keyword_tree()), [("travel".to_string(), 1), ("travel|italy".to_string(), 1)]);
     }
 
     /// Renaming matches names whatever their case, also where a letter's case changes its length
