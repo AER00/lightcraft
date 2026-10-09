@@ -66,6 +66,8 @@ pub fn parse_keyword_list(text: &str) -> Result<Vec<(String, KeywordInfo)>> {
     // Windows, Unix and classic Mac line ends alike
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
     let mut out: Vec<(String, KeywordInfo)> = Vec::new();
+    // where each keyword is in `out`, by lower-case path (a search of `out` per line was quadratic)
+    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     // the keyword at each level above the line: its path and where it is in `out`
     let mut above: Vec<(String, usize)> = Vec::new();
     for (i, line) in text.split('\n').enumerate() {
@@ -120,10 +122,11 @@ pub fn parse_keyword_list(text: &str) -> Result<Vec<(String, KeywordInfo)>> {
             Some((parent, _)) => format!("{parent}{SEP}{name}"),
             None => name.to_string(),
         };
-        let at = match out.iter().position(|(p, _)| same(p, &path)) {
-            Some(at) => at,
+        let at = match index.get(&path.to_lowercase()) {
+            Some(at) => *at,
             None => {
                 out.push((path.clone(), KeywordInfo::default()));
+                index.insert(path.to_lowercase(), out.len() - 1);
                 out.len() - 1
             }
         };
@@ -452,17 +455,48 @@ impl Catalog {
     /// levels it has; those it has keep their attributes and gain the list's synonyms. Also says how
     /// many keywords were added and how many gained synonyms.
     pub fn import_keywords_ops(&self, entries: &[(String, KeywordInfo)]) -> (Op, usize, usize) {
+        // every keyword the library has, by lower-case path, as it spells it: learnt once from the
+        // tree (looking each line up among all the photos' keywords took minutes for big lists)
+        let mut known: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        fn learn(nodes: &[KeywordNode], known: &mut std::collections::HashMap<String, String>) {
+            for n in nodes {
+                known.insert(n.path.to_lowercase(), n.path.clone());
+                learn(&n.children, known);
+            }
+        }
+        learn(&self.keyword_tree(), &mut known);
+        // a path in the library's spelling of each level it has
+        let spell = |path: &str, known: &std::collections::HashMap<String, String>| -> String {
+            let levels: Vec<&str> = path.split(SEP).collect();
+            let mut out = String::new();
+            for (i, level) in levels.iter().enumerate() {
+                if !out.is_empty() {
+                    out.push(SEP);
+                }
+                let prefix = levels.get(..=i).map(|l| l.join("|").to_lowercase()).unwrap_or_default();
+                match known.get(&prefix).and_then(|p| p.rsplit(SEP).next()) {
+                    Some(name) => out.push_str(name),
+                    None => out.push_str(level),
+                }
+            }
+            out
+        };
         let (mut added, mut updated) = (0, 0);
         let ops = self.list_ops(|list| {
             for (path, info) in entries {
-                let path = self.spelled(&clean(path));
+                let path = spell(&clean(path), &known);
                 let key = path.to_lowercase();
                 if path.is_empty() {
                     continue;
                 }
-                let known = list.contains_key(&key) || self.has_keyword(&path);
-                if !known {
-                    list.insert(key, ListedKeyword { path, info: KeywordInfo { new_keywords_inside: false, ..info.clone() } });
+                if !known.contains_key(&key) {
+                    list.insert(key.clone(), ListedKeyword { path: path.clone(), info: KeywordInfo { new_keywords_inside: false, ..info.clone() } });
+                    // it and its parents are the library's now: what follows spells them so
+                    let levels: Vec<&str> = path.split(SEP).collect();
+                    for i in 0..levels.len() {
+                        let prefix = levels.get(..=i).map(|l| l.join("|")).unwrap_or_default();
+                        known.entry(prefix.to_lowercase()).or_insert(prefix);
+                    }
                     added += 1;
                     continue;
                 }
@@ -1259,6 +1293,37 @@ mod tests {
     fn a_repeated_keyword_keeps_its_first_spelling() {
         let read = parse_keyword_list("Events\n\tWeddings\nevents\n\tBirthdays\n").unwrap();
         assert_eq!(read.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["Events", "Events|Weddings", "Events|Birthdays"]);
+    }
+
+    /// A big list reads and imports at once, against a big library too: 40,000 keywords used to take
+    /// half a minute to read, and checking 5,000 new ones against 20,000 photos over a minute, with
+    /// the app frozen.
+    #[test]
+    fn a_big_keyword_list_imports_quickly() {
+        let mut text = String::new();
+        for g in 0..400 {
+            text.push_str(&format!("group {g}\n"));
+            for k in 0..99 {
+                text.push_str(&format!("\tkeyword {g}-{k}\n"));
+            }
+        }
+        let t0 = std::time::Instant::now();
+        let read = parse_keyword_list(&text).unwrap();
+        assert_eq!(read.len(), 40_000);
+        let mut c = Catalog::new();
+        let mut ops = Vec::new();
+        for i in 0..20_000u32 {
+            let id = c.alloc_photo_id();
+            let mut p = Photo::new(id, Source::Demo { scene: 1 }, "a.jpg", "JPEG", 3, 2, "2026-01-01");
+            p.meta.keywords = (0..5).map(|k| format!("library {}|tag {}", k, (i + k) % 3000)).collect();
+            ops.push(Op::AddPhoto { photo: Box::new(p) });
+        }
+        c.apply(Op::Batch { ops }).unwrap();
+        let (op, added, _) = c.import_keywords_ops(&read[..5_000]);
+        c.apply(op).unwrap();
+        assert_eq!(added, 5_000);
+        let took = t0.elapsed();
+        assert!(took < std::time::Duration::from_secs(10), "{took:?}");
     }
 
     /// Importing a list adds the keywords the library doesn't have, with their attributes, and gives
