@@ -318,6 +318,16 @@ pub fn filter_label(filter: &lightcraft_catalog::Filter, catalog: &lightcraft_ca
     }
 }
 
+/// What people read for smart-album choice `id` of `field` ("Gemeinfrei" for `publicDomain` in
+/// German); an id the field doesn't know, as written.
+pub fn choice_text<'a>(field: &str, id: &'a str) -> &'a str {
+    choice_text_in(language(), field, id)
+}
+
+fn choice_text_in<'a>(language: Locale, field: &str, id: &'a str) -> &'a str {
+    lightcraft_catalog::rules::choice_label(field, id).map_or(id, |label| tr_in(language, label))
+}
+
 /// A rule summary for display, keeping free-text rule values verbatim.
 pub fn rules_label(rules: &lightcraft_catalog::RuleSet) -> String {
     fn describe(rules: &lightcraft_catalog::RuleSet, depth: usize) -> String {
@@ -337,9 +347,8 @@ pub fn rules_label(rules: &lightcraft_catalog::RuleSet) -> String {
                     let Some((_, label, kind)) = FIELDS.iter().find(|entry| entry.0 == field) else { return field.clone() };
                     let operator = ops_for(*kind).iter().find(|entry| entry.0 == op).map_or(op.as_str(), |entry| entry.1);
                     let text = match kind {
-                        Kind::Choice(_) | Kind::Bool => {
-                            tr(value.as_str().unwrap_or(if value.as_bool() == Some(true) { "true" } else { "false" })).to_string()
-                        }
+                        Kind::Choice(_) => value.as_str().map_or_else(|| value.to_string(), |id| choice_text(field, id).to_string()),
+                        Kind::Bool => tr(if value.as_bool() == Some(true) { "true" } else { "false" }).to_string(),
                         _ if matches!(op.as_str(), "inLast" | "notInLast") => format!(
                             "{} {}",
                             value.get("n").unwrap_or(&serde_json::Value::Null),
@@ -631,6 +640,30 @@ mod tests {
     /// catalog can translate. What a language lacks is reported, not failed (like
     /// `catalogs_agree_on_placeholders_and_report_gaps`): a feature PR doesn't have to ship every
     /// language, and the translations catch up at their own pace.
+    /// Smart-album choice values read as words in every language (English "Public Domain", German
+    /// "Gemeinfrei"), never as rule ids like `publicDomain`; an id the field doesn't know shows as
+    /// written. Unlike other labels these must be translated: an untranslated one would be English
+    /// in the middle of a translated rule.
+    #[test]
+    fn choice_values_read_as_words_in_every_language() {
+        use lightcraft_catalog::rules::{FIELDS, Kind};
+        assert_eq!(choice_text_in(Locale::En, "copyrightStatus", "publicDomain"), "Public Domain");
+        assert_eq!(choice_text_in(Locale::De, "copyrightStatus", "publicDomain"), "Gemeinfrei");
+        assert_eq!(choice_text_in(Locale::De, "copyrightStatus", "someday"), "someday");
+        for language in Locale::ALL {
+            for (field, _, kind) in FIELDS {
+                let Kind::Choice(choices) = kind else { continue };
+                for (id, label) in *choices {
+                    let text = choice_text_in(*language, field, id);
+                    assert_ne!(text, *id, "{}: {field} {id}", language.code());
+                    if *language != Locale::En {
+                        assert!(language.catalog().contains_key(*label), "{} lacks {label:?}", language.code());
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn display_label_gaps_are_reported() {
         let mut labels: Vec<&str> = lightcraft_engine::command_specs().iter().map(|spec| spec.label).collect();
@@ -705,6 +738,15 @@ mod tests {
             rules: vec![lightcraft_catalog::Rule::Field { field: "keywords".into(), op: "contains".into(), value: serde_json::json!("Color") }],
         };
         assert_eq!(rules_label(&rules), "Stichwörter enthält Color");
+        let rules = lightcraft_catalog::RuleSet {
+            mode: lightcraft_catalog::Match::All,
+            rules: vec![lightcraft_catalog::Rule::Field {
+                field: "copyrightStatus".into(),
+                op: "is".into(),
+                value: serde_json::json!("publicDomain"),
+            }],
+        };
+        assert!(rules_label(&rules).ends_with(" Gemeinfrei"), "{}", rules_label(&rules));
         let filter = lightcraft_catalog::Filter {
             labels: vec![lightcraft_catalog::ColorLabel::Red, lightcraft_catalog::ColorLabel::Blue],
             ..Default::default()

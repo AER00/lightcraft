@@ -48,8 +48,8 @@ pub enum Kind {
     Keywords,
     Number,
     Date,
-    /// One of a fixed set (`choices`).
-    Choice(&'static [&'static str]),
+    /// One of a fixed set: (id, label). Rules store the id; people see the label.
+    Choice(&'static [(&'static str, &'static str)]),
     Bool,
 }
 
@@ -57,8 +57,12 @@ pub enum Kind {
 /// each of [`FIELD_GROUPS`]).
 pub const FIELDS: &[(&str, &str, Kind)] = &[
     ("rating", "Rating", Kind::Number),
-    ("flag", "Pick Flag", Kind::Choice(&["pick", "reject", "none"])),
-    ("label", "Color Label", Kind::Choice(&["red", "yellow", "green", "blue", "purple", "none"])),
+    ("flag", "Pick Flag", Kind::Choice(&[("pick", "Picked"), ("reject", "Rejected"), ("none", "Unflagged")])),
+    (
+        "label",
+        "Color Label",
+        Kind::Choice(&[("red", "Red"), ("yellow", "Yellow"), ("green", "Green"), ("blue", "Blue"), ("purple", "Purple"), ("none", "None")]),
+    ),
     ("text", "Any Searchable Text", Kind::Text),
     // Source
     ("album", "Album", Kind::Number),
@@ -69,7 +73,7 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     ("fileName", "Filename", Kind::Text),
     ("extension", "File Extension", Kind::Text),
     ("filePath", "File Path", Kind::Text),
-    ("kind", "File Type", Kind::Choice(&["image", "raw", "video"])),
+    ("kind", "File Type", Kind::Choice(&[("image", "Image"), ("raw", "Raw"), ("video", "Video")])),
     ("format", "File Format", Kind::Text),
     ("duration", "Video Duration", Kind::Number),
     // Date
@@ -87,7 +91,11 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     ("altText", "Alt Text", Kind::Text),
     ("creator", "Creator", Kind::Text),
     ("copyright", "Copyright", Kind::Text),
-    ("copyrightStatus", "Copyright Status", Kind::Choice(&["copyrighted", "publicDomain", "unknown"])),
+    (
+        "copyrightStatus",
+        "Copyright Status",
+        Kind::Choice(&[("copyrighted", "Copyrighted"), ("publicDomain", "Public Domain"), ("unknown", "Unknown")]),
+    ),
     // Camera Info
     ("camera", "Camera", Kind::Text),
     ("lens", "Lens", Kind::Text),
@@ -104,12 +112,12 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     // Size
     ("longEdge", "Long Edge", Kind::Number),
     ("shortEdge", "Short Edge", Kind::Number),
-    ("aspect", "Aspect Ratio", Kind::Choice(&["landscape", "portrait", "square"])),
+    ("aspect", "Aspect Ratio", Kind::Choice(&[("landscape", "Landscape (wide)"), ("portrait", "Portrait (tall)"), ("square", "Square")])),
     ("megapixels", "Megapixels", Kind::Number),
     // Develop
     ("edited", "Has Edits", Kind::Bool),
     ("cropped", "Cropped", Kind::Bool),
-    ("treatment", "Treatment", Kind::Choice(&["color", "monochrome"])),
+    ("treatment", "Treatment", Kind::Choice(&[("color", "Color"), ("monochrome", "Black & White")])),
     // Assisted Culling
     ("sharpness", "Focus (assisted culling)", Kind::Number),
     ("bestOfGroup", "Best of Similar Shots", Kind::Bool),
@@ -136,6 +144,13 @@ pub const FIELD_GROUPS: &[(&str, &[&str])] = &[
 /// The field-menu group `field` sits in; `None` for a top-level or unknown field.
 pub fn field_group(field: &str) -> Option<&'static str> {
     FIELD_GROUPS.iter().find(|g| g.1.contains(&field)).map(|g| g.0)
+}
+
+/// The display label of choice `id` of `field` ("Public Domain" for `publicDomain`); `None` when
+/// `field` isn't a choice field or has no such choice.
+pub fn choice_label(field: &str, id: &str) -> Option<&'static str> {
+    let Some(Kind::Choice(choices)) = field_kind(field) else { return None };
+    choices.iter().find(|c| c.0 == id).map(|c| c.1)
 }
 
 /// The display label of `field`; `None` for an unknown field.
@@ -519,7 +534,7 @@ impl RuleSet {
                     let label = field_label(field).unwrap_or(field).to_lowercase();
                     let op = field_kind(field).and_then(|k| ops_for(k).iter().find(|o| o.0 == op)).map_or(op.as_str(), |o| o.1);
                     let v = match value {
-                        Value::String(s) => s.clone(),
+                        Value::String(s) => choice_label(field, s).map_or_else(|| s.clone(), str::to_lowercase),
                         Value::Null => String::new(),
                         Value::Object(o) => format!(
                             "{} {}",
@@ -825,6 +840,32 @@ mod tests {
         for word in ["oregon", "kite", "ana", "bluish"] {
             assert!(m(&p, word), "{word}");
         }
+    }
+
+    /// Choice values have readable labels: the editor and summaries show "Public Domain" and
+    /// "Black & White", never ids like `publicDomain`; rules still store and accept the ids.
+    #[test]
+    fn choices_have_readable_labels() {
+        assert_eq!(choice_label("copyrightStatus", "publicDomain"), Some("Public Domain"));
+        assert_eq!(choice_label("treatment", "monochrome"), Some("Black & White"));
+        assert_eq!(choice_label("flag", "pick"), Some("Picked"));
+        assert_eq!(choice_label("aspect", "landscape"), Some("Landscape (wide)"));
+        assert_eq!(choice_label("flag", "nope"), None);
+        assert_eq!(choice_label("rating", "pick"), None, "not a choice field");
+        for (field, _, kind) in FIELDS {
+            let Kind::Choice(choices) = kind else { continue };
+            for (id, label) in *choices {
+                assert!(!label.is_empty() && label != id, "{field}: {id} has no label of its own");
+                assert!(label.starts_with(|c: char| c.is_uppercase()), "{field}: {label}");
+            }
+        }
+        let r = rs(
+            json!({"rules": [{"field": "copyrightStatus", "op": "is", "value": "publicDomain"}, {"field": "flag", "op": "isNot", "value": "reject"}]}),
+        );
+        assert_eq!(r.describe(), "copyright status is public domain and pick flag isn't rejected");
+        let mut p = photo(1);
+        p.meta.copyright_status = crate::CopyrightStatus::PublicDomain;
+        assert!(r.matches(&p, &Catalog::new()), "ids still match");
     }
 
     /// The field menu shows every rule field once: at the top level or in exactly one group,

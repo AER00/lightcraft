@@ -256,6 +256,10 @@ fn smart_album_rule_sets() {
     let group = |id: &str| fields.as_array().unwrap().iter().find(|f| f["field"] == id).map(|f| f["group"].clone());
     assert_eq!(group("filePath"), Some(serde_json::json!("File")));
     assert_eq!(group("rating"), Some(serde_json::Value::Null));
+    // choices stay the ids rules store; choiceLabels maps them to what people read
+    let flag = fields.as_array().unwrap().iter().find(|f| f["field"] == "copyrightStatus").unwrap();
+    assert_eq!(flag["choices"], serde_json::json!(["copyrighted", "publicDomain", "unknown"]));
+    assert_eq!(flag["choiceLabels"]["publicDomain"], "Public Domain");
     let bad = s.execute(
         "album.createSmart",
         &serde_json::json!({"name": "Bad", "rules": {"ruleSet": {"rules": [{"field": "rating", "op": "contains", "value": 1}]}}}),

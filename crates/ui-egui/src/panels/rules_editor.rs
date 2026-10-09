@@ -19,7 +19,7 @@ pub fn default_value(field: &str, op: &str) -> Value {
         (Some(Kind::Number), _) if field == "shutterSpeed" => json!("1/250"),
         (Some(Kind::Number), "between") => json!([0, 0]),
         (Some(Kind::Number), _) => json!(if field == "rating" { 3 } else { 0 }),
-        (Some(Kind::Choice(c)), _) => json!(c.first().copied().unwrap_or("")),
+        (Some(Kind::Choice(c)), _) => json!(c.first().map_or("", |c| c.0)),
         (Some(Kind::Bool), _) => json!(true),
         _ => json!(""),
     }
@@ -119,13 +119,16 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
         (Some(Kind::Number), _) => number_value(ui, v, field),
         (Some(Kind::Choice(c)), _) => {
             let cur = v.as_str().unwrap_or("").to_string();
-            egui::ComboBox::from_id_salt(format!("{salt}-choice")).width(90.0).selected_text(crate::i18n::tr(&cur)).show_ui(ui, |ui| {
-                for x in c.iter() {
-                    if ui.selectable_label(cur == *x, crate::i18n::tr(x)).clicked() {
-                        *v = json!(x);
+            egui::ComboBox::from_id_salt(format!("{salt}-choice")).width(120.0).selected_text(crate::i18n::choice_text(field, &cur)).show_ui(
+                ui,
+                |ui| {
+                    for (id, _) in c.iter() {
+                        if ui.selectable_label(cur == *id, crate::i18n::choice_text(field, id)).clicked() {
+                            *v = json!(id);
+                        }
                     }
-                }
-            });
+                },
+            );
         }
         (Some(Kind::Bool), _) => {
             let mut b = v.as_bool().unwrap_or(true);
@@ -296,7 +299,7 @@ mod tests {
                 let _ = rs.matches(&p, &cat);
                 let v = default_value(field, op);
                 let one = |v: &Value| match kind {
-                    Kind::Choice(c) => v.as_str().is_some_and(|s| c.contains(&s)),
+                    Kind::Choice(c) => v.as_str().is_some_and(|s| c.iter().any(|c| c.0 == s)),
                     Kind::Number if *field == "shutterSpeed" => v.as_str().and_then(lightcraft_catalog::parse_shutter_seconds).is_some(),
                     Kind::Number => v.is_number(),
                     Kind::Bool => v.is_boolean(),
