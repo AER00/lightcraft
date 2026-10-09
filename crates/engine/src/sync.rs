@@ -137,6 +137,10 @@ impl SyncInput {
 /// library's photos, which run on several threads too. Stops early when `progress.cancel` is set.
 pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
     let SyncInput { folder, revision, scan, photos, labels } = input;
+    // (no threads on the web: one after the other there)
+    #[cfg(target_arch = "wasm32")]
+    let (out, checks) = (crate::import::scan_with(scan, std::slice::from_ref(&folder), progress), check_photos(&photos, &labels, progress));
+    #[cfg(not(target_arch = "wasm32"))]
     let (out, checks) = std::thread::scope(|sc| {
         let photos = &photos;
         let labels = &labels;
