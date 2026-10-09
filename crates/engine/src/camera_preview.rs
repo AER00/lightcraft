@@ -51,13 +51,17 @@ pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransf
     }
     let (sensor, reference) = proxies(raw, bytes, transform, PROXY)?;
     // A camera profile pooled from many photos knows colours this photo shows too little of;
-    // try its colour first and fit tone/chroma per photo (DRO and picture styles vary).
+    // try its colour first and fit tone/chroma per photo (picture styles vary).
     let profile = raw.metadata.model.as_deref().and_then(crate::camera_profiles::get);
     let colour = profile.as_ref().and_then(|p| Some((p.matrix().mul(&transform.matrix.inverse()?), p.hue_sat.clone())));
     let look = fit_pairs_with(&sensor, &reference, colour)?;
+    // Sony's Dynamic Range Optimizer (on by default) brightens the camera JPEG's darker regions,
+    // not the raw: keep the colour fitted to the JPEG, take the tone curve without DRO.
+    let dro = lightcraft_raw::embedded_preview_dynamic_range_optimized(bytes) == Some(true);
+    let look = if dro { with_dro_off_tone(look) } else { look };
     if lightcraft_pipeline::profiling() {
         eprintln!(
-            "[profile] {:?} camera look: {:?}, {:?}, hue/sat table {}, camera profile available {}",
+            "[profile] {:?} camera look: {:?}, {:?}, hue/sat table {}, camera profile available {}, DRO tone replaced {dro}",
             raw.format,
             look.matrix.0,
             look.tone,
@@ -66,6 +70,57 @@ pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransf
         );
     }
     Some(look)
+}
+
+/// Sony's global tone curve with the Dynamic Range Optimizer off (Standard creative style), pooled
+/// from 12 CC0 raw.pixls.us ARWs of 10 interchangeable-lens bodies and their camera JPEGs; the file
+/// lists them and how the curve was derived (`assets/ATTRIBUTION.md`). Pooled the same way from 55
+/// private ILCE-7CR photos with DRO off, the curve differs by at most 1.2 L* between scene luminance
+/// 0.01 and 0.5. Issue #244, `docs/camera-preview-colour.md`.
+const SONY_DRO_OFF_TONE: &str = include_str!("../../../assets/camera-tone/sony-dro-off.json");
+
+/// [`SONY_DRO_OFF_TONE`]'s curve (`None` only if the built-in file were invalid; a test checks it).
+fn sony_dro_off_tone() -> Option<CameraTone> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        knots: [[f32; 2]; 32],
+    }
+    static TONE: std::sync::OnceLock<Option<CameraTone>> = std::sync::OnceLock::new();
+    *TONE.get_or_init(|| serde_json::from_str::<File>(SONY_DRO_OFF_TONE).ok().and_then(|f| CameraTone::new(f.knots)))
+}
+
+/// `look`, fitted to a camera JPEG brightened by Sony's Dynamic Range Optimizer, with its tone
+/// curve lowered to Sony's without DRO ([`SONY_DRO_OFF_TONE`]) wherever that is darker. DRO only
+/// brightens, so the fitted curve bounds the curve without it from above, everywhere: where Sony's
+/// curve is brighter than the photo's own (the 1″ compacts map raw values darker), the photo keeps
+/// its own. Its colour (matrix, hue/saturation table and chroma curve) stays as fitted.
+fn with_dro_off_tone(look: CameraLook) -> CameraLook {
+    let Some(dro_off) = sony_dro_off_tone() else { return look };
+    let own = look.tone.knots();
+    let mut knots = own.map(|[x, y]| [x, y.min(dro_off.apply(x))]);
+    // Past its last knot a curve goes on as a shoulder whose rate comes from its last two knots
+    // (`CameraTone::apply`): lowering the second-last knot more than the last steepens it, and the
+    // extended highlights would end up above the fitted curve. Raise the second-last knot (never
+    // above the fitted curve) until the rate is at most the fitted curve's.
+    let ([a, b], last) = ([own[30], own[31]], knots[31]);
+    let rate = ((b[1] - a[1]) / (b[0] - a[0])).clamp(0.1, 16.0) / (1.0 - b[1]).max(0.01);
+    let floor = last[1] - rate * (1.0 - last[1]).max(0.01) * (b[0] - a[0]);
+    knots[30][1] = knots[30][1].max(floor).min(last[1]);
+    let Some(tone) = CameraTone::new(knots).and_then(|tone| tone.with_chroma(*look.tone.chroma())) else { return look };
+    if !at_most(&tone, &look.tone) {
+        return look;
+    }
+    CameraLook { tone, ..look }
+}
+
+/// Whether curve `a` is nowhere brighter than `b` over the scene luminances the finish stage's tone
+/// table covers ([`ToneMap::camera`]).
+fn at_most(a: &CameraTone, b: &CameraTone) -> bool {
+    use lightcraft_pipeline::tone::{GREY, LUT_MAX_EV, LUT_MIN_EV, LUT_N};
+    (0..LUT_N).all(|i| {
+        let x = GREY * 2f32.powf(LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32);
+        a.apply(x) <= b.apply(x) + 1e-5
+    })
 }
 
 /// Same-size proxies of the sensor (white-balanced, baseline exposure, through `transform`'s
@@ -1232,6 +1287,185 @@ mod tests {
         };
         let (_, info) = crate::files::load_bytes(&bytes, 400).unwrap();
         assert!(info.camera_tone.is_some(), "no camera look fitted");
+    }
+
+    /// A look with tone curve `f` at knots `xs` and a colour model and chroma curve to keep.
+    fn dro_test_look(xs: &[f32; 32], f: &dyn Fn(f32) -> f32) -> CameraLook {
+        CameraLook {
+            matrix: Mat3([[1.6, -0.4, -0.2], [-0.2, 1.4, -0.2], [0.0, -0.3, 1.3]]),
+            tone: CameraTone::new(xs.map(|x| [x, f(x)])).unwrap().with_chroma([1.3, 1.2, 1.1, 1.0, 1.0, 0.9, 0.6, 0.3]).unwrap(),
+            hue_sat: Some(HsvTable { hue_divisions: 4, sat_divisions: 2, val_divisions: 1, data: vec![[5.0, 1.1, 1.0]; 8], srgb_value: false }),
+        }
+    }
+
+    /// `fixed` (from `fitted`) is `min(fitted, Sony's DRO-off curve)` at every knot but the
+    /// second-last, which may stay higher (at most the fitted curve) to keep the shoulder past the
+    /// last knot below the fitted one; nowhere brighter than `fitted`, colour unchanged.
+    fn assert_lowered(fitted: &CameraLook, fixed: &CameraLook, what: &str) {
+        let dro_off = sony_dro_off_tone().unwrap();
+        assert_eq!((fixed.matrix, &fixed.hue_sat, fixed.tone.chroma()), (fitted.matrix, &fitted.hue_sat, fitted.tone.chroma()), "{what}");
+        for (i, (k, own)) in fixed.tone.knots().iter().zip(fitted.tone.knots()).enumerate() {
+            let lowered = own[1].min(dro_off.apply(own[0]));
+            assert_eq!(k[0], own[0], "{what}: knot {i}");
+            if i == 30 {
+                assert!(k[1] >= lowered && k[1] <= own[1], "{what}: knot {i} {} not in {lowered}..={}", k[1], own[1]);
+            } else {
+                assert!((k[1] - lowered).abs() < 1e-6, "{what}: knot {i} {} vs {lowered}", k[1]);
+            }
+        }
+        assert!(at_most(&fixed.tone, &fitted.tone), "{what}: brighter than the fitted curve somewhere");
+        // the same check spelled out, from deep shadows to far past the last knot (the shoulder)
+        for i in 0..=2400 {
+            let x = 0.001 * 1.005f32.powi(i);
+            assert!(fixed.tone.apply(x) <= fitted.tone.apply(x) + 1e-5, "{what} at {x}: {} > {}", fixed.tone.apply(x), fitted.tone.apply(x));
+        }
+    }
+
+    /// Issue #244: Sony's Dynamic Range Optimizer lifts the camera JPEG's shadows, not the raw's. A
+    /// look fitted to such a JPEG keeps its colour (matrix, hue/saturation table, chroma curve) and
+    /// its curve is lowered to Sony's without DRO wherever that is darker, never raised.
+    #[test]
+    fn a_dro_look_keeps_its_colour_and_is_lowered_to_the_dro_off_tone() {
+        let dro_off = sony_dro_off_tone().expect("the built-in curve is valid");
+        // the curve itself: black stays black, increasing, mid-grey where cameras put it (L* 50–75)
+        assert_eq!(dro_off.apply(0.0), 0.0);
+        let mut previous = 0.0;
+        for i in 1..200 {
+            let y = dro_off.apply(i as f32 * 0.005);
+            assert!(y > previous && y < 1.0, "{i}: {y}");
+            previous = y;
+        }
+        assert!((0.18..0.48).contains(&dro_off.apply(0.18)), "{}", dro_off.apply(0.18));
+        let xs: [f32; 32] = std::array::from_fn(|i| 0.006 * 1.13f32.powi(i as i32));
+        // a JPEG with lifted shadows: the curve comes down to Sony's, colour and chroma curve stay
+        let lifted = dro_test_look(&xs, &|x| dro_off.apply(x).powf(0.8));
+        let fixed = with_dro_off_tone(lifted.clone());
+        assert_lowered(&lifted, &fixed, "lifted");
+        assert!(fixed.tone.apply(0.02) < 0.85 * lifted.tone.apply(0.02));
+        // a camera that maps raw values darker than Sony's curve keeps its own curve exactly
+        let darker = dro_test_look(&xs, &|x| 0.7 * dro_off.apply(x));
+        assert_eq!(with_dro_off_tone(darker.clone()).tone, darker.tone);
+        // crossing curves: the lower of the two at the knots, still a valid increasing curve
+        let crossing = dro_test_look(&xs, &|x| (dro_off.apply(x) * (0.6 + x)).min(0.95));
+        assert_lowered(&crossing, &with_dro_off_tone(crossing.clone()), "crossing");
+    }
+
+    /// Past its last knot a camera curve continues as a shoulder whose rate comes from its last two
+    /// knots. Lowering the second-last knot more than the last steepened that shoulder: the curve
+    /// fitted to the CC0 NEX-5T sample (raw.pixls.us, DRO Auto) went from 0.740 to 0.843 at scene
+    /// luminance 0.63, brighter than before. The lowered curve must stay at or below the fitted one
+    /// through the shoulder, on that curve and on many others.
+    #[test]
+    fn the_lowered_curve_stays_below_the_fitted_one_past_its_last_knot() {
+        let nex5t: [[f32; 2]; 32] = [
+            [0.014948029, 0.017424058],
+            [0.018395446, 0.023981506],
+            [0.021539066, 0.030581286],
+            [0.024555191, 0.0374646],
+            [0.027602654, 0.044408206],
+            [0.030193308, 0.049894042],
+            [0.03261828, 0.055907387],
+            [0.034544908, 0.06156683],
+            [0.03669959, 0.06814718],
+            [0.039161213, 0.075263545],
+            [0.04173663, 0.0830011],
+            [0.044166446, 0.088166036],
+            [0.04682434, 0.095398724],
+            [0.049544845, 0.1027153],
+            [0.05235826, 0.11173598],
+            [0.05497513, 0.119017586],
+            [0.057503678, 0.12616614],
+            [0.059836045, 0.13521175],
+            [0.062677935, 0.14601946],
+            [0.06599234, 0.15573128],
+            [0.069809504, 0.16883339],
+            [0.0755404, 0.1854325],
+            [0.08250754, 0.20684941],
+            [0.089204684, 0.23466235],
+            [0.09650368, 0.25805998],
+            [0.102161564, 0.27849936],
+            [0.107812546, 0.29706743],
+            [0.11410169, 0.31379074],
+            [0.12000221, 0.33262977],
+            [0.12776275, 0.35407156],
+            [0.1387929, 0.38362882],
+            [0.19492775, 0.43935108],
+        ];
+        let fitted = CameraLook { tone: CameraTone::new(nex5t).unwrap(), ..dro_test_look(&std::array::from_fn(|i| 0.01 + i as f32 * 0.01), &|x| x) };
+        let fixed = with_dro_off_tone(fitted.clone());
+        assert_lowered(&fitted, &fixed, "NEX-5T");
+        assert!((fitted.tone.apply(0.63) - 0.7405).abs() < 1e-3 && fixed.tone.apply(0.63) <= fitted.tone.apply(0.63));
+        assert_ne!(fixed.tone, fitted.tone, "the lifted mid-tones still come down");
+        // curves that end at all kinds of scene luminances, slopes and heights relative to Sony's
+        let dro_off = sony_dro_off_tone().unwrap();
+        let mut seed = 0x9e37_79b9_u32;
+        let mut next = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            f32::from((seed >> 16) as u16) / 65536.0
+        };
+        for case in 0..300 {
+            let (start, span) = (0.002 + 0.03 * next(), 1.05 + 0.15 * next());
+            let xs: [f32; 32] = std::array::from_fn(|i| start * span.powi(i as i32));
+            let (lift, gain, top) = (0.5 + 0.6 * next(), 0.6 + 0.8 * next(), next());
+            // brighter or darker than Sony's, with a last knot sometimes lowered less than the one before
+            let f = |x: f32| (gain * dro_off.apply(x).powf(lift) + top * 0.2 * (x / xs[31]).powi(8)).min(0.995);
+            let mut ys = xs.map(f);
+            for i in 1..32 {
+                ys[i] = ys[i].max(ys[i - 1]);
+            }
+            let Some(tone) = CameraTone::new(std::array::from_fn(|i| [xs[i], ys[i]])) else { continue };
+            let fitted = CameraLook { tone, ..dro_test_look(&std::array::from_fn(|i| 0.01 + i as f32 * 0.01), &|x| x) };
+            assert_lowered(&fitted, &with_dro_off_tone(fitted.clone()), &format!("case {case}"));
+        }
+    }
+
+    /// Issue #244 (skipped without the corpus): the public ILCE-7RM2 sample (Standard creative
+    /// style) was shot with DRO Auto, so its curve comes down to Sony's without DRO in the shadows the
+    /// camera lifted; the ILCE-7M4 sample (DRO Auto, Vivid) has deeper shadows than that curve and
+    /// keeps them, only its brighter highlights come down. Both keep the colour fitted to their
+    /// JPEGs. The ILCE-7M3 sample (DRO off) keeps its own fit.
+    #[test]
+    fn corpus_arw_with_dro_is_lowered_to_the_dro_off_tone() {
+        let dir = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+            .join("raw");
+        let samples = [
+            ("arw-sony-a7rm2-12bit-uncompressed.arw", true, [0.01, 0.05, 0.1]),
+            ("arw-sony-a7m4-14bit.arw", true, [0.3, 0.4, 0.5]),
+            ("arw-sony-a7m3-compressed.arw", false, [0.0; 3]),
+        ];
+        for (name, dro, lowered) in samples {
+            let path = dir.join(name);
+            let bytes = match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!("skip: {} absent", path.display());
+                    continue;
+                }
+                Err(e) => panic!("{}: {e}", path.display()),
+            };
+            assert_eq!(lightcraft_raw::embedded_preview_dynamic_range_optimized(&bytes), Some(dro), "{name}");
+            let mut raw = lightcraft_raw::decode(&bytes).unwrap();
+            raw.opcodes.list3.retain(|op| !op.is_lens_correction());
+            let transform = lightcraft_raw::color::camera_transform(&raw, lightcraft_raw::color::as_shot_white_xy(&raw));
+            let look = fit_preview(&raw, &bytes, &transform).expect("a camera look");
+            // the look fitted to the JPEG, as before this change
+            let (sensor, reference) = proxies(&raw, &bytes, &transform, PROXY).unwrap();
+            let profile = raw.metadata.model.as_deref().and_then(crate::camera_profiles::get);
+            let colour = profile.as_ref().and_then(|p| Some((p.matrix().mul(&transform.matrix.inverse()?), p.hue_sat.clone())));
+            let fitted = fit_pairs_with(&sensor, &reference, colour).unwrap();
+            if dro {
+                assert_lowered(&fitted, &look, name);
+                for x in lowered {
+                    assert!(look.tone.apply(x) < 0.95 * fitted.tone.apply(x), "{name} at {x}: {} vs {}", look.tone.apply(x), fitted.tone.apply(x));
+                }
+            } else {
+                assert_eq!((look.matrix, &look.hue_sat, look.tone), (fitted.matrix, &fitted.hue_sat, fitted.tone), "{name}");
+            }
+            let (_, info) = crate::files::load_bytes(&bytes, 400).unwrap();
+            assert_eq!(info.camera_tone, Some(look.tone), "{name}");
+        }
     }
 
     /// Issue #232: an ILCE-7RM2 camera JPEG is lens-corrected ("Distortion Comp.: Auto"), so on a

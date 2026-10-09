@@ -67,6 +67,11 @@ impl CameraTone {
         &self.chroma
     }
 
+    /// The (scene, display) luminance knots, in increasing order.
+    pub fn knots(&self) -> &[[f32; 2]; 32] {
+        &self.knots
+    }
+
     pub fn apply(&self, y: f32) -> f32 {
         if !y.is_finite() || y <= 0.0 {
             return 0.0;
