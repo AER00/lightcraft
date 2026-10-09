@@ -475,9 +475,15 @@ impl Session {
         let p = self.catalog.photo(id).ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?;
         let Some(orig) = file_path(p) else { return Ok(None) };
         let Some((packet, from)) = read_packet(orig, p.kind, self.sidecar_naming(id)) else { return Ok(None) };
-        let sc = parse_sidecar(&packet, p.kind == MediaKind::Raw)
-            .map_err(|e| EngineError::Other(format!("{}: {e}", from.display())))?
-            .resolve_label(&self.catalog);
+        let sc = parse_sidecar(&packet, p.kind == MediaKind::Raw).map_err(|e| EngineError::Other(format!("{}: {e}", from.display())))?;
+        Ok(Some((self.sidecar_op(id, sc)?, from)))
+    }
+
+    /// The op that applies what a sidecar says (already read and parsed, e.g. on a worker
+    /// thread) to photo `id`: the sidecar wins. No file is read.
+    pub fn sidecar_op(&self, id: PhotoId, sc: SidecarData) -> Result<Op> {
+        let p = self.catalog.photo(id).ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?;
+        let sc = sc.resolve_label(&self.catalog);
         let mut q = (**p).clone();
         let develop_changed = merge_into(&mut q, &sc, &(self.clock)());
         let mut ops = vec![
@@ -492,7 +498,7 @@ impl Session {
         if develop_changed {
             ops.extend(self.develop_op(id, (*q.develop).clone(), "Read Metadata from File"));
         }
-        Ok(Some((Op::Batch { ops }, from)))
+        Ok(Op::Batch { ops })
     }
 
     /// Auto-write: sidecars for photos changed by `ops` (errors are logged, not returned).
