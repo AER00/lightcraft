@@ -145,7 +145,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save Keyword Set",
             [],
             None,
-            "{name, keywords?: [up to 9, \"\" = an empty slot] (default: the current nine), replace?: the set it renames} — replaces a set of that name (or `replace`, in its place) and makes it current",
+            "{name, keywords?: [up to 9, \"\" = an empty slot] (default: the renamed set's, else the current nine), replace?: the set it renames} — replaces a set of that name (or `replace`, in its place) and makes it current",
             always,
             |s, p| {
                 let name = str_param(p, "name")
@@ -153,17 +153,30 @@ pub fn specs() -> Vec<CommandSpec> {
                     .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case(RECENT))
                     .ok_or_else(|| bad("keyword.saveSet", "missing or reserved `name`"))?
                     .to_string();
-                let keywords = if p.get("keywords").is_some() { slots(&strs(p, "keywords")) } else { current_keywords(s) };
-                let set = KeywordSet { name: name.clone(), keywords };
                 let same_name = |x: &KeywordSet, n: &str| x.name.to_lowercase() == n.to_lowercase();
-                match str_param(p, "replace").map(str::trim) {
-                    // rename: in its place, onto a name no other set has
-                    Some(old) => {
-                        let at = s
-                            .keyword_sets
+                // the set it renames, if any (an empty `replace` is none)
+                let renames = match str_param(p, "replace").map(str::trim).filter(|o| !o.is_empty()) {
+                    Some(old) => Some(
+                        s.keyword_sets
                             .iter()
                             .position(|x| same_name(x, old))
-                            .ok_or_else(|| bad("keyword.saveSet", format!("no keyword set `{old}`")))?;
+                            .ok_or_else(|| bad("keyword.saveSet", format!("no keyword set `{old}`")))?,
+                    ),
+                    None => None,
+                };
+                // keywords not given: the renamed set's own, else the current nine
+                let keywords = if p.get("keywords").is_some() {
+                    slots(&strs(p, "keywords"))
+                } else {
+                    match renames.and_then(|at| s.keyword_sets.get(at)) {
+                        Some(x) => x.keywords.clone(),
+                        None => current_keywords(s),
+                    }
+                };
+                let set = KeywordSet { name: name.clone(), keywords };
+                match renames {
+                    // rename: in its place, onto a name no other set has
+                    Some(at) => {
                         if s.keyword_sets.iter().enumerate().any(|(i, x)| i != at && same_name(x, &name)) {
                             return Err(bad("keyword.saveSet", format!("there is a keyword set “{name}” already")));
                         }

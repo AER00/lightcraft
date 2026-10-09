@@ -229,3 +229,13 @@ fn renaming_a_keyword_set_keeps_its_place() {
     assert!(err.contains("already"), "{err}");
     assert!(s.execute("keyword.saveSet", &json!({"name": "Rings", "replace": "Lisbon", "keywords": []})).is_err(), "no such set");
 }
+
+/// Renaming a set without giving its keywords keeps its keywords (not the current set's).
+#[test]
+fn renaming_a_set_alone_keeps_its_keywords() {
+    let mut s = Session::with_demo();
+    s.execute("keyword.saveSet", &json!({"name": "Weddings", "keywords": ["ceremony"]})).unwrap();
+    s.execute("keyword.saveSet", &json!({"name": "Travel", "keywords": ["harbour"]})).unwrap();
+    s.execute("keyword.saveSet", &json!({"name": "Ceremonies", "replace": "Weddings"})).unwrap();
+    assert_eq!(set_named(&mut s, "Ceremonies")["keywords"], json!(["ceremony"]));
+}
