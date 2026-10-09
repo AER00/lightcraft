@@ -548,6 +548,22 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/getfile.php/1198/nice/Pentax%20-%20K-5%20II%20s%20-%2014bit%20%283:2%29.PEF",
         "e579e7360c35e512f9c3a5c0eb9519575b87b489c6f86be82590f7706a7ed17b",
     ),
+    // Samsung SRW, one file per packing: 12-bit MSB-first (NX10), 12-bit LSB-first (NX20), 16-bit words (EX1).
+    (
+        "srw-samsung-nx10.srw",
+        "https://raw.pixls.us/getfile.php/5913/nice/Samsung%20-%20NX10%20-%2012bit%20%283:2%29.SRW",
+        "dead7b4ad83b739ff7b8a1218882589f66cb14efc09f79eeba7a1dcbf7abd29f",
+    ),
+    (
+        "srw-samsung-nx20.srw",
+        "https://raw.pixls.us/getfile.php/5370/nice/Samsung%20-%20NX20%20-%2012bit%20%283:2%29.SRW",
+        "8a367db506b8f7a6661a6f33a730467cfb3bfd7e46020a9f0df702330a7b45bb",
+    ),
+    (
+        "srw-samsung-ex1.srw",
+        "https://raw.pixls.us/getfile.php/1204/nice/Samsung%20-%20EX1%20-%2014bit%20%284:3%29.SRW",
+        "a084890fd9d7995ceb746c18ecf5be48c95baf14286d5c0c480cc3daa25f3e37",
+    ),
     (
         "raf-fuji-xa2-12bit-bayer.raf",
         "https://raw.pixls.us/getfile.php/2883/nice/Fujifilm%20-%20X-A2%20-%2012bit%2012bit%20uncompressed%20%283:2%29.RAF",

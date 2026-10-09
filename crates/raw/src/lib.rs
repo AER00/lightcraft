@@ -119,6 +119,7 @@ impl RawFormat {
                 | RawFormat::Rw2
                 | RawFormat::Pef
                 | RawFormat::CfaTiff
+                | RawFormat::Srw
         )
     }
 }
@@ -333,6 +334,7 @@ fn decode_with(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         RawFormat::Pef => vendor::pef::decode(bytes, mode),
         RawFormat::Orf => vendor::orf::decode(bytes, mode),
         RawFormat::CfaTiff => dng::decode_as(bytes, mode, RawFormat::CfaTiff),
+        RawFormat::Srw => vendor::srw::decode(bytes, mode),
         RawFormat::OtherTiff => Err(RawError::Unsupported(other_tiff_reason(bytes))),
         other => Err(RawError::Unsupported(format!("{other:?} files are not decoded yet"))),
     }
