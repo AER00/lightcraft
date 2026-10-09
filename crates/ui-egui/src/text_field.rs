@@ -191,7 +191,12 @@ impl<'a> TextField<'a> {
             }
         }
         let menu_was_open = memo.menu_open;
-        memo.menu_open = response.context_menu(|ui| menu(ui, self.widget, id, self.text, &mut memo.action)).is_some();
+        // a click on a greyed-out item does nothing, as in a native menu: only a choice or a click
+        // outside closes it
+        memo.menu_open = egui::Popup::context_menu(&response)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| menu(ui, self.widget, id, self.text, &mut memo.action))
+            .is_some();
 
         let mut ending = None;
         // egui reports a lost focus on two frames: only an edit under way ends
@@ -447,14 +452,22 @@ mod tests {
         assert_eq!(rig.text, "Kyoto");
     }
 
-    /// With nothing selected, Cut and Copy do nothing.
+    /// With nothing selected, Cut and Copy are greyed out: clicking one does nothing, as in a native
+    /// menu, and neither closes the menu nor ends the edit.
     #[test]
-    fn cut_and_copy_need_a_selection() {
+    fn greyed_out_items_do_nothing() {
         let mut rig = Rig::new("Lisbon");
         rig.click(FIELD, PointerButton::Primary);
-        rig.menu("cut");
-        rig.menu("copy");
+        rig.click(FIELD, PointerButton::Secondary);
+        for item in ["cut", "copy"] {
+            rig.click(&format!("{FIELD}:{item}"), PointerButton::Primary);
+            assert!(rig.rect(&format!("{FIELD}:{item}")).is_some(), "{item}: the menu is still open");
+        }
         assert_eq!((rig.text.as_str(), rig.view.clipboard.as_str()), ("Lisbon", ""));
+        assert_eq!(rig.endings, vec![], "still editing");
+        rig.menu("selectAll");
+        rig.type_text("Kyoto");
+        assert_eq!(rig.text, "Kyoto", "and the edit goes on");
     }
 
     /// Esc gives back the text from before the edit and says the edit was cancelled.
