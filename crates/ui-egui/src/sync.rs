@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use lightcraft_engine::sync::{FolderChanges, SyncChoice, SyncInput, SyncProgress, scan_with};
+use lightcraft_engine::sync::{FolderChanges, SyncChoice, SyncCommit, SyncInput, SyncJob, SyncProgress, SyncStep, scan_with};
 use serde_json::{Value, json};
 
 use crate::LightcraftApp;
@@ -162,28 +162,151 @@ pub fn body(app: &LightcraftApp, ui: &mut egui::Ui, dlg: &mut Dialog) {
     }
 }
 
-/// Synchronize: `folder.synchronize` with the dialog's choices.
+/// Synchronize with the dialog's choices: the scan the dialog showed is handed to a worker
+/// thread at once ([`SyncRun`]); nothing is read from disk on the UI thread. A scan that went
+/// stale (the folder's photos changed meanwhile) is refused and made again, keeping the choices.
 pub fn confirm(app: &mut LightcraftApp, dlg: &Dialog) -> Result<Value, String> {
-    let Dialog::SynchronizeFolder { path, disk, counts: Some(_), import_new, relink_moved, remove_missing, read_metadata, .. } = dlg else {
+    let Dialog::SynchronizeFolder { path, name, disk, counts: Some(_), import_new, relink_moved, remove_missing, read_metadata, .. } = dlg else {
         return Err("the folder is still being scanned".into());
     };
-    let r = app.run(
-        "folder.synchronize",
-        json!({"path": path, "disk": disk, "scanned": true, "importNew": import_new, "relinkMoved": relink_moved, "removeMissing": remove_missing, "readMetadata": read_metadata}),
-    );
-    app.sync_owns_changes = false;
-    if r.is_err() {
-        // (the folder changed since the scan, or went offline): look again, in the background,
-        // keeping what was ticked; the error is what is reported, not a failure to look again
-        let name = match dlg {
-            Dialog::SynchronizeFolder { name, .. } => name.clone(),
-            _ => String::new(),
-        };
-        if open(app, path, &name, *disk).is_ok()
-            && let Some(Dialog::SynchronizeFolder { import_new: i, relink_moved: l, remove_missing: m, read_metadata: x, .. }) = &mut app.ui.dialog
-        {
-            (*i, *l, *m, *x) = (*import_new, *relink_moved, *remove_missing, *read_metadata);
-        }
+    if app.sync_run.is_some() {
+        return Err(crate::i18n::tr("A folder is already being synchronized").to_string());
     }
-    r
+    let choice = SyncChoice { import_new: *import_new, relink_moved: *relink_moved, remove_missing: *remove_missing, read_metadata: *read_metadata };
+    app.sync_owns_changes = false;
+    let started = match app.session.take_folder_changes(path) {
+        Some(changes) => SyncJob::start(&mut app.session, changes, choice).map_err(|e| e.to_string()),
+        None => Err(format!("{path} changed since it was scanned: scan again")),
+    };
+    let (work, commit) = match started {
+        Ok(halves) => halves,
+        Err(e) => {
+            // look again, in the background, keeping what was ticked
+            if open(app, path, name, *disk).is_ok()
+                && let Some(Dialog::SynchronizeFolder { import_new: i, relink_moved: l, remove_missing: m, read_metadata: x, .. }) =
+                    &mut app.ui.dialog
+            {
+                (*i, *l, *m, *x) = (*import_new, *relink_moved, *remove_missing, *read_metadata);
+            }
+            return Err(e);
+        }
+    };
+    let progress = Arc::new(SyncProgress::default());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let p = progress.clone();
+    let job = move || {
+        // (a panic in the work ends it; what was handed over is still committed)
+        let _ = lightcraft_engine::guard::catch("synchronize", || work.run(&p, |step| tx.send(step).is_ok()));
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    std::thread::spawn(job);
+    #[cfg(target_arch = "wasm32")]
+    job();
+    app.sync_run = Some(SyncRun { name: name.clone(), progress, rx, commit: Some(commit), stopping: false });
+    Ok(json!({"started": true}))
+}
+
+/// A synchronize at work: the file-system half on a worker thread, its steps committed here
+/// between frames ([`poll_run`]).
+pub struct SyncRun {
+    name: String,
+    progress: Arc<SyncProgress>,
+    rx: std::sync::mpsc::Receiver<SyncStep>,
+    commit: Option<SyncCommit>,
+    /// Cancel was pressed: nothing new is started; what was readied is still committed.
+    stopping: bool,
+}
+
+impl SyncRun {
+    /// (done, of how many) — for a progress row.
+    pub fn counts(&self) -> (usize, usize) {
+        self.progress.counts()
+    }
+    /// Stop after the piece in progress.
+    pub fn cancel(&mut self) {
+        self.stopping = true;
+        self.progress.files.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Drop for SyncRun {
+    /// A dropped run (the app closing) stops its worker at the next piece.
+    fn drop(&mut self) {
+        self.progress.files.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Commit what the worker readied (called every frame); when it is done, one undo step and a
+/// word on what happened.
+pub fn poll_run(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let Some(run) = app.sync_run.as_mut() else { return };
+    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    let mut steps = Vec::new();
+    let finished = loop {
+        match run.rx.try_recv() {
+            Ok(step) => steps.push(step),
+            Err(std::sync::mpsc::TryRecvError::Empty) => break false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => break true,
+        }
+    };
+    let Some(mut commit) = run.commit.take() else { return };
+    for step in steps {
+        let _ = app.session.execute_fn("folder.synchronize", |s| {
+            commit.apply(s, step);
+            Ok(Value::Null)
+        });
+    }
+    if !finished {
+        if let Some(run) = app.sync_run.as_mut() {
+            run.commit = Some(commit);
+        }
+        return;
+    }
+    let name = app.sync_run.take().map(|r| r.name.clone()).unwrap_or_default();
+    let mut report = None;
+    let _ = app.session.execute_fn("folder.synchronize", |s| {
+        report = Some(commit.finish(s));
+        Ok(Value::Null)
+    });
+    let Some(r) = report else { return };
+    for (path, e) in &r.failed {
+        log::warn!("synchronize {name}: {path}: {e}");
+    }
+    let parts: Vec<String> =
+        [("Imported", r.imported), ("Relinked", r.relinked), ("Removed", r.removed), ("Metadata read", r.read), ("Failed", r.failed.len())]
+            .into_iter()
+            .filter(|(_, n)| *n > 0)
+            .map(|(what, n)| format!("{} {n}", crate::i18n::tr(what)))
+            .collect();
+    let text = if parts.is_empty() { crate::i18n::tr("The library is up to date with this folder.").to_string() } else { parts.join(" · ") };
+    app.toast(ctx, format!("{name}: {text}"));
+}
+
+/// The progress window while a synchronize runs, with Cancel (what was done stays, as one undo
+/// step; nothing new is started).
+pub fn progress_window(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let Some(run) = &app.sync_run else { return };
+    let t = Tokens::get(ctx);
+    let (done, total) = run.counts();
+    let text =
+        if run.stopping { crate::i18n::tr("Stopping…").to_string() } else { format!("{} {done} / {total}", crate::i18n::tr("Synchronizing…")) };
+    let frac = if total == 0 { 0.0 } else { done as f32 / total as f32 };
+    let stopping = run.stopping;
+    let mut cancel = false;
+    egui::Window::new(crate::i18n::tr("Synchronize Folder"))
+        .id(egui::Id::new("sync-progress"))
+        .title_bar(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -80.0])
+        .fixed_size([340.0, 80.0])
+        .show(ctx, |ui| {
+            ui.label(egui::RichText::new(text).color(t.text));
+            ui.add(egui::ProgressBar::new(frac).desired_width(320.0));
+            let r = ui.add_enabled(!stopping, egui::Button::new(crate::i18n::tr("Cancel")));
+            crate::widgets::register(ui.ctx(), "button:syncCancel", r.rect);
+            cancel = r.clicked();
+        });
+    if cancel && let Some(run) = app.sync_run.as_mut() {
+        run.cancel();
+    }
 }

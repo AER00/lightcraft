@@ -1750,5 +1750,11 @@
   "Skipped: files already in the library elsewhere": "スキップ: 別の場所ですでにライブラリにあるファイル",
   "Skipped: files that can't be read": "スキップ: 読み込めないファイル",
   "This folder isn't there: it was moved or renamed, or its disk isn't connected.": "このフォルダが見つかりません。移動または名前の変更がされたか、ディスクが接続されていません。",
-  "Relink photos whose file was renamed or moved": "ファイル名の変更や移動があった写真をリンクし直す"
+  "Relink photos whose file was renamed or moved": "ファイル名の変更や移動があった写真をリンクし直す",
+  "A folder is already being synchronized": "すでにフォルダを同期中です",
+  "Synchronizing…": "同期中…",
+  "Relinked": "リンクし直し",
+  "Removed": "除去",
+  "Metadata read": "メタデータ読み込み",
+  "Failed": "失敗"
 }

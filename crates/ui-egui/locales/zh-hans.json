@@ -1750,5 +1750,11 @@
   "Skipped: files already in the library elsewhere": "已跳过：已在图库其他位置的文件",
   "Skipped: files that can't be read": "已跳过：无法读取的文件",
   "This folder isn't there: it was moved or renamed, or its disk isn't connected.": "此文件夹不存在：它已被移动或重命名，或其磁盘未连接。",
-  "Relink photos whose file was renamed or moved": "重新链接文件被重命名或移动的照片"
+  "Relink photos whose file was renamed or moved": "重新链接文件被重命名或移动的照片",
+  "A folder is already being synchronized": "已有文件夹正在同步",
+  "Synchronizing…": "正在同步…",
+  "Relinked": "已重新链接",
+  "Removed": "已移除",
+  "Metadata read": "已读取元数据",
+  "Failed": "失败"
 }

@@ -8,6 +8,9 @@
 //! * Synchronize with the defaults imports the new photos and leaves missing ones alone.
 //! * Ticking "Remove missing photos" also moves those to Recently Deleted.
 //! * Cancel leaves the library as it was.
+//! * Synchronize hands the work to the background at once: the dialog closes, the app keeps
+//!   answering, and the photos arrive over the next frames under a progress window, as one undo
+//!   step.
 
 use std::time::Duration;
 
@@ -93,6 +96,19 @@ fn open_and_scan(h: &mut Headless, folder: &str) {
     assert!(scanned, "the scan finished: {:?}", h.app.ui.dialog);
 }
 
+/// Synchronize: the dialog closes and the work goes to the background at once (nothing has
+/// changed yet when the confirm returns); then wait for it.
+fn synchronize(h: &mut Headless) {
+    let before = in_library(h);
+    // the dialog's confirm itself, between frames: it only hands the work over
+    let dlg = h.app.ui.dialog.take().expect("the dialog is open");
+    let r = crate::panels::dialogs::confirm_dialog(&mut h.app, &dlg);
+    assert!(r.is_ok(), "{r:?}");
+    assert!(h.app.sync_run.is_some(), "the work runs in the background");
+    assert_eq!(in_library(h), before, "nothing was done on the UI thread");
+    assert!(h.step_until(T, |h| h.app.sync_run.is_none()), "the work finishes");
+}
+
 fn counts(h: &Headless) -> crate::state::SyncCounts {
     match &h.app.ui.dialog {
         Some(Dialog::SynchronizeFolder { counts: Some(c), .. }) => c.clone(),
@@ -115,10 +131,8 @@ fn synchronizing_with_the_defaults_imports_the_new_photos_only() {
     let dir = Scratch::new("defaults");
     let mut h = changed_folder(&dir);
     open_and_scan(&mut h, &dir.path("trip"));
-    let r = h.request("ui.dialog.confirm", json!({}), T);
-    assert_eq!(r["ok"], true, "{r}");
+    synchronize(&mut h);
     assert_eq!(in_library(&h), vec!["a.png", "b.png", "c.png"], "c came in; the missing b stays");
-    assert!(h.app.ui.dialog.is_none());
 }
 
 #[test]
@@ -129,8 +143,7 @@ fn ticking_remove_missing_also_removes_the_missing_photos() {
     let r = h.request("ui.clickWidget", json!({"id": "syncRemoveMissing"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.step();
-    let r = h.request("ui.dialog.confirm", json!({}), T);
-    assert_eq!(r["ok"], true, "{r}");
+    synchronize(&mut h);
     assert_eq!(in_library(&h), vec!["a.png", "c.png"], "b went to Recently Deleted");
     let r = h.request("engine.execute", json!({"command": "edit.undo", "params": {}}), T);
     assert_eq!(r["ok"], true, "{r}");
@@ -181,7 +194,26 @@ fn a_scan_gone_stale_in_the_dialog_is_made_again_in_the_background() {
     let rescanned = h.step_until(T, |h| matches!(&h.app.ui.dialog, Some(Dialog::SynchronizeFolder { counts: Some(_), .. })));
     assert!(rescanned, "and scans again");
     assert!(matches!(h.app.ui.dialog, Some(Dialog::SynchronizeFolder { remove_missing: true, .. })), "keeping what was ticked");
-    let r = h.request("ui.dialog.confirm", json!({}), T);
-    assert_eq!(r["ok"], true, "{r}");
+    synchronize(&mut h);
     assert_eq!(in_library(&h), vec!["a.png", "c.png"], "c came in, the missing b went");
+}
+
+#[test]
+fn the_progress_window_can_stop_a_synchronize() {
+    let dir = Scratch::new("stop");
+    let mut h = changed_folder(&dir);
+    open_and_scan(&mut h, &dir.path("trip"));
+    let steps = h.app.session.undo.len();
+    let dlg = h.app.ui.dialog.take().expect("the dialog is open");
+    assert!(crate::panels::dialogs::confirm_dialog(&mut h.app, &dlg).is_ok());
+    // Cancel before the first frame commits anything
+    h.app.sync_run.as_mut().expect("running").cancel();
+    assert!(h.step_until(T, |h| h.app.sync_run.is_none()), "it ends");
+    // whatever was done by then is at most one undo step
+    assert!(h.app.session.undo.len() <= steps + 1);
+    if h.app.session.undo.len() == steps + 1 {
+        let r = h.request("engine.execute", json!({"command": "edit.undo", "params": {}}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    }
+    assert_eq!(in_library(&h), vec!["a.png", "b.png"]);
 }

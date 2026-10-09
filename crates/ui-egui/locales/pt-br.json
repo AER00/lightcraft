@@ -1750,5 +1750,11 @@
   "Skipped: files already in the library elsewhere": "Ignorados: arquivos que já estão na biblioteca em outro lugar",
   "Skipped: files that can't be read": "Ignorados: arquivos que não podem ser lidos",
   "This folder isn't there: it was moved or renamed, or its disk isn't connected.": "Esta pasta não está lá: foi movida ou renomeada, ou o disco dela não está conectado.",
-  "Relink photos whose file was renamed or moved": "Vincular de novo fotos cujo arquivo foi renomeado ou movido"
+  "Relink photos whose file was renamed or moved": "Vincular de novo fotos cujo arquivo foi renomeado ou movido",
+  "A folder is already being synchronized": "Uma pasta já está sendo sincronizada",
+  "Synchronizing…": "Sincronizando…",
+  "Relinked": "Revinculadas",
+  "Removed": "Removidas",
+  "Metadata read": "Metadados lidos",
+  "Failed": "Com falha"
 }

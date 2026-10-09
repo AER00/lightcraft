@@ -247,6 +247,8 @@ pub struct LightcraftApp {
     pub sync: Option<sync::SyncTask>,
     /// `session.folder_changes` came from the Synchronize Folder dialog (and goes with it).
     pub sync_owns_changes: bool,
+    /// A Synchronize Folder at work in the background.
+    pub sync_run: Option<sync::SyncRun>,
     /// A Lightroom catalog inspect/import in progress.
     pub lightroom: Option<lightroom_import::LightroomTask>,
     /// Last terminal Lightroom result, exposed by the command's status/wait response.
@@ -320,6 +322,7 @@ impl LightcraftApp {
             scan: None,
             sync: None,
             sync_owns_changes: false,
+            sync_run: None,
             lightroom: None,
             lightroom_last: None,
             export: None,
@@ -744,6 +747,7 @@ impl LightcraftApp {
         merge::poll(self, ctx);
         import::poll_scan(self, ctx);
         sync::poll(self, ctx);
+        sync::poll_run(self, ctx);
         import::tick(self, ctx);
         lightroom_import::tick(self, ctx);
         tasks::poll(self, ctx);
@@ -960,6 +964,7 @@ impl LightcraftApp {
         panels::dialogs::show(self, &ctx);
         panels::library_problem::show(self, &ctx);
         import::progress(self, &ctx);
+        sync::progress_window(self, &ctx);
         import::scan_progress(self, &ctx);
         lightroom_import::progress(self, &ctx);
         export_task::poll(self, &ctx);
