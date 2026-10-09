@@ -498,7 +498,13 @@ impl Catalog {
     /// appear together with `current` on other photos, then the most used ones. Most frequent
     /// first, at most `n`, never one of `current`.
     pub fn keyword_suggestions(&self, current: &[String], prefix: &str, n: usize) -> Vec<String> {
-        let all = self.keywords();
+        // the photos' keywords with their counts, and those only the list has (none)
+        let mut all = self.keywords();
+        for l in self.keyword_list.values() {
+            if !all.iter().any(|(k, _)| same(k, &l.path)) {
+                all.push((l.path.clone(), 0));
+            }
+        }
         let has = |k: &str| current.iter().any(|c| same(c, k));
         let q = prefix.trim().to_lowercase();
         let mut scored: Vec<(i64, String)> = if !q.is_empty() {
@@ -995,6 +1001,15 @@ mod tests {
         let op = c.edit_keyword_ops("beach", "Shore", KeywordInfo::default()).unwrap();
         c.apply(op).unwrap();
         assert!(listed(&c).is_empty());
+    }
+
+    /// Typing suggests keywords no photo has yet too (created in the Keyword List).
+    #[test]
+    fn suggestions_include_keywords_without_photos() {
+        let (mut c, _) = lib(&[&["beach"]]);
+        c.apply(Op::SetKeyword { path: "Events|Weddings".into(), info: Some(KeywordInfo::default()) }).unwrap();
+        assert_eq!(c.keyword_suggestions(&[], "wed", 5), ["Events|Weddings"]);
+        assert!(!c.keyword_suggestions(&["events|weddings".into()], "wed", 5).contains(&"Events|Weddings".to_string()), "not one it has");
     }
 
     #[test]
