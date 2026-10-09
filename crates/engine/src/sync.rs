@@ -174,7 +174,8 @@ impl SyncInput {
         if !disk && (lightcraft_catalog::folders::is_disk_root(path) || crate::cmd::library::covers_other_disks(s, path, &ids)) {
             return Err(invalid(format!("{path} is a whole disk or holds disks: pass `disk: true` to synchronize it")));
         }
-        let photos = ids.iter().filter_map(|id| s.catalog.photo(*id).map(|p| (Arc::clone(p), s.sidecar_naming(*id)))).collect();
+        let namings = s.sidecar_namings(&ids);
+        let photos = ids.iter().zip(namings).filter_map(|(id, naming)| s.catalog.photo(*id).map(|p| (Arc::clone(p), naming))).collect();
         let (scan, _) = ScanInput::new(s, &[path.to_string()]);
         Ok(SyncInput { folder: path.to_string(), scan, photos, labels: s.catalog.clone() })
     }
@@ -509,11 +510,13 @@ impl SyncJob {
         };
         let now = import.as_ref().map_or_else(|| (s.clock)(), |(j, _)| j.now().to_string());
         let sidecars = if choice.read_metadata {
+            let namings = s.sidecar_namings(&metadata.iter().map(|m| PhotoId(m.id)).collect::<Vec<_>>());
             metadata
                 .into_iter()
-                .filter_map(|m| {
+                .zip(namings)
+                .filter_map(|(m, naming)| {
                     let p = s.catalog.photo(PhotoId(m.id))?;
-                    Some((p.id, m.path, s.sidecar_naming(p.id), p.kind == lightcraft_catalog::MediaKind::Raw))
+                    Some((p.id, m.path, naming, p.kind == lightcraft_catalog::MediaKind::Raw))
                 })
                 .collect()
         } else {

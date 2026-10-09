@@ -597,3 +597,27 @@ fn an_undo_pressed_while_synchronizing_is_not_folded_into_it() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(s.catalog.photo(a).unwrap().rating, 4, "the earlier, unrelated step stays");
 }
+
+#[test]
+fn sidecar_namings_for_many_photos_agree_with_one_at_a_time() {
+    let dir = Scratch::new("namings");
+    let mut s = library(&dir);
+    // a raw beside its JPEG: the raw owns IMG_1.xmp, the JPEG's is IMG_1.JPG.xmp
+    for name in ["IMG_1.CR3", "IMG_1.JPG", "IMG_2.JPG"] {
+        let id = s.catalog.alloc_photo_id();
+        let p = lightcraft_catalog::Photo::new(
+            id,
+            lightcraft_catalog::Source::File { path: dir.path(&format!("trip/{name}")) },
+            name,
+            "X",
+            6,
+            4,
+            "2026-01-01",
+        );
+        s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    }
+    let ids: Vec<lightcraft_catalog::PhotoId> = s.catalog.photos().map(|p| p.id).collect();
+    let one_by_one: Vec<_> = ids.iter().map(|id| s.sidecar_naming(*id)).collect();
+    assert_eq!(s.sidecar_namings(&ids), one_by_one);
+    assert!(one_by_one.contains(&crate::sidecar::SidecarNaming::Full), "the case that matters is there");
+}

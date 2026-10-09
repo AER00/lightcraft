@@ -445,6 +445,18 @@ impl Session {
     /// catalogued file shares the stem (`IMG_0001.CR3` + `IMG_0001.JPG`) and owns the stem
     /// sidecar — a raw first, else the first by file name. The others use Full naming
     /// (`IMG_0001.JPG.xmp`), so their metadata never overwrites each other.
+    /// [`Session::sidecar_naming`] for many photos, the catalog's sidecar owners worked out once
+    /// (per photo that is a pass over the whole catalog).
+    pub fn sidecar_namings(&self, ids: &[PhotoId]) -> Vec<SidecarNaming> {
+        let owners = (self.xmp.naming == SidecarNaming::Stem).then(|| StemOwners::of(&self.catalog));
+        ids.iter()
+            .map(|id| match (self.catalog.photo(*id), &owners) {
+                (Some(p), Some(o)) => o.naming(p, self.xmp.naming),
+                _ => self.xmp.naming,
+            })
+            .collect()
+    }
+
     pub fn sidecar_naming(&self, id: PhotoId) -> SidecarNaming {
         match self.catalog.photo(id) {
             Some(p) if self.xmp.naming == SidecarNaming::Stem => StemOwners::of(&self.catalog).naming(p, self.xmp.naming),
