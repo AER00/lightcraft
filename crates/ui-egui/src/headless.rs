@@ -79,6 +79,10 @@ pub struct HeadlessView {
     pixels_per_point: f32,
     size: [usize; 2],
     frames: u64,
+    /// The pretend host's clipboard: what the UI last copied, and what a paste request pastes.
+    pub clipboard: String,
+    /// Events the host owes the next frame (a paste request's paste, as a desktop host sends it).
+    owed: Vec<egui::Event>,
 }
 
 impl Default for HeadlessView {
@@ -92,7 +96,16 @@ impl HeadlessView {
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
         crate::theme::apply(&ctx);
-        HeadlessView { ctx, textures: TextureStore::default(), shapes: vec![], pixels_per_point: 1.0, size: [1600, 1000], frames: 0 }
+        HeadlessView {
+            ctx,
+            textures: TextureStore::default(),
+            shapes: vec![],
+            pixels_per_point: 1.0,
+            size: [1600, 1000],
+            frames: 0,
+            clipboard: String::new(),
+            owed: vec![],
+        }
     }
 
     /// Input for one frame of a `size` (points) viewport at `pixels_per_point`.
@@ -132,12 +145,28 @@ impl HeadlessView {
                 }
             }
         }
+        raw.events.splice(0..0, std::mem::take(&mut self.owed));
         let mut out = self.ctx.run_ui(raw, run_ui);
         self.frames += 1;
         self.textures.apply(std::mem::take(&mut out.textures_delta));
         self.shapes = std::mem::take(&mut out.shapes);
         self.pixels_per_point = out.pixels_per_point;
-        out.viewport_output.remove(&ViewportId::ROOT).map(|v| v.commands).unwrap_or_default()
+        for c in &out.platform_output.commands {
+            if let egui::OutputCommand::CopyText(text) = c {
+                self.clipboard.clone_from(text);
+            }
+        }
+        let commands = out.viewport_output.remove(&ViewportId::ROOT).map(|v| v.commands).unwrap_or_default();
+        // what a desktop host does with a cut, copy or paste request (egui-winit): the event, next frame
+        for c in &commands {
+            match c {
+                ViewportCommand::RequestCut => self.owed.push(egui::Event::Cut),
+                ViewportCommand::RequestCopy => self.owed.push(egui::Event::Copy),
+                ViewportCommand::RequestPaste if !self.clipboard.is_empty() => self.owed.push(egui::Event::Paste(self.clipboard.clone())),
+                _ => {}
+            }
+        }
+        commands
     }
 
     /// Frames run so far.
@@ -423,6 +452,32 @@ mod tests {
     }
 
     use super::*;
+
+    /// The pretend host has a clipboard, as a desktop does: text the UI copies lands in it, and a
+    /// cut, copy or paste request (from a context menu) comes back as that event on the next frame.
+    #[test]
+    fn the_headless_host_has_a_clipboard() {
+        let mut view = HeadlessView::new();
+        let raw = || HeadlessView::raw_input(egui::vec2(200.0, 100.0), 1.0, 0.0, vec![]);
+        view.run(raw(), |ui| ui.ctx().copy_text("Lisbon".into()));
+        assert_eq!(view.clipboard, "Lisbon");
+        for (command, event) in [
+            (ViewportCommand::RequestPaste, egui::Event::Paste("Lisbon".into())),
+            (ViewportCommand::RequestCopy, egui::Event::Copy),
+            (ViewportCommand::RequestCut, egui::Event::Cut),
+        ] {
+            view.run(raw(), |ui| ui.ctx().send_viewport_cmd(command.clone()));
+            let mut seen = vec![];
+            view.run(raw(), |ui| seen = ui.input(|i| i.events.clone()));
+            assert!(seen.contains(&event), "{command:?}: {seen:?}");
+        }
+        // an empty clipboard pastes nothing, as a desktop host does
+        view.clipboard.clear();
+        view.run(raw(), |ui| ui.ctx().send_viewport_cmd(ViewportCommand::RequestPaste));
+        let mut seen = vec![];
+        view.run(raw(), |ui| seen = ui.input(|i| i.events.clone()));
+        assert!(!seen.iter().any(|e| matches!(e, egui::Event::Paste(_))), "{seen:?}");
+    }
 
     #[test]
     fn screenshot_dimensions_are_checked_before_layout() {
