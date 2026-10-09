@@ -150,6 +150,38 @@ fn a_folder_without_labels_moves_without_ops() {
 }
 
 #[test]
+fn an_unlabelled_folder_moved_onto_a_stale_label_does_not_inherit_it() {
+    let mut c = library();
+    // a folder that was at the destination once (its photos are gone) left its label behind
+    label(&mut c, "/pics/holiday", Some(ColorLabel::Purple));
+    let ops = c.folder_records_follow("/pics/trip", "/pics/holiday");
+    let undo = c.apply(Op::Batch { ops }).unwrap();
+    assert_eq!(c.folder_record("/pics/holiday"), None, "the folder now there is another one");
+    c.apply(undo).unwrap();
+    assert_eq!(c.folder_color_label("/pics/holiday"), Some(ColorLabel::Purple));
+}
+
+#[test]
+fn labels_survive_the_journal_without_a_snapshot() {
+    let m = MemStore::new();
+    let (mut j, mut c, _) = Journal::open(Box::new(m.clone())).unwrap();
+    {
+        let p = "/pics/trip/a.jpg";
+        let id = c.alloc_photo_id();
+        let op = Op::AddPhoto { photo: Box::new(Photo::new(id, Source::File { path: p.into() }, "a.jpg", "JPEG", 6, 4, "2026-01-01")) };
+        c.apply(op.clone()).unwrap();
+        j.append(std::slice::from_ref(&op)).unwrap();
+    }
+    let op = c.folder_label_op("/pics/trip", Some(ColorLabel::Yellow));
+    c.apply(op.clone()).unwrap();
+    j.append(std::slice::from_ref(&op)).unwrap();
+    drop(j);
+    let (_, reopened, r) = Journal::open(Box::new(m)).unwrap();
+    assert!(r.replayed >= 2, "{r:?}");
+    assert_eq!(reopened.folder_color_label("/pics/trip"), Some(ColorLabel::Yellow));
+}
+
+#[test]
 fn labels_survive_closing_and_reopening_the_library() {
     let mut c = library();
     label(&mut c, "/pics/home", Some(ColorLabel::Green));

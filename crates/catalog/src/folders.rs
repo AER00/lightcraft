@@ -205,7 +205,7 @@ impl Catalog {
     /// (the same place below it), for a folder renamed or moved on disk: commit them with the
     /// photos' relinks so undo puts both back. Records already at or below `to` are left from a
     /// folder that is no longer there and are dropped (undo restores them). Empty when there is
-    /// nothing to carry.
+    /// nothing to carry or drop.
     pub fn folder_records_follow(&self, from: &str, to: &str) -> Vec<Op> {
         let (Some(root), Some(dest)) = (record_key(from), record_key(to)) else { return Vec::new() };
         if root == dest {
@@ -222,9 +222,8 @@ impl Catalog {
                 Some((folder_key(&path), r.clone()))
             })
             .collect();
-        if moved.is_empty() {
-            return Vec::new();
-        }
+        // what was known at the old place goes, and so does what is left at the new one (also
+        // when the moved folder carries nothing: the folder now there is not the one it was about)
         let stale = self.folder_records.keys().filter(|k| key_within(k, &root) || key_within(k, &dest));
         let mut ops: Vec<Op> = stale.map(|k| Op::SetFolderRecord { folder: k.clone(), record: None }).collect();
         ops.extend(moved.into_iter().map(|(k, r)| Op::SetFolderRecord { folder: k, record: Some(r) }));

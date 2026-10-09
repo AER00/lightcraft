@@ -548,4 +548,19 @@ fn labels_follow_a_moved_folder() {
     s.execute("folder.label", &json!({"path": trip, "label": "yellow"})).unwrap();
     s.execute("folder.move", &json!({"path": trip, "into": dir.path("archive")})).unwrap();
     assert_eq!(listed_label(&mut s, &dir.path("archive/trip")).as_deref(), Some("yellow"));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(listed_label(&mut s, &trip).as_deref(), Some("yellow"), "undo moves it back with the folder");
+    assert_eq!(s.catalog.folder_record(&dir.path("archive/trip")), None);
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(listed_label(&mut s, &dir.path("archive/trip")).as_deref(), Some("yellow"));
+}
+
+#[test]
+fn a_label_comes_off_a_folder_whose_photos_are_gone() {
+    let mut s = session();
+    s.execute("folder.label", &json!({"path": "/pics/trip", "label": "red"})).unwrap();
+    s.execute("library.removeFolder", &json!({"path": "/pics/trip"})).unwrap();
+    s.execute("folder.label", &json!({"path": "/pics/trip", "label": "none"})).unwrap();
+    assert_eq!(s.catalog.folder_record("/pics/trip"), None);
+    assert!(s.execute("folder.label", &json!({"path": "/pics/trip", "label": "red"})).is_err(), "but a new one needs photos");
 }

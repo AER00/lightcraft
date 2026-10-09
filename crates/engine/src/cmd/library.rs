@@ -392,7 +392,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Folder Color Label",
             [],
             None,
-            "{path, label: red|yellow|green|blue|purple|none} — give a folder of the library (one its photos were imported from, see library.folders) a colour label, or take it off; one undo step. The label follows the folder when it is renamed or moved with folder.rename / folder.move → {path, label}",
+            "{path, label: red|yellow|green|blue|purple|none} — give a folder of the library (one its photos were imported from, see library.folders) a colour label, or take it off (also once its photos are gone); one undo step. The label follows the folder when it is renamed or moved with folder.rename / folder.move → {path, label}",
             always,
             |s, p| {
                 const C: &str = "folder.label";
@@ -401,9 +401,13 @@ pub fn specs() -> Vec<CommandSpec> {
                     "none" => None,
                     x => Some(ColorLabel::parse(x).ok_or_else(|| bad(C, format!("unknown label {x:?}")))?),
                 };
+                // taking a label off always works, also once the folder's photos are gone
                 let f = Filter { library_folder: Some(path.to_string()), ..Default::default() };
-                if s.catalog.query(&f, &Sort::default()).is_empty() {
+                if label.is_some() && s.catalog.query(&f, &Sort::default()).is_empty() {
                     return Err(bad(C, format!("{path}: no photo in the library was imported from it")));
+                }
+                if label.is_none() && s.catalog.folder_record(path).is_none() {
+                    return Ok(json!({"path": path, "label": label}));
                 }
                 let op = s.catalog.folder_label_op(path, label);
                 s.commit(if label.is_some() { "Set Folder Color Label" } else { "Remove Folder Color Label" }, op)?;
