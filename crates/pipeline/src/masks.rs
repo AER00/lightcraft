@@ -60,7 +60,7 @@ pub fn evaluate_one(m: &Mask, frame: &Frame, w: usize, h: usize, img: &Rgb32f, l
         // Refine Edges: the mask's edges follow the photo's (window up to ~4 % of the long edge,
         // the width of a soft brush edge or gradient)
         let k = (m.refine / 100.0).clamp(0.0, 1.0) as f32;
-        let sigma = (0.04 * w.max(h) as f32 * k).max(1.0);
+        let sigma = (0.04 * frame.output_long(w, h) as f32 * k).max(1.0);
         let refined = guided_cross(log_l, &alpha, sigma, 0.02);
         for (a, r) in alpha.data.iter_mut().zip(&refined.data) {
             *a += (r - *a) * k.sqrt();
@@ -336,11 +336,13 @@ pub fn auto_similarity(l: f32, ch: [f32; 3], rl: f32, rch: [f32; 3]) -> f32 {
     1.0 - smooth(0.5, 1.0, (dl * dl + dc * dc).sqrt())
 }
 
-/// The output pixel a dab at `d` samples its reference colour from.
+/// The output pixel a dab at `d` samples its reference colour from. The position is taken at f32
+/// precision (like the GPU kernel): a dab on a pixel boundary must not fall on either side of it
+/// by an f64 rounding error, which depends on where the window of a zoomed view starts.
 #[inline]
 pub fn dab_pixel(d: Point, w: usize, h: usize) -> usize {
-    let x = (d.x.floor().max(0.0) as usize).min(w - 1);
-    let y = (d.y.floor().max(0.0) as usize).min(h - 1);
+    let x = ((d.x as f32).floor().max(0.0) as usize).min(w - 1);
+    let y = ((d.y as f32).floor().max(0.0) as usize).min(h - 1);
     y * w + x
 }
 

@@ -159,7 +159,7 @@ fn photo_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, slot: Slo
         photo.embedded_lens.as_ref(),
     );
     let aspect = frame.aspect() as f32;
-    let native = [photo.width.max(1) as usize, photo.height.max(1) as usize];
+    let native = super::detail::output_px(&frame);
     let mut img = super::detail::fit_rect(img_area, aspect, zoom, native, ppp, app.ui.pan);
     if matches!(app.ui.view, ViewMode::Compare | ViewMode::Reference) {
         if super::detail::navigate_gesture(app, ui, &resp, img_area, img, native) {
@@ -168,7 +168,8 @@ fn photo_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, slot: Slo
             super::detail::pan_image(app, img_area, img, resp.drag_delta());
         }
     }
-    let want = (img.width().max(img.height()).min(img_area.width().max(img_area.height()) * 4.0) * ppp).min(2560.0) as usize;
+    let want = (img.width().max(img.height()).min(img_area.width().max(img_area.height()) * 4.0) * ppp)
+        .min(2560.0_f32.min(super::detail::texture_side(ui.ctx()) as f32)) as usize;
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
     if let Some(job) = app.session.render_job(id, rw.max(8), rh.max(8), false, true) {
         app.renderer.request(slot, job, 60);
