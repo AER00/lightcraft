@@ -19,6 +19,53 @@ pub(crate) fn raw_ifd(tiff: &Tiff) -> Option<&Ifd> {
         .max_by_key(|i| i.u64(t::IMAGE_WIDTH).unwrap_or(0).saturating_mul(i.u64(t::IMAGE_LENGTH).unwrap_or(0)))
 }
 
+/// Undo the DNG 1.7 row/column interleave, which reorders the stored raster without changing its
+/// size: with `RowInterleaveFactor = n` the rows are stored as `n` consecutive groups, group `g`
+/// holding rows `g, g+n, g+2n, …` of the image (and likewise for columns).
+///
+/// Left alone, a file like this decodes as `n × m` half-scale copies of the scene, one per
+/// quadrant, with the CFA pattern then read across permuted samples — so it is not merely
+/// misplaced, it is the wrong colour as well (`RowInterleaveFactor = ColumnInterleaveFactor = 2`
+/// is what DNG 1.7 JPEG XL files from Adobe's converter carry).
+fn deinterleave(data: &mut RawData, w: usize, h: usize, cpp: usize, rows: usize, cols: usize) -> Result<()> {
+    if rows <= 1 && cols <= 1 {
+        return Ok(());
+    }
+    if !(1..=16).contains(&rows) || !(1..=16).contains(&cols) {
+        return Err(RawError::Unsupported(format!("interleave factors {rows} × {cols}")));
+    }
+    if !h.is_multiple_of(rows) || !w.is_multiple_of(cols) {
+        return Err(RawError::Corrupt(format!("interleave {rows}×{cols} does not divide {w}×{h}")));
+    }
+    // Stored row `r` belongs to group `r / (h / rows)` at position `r % (h / rows)` within it, and
+    // that position holds image row `group + rows * position`. Same for columns.
+    let (gh, gw) = (h / rows, w / cols);
+    let at = |i: usize, n: usize, g: usize| (i % g) * n + i / g;
+    let dest = |r: usize, c: usize| at(r, rows, gh) * w + at(c, cols, gw);
+    match data {
+        RawData::U16(v) => permute(v, w, h, cpp, dest),
+        RawData::F32(v) => permute(v, w, h, cpp, dest),
+    }
+}
+
+/// Move every `cpp`-sample pixel of `v` from its stored position to `dest(r, c)`, the image
+/// position it belongs at. The permutation is not its own inverse, so it needs a destination.
+fn permute<T: Copy + Default, F: Fn(usize, usize) -> usize>(v: &mut Vec<T>, w: usize, h: usize, cpp: usize, dest: F) -> Result<()> {
+    let n = w.checked_mul(h).and_then(|n| n.checked_mul(cpp)).ok_or_else(|| RawError::Corrupt("image too large".into()))?;
+    if v.len() != n {
+        return Err(RawError::Corrupt("mosaic size does not match the image".into()));
+    }
+    let mut out = vec![T::default(); n];
+    for r in 0..h {
+        for c in 0..w {
+            let (from, to) = ((r * w + c) * cpp, dest(r, c) * cpp);
+            out[to..to + cpp].copy_from_slice(&v[from..from + cpp]);
+        }
+    }
+    *v = out;
+    Ok(())
+}
+
 fn mat3(v: Option<Vec<f64>>) -> Option<Mat3> {
     let v = v?;
     if v.len() != 9 || v.iter().any(|x| !x.is_finite()) {
@@ -99,6 +146,13 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     }
     let mut data = read_image_in(mode, bytes, &info, tiff.order, Packing::Msb)?;
     let bits = info.bits() as u32;
+
+    // DNG 1.7 interleaved storage: the raster is a permutation of the mosaic, so undo it before
+    // anything reads a sample as a pixel.
+    if mode == Mode::Full {
+        let factor = |tag| raw.u16(tag).map(usize::from).unwrap_or(1);
+        deinterleave(&mut data, w, h, cpp, factor(t::ROW_INTERLEAVE_FACTOR), factor(t::COLUMN_INTERLEAVE_FACTOR))?;
+    }
 
     // linearization table (integer data only)
     let mut linearized = false;
@@ -198,4 +252,67 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     };
     img.validate_for(mode)?;
     Ok(img)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Store `image` the way DNG 1.7 interleaves it: row `r` of the image is written to stored row
+    /// `(r % rows) * (h / rows) + r / rows`, and columns likewise. This is the inverse of
+    /// [`deinterleave`]'s destination map, i.e. what a writer produces.
+    fn interleave(image: &[u16], w: usize, h: usize, rows: usize, cols: usize) -> Vec<u16> {
+        let (gh, gw) = (h / rows, w / cols);
+        let mut out = vec![0u16; w * h];
+        for r in 0..h {
+            for c in 0..w {
+                out[((r % rows) * gh + r / rows) * w + (c % cols) * gw + c / cols] = image[r * w + c];
+            }
+        }
+        out
+    }
+
+    fn samples(d: &RawData) -> Vec<u16> {
+        match d {
+            RawData::U16(v) => v.clone(),
+            RawData::F32(_) => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn deinterleaves_an_interleaved_raster() {
+        // 3×3 rather than 2×2 on purpose: the 2×2 permutation is its own inverse, so a 2×2 fixture
+        // would pass even with the direction of the permutation reversed. This is the shape a DNG
+        // 1.7 file caught in the wild carried (JPEG XL, `RowInterleaveFactor`/`ColumnInterleaveFactor`
+        // both 2) — its real-file ground truth is that it renders bit-identical to its
+        // non-interleaved twin.
+        let (w, h, rows, cols) = (12, 9, 3, 3);
+        let image: Vec<u16> = (0..w * h).map(|i| i as u16).collect();
+        let mut data = RawData::U16(interleave(&image, w, h, rows, cols));
+        assert_ne!(samples(&data), image, "the fixture has to actually be permuted");
+        deinterleave(&mut data, w, h, 1, rows, cols).unwrap();
+        assert_eq!(samples(&data), image);
+
+        // 2×2 as well, the shape Adobe's converter writes.
+        let (w2, h2) = (12, 8);
+        let image2: Vec<u16> = (0..w2 * h2).map(|i| i as u16).collect();
+        let mut two = RawData::U16(interleave(&image2, w2, h2, 2, 2));
+        deinterleave(&mut two, w2, h2, 1, 2, 2).unwrap();
+        assert_eq!(samples(&two), image2);
+    }
+
+    #[test]
+    fn deinterleave_is_a_no_op_at_one_and_refuses_a_bad_factor() {
+        let image: Vec<u16> = (0..48).collect();
+        let mut plain = RawData::U16(image.clone());
+        deinterleave(&mut plain, 8, 6, 1, 1, 1).unwrap();
+        assert_eq!(samples(&plain), image);
+
+        // A factor that does not divide the raster is an error, not a scrambled image.
+        let mut bad = RawData::U16(image.clone());
+        assert!(deinterleave(&mut bad, 8, 6, 1, 4, 1).is_err());
+        // so is a hostile factor
+        let mut hostile = RawData::U16(image);
+        assert!(deinterleave(&mut hostile, 8, 6, 1, 1 << 20, 1).is_err());
+    }
 }
