@@ -396,6 +396,10 @@ impl AlbumTree {
     }
     /// Press at `from`, move through each `(point, frames held there)`, release at the last one.
     fn drag(&mut self, from: egui::Pos2, path: &[(egui::Pos2, usize)]) {
+        self.drag_with(from, path, vec![]);
+    }
+    /// [`Self::drag`] with `before_release` events sent just before the button comes up.
+    fn drag_with(&mut self, from: egui::Pos2, path: &[(egui::Pos2, usize)], before_release: Vec<egui::Event>) {
         let mut ev = |e| self.h.app.synthetic.push(e);
         ev(egui::Event::PointerMoved(from));
         ev(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
@@ -409,6 +413,9 @@ impl AlbumTree {
                 ev(egui::Event::PointerMoved(*to));
             }
             at = *to;
+        }
+        for e in before_release {
+            ev(e);
         }
         ev(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
         for _ in 0..400 {
@@ -452,6 +459,28 @@ fn dragging_an_album_onto_a_folder_moves_it() {
     let c = t.row(t.best).center();
     t.drag(c, &[(c, 0)]);
     assert_eq!(t.h.app.session.source, lightcraft_engine::LibrarySource::Album(lightcraft_catalog::AlbumId(t.best)));
+}
+
+/// A drag ends only with the main button, and Esc abandons it: a release of another button over a
+/// folder does not drop there, and Esc then release drops nothing.
+#[test]
+fn an_album_drag_ignores_other_buttons_and_esc_cancels_it() {
+    let mut t = album_tree();
+    let (from, to) = (t.row(t.loose).center(), t.row(t.archive).center());
+    let m = egui::Modifiers::default();
+    let secondary = |pressed| egui::Event::PointerButton { pos: to, button: egui::PointerButton::Secondary, pressed, modifiers: m };
+    // a right click over the folder mid-drag; the drag then ends elsewhere (on the Loose row itself)
+    t.drag_with(from, &[(to, 3), (from, 2)], vec![secondary(true), secondary(false)]);
+    assert_eq!(t.parent(t.loose), None, "the secondary release is not a drop");
+    assert!(t.h.app.ui.dragging_album.is_none());
+    let esc = |pressed| egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed, repeat: false, modifiers: m };
+    let (from, to) = (t.row(t.loose).center(), t.row(t.archive).center());
+    t.drag_with(from, &[(to, 3)], vec![esc(true), esc(false)]);
+    assert_eq!(t.parent(t.loose), None, "Esc abandons the drag, the release drops nothing");
+    assert!(t.h.app.ui.dragging_album.is_none());
+    // and a drag that is left alone still drops
+    t.drag_row(t.loose, t.archive);
+    assert_eq!(t.parent(t.loose), Some(t.archive));
 }
 
 /// Dragging out of a folder: the drop zone under the tree puts the album back at the top level;

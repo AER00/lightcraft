@@ -733,6 +733,12 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
     }
 }
 
+/// Whether the pointer is over `rect` and over what the panel shows of it (a row scrolled out of
+/// sight is not a drop target).
+fn pointer_over(ui: &egui::Ui, rect: Rect) -> bool {
+    ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p) && ui.clip_rect().contains(p))
+}
+
 /// How long a dragged album must rest on a closed folder before it opens.
 const HOVER_OPEN_SECS: f64 = 0.6;
 
@@ -764,12 +770,11 @@ fn drop_album(app: &mut LightcraftApp, ui: &egui::Ui, dragged: AlbumId, target: 
 /// in on release. Returns whether it opened the folder.
 fn album_drag_over(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, folder: &Album, open: Option<&mut bool>) -> bool {
     let hover_id = egui::Id::new(("album-hover", folder.id.0));
-    let Some(dragged) = app.ui.dragging_album.map(AlbumId) else {
-        ui.data_mut(|d| d.remove_temp::<f64>(hover_id));
-        return false;
-    };
-    if !ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| resp.rect.contains(p)) {
-        ui.data_mut(|d| d.remove_temp::<f64>(hover_id));
+    let Some(dragged) = app.ui.dragging_album.map(AlbumId) else { return false };
+    if !pointer_over(ui, resp.rect) {
+        if ui.data(|d| d.get_temp::<f64>(hover_id)).is_some() {
+            ui.data_mut(|d| d.remove_temp::<f64>(hover_id));
+        }
         return false;
     }
     let now = ui.input(|i| i.time);
@@ -788,7 +793,7 @@ fn album_drag_over(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Resp
     if can_drop_album(app, dragged, Some(folder.id)) {
         let t = Tokens::get(ui.ctx());
         ui.painter().rect_stroke(resp.rect.shrink2(vec2(8.0, 1.0)), 4.0, egui::Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
-        if ui.input(|i| i.pointer.any_released()) {
+        if ui.input(|i| i.pointer.primary_released()) {
             drop_album(app, ui, dragged, Some(folder.id));
         }
     }
@@ -805,11 +810,11 @@ fn top_level_drop_zone(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 29.0), Sense::hover());
     register(ui.ctx(), "albumDrop:top", r);
-    let over = ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| r.contains(p));
+    let over = pointer_over(ui, r);
     let stroke = if over { egui::Stroke::new(1.5, t.accent) } else { egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.5)) };
     ui.painter().rect_stroke(r.shrink2(vec2(8.0, 1.0)), 4.0, stroke, egui::StrokeKind::Inside);
     ui.painter().text(pos2(r.left() + 18.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Top Level"), t.font(13.5), t.text_dim);
-    if over && ui.input(|i| i.pointer.any_released()) {
+    if over && ui.input(|i| i.pointer.primary_released()) {
         drop_album(app, ui, dragged, None);
     }
 }
@@ -818,9 +823,17 @@ fn top_level_drop_zone(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 /// button is up (the drop targets act on the release frame, before this runs).
 pub fn album_drag_feedback(app: &mut LightcraftApp, ctx: &egui::Context) {
     let Some(id) = app.ui.dragging_album else { return };
-    let (released, down, pos) = ctx.input(|i| (i.pointer.any_released(), i.pointer.any_down(), i.pointer.latest_pos()));
-    if released || !down {
+    let (released, down, pos, esc) =
+        ctx.input(|i| (i.pointer.primary_released(), i.pointer.primary_down(), i.pointer.latest_pos(), i.key_pressed(egui::Key::Escape)));
+    if released || !down || esc {
         app.ui.dragging_album = None;
+        // forget how long the pointer rested on each folder
+        let ids: Vec<u64> = app.session.catalog.albums().filter(|a| a.folder).map(|a| a.id.0).collect();
+        ctx.data_mut(|d| {
+            for id in ids {
+                d.remove_temp::<f64>(egui::Id::new(("album-hover", id)));
+            }
+        });
         return;
     }
     let (Some(pos), Some(name)) = (pos, app.session.catalog.album(AlbumId(id)).map(|a| a.name.clone())) else { return };
