@@ -548,13 +548,17 @@ pub fn open_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String>
     }
     let path = match p.get("path").and_then(Value::as_str) {
         Some(x) => x.to_string(),
-        None => match app.services.pick_folder.as_mut() {
-            Some(pick) => match pick() {
-                Some(x) => x,
-                None => return Ok(Value::Null),
-            },
-            None => return Err("no folder dialog on this platform".into()),
-        },
+        None => {
+            let req = crate::pick::PickRequest::folder(crate::i18n::tr("Open Library"));
+            match crate::pick::ask(app, "app.openLibrary", p, "path", req, |s| s.pick_folder.as_mut().and_then(|f| f()).map(|x| vec![x])) {
+                crate::pick::Picked::Now(v) => match v.into_iter().next() {
+                    Some(x) => x,
+                    None => return Ok(Value::Null),
+                },
+                crate::pick::Picked::Later => return Ok(Value::Null),
+                crate::pick::Picked::Unavailable => return Err("no folder dialog on this platform".into()),
+            }
+        }
     };
     app.session.close_library().map_err(|e| e.to_string())?;
     app.session.open_library(&path, false).map_err(|e| e.to_string())?;
