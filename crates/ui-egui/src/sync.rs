@@ -6,8 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use lightcraft_engine::import::ScanProgress;
-use lightcraft_engine::sync::{FolderChanges, SyncChoice, SyncInput, scan_with};
+use lightcraft_engine::sync::{FolderChanges, SyncChoice, SyncInput, SyncProgress, scan_with};
 use serde_json::{Value, json};
 
 use crate::LightcraftApp;
@@ -17,7 +16,7 @@ use crate::theme::Tokens;
 /// A running scan of the dialog's folder.
 pub struct SyncTask {
     path: String,
-    progress: Arc<ScanProgress>,
+    progress: Arc<SyncProgress>,
     rx: std::sync::mpsc::Receiver<FolderChanges>,
 }
 
@@ -25,7 +24,7 @@ pub struct SyncTask {
 pub fn open(app: &mut LightcraftApp, path: &str, name: &str, disk: bool) -> Result<(), String> {
     cancel(app);
     let input = SyncInput::new(&mut app.session, path, disk).map_err(|e| e.to_string())?;
-    let progress = Arc::new(ScanProgress::default());
+    let progress = Arc::new(SyncProgress::default());
     let (tx, rx) = std::sync::mpsc::channel();
     let p = progress.clone();
     let job = move || {
@@ -54,7 +53,7 @@ pub fn open(app: &mut LightcraftApp, path: &str, name: &str, disk: bool) -> Resu
 /// `folder.scanChanges` is the agent's).
 fn cancel(app: &mut LightcraftApp) {
     if let Some(t) = app.sync.take() {
-        t.progress.cancel.store(true, Ordering::Relaxed);
+        t.progress.files.cancel.store(true, Ordering::Relaxed);
     }
     if std::mem::take(&mut app.sync_owns_changes) {
         app.session.folder_changes = None;
@@ -109,7 +108,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
 
 /// How far the scan is (files probed, of how many).
 fn progress(app: &LightcraftApp) -> Option<(usize, usize)> {
-    app.sync.as_ref().map(|t| (t.progress.done.load(Ordering::Relaxed), t.progress.total.load(Ordering::Relaxed)))
+    app.sync.as_ref().map(|t| t.progress.counts())
 }
 
 /// The dialog's body.

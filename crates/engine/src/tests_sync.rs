@@ -244,8 +244,8 @@ fn a_cancelled_scan_stops_checking_files() {
     let mut s = library(&dir);
     std::fs::remove_file(dir.path("trip/day1/b.png")).unwrap();
     let input = crate::sync::SyncInput::new(&mut s, &dir.path("trip"), false).unwrap();
-    let progress = crate::import::ScanProgress::default();
-    progress.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    let progress = crate::sync::SyncProgress::default();
+    progress.files.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
     let c = crate::sync::scan_with(input, &progress);
     assert!(c.missing.is_empty() && c.metadata.is_empty(), "{c:?}");
 }
@@ -392,4 +392,17 @@ fn a_change_to_the_folders_photos_makes_the_scan_stale() {
     // an agent that just asks to synchronize gets a fresh scan
     let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip")})).unwrap();
     assert_eq!(r["imported"], 1, "{r}");
+}
+
+#[test]
+fn the_progress_counts_the_photos_checked_too() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let dir = Scratch::new("progress");
+    let mut s = library(&dir);
+    let input = crate::sync::SyncInput::new(&mut s, &dir.path("trip"), false).unwrap();
+    let progress = crate::sync::SyncProgress::default();
+    crate::sync::scan_with(input, &progress);
+    assert_eq!((progress.checked.load(Relaxed), progress.to_check.load(Relaxed)), (2, 2));
+    let (done, total) = progress.counts();
+    assert!(done == total && total >= 2, "{done}/{total}");
 }

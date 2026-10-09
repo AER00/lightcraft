@@ -39,6 +39,24 @@ use crate::{EngineError, Result, Session};
 /// The largest XMP sidecar read when looking for metadata updates; a bigger one is skipped.
 const MAX_SIDECAR_BYTES: u64 = 16 * 1024 * 1024;
 
+/// How far a scan is: the folder's files probed ([`ScanProgress`], whose `cancel` stops the
+/// whole scan) and the library's photos checked.
+#[derive(Default)]
+pub struct SyncProgress {
+    pub files: ScanProgress,
+    pub checked: std::sync::atomic::AtomicUsize,
+    pub to_check: std::sync::atomic::AtomicUsize,
+}
+
+impl SyncProgress {
+    /// (done, of how many), both halves together.
+    pub fn counts(&self) -> (usize, usize) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let done = self.files.done.load(Relaxed).saturating_add(self.checked.load(Relaxed));
+        (done, self.files.total.load(Relaxed).saturating_add(self.to_check.load(Relaxed)))
+    }
+}
+
 /// What a scan of a folder needs, taken from the session so it can run on a worker thread.
 pub struct SyncInput {
     folder: String,
@@ -155,8 +173,9 @@ impl SyncInput {
 ///
 /// Both halves wait on the disk (a network share answers each file slowly), so they run at once:
 /// the look for new files (which probes them on its own threads) beside the checks of the
-/// library's photos, which run on several threads too. Stops early when `progress.cancel` is set.
-pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
+/// library's photos, which run on several threads too. Stops early when `progress.files.cancel`
+/// is set.
+pub fn scan_with(input: SyncInput, progress: &SyncProgress) -> FolderChanges {
     let SyncInput { folder, scan, photos, labels } = input;
     let seen: Vec<Arc<Photo>> = photos.iter().map(|(p, _)| Arc::clone(p)).collect();
     if !cfg!(target_arch = "wasm32") && !Path::new(&folder).is_dir() {
@@ -164,13 +183,13 @@ pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
     }
     // (no threads on the web: one after the other there)
     #[cfg(target_arch = "wasm32")]
-    let (out, checks) = (crate::import::scan_with(scan, std::slice::from_ref(&folder), progress), check_photos(&photos, &labels, progress));
+    let (out, checks) = (crate::import::scan_with(scan, std::slice::from_ref(&folder), &progress.files), check_photos(&photos, &labels, progress));
     #[cfg(not(target_arch = "wasm32"))]
     let (out, checks) = std::thread::scope(|sc| {
         let photos = &photos;
         let labels = &labels;
         let checks = sc.spawn(move || check_photos(photos, labels, progress));
-        let out = crate::import::scan_with(scan, std::slice::from_ref(&folder), progress);
+        let out = crate::import::scan_with(scan, std::slice::from_ref(&folder), &progress.files);
         // (a check that panicked counts as nothing found; the scan still reports the rest)
         (out, checks.join().unwrap_or_default())
     });
@@ -245,8 +264,15 @@ fn check_photo(p: &Photo, naming: SidecarNaming, labels: &Catalog) -> Check {
 
 /// [`check_photo`] for each photo, in order, on several threads (each file is a wait on the
 /// disk, not work for the CPU). Photos not reached before a cancel count as nothing found.
-fn check_photos(photos: &[(Arc<Photo>, SidecarNaming)], labels: &Catalog, progress: &ScanProgress) -> Vec<Check> {
+fn check_photos(photos: &[(Arc<Photo>, SidecarNaming)], labels: &Catalog, progress: &SyncProgress) -> Vec<Check> {
     use std::sync::atomic::Ordering::Relaxed;
+    progress.to_check.store(photos.len(), Relaxed);
+    let cancel = &progress.files.cancel;
+    let check = |p: &Photo, naming: SidecarNaming| {
+        let c = check_photo(p, naming, labels);
+        progress.checked.fetch_add(1, Relaxed);
+        c
+    };
     if cfg!(target_arch = "wasm32") {
         return vec![Check::Nothing; photos.len()];
     }
@@ -259,10 +285,10 @@ fn check_photos(photos: &[(Arc<Photo>, SidecarNaming)], labels: &Catalog, progre
             std::thread::scope(|sc| {
                 for _ in 0..n {
                     sc.spawn(|| {
-                        while !progress.cancel.load(Relaxed) {
+                        while !cancel.load(Relaxed) {
                             let i = next.fetch_add(1, Relaxed);
                             let Some((p, naming)) = photos.get(i) else { break };
-                            let c = check_photo(p, *naming, labels);
+                            let c = check(p, *naming);
                             if let Some(slot) = found.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_mut(i) {
                                 *slot = c;
                             }
@@ -273,13 +299,13 @@ fn check_photos(photos: &[(Arc<Photo>, SidecarNaming)], labels: &Catalog, progre
             return found.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
-    photos.iter().map(|(p, naming)| if progress.cancel.load(Relaxed) { Check::Nothing } else { check_photo(p, *naming, labels) }).collect()
+    photos.iter().map(|(p, naming)| if cancel.load(Relaxed) { Check::Nothing } else { check(p, *naming) }).collect()
 }
 
 /// [`scan_with`] on the calling thread.
 pub fn scan(s: &mut Session, path: &str, disk: bool) -> Result<FolderChanges> {
     let input = SyncInput::new(s, path, disk)?;
-    let changes = scan_with(input, &ScanProgress::default());
+    let changes = scan_with(input, &SyncProgress::default());
     if changes.offline {
         return Err(not_there(&changes.path));
     }
