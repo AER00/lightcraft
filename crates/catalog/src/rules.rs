@@ -413,6 +413,37 @@ thread_local! {
     static EVALUATING: std::cell::RefCell<Vec<crate::AlbumId>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+thread_local! {
+    /// While one outermost question is answered (is this photo in album X?): what each smart album
+    /// it leads to answered for each photo, so an album tested many times along the way (X tests Y
+    /// twice, Y tests Z twice…) is worked out once, not 2^depth times. Cleared when it ends.
+    static ANSWERS: std::cell::RefCell<std::collections::HashMap<(crate::AlbumId, crate::PhotoId), bool>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Whether `photo` is in smart album `id`, by `matches` (its rules), remembered for the rest of the
+/// outermost question and guarded by [`evaluating`] (a loop or a chain too deep holds nothing).
+pub(crate) fn smart_album_holds(id: crate::AlbumId, photo: crate::PhotoId, matches: impl FnOnce() -> bool) -> bool {
+    if let Some(known) = ANSWERS.with_borrow(|a| a.get(&(id, photo)).copied()) {
+        return known;
+    }
+    // the outermost question forgets the answers when it ends, however it ends
+    struct Forget(bool);
+    impl Drop for Forget {
+        fn drop(&mut self) {
+            if self.0 {
+                ANSWERS.with_borrow_mut(std::collections::HashMap::clear);
+            }
+        }
+    }
+    let _forget = Forget(EVALUATING.with_borrow(Vec::is_empty));
+    let answer = evaluating(id, matches);
+    if let Some(a) = answer {
+        ANSWERS.with_borrow_mut(|known| known.insert((id, photo), a));
+    }
+    answer.unwrap_or(false)
+}
+
 /// How deep smart albums may test smart albums before the innermost counts as holding nothing.
 const MAX_ALBUM_DEPTH: usize = 32;
 

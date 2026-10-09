@@ -565,3 +565,25 @@ fn summaries_name_albums() {
     let f = Filter { rule_set: Some(rules), ..Default::default() };
     assert!(f.describe_with(&c).contains("album isn't “Excluded Photos”"));
 }
+
+/// A chain of smart albums each testing the one before twice ("all of: album is X(k-1), album is
+/// X(k-1)") costs a pass per album, not 2^depth: each album's answer for a photo is worked out once
+/// per question. 25 albums deep stays instant.
+#[test]
+fn chains_of_smart_albums_stay_linear() {
+    let mut c = Catalog::new();
+    let smart = |id: u64, f: Filter| Album { smart: Some(Box::new(f)), ..Album::new(AlbumId(id), "X") };
+    c.apply(Op::AddAlbum { album: smart(1, Filter::default()) }).unwrap();
+    for k in 2..=26u64 {
+        let f: Filter = serde_json::from_value(serde_json::json!({"ruleSet": {"rules": [
+            {"field": "album", "op": "is", "value": k - 1}, {"field": "album", "op": "is", "value": k - 1}]}}))
+        .unwrap();
+        c.apply(Op::AddAlbum { album: smart(k, f) }).unwrap();
+    }
+    for i in 0..20 {
+        photo(&mut c, &format!("p{i}.jpg"), "2026-09-01T10:00:00");
+    }
+    let start = std::time::Instant::now();
+    assert_eq!(c.album_count(AlbumId(26)), 20);
+    assert!(start.elapsed() < std::time::Duration::from_secs(2), "took {:?}", start.elapsed());
+}

@@ -325,7 +325,7 @@ impl Catalog {
     pub fn album_contains(&self, id: AlbumId, p: &Photo) -> bool {
         match self.albums.get(&id) {
             // guarded: a smart album testing smart albums can't loop or recurse without end
-            Some(Album { smart: Some(rules), .. }) => !p.deleted && rules::evaluating(id, || rules.matches(p, self)).unwrap_or(false),
+            Some(Album { smart: Some(rules), .. }) => !p.deleted && rules::smart_album_holds(id, p.id, || rules.matches(p, self)),
             Some(a) => a.photos.contains(&p.id),
             None => false,
         }
