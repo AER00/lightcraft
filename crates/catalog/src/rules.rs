@@ -398,9 +398,13 @@ impl Rule {
                     &m.lens,
                     &m.location,
                     &m.city,
+                    &m.state,
                     &m.country,
+                    &m.alt_text,
                     &p.format,
                     &m.keywords.join(" "),
+                    &p.people().join(" "),
+                    p.copy_name.as_deref().unwrap_or(""),
                 ]
                 .join(" ");
                 text(&all)
@@ -795,6 +799,30 @@ mod tests {
         assert!(
             !m(&empty, "aspect", "is", json!("landscape")) && !m(&empty, "aspect", "is", json!("square")) && m(&empty, "longEdge", "is", json!(0))
         );
+    }
+
+    /// Any Searchable Text also finds the state / province, the alt text, a person on a face and
+    /// a virtual copy's name, as it already finds the city and country.
+    #[test]
+    fn any_searchable_text_covers_new_fields() {
+        let cat = Catalog::new();
+        let mut p = photo(1);
+        let m = |p: &Photo, value: &str| rs(json!({"rules": [{"field": "text", "op": "contains", "value": value}]})).matches(p, &cat);
+        for word in ["oregon", "kite", "ana", "bluish"] {
+            assert!(!m(&p, word), "{word}");
+        }
+        p.meta.state = "Oregon".into();
+        p.meta.alt_text = "A kite".into();
+        p.meta.regions = vec![lightcraft_meta::Region {
+            rect: lightcraft_meta::Rect { x0: 0.4, y0: 0.4, x1: 0.6, y1: 0.6 },
+            kind: lightcraft_meta::RegionKind::Face,
+            name: Some("Ana".into()),
+            description: None,
+        }];
+        p.copy_name = Some("Bluish".into());
+        for word in ["oregon", "kite", "ana", "bluish"] {
+            assert!(m(&p, word), "{word}");
+        }
     }
 
     /// The field menu shows every rule field once: at the top level or in exactly one group,
