@@ -296,6 +296,22 @@ fn exporting_keywords_names_what_the_list_cant_hold() {
     s.execute("keyword.import", &json!({"text": text})).unwrap();
 }
 
+/// A list saved as UTF-16 (as Windows' Notepad can) says to save it as UTF-8, and text too big to
+/// be a keyword list is refused, as a file that big is.
+#[test]
+fn importing_keywords_refuses_what_it_cant_read() {
+    let dir = temp_dir("import-keywords-refused");
+    let mut s = Session::with_demo();
+    let utf16: Vec<u8> = [0xff, 0xfe].into_iter().chain("Travel\r\n".encode_utf16().flat_map(u16::to_le_bytes)).collect();
+    std::fs::write(dir.join("travel.txt"), utf16).unwrap();
+    let err = s.execute("keyword.import", &json!({"path": dir.join("travel.txt").to_string_lossy()})).unwrap_err().to_string();
+    assert!(err.contains("UTF-16") && err.contains("UTF-8"), "{err}");
+    let big = "Travel\n".repeat((17 << 20) / 7);
+    let err = s.execute("keyword.import", &json!({"text": big})).unwrap_err().to_string();
+    assert!(err.contains("16 MB"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Import Keywords reads a keyword list file (or text) as one undo step and says what it added;
 /// a file it can't read says which line, and nothing is taken.
 #[test]

@@ -110,6 +110,10 @@ fn read_list(path: &str) -> Result<String> {
     if bytes.len() as u64 > MAX_LIST_BYTES {
         return Err(bad("keyword.import", format!("{path}: larger than {} MB, not a keyword list", MAX_LIST_BYTES >> 20)));
     }
+    // Notepad and some exporters save UTF-16: say how to get the file in, not just that it isn't
+    if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+        return Err(bad("keyword.import", format!("{path}: UTF-16 text — save it as UTF-8 and import it again")));
+    }
     String::from_utf8(bytes).map_err(|_| bad("keyword.import", format!("{path}: not UTF-8 text")))
 }
 
@@ -458,6 +462,9 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 let text = match (str_param(p, "path").map(str::trim).filter(|x| !x.is_empty()), str_param(p, "text")) {
                     (Some(path), _) => read_list(path)?,
+                    (None, Some(text)) if text.len() as u64 > MAX_LIST_BYTES => {
+                        return Err(bad("keyword.import", format!("larger than {} MB, not a keyword list", MAX_LIST_BYTES >> 20)));
+                    }
                     (None, Some(text)) => text.to_string(),
                     (None, None) => return Err(bad("keyword.import", "give `path` or `text`")),
                 };
