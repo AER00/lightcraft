@@ -249,6 +249,20 @@ lightcraft --control 7980 ~/Pictures/trip
   path=out.jpg longEdge=2048` runs any chain of commands (headless, on a saved library, or against the running app)
   and prints one JSON result per command; `lightcraft-cli render in.dng -o out.jpg --set light.exposure=0.7 --preset …`.
 - **Undo for everything**, including agent actions: a slider drag (or a scripted burst of updates) is one undo step.
+- **Contact sheets (native app / CLI):** select photos, then **File → Contact Sheet PDF…**. Choose A4 or Letter, landscape,
+  rows/columns and filename captions; save a paginated PDF and print it from your PDF viewer. Exports use the
+  current edits, fit each photo without further cropping, and render at 150 dpi in sRGB. The background export
+  supports cancellation and protects originals and XMP sidecars. From the CLI:
+
+  ```sh
+  lightcraft-cli run --import ~/Pictures/shoot library.selectAll export.contactSheet path=Contact.pdf paper=a4 columns=3 rows=4 captions=true
+  ```
+
+  `export.contactSheet` also accepts explicit `ids`, `landscape=true`, and `paper=letter`. It replaces an existing
+  output only after the entire PDF succeeds. Limits: 1,000 photos, 100 pages, 256 MiB; captions are rasterized
+  with the same font coverage as watermarks (CJK requires craft-fonts), with long names shortened in the middle.
+  This is a contact-sheet workflow,
+  not a printer-driver or custom picture-package layout editor.
 - **Every widget is addressable** (`ui.widgets`) and clickable by name, so agents operate the real UI, not a
   side door.
 - The screenshots in this README were produced end to end by the [`docs/showcase/`](docs/showcase/) scripts.

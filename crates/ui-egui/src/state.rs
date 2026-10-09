@@ -506,6 +506,9 @@ pub struct NameEdit {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Dialog {
+    ContactSheet {
+        options: lightcraft_engine::contact_sheet::Options,
+    },
     /// `parent`: the folder to create it in (none: the top level).
     NewAlbum {
         name: String,
