@@ -671,7 +671,7 @@ fn component_row_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, mask: u32, k: 
 /// offered (with `then` to start afterwards) instead of starting an AI mask.
 fn needs_model(app: &mut LightcraftApp, kind: &str, op: &str) -> bool {
     let seg = &app.session.segmenter;
-    let missing = lightcraft_engine::segment::Segmenter::AVAILABLE && seg.dir.is_some() && !seg.installed();
+    let missing = lightcraft_engine::segment::Segmenter::AVAILABLE && seg.remote_endpoint().is_none() && seg.dir.is_some() && !seg.installed();
     if missing {
         app.offer_sam_download(Some((kind, op)));
     }

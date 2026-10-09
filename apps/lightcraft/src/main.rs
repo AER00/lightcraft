@@ -52,8 +52,15 @@ struct App(LightcraftApp, PrefsWriter, #[cfg(target_os = "macos")] Option<native
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
-        if let Some(m) = self.2.as_mut() {
-            m.update(&mut self.0, ctx);
+        if let Some(m) = self.2.as_mut()
+            && m.update(&mut self.0, ctx)
+            && lightcraft_ui_egui::panels::notices::may_close(&mut self.0)
+        {
+            // Quit from the menu bar: save exactly what closing the window saves (settings and
+            // library, after the unsaved-changes check; otherwise its prompt shows), then end the
+            // process instead of closing the viewport while AppKit is terminating (PR #444).
+            eframe::App::on_exit(self);
+            std::process::exit(0);
         }
         self.0.logic(ctx);
         self.1.tick(&mut self.0, ctx);
@@ -76,11 +83,13 @@ impl eframe::App for App {
 
 /// The window's renderer (egui-wgpu): eframe's defaults, with LightCraft's backend choice — DX12
 /// alone on Windows unless `LIGHTCRAFT_GPU_BACKEND` / `WGPU_BACKEND` say otherwise (issue #136:
-/// with Vulkan in the set, wgpu loads the Vulkan driver even when it then picks DX12).
+/// with Vulkan in the set, wgpu loads the Vulkan driver even when it then picks DX12) — and DX12
+/// shaders compiled with FXC, never a stray `dxcompiler.dll` (issue #471).
 fn window_wgpu_options() -> eframe::egui_wgpu::WgpuConfiguration {
     let mut c = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(n) = &mut c.wgpu_setup {
         n.instance_descriptor.backends = lightcraft_engine::gpu::backend::window_backends();
+        n.instance_descriptor.backend_options = lightcraft_engine::gpu::backend::backend_options();
     }
     c
 }
@@ -125,7 +134,7 @@ fn gpu_crash_notice(what: &str) -> String {
 }
 
 fn config_dir() -> Option<std::path::PathBuf> {
-    lightcraft_engine::camera_profiles::config_dir()
+    lightcraft_engine::config::config_dir()
 }
 
 /// `<config>/ui.json`, the saved UI state and app settings — `None` when nothing is read or
@@ -387,6 +396,13 @@ fn services(ctx: egui::Context, log_file: Option<&std::path::Path>) -> Services 
                 .map(|p| p.to_string_lossy().to_string())
                 .collect()
         })),
+        pick_denoise_model: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .add_filter_nocase(lightcraft_ui_egui::i18n::tr("ONNX model"), &["onnx"])
+                .pick_file()
+                .map(|p| vec![p.to_string_lossy().into_owned()])
+                .unwrap_or_default()
+        })),
         pick_preset_files: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .set_title(lightcraft_ui_egui::i18n::tr("Import Presets"))
@@ -468,15 +484,15 @@ fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: boo
 /// and offers Try Again / Choose Another Library… / Continue Without Saving / Quit (issue #100).
 fn open_library_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: bool) -> (Session, Option<LibraryProblem>) {
     if in_memory {
-        return (if seed_demo { Session::with_demo() } else { Session::new() }.with_fs().with_system_clock(), None);
+        return (if seed_demo { Session::with_demo() } else { Session::new() }.with_fs().with_default_denoise_models().with_system_clock(), None);
     }
-    let unopened = || Session::new().with_fs().with_system_clock();
+    let unopened = || Session::new().with_fs().with_default_denoise_models().with_system_clock();
     let Some(dir) = dir else {
         log::warn!("no library location (set --library or LIGHTCRAFT_LIBRARY)");
         return (unopened(), Some(LibraryProblem::new("", "There is no home folder to keep the library in. Choose a folder for it.")));
     };
     let t0 = std::time::Instant::now();
-    let mut s = Session::new().with_fs().with_system_clock();
+    let mut s = Session::new().with_fs().with_default_denoise_models().with_system_clock();
     match s.open_library(&dir, seed_demo) {
         Ok(r) => {
             let (replayed, torn) = (r.replayed, r.torn_bytes);
@@ -889,6 +905,16 @@ mod tests {
             }
         }
         assert!(!b.is_empty());
+    }
+
+    /// Issue #471: the window's DX12 shaders compile with FXC — wgpu's default loaded any
+    /// `dxcompiler.dll` on the search path, and one without `dxil.dll` kept the window from opening.
+    #[test]
+    fn window_compiles_dx12_shaders_with_fxc() {
+        let eframe::egui_wgpu::WgpuSetup::CreateNew(n) = window_wgpu_options().wgpu_setup else { panic!("expected CreateNew") };
+        if std::env::var_os("WGPU_DX12_COMPILER").is_none() {
+            assert!(matches!(n.instance_descriptor.backend_options.dx12.shader_compiler, eframe::wgpu::Dx12Compiler::Fxc));
+        }
     }
 
     /// Issue #234: Windows opens links with the URL protocol handler (the default browser), not

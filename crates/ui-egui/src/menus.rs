@@ -47,6 +47,7 @@ pub fn language_from_command(id: &str) -> Option<crate::i18n::Locale> {
 }
 
 pub const UI_COMMANDS: &[UiCommand] = &[
+    ("modelSetup.cancel", "Cancel Pending Photo Action", None, ""),
     ("view.photoGrid", "Photo Grid", None, "View"),
     ("view.squareGrid", "Square Grid", None, "View"),
     // G: Photo Grid ↔ Square Grid (from other views: the photo grid)
@@ -230,6 +231,11 @@ fn adjust_brush(app: &mut LightcraftApp, k: f32, df: f32) -> Value {
         app.ui.brush_feather = (app.ui.brush_feather + df).clamp(0.0, 100.0);
         json!({"size": app.ui.brush_size, "feather": app.ui.brush_feather})
     }
+}
+
+/// The `parent` folder id of a `dialog.new*` command (none: the top level).
+fn parent_param(p: &Value) -> Option<u64> {
+    p.get("parent").and_then(Value::as_u64)
 }
 
 /// An sRGB colour from `"#rrggbb"` or `[r, g, b]` (0..255).
@@ -459,7 +465,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "app.settings" => {
             let tab = p.get("tab").and_then(Value::as_str).unwrap_or("general");
             if !crate::panels::settings::TABS.iter().any(|(id, _)| *id == tab) {
-                return Some(Err(format!("unknown settings tab `{tab}` (general|import|performance|interface|faces)")));
+                let tabs: Vec<&str> = crate::panels::settings::TABS.iter().map(|(id, _)| *id).collect();
+                return Some(Err(format!("unknown settings tab `{tab}` ({})", tabs.join("|"))));
             }
             app.ui.dialog = Some(Dialog::Settings { tab: tab.into() });
             Ok(Value::Null)
@@ -834,11 +841,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "dialog.newFolder" => {
-            app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: true });
+            app.ui.dialog =
+                Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: true, parent: parent_param(p) });
             Ok(Value::Null)
         }
         "dialog.newAlbum" => {
-            app.ui.dialog = Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: false });
+            app.ui.dialog =
+                Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: false, parent: parent_param(p) });
             Ok(Value::Null)
         }
         "dialog.autoStack" => {
@@ -865,17 +874,19 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                     id: Some(a.id.0),
                     name: a.name.clone(),
                     rules: a.smart.as_ref().and_then(|f| f.rule_set.clone()).unwrap_or_default(),
+                    parent: None,
                 },
                 None => Dialog::SmartRules {
                     id: None,
                     name: p.get("name").and_then(Value::as_str).unwrap_or("").into(),
                     rules: lightcraft_catalog::RuleSet { rules: vec![crate::panels::rules_editor::new_rule()], ..Default::default() },
+                    parent: parent_param(p),
                 },
             });
             Ok(Value::Null)
         }
         "dialog.newSmartAlbum" => {
-            app.ui.dialog = Some(Dialog::NewSmartAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into() });
+            app.ui.dialog = Some(Dialog::NewSmartAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), parent: parent_param(p) });
             Ok(Value::Null)
         }
         "dialog.captureTime" => {

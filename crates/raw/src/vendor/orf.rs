@@ -18,7 +18,7 @@
 //!   pattern is anchored at the sensor origin (assumed) or at the active area. Files without a usable tag fall back
 //!   to the green diagonal found from the data, which can't tell red from blue (GRBG or RGGB is assumed).
 
-use super::white_from_data;
+use super::{cfa_from_exif, white_from_data};
 use crate::tiffraw::{Packing, read_image};
 use crate::unpack::unpack_msb;
 use crate::{BlackLevel, Cfa, ColorData, Mode, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
@@ -35,8 +35,6 @@ pub(crate) const PREVIEW_LENGTH: u16 = 0x0102;
 const WB_RB: u16 = 0x0100;
 const BLACK: u16 = 0x0600;
 const CROP: [u16; 4] = [0x0612, 0x0613, 0x0614, 0x0615];
-/// Exif `CFAPattern`.
-const EXIF_CFA_PATTERN: u16 = 0xa302;
 
 /// The Olympus maker note.
 pub(crate) fn maker_note(bytes: &[u8], tiff: &Tiff) -> Option<MakerNote> {
@@ -68,21 +66,6 @@ pub(crate) fn unpack_row_le32_msb(src: &[u8], bits: u32, out: &mut [u16]) {
         })
         .collect();
     unpack_msb(&swapped, bits, out);
-}
-
-/// The colour-filter layout from the Exif `CFAPattern` tag (`0xa302`: two 16-bit repeat counts, found in either
-/// byte order, then one byte per site: 0 = red, 1 = green, 2 = blue), when it describes a 2×2 Bayer cell.
-fn cfa_from_exif(tiff: &Tiff) -> Option<Cfa> {
-    let &[c0, c1, r0, r1, s0, s1, s2, s3] = tiff.exif()?.bytes(EXIF_CFA_PATTERN)? else { return None };
-    let two = |a: u8, b: u8| matches!((a, b), (2, 0) | (0, 2));
-    let name = match [s0, s1, s2, s3] {
-        [0, 1, 1, 2] => "RGGB",
-        [2, 1, 1, 0] => "BGGR",
-        [1, 0, 2, 1] => "GRBG",
-        [1, 2, 0, 1] => "GBRG",
-        _ => return None,
-    };
-    (two(c0, c1) && two(r0, r1)).then(|| Cfa::bayer_static(name))
 }
 
 /// The layout found from the samples, for files without the Exif tag: GRBG when the greens sit on the main
@@ -223,6 +206,7 @@ pub(crate) fn preview(bytes: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vendor::EXIF_CFA_PATTERN;
     use lightcraft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter};
 
     fn orf(w: u32, h: u32, bits: u16, strip: Vec<u8>) -> Vec<u8> {
