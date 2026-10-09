@@ -1080,6 +1080,8 @@ mod drop_tests {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
+    /// The Keywording box's Will Export names, by library revision and selection.
+    keyword_export: Option<(u64, u64, std::sync::Arc<Vec<panels::keywording::Chip>>)>,
     /// The Keywording box's chips, by library revision and selection.
     keyword_chips: Option<(u64, u64, std::sync::Arc<Vec<panels::keywording::Chip>>)>,
     /// The Keyword List's tick boxes, by library revision and selection.
@@ -1167,6 +1169,22 @@ impl Caches {
                 let t = std::sync::Arc::new(cat.keyword_tree());
                 self.keyword_tree = Some((cat.revision, t.clone()));
                 t
+            }
+        }
+    }
+    /// What exported files carry for the selection (the Keywording box's Will Export).
+    pub(crate) fn keyword_export(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+        selection: &[lightcraft_catalog::PhotoId],
+    ) -> std::sync::Arc<Vec<panels::keywording::Chip>> {
+        let key = key_of(selection);
+        match &self.keyword_export {
+            Some((r, k, c)) if *r == cat.revision && *k == key => c.clone(),
+            _ => {
+                let c = std::sync::Arc::new(panels::keywording::will_export(cat, selection));
+                self.keyword_export = Some((cat.revision, key, c.clone()));
+                c
             }
         }
     }

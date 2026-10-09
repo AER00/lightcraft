@@ -787,7 +787,13 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
         ui.data_mut(|d| d.insert_temp(kid, text));
         ui.add_space(8.0);
-        super::keywording::chip_row(app, ui);
+        super::keywording::view_switch(app, ui);
+        ui.add_space(4.0);
+        if app.ui.keywording_will_export {
+            super::keywording::export_row(app, ui);
+        } else {
+            super::keywording::chip_row(app, ui);
+        }
         ui.add_space(10.0);
         keyword_set(app, ui);
         ui.add_space(8.0);

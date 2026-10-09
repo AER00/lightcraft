@@ -1757,5 +1757,7 @@
   "Drop here for the top level": "ここにドロップすると最上位に移動",
   "Their photos and the keywords below them come together under one keyword.": "写真と下位のキーワードが1つのキーワードにまとめられます。",
   "Select photos to give them keywords.": "写真を選択するとキーワードを付けられます。",
-  "Add to All Selected Photos": "選択したすべての写真に追加"
+  "Add to All Selected Photos": "選択したすべての写真に追加",
+  "Will Export": "書き出される内容",
+  "No keywords are exported": "書き出されるキーワードはありません"
 }

@@ -1757,5 +1757,7 @@
   "Drop here for the top level": "拖放到此處以移至最上層",
   "Their photos and the keywords below them come together under one keyword.": "它們的照片與下層關鍵字將合併到同一個關鍵字下。",
   "Select photos to give them keywords.": "選取照片以加入關鍵字。",
-  "Add to All Selected Photos": "加入所有選取的照片"
+  "Add to All Selected Photos": "加入所有選取的照片",
+  "Will Export": "將匯出",
+  "No keywords are exported": "沒有要匯出的關鍵字"
 }

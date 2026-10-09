@@ -9,6 +9,47 @@ use crate::LightcraftApp;
 use crate::theme::Tokens;
 use crate::widgets::register;
 
+/// The Keywording box's view: the keywords (chips), or what exported files will carry.
+pub fn view_switch(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        for (export, id, label) in [(false, "keywords", "Keywords"), (true, "willExport", "Will Export")] {
+            let r = ui.selectable_label(app.ui.keywording_will_export == export, crate::i18n::tr(label));
+            register(ui.ctx(), format!("keywordView:{id}"), r.rect);
+            if r.clicked() {
+                app.ui.keywording_will_export = export;
+            }
+        }
+    });
+}
+
+/// What exported files will carry for the selection, read only: one name only some of the photos
+/// carry is marked with an asterisk.
+pub fn export_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let t = Tokens::get(ui.ctx());
+    let selection = app.session.selection.ids.clone();
+    let names = app.caches.keyword_export(&app.session.catalog, &selection);
+    if names.is_empty() {
+        ui.label(egui::RichText::new(crate::i18n::tr("No keywords are exported")).color(t.text_dim));
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        for n in names.iter() {
+            let partial = !n.on_all();
+            let text = format!("{}{}", n.path, if partial { " *" } else { "" });
+            let r = egui::Frame::NONE
+                .stroke(egui::Stroke::new(1.0, t.field_border))
+                .corner_radius(10.0)
+                .inner_margin(egui::Margin::symmetric(8, 2))
+                .show(ui, |ui| ui.label(egui::RichText::new(text).color(if partial { t.text_dim } else { t.text_label })))
+                .response;
+            register(ui.ctx(), format!("keywordExport:{}", n.path), r.rect);
+            if partial {
+                r.on_hover_text(crate::i18n::tr_format!("On {have} of {of} selected photos", have = n.have, of = n.of));
+            }
+        }
+    });
+}
+
 /// A chip's menu: it acts on the selected photos (deleting a keyword from the whole library is the
 /// Keyword List's).
 fn menu(app: &mut LightcraftApp, ui: &mut egui::Ui, chip: &Chip) {
@@ -93,6 +134,20 @@ impl Chip {
 
 /// The keywords of the selected `photos`, each once whatever its case, with how many of them have
 /// it; by name.
+/// "Will Export" (Lightroom Classic's Keyword Tags ▸ Will Export): the names exported files carry
+/// for the selected `photos`, as the keyword tag options say, each with how many of them carry it;
+/// by name.
+pub(crate) fn will_export(catalog: &Catalog, photos: &[PhotoId]) -> Vec<Chip> {
+    let mut have: std::collections::BTreeMap<String, (String, usize)> = Default::default();
+    for id in photos {
+        let Some(p) = catalog.photo(*id) else { continue };
+        for name in catalog.export_keywords(&p.meta.keywords).flat {
+            have.entry(name.to_lowercase()).or_insert_with(|| (name.clone(), 0)).1 += 1;
+        }
+    }
+    have.into_values().map(|(path, have)| Chip { path, have, of: photos.len() }).collect()
+}
+
 pub(crate) fn chips(catalog: &Catalog, photos: &[PhotoId]) -> Vec<Chip> {
     use lightcraft_catalog::keywords::clean;
     // by lower-case keyword: the photos with it (each once)
@@ -151,5 +206,24 @@ mod tests {
     fn a_keyword_spelled_two_ways_is_one_chip() {
         let (c, ids) = library(&[&["Beach"], &["beach"], &["BEACH", "beach"]]);
         assert_eq!(shown(&chips(&c, &ids)), [("Beach", 3, 3)]);
+    }
+
+    /// "Will Export": the names exported files carry for the selection, as the keyword tag options
+    /// say (a keyword left out goes, its parents and synonyms come), each with how many of the
+    /// selected photos carry it.
+    #[test]
+    fn will_export_shows_what_exported_files_carry() {
+        use lightcraft_catalog::keywords::KeywordInfo;
+        let (mut c, ids) = library(&[&["Places|Lisbon", "draft"], &["Places|Lisbon"]]);
+        let out = KeywordInfo { include_on_export: false, ..KeywordInfo::default() };
+        c.apply(Op::SetKeyword { path: "Places".into(), info: Some(out.clone()) }).unwrap();
+        c.apply(Op::SetKeyword { path: "draft".into(), info: Some(out) }).unwrap();
+        c.apply(Op::SetKeyword {
+            path: "Places|Lisbon".into(),
+            info: Some(KeywordInfo { synonyms: vec!["Lisboa".into()], ..KeywordInfo::default() }),
+        })
+        .unwrap();
+        assert_eq!(shown(&will_export(&c, &ids)), [("Lisboa", 2, 2), ("Lisbon", 2, 2)]);
+        assert!(will_export(&c, &[]).is_empty());
     }
 }

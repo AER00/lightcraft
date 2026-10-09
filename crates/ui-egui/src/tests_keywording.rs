@@ -119,3 +119,18 @@ fn keyword_set_buttons_reflect_the_selection() {
     assert!(has(&h, &format!("kwSetSome:{}", at("Weddings"))), "only the active one has Weddings");
     assert!(!has(&h, &format!("kwSetOn:{}", at("Weddings"))));
 }
+
+/// "Will Export" shows the names exported files will carry for the selection instead of the chips:
+/// a keyword left out of export isn't there; "Keywords" brings the chips back.
+#[test]
+fn will_export_shows_what_exports_carry() {
+    let (mut h, _) = two_selected();
+    let r = h.request("engine.execute", json!({"command": "keyword.edit", "params": {"keyword": "Weddings", "includeOnExport": false}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordView:willExport"}));
+    assert!(has(&h, "keywordExport:beach"));
+    assert!(!has(&h, "keywordExport:Weddings"), "left out of export");
+    assert!(!has(&h, "keywordChip:beach"), "the chips give way");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordView:keywords"}));
+    assert!(has(&h, "keywordChip:beach") && !has(&h, "keywordExport:beach"));
+}

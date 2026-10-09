@@ -1431,5 +1431,7 @@
   "Their photos and the keywords below them come together under one keyword.": "Их фото и вложенные ключевые слова объединятся под одним ключевым словом.",
   "Select photos to give them keywords.": "Выберите фото, чтобы назначить им ключевые слова.",
   "Person": "Человек",
-  "Add to All Selected Photos": "Добавить ко всем выбранным фото"
+  "Add to All Selected Photos": "Добавить ко всем выбранным фото",
+  "Will Export": "Будет экспортировано",
+  "No keywords are exported": "Ключевые слова не экспортируются"
 }
