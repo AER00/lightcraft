@@ -179,6 +179,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let counts = app.caches.counts(&app.session.catalog);
         let (total, picks, deleted) = (counts.total, counts.picks, counts.deleted);
         egui::ScrollArea::both().id_salt("left-scroll").auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
+            drag_auto_scroll(app, ui);
             // rows are as wide as the widest one needs (last frame), at least the panel
             let wide = viewport.width().max(content_width(ui.ctx()));
             ui.set_min_width(wide);
@@ -749,6 +750,36 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
 /// sight is not a drop target).
 fn pointer_over(ui: &egui::Ui, rect: Rect) -> bool {
     ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p) && ui.clip_rect().contains(p))
+}
+
+/// How close to the top or bottom edge of the sidebar (points) a dragged album starts scrolling it.
+const SCROLL_EDGE: f32 = 36.0;
+/// The fastest the sidebar scrolls for a drag (points per second).
+const SCROLL_MAX_SPEED: f32 = 700.0;
+
+/// How fast the sidebar scrolls (points per second, positive = down) for a dragged item with the
+/// pointer at `y`, the visible part being `top..bottom`: none in the middle, faster the nearer to
+/// the edge, the top speed at and past it.
+pub fn auto_scroll_speed(y: f32, top: f32, bottom: f32) -> f32 {
+    let depth = |dist: f32| ((SCROLL_EDGE - dist) / SCROLL_EDGE).clamp(0.0, 1.0);
+    SCROLL_MAX_SPEED * (depth(bottom - y) - depth(y - top))
+}
+
+/// While an album, or photos from the grid, are dragged over the sidebar: scrolls it when the
+/// pointer is near its top or bottom edge, so rows beyond the visible part can be reached. Call
+/// inside the scroll area.
+fn drag_auto_scroll(app: &LightcraftApp, ui: &egui::Ui) {
+    if app.ui.dragging_album.is_none() && app.ui.dragging_photos.is_none() {
+        return;
+    }
+    let view = ui.clip_rect();
+    let Some(p) = ui.input(|i| i.pointer.latest_pos()).filter(|p| p.x >= view.left() && p.x <= view.right()) else { return };
+    let speed = auto_scroll_speed(p.y, view.top(), view.bottom());
+    if speed != 0.0 {
+        // a positive delta moves the content down: the view goes up
+        ui.scroll_with_delta_animation(vec2(0.0, -speed * ui.input(|i| i.stable_dt).min(0.1)), egui::style::ScrollAnimation::none());
+        ui.ctx().request_repaint();
+    }
 }
 
 /// How long a dragged album must rest on a closed folder before it opens.

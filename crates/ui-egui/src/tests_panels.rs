@@ -596,6 +596,78 @@ fn folders_are_placed_by_their_edges_and_entered_by_their_middle() {
     assert!(!t.h.app.session.catalog.album_children_are_ordered(None), "Travel 2026 already sits right before Trips");
 }
 
+/// Holding a dragged album near the top or bottom edge of the sidebar scrolls it that way; in the
+/// middle, or beside the sidebar, nothing scrolls. (Each drag ends with Esc: nothing is dropped.)
+#[test]
+fn a_dragged_album_scrolls_the_sidebar_at_its_edges() {
+    let mut t = album_tree();
+    for i in 0..60 {
+        t.h.app.session.execute("album.create", &json!({"name": format!("Z{i:02}")})).unwrap();
+    }
+    t.h.step();
+    t.h.step();
+    let last = t.id_of("Z59");
+    let panel = widget(&t.h, "panel:left_panel");
+    let (cx, top, bottom) = (panel.center().x, panel.top(), panel.bottom());
+    let start = t.row(last).top();
+    assert!(start > bottom, "the last album starts below the visible sidebar: {start} vs {bottom}");
+    // a row in the middle of the visible sidebar: where a drag starts
+    let pick = |t: &AlbumTree| {
+        let rows = t.h.app.widgets.iter().filter(|(w, r)| w.starts_with("source:album:") && r.top() > top + 120.0 && r.bottom() < bottom - 120.0);
+        rows.map(|(_, r)| r.center()).next().expect("a visible album row")
+    };
+    let esc = |pressed| egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed, repeat: false, modifiers: Default::default() };
+    let hold = |t: &mut AlbumTree, to: egui::Pos2| {
+        let from = pick(t);
+        t.drag_with(from, &[(to, 90)], vec![esc(true), esc(false)]);
+    };
+    hold(&mut t, egui::pos2(cx, panel.center().y));
+    assert_eq!(t.row(last).top(), start, "no scrolling in the middle");
+    hold(&mut t, egui::pos2(panel.right() + 200.0, bottom - 6.0));
+    assert_eq!(t.row(last).top(), start, "no scrolling beside the sidebar");
+    hold(&mut t, egui::pos2(cx, bottom - 6.0));
+    let scrolled = t.row(last).top();
+    assert!(scrolled < start - 100.0, "the bottom edge scrolls down: {start} -> {scrolled}");
+    hold(&mut t, egui::pos2(cx, top + 70.0));
+    let back = t.row(last).top();
+    assert!(back > scrolled + 100.0, "the top edge scrolls back up: {scrolled} -> {back}");
+    assert!(t.h.app.ui.dragging_album.is_none());
+}
+
+/// Photos dragged from the grid scroll the sidebar the same way, to reach an album further down.
+#[test]
+fn dragged_photos_scroll_the_sidebar_at_its_edges() {
+    let mut t = album_tree();
+    for i in 0..60 {
+        t.h.app.session.execute("album.create", &json!({"name": format!("Z{i:02}")})).unwrap();
+    }
+    t.h.step();
+    t.h.step();
+    let (last, panel) = (t.id_of("Z59"), widget(&t.h, "panel:left_panel"));
+    let start = t.row(last).top();
+    let first = t.h.app.session.visible_cloned()[0].0;
+    let thumb = widget(&t.h, &format!("thumb:{first}")).center();
+    t.drag(thumb, &[(egui::pos2(panel.center().x, panel.bottom() - 6.0), 90)]);
+    assert!(t.row(last).top() < start - 100.0, "scrolled down: {start} -> {}", t.row(last).top());
+    assert!(t.h.app.ui.dragging_photos.is_none(), "the drag ended");
+}
+
+/// How fast the sidebar scrolls for a pointer at `y` (+ down) is zero in the middle, ramps up
+/// within the edge band and stays at the top speed past the edge.
+#[test]
+fn auto_scroll_speed_ramps_up_at_the_edges() {
+    use crate::panels::left::auto_scroll_speed;
+    let (top, bottom) = (100.0, 700.0);
+    assert_eq!(auto_scroll_speed(400.0, top, bottom), 0.0);
+    assert_eq!(auto_scroll_speed(top + 60.0, top, bottom), 0.0, "outside the band");
+    let (slow, fast, past) =
+        (auto_scroll_speed(bottom - 30.0, top, bottom), auto_scroll_speed(bottom - 5.0, top, bottom), auto_scroll_speed(bottom + 80.0, top, bottom));
+    assert!(0.0 < slow && slow < fast && fast <= past, "{slow} {fast} {past}");
+    assert_eq!(past, auto_scroll_speed(bottom + 400.0, top, bottom), "capped");
+    let up = auto_scroll_speed(top + 5.0, top, bottom);
+    assert!(up < 0.0 && (up + fast).abs() < 1e-3, "the same ramp upwards: {up} vs {fast}");
+}
+
 /// Dragging out of a folder: the "Albums" header is the way back to the top level (it stays in
 /// view however long the tree is), only offered for an album that sits in a folder, and the move
 /// is one undo step. The drop does not fold the section.
