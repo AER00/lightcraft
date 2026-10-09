@@ -32,7 +32,7 @@ pub fn is_under(k: &str, parent: &str) -> bool {
 
 /// Replace the `from` prefix of `k` (which [`is_under`] `from`) with `to`. By levels, not bytes:
 /// `from` may be written in another case, which can change a letter's length (ẞ / ß).
-fn reparent(k: &str, from: &str, to: &str) -> String {
+pub fn reparent(k: &str, from: &str, to: &str) -> String {
     let skip = from.split(SEP).filter(|s| !s.trim().is_empty()).count();
     let rest: Vec<&str> = k.split(SEP).filter(|s| !s.trim().is_empty()).skip(skip).collect();
     std::iter::once(to).filter(|t| !t.is_empty()).chain(rest).collect::<Vec<_>>().join("|")
