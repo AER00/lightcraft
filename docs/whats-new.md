@@ -5,8 +5,9 @@
 ### Text fields
 - Right-click Search Photos, a slider's typed value or the name field under unnamed faces for Cut, Copy, Paste and
   Select All. Esc in them gives back the text from before you started typing. More fields will follow.
-- On Windows and Linux, Ctrl+C / Ctrl+V outside a text field copy and paste edit settings again, and ⇧Ctrl+V opens
-  Paste Selected Settings.
+- On Windows and Linux, Ctrl+C outside a text field copies edit settings and Ctrl+V pastes them (⇧Ctrl+V: Paste
+  Selected Settings). Ctrl+V only reaches LightCraft while the system clipboard holds text; otherwise use Edit ▸ Paste Edit
+  Settings.
 
 ### Masking
 - Drag anywhere inside the selected radial gradient's ellipse to move it, including rotated

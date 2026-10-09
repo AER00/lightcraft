@@ -2,8 +2,12 @@
 //! Select All; Esc gives back the text from before the edit; Return or leaving the field ends the
 //! edit; optionally everything is selected when it takes focus, for fields that are retyped whole.
 //!
-//! Standalone: it knows nothing of the app. The caller owns the text and learns how an edit ended
-//! from [`TextFieldResponse::ending`]; what an ending means (save, apply, close) is the caller's.
+//! It knows nothing of the app's documents or commands, only the UI's plumbing (the automation
+//! registry, translations, shortcut labels). The caller owns the text and learns how an edit
+//! ended from [`TextFieldResponse::ending`]; what an ending means (save, apply, close) is the
+//! caller's. Each field's widget id is unique on screen: its state is keyed by it.
+//!
+//! New text boxes use it rather than `egui::TextEdit`.
 //!
 //! The keyboard's ⌘X / ⌘C / ⌘V / ⌘A and undo are egui's own, and the app's shortcuts step aside
 //! while a field has focus (`shortcuts::handle`, the native menu's `yields_to_text`).
