@@ -281,6 +281,17 @@ fn matches(i: &egui::InputState, m: Modifiers, k: Key) -> bool {
     })
 }
 
+/// Default brackets rate in grids. Remapped brush keys retain their brush action, and a
+/// saved assignment of either bracket to another command takes precedence over this default.
+fn grid_bracket_command(keymap: &Keymap, grid: bool, id: &'static str, shortcut: (Modifiers, Key)) -> Option<&'static str> {
+    let command = match (grid, id, shortcut) {
+        (true, "brush.smaller", (m, Key::OpenBracket)) if m == Modifiers::NONE => "photo.decreaseRating",
+        (true, "brush.larger", (m, Key::CloseBracket)) if m == Modifiers::NONE => "photo.increaseRating",
+        _ => return Some(id),
+    };
+    if keymap.iter().any(|(other, sc)| other != id && find_bindable(other).is_some() && parse(sc) == Some(shortcut)) { None } else { Some(command) }
+}
+
 pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     if !matches!(app.ui.dialog, Some(crate::state::Dialog::Shortcuts)) {
         app.recording_shortcut = None;
@@ -294,6 +305,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     let native = |sc: &str| app.native_shortcuts.contains(sc);
     let mut aliased: Vec<(&str, serde_json::Value)> = Vec::new();
     let keymap = &app.ui.settings.keymap;
+    let grid = library_grid(app);
     // keys the user gave to a command: the fixed bindings below (aliases, ratings) yield to them
     let taken: Vec<(Modifiers, Key)> = keymap.values().filter_map(|s| parse(s)).collect();
     ctx.input(|i| {
@@ -302,8 +314,9 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 && let Some((m, k)) = parse(sc)
                 && !native(sc)
                 && matches(i, m, k)
+                && let Some(id) = grid_bracket_command(keymap, grid, b.id, (m, k))
             {
-                fire.push(b.id.to_string());
+                fire.push(id.to_string());
             }
         }
         for (sc, id, params) in ALIASES {
@@ -375,6 +388,8 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 crate::i18n::tr_format!("Rated {}", "★".repeat(n.parse().unwrap_or(0)))
             };
             app.toast(ctx, label);
+        } else if matches!(f.as_str(), "photo.decreaseRating" | "photo.increaseRating") {
+            cull(app, &f, json!({}), false);
         } else if let Some(l) = f.strip_prefix("label:") {
             cull(app, "photo.label", json!({"label": l}), false);
         } else if f == "panel.presets" && library_grid(app) {
@@ -844,3 +859,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "shortcuts/tests_relative_ratings.rs"]
+mod relative_rating_tests;

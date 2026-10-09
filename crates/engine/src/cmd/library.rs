@@ -146,6 +146,24 @@ fn for_targets(s: &mut Session, p: &Value, label: &str, f: impl Fn(PhotoId) -> O
     Ok(json!({"changed": n}))
 }
 
+/// Adjust each target's own rating; unchanged bounds do not create an undo step.
+fn change_rating(s: &mut Session, p: &Value, delta: i8, label: &str) -> Result<Value> {
+    let mut ops = Vec::new();
+    for id in s.targets(p) {
+        let old = s.catalog.photo(id).ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?.rating;
+        let rating = (i16::from(old) + i16::from(delta)).clamp(0, 5) as u8;
+        if rating != old {
+            ops.push(Op::SetRating { id, rating });
+        }
+    }
+    let n = ops.len();
+    if n > 0 {
+        s.commit(label, Op::Batch { ops })?;
+    }
+    advance_if(s, p);
+    Ok(json!({"changed": n}))
+}
+
 fn advance_if(s: &mut Session, p: &Value) {
     if bool_or(p, "advance", false) {
         let _ = step(s, 1);
@@ -563,6 +581,12 @@ pub fn specs() -> Vec<CommandSpec> {
             let v = for_targets(s, p, "Set Rating", |id| Some(Op::SetRating { id, rating: r as u8 }))?;
             advance_if(s, p);
             Ok(v)
+        }),
+        cmd!("photo.decreaseRating", "Decrease Rating", [], None, "{ids?, advance?: bool}", has_selection, |s, p| {
+            change_rating(s, p, -1, "Decrease Rating")
+        }),
+        cmd!("photo.increaseRating", "Increase Rating", [], None, "{ids?, advance?: bool}", has_selection, |s, p| {
+            change_rating(s, p, 1, "Increase Rating")
         }),
         cmd!("photo.flag", "Set Flag", ["Photo", "Set Flag"], None, "{flag: pick|reject|none, ids?, advance?: bool}", has_selection, |s, p| {
             let f = str_param(p, "flag").and_then(Flag::parse).ok_or_else(|| bad("photo.flag", "flag must be pick|reject|none"))?;
@@ -1382,3 +1406,7 @@ mod gps_tests {
         assert_eq!(p("hello"), None);
     }
 }
+
+#[cfg(test)]
+#[path = "library/tests_relative_ratings.rs"]
+mod relative_rating_tests;
