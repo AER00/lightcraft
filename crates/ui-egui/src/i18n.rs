@@ -680,6 +680,14 @@ mod tests {
         assert_eq!((Locale::Ja.tr("Yes"), Locale::Ja.tr("No")), ("はい", "いいえ"));
         assert_eq!(tr_ctx_in(Locale::Ja, "nope", "Yes"), "はい", "no contextual entry: the plain message");
         assert_eq!(tr_ctx_in(Locale::En, BOOL_CONTEXT, "Yes"), "Yes");
+        // and the yes/no fields are named by plain nouns, so "編集 … なし" doesn't read "edits: yes … none"
+        for (field, label, kind) in FIELDS {
+            if *kind != Kind::Bool {
+                continue;
+            }
+            let ja = Locale::Ja.catalog().get(*label).unwrap_or_else(|| panic!("ja lacks the {field} label {label:?}"));
+            assert!(!ja.contains("あり") && !ja.contains("なし"), "{field}: {ja}");
+        }
         // a contextual entry names a real value (a typo would silently fall back to はい / いいえ)
         let values = [lightcraft_catalog::rules::bool_label(true), lightcraft_catalog::rules::bool_label(false)];
         for language in Locale::ALL {

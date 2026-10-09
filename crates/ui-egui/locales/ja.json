@@ -503,8 +503,8 @@
   "HDR panorama": "HDRパノラマ",
   "HDR panoramas": "HDRパノラマ",
   "HDR with Last Settings": "前回の設定でHDR合成",
-  "Has Edits": "編集あり",
-  "Has GPS": "GPS情報あり",
+  "Has Edits": "編集",
+  "Has GPS": "GPS情報",
   "High Contrast B&W": "ハイコントラスト白黒",
   "Home": "ホーム",
   "Hours": "時間",
@@ -1743,5 +1743,7 @@
   "In Color": "カラー",
   "No Label": "ラベルなし",
   "smart album value|Yes": "あり",
-  "smart album value|No": "なし"
+  "smart album value|No": "なし",
+  "In a Stack": "スタック",
+  "Cropped": "切り抜き"
 }
