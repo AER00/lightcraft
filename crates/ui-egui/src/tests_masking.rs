@@ -446,6 +446,20 @@ fn smart_album_edit_with_bad_rules_keeps_the_name() {
     let _ = h.request("ui.dialog.confirm", json!({}), T);
     let album = h.app.session.catalog.album(lightcraft_catalog::AlbumId(id)).expect("album");
     assert_eq!(album.name, "Keep", "neither OK nor confirm renamed it");
+    // fixed: OK renames it and sets the rules in one undo step
+    let Some(crate::state::Dialog::SmartRules { rules, .. }) = &mut h.app.ui.dialog else { panic!("the editor stays open") };
+    *rules = serde_json::from_value(json!({"rules": [{"field": "captureDate", "op": "is", "value": "2026"}]})).unwrap();
+    h.settle(SETTLE);
+    let undo = h.app.session.undo.len();
+    let r = h.request("ui.clickWidget", json!({"id": "button:dialogOk"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let album = h.app.session.catalog.album(lightcraft_catalog::AlbumId(id)).expect("album");
+    assert_eq!((album.name.as_str(), h.app.session.undo.len()), ("Renamed", undo + 1));
+    exec(&mut h, "edit.undo", json!({}));
+    let album = h.app.session.catalog.album(lightcraft_catalog::AlbumId(id)).expect("album");
+    assert_eq!(album.name, "Keep", "one undo takes back the name with the rules");
+    assert!(album.smart.as_ref().is_some_and(|f| f.rule_set.is_none()));
 }
 
 #[test]

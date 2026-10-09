@@ -1103,12 +1103,8 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }
             let name = if name.trim().is_empty() { "Smart Album".to_string() } else { name.trim().to_string() };
             match id {
-                Some(id) => {
-                    if app.session.catalog.album(lightcraft_catalog::AlbumId(*id)).is_some_and(|a| a.name != name) {
-                        app.run("album.rename", json!({"id": id, "name": name}))?;
-                    }
-                    app.run("album.setRules", json!({"id": id, "replace": true, "rules": {"ruleSet": rules}}))
-                }
+                // the name and the rules together: one undo step, both or neither
+                Some(id) => app.run("album.setRules", json!({"id": id, "name": name, "replace": true, "rules": {"ruleSet": rules}})),
                 None => created_in(app, "album.createSmart", json!({"name": name, "rules": {"ruleSet": rules}, "parent": parent})),
             }
         }

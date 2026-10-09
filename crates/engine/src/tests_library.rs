@@ -532,3 +532,26 @@ fn old_album_operator_rules_stay_editable() {
     assert!(saved.contains(r#""op":"isNot""#), "{saved}");
     s.execute("library.filter", &serde_json::json!({"ruleSet": {"rules": [{"field": "album", "op": "lte", "value": trip}]}})).unwrap();
 }
+
+/// Renaming and changing the rules is one step: both or neither, undone together.
+#[test]
+fn set_rules_with_a_name_is_one_step() {
+    let mut s = crate::Session::with_demo();
+    let id = s.execute("album.createSmart", &serde_json::json!({"name": "Old", "rules": {"rating": 3}})).unwrap()["id"].as_u64().unwrap();
+    let album = |s: &crate::Session| s.catalog.album(lightcraft_catalog::AlbumId(id)).unwrap().clone();
+    let good = serde_json::json!({"ruleSet": {"rules": [{"field": "rating", "op": "gte", "value": 4}]}});
+    let bad = serde_json::json!({"ruleSet": {"rules": [{"field": "captureDate", "op": "is", "value": "banana"}]}});
+    // refused rules: the name stays too
+    assert!(s.execute("album.setRules", &serde_json::json!({"id": id, "name": "New", "replace": true, "rules": bad})).is_err());
+    assert_eq!(album(&s).name, "Old");
+    let undo = s.undo.len();
+    s.execute("album.setRules", &serde_json::json!({"id": id, "name": "New", "replace": true, "rules": good})).unwrap();
+    assert_eq!((album(&s).name.as_str(), s.undo.len()), ("New", undo + 1), "one undo step");
+    assert!(album(&s).smart.unwrap().rule_set.is_some());
+    s.execute("edit.undo", &serde_json::json!({})).unwrap();
+    assert_eq!(album(&s).name, "Old");
+    assert!(album(&s).smart.unwrap().rule_set.is_none(), "undone together");
+    // a blank name keeps the album's
+    s.execute("album.setRules", &serde_json::json!({"id": id, "name": "  ", "rules": {"rating": 5}})).unwrap();
+    assert_eq!(album(&s).name, "Old");
+}

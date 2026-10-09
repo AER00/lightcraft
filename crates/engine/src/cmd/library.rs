@@ -854,7 +854,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit Smart Album",
             [],
             None,
-            "{id, rules?: partial Filter merged onto the current rules (null clears a field), replace?: bool, fromView?: bool (use the current view)}",
+            "{id, rules?: partial Filter merged onto the current rules (null clears a field), replace?: bool, fromView?: bool (use the current view), name?: also rename it (blank keeps the name) — one undo step, both or neither}",
             always,
             |s, p| {
                 let id = album_param(p, "id", "album.setRules")?;
@@ -873,7 +873,13 @@ pub fn specs() -> Vec<CommandSpec> {
                     }
                     r
                 };
-                s.commit("Edit Smart Album", Op::SetAlbumRules { id, rules: Box::new(rules) })?;
+                let set = Op::SetAlbumRules { id, rules: Box::new(rules) };
+                // a new name goes with the rules: one step, applied (and undone) together
+                let rename = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty() && s.catalog.album(id).is_some_and(|a| a.name != *n));
+                match rename {
+                    Some(name) => s.commit("Edit Smart Album", Op::Batch { ops: vec![Op::RenameAlbum { id, name: name.to_string() }, set] })?,
+                    None => s.commit("Edit Smart Album", set)?,
+                };
                 Ok(json!({"count": s.catalog.album_count(id)}))
             }
         ),
