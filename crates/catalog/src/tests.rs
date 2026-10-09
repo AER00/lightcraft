@@ -522,7 +522,8 @@ fn a_smart_album_can_exclude_another() {
 
 /// An album can't include itself, directly or through other smart albums: the check refuses the
 /// loop for the album being edited, and a loop saved anyway (an older version, a hand-edited file)
-/// neither recurses forever nor crashes; it is reported and its rule matches nothing.
+/// neither recurses forever nor crashes: inside it, the album being evaluated counts as holding no
+/// photos, and every album in it is reported.
 #[test]
 fn smart_album_loops_are_refused_and_survived() {
     let mut c = Catalog::new();

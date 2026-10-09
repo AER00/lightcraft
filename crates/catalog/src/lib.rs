@@ -335,13 +335,12 @@ impl Catalog {
     /// rules of `from` would then change when those of `to` do). Loops in saved rules end the
     /// search, they don't repeat it.
     pub fn album_reaches(&self, from: AlbumId, to: AlbumId) -> bool {
-        let mut seen: Vec<AlbumId> = Vec::new();
+        let mut seen: std::collections::HashSet<AlbumId> = std::collections::HashSet::new();
         let mut next = vec![from];
         while let Some(a) = next.pop() {
-            if seen.contains(&a) {
+            if !seen.insert(a) {
                 continue;
             }
-            seen.push(a);
             let tested = self
                 .albums
                 .get(&a)
