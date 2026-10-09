@@ -1248,6 +1248,14 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         let s = to_straight(n, d.crop.geometry.angle, frame);
         d.crop.geometry.rect.contains(Point::new(s.x.clamp(-1.0, 2.0), s.y))
     };
+    // a crop drag cut short (the tool closed before the release) leaves its gesture behind: with no
+    // button held it is over
+    if matches!(app.gesture, Some(Gesture::CropRotate { .. } | Gesture::CropHandle { .. }))
+        && !resp.drag_stopped()
+        && !ui.input(|i| i.pointer.any_down())
+    {
+        app.gesture = None;
+    }
     // while rotating, the pointer may leave the canvas: it still shows rotation and the angle
     let rotating = matches!(app.gesture, Some(Gesture::CropRotate { .. }));
     let pointer = resp.hover_pos().or_else(|| if rotating { ui.input(|i| i.pointer.latest_pos()) } else { None });

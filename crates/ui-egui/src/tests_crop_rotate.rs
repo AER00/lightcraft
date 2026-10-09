@@ -300,3 +300,32 @@ fn moving_the_box_never_shows_rotation() {
     assert!(!has(&h, "cropRotateCursor"));
     assert_eq!(angle(&h), 0.0, "nothing rotated");
 }
+
+/// Closing the crop tool in the middle of a rotation (Return) leaves nothing behind: reopened,
+/// the box shows the move pointer and no angle.
+#[test]
+fn a_rotation_cut_short_leaves_nothing_behind() {
+    let mut h = crop_tool();
+    let r = h.request(
+        "ui.pointer",
+        json!({"events": [{"kind": "down", "x": -0.05, "y": 0.2}, {"kind": "drag", "x": -0.05, "y": 0.25}, {"kind": "drag", "x": -0.05, "y": 0.3}]}),
+        T,
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(has(&h, "cropAngleReadout"), "rotating");
+    for (method, params) in [
+        ("engine.execute", json!({"command": "tool.done"})),
+        ("ui.pointer", json!({"events": [{"kind": "up", "x": -0.05, "y": 0.3}]})),
+        ("engine.execute", json!({"command": "panel.crop"})),
+    ] {
+        let r = h.request(method, params, T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+    }
+    let img = h.app.image_rect.expect("the photo on screen");
+    hover(&mut h, img.center());
+    assert_eq!(h.last_cursor, egui::CursorIcon::Move);
+    assert!(!has(&h, "cropAngleReadout"), "no angle");
+    assert!(!has(&h, "cropRotateCursor"), "no rotation glyph");
+}
