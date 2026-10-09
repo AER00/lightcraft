@@ -134,3 +134,15 @@ fn will_export_shows_what_exports_carry() {
     ask(&mut h, "ui.clickWidget", json!({"id": "keywordView:keywords"}));
     assert!(has(&h, "keywordChip:beach") && !has(&h, "keywordExport:beach"));
 }
+
+/// The painter's keyword field is a shared text field: right-click ▸ Paste fills it, and Return
+/// starts painting as the Paint button does.
+#[test]
+fn the_painters_field_pastes_and_return_paints() {
+    let (mut h, _) = two_selected();
+    h.view.clipboard = "Weddings".into();
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keywordPainter", "button": "right"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keywordPainter:paste"}));
+    ask(&mut h, "ui.key", json!({"key": "Enter"}));
+    assert_eq!(h.app.ui.keyword_painter.as_deref(), Some("Weddings"));
+}

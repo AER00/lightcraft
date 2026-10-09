@@ -802,16 +802,22 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             let pid = egui::Id::new("kw-painter");
             let painting = app.ui.keyword_painter.clone();
             let mut k: String = ui.data(|d| d.get_temp(pid)).unwrap_or_else(|| painting.clone().unwrap_or_default());
-            let r = ui.add_enabled(
-                painting.is_none(),
-                egui::TextEdit::singleline(&mut k).hint_text(crate::i18n::tr("Keyword to paint")).desired_width(130.0),
-            );
-            register(ui.ctx(), "field:keywordPainter", r.rect);
+            // (fixed while painting: Stop first)
+            let field = ui
+                .add_enabled_ui(painting.is_none(), |ui| {
+                    crate::text_field::TextField::singleline("field:keywordPainter", &mut k)
+                        .hint(crate::i18n::tr("Keyword to paint"))
+                        .width(130.0)
+                        .show(ui)
+                })
+                .inner;
             ui.data_mut(|d| d.insert_temp(pid, k.clone()));
             let label = if painting.is_some() { "Stop" } else { "Paint" };
+            let returned = field.ending == Some(crate::text_field::Ending::Return) && painting.is_none() && !k.trim().is_empty();
             if text_button(ui, "keywordPaint", label, painting.is_some())
                 .on_hover_text(crate::i18n::tr("Click photos in the grid to toggle the keyword; Esc stops"))
                 .clicked()
+                || returned
             {
                 let _ = app.run("tool.keywordPainter", json!({"keyword": if painting.is_some() { serde_json::Value::Null } else { json!(k) }}));
             }
