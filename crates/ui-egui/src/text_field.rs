@@ -140,6 +140,7 @@ impl<'a> TextField<'a> {
                 // only the host can read the clipboard: it answers with a paste event
                 Action::Paste => ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestPaste),
                 Action::SelectAll => select_all(ui.ctx(), id, self.text),
+                Action::Refocus => {}
             }
         }
         let mut edit = if self.multiline { egui::TextEdit::multiline(self.text) } else { egui::TextEdit::singleline(self.text) };
@@ -199,9 +200,13 @@ impl<'a> TextField<'a> {
             .is_some();
 
         let mut ending = None;
+        let close_menu = |ui: &Ui| egui::Popup::close_id(ui.ctx(), egui::Popup::default_response_id(&response));
         // egui reports a lost focus on two frames: only an edit under way ends
         if response.lost_focus() && memo.before.is_some() {
-            if escape {
+            if escape && menu_was_open {
+                // Esc closes only the menu, as in native menus: the field takes the focus back
+                memo.action = Some(Action::Refocus);
+            } else if escape {
                 if let Some(before) = memo.before.take()
                     && *self.text != before
                 {
@@ -209,15 +214,19 @@ impl<'a> TextField<'a> {
                     response.mark_changed();
                 }
                 ending = Some(Ending::Escape);
+            } else if enter && !self.multiline {
+                ending = Some(Ending::Return);
+                close_menu(ui);
             } else if menu_was_open || memo.menu_open || memo.action.is_some() {
                 // the click went to the menu: the edit goes on once the menu is done with
                 memo.away = true;
             } else {
                 ending = Some(Ending::Away);
             }
-            if enter && !self.multiline && ending == Some(Ending::Away) {
-                ending = Some(Ending::Return);
-            }
+        } else if memo.away && escape && memo.action.is_none() {
+            // Esc with the focus in the menu (Tab took it there) closes only the menu
+            memo.action = Some(Action::Refocus);
+            memo.away = false;
         } else if memo.away && !memo.menu_open && memo.action.is_none() && !response.has_focus() {
             // the menu closed without a choice: the click outside it left the field
             ending = Some(Ending::Away);
@@ -253,6 +262,8 @@ enum Action {
     Copy,
     Paste,
     SelectAll,
+    /// Only take the focus back (Esc closed the menu).
+    Refocus,
 }
 
 fn select_all(ctx: &egui::Context, id: egui::Id, text: &str) {
@@ -491,6 +502,48 @@ mod tests {
         rig.key(Key::Enter, Modifiers::NONE);
         assert_eq!(rig.text, "Rome");
         assert_eq!(rig.endings, vec![Ending::Return]);
+    }
+
+    /// Return with the menu open ends the edit as Return does, and closes the menu.
+    #[test]
+    fn return_with_the_menu_open_ends_the_edit() {
+        let mut rig = Rig::new("Lisbon");
+        rig.select_all_by_keys();
+        rig.type_text("Rome");
+        rig.click(FIELD, PointerButton::Secondary);
+        rig.key(Key::Enter, Modifiers::NONE);
+        assert_eq!(rig.endings, vec![Ending::Return]);
+        assert_eq!(rig.text, "Rome");
+        assert!(rig.rect(&format!("{FIELD}:cut")).is_none(), "the menu closed");
+    }
+
+    /// Esc with the menu open closes only the menu, as in native menus: the edit goes on, and a
+    /// second Esc gives back the text.
+    #[test]
+    fn escape_with_the_menu_open_closes_only_the_menu() {
+        let mut rig = Rig::new("Lisbon");
+        rig.select_all_by_keys();
+        rig.type_text("Rome");
+        rig.click(FIELD, PointerButton::Secondary);
+        rig.key(Key::Escape, Modifiers::NONE);
+        assert!(rig.rect(&format!("{FIELD}:cut")).is_none(), "the menu closed");
+        assert_eq!((rig.text.as_str(), rig.endings.clone()), ("Rome", vec![]), "the edit goes on");
+        assert!(rig.focused());
+        rig.key(Key::Escape, Modifiers::NONE);
+        assert_eq!((rig.text.as_str(), rig.endings.clone()), ("Lisbon", vec![Ending::Escape]));
+    }
+
+    /// Esc after Tab took the focus into the open menu also closes only the menu.
+    #[test]
+    fn escape_from_inside_the_menu_closes_only_the_menu() {
+        let mut rig = Rig::new("Lisbon");
+        rig.select_all_by_keys();
+        rig.type_text("Rome");
+        rig.click(FIELD, PointerButton::Secondary);
+        rig.key(Key::Tab, Modifiers::NONE);
+        rig.key(Key::Escape, Modifiers::NONE);
+        assert_eq!((rig.text.as_str(), rig.endings.clone()), ("Rome", vec![]), "the edit goes on");
+        assert!(rig.focused());
     }
 
     /// Clicking elsewhere ends the edit and keeps the text.
