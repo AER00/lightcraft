@@ -480,7 +480,13 @@ fn ensure_read_active(cancel: &AtomicBool) -> Result<(), String> {
 fn mapped_settings(text: &str, raw: bool, aspect: f64) -> Result<(Value, Vec<String>), String> {
     let mut root = crate::preset_import::parse_lua(text)?;
     let deferred = strip_lua_sentinels(&mut root);
-    let (props, values) = crate::preset_import::lua_settings_props(&root)?;
+    let (mut props, values) = crate::preset_import::lua_settings_props(&root)?;
+    // A catalog's develop settings carry the crop edges and angle but no `HasCrop` (XMP has it):
+    // any crop field means the photo is cropped.
+    const CROP: [&str; 5] = ["crs:CropLeft", "crs:CropTop", "crs:CropRight", "crs:CropBottom", "crs:CropAngle"];
+    if !props.contains_key("crs:HasCrop") && CROP.iter().any(|k| props.contains_key(*k)) {
+        props.insert("crs:HasCrop".into(), vec!["True".into()]);
+    }
     let (partial, mut unknown) = crate::crs::to_partial_report(&props, Some(&values), Some(raw), aspect);
     if deferred > 0 {
         unknown.push("Deferred Lightroom adjustments (-999999)".into());
@@ -878,6 +884,30 @@ mod tests {
         assert!(xmp(Some(&json!(encoded))).is_err());
         let (partial, _) = mapped_settings("s = { Exposure2012 = 0.75, ToneCurvePV2012 = {0,0,128,150,255,255} }", true, 1.5).unwrap();
         assert_eq!(partial["light"]["exposure"], 0.75);
+    }
+
+    #[test]
+    fn catalog_crops_without_has_crop_are_imported() {
+        // Lightroom Classic catalogs store crop edges and angle but never `HasCrop`
+        let (partial, unknown) = mapped_settings(
+            "s = { CropAngle = 2.39897, CropConstrainAspectRatio = true, CropLeft = 0.042702, CropRight = 0.957298, CropTop = 0.1 }",
+            true,
+            1.5,
+        )
+        .unwrap();
+        let crop = &partial["crop"]["geometry"];
+        assert_eq!(crop["rect"]["x0"], 0.042702);
+        assert_eq!(crop["rect"]["y0"], 0.1);
+        assert_eq!(crop["rect"]["x1"], 0.957298);
+        assert_eq!(crop["rect"]["y1"], 1.0);
+        assert_eq!(crop["angle"], 2.39897);
+        assert!(!unknown.iter().any(|k| k.starts_with("CropLeft") || k.starts_with("CropAngle")), "{unknown:?}");
+        // an angle alone is a straightened, uncropped frame
+        let (partial, _) = mapped_settings("s = { CropAngle = -1.5 }", true, 1.5).unwrap();
+        assert_eq!(partial["crop"]["geometry"]["angle"], -1.5);
+        // no crop fields: the crop stays untouched
+        let (partial, _) = mapped_settings("s = { Exposure2012 = 0.5 }", true, 1.5).unwrap();
+        assert!(partial.get("crop").is_none());
     }
 
     #[test]
