@@ -8,7 +8,7 @@ use lightcraft_color::{D50, D65, Mat3, PROPHOTO, REC2020, bradford, luminance_20
 use lightcraft_pipeline::tone::{CameraTone, ToneMap};
 use lightcraft_raster::{
     Rgb32f,
-    resample::{Filter, fit},
+    resample::{Filter, fit, resize},
 };
 use lightcraft_raw::{RawFormat, RawImage, color::CameraTransform, profile::HsvTable};
 
@@ -99,11 +99,20 @@ fn proxies(raw: &RawImage, bytes: &[u8], transform: &CameraTransform, size: usiz
         sensor = align_cr3_framing(sensor, &reference);
     }
     let mut sensor = fit(&sensor, size, size, Filter::Box);
-    let reference = fit(&reference, sensor.width, sensor.height, Filter::Box);
+    let reference = reference_at(&reference, &sensor);
     if raw.format != RawFormat::Cr3 {
         sensor.map_in_place(to_working);
     }
     Some((sensor, reference))
+}
+
+/// The camera JPEG at exactly the sensor proxy's size, so the two pair pixel for pixel. Fitting it
+/// into the proxy's box instead keeps its own aspect, which can round a pixel short: an ILCE-7RM4's
+/// 1616×1080 preview, decoded at 384×257, fits a 192×128 proxy as 191×128, and `collect_pairs`
+/// then rejected every file `lightcraft-cli calibrate` was given. `proxies` has already checked
+/// that the aspects agree within 2 %.
+fn reference_at(reference: &Rgb32f, sensor: &Rgb32f) -> Rgb32f {
+    resize(reference, sensor.width, sensor.height, Filter::Box)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -728,6 +737,23 @@ fn fit_tone(mut pairs: Vec<(f64, f64)>) -> Option<CameraTone> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn camera_jpeg_matches_the_sensor_proxy_size_exactly() {
+        // An ILCE-7RM4 ARW (9504×6336 crop) embeds a 1616×1080 preview; for the camera-profile proxy
+        // it is decoded at 384×257 (`proxies`: twice the proxy edge) next to a 192×128 sensor proxy.
+        let sensor = fit(&Rgb32f::new(9504, 6336), PROFILE_PROXY, PROFILE_PROXY, Filter::Box);
+        assert_eq!((sensor.width, sensor.height), (192, 128));
+        let jpeg = Rgb32f::new(384, 257);
+        // what fitting gave before: a pixel short, so every pair was rejected
+        assert_eq!(fit(&jpeg, sensor.width, sensor.height, Filter::Box).width, 191);
+        let r = reference_at(&jpeg, &sensor);
+        assert_eq!((r.width, r.height), (192, 128));
+        // and at the single-photo proxy size, where fitting happened to land on the same size
+        let sensor = fit(&Rgb32f::new(9504, 6336), PROXY, PROXY, Filter::Box);
+        let r = reference_at(&Rgb32f::new(192, 129), &sensor);
+        assert_eq!((r.width, r.height), (sensor.width, sensor.height));
+    }
 
     #[test]
     fn linear_arw_gets_a_sensor_proxy_without_demosaicing() {
