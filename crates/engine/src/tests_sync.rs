@@ -342,3 +342,22 @@ fn a_file_renamed_or_moved_inside_the_folder_is_relinked_not_lost() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(s.catalog.photo(a).unwrap().source, lightcraft_catalog::Source::File { path: dir.path("trip/a.png") });
 }
+
+#[test]
+fn synchronizing_is_one_undo_step_even_with_a_full_undo_history() {
+    let dir = Scratch::new("full-undo");
+    let mut s = library(&dir);
+    let a = s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
+    // a long session: the history is at its limit and drops its oldest steps
+    for i in 0..1005u32 {
+        s.execute("photo.rate", &json!({"ids": [a.0], "rating": i % 5})).unwrap();
+    }
+    let before = holdings(&s);
+    write_png(&dir.path("trip/c.png"), 3);
+    std::fs::remove_file(dir.path("trip/day1/b.png")).unwrap();
+    let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip"), "removeMissing": true})).unwrap();
+    assert_eq!((r["imported"].as_u64(), r["removed"].as_u64()), (Some(1), Some(1)), "{r}");
+    let undo = s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(undo["undone"], "Synchronize Folder");
+    assert_eq!(holdings(&s), before, "one step undoes the import and the removal");
+}

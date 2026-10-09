@@ -323,12 +323,13 @@ fn sidecar_has_news(labels: &Catalog, p: &Photo, naming: SidecarNaming) -> bool 
 }
 
 /// Act on `changes` as `choice` says, as one undo step ("Synchronize Folder"). A missing photo
-/// whose file is back by now is left alone.
+/// whose file is back by now is left alone. Once the import is in, a part that fails is
+/// reported in `failed` and the rest is still done (and still one step).
 pub fn synchronize(s: &mut Session, changes: FolderChanges, choice: SyncChoice) -> Result<SyncReport> {
     if changes.offline {
         return Err(not_there(&changes.path));
     }
-    let mark = s.undo.len();
+    let mark = s.commits();
     let mut report = SyncReport::default();
     let FolderChanges { new, missing, metadata, moved, probes, .. } = changes;
     if choice.import_new && !new.is_empty() {
@@ -346,8 +347,11 @@ pub fn synchronize(s: &mut Session, changes: FolderChanges, choice: SyncChoice) 
             .map(|m| crate::cmd::missing::relink_op(PhotoId(m.id), &m.to))
             .collect();
         if !ops.is_empty() {
-            report.relinked = ops.len();
-            s.commit("Relink Moved Photos", Op::Batch { ops })?;
+            let n = ops.len();
+            match s.commit("Relink Moved Photos", Op::Batch { ops }) {
+                Ok(()) => report.relinked = n,
+                Err(e) => report.failed.push((String::new(), e.to_string())),
+            }
         }
     }
     if choice.remove_missing {
@@ -358,8 +362,11 @@ pub fn synchronize(s: &mut Session, changes: FolderChanges, choice: SyncChoice) 
             .map(|id| Op::SetDeleted { id: *id, deleted: true })
             .collect();
         if !ops.is_empty() {
-            report.removed = ops.len();
-            s.commit("Remove Missing Photos", Op::Batch { ops })?;
+            let n = ops.len();
+            match s.commit("Remove Missing Photos", Op::Batch { ops }) {
+                Ok(()) => report.removed = n,
+                Err(e) => report.failed.push((String::new(), e.to_string())),
+            }
         }
     }
     if choice.read_metadata {
@@ -374,11 +381,15 @@ pub fn synchronize(s: &mut Session, changes: FolderChanges, choice: SyncChoice) 
                 Err(e) => report.failed.push((m.path.clone(), e.to_string())),
             }
         }
-        if !ops.is_empty() {
-            s.commit("Read Metadata from File", Op::Batch { ops })?;
+        if !ops.is_empty()
+            && let Err(e) = s.commit("Read Metadata from File", Op::Batch { ops })
+        {
+            report.read = 0;
+            report.failed.push((String::new(), e.to_string()));
         }
     }
-    let steps = s.undo.len().saturating_sub(mark);
+    // (what was done stays one step even when a later part failed: the report says which)
+    let steps = usize::try_from(s.commits().wrapping_sub(mark)).unwrap_or(usize::MAX).min(s.undo.len());
     s.merge_undo(steps, "Synchronize Folder");
     if let Some(last) = s.undo.last_mut().filter(|_| steps == 1) {
         last.label = "Synchronize Folder".into();
