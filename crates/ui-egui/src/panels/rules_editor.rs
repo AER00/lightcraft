@@ -6,6 +6,7 @@ use lightcraft_catalog::rules::{FIELD_GROUPS, Kind, Problem, TOP_LEVEL_FIELDS, b
 use lightcraft_catalog::{Match, Rule, RuleSet};
 use serde_json::{Value, json};
 
+use crate::date_picker::{DatePicker, PickedDate};
 use crate::theme::Tokens;
 use crate::widgets::register;
 
@@ -89,11 +90,25 @@ fn number_value(ui: &mut egui::Ui, v: &mut Value, field: &str) {
     }
 }
 
+/// A rule date's calendar ([`DatePicker`]): opens on the date as written (or today), keeps its
+/// precision, and writes what is picked as `2026`, `2026-08` or `2026-08-14`.
+fn date_picker(ui: &mut egui::Ui, v: &mut Value, salt: &str, min: Option<PickedDate>, max: Option<PickedDate>, env: &Env) {
+    let mut date = v.as_str().and_then(PickedDate::parse);
+    let today = PickedDate::parse(&env.today);
+    if DatePicker::new(salt, &mut date).min(min).max(max).today(today).show(ui).changed()
+        && let Some(date) = date
+    {
+        *v = json!(date.iso());
+    }
+}
+
 /// What the editor shows besides the rules: the problems `RuleSet::check` found in them (each
 /// row marks its own) and the albums an Album rule can test.
 #[derive(Default)]
 pub struct Env {
     pub problems: Vec<Problem>,
+    /// Today (`YYYY-MM-DD…`, the session's clock): where a date picker opens when a rule has no date.
+    pub today: String,
     /// The albums an Album rule can test: (id, name shown, with its folder when it is in one),
     /// sorted by that name.
     pub albums: Vec<(u64, String)>,
@@ -169,9 +184,13 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
                 ui.label(crate::i18n::tr("and"));
                 number_value(ui, hi, field);
             } else {
+                // each date's picker stops at the other one, so the two stay in order
+                let (lo_date, hi_date) = (lo.as_str().and_then(PickedDate::parse), hi.as_str().and_then(PickedDate::parse));
                 text_value(ui, lo, 86.0, "2026-01-01", &format!("{salt}-a"));
+                date_picker(ui, lo, &format!("{salt}-a"), None, hi_date, env);
                 ui.label(crate::i18n::tr("and"));
                 text_value(ui, hi, 86.0, "2026-12", &format!("{salt}-b"));
+                date_picker(ui, hi, &format!("{salt}-b"), lo_date, None, env);
             }
             if pair != before {
                 *v = pair;
@@ -206,7 +225,10 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
                 }
             });
         }
-        (Some(Kind::Date), _) => text_value(ui, v, 120.0, "2026-04 or 2026-04-12", salt),
+        (Some(Kind::Date), _) => {
+            text_value(ui, v, 120.0, "2026-04 or 2026-04-12", salt);
+            date_picker(ui, v, salt, None, None, env);
+        }
         _ => text_value(ui, v, 140.0, "", salt),
     }
 }

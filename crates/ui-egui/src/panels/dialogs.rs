@@ -245,6 +245,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     // checked before drawing, so each row marks its own problem
                     let env = crate::panels::rules_editor::Env {
                         problems: rules.check(&app.session.catalog),
+                        today: (app.session.clock)(),
                         albums: {
                             let cat = &app.session.catalog;
                             let mut albums: Vec<(u64, String)> = cat

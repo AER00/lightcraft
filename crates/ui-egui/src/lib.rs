@@ -36,6 +36,8 @@ pub mod widgets;
 #[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
+mod tests_date_picker;
+#[cfg(test)]
 mod tests_filmstrip;
 #[cfg(test)]
 mod tests_grid;
