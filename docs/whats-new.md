@@ -17,6 +17,8 @@
   way round, "in the last 0 days", a colour label that doesn't exist, "contains" with nothing to look for, an
   album that is gone or smart, or an empty group is reported with its rule ("rule 2.1: rating is 0–5, not 9")
   instead of quietly matching nothing or everything. New date rules start at the current year.
+- A smart album whose rules no longer check (an album they test was deleted) is marked ⚠ in the sidebar; its tooltip
+  says what to fix, and `albums.list` reports `problems`.
 - Editing a smart album's name and rules is one step: both or neither, and one undo takes both back
   (`album.setRules` takes `name`).
 - The rule editor marks each rule that needs fixing right under it and keeps OK disabled until they are fixed. An

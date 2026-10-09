@@ -1744,5 +1744,6 @@
   "No Label": "Sin etiqueta",
   "Choose an album…": "Elige un álbum…",
   "No albums yet": "Aún no hay álbumes",
-  "Fix the marked rules to save this album.": "Corrige las reglas marcadas para guardar este álbum."
+  "Fix the marked rules to save this album.": "Corrige las reglas marcadas para guardar este álbum.",
+  "Some rules need fixing (Edit Smart Album…):": "Hay reglas que corregir (Editar álbum inteligente…):"
 }

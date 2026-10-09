@@ -462,6 +462,24 @@ fn smart_album_edit_with_bad_rules_keeps_the_name() {
     assert!(album.smart.as_ref().is_some_and(|f| f.rule_set.is_none()));
 }
 
+/// The sidebar marks a smart album whose rules no longer check, so it can be fixed.
+#[test]
+fn sidebar_marks_smart_albums_with_problems() {
+    let mut h = detail("panel.edit");
+    let trip = exec(&mut h, "album.create", json!({"name": "Trip", "addSelected": false}))["id"].as_u64().unwrap();
+    let rules = json!({"ruleSet": {"rules": [{"field": "album", "op": "is", "value": trip}]}});
+    let id = exec(&mut h, "album.createSmart", json!({"name": "In Trip", "rules": rules}))["id"].as_u64().unwrap();
+    let r = h.request("ui.set", json!({"view": "photoGrid", "leftPanel": true}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(h.app.widgets.iter().any(|(w, _)| *w == format!("source:album:{id}")), "the album's row is on screen");
+    let marked = |h: &Headless| h.app.widgets.iter().any(|(w, _)| *w == format!("albumProblem:{id}"));
+    assert!(!marked(&h));
+    exec(&mut h, "album.delete", json!({"id": trip}));
+    h.settle(SETTLE);
+    assert!(marked(&h), "its album is gone");
+}
+
 #[test]
 fn g_toggles_grids_and_shift_g_starts_guided_upright() {
     let mut h = detail("panel.edit");

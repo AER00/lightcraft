@@ -1748,5 +1748,6 @@
   "Cropped": "切り抜き",
   "Choose an album…": "アルバムを選択…",
   "No albums yet": "アルバムはまだありません",
-  "Fix the marked rules to save this album.": "このアルバムを保存するには、印の付いた条件を修正してください。"
+  "Fix the marked rules to save this album.": "このアルバムを保存するには、印の付いた条件を修正してください。",
+  "Some rules need fixing (Edit Smart Album…):": "修正が必要な条件があります（スマートアルバムを編集…）："
 }

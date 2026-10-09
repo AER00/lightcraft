@@ -328,6 +328,11 @@ pub fn filter_label(filter: &lightcraft_catalog::Filter, catalog: &lightcraft_ca
     }
 }
 
+/// What people read for a smart-album rule problem (`rule 2: …`).
+pub fn problem_text(problem: &lightcraft_catalog::rules::Problem) -> String {
+    problem.to_string()
+}
+
 /// What people read for smart-album choice `id` of `field` ("Gemeinfrei" for `publicDomain` in
 /// German); an id the field doesn't know, as written.
 pub fn choice_text<'a>(field: &str, id: &'a str) -> &'a str {
