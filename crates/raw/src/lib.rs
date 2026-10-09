@@ -165,6 +165,10 @@ pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
     if make.starts_with("PENTAX") || make.starts_with("RICOH") {
         return Some(RawFormat::Pef);
     }
+    // a Samsung-branded body built on a Pentax design writes a Pentax-style maker note (the note's own magic)
+    if make.starts_with("SAMSUNG") && has_pentax_maker_note(&t, bytes) {
+        return Some(RawFormat::Pef);
+    }
     if make.starts_with("SAMSUNG") {
         return Some(RawFormat::Srw);
     }
@@ -172,6 +176,12 @@ pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
         return Some(RawFormat::OtherTiff);
     }
     None
+}
+
+/// Whether the Exif maker note starts with the signature of the Pentax layouts (`AOC\0` or `PENTAX \0`).
+fn has_pentax_maker_note(t: &Tiff, bytes: &[u8]) -> bool {
+    let Some(e) = t.exif().and_then(|e| e.get(lightcraft_tiff::tags::MAKER_NOTE)) else { return false };
+    bytes.get(e.offset as usize..).is_some_and(|n| n.starts_with(b"AOC\0") || n.starts_with(b"PENTAX \0"))
 }
 
 /// Whether some IFD is marked as raw: CFA photometric, or a raw-only compression value (99 is not a
@@ -917,6 +927,23 @@ mod tests {
         let mut ifd = rgb_ifd(16, 12);
         ifd.set(t::COMPRESSION, Value::Short(vec![99]));
         assert_eq!(probe(&write(&[ifd])), Some(RawFormat::OtherTiff));
+    }
+
+    /// A Samsung-branded body whose maker note has a Pentax layout is read by the Pentax reader; another
+    /// Samsung file stays with the Samsung format.
+    #[test]
+    fn samsung_make_with_a_pentax_maker_note_is_pef() {
+        let with_note = |note: &[u8]| {
+            let mut ifd = rgb_ifd(16, 12);
+            ifd.set(t::MAKE, Value::Ascii("SAMSUNG TECHWIN".into()));
+            let mut exif = IfdBuilder::new();
+            exif.set(t::MAKER_NOTE, Value::Undefined(note.to_vec()));
+            ifd.set_child(t::EXIF_IFD, exif);
+            write(&[ifd])
+        };
+        assert_eq!(probe(&with_note(b"AOC\0MM\0\x01\0\0\0\0\0\0")), Some(RawFormat::Pef));
+        assert_eq!(probe(&with_note(b"PENTAX \0MM\0\0\0\0\0\0\0")), Some(RawFormat::Pef));
+        assert_eq!(probe(&with_note(b"STMN100\0\0\0\0\0\0\0\0\0")), Some(RawFormat::Srw));
     }
 
     #[test]
