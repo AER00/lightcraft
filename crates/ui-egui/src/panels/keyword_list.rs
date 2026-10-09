@@ -285,7 +285,14 @@ fn drop_target(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, path: &st
     } else if let Some(ids) = app.ui.dragging_photos.clone() {
         outline(ui);
         if released {
-            let n = ids.len();
+            // only the photos that didn't have it get it
+            let lacking = |id: &u64| {
+                app.session
+                    .catalog
+                    .photo(PhotoId(*id))
+                    .is_some_and(|p| !p.meta.keywords.iter().any(|k| same(&lightcraft_catalog::keywords::clean(k), path)))
+            };
+            let n = ids.iter().filter(|id| lacking(id)).count();
             app.ui.dragging_photos = None;
             match app.run("photo.setMeta", json!({"ids": ids, "addKeywords": [path]})) {
                 Ok(_) => app.toast(

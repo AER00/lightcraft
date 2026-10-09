@@ -417,3 +417,14 @@ fn typed_keywords_go_inside_the_default_parent() {
         assert!(k.contains(&want.to_string()), "{want}: {k:?}");
     }
 }
+
+/// Dropping photos on a keyword says how many got it: one that had it already isn't counted.
+#[test]
+fn dropping_photos_counts_those_that_get_the_keyword() {
+    let (mut h, ids) = keywords_panel_at([1400.0, 2400.0]);
+    run(&mut h, "keyword.create", json!({"name": "Portugal"}));
+    run(&mut h, "photo.setMeta", json!({"ids": [ids[1]], "addKeywords": ["Portugal"]}));
+    drag(&mut h, &format!("thumb:{}", ids[0]), "keywordRow:Portugal");
+    let toast = h.app.ui.toast.clone().map(|t| t.0).unwrap_or_default();
+    assert!(toast.contains("1 photo") && !toast.contains("2 photos"), "{toast}");
+}
