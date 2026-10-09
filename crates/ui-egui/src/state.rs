@@ -338,6 +338,12 @@ pub struct UiState {
     /// The person whose page the People view shows (their faces and the faces that look like them); `None`: everyone.
     #[serde(skip)]
     pub person_page: Option<String>,
+    /// The person page a photo in the loupe was opened from, and that photo: Escape goes back to the page (not the grid).
+    #[serde(skip)]
+    pub person_from: Option<(String, u64)>,
+    /// The last person page left: the People view offers a way back to it next to its title.
+    #[serde(skip)]
+    pub last_person: Option<String>,
     /// "More" faces the user hid with ×, for this session: (photo, region index).
     #[serde(skip)]
     pub dismissed_faces: std::collections::HashSet<(u64, usize)>,
@@ -687,6 +693,8 @@ impl Default for UiState {
             collapsed_sidebar: Vec::new(),
             name_edit: None,
             person_page: None,
+            person_from: None,
+            last_person: None,
             dismissed_faces: Default::default(),
             unnamed_selected: Default::default(),
             unnamed_name: String::new(),

@@ -318,8 +318,12 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(json!({"show": app.ui.face_boxes}))
         }
         "view.people" => {
+            // Everyone; the page just left stays one click away (the chip next to the title)
+            if let Some(name) = app.ui.person_page.take() {
+                app.ui.last_person = Some(name);
+            }
+            app.ui.person_from = None;
             app.ui.view = ViewMode::People;
-            app.ui.person_page = None;
             Ok(json!({"people": app.session.catalog.people().len()}))
         }
         "view.person" => {
@@ -328,6 +332,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 return Some(Err("view.person: missing `name`".into()));
             };
             app.ui.view = ViewMode::People;
+            app.ui.person_from = None;
             app.ui.person_page = Some(name.to_string());
             Ok(json!({"person": name}))
         }
@@ -381,7 +386,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             } else if matches!(app.ui.view, ViewMode::Compare | ViewMode::Survey) {
                 app.ui.view = ViewMode::Detail;
             } else if app.ui.view == ViewMode::Detail {
-                app.ui.view = ViewMode::PhotoGrid;
+                // a photo opened from a person's page goes back to that page, any other to the grid
+                match app.ui.person_from.take() {
+                    Some((name, photo)) if app.session.active().is_some_and(|a| a.0 == photo) => {
+                        app.ui.view = ViewMode::People;
+                        app.ui.person_page = Some(name);
+                    }
+                    _ => app.ui.view = ViewMode::PhotoGrid,
+                }
             }
             Ok(Value::Null)
         }

@@ -7,7 +7,7 @@
 //! every face is cut from the same kind of box (the detector's, once the scan has looked at it), so faces are shown
 //! equally close. Only the rows on screen ask for a face render (the engine caches them, memory and disk).
 
-use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
+use egui::{Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
 use lightcraft_catalog::Person;
 use serde_json::json;
 
@@ -65,7 +65,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let thumb = app.ui.thumb_size;
     let people = app.caches.people(&app.session.catalog, &app.session.filter);
     let (head, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
-    ui.painter().text(pos2(head.left() + PAD, head.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Named People"), t.semibold(15.0), t.text);
+    let title =
+        ui.painter().text(pos2(head.left() + PAD, head.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Named People"), t.semibold(15.0), t.text);
+    // the person page last left (a face opened from it, or its back button): one click returns to it
+    if let Some(last) = app.ui.last_person.clone().filter(|n| people.iter().any(|p| &p.name == n)) {
+        let label = fit(ui.painter(), &format!("{last} ›"), t.font(13.0), 240.0);
+        let width = ui.painter().layout_no_wrap(label.clone(), t.font(13.0), Color32::WHITE).size().x + 24.0;
+        let r = Rect::from_min_size(pos2(title.right() + 14.0, head.center().y - 12.0), vec2(width, 24.0));
+        let b = ui.put(r, egui::Button::new(RichText::new(label).font(t.font(13.0))).wrap_mode(egui::TextWrapMode::Extend));
+        register(ui.ctx(), "people:last", b.rect);
+        if b.on_hover_text(crate::i18n::tr("Back to this person")).clicked() {
+            let _ = app.run("view.person", json!({"name": last}));
+        }
+    }
     ui.painter().text(pos2(head.right() - PAD, head.center().y), Align2::RIGHT_CENTER, people.len().to_string(), t.font(13.0), t.text_dim);
     // until face recognition is set up: what it takes, and a button that does the next step
     super::faces::setup_banner(app, ui);

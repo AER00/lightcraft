@@ -715,10 +715,30 @@ mod tests {
         h.step();
         h.step();
         assert_eq!((h.app.ui.view, h.app.session.active()), (ViewMode::Detail, Some(ids[1])));
-        // back to the page, then each way out of it
-        h.request("engine.execute", json!({"command": "view.person", "params": {"name": "Jane Doe"}}), t);
+        // Escape from that photo goes back to the page, not to the grid
+        h.request("ui.key", json!({"key": "escape"}), t);
         h.step();
         assert_eq!((h.app.ui.view, h.app.ui.person_page.as_deref()), (ViewMode::People, Some("Jane Doe")));
+        // the People button from a photo shows everyone, with the person last left one click away next to the title
+        h.request("ui.clickWidget", json!({"id": format!("person-face:{}:0", ids[1].0)}), t);
+        h.step();
+        h.step();
+        assert_eq!(h.app.ui.view, ViewMode::Detail);
+        open_people(&mut h);
+        assert_eq!((h.app.ui.view, h.app.ui.person_page.clone()), (ViewMode::People, None));
+        h.step();
+        let r = h.request("ui.clickWidget", json!({"id": "people:last"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+        assert_eq!((h.app.ui.view, h.app.ui.person_page.as_deref()), (ViewMode::People, Some("Jane Doe")));
+        // a photo reached any other way goes back to the grid on Escape
+        h.request("engine.execute", json!({"command": "view.detail"}), t);
+        h.request("ui.key", json!({"key": "escape"}), t);
+        h.step();
+        assert_eq!(h.app.ui.view, ViewMode::PhotoGrid);
+        h.request("engine.execute", json!({"command": "view.person", "params": {"name": "Jane Doe"}}), t);
+        h.step();
         let r = h.request("ui.clickWidget", json!({"id": "person:back"}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.step();
