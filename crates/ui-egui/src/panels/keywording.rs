@@ -34,20 +34,48 @@ pub fn export_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     ui.horizontal_wrapped(|ui| {
         for n in names.iter() {
-            let partial = !n.on_all();
-            let text = format!("{}{}", n.path, if partial { " *" } else { "" });
-            let r = egui::Frame::NONE
-                .stroke(egui::Stroke::new(1.0, t.field_border))
-                .corner_radius(10.0)
-                .inner_margin(egui::Margin::symmetric(8, 2))
-                .show(ui, |ui| ui.label(egui::RichText::new(text).color(if partial { t.text_dim } else { t.text_label })))
-                .response;
-            register(ui.ctx(), format!("keywordExport:{}", n.path), r.rect);
-            if partial {
-                r.on_hover_text(crate::i18n::tr_format!("On {have} of {of} selected photos", have = n.have, of = n.of));
+            let (body, _) = chip(ui, &n.path, !n.on_all(), false);
+            register(ui.ctx(), format!("keywordExport:{}", n.path), body.rect);
+            if !n.on_all() {
+                body.on_hover_text(crate::i18n::tr_format!("On {have} of {of} selected photos", have = n.have, of = n.of));
             }
         }
     });
+}
+
+/// One chip, measured before it is placed so that a wrapping row moves it whole to the next line:
+/// the name (cut short to fit the row) and, with `cross`, a × at its end. A `partial` one (only
+/// some of the selected photos) is dimmed and marked with an asterisk. Returns the name's response
+/// and the ×'s.
+fn chip(ui: &mut egui::Ui, path: &str, partial: bool, cross: bool) -> (egui::Response, Option<egui::Response>) {
+    use egui::{Align2, Rect, Sense, pos2, vec2};
+    let t = Tokens::get(ui.ctx());
+    let font = t.font(13.0);
+    let color = if partial { t.text_dim } else { t.text_label };
+    let name = format!("{}{}", path.replace('|', " › "), if partial { " *" } else { "" });
+    let cross_w = if cross { 18.0 } else { 0.0 };
+    // at most the row's width
+    let room = (ui.max_rect().width() - 16.0 - cross_w).max(24.0);
+    let measure = |s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), color).size().x;
+    let shown = if measure(&name) <= room { name.clone() } else { crate::widgets::elide_head(&name, room, measure) };
+    let w = measure(&shown) + 16.0 + cross_w;
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 22.0), Sense::click());
+    ui.painter().rect_stroke(rect, 10.0, egui::Stroke::new(1.0, t.field_border), egui::StrokeKind::Inside);
+    if resp.hovered() {
+        ui.painter().rect_filled(rect.shrink(1.0), 10.0, t.hover.gamma_multiply(0.5));
+    }
+    ui.painter().text(pos2(rect.left() + 8.0, rect.center().y), Align2::LEFT_CENTER, &shown, font.clone(), color);
+    let body = Rect::from_min_max(rect.min, pos2(rect.right() - cross_w, rect.bottom()));
+    let resp = if shown != name { resp.on_hover_text(path.replace('|', " › ")) } else { resp };
+    let x = cross.then(|| {
+        let xr = Rect::from_center_size(pos2(rect.right() - 11.0, rect.center().y), vec2(14.0, 14.0));
+        let xresp = ui.interact(xr, resp.id.with("remove"), Sense::click());
+        ui.painter().text(xr.center(), Align2::CENTER_CENTER, "×", t.font(13.0), if xresp.hovered() { t.text } else { t.text_dim });
+        xresp
+    });
+    let mut body_resp = resp;
+    body_resp.rect = body;
+    (body_resp, x)
 }
 
 /// A chip's menu: it acts on the selected photos (deleting a keyword from the whole library is the
@@ -77,39 +105,26 @@ fn menu(app: &mut LightcraftApp, ui: &mut egui::Ui, chip: &Chip) {
 /// The selection's keywords as chips: the name (right-click for its menu), and × to take it off
 /// every selected photo. One only some of them have is marked with an asterisk.
 pub fn chip_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
-    let t = Tokens::get(ui.ctx());
     let selection = app.session.selection.ids.clone();
     let chips = app.caches.keyword_chips(&app.session.catalog, &selection);
     ui.horizontal_wrapped(|ui| {
-        for chip in chips.iter() {
-            let frame = egui::Frame::NONE.stroke(egui::Stroke::new(1.0, t.field_border)).corner_radius(10.0).inner_margin(egui::Margin {
-                left: 8,
-                right: 4,
-                top: 2,
-                bottom: 2,
-            });
-            let shown = frame.show(ui, |ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let partial = !chip.on_all();
-                let name = format!("{}{}", chip.path.replace('|', " › "), if partial { " *" } else { "" });
-                let color = if partial { t.text_dim } else { t.text_label };
-                let label = ui.add(egui::Label::new(egui::RichText::new(name).color(color)).sense(egui::Sense::click()));
-                register(ui.ctx(), format!("keywordChip:{}", chip.path), label.rect);
-                let label = if partial {
-                    register(ui.ctx(), format!("keywordChipPartial:{}", chip.path), label.rect);
-                    label.on_hover_text(crate::i18n::tr_format!("On {have} of {of} selected photos", have = chip.have, of = chip.of))
-                } else {
-                    label.on_hover_text(chip.path.replace('|', " › "))
-                };
-                let x = ui.add(egui::Button::new(egui::RichText::new("×").color(t.text_dim)).frame(false));
-                register(ui.ctx(), format!("keywordChipRemove:{}", chip.path), x.rect);
+        for c in chips.iter() {
+            let (body, x) = chip(ui, &c.path, !c.on_all(), true);
+            register(ui.ctx(), format!("keywordChip:{}", c.path), body.rect);
+            if let Some(x) = x {
+                register(ui.ctx(), format!("keywordChipRemove:{}", c.path), x.rect);
                 if x.on_hover_text(crate::i18n::tr("Remove from Selected Photos")).clicked() {
-                    let _ = app.run("photo.setMeta", json!({"removeKeywords": [chip.path]}));
+                    let _ = app.run("photo.setMeta", json!({"removeKeywords": [c.path]}));
                 }
-                label
-            });
-            let chip = chip.clone();
-            shown.inner.context_menu(|ui| menu(app, ui, &chip));
+            }
+            let body = if c.on_all() {
+                body
+            } else {
+                register(ui.ctx(), format!("keywordChipPartial:{}", c.path), body.rect);
+                body.on_hover_text(crate::i18n::tr_format!("On {have} of {of} selected photos", have = c.have, of = c.of))
+            };
+            let c = c.clone();
+            body.context_menu(|ui| menu(app, ui, &c));
         }
     });
 }
@@ -132,8 +147,6 @@ impl Chip {
     }
 }
 
-/// The keywords of the selected `photos`, each once whatever its case, with how many of them have
-/// it; by name.
 /// "Will Export" (Lightroom Classic's Keyword Tags ▸ Will Export): the names exported files carry
 /// for the selected `photos`, as the keyword tag options say, each with how many of them carry it;
 /// by name.
@@ -148,6 +161,8 @@ pub(crate) fn will_export(catalog: &Catalog, photos: &[PhotoId]) -> Vec<Chip> {
     have.into_values().map(|(path, have)| Chip { path, have, of: photos.len() }).collect()
 }
 
+/// The keywords of the selected `photos`, each once whatever its case, with how many of them have
+/// it; by name.
 pub(crate) fn chips(catalog: &Catalog, photos: &[PhotoId]) -> Vec<Chip> {
     use lightcraft_catalog::keywords::clean;
     // by lower-case keyword: the photos with it (each once)

@@ -155,3 +155,24 @@ fn suggestions_follow_the_selection() {
     assert!(has(&h, "kwSuggest:Weddings"), "only the active one has it");
     assert!(!has(&h, "kwSuggest:beach"), "both have it");
 }
+
+/// Chips wrap whole: each stays on one line with its ×, however many there are and however long
+/// (a chip laid out in what was left of a line used to wrap its own text, a letter a line).
+#[test]
+fn chips_stay_on_one_line() {
+    let (mut h, ids) = two_selected();
+    let r = h.request(
+        "engine.execute",
+        json!({"command": "photo.setMeta", "params": {"ids": ids, "addKeywords": ["Events|Weddings", "sunset", "Places|Portugal|Lisbon", "harbour"]}}),
+        T,
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let chips: Vec<(String, egui::Rect)> = h.app.widgets.iter().filter(|(w, _)| w.starts_with("keywordChip:")).cloned().collect();
+    assert!(chips.len() >= 5, "{chips:?}");
+    for (id, r) in &chips {
+        assert!(r.height() < 30.0, "{id} spans lines: {r:?}");
+        let x = h.app.widgets.iter().find(|(w, _)| *w == id.replace("keywordChip:", "keywordChipRemove:")).map(|(_, r)| *r).unwrap();
+        assert!((x.center().y - r.center().y).abs() < 4.0, "{id}: its × is on its line");
+    }
+}
