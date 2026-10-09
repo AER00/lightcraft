@@ -120,9 +120,27 @@ struct SmartCounts {
     built: usize,
     /// Of those, damaged ones (cut short by a crash or a full drive) that were rebuilt.
     repaired: usize,
+    /// Of those, proxies written by an older camera-look fit that were rebuilt from their online originals.
+    refreshed: usize,
+    /// Of those kept as they were: out of date, but the original can't be read now (offline), so
+    /// the stored look stays and the next run with the original online rebuilds them.
+    stale_kept: usize,
     removed: usize,
     /// `[[id, why]]`
     failed: Vec<Value>,
+}
+
+/// `source` if it reads the photo's original, else `None`: a cached source decoded from a smart
+/// preview (it has no decoder facts), a proxy standing in for an offline original, and the proxy
+/// fallback of a file source are not the original.
+#[cfg(not(target_arch = "wasm32"))]
+fn original_only(source: crate::media::SourceRef) -> Option<crate::media::SourceRef> {
+    use crate::media::SourceRef;
+    match source {
+        SourceRef::File { path, max_edge, loader, denoise, .. } => Some(SourceRef::File { path, max_edge, loader, fallback: None, denoise }),
+        SourceRef::Loaded(d) if d.info.is_some() => Some(SourceRef::Loaded(d)),
+        _ => None,
+    }
 }
 
 /// The file-system half of Build / Discard Smart Previews (runs on a worker thread in the app).
@@ -154,12 +172,17 @@ fn smart_run(
                 n.removed += 1;
             }
         } else {
-            // a complete proxy is kept; a missing or damaged one (cut short by a crash or a full
-            // drive) is (re)built
+            // a complete, current proxy is kept; a missing or damaged one (cut short by a crash or a
+            // full drive) is (re)built, and so is one written by an older camera-look fit (see
+            // `camera_preview::LOOK_VERSION`) when its original can be read
             let damaged = path.exists();
-            if damaged && crate::smart::is_valid(&path) {
+            let stale = damaged && crate::smart::is_stale(&path);
+            if damaged && !stale && crate::smart::is_valid(&path) {
                 n.built += 1;
             } else {
+                // a stale proxy is rebuilt from the original only: never from itself (the file
+                // fallback or a source decoded from a proxy would stamp the old look as current)
+                let source = if stale { source.and_then(original_only) } else { source };
                 // atomic: a failed write leaves no partial proxy that would pass for a built one;
                 // and synced (issue #134): built so the photo can be edited while its original
                 // is offline, when it is the only copy — the sync is small next to the decode
@@ -171,12 +194,20 @@ fn smart_run(
                 match r {
                     Ok(()) => {
                         n.built += 1;
-                        if damaged {
+                        if stale {
+                            n.refreshed += 1;
+                        } else if damaged {
                             n.repaired += 1;
                             if let Some(st) = state {
                                 st.repaired.fetch_add(1, Ordering::Relaxed);
                             }
                         }
+                    }
+                    Err(e) if stale => {
+                        // offline (or unreadable) original: the proxy is all there is, keep its look
+                        log::info!("smart preview {} keeps its older look: {e}", path.display());
+                        n.built += 1;
+                        n.stale_kept += 1;
                     }
                     Err(e) => {
                         n.failed.push(json!([id.0, e]));
@@ -236,7 +267,42 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(state.json());
     }
     let r = smart_run(&dir, custom, discard, jobs, None).map_err(|e| bad(C, e))?;
-    Ok(json!({"built": r.built, "repaired": r.repaired, "removed": r.removed, "failed": r.failed}))
+    Ok(
+        json!({"built": r.built, "repaired": r.repaired, "refreshed": r.refreshed, "staleKept": r.stale_kept, "removed": r.removed, "failed": r.failed}),
+    )
+}
+
+/// Bring smart previews written by an older camera-look fit up to date, once per library open:
+/// on a worker thread (the UI never waits on the drives), each stale proxy is rebuilt from its
+/// original when that can be read and kept as it is when it can't (its header still says it is
+/// stale, so the next open with the original online rebuilds it). Only existing proxies are
+/// touched: none is built, and a missing folder is never created. Returns the thread, if started.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn refresh_stale_smart_previews(s: &mut Session) -> Option<std::thread::JoinHandle<()>> {
+    let dir = s.media.smart_dir.clone()?;
+    let max_edge = crate::media::SourceLevel::Preview.max_edge();
+    let photos: Vec<_> = s.catalog.photos().filter(|p| matches!(p.source, lightcraft_catalog::Source::File { .. })).collect();
+    let jobs: Vec<SmartJob> =
+        photos.iter().map(|p| (p.id, dir.join(crate::smart::file_name(p)), Some(s.media.origin_ref(&p.source, max_edge)))).collect();
+    std::thread::Builder::new()
+        .name("lc-smart-look".into())
+        .spawn(move || refresh_stale(&dir, jobs))
+        .map_err(|e| log::warn!("smart previews: could not start the look refresh: {e}"))
+        .ok()
+}
+
+/// The body of [`refresh_stale_smart_previews`]: rebuild the stale proxies among `jobs`.
+#[cfg(not(target_arch = "wasm32"))]
+fn refresh_stale(dir: &std::path::Path, jobs: Vec<SmartJob>) {
+    let stale: Vec<SmartJob> = jobs.into_iter().filter(|(_, path, _)| crate::smart::is_stale(path)).collect();
+    if stale.is_empty() {
+        return;
+    }
+    // `custom`: the folder is there already, and must not be recreated if it went away since
+    match smart_run(dir, true, false, stale, None) {
+        Ok(n) => log::info!("smart previews: {} refreshed to the current camera look, {} kept (original offline)", n.refreshed, n.stale_kept),
+        Err(e) => log::warn!("smart previews: look refresh: {e}"),
+    }
 }
 
 /// The smart previews folder: where it is, whether it is custom, what it holds, whether it can be

@@ -77,6 +77,18 @@ One photo can show too little of a colour for its own fit to learn it: in a seco
 Profiles are JSON files `<model>.json` in `$LIGHTCRAFT_CAMERA_PROFILES`, else `<config>/camera-profiles` (macOS `~/Library/Application Support/LightCraft/camera-profiles`); a local profile replaces a built-in one. Built-in profiles live in `assets/camera-profiles/` (listed in `assets/ATTRIBUTION.md`) and are compiled in, so the app, CLI and web build share them: ILCE-7M4, fitted to 597 photos (2.2 million colour pairs) shot in 2026, mostly with the Standard creative style and DRO Auto; X-H2S, 201 photos; X-T4, 545 photos. They hold aggregate colour statistics only. A photo of a profiled model takes its colour from the profile and fits only its own tone and chroma curves (DRO and picture styles vary per shot); the acceptance gates still apply. A rejected profile fit retries the photo's own colour and tone fit before falling back to neutral rendering. Files are read once per process and validated (version, bounded invertible matrix, table shape and finite data); a damaged file is ignored with a warning. The profiles folder's contents are part of the render cache keys, so thumbnails rendered before a profile existed are redone; smart previews built before keep their colour until rebuilt.
 
 
+## Smart previews and the look version
+
+A smart preview keeps the result of the fit twice: the colour matrix is baked into its pixels and the tone and chroma curves are stored in its header. When the fit changes, a preview built earlier keeps the old look until it is rebuilt, and the render cache version does not reach it (renders are keyed on the library's files, proxies are files of their own).
+
+The fit therefore has a version, `LOOK_VERSION` in `crates/engine/src/camera_preview.rs`, and every smart preview records the version that wrote it in its header line (`look_version`). **Bump the constant in any change that makes the fit give a different result for the same file**: the matrix, hue/saturation, tone or chroma fit, their gates and fallbacks, or how a camera profile feeds them. Changes that leave the fitted look alone don't need it. A header without the field (everything built before it existed) counts as version 0, and so does a value that is not a non-negative integer; a value from a newer build is left alone.
+
+A proxy older than the constant is brought up to date by the existing Build Smart Previews path (`smart_run`), which also repairs damaged proxies:
+
+- when the library is opened, a background thread looks at the existing proxies and rebuilds the stale ones from their originals (no proxy is created, nothing is shown, the UI never waits on a drive);
+- Build Smart Previews does the same for the photos it is run on (`refreshed` in its result);
+- when the original can't be read (offline drive), the proxy and its curve are kept exactly as they are. The old version in its header is the mark: the next opening, or the next Build Smart Previews, with the original online rebuilds it. A rebuilt proxy carries the current version, so nothing is rebuilt twice. A proxy is only ever rebuilt from the original, never from another proxy.
+
 ## Nikon crop and preview colour metadata
 
 Nikon maker-note `CropArea` (0x0045) supplies the default `[left, top, width, height]` crop. The decoder validates the rectangle against the active sensor area and falls back to that area for missing or invalid values. The CFA origin is unchanged; cropping follows demosaicing.

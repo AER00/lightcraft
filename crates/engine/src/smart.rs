@@ -24,6 +24,10 @@ pub fn file_name(p: &Photo) -> String {
 /// The most header [`is_valid`] reads (the JSON line before the JPEG).
 const HEADER_MAX: u64 = 4096;
 
+/// The header field that records which version of the camera-look fit (`camera_preview::LOOK_VERSION`)
+/// wrote the proxy's pixels (colour matrix and profile are baked into them) and stored tone curve.
+const LOOK_FIELD: &str = "look_version";
+
 /// Encode a source image (and the decoder's camera tone curve, if any) as a smart preview.
 pub fn encode(img: &Rgb32f, tone: Option<&CameraTone>) -> Result<Vec<u8>, String> {
     // scale so all but the brightest 0.05 % fit into 0..1
@@ -53,7 +57,7 @@ pub fn encode(img: &Rgb32f, tone: Option<&CameraTone>) -> Result<Vec<u8>, String
     )
     .map_err(|e| e.to_string())?;
     let mut out = MAGIC.to_vec();
-    let mut head = serde_json::json!({"w": img.width, "h": img.height, "scale": scale});
+    let mut head = serde_json::json!({"w": img.width, "h": img.height, "scale": scale, LOOK_FIELD: crate::camera_preview::LOOK_VERSION});
     if let Some(t) = tone {
         head["tone"] = serde_json::to_value(t).map_err(|e| e.to_string())?;
     }
@@ -185,6 +189,33 @@ pub fn is_valid(path: &Path) -> bool {
     }
     let mut end = [0u8; 2];
     f.seek(SeekFrom::End(-2)).is_ok() && f.read_exact(&mut end).is_ok() && end == [0xFF, 0xD9]
+}
+
+/// The fit version a header records: a missing, negative, fractional or otherwise malformed value
+/// counts as 0 (older than any real version).
+fn header_look_version(head: &serde_json::Value) -> u64 {
+    head.get(LOOK_FIELD).and_then(serde_json::Value::as_u64).unwrap_or(0)
+}
+
+/// Whether the complete proxy at `path` was written by an older camera-look fit than this build's
+/// (so its stored curve, and the colour baked into its pixels, are out of date). A proxy from a
+/// newer build is left alone (rebuilding it here would only undo that build's work), as is one
+/// that can't be read: those are [`is_valid`]'s business.
+pub fn is_stale(path: &Path) -> bool {
+    use std::io::Read;
+    if !is_valid(path) {
+        return false;
+    }
+    let Ok(f) = std::fs::File::open(path) else { return false };
+    let mut head = Vec::with_capacity(1024);
+    if f.take(HEADER_MAX).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    let Some(rest) = head.strip_prefix(MAGIC) else { return false };
+    let Some(nl) = rest.iter().position(|b| *b == b'\n') else { return false };
+    rest.get(..nl)
+        .and_then(|h| serde_json::from_slice::<serde_json::Value>(h).ok())
+        .is_some_and(|h| header_look_version(&h) < u64::from(crate::camera_preview::LOOK_VERSION))
 }
 
 /// Load the proxy at `path`.
