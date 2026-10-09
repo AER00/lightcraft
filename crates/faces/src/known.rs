@@ -29,20 +29,24 @@ pub fn yunet() -> ModelManifest {
             "MIT",
             Commercial::Yes,
             "https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/LICENSE",
-            "MIT licence, copyright Shiqi Yu.",
+            "MIT licence, copyright Shiqi Yu. A separate opt-in download.",
         ),
         source: Some("https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet".into()),
         sha256: Some(YUNET_SHA256.into()),
         size_bytes: Some(232_589),
-        provenance: "WIDER FACE, whose terms are not settled by the weights' MIT licence. A detector: it finds faces, it does not identify anyone."
-            .into(),
+        provenance:
+            "Trained on WIDER FACE, whose terms are not settled by the weights' MIT licence. A detector: it finds faces, it does not identify anyone."
+                .into(),
         input: InputSpec { width: 640, height: 640, colour: Colour::Bgr, mean: [0.0; 3], std: [1.0; 3], resize: Resize::Letterbox },
         output: OutputSpec::Detector { decoder: "yunet-v2".into() },
         thresholds: Thresholds { match_cosine: None, score: Some(0.6), nms_iou: Some(0.3) },
+        speed: None,
     }
 }
 
-/// SFace 2021dec (OpenCV Zoo).
+/// SFace 2021dec (OpenCV Zoo). Its match threshold is a starting point: on 755 named faces (busts, matched across
+/// shots more than five seconds apart) 0.55 gave 97.5% right suggestions for 88% of faces; `faces.evaluate` checks it on
+/// your own photos.
 pub fn sface() -> ModelManifest {
     ModelManifest {
         id: "sface-2021dec".into(),
@@ -61,11 +65,13 @@ pub fn sface() -> ModelManifest {
         provenance: "Undocumented. The original SFace repository mentions CASIA-WebFace, VGGFace2 and MS1MV2.".into(),
         input: InputSpec { width: 112, height: 112, colour: Colour::Rgb, mean: [0.0; 3], std: [1.0; 3], resize: Resize::Stretch },
         output: OutputSpec::Embedding { dim: 128 },
-        thresholds: Thresholds::default(),
+        thresholds: Thresholds { match_cosine: Some(0.55), ..Thresholds::default() },
+        speed: Some(6.9),
     }
 }
 
-/// AuraFace v1 `glintr100` (fal.ai).
+/// AuraFace v1 `glintr100` (fal.ai). Starting-point threshold: on the same 755 faces 0.40 gave 96.6% right suggestions
+/// for 56% of faces (0.30: 97.3% for 85%).
 pub fn auraface() -> ModelManifest {
     ModelManifest {
         id: "auraface-v1".into(),
@@ -84,63 +90,9 @@ pub fn auraface() -> ModelManifest {
         provenance: "Undisclosed: \"a commercial dataset comprising face images from various sources\".".into(),
         input: InputSpec::default(),
         output: OutputSpec::Embedding { dim: 512 },
-        thresholds: Thresholds::default(),
+        thresholds: Thresholds { match_cosine: Some(0.40), ..Thresholds::default() },
+        speed: Some(1.0),
     }
-}
-
-/// Where LightCraft can fetch a model from when the user asks: an address pinned to a commit of the model's own
-/// repository, and the exact size and SHA-256 of the file (checked after the download, so the address is never
-/// trusted on its own). The file is the last segment of the address, which is what the downloader needs: it fetches
-/// `<mirror>/<file name>`, and here the mirror is everything before it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Download {
-    pub id: &'static str,
-    pub url: &'static str,
-    pub file_name: &'static str,
-    pub size_bytes: u64,
-    pub sha256: &'static str,
-}
-
-impl Download {
-    /// The address without the file name (the downloader's "mirror").
-    pub fn base(&self) -> &'static str {
-        self.url.strip_suffix(self.file_name).map_or(self.url, |b| b.trim_end_matches('/'))
-    }
-
-    /// "github.com": which site the file comes from, as the user is told.
-    pub fn host(&self) -> &'static str {
-        self.url.strip_prefix("https://").and_then(|r| r.split('/').next()).unwrap_or("")
-    }
-}
-
-/// Models LightCraft offers to download. A model marked non-commercial is never here: the user brings that file.
-pub const SOURCES: &[Download] = &[
-    Download {
-        id: YUNET_ID,
-        url: "https://github.com/opencv/opencv_zoo/raw/25f423d0e04c31a17254620e58febd7386da523b/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
-        file_name: "face_detection_yunet_2023mar.onnx",
-        size_bytes: 232_589,
-        sha256: YUNET_SHA256,
-    },
-    Download {
-        id: "sface-2021dec",
-        url: "https://github.com/opencv/opencv_zoo/raw/25f423d0e04c31a17254620e58febd7386da523b/models/face_recognition_sface/face_recognition_sface_2021dec.onnx",
-        file_name: "face_recognition_sface_2021dec.onnx",
-        size_bytes: 38_696_353,
-        sha256: SFACE_SHA256,
-    },
-    Download {
-        id: "auraface-v1",
-        url: "https://huggingface.co/fal/AuraFace-v1/resolve/af6d057c9b0ec4071d4c49c80e3539258798b609/glintr100.onnx",
-        file_name: "glintr100.onnx",
-        size_bytes: 260_694_151,
-        sha256: AURAFACE_SHA256,
-    },
-];
-
-/// How to download the model with this id, if LightCraft offers to.
-pub fn download(id: &str) -> Option<Download> {
-    SOURCES.iter().find(|d| d.id == id).copied()
 }
 
 /// Every model we know by hash.
@@ -151,6 +103,61 @@ pub fn all() -> Vec<ModelManifest> {
 /// The known model whose file has this SHA-256 (lowercase hex).
 pub fn lookup(sha256: &str) -> Option<ModelManifest> {
     all().into_iter().find(|m| m.sha256.as_deref() == Some(sha256))
+}
+
+/// Where the user's "Download" button fetches a model from. The URL is pinned to a commit of the model's own
+/// repository, and what arrives is checked against the manifest's size and SHA-256 before anything uses it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Download {
+    pub id: String,
+    pub url: String,
+    /// The name the file is kept under while it waits for the user to accept its terms.
+    pub file_name: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+}
+
+/// Pinned download addresses by model id. Only models whose terms allow us to point at them are here: a model
+/// that is marked non-commercial is never offered for download (the user brings the file themselves).
+const SOURCES: &[(&str, &str, &str)] = &[
+    (
+        YUNET_ID,
+        "https://github.com/opencv/opencv_zoo/raw/25f423d0e04c31a17254620e58febd7386da523b/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+        "face_detection_yunet_2023mar.onnx",
+    ),
+    (
+        "sface-2021dec",
+        "https://github.com/opencv/opencv_zoo/raw/25f423d0e04c31a17254620e58febd7386da523b/models/face_recognition_sface/face_recognition_sface_2021dec.onnx",
+        "face_recognition_sface_2021dec.onnx",
+    ),
+    ("auraface-v1", "https://huggingface.co/fal/AuraFace-v1/resolve/af6d057c9b0ec4071d4c49c80e3539258798b609/glintr100.onnx", "glintr100.onnx"),
+];
+
+/// How to download the model with this id, if LightCraft offers to.
+pub fn download(id: &str) -> Option<Download> {
+    let (_, url, file_name) = SOURCES.iter().find(|(i, _, _)| *i == id)?;
+    let m = all().into_iter().find(|m| m.id == id)?;
+    if m.licence.commercial == Commercial::No {
+        return None;
+    }
+    Some(Download { id: m.id, url: (*url).into(), file_name: (*file_name).into(), size_bytes: m.size_bytes?, sha256: m.sha256? })
+}
+
+/// "github.com" for a download address: what the user is told the file comes from.
+pub fn host(url: &str) -> &str {
+    url.strip_prefix("https://").and_then(|r| r.split('/').next()).unwrap_or("")
+}
+
+impl Download {
+    /// The address without the file name (the downloader's "mirror": it fetches `<mirror>/<file name>`).
+    pub fn base(&self) -> &str {
+        self.url.strip_suffix(self.file_name.as_str()).map_or(self.url.as_str(), |b| b.trim_end_matches('/'))
+    }
+
+    /// The site the file comes from, as the user is told.
+    pub fn host(&self) -> &str {
+        host(&self.url)
+    }
 }
 
 #[cfg(test)]
@@ -184,20 +191,26 @@ mod tests {
 
     #[test]
     fn downloads_are_pinned_checked_and_only_for_models_we_may_point_at() {
-        for d in SOURCES {
-            let m = all().into_iter().find(|m| m.id == d.id).unwrap_or_else(|| panic!("{} is not a known model", d.id));
+        for m in all() {
+            let Some(d) = download(&m.id) else { continue };
             assert!(d.url.starts_with("https://"), "{}: https only", d.id);
             assert!(!d.url.contains("/main/") && !d.url.contains("/master/"), "{}: pinned to a commit, not a branch", d.id);
             assert!(d.file_name.ends_with(".onnx") && !d.file_name.contains(['/', '\\']), "{}", d.file_name);
             assert!(d.url.ends_with(&format!("/{}", d.file_name)), "{}: the address ends in the file's name", d.id);
             assert!(d.base().starts_with("https://") && !d.base().ends_with('/') && !d.base().ends_with(".onnx"), "{}", d.base());
-            assert_eq!((Some(d.size_bytes), Some(d.sha256)), (m.size_bytes, m.sha256.as_deref()), "{}", d.id);
+            assert_eq!((Some(d.size_bytes), Some(d.sha256.as_str())), (m.size_bytes, m.sha256.as_deref()), "{}", d.id);
             assert!(m.licence.commercial != Commercial::No, "{} is non-commercial and must not be offered", d.id);
         }
-        assert_eq!(download("yunet-2023mar").map(|d| d.host()), Some("github.com"));
-        assert_eq!(download("auraface-v1").map(|d| d.host()), Some("huggingface.co"));
+        assert_eq!(download("yunet-2023mar").map(|d| d.host().to_string()).as_deref(), Some("github.com"));
+        assert_eq!(download("sface-2021dec").map(|d| host(&d.url).to_string()).as_deref(), Some("github.com"));
+        assert_eq!(download("auraface-v1").map(|d| host(&d.url).to_string()).as_deref(), Some("huggingface.co"));
+        // unknown ids and path tricks have nothing to download
         for id in ["nope", "", "../sface-2021dec", "SFACE-2021DEC"] {
             assert!(download(id).is_none(), "{id}");
+        }
+        // every address in the table belongs to a known model
+        for (id, _, _) in SOURCES {
+            assert!(all().iter().any(|m| m.id == *id), "{id}");
         }
     }
 

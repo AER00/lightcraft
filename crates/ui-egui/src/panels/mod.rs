@@ -16,6 +16,7 @@ pub mod library_problem;
 pub mod masking;
 pub mod notices;
 pub mod people;
+pub mod person;
 pub mod presets;
 pub mod profiles;
 pub mod right;
@@ -24,6 +25,7 @@ pub mod second;
 pub mod settings;
 pub mod strip;
 pub mod topbar;
+pub mod unnamed;
 
 use egui::{Align2, Rect, pos2, vec2};
 

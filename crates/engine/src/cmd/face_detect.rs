@@ -22,8 +22,8 @@ use crate::{Result, Session};
 
 const C: &str = "faces.detect";
 /// Regions made by this command say so in their description; only those are replaced on a new run.
-const MARK: &str = "Detected by ";
-const LABEL: &str = "YuNet 2023mar";
+pub(crate) const MARK: &str = "Detected by ";
+pub(crate) const LABEL: &str = "YuNet 2023mar";
 /// Long edge of the picture the detector looks at (it shrinks it to its own 640 anyway).
 const LOOK_EDGE: usize = 1280;
 /// YuNet is 232 KB; a file this much larger in its folder is not it.
@@ -35,7 +35,8 @@ const EXISTING_IOU: f64 = 0.3;
 const NOT_INSTALLED: &str = "finding faces needs the YuNet face detector (232 KB, MIT): download it in Settings > Faces";
 
 /// The installed YuNet, loaded once and kept (a new one is loaded when the model folder changes).
-fn detector(s: &Session) -> std::result::Result<Arc<Detector>, String> {
+/// (also used by the background scan, which aligns faces by the detector's landmarks and finds faces in photos that have none)
+pub(crate) fn detector(s: &Session) -> std::result::Result<Arc<Detector>, String> {
     static LOADED: Mutex<Option<(PathBuf, Arc<Detector>)>> = Mutex::new(None);
     let home = s.face_models_dir.as_deref().ok_or("this build has nowhere to keep face models (the desktop app does)")?.join(YUNET_ID);
     let path = home.join("model.onnx");
@@ -80,8 +81,18 @@ fn overlaps_existing(f: &Face, regions: &[Region]) -> bool {
     })
 }
 
-fn is_detected(r: &Region) -> bool {
+pub(crate) fn is_detected(r: &Region) -> bool {
     r.description.as_deref().is_some_and(|d| d.starts_with(MARK))
+}
+
+/// The photo as the faces see it: upright, uncropped, default settings, as 8-bit RGB with its size, its long edge at
+/// most `edge`.
+pub(crate) fn render_rgb(s: &mut Session, id: lightcraft_catalog::PhotoId, edge: usize) -> std::result::Result<(Vec<u8>, usize, usize), String> {
+    let settings = DevelopSettings::default();
+    let job = s.preview_job(id, edge, edge, false, &settings).ok_or("no such photo")?;
+    let image = job.run().rendered?.image;
+    let rgb: Vec<u8> = image.data.iter().flat_map(|px| [px[0], px[1], px[2]]).collect();
+    Ok((rgb, image.width, image.height))
 }
 
 fn detect(s: &mut Session, p: &Value) -> Result<Value> {
@@ -96,17 +107,14 @@ fn detect(s: &mut Session, p: &Value) -> Result<Value> {
     let started = Instant::now();
     let (mut results, mut ops) = (Vec::new(), Vec::new());
     for id in s.targets(p) {
-        let settings = DevelopSettings::default();
-        let Some(job) = s.preview_job(id, LOOK_EDGE, LOOK_EDGE, false, &settings) else { continue };
-        let rendered = match job.run().rendered {
-            Ok(r) => r.image,
+        let (rgb, width, height) = match render_rgb(s, id, LOOK_EDGE) {
+            Ok(r) => r,
             Err(e) => {
                 results.push(json!({"id": id.0, "error": e}));
                 continue;
             }
         };
-        let rgb: Vec<u8> = rendered.data.iter().flat_map(|px| [px[0], px[1], px[2]]).collect();
-        let faces = match detector.detect(&rgb, rendered.width, rendered.height, &opts) {
+        let faces = match detector.detect(&rgb, width, height, &opts) {
             Ok(f) => f,
             Err(e) => {
                 results.push(json!({"id": id.0, "error": e.to_string()}));

@@ -1642,5 +1642,6 @@
   "How to install the model": "如何安装模型",
   "Install the SAM 3 Model": "安装 SAM 3 模型",
   "This build can't download the model yet. To install it by hand, put model.safetensors, vocab.json and merges.txt from Meta's facebook/sam3 in the folder above: Object and Describe work as soon as they are there.": "此版本尚无法下载模型。如需手动安装，请将 Meta 的 facebook/sam3 中的 model.safetensors、vocab.json 和 merges.txt 放入上方的文件夹：放入后即可使用“对象”和“描述”。",
-  "Open Log Folder": "打开日志文件夹"
+  "Open Log Folder": "打开日志文件夹",
+  "Back to this person": "Back to this person"
 }

@@ -56,6 +56,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.compare", "Compare", Some("Shift+C"), "View"),
     ("view.survey", "Survey", Some("N"), "View"),
     ("view.people", "People", None, "View"),
+    ("view.person", "Show Person", None, ""),
     ("view.faceBoxes", "Face Boxes", None, "View"),
     ("view.reference", "Reference View", Some("Shift+R"), "View"),
     ("photo.setReference", "Set as Reference Photo", None, ""),
@@ -317,8 +318,23 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(json!({"show": app.ui.face_boxes}))
         }
         "view.people" => {
+            // Everyone; the page just left stays one click away (the chip next to the title)
+            if let Some(name) = app.ui.person_page.take() {
+                app.ui.last_person = Some(name);
+            }
+            app.ui.person_from = None;
             app.ui.view = ViewMode::People;
             Ok(json!({"people": app.session.catalog.people().len()}))
+        }
+        "view.person" => {
+            // {name}: one person's page in the People view: their faces, and the faces that look like them
+            let Some(name) = p.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()) else {
+                return Some(Err("view.person: missing `name`".into()));
+            };
+            app.ui.view = ViewMode::People;
+            app.ui.person_from = None;
+            app.ui.person_page = Some(name.to_string());
+            Ok(json!({"person": name}))
         }
         "view.survey" => {
             app.ui.view = ViewMode::Survey;
@@ -365,10 +381,19 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 app.ui.slideshow = None;
             } else if !app.ui.tool.is_empty() {
                 app.ui.tool.clear();
+            } else if app.ui.view == ViewMode::People && app.ui.person_page.is_some() {
+                app.ui.person_page = None;
             } else if matches!(app.ui.view, ViewMode::Compare | ViewMode::Survey) {
                 app.ui.view = ViewMode::Detail;
             } else if app.ui.view == ViewMode::Detail {
-                app.ui.view = ViewMode::PhotoGrid;
+                // a photo opened from a person's page goes back to that page, any other to the grid
+                match app.ui.person_from.take() {
+                    Some((name, photo)) if app.session.active().is_some_and(|a| a.0 == photo) => {
+                        app.ui.view = ViewMode::People;
+                        app.ui.person_page = Some(name);
+                    }
+                    _ => app.ui.view = ViewMode::PhotoGrid,
+                }
             }
             Ok(Value::Null)
         }

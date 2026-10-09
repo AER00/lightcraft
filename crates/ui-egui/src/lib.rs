@@ -765,6 +765,7 @@ impl LightcraftApp {
             ctx.request_repaint_after(std::time::Duration::from_secs(3));
         }
         self.session.persist_if_dirty();
+        panels::faces::pump(self, ctx);
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);
         if self.fonts_ready {
@@ -1054,6 +1055,27 @@ pub struct Caches {
     pub faces_epoch: u64,
     /// Face model downloads the user started, followed until installed (see `panels::faces::pump`).
     pub faces_dl_watch: Vec<String>,
+    /// Whether the background face indexer is running, how many faces it has embedded, how many photos are left, and
+    /// when to ask it again.
+    pub faces_active: bool,
+    pub faces_indexed: u64,
+    pub faces_pending: u64,
+    pub faces_next_pump: f64,
+    /// When the user last dragged, typed or scrolled, and when they last moved the pointer (egui time).
+    pub last_input: f64,
+    /// The pace the face scan was last given, and whether the window was in front then (for `ui.inspect`).
+    pub faces_pace: &'static str,
+    pub faces_in_front: bool,
+    pub last_move: f64,
+    /// Name suggestions for the photo in the loupe: (photo, catalog revision, faces indexed, suggestions by region).
+    pub face_hints: Option<(u64, u64, u64, std::sync::Arc<panels::faces::Hints>)>,
+    /// The open person page: (name, catalog revision, faces indexed, when it was asked for, the page).
+    pub person_page: Option<(String, u64, u64, f64, std::sync::Arc<panels::person::PersonPage>)>,
+    /// The unnamed faces: (catalog revision, faces indexed, when it was asked for, the list).
+    pub unnamed: Option<(u64, u64, f64, std::sync::Arc<panels::unnamed::Unnamed>)>,
+    /// The most photos the face scan has had left at once since it last finished (the progress bar's whole).
+    pub faces_peak: u64,
+    person_names: Option<(u64, std::sync::Arc<Vec<String>>)>,
     /// The grid's date runs, layout and indexes (by the visible list's generation).
     pub grid: panels::grid::GridCache,
     /// What the grid did on its frames (benchmarks and tests check unchanged frames stay cheap).
@@ -1141,6 +1163,17 @@ impl Caches {
         }
         self.counts = Some((cat.revision, c));
         c
+    }
+    /// Everyone named on a face in the library (for completing a name as it is typed).
+    pub fn person_names(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<String>> {
+        match &self.person_names {
+            Some((r, v)) if *r == cat.revision => v.clone(),
+            _ => {
+                let v = std::sync::Arc::new(cat.people().into_iter().map(|p| p.name).collect::<Vec<_>>());
+                self.person_names = Some((cat.revision, v.clone()));
+                v
+            }
+        }
     }
     /// The By Date tree.
     pub fn date_groups(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::DateGroup>> {

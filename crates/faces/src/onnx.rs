@@ -94,9 +94,10 @@ impl<R: Read + Seek> Walker<'_, R> {
         let mut v = 0u64;
         for shift in (0..70u32).step_by(7) {
             let b = self.byte()?;
-            if shift < 64 {
-                v |= u64::from(b & 0x7f) << shift;
+            if shift == 63 && b > 1 {
+                return Err(ProbeError::Malformed("number overflows 64 bits"));
             }
+            v |= u64::from(b & 0x7f) << shift;
             if b & 0x80 == 0 {
                 return Ok(v);
             }
@@ -116,6 +117,9 @@ impl<R: Read + Seek> Walker<'_, R> {
         }
         let tag = self.varint()?;
         let number = u32::try_from(tag >> 3).map_err(|_| ProbeError::Malformed("field number too large"))?;
+        if number == 0 || number > 0x1fff_ffff {
+            return Err(ProbeError::Malformed("invalid field number"));
+        }
         let wire = match tag & 7 {
             0 => Wire::Varint(self.varint()?),
             1 => {
@@ -147,18 +151,21 @@ impl<R: Read + Seek> Walker<'_, R> {
             }
             _ => return Err(ProbeError::Malformed("unsupported field type")),
         };
+        if self.pos()? > end {
+            return Err(ProbeError::Malformed("field runs past its message"));
+        }
         Ok(Some((number, wire)))
     }
 
-    /// A bounded UTF-8 string occupying `start..end` (empty when it is longer than we care about).
+    /// A bounded UTF-8 string occupying `start..end`; never silently truncate graph names.
     pub(crate) fn string(&mut self, start: u64, end: u64) -> Result<String> {
         let len = end.saturating_sub(start);
         if len > MAX_STRING {
-            return Ok(String::new());
+            return Err(ProbeError::Malformed("a string exceeds 4096 bytes"));
         }
         let mut buf = Vec::new();
         self.r.by_ref().take(len).read_to_end(&mut buf)?;
-        Ok(String::from_utf8_lossy(&buf).into_owned())
+        String::from_utf8(buf).map_err(|_| ProbeError::Malformed("a string is not UTF-8"))
     }
 
     /// The bytes of `start..end`, which must be at most `max` long.
@@ -321,6 +328,9 @@ fn opset<R: Read + Seek>(w: &mut Walker<R>, end: u64) -> Result<Option<u64>> {
 /// Read an ONNX model's graph inputs and outputs from any seekable source.
 pub fn probe_reader<R: Read + Seek>(r: &mut R) -> Result<OnnxInfo> {
     let total = r.seek(SeekFrom::End(0))?;
+    if total > crate::manifest::MAX_MODEL_BYTES {
+        return Err(ProbeError::Malformed("the model exceeds 512 MiB"));
+    }
     r.seek(SeekFrom::Start(0))?;
     if total == 0 {
         return Err(ProbeError::Malformed("the file is empty"));
@@ -485,5 +495,20 @@ pub(crate) mod tests {
             }
             let _ = probe_reader(&mut Cursor::new(bytes));
         }
+    }
+    #[test]
+    fn oversized_models_are_rejected_without_reading_or_allocating() {
+        struct Oversized;
+        impl std::io::Read for Oversized {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                panic!("an oversized model must not be read")
+            }
+        }
+        impl std::io::Seek for Oversized {
+            fn seek(&mut self, _: std::io::SeekFrom) -> std::io::Result<u64> {
+                Ok(crate::manifest::MAX_MODEL_BYTES + 1)
+            }
+        }
+        assert!(probe_reader(&mut Oversized).is_err());
     }
 }
