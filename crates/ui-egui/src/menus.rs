@@ -164,6 +164,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.quit", "Quit LightCraft", Some("Cmd+Q"), "File"),
     ("file.importPresets", "Import Profiles & Presets…", None, "File"),
     ("file.exportPresets", "Export Presets…", None, "File"),
+    ("file.importKeywords", "Import Keywords…", None, "File"),
+    ("file.exportKeywords", "Export Keywords…", None, "File"),
     // Edit panel ▸ Curve ▸ Point Curve dropdown
     ("file.importCurvePresets", "Import Point Curve Presets…", None, ""),
     ("file.exportCurvePresets", "Export Point Curve Presets…", None, ""),
@@ -1343,6 +1345,68 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 if n > 0 {
                     app.ui.presets = true;
                 }
+            }
+            return Some(r);
+        }
+        "file.importKeywords" => {
+            // a keyword list file: Lightroom Classic's, Capture One's, Photo Supreme's (.utf8)
+            let path = match p.get("path").and_then(Value::as_str) {
+                Some(x) => x.to_string(),
+                None => {
+                    let req = PickRequest::file(crate::i18n::tr("Import Keywords"), crate::i18n::tr("Keyword Lists"), &["txt", "utf8"]);
+                    match crate::pick::ask(app, id, p, "path", req, |s| s.pick_keyword_list.as_mut().map(|f| f())) {
+                        Picked::Now(v) => match v.into_iter().next() {
+                            Some(x) => x,
+                            None => return Some(Ok(Value::Null)),
+                        },
+                        Picked::Later => return Some(Ok(Value::Null)),
+                        Picked::Unavailable => return Some(Err("no file dialog on this platform".into())),
+                    }
+                }
+            };
+            let r = app.session.execute("keyword.import", &json!({"path": path})).map_err(|e| e.to_string());
+            match &r {
+                Ok(v) => {
+                    let (added, updated) = (v["added"].as_u64().unwrap_or(0), v["updated"].as_u64().unwrap_or(0));
+                    let mut msg = crate::i18n::tr_format!("Added {n} keyword{}", if added == 1 { "" } else { "s" }, n = added);
+                    if updated > 0 {
+                        msg.push_str(&crate::i18n::tr_format!("; {n} gained synonyms", n = updated));
+                    }
+                    app.toast(&ctx, msg);
+                }
+                Err(e) => app.toast(&ctx, e.clone()),
+            }
+            return Some(r);
+        }
+        "file.exportKeywords" => {
+            let path = match p.get("path").and_then(Value::as_str) {
+                Some(x) => x.to_string(),
+                None => {
+                    let name = "Keywords.txt";
+                    let req = PickRequest::save(crate::i18n::tr("Export Keywords"), crate::i18n::tr("Keyword Lists"), &["txt"], name);
+                    match crate::pick::ask(app, id, p, "path", req, |s| s.save_keyword_list.as_mut().map(|f| f(name).into_iter().collect())) {
+                        Picked::Now(v) => match v.into_iter().next() {
+                            Some(x) => x,
+                            None => return Some(Ok(Value::Null)),
+                        },
+                        Picked::Later => return Some(Ok(Value::Null)),
+                        Picked::Unavailable => return Some(Err("no file dialog on this platform".into())),
+                    }
+                }
+            };
+            let r = app.session.execute("keyword.export", &json!({"path": path})).map_err(|e| e.to_string());
+            if let Ok(v) = &r {
+                let n = v["keywords"].as_u64().unwrap_or(0);
+                let mut msg = crate::i18n::tr_format!("Exported {n} keyword{}", if n == 1 { "" } else { "s" }, n = n);
+                // Capture One's importer refuses ; , < > in a list: say which to rename first
+                let refuses: Vec<&str> = v["captureOneRefuses"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                if !refuses.is_empty() {
+                    msg.push_str(&crate::i18n::tr_format!(
+                        " — Capture One won't import a list with ; , < or > in a keyword: {names}",
+                        names = refuses.iter().take(5).copied().collect::<Vec<_>>().join(" · ")
+                    ));
+                }
+                app.toast(&ctx, msg);
             }
             return Some(r);
         }

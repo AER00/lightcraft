@@ -1766,5 +1766,10 @@
   "Keywords (⌥1–⌥9)": "キーワード (⌥1–⌥9)",
   "A keyword set needs a name": "キーワードセットには名前が必要です",
   "Save as a new set": "新しいセットとして保存",
-  "Recent Keywords is built in: choose another name": "「最近使用したキーワード」は組み込みです。別の名前を選んでください"
+  "Recent Keywords is built in: choose another name": "「最近使用したキーワード」は組み込みです。別の名前を選んでください",
+  "Import Keywords…": "キーワードを読み込み…",
+  "Export Keywords…": "キーワードを書き出し…",
+  "Import Keywords": "キーワードを読み込み",
+  "Export Keywords": "キーワードを書き出し",
+  "Keyword Lists": "キーワードリスト"
 }

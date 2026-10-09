@@ -213,6 +213,8 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         // Face models need a folder to live in; the web has none.
         pick_model_file: None,
         save_preset_file: None,
+        pick_keyword_list: None,
+        save_keyword_list: None,
         pick_curve_preset_files: None,
         save_curve_preset_file: None,
         write: Some(Box::new(download)),

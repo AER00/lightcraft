@@ -216,5 +216,9 @@
   "Added “{keyword}” to {n} photo{}": "写真{n}枚に「{keyword}」を追加しました{:.0}",
   "On {have} of {of} selected photos": "選択した写真{of}枚のうち{have}枚",
   "Remove “{name}”": "「{name}」を削除",
-  "There is a keyword set “{name}” already": "キーワードセット「{name}」はすでにあります"
+  "There is a keyword set “{name}” already": "キーワードセット「{name}」はすでにあります",
+  "Added {n} keyword{}": "{n}件のキーワードを追加しました{:.0}",
+  "; {n} gained synonyms": "。{n}件に同義語を追加",
+  "Exported {n} keyword{}": "{n}件のキーワードを書き出しました{:.0}",
+  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One は ; , < > を含むキーワードがあるリストを読み込みません: {names}"
 }

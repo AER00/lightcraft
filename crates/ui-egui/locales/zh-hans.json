@@ -1766,5 +1766,10 @@
   "Keywords (⌥1–⌥9)": "关键字 (⌥1–⌥9)",
   "A keyword set needs a name": "关键字集需要名称",
   "Save as a new set": "另存为新关键字集",
-  "Recent Keywords is built in: choose another name": "“最近使用的关键字”为内置集：请另选名称"
+  "Recent Keywords is built in: choose another name": "“最近使用的关键字”为内置集：请另选名称",
+  "Import Keywords…": "导入关键字…",
+  "Export Keywords…": "导出关键字…",
+  "Import Keywords": "导入关键字",
+  "Export Keywords": "导出关键字",
+  "Keyword Lists": "关键字列表"
 }

@@ -216,5 +216,9 @@
   "Added “{keyword}” to {n} photo{}": "已將「{keyword}」加入 {n} 張照片{:.0}",
   "On {have} of {of} selected photos": "選取的 {of} 張照片中的 {have} 張",
   "Remove “{name}”": "移除「{name}」",
-  "There is a keyword set “{name}” already": "已有關鍵字集「{name}」"
+  "There is a keyword set “{name}” already": "已有關鍵字集「{name}」",
+  "Added {n} keyword{}": "已加入 {n} 個關鍵字{:.0}",
+  "; {n} gained synonyms": "；{n} 個獲得了同義詞",
+  "Exported {n} keyword{}": "已匯出 {n} 個關鍵字{:.0}",
+  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One 不會匯入關鍵字中含有 ; , < 或 > 的清單：{names}"
 }

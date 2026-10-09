@@ -42,6 +42,8 @@ mod tests_grid;
 #[cfg(test)]
 mod tests_keymap;
 #[cfg(test)]
+mod tests_keyword_files;
+#[cfg(test)]
 mod tests_keyword_list;
 #[cfg(test)]
 mod tests_keyword_set;
@@ -124,6 +126,10 @@ pub struct Services {
     pub pick_tracklog: Option<PickFiles>,
     /// Save dialog for an exported `.lcpreset` file.
     pub save_preset_file: Option<SaveFile>,
+    /// Open dialog for a keyword list file (`.txt`, Photo Supreme's `.utf8`; File ▸ Import Keywords…).
+    pub pick_keyword_list: Option<PickFiles>,
+    /// Save dialog for an exported keyword list (File ▸ Export Keywords…).
+    pub save_keyword_list: Option<SaveFile>,
     /// Open dialog for point-curve preset files (`.lccurve`).
     pub pick_curve_preset_files: Option<PickFiles>,
     /// Save dialog for an exported `.lccurve` file.
