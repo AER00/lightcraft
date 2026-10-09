@@ -258,7 +258,8 @@ pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
 /// Handle UI commands; `None` means "not a UI command — send it to the engine".
 pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
     if matches!(id, "library.inspectLightroom" | "library.importLightroom") {
-        let ctx = egui::Context::default();
+        // the app's own context: a fresh one's repaints reach no window and its clock starts at zero
+        let ctx = app.tasks.repaint.clone().unwrap_or_default();
         return Some(crate::lightroom_import::command(app, id, p, &ctx));
     }
     if let Some(language) = language_from_command(id) {
@@ -1205,7 +1206,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 if kept > 0 {
                     msg += &crate::i18n::tr_format!("; {kept} already had a location", kept = kept);
                 }
-                app.toast(&egui::Context::default(), msg);
+                let ctx = app.tasks.repaint.clone().unwrap_or_default();
+                app.toast(&ctx, msg);
             }
             r
         }

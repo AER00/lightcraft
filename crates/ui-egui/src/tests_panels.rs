@@ -1113,3 +1113,29 @@ fn a_menu_commands_toast_shows_after_a_while() {
     h.step();
     assert!(h.app.ui.toast.as_ref().is_some_and(|t| t.0.starts_with("Auto Advance")), "{:?}", h.app.ui.toast);
 }
+
+/// Auto-Tag from Tracklog's toast shows too: it was stamped by a clock of its own, which starts at
+/// zero, so a while into a session it had always already expired.
+#[test]
+fn the_tracklog_toast_shows_after_a_while() {
+    let dir = std::env::temp_dir().join(format!("lc-tracklog-toast-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let gpx = dir.join("walk.gpx");
+    std::fs::write(
+        &gpx,
+        r#"<?xml version="1.0"?><gpx version="1.1" creator="test" xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg><trkpt lat="46.0" lon="7.0"><time>2026-05-01T10:00:00Z</time></trkpt></trkseg></trk></gpx>"#,
+    )
+    .unwrap();
+    let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), Services { png: None, ..Default::default() });
+    let mut h = crate::headless::Headless::new(app, [1000.0, 700.0], 1.0);
+    for _ in 0..600 {
+        h.step();
+    }
+    let p = serde_json::json!({"command": "photo.tagFromTracklog", "params": {"path": gpx.to_string_lossy(), "offset": 0}});
+    let r = h.request("engine.execute", p, std::time::Duration::from_secs(10));
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    h.step();
+    assert!(h.app.ui.toast.as_ref().is_some_and(|t| t.0.starts_with("Tagged")), "{:?}", h.app.ui.toast);
+    let _ = std::fs::remove_dir_all(&dir);
+}
