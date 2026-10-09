@@ -76,6 +76,8 @@ fn create_device() -> Result<Dev, String> {
 fn make_device(backends: wgpu::Backends) -> Result<Dev, String> {
     let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
     desc.backends = backends;
+    // DX12 shaders compile with FXC (issue #471)
+    desc.backend_options = crate::backend::backend_options();
     let instance = wgpu::Instance::new(desc);
     let wanted = std::env::var("LIGHTCRAFT_GPU_ADAPTER").ok().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty());
     let adapter = match &wanted {
