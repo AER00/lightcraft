@@ -47,12 +47,34 @@ pub struct TextField<'a> {
     hint: Option<String>,
     width: Option<f32>,
     select_on_focus: bool,
+    frame: bool,
+    font: Option<egui::FontId>,
+    color: Option<egui::Color32>,
+    align: Option<egui::Align>,
+    margin: Option<egui::Margin>,
+}
+
+/// The egui id of the field registered as `widget`, to give it the focus (⌘F to search).
+pub fn id(widget: &str) -> egui::Id {
+    egui::Id::new("lc-text-field").with(widget)
 }
 
 impl<'a> TextField<'a> {
     /// A one-line field (Return ends the edit) registered as `widget`.
     pub fn singleline(widget: &'a str, text: &'a mut String) -> Self {
-        TextField { widget, text, multiline: false, hint: None, width: None, select_on_focus: false }
+        TextField {
+            widget,
+            text,
+            multiline: false,
+            hint: None,
+            width: None,
+            select_on_focus: false,
+            frame: true,
+            font: None,
+            color: None,
+            align: None,
+            margin: None,
+        }
     }
 
     /// A multi-line field: Return starts a new line; leaving the field ends the edit.
@@ -71,6 +93,32 @@ impl<'a> TextField<'a> {
         self
     }
 
+    /// Draw the field's own box (on by default); off where the caller draws one around it.
+    pub fn frame(mut self, on: bool) -> Self {
+        self.frame = on;
+        self
+    }
+
+    pub fn font(mut self, font: egui::FontId) -> Self {
+        self.font = Some(font);
+        self
+    }
+
+    pub fn text_color(mut self, color: egui::Color32) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    pub fn horizontal_align(mut self, align: egui::Align) -> Self {
+        self.align = Some(align);
+        self
+    }
+
+    pub fn margin(mut self, margin: egui::Margin) -> Self {
+        self.margin = Some(margin);
+        self
+    }
+
     /// Select all the text when the field takes focus, so typing replaces it (names, numbers).
     pub fn select_on_focus(mut self, on: bool) -> Self {
         self.select_on_focus = on;
@@ -78,7 +126,7 @@ impl<'a> TextField<'a> {
     }
 
     pub fn show(self, ui: &mut Ui) -> TextFieldResponse {
-        let id = egui::Id::new("lc-text-field").with(self.widget);
+        let id = id(self.widget);
         let mut memo: Memo = ui.data_mut(|d| d.get_temp(id.with("memo"))).unwrap_or_default();
         // a choice from the menu last frame: the field takes the focus back and does it, with
         // egui's own handling of the clipboard events (a password is never copied)
@@ -99,6 +147,21 @@ impl<'a> TextField<'a> {
         }
         if let Some(w) = self.width {
             edit = edit.desired_width(w);
+        }
+        if !self.frame {
+            edit = edit.frame(egui::Frame::NONE);
+        }
+        if let Some(font) = self.font {
+            edit = edit.font(font);
+        }
+        if let Some(color) = self.color {
+            edit = edit.text_color(color);
+        }
+        if let Some(align) = self.align {
+            edit = edit.horizontal_align(align);
+        }
+        if let Some(margin) = self.margin {
+            edit = edit.margin(margin);
         }
         let (escape, enter) = ui.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter)));
         // a right-click places the cursor as a left one does: the selection the menu acts on

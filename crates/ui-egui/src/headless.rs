@@ -678,6 +678,41 @@ mod tests {
         assert!(egui::Popup::is_any_open(&h.view.ctx), "its context menu");
     }
 
+    /// The search field is a shared text field: right-click ▸ Paste puts the clipboard's text in
+    /// and filters by it.
+    #[test]
+    fn the_search_field_pastes_from_its_menu() {
+        let mut h = demo([1200.0, 760.0]);
+        let t = Duration::from_secs(10);
+        h.settle(SETTLE);
+        h.view.clipboard = "wedding".into();
+        for (id, button) in [("field:search", "right"), ("field:search:paste", "left")] {
+            let r = h.request("ui.clickWidget", json!({"id": id, "button": button}), t);
+            assert_eq!(r["ok"], true, "{id}: {r}");
+            h.settle(SETTLE);
+        }
+        assert_eq!(h.app.ui.search, "wedding");
+        assert_eq!(h.app.session.filter.text, "wedding", "and the library is filtered by it");
+    }
+
+    /// Esc in the search field gives back the search from before the edit, and the filter with it.
+    #[test]
+    fn escape_in_the_search_field_gives_back_the_search() {
+        let mut h = demo([1200.0, 760.0]);
+        let t = Duration::from_secs(10);
+        h.settle(SETTLE);
+        for (method, params) in [("ui.clickWidget", json!({"id": "field:search"})), ("ui.text", json!({"text": "travel"}))] {
+            let r = h.request(method, params, t);
+            assert_eq!(r["ok"], true, "{r}");
+            h.settle(SETTLE);
+        }
+        assert_eq!(h.app.session.filter.text, "travel", "filtered while typing");
+        let r = h.request("ui.key", json!({"key": "Escape"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert_eq!((h.app.ui.search.as_str(), h.app.session.filter.text.as_str()), ("", ""));
+    }
+
     #[test]
     fn demo_grid_snapshot_has_ui_pixels() {
         let t0 = Instant::now();
