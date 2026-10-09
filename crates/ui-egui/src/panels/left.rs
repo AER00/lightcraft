@@ -1247,7 +1247,8 @@ fn synchronize_item(app: &mut LightcraftApp, ui: &mut egui::Ui, n: &FolderNode, 
         .on_hover_text(crate::i18n::tr("Find photos added to or missing from this folder on disk, and XMP sidecars changed by other apps"));
     crate::widgets::register(ui.ctx(), "folderSynchronize", r.rect);
     if r.clicked() {
-        if let Err(e) = crate::sync::open(app, &n.path, name) {
+        // a disk, or a folder holding disks, was chosen as such
+        if let Err(e) = crate::sync::open(app, &n.path, name, n.volume || !n.selectable) {
             app.toast(ui.ctx(), e);
         }
         ui.close();

@@ -22,9 +22,9 @@ pub struct SyncTask {
 }
 
 /// Open the dialog for folder `path` (called `name` in it) and start scanning.
-pub fn open(app: &mut LightcraftApp, path: &str, name: &str) -> Result<(), String> {
+pub fn open(app: &mut LightcraftApp, path: &str, name: &str, disk: bool) -> Result<(), String> {
     cancel(app);
-    let input = SyncInput::new(&mut app.session, path).map_err(|e| e.to_string())?;
+    let input = SyncInput::new(&mut app.session, path, disk).map_err(|e| e.to_string())?;
     let progress = Arc::new(ScanProgress::default());
     let (tx, rx) = std::sync::mpsc::channel();
     let p = progress.clone();
@@ -40,6 +40,7 @@ pub fn open(app: &mut LightcraftApp, path: &str, name: &str) -> Result<(), Strin
     app.ui.dialog = Some(Dialog::SynchronizeFolder {
         path: path.to_string(),
         name: name.to_string(),
+        disk,
         counts: None,
         import_new: d.import_new,
         remove_missing: d.remove_missing,
@@ -87,6 +88,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
     };
     app.sync = None;
     let c = SyncCounts {
+        offline: changes.offline,
         new: changes.new.len(),
         duplicates: changes.duplicates,
         unreadable: changes.unreadable.len(),
@@ -106,7 +108,7 @@ fn progress(app: &LightcraftApp) -> Option<(usize, usize)> {
 
 /// The dialog's body.
 pub fn body(app: &LightcraftApp, ui: &mut egui::Ui, dlg: &mut Dialog) {
-    let Dialog::SynchronizeFolder { path, name, counts, import_new, remove_missing, read_metadata } = dlg else { return };
+    let Dialog::SynchronizeFolder { path, name, counts, import_new, remove_missing, read_metadata, .. } = dlg else { return };
     let t = Tokens::get(ui.ctx());
     ui.set_min_width(420.0);
     ui.label(crate::i18n::tr("Bring the library up to date with this folder and the folders inside it:"));
@@ -123,6 +125,10 @@ pub fn body(app: &LightcraftApp, ui: &mut egui::Ui, dlg: &mut Dialog) {
         });
         return;
     };
+    if c.offline {
+        ui.label(crate::i18n::tr("This folder isn't there: it was moved or renamed, or its disk isn't connected."));
+        return;
+    }
     let choice = |ui: &mut egui::Ui, on: &mut bool, n: usize, text: String, widget: &str| {
         let r = ui.add_enabled(n > 0, egui::Checkbox::new(on, text));
         crate::widgets::register(ui.ctx(), widget, r.rect);
@@ -152,11 +158,13 @@ pub fn body(app: &LightcraftApp, ui: &mut egui::Ui, dlg: &mut Dialog) {
 
 /// Synchronize: `folder.synchronize` with the dialog's choices.
 pub fn confirm(app: &mut LightcraftApp, dlg: &Dialog) -> Result<Value, String> {
-    let Dialog::SynchronizeFolder { path, counts: Some(_), import_new, remove_missing, read_metadata, .. } = dlg else {
+    let Dialog::SynchronizeFolder { path, disk, counts: Some(_), import_new, remove_missing, read_metadata, .. } = dlg else {
         return Err("the folder is still being scanned".into());
     };
-    let r =
-        app.run("folder.synchronize", json!({"path": path, "importNew": import_new, "removeMissing": remove_missing, "readMetadata": read_metadata}));
+    let r = app.run(
+        "folder.synchronize",
+        json!({"path": path, "disk": disk, "importNew": import_new, "removeMissing": remove_missing, "readMetadata": read_metadata}),
+    );
     app.session.folder_changes = None;
     r
 }

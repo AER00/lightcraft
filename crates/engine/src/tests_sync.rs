@@ -243,7 +243,7 @@ fn a_cancelled_scan_stops_checking_files() {
     let dir = Scratch::new("cancel");
     let mut s = library(&dir);
     std::fs::remove_file(dir.path("trip/day1/b.png")).unwrap();
-    let input = crate::sync::SyncInput::new(&mut s, &dir.path("trip")).unwrap();
+    let input = crate::sync::SyncInput::new(&mut s, &dir.path("trip"), false).unwrap();
     let progress = crate::import::ScanProgress::default();
     progress.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
     let c = crate::sync::scan_with(input, &progress);
@@ -269,4 +269,41 @@ fn many_photos_are_checked_in_parallel_with_the_same_answer() {
     let expect_meta: Vec<String> = (1..40u8).step_by(5).filter(|i| i % 3 != 0).map(|i| dir.path(&format!("big/{i:02}.png"))).collect();
     assert_eq!(paths(&r, "missing"), expect_missing);
     assert_eq!(paths(&r, "metadata"), expect_meta);
+}
+
+#[test]
+fn a_folder_that_is_not_there_is_not_scanned_as_if_everything_went_missing() {
+    let dir = Scratch::new("offline");
+    let mut s = library(&dir);
+    // an unplugged disk, or a folder moved away whole
+    std::fs::rename(dir.0.join("trip"), dir.0.join("trip-elsewhere")).unwrap();
+    for cmd in ["folder.scanChanges", "folder.synchronize"] {
+        let e = s.execute(cmd, &json!({"path": dir.path("trip"), "removeMissing": true})).unwrap_err().to_string();
+        assert!(e.contains("not there"), "{cmd}: {e}");
+    }
+    assert_eq!(s.catalog.photos().filter(|p| p.in_library()).count(), 2, "nothing was removed");
+}
+
+#[test]
+fn a_whole_disk_or_a_folder_holding_disks_is_synchronized_only_on_request() {
+    let dir = Scratch::new("disks");
+    let mut s = library(&dir);
+    // a library photo on another disk makes the scratch folder's root look like it holds disks
+    let id = s.catalog.alloc_photo_id();
+    let p = lightcraft_catalog::Photo::new(
+        id,
+        lightcraft_catalog::Source::File { path: "/Volumes/nas/x.jpg".into() },
+        "x.jpg",
+        "JPEG",
+        6,
+        4,
+        "2026-01-01",
+    );
+    s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    if std::path::Path::new("/Volumes").is_dir() {
+        let e = s.execute("folder.scanChanges", &json!({"path": "/Volumes"})).unwrap_err().to_string();
+        assert!(e.contains("disk: true"), "{e}");
+    }
+    // a folder inside one disk needs nothing more
+    assert!(s.execute("folder.scanChanges", &json!({"path": dir.path("trip")})).is_ok());
 }

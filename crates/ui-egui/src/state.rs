@@ -671,6 +671,9 @@ pub enum Dialog {
         path: String,
         /// What the dialog calls it (a folder's last two names).
         name: String,
+        /// A whole disk, or a folder holding disks (`folder.synchronize` `disk`).
+        #[serde(default)]
+        disk: bool,
         /// What the scan found (`None` while it runs).
         counts: Option<SyncCounts>,
         import_new: bool,
@@ -685,6 +688,9 @@ pub enum Dialog {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncCounts {
+    /// The folder isn't there (moved, renamed, or on a disk that isn't connected).
+    #[serde(default)]
+    pub offline: bool,
     pub new: usize,
     pub duplicates: usize,
     pub unreadable: usize,

@@ -17,12 +17,12 @@ pub fn specs() -> Vec<CommandSpec> {
             "Scan Folder for Changes",
             [],
             None,
-            "{path} — compare a folder of the library (and the folders inside it) with the disk; changes nothing → {path, new: [{path, name, format, …}] files the library doesn't have, duplicates: files whose content it already has, unreadable: [{path, error}], missing: [{id, path}] photos whose file is gone, metadata: [{id, path}] photos whose XMP sidecar was saved after they came in or were last edited here and says something the library doesn't}",
+            "{path, disk?: bool (a whole disk or share, or a folder holding disks)} — compare a folder of the library (and the folders inside it) with the disk; changes nothing → {path, new: [{path, name, format, …}] files the library doesn't have, duplicates: files whose content it already has, unreadable: [{path, error}], missing: [{id, path}] photos whose file is gone, metadata: [{id, path}] photos whose XMP sidecar was saved after they came in or were last edited here and says something the library doesn't}",
             always,
             |s, p| {
                 const C: &str = "folder.scanChanges";
                 let path = path(p, C)?;
-                let changes = scan(s, &path).map_err(|e| bad(C, e.to_string()))?;
+                let changes = scan(s, &path, bool_or(p, "disk", false)).map_err(|e| bad(C, e.to_string()))?;
                 let v = serde_json::to_value(&changes).unwrap_or_default();
                 s.folder_changes = Some(changes);
                 Ok(v)
@@ -33,7 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Synchronize Folder",
             [],
             None,
-            "{path, importNew?: true, removeMissing?: false, readMetadata?: false} — bring a folder of the library up to date with the disk (see folder.scanChanges): import its new files in place, move photos whose file is gone to Recently Deleted, read XMP sidecars saved by other apps (the sidecar wins); acts on the last folder.scanChanges of the folder while nothing changed in the library since (else scans again); one undo step, no file is touched → {imported, removed, read, failed: [[path, error]]}",
+            "{path, disk?: bool, importNew?: true, removeMissing?: false, readMetadata?: false} — bring a folder of the library up to date with the disk (see folder.scanChanges): import its new files in place, move photos whose file is gone to Recently Deleted, read XMP sidecars saved by other apps (the sidecar wins); acts on the last folder.scanChanges of the folder while nothing changed in the library since (else scans again); one undo step, no file is touched → {imported, removed, read, failed: [[path, error]]}",
             always,
             sync
         ),
@@ -51,7 +51,7 @@ fn sync(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let changes = match s.take_folder_changes(&path) {
         Some(c) => c,
-        None => scan(s, &path).map_err(|e| bad(C, e.to_string()))?,
+        None => scan(s, &path, bool_or(p, "disk", false)).map_err(|e| bad(C, e.to_string()))?,
     };
     let r = synchronize(s, changes, choice)?;
     Ok(json!({"imported": r.imported, "removed": r.removed, "read": r.read, "failed": r.failed}))

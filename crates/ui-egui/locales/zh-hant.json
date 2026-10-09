@@ -1748,5 +1748,6 @@
   "Missing photos move to Recently Deleted and can be restored; no file on disk is touched.": "遺失的照片會移至「最近刪除」，可以還原；磁碟上的檔案不會被更動。",
   "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says.": "讀取附屬檔案會以其內容取代照片的評等、標籤、中繼資料和編輯。",
   "Skipped: files already in the library elsewhere": "已略過：已在照片庫其他位置的檔案",
-  "Skipped: files that can't be read": "已略過：無法讀取的檔案"
+  "Skipped: files that can't be read": "已略過：無法讀取的檔案",
+  "This folder isn't there: it was moved or renamed, or its disk isn't connected.": "此資料夾不存在：它已被移動或重新命名，或其磁碟未連接。"
 }

@@ -65,6 +65,9 @@ pub struct FolderChanges {
     pub missing: Vec<FolderPhoto>,
     /// Photos whose sidecar has news.
     pub metadata: Vec<FolderPhoto>,
+    /// The folder itself is not there (moved or renamed whole, or on a disk that isn't
+    /// connected): nothing else is reported, rather than every photo as missing.
+    pub offline: bool,
     /// The probes of the new files, kept for the import that follows.
     #[serde(skip)]
     probes: HashMap<String, ProbeInfo>,
@@ -110,8 +113,10 @@ fn invalid(msg: impl Into<String>) -> EngineError {
 }
 
 impl SyncInput {
-    /// The scan of folder `path`: a folder the library holds photos in, not the startup disk.
-    pub fn new(s: &mut Session, path: &str) -> Result<SyncInput> {
+    /// The scan of folder `path`: a folder the library holds photos in, not the startup disk. A
+    /// whole disk or share, or a folder that holds disks (`/Volumes`, `/mnt`…), only with `disk`
+    /// (as for Remove Disk from Library: its missing photos can be a whole disk's).
+    pub fn new(s: &mut Session, path: &str, disk: bool) -> Result<SyncInput> {
         let path = path.trim();
         if path.is_empty() {
             return Err(invalid("missing `path`"));
@@ -123,6 +128,9 @@ impl SyncInput {
         let ids = s.catalog.query(&f, &Sort::default());
         if ids.is_empty() {
             return Err(invalid(format!("{path}: no photo in the library was imported from it")));
+        }
+        if !disk && (lightcraft_catalog::folders::is_disk_root(path) || crate::cmd::library::covers_other_disks(s, path, &ids)) {
+            return Err(invalid(format!("{path} is a whole disk or holds disks: pass `disk: true` to synchronize it")));
         }
         let photos = ids.iter().filter_map(|id| s.catalog.photo(*id).map(|p| (Arc::clone(p), s.sidecar_naming(*id)))).collect();
         let (scan, _) = ScanInput::new(s, &[path.to_string()]);
@@ -137,6 +145,9 @@ impl SyncInput {
 /// library's photos, which run on several threads too. Stops early when `progress.cancel` is set.
 pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
     let SyncInput { folder, revision, scan, photos, labels } = input;
+    if !cfg!(target_arch = "wasm32") && !Path::new(&folder).is_dir() {
+        return FolderChanges { path: folder, revision, offline: true, ..Default::default() };
+    }
     // (no threads on the web: one after the other there)
     #[cfg(target_arch = "wasm32")]
     let (out, checks) = (crate::import::scan_with(scan, std::slice::from_ref(&folder), progress), check_photos(&photos, &labels, progress));
@@ -224,9 +235,17 @@ fn check_photos(photos: &[(Arc<Photo>, SidecarNaming)], labels: &Catalog, progre
 }
 
 /// [`scan_with`] on the calling thread.
-pub fn scan(s: &mut Session, path: &str) -> Result<FolderChanges> {
-    let input = SyncInput::new(s, path)?;
-    Ok(scan_with(input, &ScanProgress::default()))
+pub fn scan(s: &mut Session, path: &str, disk: bool) -> Result<FolderChanges> {
+    let input = SyncInput::new(s, path, disk)?;
+    let changes = scan_with(input, &ScanProgress::default());
+    if changes.offline {
+        return Err(not_there(&changes.path));
+    }
+    Ok(changes)
+}
+
+fn not_there(path: &str) -> EngineError {
+    invalid(format!("{path} is not there (moved, renamed, or on a disk that isn't connected)"))
 }
 
 impl Session {
@@ -265,6 +284,9 @@ fn sidecar_has_news(labels: &Catalog, p: &Photo, naming: SidecarNaming) -> bool 
 /// Act on `changes` as `choice` says, as one undo step ("Synchronize Folder"). A missing photo
 /// whose file is back by now is left alone.
 pub fn synchronize(s: &mut Session, changes: FolderChanges, choice: SyncChoice) -> Result<SyncReport> {
+    if changes.offline {
+        return Err(not_there(&changes.path));
+    }
     let mark = s.undo.len();
     let mut report = SyncReport::default();
     let FolderChanges { new, missing, metadata, probes, .. } = changes;
