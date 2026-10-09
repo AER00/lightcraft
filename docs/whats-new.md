@@ -149,6 +149,9 @@
   ignored before) chooses the graphics backend; `off` renders on the CPU. The GPU now starts after the window
   is up, and only when Settings ▸ Performance ▸ Use the GPU for rendering is on; if LightCraft ever dies while
   starting the GPU, the next launch starts with GPU rendering off and says how to turn it back on.
+- The Windows app no longer quits at launch with "Parent device is lost" when another program's `dxcompiler.dll` is
+  on the DLL search path without its `dxil.dll` (issue #471): DirectX 12 shaders now always compile with the
+  compiler built into Windows (FXC). `WGPU_DX12_COMPILER=dxc` uses a `dxcompiler.dll` instead.
 - Exports and renders never write over a photo's original (issue #93): exporting into the photo's own folder with
   the same name and "Overwrite" (or Export with Previous repeating it), an exact output path from the control
   channel or MCP, a merge preview path or `lightcraft-cli render IMG.jpg -o IMG.jpg` is refused with a clear
