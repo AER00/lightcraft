@@ -238,6 +238,19 @@ pub fn scan_with(input: SyncInput, progress: &SyncProgress) -> FolderChanges {
     changes
 }
 
+/// Whether a photo is the same as far as synchronizing goes: its file, its place in the library
+/// and what a sidecar is compared with. Face and pet regions found in the background meanwhile
+/// don't make a scan stale.
+fn same_for_sync(a: &Arc<Photo>, b: &Arc<Photo>) -> bool {
+    if Arc::ptr_eq(a, b) {
+        return true;
+    }
+    let meta = |p: &Photo| lightcraft_catalog::Meta { regions: Vec::new(), ..p.meta.clone() };
+    (&a.source, a.deleted, a.local, a.copy_of, &a.content_hash, a.file_size, a.rating, a.flag, a.label, &a.captured, &a.edited, &a.develop)
+        == (&b.source, b.deleted, b.local, b.copy_of, &b.content_hash, b.file_size, b.rating, b.flag, b.label, &b.captured, &b.edited, &b.develop)
+        && meta(a) == meta(b)
+}
+
 /// The content a hash stands for: a Duplicate's own hash is the original's plus `:dup<id>`.
 fn base_hash(h: &str) -> &str {
     h.split(':').next().unwrap_or(h)
@@ -388,7 +401,7 @@ impl Session {
         let mut then: Vec<PhotoId> = c.seen.iter().map(|p| p.id).collect();
         now.sort();
         then.sort();
-        let unchanged = now == then && c.seen.iter().all(|p| self.catalog.photo(p.id).is_some_and(|q| Arc::ptr_eq(p, q)));
+        let unchanged = now == then && c.seen.iter().all(|p| self.catalog.photo(p.id).is_some_and(|q| same_for_sync(p, q)));
         unchanged.then_some(c)
     }
 }
