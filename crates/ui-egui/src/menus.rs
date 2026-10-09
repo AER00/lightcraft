@@ -1397,6 +1397,9 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 }
             };
             let r = app.session.execute("keyword.export", &json!({"path": path})).map_err(|e| e.to_string());
+            if let Err(e) = &r {
+                app.toast(&ctx, e.clone());
+            }
             if let Ok(v) = &r {
                 let n = v["keywords"].as_u64().unwrap_or(0);
                 let mut msg = crate::i18n::tr_format!("Exported {n} keyword{}", if n == 1 { "" } else { "s" }, n = n);
