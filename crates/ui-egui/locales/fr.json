@@ -1871,5 +1871,6 @@
   "Building smart previews": "Génération des aperçus dynamiques",
   "Discarding smart previews": "Suppression des aperçus dynamiques",
   "Importing Lightroom catalog": "Importation du catalogue Lightroom",
-  "Reading Lightroom catalog": "Lecture du catalogue Lightroom"
+  "Reading Lightroom catalog": "Lecture du catalogue Lightroom",
+  "Merging": "Fusion en cours"
 }

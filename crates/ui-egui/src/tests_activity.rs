@@ -14,7 +14,9 @@ const T: Duration = Duration::from_secs(20);
 fn demo() -> Headless {
     let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), Services { png: None, ..Default::default() });
     let mut h = Headless::new(app, [1200.0, 800.0], 1.0);
-    h.step();
+    // let the first renders finish: a render still running when the test binary exits can crash in the
+    // GPU driver's teardown (the preview pool doesn't join its workers)
+    h.settle(T);
     h
 }
 
@@ -53,7 +55,10 @@ fn rows_appear_after_half_a_second_and_cancel_by_click() {
     let g = h.app.session.activity.start("export", "Exporting", Cancel::Yes);
     g.progress(2, 5);
     h.step();
-    assert!(!has(&h, &format!("activity:row:{}", g.id())), "not before 0.5 s");
+    // a frame on a loaded machine can outlast the half second: only judge a task still young after it
+    if h.app.session.activity.list()[0].age_ms < crate::panels::activity::SHOW_AFTER_MS {
+        assert!(!has(&h, &format!("activity:row:{}", g.id())), "not before 0.5 s");
+    }
     wait_visible(&mut h);
     assert!(has(&h, &format!("activity:row:{}", g.id())));
     click(&mut h, &format!("activity:cancel:{}", g.id()));
@@ -242,7 +247,7 @@ fn slow_import(tag: &str, n: usize) -> (Headless, std::path::PathBuf) {
         })
     }));
     let mut h = Headless::new(LightcraftApp::new(s, Services { png: None, ..Default::default() }), [1200.0, 800.0], 1.0);
-    h.step();
+    h.settle(T);
     (h, dir)
 }
 
@@ -281,4 +286,46 @@ fn scan_shows_a_row_and_cancel_closes_it() {
     }
     assert!(h.app.ui.dialog.is_none(), "no review opened");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A library of three bracketed DNGs (−2, 0, +2 EV) on disk, all selected.
+fn bracket(tag: &str) -> (Headless, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("lc-activity-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut paths = Vec::new();
+    for (i, bytes) in lightcraft_merge::synth::bracket_dngs(1600, 1200, &[-2.0, 0.0, 2.0]).unwrap().into_iter().enumerate() {
+        let p = dir.join(format!("IMG_{i}.dng"));
+        std::fs::write(&p, bytes).unwrap();
+        paths.push(p.to_string_lossy().to_string());
+    }
+    let mut session = lightcraft_engine::Session::new().with_fs();
+    let r = session.execute("library.import", &json!({"paths": paths})).unwrap();
+    let ids: Vec<u64> = r["imported"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();
+    session.execute("library.select", &json!({"ids": ids})).unwrap();
+    let app = LightcraftApp::new(session, Services { png: None, ..Default::default() });
+    let mut h = Headless::new(app, [1200.0, 800.0], 1.0);
+    h.settle(T);
+    (h, dir)
+}
+
+#[test]
+fn final_merge_shows_a_row_and_cancels() {
+    let (mut h, dir) = bracket("merge");
+    let before = h.app.session.catalog.len();
+    crate::merge::start_last(&mut h.app, "merge.hdr").unwrap();
+    h.step();
+    let rows = h.app.session.activity.list();
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].kind, rows[0].label.as_str(), rows[0].unit), ("merge", "Merging", Unit::Percent));
+    assert!(rows[0].cancellable);
+    assert_eq!(rows[0].total, 1000);
+    h.app.session.activity.cancel(rows[0].id).unwrap();
+    assert!(h.step_until(T, |h| h.app.merge.final_task.is_none()));
+    assert!(h.app.merge.last_result.is_none(), "nothing merged");
+    assert_eq!(h.app.session.catalog.len(), before, "no photo added");
+    assert!(h.app.session.activity.list().is_empty());
+    let toast = h.app.ui.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default();
+    assert_eq!(toast, "HDR merge cancelled");
+    let _ = std::fs::remove_dir_all(dir);
 }

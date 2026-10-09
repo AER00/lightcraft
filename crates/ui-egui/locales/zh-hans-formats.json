@@ -227,5 +227,6 @@
   "{pct} %": "{pct}%",
   "+{n} more": "还有 {n} 项",
   "1 task is still running: {names}. Quitting stops it.": "仍有 1 个任务在运行：{names}。退出将停止它。",
-  "{n} tasks are still running: {names}. Quitting stops them.": "仍有 {n} 个任务在运行：{names}。退出将停止它们。"
+  "{n} tasks are still running: {names}. Quitting stops them.": "仍有 {n} 个任务在运行：{names}。退出将停止它们。",
+  "{what} merge cancelled": "已取消 {what} 合并"
 }
