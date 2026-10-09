@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd, str_param};
+use crate::face_download::{self, State};
 use crate::{EngineError, Result, Session};
 
 #[derive(Default, Serialize, Deserialize)]
@@ -98,6 +99,8 @@ fn row(m: &ModelManifest, installed: bool, selected: bool, accepted: &Value) -> 
         "sizeBytes": m.size_bytes,
         "sha256": m.sha256,
         "known": known::all().iter().any(|k| k.id == m.id),
+        // a pinned address LightCraft can fetch it from (the user presses Download), and which site that is
+        "downloadHost": known::download(&m.id).map(|d| d.host()),
         "installed": installed,
         "selected": selected,
         "accepted": accepted,
@@ -111,7 +114,9 @@ struct Inspection {
     suggestion: Suggestion,
 }
 
-fn inspect_file(path: &str, cmd: &str) -> Result<Inspection> {
+/// Look at a model file. `known_sha` is its SHA-256 when something already checked it (a finished download), so a
+/// file of hundreds of megabytes is not read again just to be hashed.
+fn inspect_file(path: &str, cmd: &str, known_sha: Option<&str>) -> Result<Inspection> {
     let p = Path::new(path);
     let meta = std::fs::metadata(p).map_err(|e| bad(cmd, format!("cannot read `{path}`: {e}")))?;
     if !meta.is_file() {
@@ -120,7 +125,10 @@ fn inspect_file(path: &str, cmd: &str) -> Result<Inspection> {
     if meta.len() == 0 || meta.len() > MAX_MODEL_BYTES {
         return Err(bad(cmd, "a model file must be between 1 byte and 4 GiB"));
     }
-    let sha256 = sha256_file(p).map_err(|e| fail(&format!("could not read {path}"), e))?;
+    let sha256 = match known_sha {
+        Some(h) => h.to_string(),
+        None => sha256_file(p).map_err(|e| fail(&format!("could not read {path}"), e))?,
+    };
     let file_name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let suggestion = match onnx::probe_path(p) {
         Ok(info) => suggest(&info, &sha256, meta.len(), &file_name),
@@ -159,7 +167,7 @@ fn list(s: &mut Session, _: &Value) -> Result<Value> {
 fn inspect(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "faces.models.inspect";
     let path = str_param(p, "path").ok_or_else(|| bad(C, "missing `path`"))?;
-    let ins = inspect_file(path, C)?;
+    let ins = inspect_file(path, C, None)?;
     let installed = s.face_models_dir.as_deref().map(installed_models).unwrap_or_default();
     let (kind, model, assumptions, reason) = match &ins.suggestion {
         Suggestion::Known(m) => ("known", Some(m), Vec::new(), None),
@@ -184,36 +192,124 @@ fn install(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "faces.models.install";
     let path = str_param(p, "path").ok_or_else(|| bad(C, "missing `path`"))?;
     let acknowledged = p.get("acknowledged").and_then(Value::as_bool).unwrap_or(false);
-    let dir = models_dir(s, C)?;
-    let ins = inspect_file(path, C)?;
+    let ins = inspect_file(path, C, None)?;
+    install_file(s, C, Path::new(path), ins, acknowledged, false)
+}
+
+/// Install the inspected model file `src`. `verified` is for a download that was already checked against its recorded
+/// hash: it is moved into place instead of being copied and read again.
+fn install_file(s: &mut Session, c: &str, src: &Path, ins: Inspection, acknowledged: bool, verified: bool) -> Result<Value> {
+    let dir = models_dir(s, c)?;
     let m = match ins.suggestion {
         Suggestion::Known(m) | Suggestion::Draft { manifest: m, .. } => m,
-        Suggestion::Unsupported(why) => return Err(bad(C, format!("this model cannot be used yet: {why}"))),
+        Suggestion::Unsupported(why) => return Err(bad(c, format!("this model cannot be used yet: {why}"))),
     };
-    if m.role != Role::Embedder {
-        return Err(bad(C, "only face recognition models can be installed for now"));
+    if !matches!(m.role, Role::Embedder | Role::Detector) {
+        return Err(bad(c, "only face detection and recognition models can be installed"));
     }
-    manifest::validate(&m).map_err(|e| bad(C, e.to_string()))?;
+    manifest::validate(&m).map_err(|e| bad(c, e.to_string()))?;
     if !acknowledged {
-        return Err(bad(C, "the licence has not been accepted: show the user its terms and pass `acknowledged: true` once they agree"));
+        return Err(bad(c, "the licence has not been accepted: show the user its terms and pass `acknowledged: true` once they agree"));
     }
     let home = dir.join(&m.id);
     std::fs::create_dir_all(&home).map_err(|e| fail("could not create the model's folder", e))?;
     let (part, final_path) = (home.join("model.onnx.part"), home.join("model.onnx"));
-    let copied =
-        std::fs::copy(path, &part).map_err(|e| fail("could not copy the model (is the disk full?)", e)).and_then(|_| match sha256_file(&part) {
+    let moved = verified && std::fs::rename(src, &part).is_ok();
+    let placed = if moved {
+        Ok(())
+    } else {
+        std::fs::copy(src, &part).map_err(|e| fail("could not copy the model (is the disk full?)", e)).and_then(|_| match sha256_file(&part) {
             Ok(h) if h == ins.sha256 => Ok(()),
             Ok(_) => Err(EngineError::Other("the copy does not match the original (the file changed while copying?)".into())),
             Err(e) => Err(fail("could not check the copy", e)),
-        });
-    if let Err(e) = copied.and_then(|_| std::fs::rename(&part, &final_path).map_err(|e| fail("could not finish the copy", e))) {
+        })
+    };
+    if let Err(e) = placed.and_then(|_| std::fs::rename(&part, &final_path).map_err(|e| fail("could not finish the copy", e))) {
         let _ = std::fs::remove_file(&part);
         return Err(e);
     }
     write_atomic(&home.join("face-model.json"), &serde_json::to_vec_pretty(&m).map_err(|e| fail("manifest", e))?)?;
     let accepted = json!({"acceptedAt": (s.clock)(), "licence": m.licence.name, "commercial": m.licence.commercial, "fileName": ins.file_name});
     write_atomic(&home.join("installed.json"), &serde_json::to_vec_pretty(&accepted).map_err(|e| fail("record", e))?)?;
+    // a file that was downloaded and waited in the staging folder has served: the installed copy is the model now
+    if src.parent() == Some(dir.join(face_download::STAGING).as_path()) {
+        let _ = std::fs::remove_file(src);
+        s.face_downloads.staged_file_used(src);
+    }
     Ok(json!({"installed": row(&m, true, false, &accepted)}))
+}
+
+/// What an error says, without the command it came from (for a line shown to the user).
+fn plain(e: &EngineError) -> String {
+    match e {
+        EngineError::BadParams { msg, .. } => msg.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Install every download that has arrived: each was accepted when it was started, so it is installed without another
+/// question. Called by `faces.models.downloads`, which the UI asks for every frame while it watches a download.
+fn finish_downloads(s: &mut Session) {
+    const C: &str = "faces.models.download";
+    for (id, path, sha) in s.face_downloads.finished() {
+        let outcome = inspect_file(&path.to_string_lossy(), C, Some(&sha)).and_then(|ins| install_file(s, C, &path, ins, true, true));
+        match outcome {
+            Ok(_) => s.face_downloads.set_outcome(&id, State::Installed),
+            Err(e) => {
+                // a file that cannot be installed is of no use to anyone: throw it away, say why
+                let _ = std::fs::remove_file(&path);
+                s.face_downloads.set_outcome(&id, State::Failed(plain(&e)));
+            }
+        }
+    }
+}
+
+/// `faces.models.download {id, acknowledged: true}`: fetch a model LightCraft knows an address for, in the background;
+/// when it has arrived and checked out it is installed.
+fn download(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "faces.models.download";
+    let id = str_param(p, "id").ok_or_else(|| bad(C, "missing `id`"))?;
+    let dir = models_dir(s, C)?;
+    let spec = known::download(id).ok_or_else(|| bad(C, "LightCraft has no download for that model: get the file from its page, then add it"))?;
+    if cfg!(target_arch = "wasm32") {
+        return Err(bad(C, "the web build downloads no models"));
+    }
+    if p.get("acknowledged").and_then(Value::as_bool) != Some(true) {
+        return Err(bad(
+            C,
+            "the licence has not been accepted: show the user the model's terms (see `faces.models.list`) and pass `acknowledged: true` once they agree",
+        ));
+    }
+    if installed_models(&dir).iter().any(|i| i.manifest.id == spec.id) {
+        return Err(bad(C, "that model is already installed"));
+    }
+    s.face_downloads.start(spec, &dir).map_err(|e| bad(C, e))?;
+    Ok(json!({"started": id, "from": spec.host()}))
+}
+
+fn download_row(id: &str, state: &State) -> Value {
+    let from = known::download(id).map(|d| d.host());
+    match state {
+        State::Running { bytes, total } => json!({"id": id, "state": "running", "bytes": bytes, "total": total, "from": from}),
+        State::Done { path, .. } => json!({"id": id, "state": "done", "path": path.display().to_string(), "from": from}),
+        State::Installed => json!({"id": id, "state": "installed", "from": from}),
+        State::Failed(why) => json!({"id": id, "state": "failed", "error": why, "from": from}),
+        State::Cancelled => json!({"id": id, "state": "cancelled", "from": from}),
+    }
+}
+
+/// `faces.models.downloads`: where each download stands (a finished one is installed first).
+fn downloads(s: &mut Session, _: &Value) -> Result<Value> {
+    finish_downloads(s);
+    let all: Vec<Value> = s.face_downloads.snapshot().iter().map(|(id, st)| download_row(id, st)).collect();
+    Ok(json!({"running": s.face_downloads.running(), "downloads": all}))
+}
+
+/// `faces.models.downloadCancel {id}`: stop a download, or clear a finished one (a staged file is deleted).
+fn download_cancel(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "faces.models.downloadCancel";
+    let id = str_param(p, "id").ok_or_else(|| bad(C, "missing `id`"))?;
+    Ok(json!({"discarded": s.face_downloads.discard(id)}))
 }
 
 fn remove(s: &mut Session, p: &Value) -> Result<Value> {
@@ -268,7 +364,10 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "faces.models.list", "Face Models", [], None, "{} → {dir, enabled, embedder, runtime, models: [{id, name, role, licence{name, commercial, url, notice}, provenance, source, sizeBytes, known, installed, selected}]}", always, list),
         cmd!(query "faces.models.inspect", "Inspect Face Model File", [], None, "{path} → what a .onnx file is: {kind: known | draft | unsupported, model, assumptions, reason, alreadyInstalled}; installs nothing", always, inspect),
-        cmd!(query "faces.models.install", "Install Face Model", [], None, "{path, acknowledged: true} — copy a .onnx face recognition model into the models folder. `acknowledged` must be true: the user has been shown its licence (see inspect) and accepted it", always, install),
+        cmd!(query "faces.models.install", "Install Face Model", [], None, "{path, acknowledged: true} — copy a .onnx face model (the detector or a recogniser) into the models folder. `acknowledged` must be true: the user has been shown its licence (see inspect) and accepted it", always, install),
+        cmd!(query "faces.models.download", "Download Face Model", [], None, "{id, acknowledged: true} → {started, from} — fetch a model LightCraft has a pinned address for (see `downloadHost` in the list), in the background over https. `acknowledged` must be true: the user has been shown the model's terms and accepted them. It is checked against its size and SHA-256, then installed by itself; `faces.models.downloads` shows how far it is", always, download),
+        cmd!(query "faces.models.downloads", "Face Model Downloads", [], None, "{} → {running, downloads: [{id, state: running | done | installed | failed | cancelled, bytes, total, error, from}]} — also installs any download that has arrived; `installed` stays listed until `faces.models.downloadCancel` clears it", always, downloads),
+        cmd!(query "faces.models.downloadCancel", "Cancel Face Model Download", [], None, "{id} → {discarded} — stop a download, or clear a finished one", always, download_cancel),
         cmd!(query "faces.models.remove", "Remove Face Model", [], None, "{id} — delete an installed model", always, remove),
         cmd!(query "faces.models.select", "Choose Face Recognition Model", [], None, "{id: installed recogniser | null}", always, select),
         cmd!(query "faces.enable", "Face Recognition On/Off", [], None, "{enabled?: bool} (toggles when omitted)", always, enable),
