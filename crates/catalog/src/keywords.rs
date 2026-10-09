@@ -345,6 +345,22 @@ impl Catalog {
         self.keyword_path(path).is_some()
     }
 
+    /// `path` with each level the library has spelled as the library spells it (`TRAVEL|Rome` next
+    /// to `travel|italy` is `travel|Rome`).
+    fn spelled(&self, path: &str) -> String {
+        let levels: Vec<&str> = path.split(SEP).collect();
+        let mut out = String::new();
+        for (i, level) in levels.iter().enumerate() {
+            let prefix = levels.get(..=i).map(|l| l.join("|")).unwrap_or_default();
+            let name = self.keyword_path(&prefix).and_then(|p| p.rsplit(SEP).next().map(str::to_string)).unwrap_or_else(|| level.to_string());
+            if !out.is_empty() {
+                out.push(SEP);
+            }
+            out.push_str(&name);
+        }
+        out
+    }
+
     /// The keyword new keywords go inside (Put New Keywords Inside This Keyword), if any.
     pub fn default_keyword_parent(&self) -> Option<String> {
         self.keyword_list.values().find(|l| l.info.new_keywords_inside).map(|l| l.path.clone())
@@ -399,6 +415,7 @@ impl Catalog {
         if self.has_keyword(&path) {
             return Err(CatalogError::KeywordExists(path));
         }
+        let path = self.spelled(&path);
         let mut ops = vec![Op::SetKeyword { path: path.clone(), info: Some(info) }];
         for id in photos {
             let p = self.photo(*id).ok_or(CatalogError::NoPhoto(*id))?;
@@ -944,6 +961,17 @@ mod tests {
         assert_eq!(from_file(&v(&["ROME"]), &v(&["travel|Rome", " travel | rome "])), ["travel|Rome"], "each once, cleaned");
         assert_eq!(from_file(&v(&["beach", " sea "]), &[]), ["beach", "sea"]);
         assert_eq!(from_file(&v(&["a|b"]), &[]), ["a|b"], "LightCraft's own sidecars write paths flat");
+    }
+
+    /// A new keyword inside one the library has takes the library's spelling of it: creating
+    /// "TRAVEL|rome" next to "travel|italy" doesn't respell "travel".
+    #[test]
+    fn a_new_keyword_keeps_the_spelling_of_its_parents() {
+        let (mut c, _) = lib(&[&["travel|italy"]]);
+        let op = c.create_keyword_ops("TRAVEL|Rome", KeywordInfo::default(), &[]).unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(listed(&c).iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["travel|Rome"]);
+        assert_eq!(tree_paths(&c.keyword_tree())[0].0, "travel");
     }
 
     #[test]
