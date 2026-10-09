@@ -37,6 +37,8 @@ pub mod titlebar;
 pub mod widgets;
 
 #[cfg(test)]
+mod tests_activity;
+#[cfg(test)]
 mod tests_album_picker;
 #[cfg(test)]
 mod tests_crop_rotate;
@@ -302,6 +304,8 @@ pub struct LightcraftApp {
     /// The library failed to open at launch: the blocking window, then the temporary-session
     /// banner (issue #100). Cleared once a library opens.
     pub library_problem: Option<panels::library_problem::LibraryProblem>,
+    /// The activity stack shows every task, not just the first few ("+N more" was clicked).
+    pub activity_expanded: bool,
 }
 
 impl LightcraftApp {
@@ -367,6 +371,7 @@ impl LightcraftApp {
             display_applied: None,
             display_error: None,
             library_problem: None,
+            activity_expanded: false,
             model_setup: Default::default(),
         }
     }
@@ -1054,6 +1059,7 @@ impl LightcraftApp {
         import::scan_progress(self, &ctx);
         lightroom_import::progress(self, &ctx);
         export_task::poll(self, &ctx);
+        panels::activity::show(self, &ctx);
         pick::poll(self, &ctx);
         panels::grid::drag_feedback(self, &ctx);
         panels::left::album_drag_feedback(self, &ctx);

@@ -1863,5 +1863,6 @@
   "Stopped by an error (see the log)": "エラーで停止しました（ログを参照）",
   "Not saved": "保存されていません",
   "A folder is being synchronized": "フォルダを同期中です",
-  "Wait for the import to finish": "読み込みが終わるまでお待ちください"
+  "Wait for the import to finish": "読み込みが終わるまでお待ちください",
+  "Show less": "表示を減らす"
 }

@@ -2055,5 +2055,6 @@
   "Stopped by an error (see the log)": "Зупинено через помилку (див. журнал)",
   "Not saved": "Не збережено",
   "A folder is being synchronized": "Тека синхронізується",
-  "Wait for the import to finish": "Дочекайтеся завершення імпорту"
+  "Wait for the import to finish": "Дочекайтеся завершення імпорту",
+  "Show less": "Показати менше"
 }

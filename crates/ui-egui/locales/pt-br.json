@@ -1861,5 +1861,6 @@
   "Stopped by an error (see the log)": "Interrompido por um erro (veja o log)",
   "Not saved": "Não salvo",
   "A folder is being synchronized": "Uma pasta está sendo sincronizada",
-  "Wait for the import to finish": "Aguarde a importação terminar"
+  "Wait for the import to finish": "Aguarde a importação terminar",
+  "Show less": "Mostrar menos"
 }

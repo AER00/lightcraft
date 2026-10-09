@@ -221,5 +221,9 @@
   "; {n} gained synonyms": " ; avec de nouveaux synonymes : {n}",
   "Exported {n} keyword{}": "Mots-clés exportés : {n}{:.0}",
   " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One n’importe pas une liste dont un mot-clé contient ; , < ou > : {names}",
-  " — left out, as a keyword list can't hold them: {names}": " — omis, car une liste de mots-clés ne peut pas les contenir : {names}"
+  " — left out, as a keyword list can't hold them: {names}": " — omis, car une liste de mots-clés ne peut pas les contenir : {names}",
+  "{done} of {total}": "{done} sur {total}",
+  "{done} of {total} MB": "{done} sur {total} Mo",
+  "{pct} %": "{pct} %",
+  "+{n} more": "+{n} autres"
 }
