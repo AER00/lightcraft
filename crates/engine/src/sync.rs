@@ -16,7 +16,9 @@
 //! [`synchronize`] then imports the new files (in place), relinks the moved photos, moves the
 //! missing photos to Recently Deleted and reads the metadata updates — each only when chosen — as
 //! one undo step. It runs in halves ([`SyncJob`]) so that, in the app, every file it reads is
-//! read on a worker thread and only the catalog changes happen on the UI thread.
+//! read on a worker thread and only the catalog changes happen on the UI thread — with what every
+//! command does after them there: the library's durable save and, with XMP auto-write on, the
+//! sidecars of the photos whose metadata was read.
 //!
 //! The scan runs without the session ([`SyncInput`] + [`scan_with`]), so the app can run it on a
 //! worker thread: a folder on a sleeping network share must never stall a frame.
@@ -572,9 +574,10 @@ impl SyncWork {
             return;
         }
         // still where the scan found it, and still gone from where the photo says
+        let checked = moved.len();
         let relink: Vec<(PhotoId, String)> =
             moved.into_iter().filter(|m| Path::new(&m.to).is_file() && !Path::new(&m.from).exists()).map(|m| (PhotoId(m.id), m.to)).collect();
-        step(relink.len());
+        step(checked);
         if !relink.is_empty() && !send(SyncStep::Relink(relink)) {
             return;
         }

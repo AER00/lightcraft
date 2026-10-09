@@ -498,7 +498,7 @@ fn the_work_of_synchronizing_runs_apart_from_its_commits() {
 }
 
 #[test]
-fn readying_a_synchronize_reads_no_file() {
+fn the_work_checks_again_that_a_new_file_is_still_there() {
     let dir = Scratch::new("ready");
     let mut s = library(&dir);
     write_png(&dir.path("trip/c.png"), 3);
