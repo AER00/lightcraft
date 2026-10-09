@@ -2,6 +2,23 @@
 
 ## October 2026
 
+### Albums tree
+- Album folders fold with the same disclosure triangle as Local, By Date, Folders and Keywords.
+- Right-click a folder ▸ New ▸ Create Album… / Create Smart Album… / Create Smart Album from Filter… / Create Folder…
+  makes it inside that folder (`dialog.newAlbum`, `dialog.newFolder`, `dialog.smartAlbum`, `dialog.newSmartAlbum` take `parent`).
+- Drag an album or folder onto a folder to move it there (a closed folder opens after 0.6 s under the pointer; a
+  "Albums" header takes it back to the top level; Esc cancels; holding a dragged album or photos near the top or bottom edge of the sidebar scrolls it). Drop on the top or bottom half of another album,
+  or the edge of another folder, to place it before or after it: that folder is then ordered by hand. Right-click ▸
+  Sort Contents A–Z (or ＋ ▸ Sort Albums A–Z at the top level) goes back to by name. To put a folder after an open
+  folder, fold that folder first (the bottom of an open folder means "inside"). Agents use `album.reorder`
+  (`id`, `parent?`, `before?`) and `album.sort`.
+- The catalog format is now version 3 (`Album.order`, `Op::SetAlbumOrder`). Once this version has opened a library,
+  older versions refuse it, as with every format change.
+
+### AI RAW denoise
+- Detail has a per-photo AI Denoise switch and Amount. Bayer RAW photos use a disposable cache, with matching previews and exports and pure-Rust CPU/GPU inference.
+- Models are installed separately after accepting their terms; no weights are bundled. See [setup and limitations](denoise.md).
+
 ### Library keyboard culling
 - Colour labels tint thumbnail surrounds in Square Grid and the Detail filmstrip, and a translucent footer along the bottom of the photo in Photo Grid. Label confirmations use a matching pale colour.
 - Setting or clearing a colour label shows a brief bottom confirmation, like rating a photo; custom label names appear in the message too.
@@ -33,6 +50,8 @@
   are unchanged; photos imported before this change get it when imported again.
 - Canon CR3 raws now develop from their sensor data: lossless RAW and C-RAW, checked sample for sample on the EOS
   M50, R100 and R8. CR3 files the decoder can't read yet still open from their embedded JPEG, as before.
+- Canon EOS R7 C-RAW files develop from their sensor data too, instead of opening from their embedded JPEG. For R7
+  C-RAWs imported earlier, Photo ▸ Reload from Disk picks up the raw data.
 - Canon CRW, Minolta MRW, Sigma X3F, Kodak KDC, Leaf MOS and Epson ERF files that LightCraft can't decode yet
   now import as "preview only" with their embedded JPEG instead of failing. A raw whose data is damaged but whose
   preview is intact does the same.
@@ -133,6 +152,9 @@
   ignored before) chooses the graphics backend; `off` renders on the CPU. The GPU now starts after the window
   is up, and only when Settings ▸ Performance ▸ Use the GPU for rendering is on; if LightCraft ever dies while
   starting the GPU, the next launch starts with GPU rendering off and says how to turn it back on.
+- The Windows app no longer quits at launch with "Parent device is lost" when another program's `dxcompiler.dll` is
+  on the DLL search path without its `dxil.dll` (issue #471): DirectX 12 shaders now always compile with the
+  compiler built into Windows (FXC). `WGPU_DX12_COMPILER=dxc` uses a `dxcompiler.dll` instead.
 - Exports and renders never write over a photo's original (issue #93): exporting into the photo's own folder with
   the same name and "Overwrite" (or Export with Previous repeating it), an exact output path from the control
   channel or MCP, a merge preview path or `lightcraft-cli render IMG.jpg -o IMG.jpg` is refused with a clear
@@ -248,6 +270,9 @@
   lost everything at quit; a temporary session shows a banner the whole time and never writes to your library.
 
 ### Editing
+- Optional remote SAM 3: keep the native editor local and run Object, Describe, and detail
+  inference on a Mac through SSH. Saved masks still render and export offline.
+  See [remote Metal inference](ai-masks.md#remote-metal-inference).
 - AI masks with SAM 3 (Object and Describe in the Masking panel): click an object to select it (⌥-click leaves a
   part out), or type what to select ("sky", "the red car", "car, road"); both combine with other masks, have an
   Edge setting, and get a sharper zoomed-in pass in the background. The model runs inside LightCraft in pure Rust
