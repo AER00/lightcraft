@@ -230,7 +230,7 @@ fn dragging_a_keyword_nests_it_and_back() {
     drag(&mut h, "keywordRow:Lisbon", "keywordRow:Portugal");
     assert_eq!(keywords_of(&h, ids[0]), ["Portugal|Lisbon"]);
     assert!(h.app.ui.dragging_keyword.is_none(), "the drag ended");
-    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRowToggle:Portugal"}));
+    assert!(has(&h, "keywordRow:Portugal|Lisbon"), "Portugal opened to show it");
     drag(&mut h, "keywordRow:Portugal|Lisbon", "keywordList:topLevel");
     assert_eq!(keywords_of(&h, ids[0]), ["Lisbon"]);
 }
@@ -318,4 +318,28 @@ fn return_in_synonyms_creates_the_keyword() {
     ask(&mut h, "ui.key", json!({"key": "Enter"}));
     assert_eq!(h.app.ui.dialog, None);
     assert_eq!(info(&mut h, "Weddings")["synonyms"], json!(["marriage"]));
+}
+
+/// The picked keyword and the open levels follow a rename or a move made in the list: renamed,
+/// Events stays open and picked; dropped into Portugal, Lisbon stays in sight and picked.
+#[test]
+fn the_list_follows_its_keywords() {
+    let (mut h, ids) = keywords_panel_at([1400.0, 2400.0]);
+    run(&mut h, "keyword.create", json!({"name": "Weddings", "parent": "Events"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRowToggle:Events"}));
+    // a moment later: the triangle's click and the row's two aren't a triple click
+    for _ in 0..40 {
+        h.step();
+    }
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRow:Events", "count": 2}));
+    ask(&mut h, "ui.text", json!({"text": "Occasions"}));
+    ask(&mut h, "ui.key", json!({"key": "Enter"}));
+    assert!(has(&h, "keywordRow:Occasions|Weddings"), "still open");
+    assert_eq!(h.app.ui.keyword_list_selected.as_deref(), Some("Occasions"), "still picked");
+    run(&mut h, "photo.setMeta", json!({"ids": [ids[0]], "keywords": ["Lisbon"]}));
+    run(&mut h, "keyword.create", json!({"name": "Portugal", "parent": null}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRow:Lisbon"}));
+    drag(&mut h, "keywordRow:Lisbon", "keywordRow:Portugal");
+    assert!(has(&h, "keywordRow:Portugal|Lisbon"), "its new parent opened");
+    assert_eq!(h.app.ui.keyword_list_selected.as_deref(), Some("Portugal|Lisbon"));
 }

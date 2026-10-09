@@ -89,6 +89,30 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
 }
 
+/// After the keyword `from` became `to` (renamed, moved or merged), the list's pick and open
+/// levels follow it, and the levels containing it open so that it stays in sight.
+pub(crate) fn follow(app: &mut LightcraftApp, from: &str, to: &str) {
+    use lightcraft_catalog::keywords::{is_under, reparent};
+    let to = app.session.catalog.keyword_path(to).unwrap_or_else(|| to.to_string());
+    if let Some(k) = app.ui.keyword_list_selected.clone()
+        && is_under(&k, from)
+    {
+        app.ui.keyword_list_selected = Some(reparent(&k, from, &to));
+    }
+    for o in &mut app.ui.keyword_list_open {
+        if is_under(o, from) {
+            *o = reparent(o, from, &to).to_lowercase();
+        }
+    }
+    let levels: Vec<&str> = to.split('|').collect();
+    for n in 1..levels.len() {
+        let parent = levels.get(..n).map(|l| l.join("|").to_lowercase()).unwrap_or_default();
+        if !app.ui.keyword_list_open.iter().any(|o| same(o, &parent)) {
+            app.ui.keyword_list_open.push(parent);
+        }
+    }
+}
+
 /// The pointer is on the part of `rect` that is shown: inside it and inside the panel's visible
 /// (scrolled) area, so a drop never lands on a row or title hidden under the top bar.
 fn shown_under(ui: &egui::Ui, rect: Rect, pointer: Option<egui::Pos2>) -> bool {
@@ -125,8 +149,9 @@ fn drop_keyword(app: &mut LightcraftApp, ctx: &egui::Context, keyword: &str, par
         app.ui.dialog = Some(Dialog::MoveKeyword { keyword: keyword.to_string(), parent });
         return;
     }
-    if let Err(e) = app.run("keyword.move", json!({"keyword": keyword, "parent": parent})) {
-        app.toast(ctx, e);
+    match app.run("keyword.move", json!({"keyword": keyword, "parent": parent})) {
+        Ok(_) => follow(app, keyword, &to),
+        Err(e) => app.toast(ctx, e),
     }
 }
 

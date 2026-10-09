@@ -1169,7 +1169,15 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
                 Some(keyword) => {
                     params["keyword"] = json!(keyword);
                     params["name"] = json!(name);
-                    app.run("keyword.edit", params)
+                    let r = app.run("keyword.edit", params);
+                    if r.is_ok() {
+                        let to = match keyword.rsplit_once('|') {
+                            Some((parent, _)) => format!("{parent}|{}", name.trim()),
+                            None => name.trim().to_string(),
+                        };
+                        crate::panels::keyword_list::follow(app, keyword, &to);
+                    }
+                    r
                 }
                 None => {
                     params["name"] = json!(name);
@@ -1180,7 +1188,15 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }
         }
         Dialog::DeleteKeyword { keyword, .. } => app.run("keyword.delete", json!({"keyword": keyword})),
-        Dialog::MoveKeyword { keyword, parent } => app.run("keyword.move", json!({"keyword": keyword, "parent": parent, "merge": true})),
+        Dialog::MoveKeyword { keyword, parent } => {
+            let r = app.run("keyword.move", json!({"keyword": keyword, "parent": parent, "merge": true}));
+            if r.is_ok() {
+                let leaf = keyword.rsplit('|').next().unwrap_or(keyword);
+                let to = parent.as_deref().map_or_else(|| leaf.to_string(), |p| format!("{p}|{leaf}"));
+                crate::panels::keyword_list::follow(app, keyword, &to);
+            }
+            r
+        }
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),
         Dialog::DenoiseModel { info, accepted } => crate::panels::denoise::install(app, info, *accepted),
