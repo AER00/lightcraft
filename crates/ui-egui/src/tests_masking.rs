@@ -407,6 +407,47 @@ fn smart_album_editor_picks_an_album_from_a_list() {
     assert!(!h.app.widgets.iter().any(|(w, _)| w == "ruleProblem:rules-0"));
 }
 
+/// Drawing the editor never changes a rule: values it can't show as they are (in the last 0 days,
+/// 20,000 days, a plain number of days, a "between" that isn't a pair) stay as stored, and the
+/// ones the check refuses are marked.
+#[test]
+fn smart_album_editor_never_rewrites_what_it_draws() {
+    let mut h = detail("panel.edit");
+    exec(&mut h, "dialog.smartAlbum", json!({"name": "Odd"}));
+    let rules = json!({"rules": [
+        {"field": "captureDate", "op": "inLast", "value": {"n": 0, "unit": "days"}},
+        {"field": "captureDate", "op": "inLast", "value": {"n": 20000, "unit": "Days"}},
+        {"field": "captureDate", "op": "notInLast", "value": 7},
+        {"field": "captureDate", "op": "between", "value": "2026"},
+        {"field": "iso", "op": "between", "value": [100]}
+    ]});
+    let Some(crate::state::Dialog::SmartRules { rules: r, .. }) = &mut h.app.ui.dialog else { panic!("no rule editor") };
+    *r = serde_json::from_value(rules.clone()).unwrap();
+    h.settle(SETTLE);
+    let Some(crate::state::Dialog::SmartRules { rules: r, .. }) = &h.app.ui.dialog else { panic!("no rule editor") };
+    assert_eq!(serde_json::to_value(r).unwrap()["rules"], rules["rules"], "unchanged by drawing");
+    let marked: Vec<&str> = h.app.widgets.iter().filter_map(|(w, _)| w.strip_prefix("ruleProblem:")).collect();
+    assert_eq!(marked, ["rules-0", "rules-3", "rules-4"], "0 days and the half-made betweens");
+}
+
+/// Editing an album with rules that need fixing changes nothing, not even its name.
+#[test]
+fn smart_album_edit_with_bad_rules_keeps_the_name() {
+    let mut h = detail("panel.edit");
+    let id = exec(&mut h, "album.createSmart", json!({"name": "Keep", "rules": {"rating": 3}}))["id"].as_u64().unwrap();
+    exec(&mut h, "dialog.smartAlbum", json!({"id": id}));
+    let Some(crate::state::Dialog::SmartRules { name, rules, .. }) = &mut h.app.ui.dialog else { panic!("no rule editor") };
+    *name = "Renamed".into();
+    *rules = serde_json::from_value(json!({"rules": [{"field": "captureDate", "op": "is", "value": "banana"}]})).unwrap();
+    h.settle(SETTLE);
+    let r = h.request("ui.clickWidget", json!({"id": "button:dialogOk"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let _ = h.request("ui.dialog.confirm", json!({}), T);
+    let album = h.app.session.catalog.album(lightcraft_catalog::AlbumId(id)).expect("album");
+    assert_eq!(album.name, "Keep", "neither OK nor confirm renamed it");
+}
+
 #[test]
 fn g_toggles_grids_and_shift_g_starts_guided_upright() {
     let mut h = detail("panel.edit");

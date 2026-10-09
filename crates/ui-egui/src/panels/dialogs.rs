@@ -245,7 +245,20 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     // checked before drawing, so each row marks its own problem
                     let env = crate::panels::rules_editor::Env {
                         problems: rules.check(&app.session.catalog),
-                        albums: app.session.catalog.albums().filter(|a| !a.is_smart() && !a.folder).map(|a| (a.id.0, a.name.clone())).collect(),
+                        albums: {
+                            let cat = &app.session.catalog;
+                            let mut albums: Vec<(u64, String)> = cat
+                                .albums()
+                                .filter(|a| !a.is_smart() && !a.folder)
+                                .map(|a| {
+                                    // "Folder / Album", so albums of the same name in two folders differ
+                                    let folder = a.parent.and_then(|f| cat.album(f)).map(|f| f.name.as_str());
+                                    (a.id.0, folder.map_or_else(|| a.name.clone(), |f| format!("{f} / {}", a.name)))
+                                })
+                                .collect();
+                            albums.sort_by_key(|a| a.1.to_lowercase());
+                            albums
+                        },
                     };
                     egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
                         crate::panels::rules_editor::edit(ui, rules, "rules", 0, &[], &env);

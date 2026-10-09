@@ -94,14 +94,22 @@ fn number_value(ui: &mut egui::Ui, v: &mut Value, field: &str) {
 #[derive(Default)]
 pub struct Env {
     pub problems: Vec<Problem>,
-    /// The plain albums: (id, name), in the sidebar's order.
+    /// The albums an Album rule can test: (id, name shown, with its folder when it is in one),
+    /// sorted by that name.
     pub albums: Vec<(u64, String)>,
+}
+
+/// The album of `albums` an Album rule's value names, read as the catalog reads it (`3`, `"3"`).
+fn chosen_album<'a>(v: &Value, albums: &'a [(u64, String)]) -> Option<&'a (u64, String)> {
+    let id = lightcraft_catalog::rules::album_rule_id(v)?;
+    albums.iter().find(|a| a.0 == id.0)
 }
 
 /// An Album rule's value: one of the plain albums, picked by name.
 fn album_value(ui: &mut egui::Ui, v: &mut Value, salt: &str, env: &Env) {
-    let cur = v.as_u64();
-    let text = env.albums.iter().find(|a| Some(a.0) == cur).map_or_else(|| crate::i18n::tr("Choose an album…").to_string(), |a| a.1.clone());
+    let chosen = chosen_album(v, &env.albums);
+    let cur = chosen.map(|a| a.0);
+    let text = chosen.map_or_else(|| crate::i18n::tr("Choose an album…").to_string(), |a| a.1.clone());
     let r = egui::ComboBox::from_id_salt(format!("{salt}-album")).width(160.0).selected_text(text).show_ui(ui, |ui| {
         for (id, name) in &env.albums {
             let r = ui.selectable_label(cur == Some(*id), name);
@@ -123,39 +131,50 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
         (_, "isEmpty" | "isNotEmpty") => {}
         (Some(Kind::Album), _) => album_value(ui, v, salt, env),
         (Some(Kind::Date), "inLast" | "notInLast") => {
-            if !v.is_object() {
-                *v = default_value(field, op);
-            }
-            let mut n = v["n"].as_f64().unwrap_or(30.0);
-            if ui.add(egui::DragValue::new(&mut n).range(1.0..=10_000.0).speed(0.2).fixed_decimals(0)).changed() {
-                v["n"] = json!(n.round());
-            }
-            let unit = v["unit"].as_str().unwrap_or("days").to_string();
+            // shown as stored ({n, unit}, or a plain number of days) and only written when changed:
+            // drawing never turns "0 days" into 1 or 20,000 into the spinner's 10,000
+            let (stored_n, stored_unit) = match &*v {
+                Value::Object(o) => (o.get("n").and_then(Value::as_f64), o.get("unit").and_then(Value::as_str).unwrap_or("days").to_string()),
+                Value::Number(n) => (n.as_f64(), "days".to_string()),
+                _ => (None, "days".to_string()),
+            };
+            let mut n = stored_n.unwrap_or(30.0);
+            let mut unit = stored_unit.to_lowercase();
+            let mut changed =
+                ui.add(egui::DragValue::new(&mut n).range(1.0..=10_000.0).clamp_existing_to_range(false).speed(0.2).fixed_decimals(0)).changed();
             egui::ComboBox::from_id_salt(format!("{salt}-unit")).width(70.0).selected_text(crate::i18n::tr(&unit)).show_ui(ui, |ui| {
                 for u in ["hours", "days", "weeks", "months", "years"] {
-                    if ui.selectable_label(unit == u, crate::i18n::tr(u)).clicked() {
-                        v["unit"] = json!(u);
+                    if ui.selectable_label(unit.trim_end_matches('s') == u.trim_end_matches('s'), crate::i18n::tr(u)).clicked() {
+                        unit = u.to_string();
+                        changed = true;
                     }
                 }
             });
+            if changed {
+                *v = json!({"n": n.round(), "unit": unit});
+            }
         }
         (Some(k), "between") => {
-            if v.as_array().is_none_or(|a| a.len() != 2) {
-                *v = default_value(field, op);
-            }
-            let Value::Array(a) = v else { return };
+            // a value that isn't a pair is shown as the default pair but kept until one is edited,
+            // so the check can mark it
+            let mut pair = v.as_array().filter(|a| a.len() == 2).cloned().map_or_else(|| default_value(field, op), Value::Array);
+            let before = pair.clone();
+            let Some([lo, hi]) = pair.as_array_mut().map(Vec::as_mut_slice) else { return };
             if field == "shutterSpeed" {
-                text_value(ui, &mut a[0], 60.0, "1/1000", &format!("{salt}-a"));
+                text_value(ui, lo, 60.0, "1/1000", &format!("{salt}-a"));
                 ui.label(crate::i18n::tr("and"));
-                text_value(ui, &mut a[1], 60.0, "1/125", &format!("{salt}-b"));
+                text_value(ui, hi, 60.0, "1/125", &format!("{salt}-b"));
             } else if k == Kind::Number {
-                number_value(ui, &mut a[0], field);
+                number_value(ui, lo, field);
                 ui.label(crate::i18n::tr("and"));
-                number_value(ui, &mut a[1], field);
+                number_value(ui, hi, field);
             } else {
-                text_value(ui, &mut a[0], 86.0, "2026-01-01", &format!("{salt}-a"));
+                text_value(ui, lo, 86.0, "2026-01-01", &format!("{salt}-a"));
                 ui.label(crate::i18n::tr("and"));
-                text_value(ui, &mut a[1], 86.0, "2026-12", &format!("{salt}-b"));
+                text_value(ui, hi, 86.0, "2026-12", &format!("{salt}-b"));
+            }
+            if pair != before {
+                *v = pair;
             }
         }
         // camera notation: 1/250, 0.5, 2"
@@ -383,6 +402,11 @@ mod tests {
         assert_eq!(default_value("captureDate", "is"), json!("2026"));
         assert_eq!(default_value("captureDate", "between"), json!(["2026-01", "2026-12"]));
         lightcraft_catalog::rules::set_now(None);
+        // the picker shows the album a rule names, however the id is written
+        let albums = vec![(3, "Trip".to_string())];
+        assert_eq!(chosen_album(&json!(3), &albums).map(|a| a.1.as_str()), Some("Trip"));
+        assert_eq!(chosen_album(&json!("3"), &albums).map(|a| a.1.as_str()), Some("Trip"));
+        assert_eq!(chosen_album(&json!(4), &albums), None);
         assert_eq!(default_value("shutterSpeed", "gte"), json!("1/250"));
         assert_eq!(default_value("shutterSpeed", "between"), json!(["1/1000", "1/125"]));
     }
