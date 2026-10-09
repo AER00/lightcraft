@@ -2,6 +2,13 @@
 
 ## October 2026
 
+### Synchronize Folder
+- Right-click a folder (or a disk other than the startup disk) in the sidebar's Folders section ▸ Synchronize
+  Folder…. The folder and the folders inside it are scanned in the background for photos added on disk, photos whose
+  file is gone, and XMP sidecars changed by other apps; then choose what to do: import the new photos (the default),
+  move the missing ones to Recently Deleted, read the metadata updates. Everything is one undo step, and no file on
+  disk is touched. Agents use `folder.scanChanges` and `folder.synchronize`.
+
 ### Folder colour labels
 - Right-click a folder (or a disk other than the startup disk) in the sidebar's Folders section ▸ Set Color Label ▸ a colour or None. The row
   shows the label's dot before its photo count. Agents use `folder.label` (`path`, `label`); `library.folders`
