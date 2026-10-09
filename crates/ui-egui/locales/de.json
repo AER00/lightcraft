@@ -1914,5 +1914,7 @@
   "Failed": "Fehlgeschlagen",
   "Stopped": "Angehalten",
   "Stopped by an error (see the log)": "Durch einen Fehler angehalten (siehe Protokoll)",
-  "Not saved": "Nicht gespeichert"
+  "Not saved": "Nicht gespeichert",
+  "A folder is being synchronized": "Ein Ordner wird gerade synchronisiert",
+  "Wait for the import to finish": "Warten Sie, bis der Import abgeschlossen ist"
 }

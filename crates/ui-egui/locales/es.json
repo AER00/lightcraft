@@ -1759,5 +1759,7 @@
   "Failed": "Con errores",
   "Stopped": "Detenido",
   "Stopped by an error (see the log)": "Detenido por un error (ver el registro)",
-  "Not saved": "Sin guardar"
+  "Not saved": "Sin guardar",
+  "A folder is being synchronized": "Se está sincronizando una carpeta",
+  "Wait for the import to finish": "Espera a que termine la importación"
 }

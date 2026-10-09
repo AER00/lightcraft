@@ -1759,5 +1759,7 @@
   "Failed": "失敗",
   "Stopped": "已停止",
   "Stopped by an error (see the log)": "因錯誤而停止（請見記錄）",
-  "Not saved": "未儲存"
+  "Not saved": "未儲存",
+  "A folder is being synchronized": "正在同步資料夾",
+  "Wait for the import to finish": "請等待匯入完成"
 }

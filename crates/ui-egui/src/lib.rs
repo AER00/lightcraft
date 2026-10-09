@@ -772,7 +772,12 @@ impl LightcraftApp {
         if let Some(folder) = self.session.import_defaults.auto_folder.clone() {
             const LABEL: &str = "Auto Import";
             let now = ctx.input(|i| i.time);
-            if now - self.ui.auto_import_at >= 3.0 && self.import.is_none() && self.lightroom.is_none() && !self.tasks.is_running(LABEL) {
+            if now - self.ui.auto_import_at >= 3.0
+                && self.import.is_none()
+                && self.sync_run.is_none()
+                && self.lightroom.is_none()
+                && !self.tasks.is_running(LABEL)
+            {
                 self.ui.auto_import_at = now;
                 let work = move || lightcraft_engine::cmd::library::list_auto_import_folder(&folder);
                 let done = |app: &mut LightcraftApp, _ctx: &egui::Context, listing: Result<Vec<(String, u64)>, String>| {

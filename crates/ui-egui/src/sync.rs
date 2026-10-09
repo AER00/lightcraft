@@ -172,6 +172,10 @@ pub fn confirm(app: &mut LightcraftApp, dlg: &Dialog) -> Result<Value, String> {
     if app.sync_run.is_some() {
         return Err(crate::i18n::tr("A folder is already being synchronized").to_string());
     }
+    // (an import readies its files against the library as it was: both could add the same file)
+    if app.import.is_some() {
+        return Err(crate::i18n::tr("Wait for the import to finish").to_string());
+    }
     let choice = SyncChoice { import_new: *import_new, relink_moved: *relink_moved, remove_missing: *remove_missing, read_metadata: *read_metadata };
     app.sync_owns_changes = false;
     let started = match app.session.take_folder_changes(path) {

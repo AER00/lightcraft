@@ -217,3 +217,32 @@ fn a_stopped_synchronize_says_it_was_stopped_and_stays_at_most_one_step() {
     assert!(toast.contains("Stopped"), "never 'up to date': {toast:?}");
     assert!(h.app.session.undo.len() <= steps + 1, "what was done by then is at most one step");
 }
+
+#[test]
+fn a_synchronize_and_an_import_never_run_at_once() {
+    let dir = Scratch::new("exclusive");
+    let mut h = changed_folder(&dir);
+    open_and_scan(&mut h, &dir.path("trip"));
+    let dlg = h.app.ui.dialog.take().expect("the dialog is open");
+    assert!(crate::panels::dialogs::confirm_dialog(&mut h.app, &dlg).is_ok());
+    // dropping the same folder on the window while the run works would add its files twice
+    let r = crate::import::start_paths(&mut h.app, vec![dir.path("trip")]);
+    assert!(r.is_err(), "no import while synchronizing: {r:?}");
+    assert!(h.step_until(T, |h| h.app.sync_run.is_none()));
+    // and the other way round: an import is running (no frame has run since it started)
+    let r = crate::import::start_paths(&mut h.app, vec![dir.path("trip/a.png")]);
+    assert!(r.is_ok(), "{r:?}");
+    assert!(h.app.import.is_some());
+    let d = Dialog::SynchronizeFolder {
+        path: dir.path("trip"),
+        name: "trip".into(),
+        disk: false,
+        counts: Some(Default::default()),
+        import_new: true,
+        relink_moved: true,
+        remove_missing: false,
+        read_metadata: false,
+    };
+    let r = crate::panels::dialogs::confirm_dialog(&mut h.app, &d);
+    assert!(r.is_err() && h.app.sync_run.is_none(), "no synchronize while importing: {r:?}");
+}

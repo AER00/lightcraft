@@ -1433,5 +1433,7 @@
   "Failed": "Ошибки",
   "Stopped": "Остановлено",
   "Stopped by an error (see the log)": "Остановлено из-за ошибки (см. журнал)",
-  "Not saved": "Не сохранено"
+  "Not saved": "Не сохранено",
+  "A folder is being synchronized": "Идёт синхронизация папки",
+  "Wait for the import to finish": "Дождитесь окончания импорта"
 }
