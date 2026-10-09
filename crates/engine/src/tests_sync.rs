@@ -466,3 +466,75 @@ fn face_regions_found_meanwhile_leave_the_scan_current() {
     let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip"), "scanned": true})).unwrap();
     assert_eq!(r["imported"], 1, "{r}");
 }
+
+/// Synchronizing in halves, as the app does it: readied on the UI thread without touching the
+/// disk, the work (every file read) on a worker, each step committed back on the UI thread.
+fn sync_in_halves(s: &mut Session, path: &str, choice: crate::sync::SyncChoice) -> crate::sync::SyncReport {
+    let changes = crate::sync::scan(s, path, false).unwrap();
+    let (work, mut commit) = crate::sync::SyncJob::start(s, changes, choice).unwrap();
+    let progress = crate::sync::SyncProgress::default();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || work.run(&progress, |step| tx.send(step).is_ok())).join().unwrap();
+    for step in rx {
+        commit.apply(s, step);
+    }
+    commit.finish(s)
+}
+
+#[test]
+fn the_work_of_synchronizing_runs_apart_from_its_commits() {
+    let dir = Scratch::new("halves");
+    let mut s = library(&dir);
+    let before = holdings(&s);
+    write_png(&dir.path("trip/c.png"), 3);
+    std::fs::remove_file(dir.path("trip/day1/b.png")).unwrap();
+    write_sidecar(&dir.path("trip/a.png"), 5, Duration::ZERO);
+    let choice = crate::sync::SyncChoice { import_new: true, relink_moved: true, remove_missing: true, read_metadata: true };
+    let r = sync_in_halves(&mut s, &dir.path("trip"), choice);
+    assert_eq!((r.imported, r.removed, r.read), (1, 1, 1), "{r:?}");
+    assert_eq!(s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().rating, 5);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(holdings(&s), before, "still one undo step");
+}
+
+#[test]
+fn readying_a_synchronize_reads_no_file() {
+    let dir = Scratch::new("ready");
+    let mut s = library(&dir);
+    write_png(&dir.path("trip/c.png"), 3);
+    let changes = crate::sync::scan(&mut s, &dir.path("trip"), false).unwrap();
+    // the file goes away between readying (UI thread) and the work (worker): the work finds out
+    let (work, mut commit) = crate::sync::SyncJob::start(&mut s, changes, crate::sync::SyncChoice::default()).unwrap();
+    std::fs::remove_file(dir.path("trip/c.png")).unwrap();
+    let mut steps = Vec::new();
+    work.run(&crate::sync::SyncProgress::default(), |step| {
+        steps.push(step);
+        true
+    });
+    for step in steps {
+        commit.apply(&mut s, step);
+    }
+    let r = commit.finish(&mut s);
+    assert_eq!(r.imported, 0, "{r:?}");
+    assert_eq!(r.failed.len(), 1, "{r:?}");
+}
+
+#[test]
+fn a_cancelled_synchronize_does_nothing_more() {
+    let dir = Scratch::new("cancel-run");
+    let mut s = library(&dir);
+    let steps_before = s.undo.len();
+    write_png(&dir.path("trip/c.png"), 3);
+    let changes = crate::sync::scan(&mut s, &dir.path("trip"), false).unwrap();
+    let (work, commit) = crate::sync::SyncJob::start(&mut s, changes, crate::sync::SyncChoice::default()).unwrap();
+    let progress = crate::sync::SyncProgress::default();
+    progress.files.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    let mut sent = 0;
+    work.run(&progress, |_| {
+        sent += 1;
+        true
+    });
+    assert_eq!(sent, 0);
+    let r = commit.finish(&mut s);
+    assert_eq!((r.imported, s.undo.len()), (0, steps_before));
+}

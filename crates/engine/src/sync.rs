@@ -433,73 +433,226 @@ fn sidecar_has_news(labels: &Catalog, p: &Photo, naming: SidecarNaming) -> bool 
 /// whose file is back by now is left alone. Once the import is in, a part that fails is
 /// reported in `failed` and the rest is still done (and still one step).
 pub fn synchronize(s: &mut Session, changes: FolderChanges, choice: SyncChoice) -> Result<SyncReport> {
-    if changes.offline {
-        return Err(not_there(&changes.path));
+    let (work, mut commit) = SyncJob::start(s, changes, choice)?;
+    let mut steps = Vec::new();
+    work.run(&SyncProgress::default(), |step| {
+        steps.push(step);
+        true
+    });
+    for step in steps {
+        commit.apply(s, step);
     }
-    let mark = s.commits();
-    let mut report = SyncReport::default();
-    let FolderChanges { new, missing, metadata, moved, probes, .. } = changes;
-    if choice.import_new && !new.is_empty() {
-        s.import_probes = probes;
-        let files: Vec<String> = new.into_iter().map(|c| c.path).collect();
-        let r = crate::import::import_with(s, &files, &ImportOptions { mode: ImportMode::Add, ..Default::default() })?;
-        report.imported = r.imported.len();
-        report.failed.extend(r.failed);
-    }
-    if choice.relink_moved {
-        // still where the scan found it, and still gone from where the photo says
-        let ops: Vec<Op> = moved
-            .iter()
-            .filter(|m| Path::new(&m.to).is_file() && !Path::new(&m.from).exists() && s.catalog.photo(PhotoId(m.id)).is_some())
-            .map(|m| crate::cmd::missing::relink_op(PhotoId(m.id), &m.to))
-            .collect();
-        if !ops.is_empty() {
-            let n = ops.len();
-            match s.commit("Relink Moved Photos", Op::Batch { ops }) {
-                Ok(()) => report.relinked = n,
-                Err(e) => report.failed.push((String::new(), e.to_string())),
-            }
+    Ok(commit.finish(s))
+}
+
+/// Synchronizing in halves, so no file is touched on the UI thread: [`SyncJob::start`] takes what
+/// it needs from the session (no file-system call); the [`SyncWork`] does every file read (the
+/// import's probes, whether files are still where the scan found them, the sidecars) and hands
+/// over [`SyncStep`]s — on a worker thread in the app; [`SyncCommit::apply`] puts each into the
+/// catalog and [`SyncCommit::finish`] makes them one undo step.
+pub struct SyncJob;
+
+/// The file-system half of a synchronize (see [`SyncJob`]).
+pub struct SyncWork {
+    /// The import of the new files, and the files.
+    import: Option<(crate::import::ImportJob, Vec<String>)>,
+    moved: Vec<FolderMoved>,
+    missing: Vec<FolderPhoto>,
+    /// (photo, its file, how its sidecar is named)
+    sidecars: Vec<(PhotoId, String, SidecarNaming, bool)>,
+}
+
+/// The catalog half of a synchronize (see [`SyncJob`]).
+pub struct SyncCommit {
+    opts: ImportOptions,
+    now: String,
+    mark: u64,
+    report: SyncReport,
+}
+
+/// A piece of work done, for [`SyncCommit::apply`].
+pub enum SyncStep {
+    /// A batch of new files, readied for the catalog.
+    Import(crate::import::Prepared),
+    /// Moved photos whose file is still at its new place (photo, new path).
+    Relink(Vec<(PhotoId, String)>),
+    /// Missing photos whose file is still gone.
+    Remove(Vec<PhotoId>),
+    /// Sidecars read (photo, its file, what the sidecar says or why it couldn't be read).
+    Sidecars(Vec<(PhotoId, String, std::result::Result<crate::sidecar::SidecarData, String>)>),
+}
+
+impl SyncJob {
+    /// Ready a synchronize of `changes` as `choice` says. Reads no file.
+    pub fn start(s: &mut Session, changes: FolderChanges, choice: SyncChoice) -> Result<(SyncWork, SyncCommit)> {
+        if changes.offline {
+            return Err(not_there(&changes.path));
         }
+        let FolderChanges { new, missing, metadata, moved, probes, .. } = changes;
+        let opts = ImportOptions { mode: ImportMode::Add, ..Default::default() };
+        let import = if choice.import_new && !new.is_empty() {
+            s.import_probes = probes;
+            let job = crate::import::ImportJob::new(s, opts.clone())?;
+            Some((job, new.into_iter().map(|c| c.path).collect()))
+        } else {
+            None
+        };
+        let now = import.as_ref().map_or_else(|| (s.clock)(), |(j, _)| j.now().to_string());
+        let sidecars = if choice.read_metadata {
+            metadata
+                .into_iter()
+                .filter_map(|m| {
+                    let p = s.catalog.photo(PhotoId(m.id))?;
+                    Some((p.id, m.path, s.sidecar_naming(p.id), p.kind == lightcraft_catalog::MediaKind::Raw))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let work = SyncWork {
+            import,
+            moved: if choice.relink_moved { moved } else { Vec::new() },
+            missing: if choice.remove_missing { missing } else { Vec::new() },
+            sidecars,
+        };
+        Ok((work, SyncCommit { opts, now, mark: s.commits(), report: SyncReport::default() }))
     }
-    if choice.remove_missing {
-        let gone: Vec<PhotoId> = missing.iter().filter(|m| !Path::new(&m.path).exists()).map(|m| PhotoId(m.id)).collect();
-        let ops: Vec<Op> = gone
-            .iter()
-            .filter(|id| s.catalog.photo(**id).is_some_and(|p| p.in_library()))
-            .map(|id| Op::SetDeleted { id: *id, deleted: true })
-            .collect();
-        if !ops.is_empty() {
-            let n = ops.len();
-            match s.commit("Remove Missing Photos", Op::Batch { ops }) {
-                Ok(()) => report.removed = n,
-                Err(e) => report.failed.push((String::new(), e.to_string())),
-            }
-        }
-    }
-    if choice.read_metadata {
-        let mut ops = Vec::new();
-        for m in &metadata {
-            match s.read_sidecar_op(PhotoId(m.id)) {
-                Ok(Some((op, _))) => {
-                    ops.push(op);
-                    report.read += 1;
+}
+
+impl SyncWork {
+    /// Do the work, handing each step to `send` (`false`: nobody takes them any more — stop).
+    /// Stops before the next piece once `progress.files.cancel` is set; what was handed over
+    /// stays handed over.
+    pub fn run(self, progress: &SyncProgress, mut send: impl FnMut(SyncStep) -> bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let cancel = &progress.files.cancel;
+        let SyncWork { import, moved, missing, sidecars } = self;
+        let pieces = import.as_ref().map_or(0, |(_, f)| f.len()) + moved.len() + missing.len() + sidecars.len();
+        progress.to_check.store(pieces, Relaxed);
+        progress.checked.store(0, Relaxed);
+        let step = |n: usize| {
+            progress.checked.fetch_add(n, Relaxed);
+        };
+        if let Some((mut job, files)) = import {
+            for chunk in files.chunks(crate::import::batch_size()) {
+                if cancel.load(Relaxed) {
+                    return;
                 }
-                Ok(None) => report.failed.push((m.path.clone(), "no XMP sidecar".into())),
-                Err(e) => report.failed.push((m.path.clone(), e.to_string())),
+                let prepared = job.prepare_files(chunk.to_vec(), cancel);
+                step(chunk.len());
+                // (the files are added in place: a batch nobody takes leaves nothing behind on disk)
+                if !send(SyncStep::Import(prepared)) {
+                    return;
+                }
             }
         }
-        if !ops.is_empty()
-            && let Err(e) = s.commit("Read Metadata from File", Op::Batch { ops })
-        {
-            report.read = 0;
-            report.failed.push((String::new(), e.to_string()));
+        if cancel.load(Relaxed) {
+            return;
+        }
+        // still where the scan found it, and still gone from where the photo says
+        let relink: Vec<(PhotoId, String)> =
+            moved.into_iter().filter(|m| Path::new(&m.to).is_file() && !Path::new(&m.from).exists()).map(|m| (PhotoId(m.id), m.to)).collect();
+        step(relink.len());
+        if !relink.is_empty() && !send(SyncStep::Relink(relink)) {
+            return;
+        }
+        if cancel.load(Relaxed) {
+            return;
+        }
+        let gone: Vec<PhotoId> = missing.iter().filter(|m| !Path::new(&m.path).exists()).map(|m| PhotoId(m.id)).collect();
+        step(missing.len());
+        if !gone.is_empty() && !send(SyncStep::Remove(gone)) {
+            return;
+        }
+        let mut read = Vec::with_capacity(sidecars.len());
+        for (id, path, naming, raw) in sidecars {
+            if cancel.load(Relaxed) {
+                break;
+            }
+            read.push((id, path.clone(), read_sidecar(&path, naming, raw)));
+            step(1);
+        }
+        if !read.is_empty() {
+            send(SyncStep::Sidecars(read));
         }
     }
-    // (what was done stays one step even when a later part failed: the report says which)
-    let steps = usize::try_from(s.commits().wrapping_sub(mark)).unwrap_or(usize::MAX).min(s.undo.len());
-    s.merge_undo(steps, "Synchronize Folder");
-    if let Some(last) = s.undo.last_mut().filter(|_| steps == 1) {
-        last.label = "Synchronize Folder".into();
+}
+
+/// Read and parse photo file `path`'s XMP sidecar file.
+fn read_sidecar(path: &str, naming: SidecarNaming, raw: bool) -> std::result::Result<crate::sidecar::SidecarData, String> {
+    let file = crate::sidecar::find_sidecar(path, naming).ok_or_else(|| "no XMP sidecar".to_string())?;
+    let len = std::fs::metadata(&file).map_err(|e| format!("{}: {e}", file.display()))?.len();
+    if len > MAX_SIDECAR_BYTES {
+        return Err(format!("{}: too large for an XMP sidecar", file.display()));
     }
-    Ok(report)
+    let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    crate::sidecar::parse_sidecar(&text, raw).map_err(|e| format!("{}: {e}", file.display()))
+}
+
+impl SyncCommit {
+    /// Put a step into the catalog (no file is touched). A part that fails is reported in the
+    /// end, and the rest is still done.
+    pub fn apply(&mut self, s: &mut Session, step: SyncStep) {
+        let report = &mut self.report;
+        match step {
+            SyncStep::Import(prepared) => match crate::import::commit_prepared(s, &self.opts, &self.now, prepared) {
+                Ok(r) => {
+                    report.imported += r.imported.len();
+                    report.failed.extend(r.failed);
+                }
+                Err(e) => report.failed.push((String::new(), e.to_string())),
+            },
+            SyncStep::Relink(moved) => {
+                let ops: Vec<Op> =
+                    moved.iter().filter(|(id, _)| s.catalog.photo(*id).is_some()).map(|(id, to)| crate::cmd::missing::relink_op(*id, to)).collect();
+                let n = ops.len();
+                if n > 0 {
+                    match s.commit("Relink Moved Photos", Op::Batch { ops }) {
+                        Ok(()) => report.relinked += n,
+                        Err(e) => report.failed.push((String::new(), e.to_string())),
+                    }
+                }
+            }
+            SyncStep::Remove(gone) => {
+                let ops: Vec<Op> = gone
+                    .iter()
+                    .filter(|id| s.catalog.photo(**id).is_some_and(|p| p.in_library()))
+                    .map(|id| Op::SetDeleted { id: *id, deleted: true })
+                    .collect();
+                let n = ops.len();
+                if n > 0 {
+                    match s.commit("Remove Missing Photos", Op::Batch { ops }) {
+                        Ok(()) => report.removed += n,
+                        Err(e) => report.failed.push((String::new(), e.to_string())),
+                    }
+                }
+            }
+            SyncStep::Sidecars(read) => {
+                let mut ops = Vec::new();
+                for (id, path, sc) in read {
+                    match sc.map_err(EngineError::Other).and_then(|sc| s.sidecar_op(id, sc)) {
+                        Ok(op) => ops.push(op),
+                        Err(e) => report.failed.push((path, e.to_string())),
+                    }
+                }
+                let n = ops.len();
+                if n > 0 {
+                    match s.commit("Read Metadata from File", Op::Batch { ops }) {
+                        Ok(()) => report.read += n,
+                        Err(e) => report.failed.push((String::new(), e.to_string())),
+                    }
+                }
+            }
+        }
+    }
+
+    /// What was done, as one undo step ("Synchronize Folder").
+    pub fn finish(self, s: &mut Session) -> SyncReport {
+        let steps = usize::try_from(s.commits().wrapping_sub(self.mark)).unwrap_or(usize::MAX).min(s.undo.len());
+        s.merge_undo(steps, "Synchronize Folder");
+        if let Some(last) = s.undo.last_mut().filter(|_| steps == 1) {
+            last.label = "Synchronize Folder".into();
+        }
+        self.report
+    }
 }
