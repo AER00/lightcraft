@@ -1749,5 +1749,9 @@
   "Create Keyword Tag": "キーワードタグを作成",
   "Edit Keyword Tag": "キーワードタグを編集",
   "Create": "作成",
-  "No photo has it; the keywords below it go too.": "このキーワードを持つ写真はありません。下位のキーワードも削除されます。"
+  "No photo has it; the keywords below it go too.": "このキーワードを持つ写真はありません。下位のキーワードも削除されます。",
+  "Edit Keyword Tag…": "キーワードタグを編集…",
+  "Put New Keywords Inside This Keyword": "新しいキーワードをこのキーワードの中に入れる",
+  "Purge Unused Keywords": "使用されていないキーワードを削除",
+  "Delete Keyword…": "キーワードを削除…"
 }

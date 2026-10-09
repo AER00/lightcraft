@@ -1904,5 +1904,9 @@
   "Create Keyword Tag": "Stichwort erstellen",
   "Edit Keyword Tag": "Stichwort bearbeiten",
   "Create": "Erstellen",
-  "No photo has it; the keywords below it go too.": "Kein Foto hat es; die Stichwörter darunter werden ebenfalls gelöscht."
+  "No photo has it; the keywords below it go too.": "Kein Foto hat es; die Stichwörter darunter werden ebenfalls gelöscht.",
+  "Edit Keyword Tag…": "Stichwort bearbeiten…",
+  "Put New Keywords Inside This Keyword": "Neue Stichwörter in dieses Stichwort einfügen",
+  "Purge Unused Keywords": "Nicht verwendete Stichwörter löschen",
+  "Delete Keyword…": "Stichwort löschen…"
 }

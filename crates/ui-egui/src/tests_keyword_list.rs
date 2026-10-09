@@ -177,3 +177,30 @@ fn creating_a_keyword_that_exists_keeps_the_dialog() {
     assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::KeywordTag { .. })), "still open");
     assert!(h.app.ui.toast.as_ref().is_some_and(|t| t.0.contains("already")), "{:?}", h.app.ui.toast);
 }
+
+/// A keyword's context menu: create a keyword inside it, edit it, make it where new keywords go
+/// (marked in the list), and purge the keywords no photo has.
+#[test]
+fn a_keywords_menu_offers_its_actions() {
+    let (mut h, _) = keywords_panel();
+    run(&mut h, "keyword.create", json!({"name": "Weddings", "parent": "Events"}));
+    find(&mut h, "events");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRow:Events", "button": "right"}));
+    for item in ["create", "edit", "defaultParent", "purge", "delete"] {
+        assert!(has(&h, &format!("keywordMenu:{item}")), "{item}");
+    }
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordMenu:defaultParent"}));
+    assert_eq!(h.app.session.keyword_parent.as_deref(), Some("Events"));
+    assert!(has(&h, "keywordDefault:Events"), "the list marks where new keywords go");
+    // Create inside it
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRow:Events", "button": "right"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordMenu:create"}));
+    let Some(crate::state::Dialog::KeywordTag { parent, inside, .. }) = h.app.ui.dialog.clone() else { panic!("{:?}", h.app.ui.dialog) };
+    assert_eq!((parent.as_deref(), inside), (Some("Events"), true));
+    ask(&mut h, "ui.dialog.cancel", json!({}));
+    // Purge: Events|Weddings and Events have no photos
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRow:Events", "button": "right"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordMenu:purge"}));
+    assert!(!h.app.session.catalog.has_keyword("Events"));
+    assert_eq!(h.app.session.keyword_parent, None, "gone with it");
+}

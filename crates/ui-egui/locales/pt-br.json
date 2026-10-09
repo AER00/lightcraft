@@ -1749,5 +1749,9 @@
   "Create Keyword Tag": "Criar palavra-chave",
   "Edit Keyword Tag": "Editar palavra-chave",
   "Create": "Criar",
-  "No photo has it; the keywords below it go too.": "Nenhuma foto a tem; as palavras-chave abaixo dela também são excluídas."
+  "No photo has it; the keywords below it go too.": "Nenhuma foto a tem; as palavras-chave abaixo dela também são excluídas.",
+  "Edit Keyword Tag…": "Editar palavra-chave…",
+  "Put New Keywords Inside This Keyword": "Colocar novas palavras-chave dentro desta",
+  "Purge Unused Keywords": "Excluir palavras-chave não usadas",
+  "Delete Keyword…": "Excluir palavra-chave…"
 }

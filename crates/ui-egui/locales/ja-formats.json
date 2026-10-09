@@ -209,5 +209,6 @@
   "•  {assumption}": "•  {assumption}",
   "Put inside “{parent}”": "「{parent}」の中に入れる",
   "Delete the keyword “{name}”?": "キーワード「{name}」を削除しますか？",
-  "It is taken off {count} photo{}, with the keywords below it. Undo brings it back.": "写真{count}枚から下位のキーワードとともに削除されます。取り消すと元に戻ります。{:.0}"
+  "It is taken off {count} photo{}, with the keywords below it. Undo brings it back.": "写真{count}枚から下位のキーワードとともに削除されます。取り消すと元に戻ります。{:.0}",
+  "Create Keyword Tag Inside “{name}”…": "「{name}」の中にキーワードタグを作成…"
 }

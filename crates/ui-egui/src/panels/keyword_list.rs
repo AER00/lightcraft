@@ -149,13 +149,65 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId
     let font = t.font(13.0);
     let measure = |s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), t.text_label).size().x;
     let name = if measure(&r.name) <= room { r.name.clone() } else { crate::widgets::elide_head(&r.name, room, measure) };
-    ui.painter().text(pos2(x + 34.0, cy), Align2::LEFT_CENTER, name, font.clone(), if picked { t.text } else { t.text_label });
+    let label = ui.painter().text(pos2(x + 34.0, cy), Align2::LEFT_CENTER, name, font.clone(), if picked { t.text } else { t.text_label });
+    // where new keywords go (Put New Keywords Inside This Keyword): a dot after the name
+    if app.session.keyword_parent.as_deref().is_some_and(|k| same(k, &r.path)) {
+        let dot = Rect::from_center_size(pos2(label.right() + 7.0, cy), vec2(6.0, 6.0));
+        ui.painter().circle_filled(dot.center(), 3.0, t.accent);
+        register(ui.ctx(), format!("keywordDefault:{}", r.path), dot);
+    }
     let resp = resp.on_hover_text(r.path.replace('|', " › "));
     if resp.clicked() {
         app.ui.keyword_list_selected = Some(r.path.clone());
     }
     if resp.double_clicked() {
         app.ui.dialog = Some(edit_dialog(app, &r.path));
+    }
+    resp.context_menu(|ui| menu(app, ui, &r.path, selection));
+}
+
+/// A keyword's context menu.
+fn menu(app: &mut LightcraftApp, ui: &mut egui::Ui, path: &str, selection: &[PhotoId]) {
+    let name = path.replace('|', " › ");
+    let item = |ui: &mut egui::Ui, id: &str, label: &str, enabled: bool| {
+        let r = ui.add_enabled(enabled, egui::Button::new(label));
+        register(ui.ctx(), format!("keywordMenu:{id}"), r.rect);
+        r.clicked()
+    };
+    if item(ui, "create", &crate::i18n::tr_format!("Create Keyword Tag Inside “{name}”…", name = name), true) {
+        let mut d = create_dialog(app);
+        if let Dialog::KeywordTag { parent, inside, .. } = &mut d {
+            *parent = Some(path.to_string());
+            *inside = true;
+        }
+        app.ui.dialog = Some(d);
+    }
+    if item(ui, "edit", crate::i18n::tr("Edit Keyword Tag…"), true) {
+        app.ui.dialog = Some(edit_dialog(app, path));
+    }
+    let is_default = app.session.keyword_parent.as_deref().is_some_and(|k| same(k, path));
+    let label = format!("{}{}", if is_default { "✓ " } else { "" }, crate::i18n::tr("Put New Keywords Inside This Keyword"));
+    if item(ui, "defaultParent", &label, true) {
+        let _ = app.run("keyword.setDefaultParent", json!({"keyword": if is_default { serde_json::Value::Null } else { json!(path) }}));
+    }
+    ui.separator();
+    let some = !selection.is_empty();
+    if item(ui, "add", crate::i18n::tr("Add to Selected Photos"), some) {
+        let _ = app.run("photo.setMeta", json!({"addKeywords": [path]}));
+    }
+    if item(ui, "remove", crate::i18n::tr("Remove from Selected Photos"), some) {
+        let _ = app.run("photo.setMeta", json!({"removeKeywords": [path]}));
+    }
+    if item(ui, "show", crate::i18n::tr("Show Photos with Keyword"), true) {
+        super::left::browse_all_photos(app, true);
+        let _ = app.run("library.filter", json!({"keyword": path}));
+    }
+    ui.separator();
+    if item(ui, "purge", crate::i18n::tr("Purge Unused Keywords"), true) {
+        let _ = app.run("keyword.purgeUnused", json!({}));
+    }
+    if item(ui, "delete", crate::i18n::tr("Delete Keyword…"), true) {
+        app.ui.dialog = Some(delete_dialog(app, path));
     }
 }
 

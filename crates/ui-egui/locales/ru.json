@@ -1422,5 +1422,9 @@
   "Create Keyword Tag": "Создать ключевое слово",
   "Edit Keyword Tag": "Изменить ключевое слово",
   "Create": "Создать",
-  "No photo has it; the keywords below it go too.": "Ни у одного фото его нет; вложенные ключевые слова тоже будут удалены."
+  "No photo has it; the keywords below it go too.": "Ни у одного фото его нет; вложенные ключевые слова тоже будут удалены.",
+  "Edit Keyword Tag…": "Изменить ключевое слово…",
+  "Put New Keywords Inside This Keyword": "Помещать новые ключевые слова в это",
+  "Purge Unused Keywords": "Удалить неиспользуемые ключевые слова",
+  "Delete Keyword…": "Удалить ключевое слово…"
 }

@@ -1749,5 +1749,9 @@
   "Create Keyword Tag": "创建关键字标记",
   "Edit Keyword Tag": "编辑关键字标记",
   "Create": "创建",
-  "No photo has it; the keywords below it go too.": "没有照片使用它；其下的关键字也会一并删除。"
+  "No photo has it; the keywords below it go too.": "没有照片使用它；其下的关键字也会一并删除。",
+  "Edit Keyword Tag…": "编辑关键字标记…",
+  "Put New Keywords Inside This Keyword": "将新关键字放入此关键字中",
+  "Purge Unused Keywords": "清除未使用的关键字",
+  "Delete Keyword…": "删除关键字…"
 }

@@ -209,5 +209,6 @@
   "•  {assumption}": "•  {assumption}",
   "Put inside “{parent}”": "Poner dentro de “{parent}”",
   "Delete the keyword “{name}”?": "¿Eliminar la palabra clave “{name}”?",
-  "It is taken off {count} photo{}, with the keywords below it. Undo brings it back.": "Se quita de {count} foto{}, con las palabras clave que contiene. Deshacer la recupera."
+  "It is taken off {count} photo{}, with the keywords below it. Undo brings it back.": "Se quita de {count} foto{}, con las palabras clave que contiene. Deshacer la recupera.",
+  "Create Keyword Tag Inside “{name}”…": "Crear palabra clave dentro de “{name}”…"
 }
