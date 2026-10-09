@@ -6,8 +6,9 @@
 - File ▸ Import Keywords… and Export Keywords… read and write keyword list files as Lightroom Classic does (a keyword
   a line, a tab per level, synonyms in braces, keywords left out of export in brackets). Capture One, darktable, Adobe
   Bridge and Photo Supreme (its Formatted Vocabulary File) use the same files, so keyword lists move between them and
-  LightCraft. Importing adds the keywords you don't have, in one undo step; exporting warns about keywords Capture One
-  won't import.
+  LightCraft. Importing adds the keywords you don't have, in one undo step; a file it can't read says which line, or
+  to save it as UTF-8. Exporting warns about keywords Capture One won't import, and names any keyword the format can't
+  hold (such as a name in brackets), which it leaves out so the file always reads back.
 
 ### Keyword sets
 - Keyword Set ▸ Edit Set… edits a set's nine keywords in place, one field per ⌥ key, and renames it (or saves the edits as a new
