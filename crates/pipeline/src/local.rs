@@ -22,12 +22,20 @@ pub fn white_balance(img: &mut Rgb32f, info: &SourceInfo, s: &DevelopSettings) {
     wb_gain(img, info, s, 1.0);
 }
 
-/// The white-balance matrix (linear Rec.2020, luminance-preserving) for the settings, or `None`
-/// when the as-shot white is kept.
+/// The white-balance matrix (linear Rec.2020) for the settings, or `None` when the as-shot white
+/// is kept. A raw source with its camera colour model ([`crate::CameraColor`]) is re-developed for
+/// the new white in camera space, as Lightroom does (so a neutral under the chosen white renders
+/// neutral and saturated colours move as the camera's matrices say); other sources are adapted
+/// with Bradford, luminance-preserving.
 pub fn wb_matrix_for(info: &SourceInfo, s: &DevelopSettings) -> Option<[[f32; 3]; 3]> {
     let (t, tint) = effective_wb(info, s);
     if (t - info.as_shot_temp).abs() < 1e-6 && (tint - info.as_shot_tint).abs() < 1e-6 {
         return None;
+    }
+    if let Some(cc) = info.camera_color.as_deref().filter(|_| info.raw && !info.relative_wb)
+        && let Some(m) = lightcraft_raw::color::rebalance(&cc.tags, cc.developed_for, temp_tint_to_xy(t, tint))
+    {
+        return Some(m.to_f32());
     }
     let set = wb_matrix(&REC2020, temp_tint_to_xy(t, tint));
     let shot = wb_matrix(&REC2020, temp_tint_to_xy(info.as_shot_temp, info.as_shot_tint));
@@ -279,7 +287,16 @@ pub fn plane_sigmas(s: &DevelopSettings, px_per_long: f64, q: Quality) -> PlaneS
 /// The spatial planes the per-pixel stage needs for `img` (white-balanced, before exposure),
 /// reusing whatever `planes` already holds for it. Missing planes are computed side by side (each
 /// one alone scales poorly: the guided filters work on small subsampled grids).
-pub(crate) fn prepare(img: Arc<Rgb32f>, s: &DevelopSettings, frame: &Frame, px_per_long: f64, q: Quality, planes: &mut Planes) -> Prepared {
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare(
+    img: Arc<Rgb32f>,
+    s: &DevelopSettings,
+    frame: &Frame,
+    px_per_long: f64,
+    q: Quality,
+    planes: &mut Planes,
+    mattes: Option<&masks::Mattes>,
+) -> Prepared {
     let log_l = planes.log_l.get_or_insert_with(|| Arc::new(timed("log_l", || img.map(log_lum)))).clone();
     let PlaneSigmas { base: base_sigma, clarity: clarity_sigma, texture: texture_sigma, dark: dark_sigma, chroma: chroma_sigma } =
         plane_sigmas(s, px_per_long, q);
@@ -324,7 +341,7 @@ pub(crate) fn prepare(img: Arc<Rgb32f>, s: &DevelopSettings, frame: &Frame, px_p
         None => (None, 1.0),
     };
     let ev = s.light.exposure as f32;
-    let masks = timed("masks", || masks::evaluate(&s.masks, frame, img.width, img.height, &img, &log_l, ev));
+    let masks = timed("masks", || masks::evaluate(&s.masks, frame, img.width, img.height, &img, &log_l, ev, mattes));
     Prepared { img, log_l, base, clarity_blur, texture_blur, dark, chroma_blur, air, masks, px_per_long }
 }
 
