@@ -1777,5 +1777,8 @@
   "Su": "日",
   "Pick a date": "选择日期",
   "would make this album include itself through other smart albums": "会通过其他智能相册让此相册包含自身",
-  "Smart Albums": "智能相册"
+  "Search albums": "搜索相册",
+  "No albums match": "没有匹配的相册",
+  "This is the album you're editing": "这是正在编辑的相册",
+  "It tests this album, so testing it back would loop": "它引用了此相册，反过来引用会形成循环"
 }

@@ -1932,5 +1932,8 @@
   "Su": "So",
   "Pick a date": "Datum wählen",
   "would make this album include itself through other smart albums": "würde dieses Album über andere Smart-Alben sich selbst enthalten lassen",
-  "Smart Albums": "Smart-Alben"
+  "Search albums": "Alben suchen",
+  "No albums match": "Kein Album passt",
+  "This is the album you're editing": "Das ist das Album, das du bearbeitest",
+  "It tests this album, so testing it back would loop": "Es prüft dieses Album; es zurückzuprüfen wäre ein Kreis"
 }

@@ -6,6 +6,7 @@ use lightcraft_catalog::rules::{FIELD_GROUPS, Kind, Problem, TOP_LEVEL_FIELDS, b
 use lightcraft_catalog::{Match, Rule, RuleSet};
 use serde_json::{Value, json};
 
+use crate::album_picker::{AlbumEntry, AlbumPicker};
 use crate::date_picker::{DatePicker, PickedDate};
 use crate::theme::Tokens;
 use crate::widgets::register;
@@ -110,48 +111,21 @@ pub struct Env {
     pub problems: Vec<Problem>,
     /// Today (`YYYY-MM-DD…`, the session's clock): where a date picker opens when a rule has no date.
     pub today: String,
-    /// The albums an Album rule can test: (id, name shown, with its folder when it is in one),
-    /// sorted by that name.
-    pub albums: Vec<(u64, String)>,
-    /// The smart albums it can test, the same way: not the album being edited, nor one that tests
-    /// it (that would loop back).
-    pub smart_albums: Vec<(u64, String)>,
+    /// The albums, smart albums and folders an Album rule picks from, in the sidebar's order
+    /// ([`crate::album_picker::entries_from`]); the album being edited and those that would loop
+    /// back to it are blocked, with the reason.
+    pub albums: Vec<AlbumEntry>,
 }
 
-/// The album of `albums` an Album rule's value names, read as the catalog reads it (`3`, `"3"`).
-fn chosen_album<'a>(v: &Value, albums: &'a [(u64, String)]) -> Option<&'a (u64, String)> {
-    let id = lightcraft_catalog::rules::album_rule_id(v)?;
-    albums.iter().find(|a| a.0 == id.0)
-}
-
-/// An Album rule's value: an album or a smart album, picked by name.
+/// An Album rule's value: an album or a smart album, picked from the tree or by typing
+/// ([`AlbumPicker`]). The id is read as the catalog reads it (`3`, `"3"`) and written as a number.
 fn album_value(ui: &mut egui::Ui, v: &mut Value, salt: &str, env: &Env) {
-    let chosen = chosen_album(v, &env.albums).or_else(|| chosen_album(v, &env.smart_albums));
-    let cur = chosen.map(|a| a.0);
-    let text = chosen.map_or_else(|| crate::i18n::tr("Choose an album…").to_string(), |a| a.1.clone());
-    let r = egui::ComboBox::from_id_salt(format!("{salt}-album")).width(160.0).selected_text(text).show_ui(ui, |ui| {
-        let mut item = |ui: &mut egui::Ui, id: u64, name: &str| {
-            let r = ui.selectable_label(cur == Some(id), name);
-            register(ui.ctx(), format!("ruleAlbumItem:{id}:{salt}"), r.rect);
-            if r.clicked() {
-                *v = json!(id);
-            }
-        };
-        for (id, name) in &env.albums {
-            item(ui, *id, name);
-        }
-        if !env.smart_albums.is_empty() {
-            ui.separator();
-            ui.label(RichText::new(crate::i18n::tr("Smart Albums")).weak().small());
-            for (id, name) in &env.smart_albums {
-                item(ui, *id, name);
-            }
-        }
-        if env.albums.is_empty() && env.smart_albums.is_empty() {
-            ui.label(crate::i18n::tr("No albums yet"));
-        }
-    });
-    register(ui.ctx(), format!("ruleAlbum:{salt}"), r.response.rect);
+    let mut chosen = lightcraft_catalog::rules::album_rule_id(v).map(|a| a.0);
+    if AlbumPicker::new(salt, &mut chosen, &env.albums).width(200.0).show(ui).changed()
+        && let Some(id) = chosen
+    {
+        *v = json!(id);
+    }
 }
 
 /// The value editor for one rule.
@@ -438,11 +412,6 @@ mod tests {
         assert_eq!(default_value("captureDate", "is"), json!("2026"));
         assert_eq!(default_value("captureDate", "between"), json!(["2026-01", "2026-12"]));
         lightcraft_catalog::rules::set_now(None);
-        // the picker shows the album a rule names, however the id is written
-        let albums = vec![(3, "Trip".to_string())];
-        assert_eq!(chosen_album(&json!(3), &albums).map(|a| a.1.as_str()), Some("Trip"));
-        assert_eq!(chosen_album(&json!("3"), &albums).map(|a| a.1.as_str()), Some("Trip"));
-        assert_eq!(chosen_album(&json!(4), &albums), None);
         assert_eq!(default_value("shutterSpeed", "gte"), json!("1/250"));
         assert_eq!(default_value("shutterSpeed", "between"), json!(["1/1000", "1/125"]));
     }

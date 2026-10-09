@@ -1781,5 +1781,8 @@
   "Su": "日",
   "Pick a date": "日付を選択",
   "would make this album include itself through other smart albums": "ほかのスマートアルバムを通じて、このアルバム自身を含むことになります",
-  "Smart Albums": "スマートアルバム"
+  "Search albums": "アルバムを検索",
+  "No albums match": "一致するアルバムはありません",
+  "This is the album you're editing": "編集中のアルバムです",
+  "It tests this album, so testing it back would loop": "このアルバムを条件にしているため、逆に指定すると循環します"
 }

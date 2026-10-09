@@ -251,8 +251,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     let env = crate::panels::rules_editor::Env {
                         problems: rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)),
                         today: (app.session.clock)(),
-                        albums: album_choices(&app.session.catalog, *id, false),
-                        smart_albums: album_choices(&app.session.catalog, *id, true),
+                        albums: album_entries(&app.session.catalog, *id),
                     };
                     egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
                         crate::panels::rules_editor::edit(ui, rules, "rules", 0, &[], &env);
@@ -1033,23 +1032,15 @@ fn created_in(app: &mut LightcraftApp, command: &str, params: serde_json::Value)
     Ok(r)
 }
 
-/// The albums (`smart` false) or smart albums an Album rule in smart album `editing` can test, as
-/// (id, "Folder / Name"), sorted by name: no folders, and no smart album that is `editing` itself
-/// or tests it (that would loop back).
-fn album_choices(cat: &lightcraft_catalog::Catalog, editing: Option<u64>, smart: bool) -> Vec<(u64, String)> {
+/// The albums an Album rule in smart album `editing` picks from, in the sidebar's order: the album
+/// itself and any smart album that tests it (testing it back would loop) are blocked, with why.
+fn album_entries(cat: &lightcraft_catalog::Catalog, editing: Option<u64>) -> Vec<crate::album_picker::AlbumEntry> {
     let editing = editing.map(lightcraft_catalog::AlbumId);
-    let mut albums: Vec<(u64, String)> = cat
-        .albums()
-        .filter(|a| !a.folder && a.is_smart() == smart)
-        .filter(|a| editing.is_none_or(|e| a.id != e && !cat.album_reaches(a.id, e)))
-        .map(|a| {
-            // "Folder / Album", so albums of the same name in two folders differ
-            let folder = a.parent.and_then(|f| cat.album(f)).map(|f| f.name.as_str());
-            (a.id.0, folder.map_or_else(|| a.name.clone(), |f| format!("{f} / {}", a.name)))
-        })
-        .collect();
-    albums.sort_by_key(|a| a.1.to_lowercase());
-    albums
+    crate::album_picker::entries_from(cat, |a| match editing {
+        Some(e) if a.id == e => Some(crate::i18n::tr("This is the album you're editing").to_string()),
+        Some(e) if cat.album_reaches(a.id, e) => Some(crate::i18n::tr("It tests this album, so testing it back would loop").to_string()),
+        _ => None,
+    })
 }
 
 pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_json::Value, String> {

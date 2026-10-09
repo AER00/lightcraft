@@ -1777,5 +1777,8 @@
   "Su": "Do",
   "Pick a date": "Elegir una fecha",
   "would make this album include itself through other smart albums": "haría que este álbum se incluyera a sí mismo a través de otros álbumes inteligentes",
-  "Smart Albums": "Álbumes inteligentes"
+  "Search albums": "Buscar álbumes",
+  "No albums match": "Ningún álbum coincide",
+  "This is the album you're editing": "Es el álbum que estás editando",
+  "It tests this album, so testing it back would loop": "Comprueba este álbum, así que comprobarlo a su vez crearía un bucle"
 }

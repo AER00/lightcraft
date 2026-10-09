@@ -392,13 +392,13 @@ fn smart_album_editor_picks_an_album_from_a_list() {
     rules.rules[0] = serde_json::from_value(json!({"field": "album", "op": "is", "value": 0})).unwrap();
     h.settle(SETTLE);
     assert!(h.app.widgets.iter().any(|(w, _)| w == "ruleProblem:rules-0"), "no album chosen yet");
-    let r = h.request("ui.clickWidget", json!({"id": "ruleAlbum:rules-0"}), T);
+    let r = h.request("ui.clickWidget", json!({"id": "albumPicker:rules-0"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
     let has = |h: &Headless, id: String| h.app.widgets.iter().any(|(w, _)| *w == id);
-    assert!(has(&h, format!("ruleAlbumItem:{trip}:rules-0")), "plain albums are offered");
-    assert!(has(&h, format!("ruleAlbumItem:{smart}:rules-0")), "smart albums too");
-    let r = h.request("ui.clickWidget", json!({"id": format!("ruleAlbumItem:{trip}:rules-0")}), T);
+    assert!(has(&h, format!("albumPickerItem:{trip}:rules-0")), "plain albums are offered");
+    assert!(has(&h, format!("albumPickerItem:{smart}:rules-0")), "smart albums too");
+    let r = h.request("ui.clickWidget", json!({"id": format!("albumPickerItem:{trip}:rules-0")}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
     let Some(crate::state::Dialog::SmartRules { rules, .. }) = &h.app.ui.dialog else { panic!("no rule editor") };
@@ -480,8 +480,8 @@ fn sidebar_marks_smart_albums_with_problems() {
     assert!(marked(&h), "its album is gone");
 }
 
-/// Editing "Excluded Photos" while "Travel" tests it: the list offers neither the album itself nor
-/// Travel (testing it would loop back), and a rule set to Travel by other means is marked.
+/// Editing "Excluded Photos" while "Travel" tests it: the list shows the album itself and Travel
+/// greyed (testing Travel would loop back), and a rule set to Travel by other means is marked.
 #[test]
 fn smart_album_editor_keeps_albums_from_including_themselves() {
     let mut h = detail("panel.edit");
@@ -496,13 +496,19 @@ fn smart_album_editor_keeps_albums_from_including_themselves() {
         h.settle(SETTLE);
     };
     set(&mut h, json!(null));
-    let r = h.request("ui.clickWidget", json!({"id": "ruleAlbum:rules-0"}), T);
+    let r = h.request("ui.clickWidget", json!({"id": "albumPicker:rules-0"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
     let has = |h: &Headless, id: String| h.app.widgets.iter().any(|(w, _)| *w == id);
-    assert!(has(&h, format!("ruleAlbumItem:{trip}:rules-0")));
-    assert!(!has(&h, format!("ruleAlbumItem:{excluded}:rules-0")), "not itself");
-    assert!(!has(&h, format!("ruleAlbumItem:{travel}:rules-0")), "not an album that tests it");
+    assert!(has(&h, format!("albumPickerItem:{trip}:rules-0")));
+    // itself and an album that tests it are shown, greyed: clicking them picks nothing
+    for blocked in [excluded, travel] {
+        let r = h.request("ui.clickWidget", json!({"id": format!("albumPickerItem:{blocked}:rules-0")}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        let Some(crate::state::Dialog::SmartRules { rules, .. }) = &h.app.ui.dialog else { panic!("no rule editor") };
+        assert!(matches!(&rules.rules[0], Rule::Field { value, .. } if value.is_null()), "{blocked} wasn't picked");
+    }
     let _ = h.request("ui.key", json!({"key": "Escape"}), T);
     h.settle(SETTLE);
     set(&mut h, json!(travel));

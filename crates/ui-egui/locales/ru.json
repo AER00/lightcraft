@@ -1469,5 +1469,8 @@
   "Su": "Вс",
   "Pick a date": "Выбрать дату",
   "would make this album include itself through other smart albums": "альбом включал бы сам себя через другие смарт-альбомы",
-  "Smart Albums": "Смарт-альбомы"
+  "Search albums": "Поиск альбомов",
+  "No albums match": "Нет подходящих альбомов",
+  "This is the album you're editing": "Это альбом, который вы изменяете",
+  "It tests this album, so testing it back would loop": "Он проверяет этот альбом, поэтому обратная проверка создаст цикл"
 }

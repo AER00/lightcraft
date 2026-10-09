@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod album_picker;
 pub mod control;
 pub mod credits;
 pub mod date_picker;
@@ -33,6 +34,8 @@ pub mod theme;
 pub mod titlebar;
 pub mod widgets;
 
+#[cfg(test)]
+mod tests_album_picker;
 #[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
