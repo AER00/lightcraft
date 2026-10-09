@@ -1787,6 +1787,8 @@ mod tests {
         assert!(h.app.export.is_some(), "running in the background");
         let running = h.request("ui.inspect", json!({}), t);
         assert_eq!(running["result"]["export"]["running"]["total"], 3, "{}", running["result"]["export"]);
+        // …and as a row in the activity stack (issue #345)
+        assert_eq!(running["result"]["activity"][0]["kind"], "export", "{}", running["result"]["activity"]);
         let t0 = Instant::now();
         while h.app.export.is_some() && t0.elapsed() < Duration::from_secs(60) {
             h.step();
@@ -1795,7 +1797,9 @@ mod tests {
         let w = written.lock().unwrap().clone();
         assert_eq!(w.len(), 3, "{w:?}");
         assert!(w.iter().all(|p| p.starts_with("/lc-test-out/")));
-        let last = h.request("ui.inspect", json!({}), t)["result"]["export"]["last"].clone();
+        let after = h.request("ui.inspect", json!({}), t)["result"].clone();
+        assert_eq!(after["activity"], json!([]), "the row is gone");
+        let last = after["export"]["last"].clone();
         assert_eq!(last["files"].as_array().map(Vec::len), Some(3), "{last}");
         assert!(last["files"][0]["width"].as_u64().is_some_and(|w| w <= 64));
     }

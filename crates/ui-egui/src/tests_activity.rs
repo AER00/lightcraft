@@ -161,3 +161,53 @@ fn cancelling_task_does_not_block_quit() {
     let _f = h.app.session.activity.start("faces", "Finding faces", Cancel::No);
     assert!(crate::panels::notices::may_close(&mut h.app));
 }
+
+/// A slow disk: every file takes `ms` to write (the UI must not wait for it).
+fn slow_writer(ms: u64) -> crate::SharedWrite {
+    std::sync::Arc::new(move |_: &str, _: &[u8]| {
+        std::thread::sleep(Duration::from_millis(ms));
+        Ok(())
+    })
+}
+
+/// Export the first `n` photos in view through the Export dialog (small JPEGs, a made-up folder).
+fn start_export(h: &mut Headless, n: usize) {
+    let ids: Vec<u64> = h.app.session.visible_cloned().iter().take(n).map(|p| p.0).collect();
+    assert_eq!(ids.len(), n, "the demo library has {n} photos");
+    h.request("engine.execute", json!({"command": "library.select", "params": {"ids": ids}}), T);
+    h.request("engine.execute", json!({"command": "dialog.export", "params": {}}), T);
+    h.step();
+    if let Some(crate::state::Dialog::Export { full_size, resize, dir, .. }) = &mut h.app.ui.dialog {
+        *full_size = false;
+        *resize = lightcraft_engine::export::Resize::long_edge(64);
+        *dir = "/lc-test-out".into();
+    }
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(h.app.export.is_some(), "running in the background");
+}
+
+#[test]
+fn export_shows_a_row_and_stops_on_activity_cancel() {
+    let mut h = demo();
+    h.app.services.write_shared = Some(slow_writer(200));
+    start_export(&mut h, 5);
+    let tasks = h.request("ui.inspect", json!({}), T)["result"]["activity"].clone();
+    assert_eq!(tasks[0]["kind"], "export", "{tasks}");
+    assert_eq!(tasks[0]["total"], 5, "{tasks}");
+    let id = tasks[0]["id"].as_u64().unwrap();
+    assert_eq!(h.request("engine.execute", json!({"command": "activity.cancel", "params": {"id": id}}), T)["ok"], true);
+    assert!(h.step_until(Duration::from_secs(60), |h| h.app.export.is_none()));
+    assert!(h.app.session.activity.list().is_empty());
+    assert!(h.app.last_export_result.as_ref().is_some_and(|r| r["cancelled"] == true), "{:?}", h.app.last_export_result);
+    assert!(!has(&h, "button:exportCancel"), "the old window is gone");
+}
+
+#[test]
+fn dead_export_worker_leaves_no_row() {
+    let mut h = demo();
+    h.app.services.write_shared = Some(std::sync::Arc::new(|_: &str, _: &[u8]| -> Result<(), String> { panic!("synthetic writer panic") }));
+    start_export(&mut h, 2);
+    assert!(h.step_until(Duration::from_secs(60), |h| h.app.export.is_none()));
+    assert!(h.app.session.activity.list().is_empty());
+}

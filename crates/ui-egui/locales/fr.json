@@ -1863,5 +1863,6 @@
   "A folder is being synchronized": "Un dossier est en cours de synchronisation",
   "Wait for the import to finish": "Attendez la fin de l'importation",
   "Show less": "Afficher moins",
-  "Quit while tasks are running?": "Quitter pendant que des tâches sont en cours ?"
+  "Quit while tasks are running?": "Quitter pendant que des tâches sont en cours ?",
+  "Exporting contact sheet": "Exportation de la planche-contact"
 }
