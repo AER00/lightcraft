@@ -18,13 +18,24 @@ const WB_RB_LEVELS: u16 = 0x000c;
 const BLACK_LEVEL: u16 = 0x003d;
 const LINEARIZATION_TABLE: u16 = 0x0096;
 const CROP_AREA: u16 = 0x0045;
-/// Maker note `0x0014`, the "NRW" data block of Coolpix raws: `"NRW "` + a 4-character version, then fields.
+/// Maker note `0x0014`, the "NRW" data block of Coolpix raws: `"NRW "` + a 4-character version, then fields. In
+/// version `0104` the `u32` at byte `0x20` is the black level in sample units (200 in the four 12-bit files here
+/// that have 200 as their darkest samples, 0 in the one whose samples reach 0).
 const NRW_DATA: u16 = 0x0014;
+const NRW_BLACK_AT: usize = 0x20;
 
 /// The NRW data block, when the maker note has one.
 fn nrw_data(mn: Option<&makernote::MakerNote>) -> Option<(&[u8], ByteOrder)> {
     let m = mn?;
     m.ifd.bytes(NRW_DATA).filter(|b| b.starts_with(b"NRW ")).map(|b| (b, m.order))
+}
+
+/// Black level from the NRW data block, bounded to a quarter of the sample range so an unknown version's field
+/// can't turn into a large offset.
+fn nrw_black(mn: Option<&makernote::MakerNote>, bits: u32) -> Option<f32> {
+    let (b, order) = nrw_data(mn)?;
+    let v = order.u32(b.get(NRW_BLACK_AT..NRW_BLACK_AT + 4)?.try_into().ok()?);
+    (u64::from(v) < (1u64 << bits.min(16)) / 4).then_some(v as f32)
 }
 
 /// Nikon CropArea is `[left, top, width, height]` in sensor pixels (maker-note tag documentation).
@@ -91,7 +102,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RawImage> {
             values: [a, b, c, d].iter().map(|v| (**v * black_scale) as f32).collect(),
             ..Default::default()
         },
-        _ => BlackLevel::uniform(0.0),
+        _ => BlackLevel::uniform(nrw_black(mn.as_ref(), bits).unwrap_or(0.0)),
     };
     let wb = mn
         .as_ref()
@@ -316,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn nrw_block_selects_32_bit_word_packing() {
+    fn nrw_block_selects_32_bit_word_packing_and_supplies_the_black_level() {
         let (w, h) = (16usize, 6usize);
         let px: Vec<u16> = (0..w * h).map(|i| (200 + i * 131 % 3800) as u16).collect();
         let packed = words32(&px, w, ByteOrder::Little);
@@ -326,9 +337,18 @@ mod tests {
         };
         let r = decode(Some(nrw_note(200)));
         assert_eq!(r.data, RawData::U16(px.clone()));
+        assert_eq!(r.black.values, vec![200.0]);
+        assert_eq!(decode(Some(nrw_note(0))).black.values, vec![0.0]);
+        // an implausible field is not a black level
+        assert_eq!(decode(Some(nrw_note(60000))).black.values, vec![0.0]);
         // without the block the same bytes are an MSB-first byte stream
         let plain = decode(None);
         assert_ne!(plain.data, RawData::U16(px));
+        assert_eq!(plain.black.values, vec![0.0]);
+        // the maker-note black level (14-bit units) wins when present
+        let mut both = nrw_note(200);
+        both.set(BLACK_LEVEL, Value::Short(vec![400, 404, 408, 412]));
+        assert_eq!(decode(Some(both)).black.values, vec![100.0, 101.0, 102.0, 103.0]);
     }
 
     #[test]
