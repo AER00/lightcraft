@@ -293,3 +293,16 @@ fn drops_land_only_on_what_is_shown() {
     ask(&mut h, "ui.dragWidget", json!({"id": "keywordRow:aaa|zz", "toX": hidden.x, "toY": hidden.y, "steps": 12}));
     assert_eq!(keywords_of(&h, ids[0]), ["aaa|zz"], "not moved to the top level");
 }
+
+/// With no photo selected the Keyword List is still there, to create and organize keywords; its
+/// tick boxes wait for a selection.
+#[test]
+fn the_keyword_list_needs_no_selection() {
+    let (mut h, _) = keywords_panel();
+    run(&mut h, "library.select", json!({"ids": []}));
+    assert!(has(&h, "keywordList:topLevel") && has(&h, "keywordList:create"), "the list is shown");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordList:create"}));
+    ask(&mut h, "ui.text", json!({"text": "Weddings"}));
+    ask(&mut h, "ui.key", json!({"key": "Enter"}));
+    assert!(h.app.session.catalog.has_keyword("Weddings"), "and creates keywords");
+}

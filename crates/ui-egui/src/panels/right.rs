@@ -19,6 +19,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let width = app.ui.right_width;
     let resized = super::resizable_side(ui, false, "right_panel", frame, width, crate::state::RIGHT_WIDTH, reserve, |ui| {
         let Some(id) = app.session.active() else {
+            // the Keyword List is the library's, not a photo's: it is there without a selection
+            if app.ui.right == RightPanel::Keywords {
+                egui::ScrollArea::vertical().id_salt("right-scroll").auto_shrink([false, false]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    header(ui, "Keywords");
+                    padded(ui, |ui| {
+                        ui.label(egui::RichText::new(crate::i18n::tr("Select photos to give them keywords.")).color(t.text_dim));
+                    });
+                    super::keyword_list::show(app, ui);
+                });
+                return;
+            }
             let r = ui.max_rect();
             super::empty_message(ui, r, "No photo selected", "Select a photo to edit");
             return;

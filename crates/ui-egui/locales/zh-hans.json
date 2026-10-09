@@ -1755,5 +1755,6 @@
   "Purge Unused Keywords": "清除未使用的关键字",
   "Delete Keyword…": "删除关键字…",
   "Drop here for the top level": "拖放到此处以移至顶层",
-  "Their photos and the keywords below them come together under one keyword.": "它们的照片和下级关键字将合并到同一个关键字下。"
+  "Their photos and the keywords below them come together under one keyword.": "它们的照片和下级关键字将合并到同一个关键字下。",
+  "Select photos to give them keywords.": "选择照片以为其添加关键字。"
 }
