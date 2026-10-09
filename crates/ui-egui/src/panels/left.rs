@@ -53,9 +53,26 @@ fn row_named(
     selected: bool,
     indent: f32,
 ) -> egui::Response {
+    row_sensed(app, ui, id, icon, label, spoken, count, selected, indent, Sense::click())
+}
+
+/// [`row_named`] with the given `sense` (rows that can be dragged add `drag`).
+#[allow(clippy::too_many_arguments)]
+fn row_sensed(
+    app: &mut LightcraftApp,
+    ui: &mut egui::Ui,
+    id: &str,
+    icon: Icon,
+    label: &str,
+    spoken: Option<&str>,
+    count: Option<usize>,
+    selected: bool,
+    indent: f32,
+    sense: Sense,
+) -> egui::Response {
     let label = if matches!(id, "all" | "recentlyAdded" | "picks" | "missing" | "recentlyDeleted") { crate::i18n::tr(label) } else { label };
     let t = Tokens::get(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 29.0), Sense::click());
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 29.0), sense);
     register(ui.ctx(), format!("source:{id}"), r);
     let said = spoken.unwrap_or(label);
     let name = match count {
@@ -107,6 +124,25 @@ fn row_named(
     resp
 }
 
+/// The disclosure triangle at the left of a tree row (`indent` is the row's): right-pointing
+/// when closed, down when open, registered as widget `widget` for the control channel. Returns
+/// its response: the caller flips the open state on `clicked()`.
+fn disclosure_triangle(ui: &mut egui::Ui, row: &egui::Response, indent: f32, open: bool, id: egui::Id, widget: String) -> egui::Response {
+    let t = Tokens::get(ui.ctx());
+    let c = pos2(row.rect.left() + 10.0 + indent, row.rect.center().y);
+    let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
+    let tr = ui.interact(tri, id, Sense::click());
+    register(ui.ctx(), widget, tri);
+    let col = if tr.hovered() { t.text } else { t.text_dim };
+    let pts = if open {
+        vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
+    } else {
+        vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+    tr
+}
+
 /// A collapsible section header (Albums, Local, By Date, Keywords): the bold title with a
 /// disclosure chevron after it; a click folds or unfolds the section (kept in the UI state, so it
 /// survives restarts). Returns the header's rect and whether the section is now open.
@@ -143,6 +179,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let counts = app.caches.counts(&app.session.catalog);
         let (total, picks, deleted) = (counts.total, counts.picks, counts.deleted);
         egui::ScrollArea::both().id_salt("left-scroll").auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
+            drag_auto_scroll(app, ui);
             // rows are as wide as the widest one needs (last frame), at least the panel
             let wide = viewport.width().max(content_width(ui.ctx()));
             ui.set_min_width(wide);
@@ -172,6 +209,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.add_space(10.0);
             // Albums header
             let (ar, albums_open) = sidebar_section_header(app, ui, "albums", "Albums");
+            top_level_drop_target(app, ui, ar);
             // the + stays at the visible edge when the sidebar is scrolled sideways
             let plus_right = (ar.left() + viewport.max.x).min(ar.right());
             let mut hdr = ui.new_child(
@@ -182,25 +220,43 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let plus = icon_button(&mut hdr, "albumNew", Icon::Plus, vec2(26.0, 26.0), false, true, "Create Album");
             egui::Popup::menu(&plus).show(|ui| {
                 if ui.button(crate::i18n::tr("Create Album…")).clicked() {
-                    app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: false });
+                    app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: false, parent: None });
                 }
                 if ui.button(crate::i18n::tr("Create Smart Album…")).clicked() {
                     app.ui.dialog = Some(crate::state::Dialog::SmartRules {
                         id: None,
                         name: String::new(),
                         rules: lightcraft_catalog::RuleSet { rules: vec![crate::panels::rules_editor::new_rule()], ..Default::default() },
+                        parent: None,
                     });
                 }
                 if ui.button(crate::i18n::tr("Create Smart Album from Filter…")).clicked() {
-                    app.ui.dialog = Some(crate::state::Dialog::NewSmartAlbum { name: String::new() });
+                    app.ui.dialog = Some(crate::state::Dialog::NewSmartAlbum { name: String::new(), parent: None });
                 }
                 if ui.button(crate::i18n::tr("Create Folder…")).clicked() {
-                    app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: true });
+                    app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: true, parent: None });
+                }
+                // only once the albums were put in an order by hand
+                if app.session.catalog.album_children_are_ordered(None) {
+                    ui.separator();
+                    if ui.button(crate::i18n::tr("Sort Albums A–Z")).on_hover_text(crate::i18n::tr("Go back to listing them by name")).clicked() {
+                        let _ = app.run("album.sort", json!({}));
+                    }
                 }
             });
+            // the album just made: the folders down to it open, once (also when the section is shut)
+            let reveal = app.ui.reveal_album.take();
             if albums_open {
-                let albums: Vec<Album> = app.session.catalog.albums().cloned().collect();
-                albums_tree(app, ui, &albums, None, 0.0);
+                let kids: AlbumKids =
+                    app.session.catalog.album_children_by_parent().into_iter().map(|(k, v)| (k, v.into_iter().cloned().collect())).collect();
+                let cat = &app.session.catalog;
+                let mut open_to = Vec::new();
+                let mut cur = reveal.map(AlbumId).and_then(|id| cat.album(id)).and_then(|a| a.parent);
+                while let Some(p) = cur.filter(|p| !open_to.contains(p) && open_to.len() < 64) {
+                    open_to.push(p);
+                    cur = cat.album(p).and_then(|a| a.parent);
+                }
+                albums_tree(app, ui, &kids, None, 0.0, &open_to);
             }
             ui.add_space(10.0);
             local_section(app, ui);
@@ -516,7 +572,6 @@ fn folder_tree(
     reveal: bool,
     transient: bool,
 ) {
-    let t = Tokens::get(ui.ctx());
     let open_id = egui::Id::new(("folder-open", path.to_string()));
     let sel = current.is_some_and(|c| same_folder(c, path));
     let on_the_way = !sel && current.is_some_and(|c| lightcraft_catalog::query::folder_within(c, path));
@@ -534,17 +589,7 @@ fn folder_tree(
         }
     }
     let resp = row(app, ui, &format!("local:{path}"), Icon::Folder, name, None, sel, indent + 12.0).on_hover_text(path);
-    let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
-    let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
-    let tr = ui.interact(tri, egui::Id::new(("folder-tri", path.to_string())), Sense::click());
-    register(ui.ctx(), format!("folderToggle:{path}"), tri);
-    let col = if tr.hovered() { t.text } else { t.text_dim };
-    let pts = if open {
-        vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
-    } else {
-        vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
-    };
-    ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+    let tr = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("folder-tri", path.to_string())), format!("folderToggle:{path}"));
     if tr.clicked() {
         open = !open;
         ui.data_mut(|d| d.insert_temp(open_id, open));
@@ -607,23 +652,12 @@ fn folder_tree(
 
 /// One By Date row (`key`: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`); returns whether it is open.
 fn date_row(app: &mut LightcraftApp, ui: &mut egui::Ui, key: &str, label: &str, count: usize, indent: f32) -> bool {
-    let t = Tokens::get(ui.ctx());
     let open_id = egui::Id::new(("date-open", key.to_string()));
     let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(false);
     let sel = app.session.filter.date.as_deref() == Some(key);
     let resp = row(app, ui, &format!("date:{key}"), Icon::Clock, label, Some(count), sel, indent);
     if key.len() < 10 {
-        let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
-        let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
-        let tr = ui.interact(tri, egui::Id::new(("date-tri", key.to_string())), Sense::click());
-        register(ui.ctx(), format!("dateToggle:{key}"), tri);
-        let col = if tr.hovered() { t.text } else { t.text_dim };
-        let pts = if open {
-            vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
-        } else {
-            vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
-        };
-        ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+        let tr = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("date-tri", key.to_string())), format!("dateToggle:{key}"));
         if tr.clicked() {
             open = !open;
             ui.data_mut(|d| d.insert_temp(open_id, open));
@@ -646,20 +680,42 @@ fn browse_all_photos(app: &mut LightcraftApp, on: bool) {
     }
 }
 
-fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent: Option<AlbumId>, indent: f32) {
-    let mut kids: Vec<&Album> = all.iter().filter(|a| a.parent == parent).collect();
-    kids.sort_by_key(|a| (!a.folder, a.name.to_lowercase()));
+/// The albums inside each folder (`None`: the top level), in the order they are listed.
+type AlbumKids = std::collections::HashMap<Option<AlbumId>, Vec<Album>>;
+
+/// `open_to`: folders forced open this frame (the way down to an album that was just made).
+fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, parent: Option<AlbumId>, indent: f32, open_to: &[AlbumId]) {
+    let Some(kids) = all.get(&parent) else { return };
     for a in kids {
         if a.folder {
             let open_id = egui::Id::new(("folder-open", a.id.0));
-            let open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(true);
-            let resp = row(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, false, indent);
-            if resp.clicked() {
+            let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(true);
+            if open_to.contains(&a.id) && !open {
+                open = true;
+                ui.data_mut(|d| d.insert_temp(open_id, true));
+            }
+            let resp = row_sensed(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, None, false, indent, Sense::click_and_drag());
+            // a folder is no source, so its row folds it too; the triangle is the same click, aimed
+            let has_children = all.get(&Some(a.id)).is_some_and(|v| !v.is_empty());
+            if resp.drag_started() {
+                app.ui.dragging_album = Some(a.id.0);
+            }
+            if album_drag_over(app, ui, &resp, a, has_children.then_some(&mut open), indent) {
+                ui.data_mut(|d| d.insert_temp(open_id, true));
+            }
+            let mut toggled = resp.clicked();
+            if has_children {
+                let tri = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("album-tri", a.id.0)), format!("albumToggle:{}", a.id.0));
+                toggled |= tri.clicked();
+                // the triangle sits on the row and takes its clicks: the menu opens from it too
+                folder_menu(app, &tri, a);
+            }
+            if toggled {
                 ui.data_mut(|d| d.insert_temp(open_id, !open));
             }
             folder_menu(app, &resp, a);
             if open {
-                albums_tree(app, ui, all, Some(a.id), indent + 16.0);
+                albums_tree(app, ui, all, Some(a.id), indent + 16.0, open_to);
             }
         } else {
             let sel = app.session.source == LibrarySource::Album(a.id);
@@ -671,7 +727,11 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
             let target =
                 app.session.target_album.filter(|t| app.session.catalog.album(*t).is_some()).or_else(|| app.session.catalog.quick_collection());
             let label = if target == Some(a.id) { format!("{} +", a.name) } else { a.name.clone() };
-            let mut resp = row(app, ui, &format!("album:{}", a.id.0), icon, &label, Some(n), sel, indent);
+            let mut resp = row_sensed(app, ui, &format!("album:{}", a.id.0), icon, &label, None, Some(n), sel, indent, Sense::click_and_drag());
+            if resp.drag_started() {
+                app.ui.dragging_album = Some(a.id.0);
+            }
+            album_drag_over(app, ui, &resp, a, None, indent);
             if !a.is_smart() {
                 drop_target(app, ui, &resp, a);
             }
@@ -684,6 +744,237 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
             folder_menu(app, &resp, a);
         }
     }
+}
+
+/// Whether the pointer is over `rect` and over what the panel shows of it (a row scrolled out of
+/// sight is not a drop target).
+fn pointer_over(ui: &egui::Ui, rect: Rect) -> bool {
+    ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p) && ui.clip_rect().contains(p))
+}
+
+/// How close to the top or bottom edge of the sidebar (points) a dragged album starts scrolling it.
+const SCROLL_EDGE: f32 = 36.0;
+/// The fastest the sidebar scrolls for a drag (points per second).
+const SCROLL_MAX_SPEED: f32 = 700.0;
+
+/// How fast the sidebar scrolls (points per second, positive = down) for a dragged item with the
+/// pointer at `y`, the visible part being `top..bottom`: none in the middle, faster the nearer to
+/// the edge, the top speed at and past it.
+pub fn auto_scroll_speed(y: f32, top: f32, bottom: f32) -> f32 {
+    let depth = |dist: f32| ((SCROLL_EDGE - dist) / SCROLL_EDGE).clamp(0.0, 1.0);
+    SCROLL_MAX_SPEED * (depth(bottom - y) - depth(y - top))
+}
+
+/// While an album, or photos from the grid, are dragged over the sidebar: scrolls it when the
+/// pointer is near its top or bottom edge, so rows beyond the visible part can be reached. Call
+/// inside the scroll area.
+fn drag_auto_scroll(app: &LightcraftApp, ui: &egui::Ui) {
+    if app.ui.dragging_album.is_none() && app.ui.dragging_photos.is_none() {
+        return;
+    }
+    let view = ui.clip_rect();
+    let Some(p) = ui.input(|i| i.pointer.latest_pos()).filter(|p| p.x >= view.left() && p.x <= view.right()) else { return };
+    let speed = auto_scroll_speed(p.y, view.top(), view.bottom());
+    if speed != 0.0 {
+        // a positive delta moves the content down: the view goes up
+        ui.scroll_with_delta_animation(vec2(0.0, -speed * ui.input(|i| i.stable_dt).min(0.1)), egui::style::ScrollAnimation::none());
+        ui.ctx().request_repaint();
+    }
+}
+
+/// How long a dragged album must rest on a closed folder before it opens.
+const HOVER_OPEN_SECS: f64 = 0.6;
+
+/// Whether the album `dragged` may be dropped into the folder `target` (`None`: the top level):
+/// a folder other than where it already is, and not itself or something inside it.
+fn can_drop_album(app: &LightcraftApp, dragged: AlbumId, target: Option<AlbumId>) -> bool {
+    let Some(d) = app.session.catalog.album(dragged) else { return false };
+    match target {
+        None => d.parent.is_some(),
+        Some(t) => app.session.catalog.album(t).is_some_and(|f| f.folder) && d.parent != Some(t) && !is_within(app, t, dragged),
+    }
+}
+
+/// Ends a drag that ran `result`: the folders down to the album open so it shows in its new place.
+fn finish_drop(app: &mut LightcraftApp, ui: &egui::Ui, dragged: AlbumId, result: Result<serde_json::Value, String>) {
+    forget_hover(app, ui.ctx());
+    match result {
+        Ok(_) => {
+            app.ui.reveal_album = Some(dragged.0);
+            ui.ctx().request_repaint();
+        }
+        Err(e) => app.toast(ui.ctx(), e),
+    }
+    app.ui.dragging_album = None;
+}
+
+/// Forgets how long the pointer rested on each folder (a new drag starts counting again).
+fn forget_hover(app: &LightcraftApp, ctx: &egui::Context) {
+    let ids: Vec<u64> = app.session.catalog.albums().filter(|a| a.folder).map(|a| a.id.0).collect();
+    ctx.data_mut(|d| {
+        for id in ids {
+            d.remove_temp::<f64>(egui::Id::new(("album-hover", id)));
+        }
+    });
+}
+
+/// Moves the dragged album into a folder (`album.move`, one undo step; `None`: the top level).
+fn drop_album(app: &mut LightcraftApp, ui: &egui::Ui, dragged: AlbumId, target: Option<AlbumId>) {
+    let r = app.run("album.move", json!({"id": dragged.0, "parent": target.map(|t| t.0)}));
+    finish_drop(app, ui, dragged, r);
+}
+
+/// Places the dragged album in `parent` before the sibling `before` (`None`: last of its kind), by
+/// hand (`album.reorder`, one undo step).
+fn place_album(app: &mut LightcraftApp, ui: &egui::Ui, dragged: AlbumId, parent: Option<AlbumId>, before: Option<AlbumId>) {
+    let r = app.run("album.reorder", json!({"id": dragged.0, "parent": parent.map(|p| p.0), "before": before.map(|b| b.0)}));
+    finish_drop(app, ui, dragged, r);
+}
+
+/// What dropping the dragged album on a row would do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AlbumDrop {
+    /// Into the folder.
+    Into(AlbumId),
+    /// Beside the row: in `parent`, before `before` (`None`: last of its kind); the line is drawn
+    /// above the row (`above`) or below it.
+    Place { parent: Option<AlbumId>, before: Option<AlbumId>, above: bool },
+}
+
+/// What dropping `dragged` at `frac` (0 = top edge, 1 = bottom edge) of the row of `target` does,
+/// if anything. An album over a folder goes inside it; a folder over a folder goes inside by its
+/// middle and beside it by its edges; an album over an album goes before it by its top half and
+/// after it by its bottom half; a folder over an album does nothing. Placing where it already
+/// is, or inside itself, is nothing too. `expanded`: `target` is a folder shown open.
+fn album_drop_at(app: &LightcraftApp, dragged: AlbumId, target: &Album, frac: f32, expanded: bool) -> Option<AlbumDrop> {
+    let cat = &app.session.catalog;
+    let d = cat.album(dragged)?;
+    let into = || can_drop_album(app, dragged, Some(target.id)).then_some(AlbumDrop::Into(target.id));
+    if d.folder != target.folder {
+        return if target.folder { into() } else { None };
+    }
+    if target.id == dragged {
+        return None;
+    }
+    let after = frac >= if target.folder { 0.7 } else { 0.5 };
+    // the middle of a folder, and the bottom of an open one (its first child is next), mean inside
+    if target.folder && frac >= 0.3 && (!after || expanded) {
+        return into();
+    }
+    let parent = target.parent;
+    if parent.is_some_and(|p| is_within(app, p, dragged)) {
+        return None;
+    }
+    let sibs = cat.album_children(parent);
+    let at = sibs.iter().position(|a| a.id == target.id)?;
+    let was = sibs.iter().position(|a| a.id == dragged);
+    if !after {
+        (was.map(|w| w + 1) != Some(at)).then_some(AlbumDrop::Place { parent, before: Some(target.id), above: true })
+    } else {
+        let next = sibs.iter().skip(at + 1).find(|a| a.id != dragged).filter(|a| a.folder == target.folder).map(|a| a.id);
+        (was != Some(at + 1)).then_some(AlbumDrop::Place { parent, before: next, above: false })
+    }
+}
+
+/// A row while an album is dragged: a folder outlined under the pointer when the drop would go
+/// inside it, a line above or below the row when it would go beside it, and the move or placement
+/// done on release. A closed folder with something inside (`open`) opens once the pointer rests on
+/// it; returns whether it did.
+fn album_drag_over(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, row: &Album, open: Option<&mut bool>, indent: f32) -> bool {
+    let hover_id = egui::Id::new(("album-hover", row.id.0));
+    let Some(dragged) = app.ui.dragging_album.map(AlbumId) else { return false };
+    let pos = ui.input(|i| i.pointer.latest_pos()).filter(|_| pointer_over(ui, resp.rect));
+    let Some(pos) = pos else {
+        if ui.data(|d| d.get_temp::<f64>(hover_id)).is_some() {
+            ui.data_mut(|d| d.remove_temp::<f64>(hover_id));
+        }
+        return false;
+    };
+    let expanded = open.as_deref().copied().unwrap_or(false);
+    let frac = ((pos.y - resp.rect.top()) / resp.rect.height().max(1.0)).clamp(0.0, 1.0);
+    let drop = album_drop_at(app, dragged, row, frac, expanded);
+    let mut opened = false;
+    // only a drop that goes inside opens the folder: on its edges the rows would shift under the pointer
+    let inside = matches!(drop, Some(AlbumDrop::Into(_)));
+    if !inside && ui.data(|d| d.get_temp::<f64>(hover_id)).is_some() {
+        ui.data_mut(|d| d.remove_temp::<f64>(hover_id));
+    }
+    if inside
+        && let Some(open) = open
+        && !*open
+    {
+        let now = ui.input(|i| i.time);
+        let since = ui.data_mut(|d| *d.get_temp_mut_or_insert_with(hover_id, || now));
+        if now - since >= HOVER_OPEN_SECS {
+            *open = true;
+            opened = true;
+        } else {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
+    let t = Tokens::get(ui.ctx());
+    let released = ui.input(|i| i.pointer.primary_released());
+    match drop {
+        Some(AlbumDrop::Into(folder)) => {
+            ui.painter().rect_stroke(resp.rect.shrink2(vec2(8.0, 1.0)), 4.0, egui::Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
+            if released {
+                drop_album(app, ui, dragged, Some(folder));
+            }
+        }
+        Some(AlbumDrop::Place { parent, before, above }) => {
+            let y = if above { resp.rect.top() + 0.5 } else { resp.rect.bottom() - 0.5 };
+            let (x0, x1) = (resp.rect.left() + 18.0 + indent, ui.clip_rect().right() - 8.0);
+            ui.painter().circle_stroke(pos2(x0, y), 3.0, egui::Stroke::new(1.5, t.accent));
+            ui.painter().line_segment([pos2(x0 + 3.0, y), pos2(x1.max(x0 + 3.0), y)], egui::Stroke::new(2.0, t.accent));
+            if released {
+                place_album(app, ui, dragged, parent, before);
+            }
+        }
+        None => {}
+    }
+    opened
+}
+
+/// While an album that sits in a folder is dragged: the "Albums" header takes it back to the top
+/// level (outlined, with a hint). The header stays in view however long the tree is, and nothing
+/// moves when it appears.
+fn top_level_drop_target(app: &mut LightcraftApp, ui: &mut egui::Ui, header: Rect) {
+    let Some(dragged) = app.ui.dragging_album.map(AlbumId) else { return };
+    if !can_drop_album(app, dragged, None) {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    register(ui.ctx(), "albumDrop:top", header);
+    let over = pointer_over(ui, header);
+    let stroke = if over { egui::Stroke::new(1.5, t.accent) } else { egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.5)) };
+    ui.painter().rect_stroke(header.shrink2(vec2(8.0, 3.0)), 4.0, stroke, egui::StrokeKind::Inside);
+    // right-aligned, left of the + button
+    let edge = header.right().min(ui.clip_rect().right());
+    ui.painter().text(pos2(edge - 56.0, header.center().y), Align2::RIGHT_CENTER, crate::i18n::tr("Top Level"), t.font(12.5), t.text_dim);
+    if over && ui.input(|i| i.pointer.primary_released()) {
+        drop_album(app, ui, dragged, None);
+    }
+}
+
+/// While an album is dragged in the sidebar: its name at the pointer; the drag ends when the
+/// button is up (the drop targets act on the release frame, before this runs).
+pub fn album_drag_feedback(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let Some(id) = app.ui.dragging_album else { return };
+    let (released, down, pos, esc) =
+        ctx.input(|i| (i.pointer.primary_released(), i.pointer.primary_down(), i.pointer.latest_pos(), i.key_pressed(egui::Key::Escape)));
+    if released || !down || esc {
+        app.ui.dragging_album = None;
+        forget_hover(app, ctx);
+        return;
+    }
+    let (Some(pos), Some(name)) = (pos, app.session.catalog.album(AlbumId(id)).map(|a| a.name.clone())) else { return };
+    let t = Tokens::get(ctx);
+    ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+    egui::Area::new(egui::Id::new("drag-album")).order(egui::Order::Tooltip).interactable(false).fixed_pos(pos + vec2(14.0, 10.0)).show(ctx, |ui| {
+        egui::Frame::NONE.fill(t.accent).corner_radius(10.0).inner_margin(egui::Margin::symmetric(9, 3)).show(ui, |ui| {
+            ui.label(egui::RichText::new(name).color(egui::Color32::WHITE).font(t.semibold(12.0)));
+        });
+    });
 }
 
 /// An album row while photos are dragged from the grid: highlighted under the pointer; a
@@ -708,6 +999,29 @@ fn drop_target(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response
 
 fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
     resp.context_menu(|ui| {
+        if a.folder {
+            // the same commands as File ▸ New…, aimed at this folder
+            ui.menu_button(crate::i18n::tr("New"), |ui| {
+                for (label, command) in [
+                    ("Create Album…", "dialog.newAlbum"),
+                    ("Create Smart Album…", "dialog.smartAlbum"),
+                    ("Create Smart Album from Filter…", "dialog.newSmartAlbum"),
+                    ("Create Folder…", "dialog.newFolder"),
+                ] {
+                    if ui.button(crate::i18n::tr(label)).clicked() {
+                        let _ = app.run(command, json!({"parent": a.id.0}));
+                        ui.close();
+                    }
+                }
+            });
+            if app.session.catalog.album_children_are_ordered(Some(a.id))
+                && ui.button(crate::i18n::tr("Sort Contents A–Z")).on_hover_text(crate::i18n::tr("Go back to listing them by name")).clicked()
+            {
+                let _ = app.run("album.sort", json!({"parent": a.id.0}));
+                ui.close();
+            }
+            ui.separator();
+        }
         if !a.folder && !a.is_smart() && ui.button(crate::i18n::tr("Add Selected Photos")).clicked() {
             let _ = app.run("album.addPhotos", json!({"id": a.id.0}));
         }
@@ -726,7 +1040,7 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
         if a.is_smart() && ui.button(crate::i18n::tr("Edit Smart Album…")).clicked() {
             // older smart albums keep their filter fields; the editor works on the rule set
             let rules = a.smart.as_ref().and_then(|f| f.rule_set.clone()).unwrap_or_default();
-            app.ui.dialog = Some(crate::state::Dialog::SmartRules { id: Some(a.id.0), name: a.name.clone(), rules });
+            app.ui.dialog = Some(crate::state::Dialog::SmartRules { id: Some(a.id.0), name: a.name.clone(), rules, parent: None });
         }
         if a.is_smart() && ui.button(crate::i18n::tr("Update Rules from Current Filter")).clicked() {
             let _ = app.run("album.setRules", json!({"id": a.id.0, "fromView": true}));
@@ -838,7 +1152,6 @@ fn reveal_chosen(app: &LightcraftApp, ui: &egui::Ui, tree: &[FolderNode]) {
 }
 
 fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode], indent: f32) {
-    let t = Tokens::get(ui.ctx());
     for n in nodes {
         let key = lightcraft_catalog::query::folder_key(&n.path);
         let open_id = egui::Id::new(("libfolder-open", key.clone()));
@@ -855,18 +1168,7 @@ fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode],
         let resp = row_named(app, ui, &format!("libfolder:{}", n.path), Icon::Folder, &name, Some(&name), Some(n.count), sel, indent);
         let mut toggled = false;
         if !n.children.is_empty() {
-            // disclosure triangle left of the icon
-            let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
-            let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
-            let tr = ui.interact(tri, egui::Id::new(("libfolder-tri", key)), Sense::click());
-            register(ui.ctx(), format!("libraryFolderToggle:{}", n.path), tri);
-            let col = if tr.hovered() { t.text } else { t.text_dim };
-            let pts = if open {
-                vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
-            } else {
-                vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
-            };
-            ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+            let tr = disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("libfolder-tri", key)), format!("libraryFolderToggle:{}", n.path));
             toggled = tr.clicked();
             tr.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, true, if open { crate::i18n::tr("Collapse") } else { crate::i18n::tr("Expand") })
@@ -977,25 +1279,14 @@ fn keywords_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 }
 
 fn keyword_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[KeywordNode], indent: f32) {
-    let t = Tokens::get(ui.ctx());
     for n in nodes {
         let open_id = egui::Id::new(("kw-open", n.path.to_lowercase()));
         let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(false);
         let sel = app.session.filter.keyword.as_deref().is_some_and(|k| k.eq_ignore_ascii_case(&n.path));
         let resp = row(app, ui, &format!("keyword:{}", n.path), Icon::Tag, &n.name, Some(n.count), sel, indent);
         if !n.children.is_empty() {
-            // disclosure triangle left of the icon
-            let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
-            let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
-            let tr = ui.interact(tri, egui::Id::new(("kw-tri", n.path.to_lowercase())), Sense::click());
-            register(ui.ctx(), format!("keywordToggle:{}", n.path), tri);
-            let col = if tr.hovered() { t.text } else { t.text_dim };
-            let pts = if open {
-                vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
-            } else {
-                vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
-            };
-            ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+            let tr =
+                disclosure_triangle(ui, &resp, indent, open, egui::Id::new(("kw-tri", n.path.to_lowercase())), format!("keywordToggle:{}", n.path));
             if tr.clicked() {
                 open = !open;
                 ui.data_mut(|d| d.insert_temp(open_id, open));

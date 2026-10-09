@@ -122,8 +122,8 @@ are the same in every version, so serve them with `Cache-Control: no-cache` (not
     a reload); a notice says why.
   - One tab at a time: the page holds a Web Lock (`navigator.locks`, `lightcraft-library`); a
     second tab or window shows "LightCraft is already open in another tab" instead of loading
-    its own copy (two copies would overwrite each other's saves). Browsers without Web Locks
-    aren't protected.
+    its own copy (two copies would overwrite each other's saves). Browsers without Web Locks, or
+    that refuse the lock request, aren't protected: the app starts without the guard.
   - If the stored library can't be opened, a notice says the session is temporary and nothing
     is saved; the stored library is left as it was.
   - A panic (wasm is built with `panic = "abort"`) replaces the page with a message saying the

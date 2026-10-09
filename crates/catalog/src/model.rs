@@ -405,12 +405,16 @@ pub struct Album {
     /// The Quick Collection: a regular album that B adds to (one per library).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub quick: bool,
+    /// Its place among the albums of the same kind in its folder, once the user ordered them by
+    /// hand (see [`crate::Catalog::album_children`]); `None`: listed by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<u32>,
 }
 
 impl Album {
     /// A regular (manual) album.
     pub fn new(id: AlbumId, name: impl Into<String>) -> Album {
-        Album { id, name: name.into(), parent: None, folder: false, photos: Vec::new(), cover: None, smart: None, quick: false }
+        Album { id, name: name.into(), parent: None, folder: false, photos: Vec::new(), cover: None, smart: None, quick: false, order: None }
     }
     pub fn is_smart(&self) -> bool {
         self.smart.is_some()
