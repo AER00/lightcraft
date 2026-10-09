@@ -132,6 +132,16 @@ fn long_detail_stays_inside_the_stack() {
 }
 
 #[test]
+fn cross_sits_at_the_right_edge_of_its_row() {
+    let mut h = demo();
+    let g = h.app.session.activity.start("export", "Exporting", Cancel::Yes);
+    wait_visible(&mut h);
+    let row = rect(&h, &format!("activity:row:{}", g.id()));
+    let cross = rect(&h, &format!("activity:cancel:{}", g.id()));
+    assert!(cross.right() >= row.right() - 2.0, "the cross is at the right, not after the label: {cross:?} in {row:?}");
+}
+
+#[test]
 fn quit_with_a_running_task_asks_and_quit_anyway_cancels() {
     let mut h = demo();
     let g = h.app.session.activity.start("export", "Exporting", Cancel::Yes);
@@ -184,7 +194,6 @@ fn start_export(h: &mut Headless, n: usize) {
     }
     let r = h.request("ui.dialog.confirm", json!({}), T);
     assert_eq!(r["ok"], true, "{r}");
-    assert!(h.app.export.is_some(), "running in the background");
 }
 
 #[test]
@@ -192,6 +201,7 @@ fn export_shows_a_row_and_stops_on_activity_cancel() {
     let mut h = demo();
     h.app.services.write_shared = Some(slow_writer(200));
     start_export(&mut h, 5);
+    assert!(h.app.export.is_some(), "running in the background");
     let tasks = h.request("ui.inspect", json!({}), T)["result"]["activity"].clone();
     assert_eq!(tasks[0]["kind"], "export", "{tasks}");
     assert_eq!(tasks[0]["total"], 5, "{tasks}");

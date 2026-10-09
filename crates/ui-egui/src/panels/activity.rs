@@ -115,7 +115,8 @@ fn row(ui: &mut egui::Ui, t: &Tokens, task: &TaskInfo, width: f32) -> bool {
             let cross = task.cancellable && !task.cancelling;
             let label_w = if cross { width - CROSS - 6.0 } else { width };
             ui.allocate_ui_with_layout(vec2(label_w, 18.0), Layout::left_to_right(Align::Center), |ui| {
-                ui.set_max_width(label_w);
+                // the whole width, so the cross lands at the right edge however short the name
+                ui.set_width(label_w);
                 ui.add(egui::Label::new(RichText::new(tr(&task.label)).font(t.font(12.5)).color(t.text)).truncate());
             });
             if cross {
