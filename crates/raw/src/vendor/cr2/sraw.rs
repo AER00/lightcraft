@@ -84,8 +84,8 @@ impl Layout {
         }
         let samples =
             frame_width.checked_mul(frame_height).and_then(|p| p.checked_add(p / vertical)).ok_or(RawError::Limit("sRAW frame too large"))?;
-        let row: usize = widths.iter().sum();
-        if samples == 0 || samples % row != 0 {
+        let row = widths.iter().try_fold(0usize, |a, &w| a.checked_add(w)).ok_or(RawError::Limit("sRAW slice widths"))?;
+        if samples == 0 || row == 0 || samples % row != 0 {
             return Err(RawError::Corrupt(format!("sRAW slices ({row} samples per row) do not divide the frame ({samples} samples)")));
         }
         let rows = samples / row;
@@ -499,6 +499,9 @@ mod tests {
         assert!(Layout::new(4, 2, 1, &[1, 0, 4]).is_err());
         assert!(Layout::new(4, 2, 1, &[4, 4]).is_err()); // not three values
         assert!(Layout::new(4, 2, 1, &[65, 4, 4]).is_err());
+        // slice widths whose sum overflows (or wraps to zero) are rejected, not divided by
+        assert!(Layout::new(4, 2, 1, &[3, 1 << 62, 1 << 62]).is_err());
+        assert!(Layout::new(4, 2, 1, &[1, u64::MAX - 3, 4]).is_err());
         let bytes = sraw_file(stream_422(), [1, 4, 8], 4, None);
         assert!(crate::decode(&bytes).is_err());
     }
