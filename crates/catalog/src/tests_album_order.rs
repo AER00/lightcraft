@@ -74,7 +74,7 @@ fn the_children_map_matches_the_children_of_each_folder() {
         let direct: Vec<AlbumId> = c.album_children(parent).iter().map(|a| a.id).collect();
         assert_eq!(from_map, direct, "{parent:?}");
     }
-    assert!(map.get(&Some(AlbumId(999))).is_none());
+    assert!(!map.contains_key(&Some(AlbumId(999))));
 }
 
 /// A place is one undo step, and `None` puts the album back among the alphabetical ones.
