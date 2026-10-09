@@ -20,6 +20,10 @@
 //! `0x7310`, else the level stored in the encrypted `SR2SubIFD` (see [`SR2_BLACK_AT`]; 800 rather than the
 //! default 512 on 1″-sensor bodies such as the RX100 series), else 512 (14-bit) / 128 (12-bit).
 //!
+//! Packed 12-bit ARW (DSLR-A900; Compression 32767 but BitsPerSample 12 and a strip of exactly width × height × 1.5
+//! bytes): plain 12-bit samples, two per three bytes, least-significant-bit first ([`unpack_row12`]); linear, black 128
+//! (512 on the 14-bit scale), CFA from the file's own pattern tag, crop centred on the frame (see [`default_crop`]).
+//!
 //! Also: uncompressed 16-bit ARW, and lossless-compressed ARW (Compression 7, ILCE-7M4 and later): LJ92 tiles whose
 //! frames hold one 2×2 CFA cell per four-component sample ([`read_quad_tiles`]). Other lossless-JPEG layouts go
 //! through the generic TIFF path.
@@ -42,6 +46,11 @@ const REFERENCE_BLACK_WHITE: u16 = 532;
 /// Maker-note tags (ExifTool Sony tag names): the enciphered `Tag2010` block and `FullImageSize` (height, width).
 const MN_TAG2010: u16 = 0x2010;
 const MN_FULL_IMAGE_SIZE: u16 = 0xb02b;
+/// Maker-note tag that holds, on the DSLR-A900 sample, the as-shot white balance in plain form: four big-endian
+/// `u16` (R, G, G, B; 256 = unity) at [`MN_A900_WB_AT`] in a block of exactly [`MN_A900_BLOCK_LEN`] bytes.
+const MN_A900_BLOCK: u16 = 0x0020;
+const MN_A900_BLOCK_LEN: usize = 19148;
+const MN_A900_WB_AT: usize = 188;
 
 /// Inverse of Sony's maker-note byte substitution. ExifTool's Sony tag documentation states that the data of
 /// tags `0x2010`, `0x9050` and `0x94xx` "is encrypted by a simple substitution cipher" (no decoder source was
@@ -169,6 +178,41 @@ fn tag2010_wb(model: &str, block: &[u8], order: lightcraft_tiff::ByteOrder) -> O
     }
     let (r, b) = (r / g, b / g);
     ((0.2..=8.0).contains(&r) && (0.2..=8.0).contains(&b)).then_some([r, 1.0, b])
+}
+
+/// As-shot white balance of the packed 12-bit ARW (DSLR-A900): see [`MN_A900_BLOCK`]. Only the exact block size
+/// measured on the sample is read, and the two green levels must both be unity, so another layout is rejected
+/// rather than misread.
+fn a900_wb(block: &[u8]) -> Option<[f32; 3]> {
+    if block.len() != MN_A900_BLOCK_LEN {
+        return None;
+    }
+    let at = |i: usize| block.get(MN_A900_WB_AT + 2 * i..MN_A900_WB_AT + 2 * i + 2).map(|b| f32::from(u16::from_be_bytes([b[0], b[1]])));
+    let (r, g1, g2, b) = (at(0)?, at(1)?, at(2)?, at(3)?);
+    if g1 != 256.0 || g2 != 256.0 {
+        return None;
+    }
+    let (r, b) = (r / 256.0, b / 256.0);
+    ((0.2..=8.0).contains(&r) && (0.2..=8.0).contains(&b)).then_some([r, 1.0, b])
+}
+
+/// Whether a 12-bit, single-strip, Sony-compressed (32767) image is stored as plain packed 12-bit samples: the strip
+/// is exactly 1.5 bytes per pixel (width even), so every row is `1.5 · width` bytes with no padding. On the one
+/// DSLR-A900 sample this is the whole strip (36 917 760 = 6080 × 4048 × 1.5) and it ends at the end of the file.
+fn is_packed12(info: &ImageInfo, strip_count: usize, strip_len: u64) -> bool {
+    let (w, h) = (info.width as u64, info.height as u64);
+    info.bits() == 12 && strip_count == 1 && w % 2 == 0 && w > 0 && h > 0 && strip_len == w * h * 3 / 2
+}
+
+/// Unpack plain 12-bit samples stored least-significant-bit first: two pixels per three bytes, the first being
+/// `b0 | (b1 & 0xf) << 8` and the second `b1 >> 4 | b2 << 4` (measured: same-colour neighbours differ by ~16 codes
+/// in this order against ~200 in the most-significant-first order). `row` is `1.5 · out.len()` bytes.
+pub(crate) fn unpack_row12(row: &[u8], out: &mut [u16]) {
+    for (i, b) in row.windows(3).step_by(3).enumerate() {
+        let Some(px) = out.get_mut(2 * i..2 * i + 2) else { break };
+        px[0] = u16::from(b[0]) | (u16::from(b[1] & 0xf) << 8);
+        px[1] = u16::from(b[1] >> 4) | (u16::from(b[2]) << 4);
+    }
 }
 
 /// The inverse tone curve: 11-bit code → 14-bit sensor value.
@@ -417,7 +461,11 @@ fn sr2_black_levels(cipher: &[u8], order: lightcraft_tiff::ByteOrder) -> Option<
 /// at the top-left. Older bodies store a few columns of padding at the right edge of the raw frame (constant
 /// values, 8–32 columns on the samples we checked) inside a frame 16–48 pixels wider than `FullImageSize`, so
 /// the anchored crop removes them while keeping the CFA phase.
-fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, w: usize, h: usize) -> Rect {
+///
+/// `centred` places the `FullImageSize` window in the middle of the frame (on even offsets, keeping the CFA phase)
+/// instead of at the top-left: the packed 12-bit frame has no padding at either edge, and the camera JPEG is
+/// centred on the frame.
+fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, w: usize, h: usize, centred: bool) -> Rect {
     let full = Rect::new(0, 0, w, h);
     if let (Some([x, y]), Some([cw, ch])) = (raw.u64s(t::DEFAULT_CROP_ORIGIN).as_deref(), raw.u64s(t::DEFAULT_CROP_SIZE).as_deref())
         && *cw > 0
@@ -428,7 +476,8 @@ fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, w: usize, h: usize
     match mn.and_then(|m| m.ifd.u64s(MN_FULL_IMAGE_SIZE)).as_deref() {
         // only a plausible trim: never more than 64 pixels per side, never an enlargement
         Some([fh, fw]) if *fw as usize <= w && *fh as usize <= h && *fw as usize + 64 >= w && *fh as usize + 64 >= h => {
-            Rect::new(0, 0, *fw as usize, *fh as usize)
+            let (fw, fh) = (*fw as usize, *fh as usize);
+            if centred { Rect::new(((w - fw) / 2) & !1, ((h - fh) / 2) & !1, fw, fh) } else { Rect::new(0, 0, fw, fh) }
         }
         _ => full,
     }
@@ -458,6 +507,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     // archive measure exactly width x height. A200/A230/A350 files carry a strip 4-23 % larger than that (and A290/A390 one
     // smaller), which is a different packing, so they are refused rather than read with the wrong layout.
     let one_byte_per_sample = chunks.len() == 1 && strip_len == (w * h) as u64;
+    let packed12 = info.compression == 32767 && is_packed12(&info, chunks.len(), strip_len);
     let (data, out_bits) = match info.compression {
         7 if linear_rgb => (RawData::U16(read_ycbcr_tiles(bytes, &info, raw, mode)?), 14),
         32767 if one_byte_per_sample && mode == Mode::Header => {
@@ -476,6 +526,21 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
                 }
             });
             (RawData::U16(data), 14)
+        }
+        32767 if packed12 && mode == Mode::Header => {
+            chunk_bytes(bytes, &chunks[0]).ok_or_else(|| RawError::Corrupt("raw strip outside file".into()))?;
+            (RawData::U16(Vec::new()), 12)
+        }
+        32767 if packed12 => {
+            let src = chunk_bytes(bytes, &chunks[0]).ok_or_else(|| RawError::Corrupt("raw strip outside file".into()))?;
+            let row_bytes = w / 2 * 3;
+            let mut data = vec![0u16; w * h];
+            data.par_chunks_mut(w).enumerate().for_each(|(y, out)| {
+                if let Some(row) = src.get(y * row_bytes..(y + 1) * row_bytes) {
+                    unpack_row12(row, out);
+                }
+            });
+            (RawData::U16(data), 12)
         }
         32767 => return Err(RawError::Unsupported("Sony ARW version 1 / packed compressed variant (raw strip is not one byte per pixel)".into())),
         7 if is_quad_tiled(bytes, &info) => match mode {
@@ -530,10 +595,11 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
             let g = (v[1] + v[2]) / 2.0;
             [(v[0] / g) as f32, 1.0, (v[3] / g) as f32]
         })
-        .or_else(|| mn.as_ref().and_then(|m| tag2010_wb(&model, m.ifd.bytes(MN_TAG2010)?, m.order)));
+        .or_else(|| mn.as_ref().and_then(|m| tag2010_wb(&model, m.ifd.bytes(MN_TAG2010)?, m.order)))
+        .or_else(|| mn.as_ref().filter(|_| packed12).and_then(|m| a900_wb(m.ifd.bytes(MN_A900_BLOCK)?)));
     let crop = match (raw.u64s(CROP_TOP_LEFT).as_deref(), raw.u64s(CROP_SIZE).as_deref()) {
         (Some([x, y]), Some([cw, ch])) if *cw > 0 && *ch > 0 => Rect::new(*x as usize, *y as usize, *cw as usize, *ch as usize).clipped(w, h),
-        _ => default_crop(raw, mn.as_ref(), w, h),
+        _ => default_crop(raw, mn.as_ref(), w, h, packed12),
     };
     let mut metadata = lightcraft_meta::from_tiff(&tiff);
     metadata.width = Some(crop.width as u32);
@@ -628,6 +694,81 @@ mod tests {
             let r = decode(&arw_with_strip(32 * 4), mode);
             assert!(!matches!(r, Err(RawError::Unsupported(ref m)) if m.contains("packed compressed variant")), "{r:?}");
         }
+    }
+
+    /// A 32767-compressed, 12-bit ARW of `w` x `h` whose single strip is `strip`.
+    fn packed_arw(w: u32, h: u32, strip: Vec<u8>) -> Vec<u8> {
+        use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value};
+        let mut raw = IfdBuilder::new();
+        raw.set(t::MAKE, Value::Ascii("SONY".into()));
+        raw.set(t::MODEL, Value::Ascii("DSLR-A900".into()));
+        raw.set(t::IMAGE_WIDTH, Value::Long(vec![w]));
+        raw.set(t::IMAGE_LENGTH, Value::Long(vec![h]));
+        raw.set(t::BITS_PER_SAMPLE, Value::Short(vec![12]));
+        raw.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
+        raw.set(t::PHOTOMETRIC, Value::Short(vec![photometric::CFA]));
+        raw.set(t::COMPRESSION, Value::Short(vec![32767]));
+        raw.set(t::CFA_REPEAT_PATTERN_DIM, Value::Short(vec![2, 2]));
+        raw.set(t::CFA_PATTERN_EP, Value::Byte(vec![0, 1, 1, 2]));
+        raw.set(TONE_CURVE, Value::Short(vec![8000, 10400, 12900, 14100]));
+        raw.set_image(ImageData::Strips { rows_per_strip: h, strips: vec![strip] });
+        TiffWriter::default().write(&[raw]).unwrap()
+    }
+
+    /// Pack 12-bit samples as the file does: `b0 = a & 0xff`, `b1 = a >> 8 | b << 4 & 0xf0`, `b2 = b >> 4`.
+    fn pack12(samples: &[u16]) -> Vec<u8> {
+        samples.chunks(2).flat_map(|p| [p[0] as u8, (p[0] >> 8) as u8 | ((p[1] & 0xf) << 4) as u8, (p[1] >> 4) as u8]).collect()
+    }
+
+    #[test]
+    fn packed_12_bit_strip_of_one_and_a_half_bytes_per_pixel_decodes() {
+        let (w, h) = (8usize, 4usize);
+        let samples: Vec<u16> = (0..w * h).map(|i| (i as u16 * 129 + 130) & 0xfff).collect();
+        let file = packed_arw(w as u32, h as u32, pack12(&samples));
+        let full = decode(&file, Mode::Full).unwrap();
+        let RawData::U16(ref got) = full.data else { panic!("integer ARW") };
+        assert_eq!(got, &samples);
+        assert_eq!((full.width, full.height, full.bits), (w, h, 12));
+        assert_eq!(full.cfa.as_ref().map(|c| c.pattern.clone()), Some(vec![0, 1, 1, 2]));
+        assert_eq!(full.black.values.first().copied().unwrap_or(0.0), 128.0);
+        let header = decode(&file, Mode::Header).unwrap();
+        assert_eq!(header.info(), full.info());
+        // the first three bytes 0x12 0xA3 0x45 are the samples 0x312 and 0x45A (least-significant-bit first)
+        let mut row = vec![0u16; 2];
+        unpack_row12(&[0x12, 0xa3, 0x45], &mut row);
+        assert_eq!(row, [0x312, 0x45a]);
+    }
+
+    #[test]
+    fn packed_12_bit_needs_the_exact_strip_size() {
+        let (w, h) = (8usize, 4usize);
+        let exact = w * h * 3 / 2;
+        for strip in [exact - 1, exact + 1, exact + 3 * h] {
+            for mode in [Mode::Header, Mode::Full] {
+                let err = decode(&packed_arw(w as u32, h as u32, vec![0u8; strip]), mode).unwrap_err();
+                assert!(matches!(err, RawError::Unsupported(ref m) if m.contains("packed compressed variant")), "{strip} {mode:?}: {err:?}");
+            }
+        }
+        // an odd width cannot be packed in pairs
+        let err = decode(&packed_arw(7, 4, vec![0u8; 7 * 4 * 3 / 2]), Mode::Full).unwrap_err();
+        assert!(matches!(err, RawError::Unsupported(_)), "{err:?}");
+    }
+
+    #[test]
+    fn a900_white_balance_block_is_read_only_when_it_matches() {
+        let mut block = vec![0u8; MN_A900_BLOCK_LEN];
+        for (i, v) in [672u16, 256, 256, 379].iter().enumerate() {
+            block[MN_A900_WB_AT + 2 * i..MN_A900_WB_AT + 2 * i + 2].copy_from_slice(&v.to_be_bytes());
+        }
+        let wb = a900_wb(&block).unwrap();
+        assert_eq!(wb, [2.625, 1.0, 379.0 / 256.0]);
+        assert!(a900_wb(&block[..MN_A900_BLOCK_LEN - 1]).is_none());
+        let mut other = block.clone();
+        other[MN_A900_WB_AT + 2] = 2; // green no longer unity
+        assert!(a900_wb(&other).is_none());
+        other = block.clone();
+        other[MN_A900_WB_AT] = 0xff; // red gain far out of range
+        assert!(a900_wb(&other).is_none());
     }
 
     /// Encode one 16-value set as an ARW2 block (the paper's scheme, used here to test the decoder).
