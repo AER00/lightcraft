@@ -270,3 +270,26 @@ fn dropping_photos_on_a_keyword_tags_them() {
     assert!(ids.iter().all(|id| keywords_of(&h, *id).contains(&"Portugal".to_string())), "the selection got it");
     assert!(h.app.ui.dragging_photos.is_none());
 }
+
+fn rect(h: &Headless, id: &str) -> egui::Rect {
+    h.app.widgets.iter().rev().find(|(w, _)| w == id).map(|(_, r)| *r).unwrap_or_else(|| panic!("no {id}"))
+}
+
+/// A drop lands only on what is shown: with the list scrolled so that its title is hidden under
+/// the top bar, a keyword released over the top bar stays where it is.
+#[test]
+fn drops_land_only_on_what_is_shown() {
+    let (mut h, ids) = keywords_panel_at([1400.0, 640.0]);
+    run(&mut h, "photo.setMeta", json!({"ids": [ids[0]], "keywords": ["aaa|zz"]}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordRowToggle:aaa"}));
+    let title = rect(&h, "keywordList:topLevel");
+    ask(&mut h, "ui.hoverWidget", json!({"id": "keywordRow:aaa"}));
+    ask(&mut h, "ui.scroll", json!({"dx": 0, "dy": -(title.top() - 20.0)}));
+    let title = rect(&h, "keywordList:topLevel");
+    let hidden = egui::pos2(title.center().x, title.top() + 8.0);
+    assert!(hidden.y < 44.0 && title.contains(hidden), "the title's top is under the top bar: {title:?}");
+    let row = rect(&h, "keywordRow:aaa|zz");
+    assert!(row.top() > 44.0, "the row is shown: {row:?}");
+    ask(&mut h, "ui.dragWidget", json!({"id": "keywordRow:aaa|zz", "toX": hidden.x, "toY": hidden.y, "steps": 12}));
+    assert_eq!(keywords_of(&h, ids[0]), ["aaa|zz"], "not moved to the top level");
+}

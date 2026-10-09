@@ -25,7 +25,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     register(ui.ctx(), "keywordList:topLevel", title);
     let dragging = app.ui.dragging_keyword.clone();
     let (pointer, released) = ui.input(|i| (i.pointer.latest_pos(), i.pointer.any_released()));
-    let over_title = pointer.is_some_and(|p| title.contains(p));
+    let over_title = shown_under(ui, title, pointer);
     if dragging.is_some() && over_title {
         ui.painter().rect_stroke(title.shrink2(vec2(16.0, 6.0)), 4.0, Stroke::new(1.5, t.accent), StrokeKind::Inside);
     }
@@ -87,6 +87,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             drag_label(ui.ctx(), &k, p);
         }
     }
+}
+
+/// The pointer is on the part of `rect` that is shown: inside it and inside the panel's visible
+/// (scrolled) area, so a drop never lands on a row or title hidden under the top bar.
+fn shown_under(ui: &egui::Ui, rect: Rect, pointer: Option<egui::Pos2>) -> bool {
+    pointer.is_some_and(|p| rect.contains(p) && ui.clip_rect().contains(p))
 }
 
 /// The dragged keyword's name, following the pointer.
@@ -236,7 +242,7 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId
 /// keyword inside this one, or gives this keyword to the photos.
 fn drop_target(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, path: &str) {
     let (pointer, released) = ui.input(|i| (i.pointer.latest_pos(), i.pointer.any_released()));
-    if !pointer.is_some_and(|p| rect.contains(p)) {
+    if !shown_under(ui, rect, pointer) {
         return;
     }
     let t = Tokens::get(ui.ctx());
