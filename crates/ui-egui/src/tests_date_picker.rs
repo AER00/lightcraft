@@ -114,3 +114,12 @@ fn escape_closes_only_a_dropdown() {
     assert!(!has(&h, "ruleFieldItem:rating:rules-0"), "the menu closed");
     assert!(h.app.ui.dialog.is_some(), "the editor stays open");
 }
+
+/// Only date rules get calendars: a "between" on a text field (written by an agent; the check marks
+/// it) shows its two values as text, without date pickers that would write dates into it.
+#[test]
+fn only_dates_get_calendars() {
+    let h = editor(json!([{"field": "title", "op": "between", "value": ["a", "b"]}]));
+    assert!(!has(&h, "datePicker:rules-0-a") && !has(&h, "datePicker:rules-0-b"));
+    assert!(has(&h, "ruleProblem:rules-0"), "and the operator is marked");
+}

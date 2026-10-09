@@ -20,8 +20,7 @@ pub fn register(ctx: &egui::Context, id: impl Into<String>, rect: Rect) {
 }
 
 /// Esc was handled this frame by something nested (an open popup closed on it): containers such
-/// as dialogs shouldn't close too. Kept for the whole frame, since egui may run it in more than one
-/// pass and the popup is already closed in the later ones.
+/// as dialogs shouldn't close too. Keyed to the frame, so it lapses by itself on the next one.
 pub fn take_escape(ctx: &egui::Context) {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("lc-escape-taken"), frame));

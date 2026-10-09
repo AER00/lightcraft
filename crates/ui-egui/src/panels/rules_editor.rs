@@ -137,7 +137,11 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
             // shown as stored ({n, unit}, or a plain number of days) and only written when changed:
             // drawing never turns "0 days" into 1 or 20,000 into the spinner's 10,000
             let (stored_n, stored_unit) = match &*v {
-                Value::Object(o) => (o.get("n").and_then(Value::as_f64), o.get("unit").and_then(Value::as_str).unwrap_or("days").to_string()),
+                // n as the catalog reads it: a number, or one written as text ("7")
+                Value::Object(o) => (
+                    o.get("n").and_then(|n| n.as_f64().or_else(|| n.as_str().and_then(|t| t.trim().parse().ok()))),
+                    o.get("unit").and_then(Value::as_str).unwrap_or("days").to_string(),
+                ),
                 Value::Number(n) => (n.as_f64(), "days".to_string()),
                 _ => (None, "days".to_string()),
             };
@@ -171,7 +175,7 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
                 number_value(ui, lo, field);
                 ui.label(crate::i18n::tr("and"));
                 number_value(ui, hi, field);
-            } else {
+            } else if k == Kind::Date {
                 // each date's picker stops at the other one, so the two stay in order
                 let (lo_date, hi_date) = (lo.as_str().and_then(PickedDate::parse), hi.as_str().and_then(PickedDate::parse));
                 text_value(ui, lo, 86.0, "2026-01-01", &format!("{salt}-a"));
@@ -179,6 +183,11 @@ fn value_editor(ui: &mut egui::Ui, field: &str, op: &str, v: &mut Value, salt: &
                 ui.label(crate::i18n::tr("and"));
                 text_value(ui, hi, 86.0, "2026-12", &format!("{salt}-b"));
                 date_picker(ui, hi, &format!("{salt}-b"), lo_date, None, env);
+            } else {
+                // a field without "between" (the check marks it): its two values, as text
+                text_value(ui, lo, 86.0, "", &format!("{salt}-a"));
+                ui.label(crate::i18n::tr("and"));
+                text_value(ui, hi, 86.0, "", &format!("{salt}-b"));
             }
             if pair != before {
                 *v = pair;
