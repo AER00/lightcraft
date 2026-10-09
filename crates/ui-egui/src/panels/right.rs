@@ -767,7 +767,10 @@ fn meta_field(app: &mut LightcraftApp, ui: &mut egui::Ui, label: &str, key: &str
 }
 
 fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
-    let Some(p) = app.session.catalog.photo(id).cloned() else { return };
+    // (the box is the selection's: the active photo only says that there is one)
+    if app.session.catalog.photo(id).is_none() {
+        return;
+    }
     header(ui, "Keywords");
     let t = Tokens::get(ui.ctx());
     padded(ui, |ui| {
@@ -827,7 +830,11 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         // photo's keywords, else the most used ones
         let typed = ui.data(|d| d.get_temp::<String>(kid).unwrap_or_default());
         let last = typed.rsplit(',').next().unwrap_or("").trim().to_string();
-        let suggestions = (*app.caches.suggestions(&app.session.catalog, &p.meta.keywords, &last, 12)).clone();
+        // the keywords every selected photo has: those only some have are still suggested
+        let selection = app.session.selection.ids.clone();
+        let have: Vec<String> =
+            app.caches.keyword_chips(&app.session.catalog, &selection).iter().filter(|c| c.on_all()).map(|c| c.path.clone()).collect();
+        let suggestions = (*app.caches.suggestions(&app.session.catalog, &have, &last, 12)).clone();
         if !suggestions.is_empty() {
             ui.label(egui::RichText::new(crate::i18n::tr("Suggestions")).color(t.text_dim));
             ui.horizontal_wrapped(|ui| {

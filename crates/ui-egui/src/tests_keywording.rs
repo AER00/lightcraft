@@ -146,3 +146,12 @@ fn the_painters_field_pastes_and_return_paints() {
     ask(&mut h, "ui.key", json!({"key": "Enter"}));
     assert_eq!(h.app.ui.keyword_painter.as_deref(), Some("Weddings"));
 }
+
+/// Suggestions follow the selection: a keyword only some selected photos have is suggested, to give
+/// it to all of them; one every selected photo has isn't.
+#[test]
+fn suggestions_follow_the_selection() {
+    let (h, _) = two_selected();
+    assert!(has(&h, "kwSuggest:Weddings"), "only the active one has it");
+    assert!(!has(&h, "kwSuggest:beach"), "both have it");
+}
