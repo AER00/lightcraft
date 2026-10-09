@@ -36,8 +36,11 @@ pub fn export_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         for n in names.iter() {
             let (body, _) = chip(ui, &n.path, !n.on_all(), false);
             register(ui.ctx(), format!("keywordExport:{}", n.path), body.rect);
-            if !n.on_all() {
-                body.on_hover_text(crate::i18n::tr_format!("On {have} of {of} selected photos", have = n.have, of = n.of));
+            if n.on_all() {
+                body.on_hover_text(&n.path);
+            } else {
+                let count = crate::i18n::tr_format!("On {have} of {of} selected photos", have = n.have, of = n.of);
+                body.on_hover_text(format!("{}\n{count}", n.path));
             }
         }
     });
@@ -52,12 +55,11 @@ fn chip(ui: &mut egui::Ui, path: &str, partial: bool, cross: bool) -> (egui::Res
     let t = Tokens::get(ui.ctx());
     let font = t.font(13.0);
     let color = if partial { t.text_dim } else { t.text_label };
-    let name = format!("{}{}", path.replace('|', " › "), if partial { " *" } else { "" });
     let cross_w = if cross { 18.0 } else { 0.0 };
     // at most the row's width
     let room = (ui.max_rect().width() - 16.0 - cross_w).max(24.0);
     let measure = |s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), color).size().x;
-    let shown = if measure(&name) <= room { name.clone() } else { crate::widgets::elide_head(&name, room, measure) };
+    let shown = chip_label(path, partial, room, measure);
     let w = measure(&shown) + 16.0 + cross_w;
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 22.0), Sense::click());
     ui.painter().rect_stroke(rect, 10.0, egui::Stroke::new(1.0, t.field_border), egui::StrokeKind::Inside);
@@ -66,7 +68,6 @@ fn chip(ui: &mut egui::Ui, path: &str, partial: bool, cross: bool) -> (egui::Res
     }
     ui.painter().text(pos2(rect.left() + 8.0, rect.center().y), Align2::LEFT_CENTER, &shown, font.clone(), color);
     let body = Rect::from_min_max(rect.min, pos2(rect.right() - cross_w, rect.bottom()));
-    let resp = if shown != name { resp.on_hover_text(path.replace('|', " › ")) } else { resp };
     let x = cross.then(|| {
         let xr = Rect::from_center_size(pos2(rect.right() - 11.0, rect.center().y), vec2(14.0, 14.0));
         let xresp = ui.interact(xr, resp.id.with("remove"), Sense::click());
@@ -117,16 +118,43 @@ pub fn chip_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     let _ = app.run("photo.setMeta", json!({"removeKeywords": [c.path]}));
                 }
             }
+            // one tooltip: the whole name (it may be cut short), and how many have it
+            let full = c.path.replace('|', " › ");
             let body = if c.on_all() {
-                body
+                body.on_hover_text(full)
             } else {
                 register(ui.ctx(), format!("keywordChipPartial:{}", c.path), body.rect);
-                body.on_hover_text(crate::i18n::tr_format!("On {have} of {of} selected photos", have = c.have, of = c.of))
+                let n = crate::i18n::tr_format!("On {have} of {of} selected photos", have = c.have, of = c.of);
+                body.on_hover_text(format!("{full}\n{n}"))
             };
             let c = c.clone();
             body.context_menu(|ui| menu(app, ui, &c));
         }
     });
+}
+
+/// A chip's label within `room` (as `measure` measures text): the keyword's path with " › "
+/// between its levels, and an asterisk when it is `partial`. Too long, it is cut from the front so
+/// that the keyword's own name and the asterisk stay ("…Lisbon › Belém tower *").
+pub(crate) fn chip_label(path: &str, partial: bool, room: f32, measure: impl Fn(&str) -> f32) -> String {
+    let full = path.replace('|', " › ");
+    let marker = if partial { " *" } else { "" };
+    let whole = format!("{full}{marker}");
+    if measure(&whole) <= room {
+        return whole;
+    }
+    // the longest end of the path that fits after "…"
+    let chars: Vec<char> = full.chars().collect();
+    let mut best = format!("…{marker}");
+    for start in (0..chars.len()).rev() {
+        let tail: String = chars.get(start..).map(|c| c.iter().collect()).unwrap_or_default();
+        let candidate = format!("…{}{marker}", tail.trim_start());
+        if measure(&candidate) > room {
+            break;
+        }
+        best = candidate;
+    }
+    best
 }
 
 /// A keyword of the selection, as a chip shows it.
@@ -240,5 +268,18 @@ mod tests {
         .unwrap();
         assert_eq!(shown(&will_export(&c, &ids)), [("Lisboa", 2, 2), ("Lisbon", 2, 2)]);
         assert!(will_export(&c, &[]).is_empty());
+    }
+
+    /// A chip too long for its row is cut from the front: the keyword's own name and the asterisk
+    /// of a partial one stay.
+    #[test]
+    fn a_long_chip_keeps_its_name_and_asterisk() {
+        let chars = |s: &str| s.chars().count() as f32;
+        assert_eq!(chip_label("travel|Lisbon", false, 40.0, chars), "travel › Lisbon");
+        assert_eq!(chip_label("travel|Lisbon", true, 40.0, chars), "travel › Lisbon *");
+        let cut = chip_label("Places|Portugal|Lisbon|Belém tower", true, 24.0, chars);
+        assert_eq!(cut, "…Lisbon › Belém tower *");
+        assert!(chars(&cut) <= 24.0);
+        assert!(chip_label("Places|Lisbon", false, 4.0, chars).starts_with('…'), "even with hardly any room");
     }
 }
