@@ -285,9 +285,10 @@ fn windows_open_url_command(url: &str) -> std::process::Command {
 /// selects the file when the path after the comma is quoted (`/select,"C:\My Photos\a.jpg"`),
 /// spelled with backslashes and free of the verbatim prefix (`\\?\`, `\\?\UNC\`) that
 /// `canonicalize` adds; given anything else it opens Documents. Windows file names can't contain
-/// `"`, so the quotes are always safe.
+/// `"`; a path that does anyway (a hostile catalog) has them dropped, so the raw command line
+/// always holds exactly this one argument.
 fn explorer_select_arg(path: &str) -> String {
-    let path = path.replace('/', "\\");
+    let path = path.replace('/', "\\").replace('"', "");
     let path = match path.strip_prefix(r"\\?\UNC\") {
         Some(unc) => format!(r"\\{unc}"),
         None => path.strip_prefix(r"\\?\").unwrap_or(path.as_str()).to_string(),
@@ -949,6 +950,8 @@ mod tests {
         assert_eq!(explorer_select_arg(r"\\server\share\My Photos\a.jpg"), r#"/select,"\\server\share\My Photos\a.jpg""#);
         assert_eq!(explorer_select_arg(r"\\?\D:\My Photos\a.jpg"), r#"/select,"D:\My Photos\a.jpg""#);
         assert_eq!(explorer_select_arg(r"\\?\UNC\server\share\a.jpg"), r#"/select,"\\server\share\a.jpg""#);
+        // a `"` can't end the quoted path and add arguments to the raw command line
+        assert_eq!(explorer_select_arg(r#"C:\a" "C:\b.jpg"#), r#"/select,"C:\a C:\b.jpg""#);
         let c = explorer_select_command(r"C:\My Photos\a.jpg");
         assert_eq!(c.get_program(), "explorer");
         let args: Vec<&std::ffi::OsStr> = c.get_args().collect();
