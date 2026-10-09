@@ -176,3 +176,17 @@ fn chips_stay_on_one_line() {
         assert!((x.center().y - r.center().y).abs() < 4.0, "{id}: its × is on its line");
     }
 }
+
+/// With an active photo and nothing else selected, the box is that photo's, as the commands are:
+/// its chips show (keywords typed go to it), and the Keyword List ticks what it has.
+#[test]
+fn the_active_photo_alone_is_the_selection() {
+    let (mut h, ids) = two_selected();
+    ask(&mut h, "engine.execute", json!({"command": "library.select", "params": {"ids": [], "active": ids[0]}}));
+    assert_eq!(h.app.session.selection.active.map(|p| p.0), Some(ids[0]));
+    assert!(h.app.session.selection.ids.is_empty());
+    assert!(has(&h, "keywordChip:Weddings") && !has(&h, "keywordChipPartial:Weddings"), "the active photo's keywords");
+    let ticks = crate::panels::keyword_list::Ticks::of(&h.app.session.catalog, &h.app.session.targets(&json!({})));
+    assert_eq!(ticks.tick("Weddings"), crate::panels::keyword_list::Tick::All);
+    assert!(has(&h, "keywordCheck:beach"));
+}
