@@ -33,7 +33,7 @@ commands:
   web [--serve [port]] [--dev]
                   build the browser app (apps/lightcraft-web) into <target>/web/;
                   --serve serves it on http://127.0.0.1:<port> (default 8080)
-  ci              fmt --check, clippy -D warnings, test, parity refs, layers, assets, wasm (stops at first failure)
+  ci              fmt --check, clippy -D warnings, heif, test, parity refs, layers, assets, wasm (stops at first failure)
   corpus [--download]
                   show where test corpora live; --download fetches PngSuite and CC0 raw samples (raw.pixls.us) into corpus/
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
@@ -260,6 +260,18 @@ fn cmd_ci() -> Result<(), String> {
             }),
         ),
         (
+            "heif",
+            Box::new(|| {
+                // the optional HEIC/HEIF decoder is off in the workspace build above
+                let mut c = cargo();
+                c.args(["clippy", "-p", "lightcraft-codecs", "--features", "heif", "--all-targets", "--", "-D", "warnings"]);
+                run(c, "cargo clippy -p lightcraft-codecs --features heif --all-targets -- -D warnings")?;
+                let mut c = cargo();
+                c.args(["test", "-p", "lightcraft-codecs", "-p", "lightcraft-heif", "--features", "lightcraft-codecs/heif"]);
+                run(c, "cargo test -p lightcraft-codecs -p lightcraft-heif --features lightcraft-codecs/heif")
+            }),
+        ),
+        (
             "test",
             Box::new(|| {
                 let mut c = cargo();
@@ -324,6 +336,11 @@ const RAW_SAMPLES: &[(&str, &str)] = &[
     ("cr2-canon-5d3.cr2", "https://raw.pixls.us/getfile.php/771/nice/Canon%20-%20EOS%205D%20Mark%20III.CR2"),
     ("cr2-canon-80d.cr2", "https://raw.pixls.us/getfile.php/1294/nice/Canon%20-%20EOS%2080D%20-%20RAW%20%283:2%29.CR2"),
     ("cr3-canon-m50-craw.cr3", "https://raw.pixls.us/getfile.php/2663/nice/Canon%20-%20EOS%20M50%20-%20CRAW%20%283:2%29.CR3"),
+    ("cr3-canon-m50-raw.cr3", "https://raw.pixls.us/getfile.php/4657/nice/Canon%20-%20EOS%20M50%20-%203:2.CR3"),
+    ("cr3-canon-r100-raw.cr3", "https://raw.pixls.us/getfile.php/7896/nice/Canon%20-%20EOS%20R100%20-%20RAW%20%283:2%29.CR3"),
+    ("cr3-canon-r100-craw.cr3", "https://raw.pixls.us/getfile.php/7897/nice/Canon%20-%20EOS%20R100%20-%20CRAW%20%283:2%29.CR3"),
+    ("cr3-canon-r8-raw.cr3", "https://raw.pixls.us/getfile.php/6585/nice/Canon%20-%20EOS%20R8%20-%203:2.CR3"),
+    ("cr3-canon-r8-craw.cr3", "https://raw.pixls.us/getfile.php/6587/nice/Canon%20-%20EOS%20R8%20-%203:2.CR3"),
     (
         "dng-adobe-canon-5d3-linear-lj92.dng",
         "https://raw.pixls.us/getfile.php/1032/nice/Adobe%20DNG%20Converter%20-%20Canon%20EOS%205D%20Mark%20III%20-%20Lossless%20JPEG%20compression%2C%20rgb%20%283:2%29.DNG",
@@ -393,6 +410,41 @@ const RAW_SAMPLES: &[(&str, &str)] = &[
     ("raw-panasonic-fz50.raw", "https://raw.pixls.us/getfile.php/2234/nice/Panasonic%20-%20DMC-FZ50%20-%204:3.RAW"),
     ("raw-panasonic-fz8.raw", "https://raw.pixls.us/getfile.php/2282/nice/Panasonic%20-%20DMC-FZ8%20-%204:3.RAW"),
     ("rw2-panasonic-fz1000m2-4x3.rw2", "https://raw.pixls.us/getfile.php/4706/nice/Panasonic%20-%20DC-FZ10002%20-%204:3.RW2"),
+    // Fujifilm predictive compression: older X-Trans, 40 MP X-Trans, 14/16-bit GFX; both compression modes.
+    (
+        "raf-fuji-gfx100-3773.raf",
+        "https://raw.pixls.us/getfile.php/3773/nice/Fujifilm%20-%20GFX%20100%20-%2016bit%2016bit%20compressed%20%284:3%29.RAF",
+    ),
+    (
+        "raf-fuji-gfx100-3775.raf",
+        "https://raw.pixls.us/getfile.php/3775/nice/Fujifilm%20-%20GFX%20100%20-%2014bit%2014bit%20compressed%20%284:3%29.RAF",
+    ),
+    ("raf-fuji-gfx100rf-8091.raf", "https://raw.pixls.us/getfile.php/8091/nice/Fujifilm%20-%20GFX100RF%20-%2016bit%20compressed%20%284:3%29.RAF"),
+    (
+        "raf-fuji-gfx100s-4495.raf",
+        "https://raw.pixls.us/getfile.php/4495/nice/Fujifilm%20-%20GFX100S%20-%2016bit%2016bit%20lossless%20compressed%20%284:3%29.RAF",
+    ),
+    (
+        "raf-fuji-gfx100s-4503.raf",
+        "https://raw.pixls.us/getfile.php/4503/nice/Fujifilm%20-%20GFX100S%20-%2016bit%2016bit%20compressed%20%284:3%29.RAF",
+    ),
+    (
+        "raf-fuji-gfx50s-1435.raf",
+        "https://raw.pixls.us/getfile.php/1435/nice/Fujifilm%20-%20GFX%2050S%20-%2014bit%2014bit%20compressed%20%283:2%29.RAF",
+    ),
+    ("raf-fuji-xe5-8509.raf", "https://raw.pixls.us/getfile.php/8509/nice/Fujifilm%20-%20X-E5%20-%2014bit%20lossy%20compressed%20%283:2%29.RAF"),
+    ("raf-fuji-xh2-6001.raf", "https://raw.pixls.us/getfile.php/6001/nice/Fujifilm%20-%20X-H2%20-%2014bit%2014bit%20compressed%20%283:2%29.RAF"),
+    ("raf-fuji-xh2-6002.raf", "https://raw.pixls.us/getfile.php/6002/nice/Fujifilm%20-%20X-H2%20-%2014bit%2014bit%20compressed%20%283:2%29.RAF"),
+    ("raf-fuji-xm5-7748.raf", "https://raw.pixls.us/getfile.php/7748/nice/Fujifilm%20-%20X-M5%20-%2014bit%20compressed%20%283:2%29.RAF"),
+    ("raf-fuji-xt2-865.raf", "https://raw.pixls.us/getfile.php/865/nice/Fujifilm%20-%20X-T2%20-%2014bit%2014bit%20compressed%20%283:2%29.RAF"),
+    (
+        "raf-fuji-xt4-3914.raf",
+        "https://raw.pixls.us/getfile.php/3914/nice/Fujifilm%20-%20X-T4%20-%2014bit%2014bit%20lossless%20compressed%20%283:2%29.RAF",
+    ),
+    ("raf-fuji-xt4-3918.raf", "https://raw.pixls.us/getfile.php/3918/nice/Fujifilm%20-%20X-T4%20-%2014bit%2014bit%20compressed%20%283:2%29.RAF"),
+    ("raf-fuji-xt5-6122.raf", "https://raw.pixls.us/getfile.php/6122/nice/Fujifilm%20-%20X-T5%20-%2014bit%2014bit%20compressed%20%283:2%29.RAF"),
+    ("raf-fuji-xt5-6123.raf", "https://raw.pixls.us/getfile.php/6123/nice/Fujifilm%20-%20X-T5%20-%2014bit%2014bit%20compressed%20%283:2%29.RAF"),
+    ("raf-fuji-xt50-7807.raf", "https://raw.pixls.us/getfile.php/7807/nice/Fujifilm%20-%20X-T50%20-%2014bit%20compressed%20%283:2%29.RAF"),
     ("rw2-panasonic-g9-b.rw2", "https://raw.pixls.us/getfile.php/2348/nice/Panasonic%20-%20DC-G9%20-%204:3.RW2"),
     ("rw2-panasonic-g9.rw2", "https://raw.pixls.us/getfile.php/2585/nice/Panasonic%20-%20DC-G9%20-%204:3.RW2"),
     ("rw2-panasonic-gh1.rw2", "https://raw.pixls.us/getfile.php/1323/nice/Panasonic%20-%20DMC-GH1%20-%204:3.RW2"),

@@ -270,10 +270,37 @@ pub fn set_pool_limit(bytes: u64) {
 pub fn trim_pool(keep: u64) {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(g) = existing_device() {
+        if keep == 0 {
+            render::release_shared_source();
+        }
         g.trim(keep);
     }
     #[cfg(target_arch = "wasm32")]
     let _ = keep;
+}
+
+/// Device bytes of the one big source (a zoom window's original) shared by every view of the photo.
+pub fn shared_source_bytes() -> usize {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        render::shared_source_bytes()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
+}
+
+/// Big sources uploaded to the shared copy so far (a diagnostic: one big photo is uploaded once, not once per window).
+pub fn source_uploads() -> u64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        render::source_uploads()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
 }
 
 /// Device bytes held by a view's GPU stages (kept with its [`StageCache`]); 0 when it has none.
@@ -294,6 +321,9 @@ pub fn stage_bytes(stages: &StageCache) -> usize {
 pub fn render(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, stages: Option<&StageCache>) -> Option<Rendered> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // sections switched off with their eye render as if at their defaults (issue #316)
+        let effective = s.effective();
+        let s: &DevelopSettings = &effective;
         // the kernel writes 8-bit output: high-bit-depth exports (and soft proofs) render on the CPU
         if !enabled() || req.depth != lightcraft_pipeline::OutputDepth::U8 || req.proof.is_some() {
             return None;
