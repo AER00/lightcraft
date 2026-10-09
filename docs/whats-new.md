@@ -3,9 +3,9 @@
 ## October 2026
 
 ### Keyword sets
-- Keyword Set ▸ Edit Set… edits a set's nine keywords in place, one field per ⌥ key, and renames it. An empty field
-  leaves its key empty instead of moving the keywords after it; editing Recent Keywords and naming them saves a new
-  set.
+- Keyword Set ▸ Edit Set… edits a set's nine keywords in place, one field per ⌥ key, and renames it (or saves the edits as a new
+  set). An empty field leaves its key empty instead of moving the keywords after it; editing Recent Keywords and naming
+  them saves a new set.
 
 ### Keywording box
 - The chips at the top of the Keywords panel are the keywords of every selected photo, not only the active one's; a
