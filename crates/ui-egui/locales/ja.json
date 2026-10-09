@@ -1734,5 +1734,19 @@
   "Pending photo action cancelled": "Pending photo action cancelled",
   "Pending photo action cancelled because its library or photo changed": "Pending photo action cancelled because its library or photo changed",
   "ONNX model": "ONNX model",
-  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions"
+  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
+  "Synchronize Folder…": "フォルダを同期…",
+  "Synchronize Folder": "フォルダを同期",
+  "Synchronize": "同期",
+  "Scanning…": "スキャン中…",
+  "Find photos added to or missing from this folder on disk, and XMP sidecars changed by other apps": "ディスク上のこのフォルダに追加された写真や見つからない写真、ほかのアプリで変更された XMP サイドカーを探します",
+  "Bring the library up to date with this folder and the folders inside it:": "このフォルダとその中のフォルダに合わせてライブラリを最新にします:",
+  "Import new photos": "新しい写真を読み込む",
+  "Remove missing photos from the library": "見つからない写真をライブラリから除去",
+  "Read metadata updates from XMP sidecars": "XMP サイドカーからメタデータの更新を読み込む",
+  "The library is up to date with this folder.": "ライブラリはこのフォルダと一致しています。",
+  "Missing photos move to Recently Deleted and can be restored; no file on disk is touched.": "見つからない写真は「最近削除した写真」に移動し、復元できます。ディスク上のファイルには手を加えません",
+  "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says.": "サイドカーを読み込むと、写真のレーティング、ラベル、メタデータ、編集内容がその内容に置き換わります。",
+  "Skipped: files already in the library elsewhere": "スキップ: 別の場所ですでにライブラリにあるファイル",
+  "Skipped: files that can't be read": "スキップ: 読み込めないファイル"
 }

@@ -1734,5 +1734,19 @@
   "Pending photo action cancelled": "Pending photo action cancelled",
   "Pending photo action cancelled because its library or photo changed": "Pending photo action cancelled because its library or photo changed",
   "ONNX model": "ONNX model",
-  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions"
+  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
+  "Synchronize Folder…": "同步資料夾…",
+  "Synchronize Folder": "同步資料夾",
+  "Synchronize": "同步",
+  "Scanning…": "正在掃描…",
+  "Find photos added to or missing from this folder on disk, and XMP sidecars changed by other apps": "尋找磁碟上此資料夾中新增或遺失的照片，以及被其他 App 更改的 XMP 附屬檔案",
+  "Bring the library up to date with this folder and the folders inside it:": "讓照片庫與此資料夾及其中的資料夾保持一致：",
+  "Import new photos": "匯入新照片",
+  "Remove missing photos from the library": "從照片庫移除遺失的照片",
+  "Read metadata updates from XMP sidecars": "從 XMP 附屬檔案讀取中繼資料更新",
+  "The library is up to date with this folder.": "照片庫與此資料夾一致。",
+  "Missing photos move to Recently Deleted and can be restored; no file on disk is touched.": "遺失的照片會移至「最近刪除」，可以還原；磁碟上的檔案不會被更動。",
+  "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says.": "讀取附屬檔案會以其內容取代照片的評等、標籤、中繼資料和編輯。",
+  "Skipped: files already in the library elsewhere": "已略過：已在照片庫其他位置的檔案",
+  "Skipped: files that can't be read": "已略過：無法讀取的檔案"
 }

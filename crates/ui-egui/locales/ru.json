@@ -1407,5 +1407,19 @@
   "Pending photo action cancelled": "Pending photo action cancelled",
   "Pending photo action cancelled because its library or photo changed": "Pending photo action cancelled because its library or photo changed",
   "ONNX model": "ONNX model",
-  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions"
+  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
+  "Synchronize Folder…": "Синхронизировать папку…",
+  "Synchronize Folder": "Синхронизация папки",
+  "Synchronize": "Синхронизировать",
+  "Scanning…": "Сканирование…",
+  "Find photos added to or missing from this folder on disk, and XMP sidecars changed by other apps": "Найти фото, добавленные в эту папку на диске или пропавшие из неё, и файлы XMP, изменённые другими приложениями",
+  "Bring the library up to date with this folder and the folders inside it:": "Привести медиатеку в соответствие с этой папкой и вложенными папками:",
+  "Import new photos": "Импортировать новые фото",
+  "Remove missing photos from the library": "Убрать отсутствующие фото из медиатеки",
+  "Read metadata updates from XMP sidecars": "Прочитать изменения метаданных из файлов XMP",
+  "The library is up to date with this folder.": "Медиатека соответствует этой папке.",
+  "Missing photos move to Recently Deleted and can be restored; no file on disk is touched.": "Отсутствующие фото перемещаются в «Недавно удалённые» и могут быть восстановлены; файлы на диске не затрагиваются.",
+  "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says.": "Чтение файла XMP заменяет рейтинг, метки, метаданные и правки фото его содержимым.",
+  "Skipped: files already in the library elsewhere": "Пропущено: файлы, которые уже есть в медиатеке в другом месте",
+  "Skipped: files that can't be read": "Пропущено: файлы, которые не удаётся прочитать"
 }

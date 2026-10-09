@@ -1,0 +1,151 @@
+//! Synchronize Folder in the app (see `lightcraft_engine::sync`).
+//!
+//! Scenarios, in the words of someone whose folder changed outside LightCraft:
+//!
+//! * Right-click a folder in the sidebar's Folders section ▸ Synchronize Folder…: a dialog opens
+//!   at once and scans the folder without holding up the app, then says how many photos are new,
+//!   missing, or have metadata updates.
+//! * Synchronize with the defaults imports the new photos and leaves missing ones alone.
+//! * Ticking "Remove missing photos" also moves those to Recently Deleted.
+//! * Cancel leaves the library as it was.
+
+use std::time::Duration;
+
+use serde_json::json;
+
+use crate::headless::Headless;
+use crate::state::Dialog;
+use crate::{LightcraftApp, Services};
+
+const T: Duration = Duration::from_secs(20);
+const SETTLE: Duration = Duration::from_secs(120);
+
+/// A scratch folder that goes away with the test, however it ends.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new(tag: &str) -> Scratch {
+        let dir = std::env::temp_dir().join(format!("lc-ui-sync-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Scratch(dir)
+    }
+    /// The path as the folder tree writes it (forward slashes; widget ids carry it).
+    fn path(&self, rel: &str) -> String {
+        self.0.join(rel).to_string_lossy().replace('\\', "/")
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn write_png(path: &str, seed: u8) {
+    let (w, h) = (24usize, 16usize);
+    let data: Vec<[u8; 4]> = (0..w * h).map(|i| [(i % w * 9) as u8, (i / w * 13) as u8, seed, 255]).collect();
+    let img = lightcraft_raster::Rgba8 { width: w, height: h, data };
+    let bytes = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+    std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+    std::fs::write(path, bytes).unwrap();
+}
+
+/// The app with `trip/a.png` and `trip/b.png` imported, then `c.png` added and `b.png` deleted
+/// on disk behind its back.
+fn changed_folder(dir: &Scratch) -> Headless {
+    write_png(&dir.path("trip/a.png"), 1);
+    write_png(&dir.path("trip/b.png"), 2);
+    let mut session = lightcraft_engine::Session::new().with_fs();
+    session.execute("library.import", &json!({"paths": [dir.path("trip")]})).unwrap();
+    write_png(&dir.path("trip/c.png"), 3);
+    std::fs::remove_file(dir.path("trip/b.png")).unwrap();
+    let app = LightcraftApp::new(session, Services { png: None, ..Default::default() });
+    let mut h = Headless::new(app, [1400.0, 900.0], 1.0);
+    let r = h.request("ui.set", json!({"view": "photoGrid", "leftPanel": true}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    h
+}
+
+fn in_library(h: &Headless) -> Vec<String> {
+    let mut v: Vec<String> = h.app.session.catalog.photos().filter(|p| p.in_library()).map(|p| p.file_name.clone()).collect();
+    v.sort();
+    v
+}
+
+/// Open the dialog from the folder's menu and wait for the scan.
+fn open_and_scan(h: &mut Headless, folder: &str) {
+    // the rows above it hold one folder each and open by themselves
+    let row = format!("source:libfolder:{folder}");
+    assert!(h.step_until(T, |h| h.app.widgets.iter().any(|(w, _)| *w == row)), "no row {row}");
+    let rect = h.app.widgets.iter().find(|(w, _)| *w == row).map(|(_, r)| *r).unwrap_or_else(|| panic!("no row {row}"));
+    let c = rect.center();
+    let r = h.request("ui.click", json!({"x": c.x, "y": c.y, "button": "right"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    h.step();
+    let r = h.request("ui.clickWidget", json!({"id": "folderSynchronize"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    assert!(matches!(h.app.ui.dialog, Some(Dialog::SynchronizeFolder { .. })), "the dialog opens at once");
+    let scanned = h.step_until(T, |h| matches!(&h.app.ui.dialog, Some(Dialog::SynchronizeFolder { counts: Some(_), .. })));
+    assert!(scanned, "the scan finished: {:?}", h.app.ui.dialog);
+}
+
+fn counts(h: &Headless) -> crate::state::SyncCounts {
+    match &h.app.ui.dialog {
+        Some(Dialog::SynchronizeFolder { counts: Some(c), .. }) => c.clone(),
+        d => panic!("no scanned dialog: {d:?}"),
+    }
+}
+
+#[test]
+fn the_dialog_says_what_changed_in_the_folder() {
+    let dir = Scratch::new("counts");
+    let mut h = changed_folder(&dir);
+    open_and_scan(&mut h, &dir.path("trip"));
+    let c = counts(&h);
+    assert_eq!((c.new, c.missing, c.metadata), (1, 1, 0), "{c:?}");
+    assert_eq!(in_library(&h), vec!["a.png", "b.png"], "scanning changed nothing");
+}
+
+#[test]
+fn synchronizing_with_the_defaults_imports_the_new_photos_only() {
+    let dir = Scratch::new("defaults");
+    let mut h = changed_folder(&dir);
+    open_and_scan(&mut h, &dir.path("trip"));
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(in_library(&h), vec!["a.png", "b.png", "c.png"], "c came in; the missing b stays");
+    assert!(h.app.ui.dialog.is_none());
+}
+
+#[test]
+fn ticking_remove_missing_also_removes_the_missing_photos() {
+    let dir = Scratch::new("remove");
+    let mut h = changed_folder(&dir);
+    open_and_scan(&mut h, &dir.path("trip"));
+    let r = h.request("ui.clickWidget", json!({"id": "syncRemoveMissing"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(in_library(&h), vec!["a.png", "c.png"], "b went to Recently Deleted");
+    let r = h.request("engine.execute", json!({"command": "edit.undo", "params": {}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(in_library(&h), vec!["a.png", "b.png"], "one undo step");
+}
+
+#[test]
+fn cancel_leaves_the_library_as_it_was() {
+    let dir = Scratch::new("cancel");
+    let mut h = changed_folder(&dir);
+    open_and_scan(&mut h, &dir.path("trip"));
+    h.request("ui.key", json!({"key": "escape"}), T);
+    h.step();
+    h.step();
+    assert!(h.app.ui.dialog.is_none());
+    assert_eq!(in_library(&h), vec!["a.png", "b.png"]);
+    assert!(h.app.session.folder_changes.is_none(), "the scan is let go");
+}

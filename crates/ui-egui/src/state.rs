@@ -665,8 +665,31 @@ pub enum Dialog {
         /// A whole disk or share (`library.removeFolder` takes it only on request).
         disk: bool,
     },
+    /// Synchronize Folder: what changed in a library folder on disk, and what to do about it
+    /// (`folder.synchronize`; the scan runs in [`crate::sync`]).
+    SynchronizeFolder {
+        path: String,
+        /// What the dialog calls it (a folder's last two names).
+        name: String,
+        /// What the scan found (`None` while it runs).
+        counts: Option<SyncCounts>,
+        import_new: bool,
+        remove_missing: bool,
+        read_metadata: bool,
+    },
     About,
     Shortcuts,
+}
+
+/// How many changes a Synchronize Folder scan found, by kind.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncCounts {
+    pub new: usize,
+    pub duplicates: usize,
+    pub unreadable: usize,
+    pub missing: usize,
+    pub metadata: usize,
 }
 
 impl Default for UiState {

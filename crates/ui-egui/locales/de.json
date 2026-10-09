@@ -1889,5 +1889,19 @@
   "Pending photo action cancelled": "Pending photo action cancelled",
   "Pending photo action cancelled because its library or photo changed": "Pending photo action cancelled because its library or photo changed",
   "ONNX model": "ONNX model",
-  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions"
+  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
+  "Synchronize Folder…": "Ordner synchronisieren…",
+  "Synchronize Folder": "Ordner synchronisieren",
+  "Synchronize": "Synchronisieren",
+  "Scanning…": "Wird durchsucht…",
+  "Find photos added to or missing from this folder on disk, and XMP sidecars changed by other apps": "Fotos finden, die in diesem Ordner auf dem Datenträger hinzugekommen sind oder fehlen, und von anderen Apps geänderte XMP-Filialdateien",
+  "Bring the library up to date with this folder and the folders inside it:": "Die Bibliothek mit diesem Ordner und den Ordnern darin abgleichen:",
+  "Import new photos": "Neue Fotos importieren",
+  "Remove missing photos from the library": "Fehlende Fotos aus der Bibliothek entfernen",
+  "Read metadata updates from XMP sidecars": "Metadaten-Änderungen aus XMP-Filialdateien lesen",
+  "The library is up to date with this folder.": "Die Bibliothek ist mit diesem Ordner auf dem neuesten Stand.",
+  "Missing photos move to Recently Deleted and can be restored; no file on disk is touched.": "Fehlende Fotos werden nach „Zuletzt gelöscht“ verschoben und können wiederhergestellt werden; keine Datei auf dem Datenträger wird verändert.",
+  "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says.": "Beim Lesen einer Filialdatei werden Bewertung, Markierungen, Metadaten und Bearbeitungen des Fotos durch ihren Inhalt ersetzt.",
+  "Skipped: files already in the library elsewhere": "Übersprungen: Dateien, die bereits an anderer Stelle in der Bibliothek sind",
+  "Skipped: files that can't be read": "Übersprungen: Dateien, die nicht gelesen werden können"
 }

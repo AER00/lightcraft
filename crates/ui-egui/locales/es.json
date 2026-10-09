@@ -1734,5 +1734,19 @@
   "Pending photo action cancelled": "Pending photo action cancelled",
   "Pending photo action cancelled because its library or photo changed": "Pending photo action cancelled because its library or photo changed",
   "ONNX model": "ONNX model",
-  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions"
+  "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
+  "Synchronize Folder…": "Sincronizar carpeta…",
+  "Synchronize Folder": "Sincronizar carpeta",
+  "Synchronize": "Sincronizar",
+  "Scanning…": "Explorando…",
+  "Find photos added to or missing from this folder on disk, and XMP sidecars changed by other apps": "Buscar fotos añadidas a esta carpeta del disco o que faltan en ella, y archivos XMP complementarios cambiados por otras apps",
+  "Bring the library up to date with this folder and the folders inside it:": "Poner la biblioteca al día con esta carpeta y las carpetas que contiene:",
+  "Import new photos": "Importar fotos nuevas",
+  "Remove missing photos from the library": "Quitar de la biblioteca las fotos que faltan",
+  "Read metadata updates from XMP sidecars": "Leer cambios de metadatos de los archivos XMP complementarios",
+  "The library is up to date with this folder.": "La biblioteca está al día con esta carpeta.",
+  "Missing photos move to Recently Deleted and can be restored; no file on disk is touched.": "Las fotos que faltan pasan a Eliminadas recientemente y se pueden restaurar; no se toca ningún archivo del disco.",
+  "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says.": "Leer un archivo complementario sustituye la valoración, las etiquetas, los metadatos y las ediciones de la foto por lo que contiene.",
+  "Skipped: files already in the library elsewhere": "Omitidos: archivos que ya están en la biblioteca en otro lugar",
+  "Skipped: files that can't be read": "Omitidos: archivos que no se pueden leer"
 }

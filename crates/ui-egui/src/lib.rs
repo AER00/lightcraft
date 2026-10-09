@@ -27,6 +27,7 @@ pub mod render;
 pub mod shortcuts;
 pub mod softpaint;
 pub mod state;
+pub mod sync;
 pub mod tasks;
 pub mod theme;
 pub mod titlebar;
@@ -62,6 +63,8 @@ mod tests_quit_unsaved;
 mod tests_scroll;
 #[cfg(test)]
 mod tests_switch_library;
+#[cfg(test)]
+mod tests_sync;
 #[cfg(test)]
 mod tests_titlebar;
 #[cfg(test)]
@@ -240,6 +243,8 @@ pub struct LightcraftApp {
     pub import: Option<import::ImportTask>,
     /// A folder scan in progress (feeds the import review).
     pub scan: Option<import::ScanTask>,
+    /// A Synchronize Folder scan in progress (feeds its dialog).
+    pub sync: Option<sync::SyncTask>,
     /// A Lightroom catalog inspect/import in progress.
     pub lightroom: Option<lightroom_import::LightroomTask>,
     /// Last terminal Lightroom result, exposed by the command's status/wait response.
@@ -311,6 +316,7 @@ impl LightcraftApp {
             merge: merge::MergeState::default(),
             import: None,
             scan: None,
+            sync: None,
             lightroom: None,
             lightroom_last: None,
             export: None,
@@ -734,6 +740,7 @@ impl LightcraftApp {
         self.renderer.poll(ctx, &mut self.session);
         merge::poll(self, ctx);
         import::poll_scan(self, ctx);
+        sync::poll(self, ctx);
         import::tick(self, ctx);
         lightroom_import::tick(self, ctx);
         tasks::poll(self, ctx);
