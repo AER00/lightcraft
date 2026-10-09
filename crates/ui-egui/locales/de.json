@@ -1904,5 +1904,6 @@
   "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says.": "Beim Lesen einer Filialdatei werden Bewertung, Markierungen, Metadaten und Bearbeitungen des Fotos durch ihren Inhalt ersetzt.",
   "Skipped: files already in the library elsewhere": "Übersprungen: Dateien, die bereits an anderer Stelle in der Bibliothek sind",
   "Skipped: files that can't be read": "Übersprungen: Dateien, die nicht gelesen werden können",
-  "This folder isn't there: it was moved or renamed, or its disk isn't connected.": "Dieser Ordner ist nicht vorhanden: Er wurde verschoben oder umbenannt, oder sein Datenträger ist nicht verbunden."
+  "This folder isn't there: it was moved or renamed, or its disk isn't connected.": "Dieser Ordner ist nicht vorhanden: Er wurde verschoben oder umbenannt, oder sein Datenträger ist nicht verbunden.",
+  "Relink photos whose file was renamed or moved": "Fotos neu verknüpfen, deren Datei umbenannt oder verschoben wurde"
 }

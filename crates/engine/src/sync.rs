@@ -65,6 +65,8 @@ pub struct FolderChanges {
     pub missing: Vec<FolderPhoto>,
     /// Photos whose sidecar has news.
     pub metadata: Vec<FolderPhoto>,
+    /// Photos whose file was renamed or moved within the folder (found by its content).
+    pub moved: Vec<FolderMoved>,
     /// The folder itself is not there (moved or renamed whole, or on a disk that isn't
     /// connected): nothing else is reported, rather than every photo as missing.
     pub offline: bool,
@@ -83,18 +85,28 @@ pub struct FolderPhoto {
     pub path: String,
 }
 
+/// A photo whose file is now somewhere else in the folder.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct FolderMoved {
+    pub id: u64,
+    pub from: String,
+    pub to: String,
+}
+
 /// What [`synchronize`] does with the changes found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SyncChoice {
     pub import_new: bool,
+    pub relink_moved: bool,
     pub remove_missing: bool,
     pub read_metadata: bool,
 }
 
 impl Default for SyncChoice {
-    /// Lightroom Classic's defaults: import the new files, leave the rest to be looked at.
+    /// Lightroom Classic's defaults: import the new files, leave the rest to be looked at; and
+    /// photos whose file moved follow it (nothing is lost, and undo puts them back).
     fn default() -> Self {
-        SyncChoice { import_new: true, remove_missing: false, read_metadata: false }
+        SyncChoice { import_new: true, relink_moved: true, remove_missing: false, read_metadata: false }
     }
 }
 
@@ -102,6 +114,7 @@ impl Default for SyncChoice {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct SyncReport {
     pub imported: usize,
+    pub relinked: usize,
     pub removed: usize,
     pub read: usize,
     /// (path or photo, why) for what couldn't be done.
@@ -160,15 +173,7 @@ pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
         // (a check that panicked counts as nothing found; the scan still reports the rest)
         (out, checks.join().unwrap_or_default())
     });
-    let mut changes = FolderChanges { path: folder, probes: out.probes, revision, ..Default::default() };
-    for c in out.candidates {
-        match (&c.duplicate, &c.error) {
-            (Some(d), _) if d == "path" => {}
-            (Some(_), _) => changes.duplicates += 1,
-            (None, Some(_)) => changes.unreadable.push(c),
-            (None, None) => changes.new.push(c),
-        }
-    }
+    let mut changes = FolderChanges { path: folder, revision, ..Default::default() };
     for ((p, _), check) in photos.iter().zip(checks) {
         let Some(file) = crate::cmd::missing::checked_path(p) else { continue };
         let found = FolderPhoto { id: p.id.0, path: file.to_string() };
@@ -178,6 +183,42 @@ pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
             Check::Nothing => {}
         }
     }
+    // a missing photo's content found under another name in the folder: the file was renamed or
+    // moved, and the photo (with its edits) follows it rather than going missing
+    let mut gone_by_hash: HashMap<&str, &str> = HashMap::new();
+    for m in &changes.missing {
+        if let Some(h) = labels.photo(PhotoId(m.id)).and_then(|p| p.content_hash.as_deref()) {
+            gone_by_hash.entry(h).or_insert(m.path.as_str());
+        }
+    }
+    let mut moved_from: HashMap<String, String> = HashMap::new();
+    for c in out.candidates {
+        let hash = out.probes.get(&c.path).and_then(|i| i.content_hash.as_deref());
+        if c.error.is_none()
+            && c.duplicate.as_deref() != Some("path")
+            && let Some(from) = hash.and_then(|h| gone_by_hash.remove(h))
+        {
+            moved_from.insert(from.to_string(), c.path.clone());
+            continue;
+        }
+        let browsed = c.existing.and_then(|id| labels.photo(PhotoId(id))).is_some_and(|p| p.local && !p.deleted);
+        match (c.duplicate.as_deref(), &c.error) {
+            // a file only looked at in Local is not in the library yet: it is new
+            (Some("path"), _) if browsed => changes.new.push(c),
+            (Some("path"), _) => {}
+            (Some(_), _) => changes.duplicates += 1,
+            (None, Some(_)) => changes.unreadable.push(c),
+            (None, None) => changes.new.push(c),
+        }
+    }
+    let missing = std::mem::take(&mut changes.missing);
+    for m in missing {
+        match moved_from.get(&m.path) {
+            Some(to) => changes.moved.push(FolderMoved { id: m.id, from: m.path, to: to.clone() }),
+            None => changes.missing.push(m),
+        }
+    }
+    changes.probes = out.probes;
     changes
 }
 
@@ -289,13 +330,25 @@ pub fn synchronize(s: &mut Session, changes: FolderChanges, choice: SyncChoice) 
     }
     let mark = s.undo.len();
     let mut report = SyncReport::default();
-    let FolderChanges { new, missing, metadata, probes, .. } = changes;
+    let FolderChanges { new, missing, metadata, moved, probes, .. } = changes;
     if choice.import_new && !new.is_empty() {
         s.import_probes = probes;
         let files: Vec<String> = new.into_iter().map(|c| c.path).collect();
         let r = crate::import::import_with(s, &files, &ImportOptions { mode: ImportMode::Add, ..Default::default() })?;
         report.imported = r.imported.len();
         report.failed.extend(r.failed);
+    }
+    if choice.relink_moved {
+        // still where the scan found it, and still gone from where the photo says
+        let ops: Vec<Op> = moved
+            .iter()
+            .filter(|m| Path::new(&m.to).is_file() && !Path::new(&m.from).exists() && s.catalog.photo(PhotoId(m.id)).is_some())
+            .map(|m| crate::cmd::missing::relink_op(PhotoId(m.id), &m.to))
+            .collect();
+        if !ops.is_empty() {
+            report.relinked = ops.len();
+            s.commit("Relink Moved Photos", Op::Batch { ops })?;
+        }
     }
     if choice.remove_missing {
         let gone: Vec<PhotoId> = missing.iter().filter(|m| !Path::new(&m.path).exists()).map(|m| PhotoId(m.id)).collect();

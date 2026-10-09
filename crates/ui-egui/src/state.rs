@@ -677,6 +677,8 @@ pub enum Dialog {
         /// What the scan found (`None` while it runs).
         counts: Option<SyncCounts>,
         import_new: bool,
+        #[serde(default)]
+        relink_moved: bool,
         remove_missing: bool,
         read_metadata: bool,
     },
@@ -696,6 +698,8 @@ pub struct SyncCounts {
     pub unreadable: usize,
     pub missing: usize,
     pub metadata: usize,
+    #[serde(default)]
+    pub moved: usize,
 }
 
 impl Default for UiState {

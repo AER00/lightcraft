@@ -1422,5 +1422,6 @@
   "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says.": "Чтение файла XMP заменяет рейтинг, метки, метаданные и правки фото его содержимым.",
   "Skipped: files already in the library elsewhere": "Пропущено: файлы, которые уже есть в медиатеке в другом месте",
   "Skipped: files that can't be read": "Пропущено: файлы, которые не удаётся прочитать",
-  "This folder isn't there: it was moved or renamed, or its disk isn't connected.": "Этой папки нет: её переместили или переименовали, или её диск не подключён."
+  "This folder isn't there: it was moved or renamed, or its disk isn't connected.": "Этой папки нет: её переместили или переименовали, или её диск не подключён.",
+  "Relink photos whose file was renamed or moved": "Заново связать фото, файл которых переименован или перемещён"
 }

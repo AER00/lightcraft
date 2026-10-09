@@ -307,3 +307,38 @@ fn a_whole_disk_or_a_folder_holding_disks_is_synchronized_only_on_request() {
     // a folder inside one disk needs nothing more
     assert!(s.execute("folder.scanChanges", &json!({"path": dir.path("trip")})).is_ok());
 }
+
+#[test]
+fn a_file_only_browsed_in_local_is_new_and_joins_the_library() {
+    let dir = Scratch::new("local");
+    let mut s = library(&dir);
+    write_png(&dir.path("trip/c.png"), 3);
+    // looking at the folder in Local catalogues c.png as a browse record, not a library photo
+    s.execute("library.browse", &json!({"path": dir.path("trip")})).unwrap();
+    assert!(s.catalog.photos().any(|p| p.file_name == "c.png" && p.local));
+    let r = scan(&mut s, &dir.path("trip"));
+    assert_eq!(paths(&r, "new"), vec![dir.path("trip/c.png")], "{r}");
+    let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip")})).unwrap();
+    assert_eq!(r["imported"], 1, "{r}");
+    assert!(s.catalog.photos().any(|p| p.file_name == "c.png" && p.in_library()));
+}
+
+#[test]
+fn a_file_renamed_or_moved_inside_the_folder_is_relinked_not_lost() {
+    let dir = Scratch::new("moved");
+    let mut s = library(&dir);
+    let a = s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
+    s.execute("photo.rate", &json!({"ids": [a.0], "rating": 4})).unwrap();
+    std::fs::rename(dir.path("trip/a.png"), dir.path("trip/day1/a-renamed.png")).unwrap();
+    let r = scan(&mut s, &dir.path("trip"));
+    assert!(paths(&r, "missing").is_empty() && paths(&r, "new").is_empty(), "{r}");
+    assert_eq!(r["moved"][0]["id"], a.0, "{r}");
+    assert_eq!(r["moved"][0]["to"], dir.path("trip/day1/a-renamed.png"), "{r}");
+    let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip"), "removeMissing": true})).unwrap();
+    assert_eq!((r["relinked"].as_u64(), r["removed"].as_u64(), r["imported"].as_u64()), (Some(1), Some(0), Some(0)), "{r}");
+    let p = s.catalog.photo(a).unwrap();
+    assert!(p.in_library() && p.rating == 4, "the same photo, edits and all");
+    assert_eq!(p.source, lightcraft_catalog::Source::File { path: dir.path("trip/day1/a-renamed.png") });
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.photo(a).unwrap().source, lightcraft_catalog::Source::File { path: dir.path("trip/a.png") });
+}

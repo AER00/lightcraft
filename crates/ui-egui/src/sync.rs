@@ -43,6 +43,7 @@ pub fn open(app: &mut LightcraftApp, path: &str, name: &str, disk: bool) -> Resu
         disk,
         counts: None,
         import_new: d.import_new,
+        relink_moved: d.relink_moved,
         remove_missing: d.remove_missing,
         read_metadata: d.read_metadata,
     });
@@ -94,6 +95,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         unreadable: changes.unreadable.len(),
         missing: changes.missing.len(),
         metadata: changes.metadata.len(),
+        moved: changes.moved.len(),
     };
     app.session.folder_changes = Some(changes);
     if let Some(Dialog::SynchronizeFolder { counts, .. }) = &mut app.ui.dialog {
@@ -108,7 +110,7 @@ fn progress(app: &LightcraftApp) -> Option<(usize, usize)> {
 
 /// The dialog's body.
 pub fn body(app: &LightcraftApp, ui: &mut egui::Ui, dlg: &mut Dialog) {
-    let Dialog::SynchronizeFolder { path, name, counts, import_new, remove_missing, read_metadata, .. } = dlg else { return };
+    let Dialog::SynchronizeFolder { path, name, counts, import_new, relink_moved, remove_missing, read_metadata, .. } = dlg else { return };
     let t = Tokens::get(ui.ctx());
     ui.set_min_width(420.0);
     ui.label(crate::i18n::tr("Bring the library up to date with this folder and the folders inside it:"));
@@ -135,11 +137,12 @@ pub fn body(app: &LightcraftApp, ui: &mut egui::Ui, dlg: &mut Dialog) {
     };
     let count = |text: &str, n: usize| format!("{} ({n})", crate::i18n::tr(text));
     choice(ui, import_new, c.new, count("Import new photos", c.new), "syncImportNew");
+    choice(ui, relink_moved, c.moved, count("Relink photos whose file was renamed or moved", c.moved), "syncRelinkMoved");
     choice(ui, remove_missing, c.missing, count("Remove missing photos from the library", c.missing), "syncRemoveMissing");
     choice(ui, read_metadata, c.metadata, count("Read metadata updates from XMP sidecars", c.metadata), "syncReadMetadata");
     ui.add_space(6.0);
     let dim = |ui: &mut egui::Ui, s: &str| ui.label(egui::RichText::new(s).color(t.text_dim));
-    if c.new + c.missing + c.metadata == 0 {
+    if c.new + c.moved + c.missing + c.metadata == 0 {
         dim(ui, crate::i18n::tr("The library is up to date with this folder."));
     }
     if c.missing > 0 {
@@ -158,12 +161,12 @@ pub fn body(app: &LightcraftApp, ui: &mut egui::Ui, dlg: &mut Dialog) {
 
 /// Synchronize: `folder.synchronize` with the dialog's choices.
 pub fn confirm(app: &mut LightcraftApp, dlg: &Dialog) -> Result<Value, String> {
-    let Dialog::SynchronizeFolder { path, disk, counts: Some(_), import_new, remove_missing, read_metadata, .. } = dlg else {
+    let Dialog::SynchronizeFolder { path, disk, counts: Some(_), import_new, relink_moved, remove_missing, read_metadata, .. } = dlg else {
         return Err("the folder is still being scanned".into());
     };
     let r = app.run(
         "folder.synchronize",
-        json!({"path": path, "disk": disk, "importNew": import_new, "removeMissing": remove_missing, "readMetadata": read_metadata}),
+        json!({"path": path, "disk": disk, "importNew": import_new, "relinkMoved": relink_moved, "removeMissing": remove_missing, "readMetadata": read_metadata}),
     );
     app.session.folder_changes = None;
     r
