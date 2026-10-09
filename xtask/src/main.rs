@@ -33,7 +33,7 @@ commands:
   web [--serve [port]] [--dev]
                   build the browser app (apps/lightcraft-web) into <target>/web/;
                   --serve serves it on http://127.0.0.1:<port> (default 8080)
-  ci              fmt --check, clippy -D warnings, test, parity refs, layers, assets, wasm (stops at first failure)
+  ci              fmt --check, clippy -D warnings, heif, test, parity refs, layers, assets, wasm (stops at first failure)
   corpus [--download]
                   show where test corpora live; --download fetches PngSuite and CC0 raw samples (raw.pixls.us) into corpus/
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
@@ -257,6 +257,18 @@ fn cmd_ci() -> Result<(), String> {
                 let mut c = cargo();
                 c.args(["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]);
                 run(c, "cargo clippy --workspace --all-targets -- -D warnings")
+            }),
+        ),
+        (
+            "heif",
+            Box::new(|| {
+                // the optional HEIC/HEIF decoder is off in the workspace build above
+                let mut c = cargo();
+                c.args(["clippy", "-p", "lightcraft-codecs", "--features", "heif", "--all-targets", "--", "-D", "warnings"]);
+                run(c, "cargo clippy -p lightcraft-codecs --features heif --all-targets -- -D warnings")?;
+                let mut c = cargo();
+                c.args(["test", "-p", "lightcraft-codecs", "-p", "lightcraft-heif", "--features", "lightcraft-codecs/heif"]);
+                run(c, "cargo test -p lightcraft-codecs -p lightcraft-heif --features lightcraft-codecs/heif")
             }),
         ),
         (

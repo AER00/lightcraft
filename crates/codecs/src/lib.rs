@@ -19,6 +19,7 @@
 mod convert;
 pub mod encode;
 pub mod exif;
+mod heif;
 pub mod icc;
 mod jpeg;
 pub mod jpeg_par;
@@ -227,8 +228,8 @@ pub fn decode_unguarded(bytes: &[u8], format: Format, opts: &DecodeOptions) -> R
         Format::Jxl => jxl::decode(bytes, &opts),
         #[cfg(not(feature = "jxl"))]
         Format::Jxl => Err(Error::Unsupported(format, "built without the `jxl` feature")),
+        Format::Heif => heif::decode(bytes, &opts),
         Format::Avif => Err(Error::Unsupported(format, "no pure-Rust, permissively licensed AV1 decoder yet")),
-        Format::Heif => Err(Error::Unsupported(format, "no pure-Rust, permissively licensed HEVC decoder yet")),
         Format::RawTiffLike | Format::RawOther => Err(Error::Unsupported(format, "camera raw: decode with lightcraft-raw")),
     }
 }
