@@ -195,9 +195,22 @@ impl<'a> TextField<'a> {
             memo.before = None;
         }
         // the start of an edit (not the focus coming back from the menu)
+        let pressing = ui.input(|i| i.pointer.any_down());
         if focused && memo.before.is_none() {
             memo.before = Some(self.text.clone());
             if self.select_on_focus {
+                // a press that took the focus may go on to drag a selection: wait for its release
+                if pressing {
+                    memo.select_on_release = true;
+                } else {
+                    select_all(ui.ctx(), id, self.text);
+                }
+            }
+        }
+        if memo.select_on_release && !pressing {
+            memo.select_on_release = false;
+            // a plain click selects everything; a drag keeps what it selected
+            if focused && !has_selection(ui.ctx(), id) {
                 select_all(ui.ctx(), id, self.text);
             }
         }
@@ -264,6 +277,9 @@ struct Memo {
     action: Option<Action>,
     /// The focus left for the menu: the edit ends if the menu closes without a choice.
     away: bool,
+    /// The field took the focus with select-on-focus under a press: select all on its release,
+    /// unless it dragged a selection.
+    select_on_release: bool,
     /// The frame (egui pass) the field was last drawn in.
     pass: u64,
 }
@@ -665,5 +681,24 @@ mod tests {
         rig.type_text("Kyoto");
         rig.key(Key::Escape, Modifiers::NONE);
         assert_eq!(rig.text, "Porto");
+    }
+
+    /// A field that selects on focus still lets a drag into it select part of the text, as a
+    /// browser's address bar does: only a plain click selects everything.
+    #[test]
+    fn a_drag_into_a_field_that_selects_on_focus_selects_what_it_covers() {
+        let mut rig = Rig::new("Lisbon Portugal Europe Atlantic Ocean");
+        rig.select_on_focus = true;
+        let r = rig.rect(FIELD).expect("the field");
+        let (from, to) = (r.center(), egui::pos2(r.right() + 40.0, r.center().y));
+        let press = |at, pressed| Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        rig.frame(vec![Event::PointerMoved(from), press(from, true)]);
+        for i in 1..=5 {
+            rig.frame(vec![Event::PointerMoved(from + (to - from) * (i as f32 / 5.0))]);
+        }
+        rig.frame(vec![press(to, false)]);
+        rig.settle();
+        rig.type_text("X");
+        assert!(rig.text.starts_with("Lisbon") && rig.text.ends_with('X') && rig.text != "X", "{:?}", rig.text);
     }
 }
