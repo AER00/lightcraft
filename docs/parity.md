@@ -241,7 +241,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-HDR-MODE | HDR editing | P2 | ⬜ | | |
 | LR-EDIT-LIGHT-EXPOSURE | Exposure | P0 | ✅ | `ctl:light.exposure` | |
 | LR-EDIT-LIGHT-CONTRAST | Contrast | P0 | ✅ | `ctl:light.contrast` | |
-| LR-EDIT-LIGHT-HIGHLIGHTS | Highlights | P0 | ✅ | `ctl:light.highlights` | |
+| LR-EDIT-LIGHT-HIGHLIGHTS | Highlights | P0 | ✅ | `ctl:light.highlights`, `crates/raw/src/highlight.rs` | sensor-clipped highlights stay neutral when Highlights (or Exposure, Whites) darkens them: fully clipped content is rebuilt to the neutral of the colour model applied after it, partly clipped content takes its colour from reliable unclipped content nearby (not from dark objects or lens fringes beside it) and white where there is none (#523) |
 | LR-EDIT-LIGHT-SHADOWS | Shadows | P0 | ✅ | `ctl:light.shadows` | |
 | LR-EDIT-LIGHT-WHITES | Whites | P0 | ✅ | `ctl:light.whites` | |
 | LR-EDIT-LIGHT-BLACKS | Blacks | P0 | ✅ | `ctl:light.blacks` | |

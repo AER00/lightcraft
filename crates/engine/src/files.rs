@@ -200,6 +200,86 @@ fn preview_reason(bytes: &[u8], e: lightcraft_raw::RawError) -> Result<String, S
 /// Sensor clip level (normalised) for highlight reconstruction.
 const HIGHLIGHT_CLIP: f32 = 0.99;
 
+/// How a raw's camera RGB becomes the linear Rec.2020 the pipeline takes.
+pub(crate) struct CameraColourModel<'a> {
+    /// White-balance multipliers (as shot).
+    pub wb: [f32; 3],
+    /// White-balanced camera RGB → linear Rec.2020: the camera matrix, or a look fitted to the camera's JPEG on top.
+    pub matrix: lightcraft_color::Mat3,
+    /// Baseline exposure, as a gain.
+    pub gain: f32,
+    /// A DNG profile's hue/saturation map and look table.
+    pub tables: Option<&'a lightcraft_raw::profile::ProfileTables>,
+    /// A fitted camera look's hue/saturation table.
+    pub hue_sat: Option<&'a crate::camera_preview::HueSat<'a>>,
+}
+
+impl CameraColourModel<'_> {
+    /// Rebuild sensor-clipped channels; fully clipped highlights become [`clipped_white`] of the matrix, so they
+    /// come out of [`Self::apply`] neutral.
+    pub fn rebuild_highlights(&self, img: &mut Rgb32f) {
+        lightcraft_raw::highlight::reconstruct_with(img, self.wb, HIGHLIGHT_CLIP, clipped_white(&self.matrix));
+    }
+
+    /// White balance, matrix, tables and baseline exposure, in place.
+    pub fn apply(&self, img: &mut Rgb32f) {
+        let (wb, m, gain) = (self.wb, self.matrix.to_f32(), self.gain);
+        img.map_in_place(|p| {
+            let c = [p[0] * wb[0], p[1] * wb[1], p[2] * wb[2]];
+            let rgb = [
+                m[0][0] * c[0] + m[0][1] * c[1] + m[0][2] * c[2],
+                m[1][0] * c[0] + m[1][1] * c[1] + m[1][2] * c[2],
+                m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2],
+            ];
+            let rgb = match self.tables {
+                Some(tables) => tables.apply(rgb, gain),
+                None => rgb.map(|v| v * gain),
+            };
+            self.hue_sat.map_or(rgb, |h| h.apply(rgb)).map(|v| v.max(0.0))
+        });
+    }
+}
+
+/// The white-balanced camera RGB that `model` (white-balanced camera RGB → linear Rec.2020) renders
+/// neutral, as bright as it renders `[1, 1, 1]`: what fully clipped highlights are rebuilt to, so they come out
+/// neutral whatever the colour model does to the camera's own neutral (a look fitted to the camera's JPEG or a
+/// camera profile often tints it by a few per cent, which any darkening of the highlights would show).
+/// `[1, 1, 1]` (the camera's own neutral, as before this existed) when the model can't be trusted with it: not
+/// invertible or nearly so, an answer far from the camera's neutral (a sane colour model moves white by a few per
+/// cent), or one that isn't neutral through the `f32` matrix the decode applies.
+pub(crate) fn clipped_white(model: &lightcraft_color::Mat3) -> [f32; 3] {
+    const CAMERA: [f32; 3] = [1.0; 3];
+    /// Largest condition number (max row sum norm) of a model trusted for this.
+    const CONDITION: f64 = 1e3;
+    /// Largest factor between the answer and the camera's neutral, per channel.
+    const SPREAD: f64 = 4.0;
+    let norm = |m: &lightcraft_color::Mat3| m.0.iter().map(|row| row.iter().map(|v| v.abs()).sum::<f64>()).fold(0.0, f64::max);
+    let Some(inverse) = model.inverse() else { return CAMERA };
+    let condition = norm(model) * norm(&inverse);
+    if !condition.is_finite() || condition > CONDITION {
+        return CAMERA;
+    }
+    let luma = |v: [f64; 3]| {
+        let c = model.apply(v);
+        (0..3).map(|i| c[i] * f64::from(lightcraft_color::LUMA_2020[i])).sum::<f64>()
+    };
+    let n = inverse.apply([1.0; 3]);
+    let (target, own) = (luma([1.0; 3]), luma(n));
+    if !(target > 0.0 && own > 0.0 && target.is_finite() && own.is_finite()) {
+        return CAMERA;
+    }
+    let white = n.map(|v| v * target / own);
+    if !white.iter().all(|v| v.is_finite() && (1.0 / SPREAD..=SPREAD).contains(v)) {
+        return CAMERA;
+    }
+    let white = white.map(|v| v as f32);
+    // neutral through the matrix as the decode applies it
+    let m = model.to_f32();
+    let out: [f32; 3] = std::array::from_fn(|i| m[i][0] * white[0] + m[i][1] * white[1] + m[i][2] * white[2]);
+    let (lo, hi) = (out[0].min(out[1]).min(out[2]), out[0].max(out[1]).max(out[2]));
+    if lo > 0.0 && hi.is_finite() && hi - lo <= 1e-3 * hi { white } else { CAMERA }
+}
+
 /// The largest block size to bin a raw's mosaic by for a source of at most `max_edge` pixels:
 /// the binned image must keep at least 90 % of `max_edge` (a 16 MP sensor still bins 2× for the
 /// 2560 px preview). X-Trans can only bin 3× (its 6×6 pattern), and its full demosaic is ~5× the
@@ -302,32 +382,24 @@ fn load_bytes_now(
         let twin = denoise.and_then(|spec| denoised_camera_rgb(&raw, spec, factor)).filter(|d| d.width == img.width && d.height == img.height);
         // the samples aren't needed any more (the colour model below reads only the tags)
         raw.data = lightcraft_raw::RawData::U16(Vec::new());
-        let wb = t.wb;
-        let m = camera_look.as_ref().map(|p| p.matrix.mul(&t.matrix)).unwrap_or(t.matrix).to_f32();
         let hue_sat = camera_look.as_ref().and_then(|p| p.hue_sat.as_ref()).and_then(crate::camera_preview::HueSat::new);
-        let gain = 2f32.powf(t.baseline_exposure as f32);
         // A DNG's own profile look (hue/saturation map, look table), DNG spec chapter 6.
         let tables = lightcraft_raw::profile::ProfileTables::new(&raw.color.profile, lightcraft_raw::color::illuminant_weight(&raw.color, xy));
+        let colour = CameraColourModel {
+            wb: t.wb,
+            matrix: camera_look.as_ref().map(|p| p.matrix.mul(&t.matrix)).unwrap_or(t.matrix),
+            gain: 2f32.powf(t.baseline_exposure as f32),
+            tables: tables.as_ref(),
+            hue_sat: hue_sat.as_ref(),
+        };
         // camera RGB → what the pipeline takes: clipped highlights rebuilt, white balance and the colour model applied,
         // fitted to `max_edge` and upright (the same for the plain and the denoised picture)
         let finish = |mut img: Rgb32f| {
             let mut stages = vec![("develop", t0.elapsed())];
             stages.push(("transform", t0.elapsed()));
-            lightcraft_raw::highlight::reconstruct(&mut img, wb, HIGHLIGHT_CLIP);
+            colour.rebuild_highlights(&mut img);
             stages.push(("highlights", t0.elapsed()));
-            img.map_in_place(|p| {
-                let c = [p[0] * wb[0], p[1] * wb[1], p[2] * wb[2]];
-                let rgb = [
-                    m[0][0] * c[0] + m[0][1] * c[1] + m[0][2] * c[2],
-                    m[1][0] * c[0] + m[1][1] * c[1] + m[1][2] * c[2],
-                    m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2],
-                ];
-                let rgb = match &tables {
-                    Some(tables) => tables.apply(rgb, gain),
-                    None => rgb.map(|v| v * gain),
-                };
-                hue_sat.as_ref().map_or(rgb, |h| h.apply(rgb)).map(|v| v.max(0.0))
-            });
+            colour.apply(&mut img);
             stages.push(("colour", t0.elapsed()));
             let img = fit(&img, max_edge, max_edge, Filter::Box);
             stages.push(("fit", t0.elapsed()));
@@ -866,6 +938,189 @@ mod tests {
         };
         let (dim, _) = load_bytes(&lightcraft_raw::write_dng(&raw, &Default::default()).unwrap(), 64).unwrap();
         assert!((mean(&dim) / mean(&before) - 0.5).abs() < 0.02, "{} vs {}", mean(&dim), mean(&before));
+    }
+
+    /// A look fitted to a camera's JPEG, as `camera_preview` makes them: its rows don't sum to one, so the camera's
+    /// own white-balanced neutral comes out yellow (blue 12 % low).
+    fn yellowing_look() -> lightcraft_color::Mat3 {
+        lightcraft_color::Mat3([[0.42, 0.548, 0.04], [0.246, 0.728, 0.033], [-0.247, 0.679, 0.447]])
+    }
+
+    #[test]
+    fn clipped_white_renders_neutral_through_the_colour_model() {
+        use lightcraft_color::{LUMA_2020, Mat3};
+        let look = yellowing_look();
+        let white = clipped_white(&look);
+        let out = look.apply(white.map(f64::from));
+        assert!(out.iter().all(|v| (v - out[1]).abs() < 1e-5), "{white:?} renders {out:?}");
+        let luma = |c: [f64; 3]| (0..3).map(|i| c[i] * f64::from(LUMA_2020[i])).sum::<f64>();
+        assert!((luma(out) - luma(look.apply([1.0; 3]))).abs() < 1e-5, "as bright as the camera's neutral");
+        assert_eq!(clipped_white(&Mat3::IDENTITY), [1.0; 3]);
+        // a model that can't be inverted, or only just, keeps the camera's neutral
+        assert_eq!(clipped_white(&Mat3([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])), [1.0; 3]);
+        assert_eq!(clipped_white(&Mat3([[1.0, 1.0, 0.0], [1.0, 1.0 + 1e-8, 0.0], [0.0, 0.0, 1.0]])), [1.0; 3]);
+        // so does one whose white would overflow the rebuilt highlights (2.5e38 in red here)
+        assert_eq!(clipped_white(&Mat3([[3e-39, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])), [1.0; 3]);
+        // or move the camera's neutral implausibly far
+        assert_eq!(clipped_white(&Mat3([[0.1, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])), [1.0; 3]);
+        // what it answers renders neutral through the f32 matrix, and fully clipped highlights stay finite
+        for model in [look, Mat3([[1.9, -0.7, -0.2], [-0.3, 1.4, -0.1], [0.0, -0.4, 1.4]])] {
+            let w = clipped_white(&model);
+            let m = model.to_f32();
+            let out: [f32; 3] = std::array::from_fn(|i| m[i][0] * w[0] + m[i][1] * w[1] + m[i][2] * w[2]);
+            assert!(out.iter().all(|v| (v - out[1]).abs() <= 1e-3 * out[1]), "{w:?} renders {out:?}");
+            let colour = CameraColourModel { wb: [2.5, 1.0, 1.6], matrix: model, gain: 1.0, tables: None, hue_sat: None };
+            let mut img = Rgb32f::filled(4, 4, [1.0; 3]);
+            colour.rebuild_highlights(&mut img);
+            colour.apply(&mut img);
+            assert!(img.data.iter().flatten().all(|v| v.is_finite()), "{:?}", img.get(0, 0));
+        }
+    }
+
+    /// Issue #523: fully clipped highlights are neutral in the white-balanced camera RGB, but a colour model that
+    /// doesn't map that neutral to neutral tinted them. The tone map's roll-off to white hid the tint at Neutral;
+    /// Highlights -100, or the issue's edit (Exposure -0.88, Highlights -75…), showed it.
+    #[test]
+    fn clipped_highlights_stay_neutral_when_darkened() {
+        use lightcraft_pipeline::{RenderRequest, render};
+        let wb = [2.4f32, 1.0, 1.6];
+        let colour = CameraColourModel { wb, matrix: yellowing_look(), gain: 1.0, tables: None, hue_sat: None };
+        // a grey wall (camera neutral) with a fully clipped light and a light clipped in green only
+        let mut img = Rgb32f::from_fn(96, 64, |x, y| {
+            let d = |cx: f32| ((x as f32 - cx).powi(2) + (y as f32 - 32.0).powi(2)).sqrt();
+            if d(28.0) < 14.0 {
+                [1.0; 3]
+            } else if d(70.0) < 12.0 {
+                [0.6 / wb[0], 1.0, 0.7 / wb[2]]
+            } else {
+                [0.3 / wb[0], 0.3, 0.3 / wb[2]]
+            }
+        });
+        colour.rebuild_highlights(&mut img);
+        colour.apply(&mut img);
+        let info = SourceInfo { raw: true, ..Default::default() };
+        let mut issue = lightcraft_develop::DevelopSettings::default();
+        let l = &mut issue.light;
+        (l.exposure, l.contrast, l.highlights, l.shadows, l.whites, l.blacks) = (-0.88, 5.0, -75.0, 52.0, 6.0, -37.0);
+        let mut h100 = lightcraft_develop::DevelopSettings::default();
+        h100.light.highlights = -100.0;
+        for (name, s) in [("Highlights -100", h100), ("#523's edit", issue)] {
+            let out = render(&img, &info, &s, &RenderRequest::fit(96, 64)).image;
+            let p = out.get(28, 32);
+            assert!(p[1] < 250, "{name}: the clipped light is darkened ({p:?})");
+            let spread = p[0].max(p[1]).max(p[2]) - p[0].min(p[1]).min(p[2]);
+            assert!(spread <= 1, "{name}: clipped light {p:?} is not neutral");
+        }
+    }
+
+    /// A smooth pink gradient (`[0.9k, k, 0.8k]` in the sensor, k from 0.8 to 1.35, white balance `[2.5, 1, 1.6]`)
+    /// through the point where green clips, 1600 px long, in `rows` of a 1600 × `height` picture that is otherwise
+    /// near black, rebuilt and rendered at Exposure -2. Returns the rendered colour of the middle row's last
+    /// unclipped pixel and the next two, and the largest step between neighbouring pixels along that row.
+    fn darkened_ramp(rows: std::ops::Range<usize>, height: usize) -> ([[u8; 4]; 3], u8) {
+        use lightcraft_pipeline::{RenderRequest, render};
+        let wb = [2.5f32, 1.0, 1.6];
+        let colour = CameraColourModel { wb, matrix: lightcraft_color::Mat3::IDENTITY, gain: 1.0, tables: None, hue_sat: None };
+        let w = 1600usize;
+        let k = |x: usize| 0.8 + 0.55 * x as f32 / (w - 1) as f32;
+        let sensor =
+            Rgb32f::from_fn(w, height, |x, y| if rows.contains(&y) { [0.9 * k(x), k(x), 0.8 * k(x)].map(|v| v.min(1.0)) } else { [0.01; 3] });
+        let y = (rows.start + rows.end) / 2;
+        let first = (0..w).find(|&x| sensor.get(x, y)[1] >= HIGHLIGHT_CLIP).unwrap();
+        let mut img = sensor.clone();
+        colour.rebuild_highlights(&mut img);
+        colour.apply(&mut img);
+        let mut s = lightcraft_develop::DevelopSettings::default();
+        s.light.exposure = -2.0;
+        let out = render(&img, &SourceInfo { raw: true, ..Default::default() }, &s, &RenderRequest::fit(w, height)).image;
+        let step = |x: usize| {
+            let (a, b) = (out.get(x - 1, y), out.get(x, y));
+            (0..3).map(|c| a[c].abs_diff(b[c])).max().unwrap_or(0)
+        };
+        ([out.get(first - 1, y), out.get(first, y), out.get(first + 1, y)], (1..w).map(step).max().unwrap_or(0))
+    }
+
+    /// The darkened pink gradient carries on across the point where green clips: before the fix the fade towards
+    /// the clipped neutral, driven by how close the other channels were to their clip, made a step of 37 levels
+    /// there.
+    #[test]
+    fn rendered_colour_is_continuous_where_the_first_channel_clips() {
+        let ([a, b, c], worst) = darkened_ramp(0..16, 16);
+        let step = |p: [u8; 4], q: [u8; 4]| (0..3).map(|i| p[i].abs_diff(q[i])).max().unwrap_or(0);
+        assert!(step(a, b) <= 1 && step(b, c) <= 1, "at the first clip: {a:?} {b:?} {c:?}");
+        assert!(worst <= 3, "largest step between neighbouring pixels: {worst} levels");
+    }
+
+    /// The same gradient as a thin bright line on near black: every pixel of it is next to a strong edge, so there
+    /// is no reliable colour around it. It still carries on across the first clip, however thin the line and however
+    /// much dark background there is (a 4-row line on 32 rows used to jump from [225, 126, 153] to [198, 177, 163];
+    /// on 512 rows, from [225, 126, 153] to [218, 145, 151]).
+    #[test]
+    fn rendered_thin_line_is_continuous_where_the_first_channel_clips() {
+        let step = |p: [u8; 4], q: [u8; 4]| (0..3).map(|i| p[i].abs_diff(q[i])).max().unwrap_or(0);
+        for height in [32usize, 128, 512, 1024] {
+            for width in [1usize, 2, 4, 16] {
+                let top = (height - width) / 2;
+                let ([a, b, c], worst) = darkened_ramp(top..top + width, height);
+                let case = format!("{width} rows of {height}");
+                assert!(step(a, b) <= 1 && step(b, c) <= 1, "{case}, at the first clip: {a:?} {b:?} {c:?}");
+                assert!(worst <= 3, "{case}: largest step between neighbouring pixels {worst} levels");
+            }
+        }
+    }
+
+    /// Issue #523 on a public ILCE-7RM4 raw (raw.pixls.us, CC0; skipped without the corpus): a dusk sky clipped in
+    /// green behind a poplar. Its rebuilt colour used to come from the tree's foliage and lens fringes, a green halo
+    /// on one side of the tree and a magenta one on the other (Highlights -100 or the issue's edit show them).
+    #[test]
+    fn corpus_clipped_sky_beside_a_tree_has_no_coloured_halo() {
+        let dir = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+            .join("raw");
+        let Ok(bytes) = std::fs::read(dir.join("arw-sony-a7rm4-14bit-compressed.arw")) else {
+            eprintln!("skip: {} absent", dir.display());
+            return;
+        };
+        let (img, _) = load_bytes(&bytes, 1600).unwrap();
+        let (w, h) = (img.width, img.height);
+        let lum = |p: [f32; 3]| lightcraft_color::luminance_2020(p);
+        let chroma = |p: [f32; 3]| {
+            let s = (p[0] + p[1] + p[2]).max(1e-6);
+            [p[0] / s, p[2] / s]
+        };
+        // the poplar stands at about 30 % of the width, its top 25 to 34 % down the frame
+        let px = |f: f32, n: usize| (f * n as f32) as usize;
+        let (mut near, mut far) = ([[0f64; 2]; 2], [[0f64; 2]; 2]);
+        let mut rows = 0;
+        for y in px(0.24, h)..px(0.34, h) {
+            let row = &img.data[y * w..(y + 1) * w];
+            let sky = lum(row[px(0.2, w)]);
+            let dark: Vec<usize> = (px(0.25, w)..px(0.35, w)).filter(|&x| lum(row[x]) < 0.5 * sky).collect();
+            let (Some(&left), Some(&right)) = (dark.first(), dark.last()) else { continue };
+            let k = w as f32 / 6000.0;
+            let mean = |a: usize, b: usize| {
+                let n = (b - a) as f64;
+                (a..b).map(|x| chroma(row[x])).fold([0f64; 2], |s, c| [s[0] + c[0] as f64 / n, s[1] + c[1] as f64 / n])
+            };
+            let (n0, n1, f0, f1) = (px(8.0 / 6000.0, w).max(2), px(40.0 / 6000.0, w), (200.0 * k) as usize, (320.0 * k) as usize);
+            for (side, (n, f)) in
+                [(mean(left - n1, left - n0), mean(left - f1, left - f0)), (mean(right + n0, right + n1), mean(right + f0, right + f1))]
+                    .into_iter()
+                    .enumerate()
+            {
+                for c in 0..2 {
+                    near[side][c] += n[c];
+                    far[side][c] += f[c];
+                }
+            }
+            rows += 1;
+        }
+        assert!(rows > 50, "the tree was not found ({rows} rows)");
+        for side in 0..2 {
+            let d = (0..2).map(|c| ((near[side][c] - far[side][c]) / rows as f64).abs()).fold(0.0, f64::max);
+            assert!(d < 0.004, "{} of the tree the clipped sky's chromaticity is off by {d:.4}", ["left", "right"][side]);
+        }
     }
 
     /// iPhone ProRAW-style semantic masks drive the Sky mask: Apple's sky matte (here the right

@@ -340,6 +340,12 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/data/Sony/ILCE-7M4/ILCE-7M4_DSC06676_FullFrame-LossLess-Compressed-Small.ARW",
         "cbbd0930c7d8706dff84c68a2004454266e6fd0d8354f5f76a106b5d776e0223",
     ),
+    // a dusk sky clipped in green behind a poplar: the clipped-highlight colour of issue #523
+    (
+        "arw-sony-a7rm4-14bit-compressed.arw",
+        "https://raw.pixls.us/getfile.php/3480/nice/Sony%20-%20ILCE-7RM4%20-%2014bit%2014bit%20compressed%20%283:2%29.ARW",
+        "e6dafe42643f69ab9d1fd00414b7a1f5104df354bb589201600ac934b29b5e4a",
+    ),
     // pre-2017 bodies: white balance only in the enciphered maker note, black level only in the SR2SubIFD (#148)
     (
         "arw-sony-rx100m3.arw",
