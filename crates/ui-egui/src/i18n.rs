@@ -774,6 +774,17 @@ mod tests {
         }
     }
 
+    /// The date picker's own words (its tooltip, the weekday headers) are in every language, as the
+    /// month and day labels it borrows from the date headings are.
+    #[test]
+    fn date_picker_words_are_translated() {
+        for language in Locale::ALL.iter().filter(|l| **l != Locale::En) {
+            for word in crate::date_picker::WEEKDAY_SHORT.iter().chain(&["Pick a date"]) {
+                assert!(language.catalog().contains_key(*word), "{} lacks {word:?}", language.code());
+            }
+        }
+    }
+
     /// Every command, control, rule and rename label, and every line of What's New, is a message a
     /// catalog can translate. What a language lacks is reported, not failed (like
     /// `catalogs_agree_on_placeholders_and_report_gaps`): a feature PR doesn't have to ship every

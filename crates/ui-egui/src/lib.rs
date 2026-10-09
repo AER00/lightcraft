@@ -8,6 +8,7 @@
 
 pub mod control;
 pub mod credits;
+pub mod date_picker;
 pub mod export_task;
 pub mod headless;
 pub mod i18n;

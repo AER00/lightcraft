@@ -1772,5 +1772,13 @@
   "This group is empty: add a rule or remove it.": "このグループは空です。条件を追加するか、グループを削除してください。",
   "needs something to look for (or use “are empty”)": "検索する語句が必要です（または「が空」を使用）",
   "needs something to look for (or use “aren't empty”)": "検索する語句が必要です（または「が空でない」を使用）",
-  "can't have a time zone or fractions of a second": "タイムゾーンや秒未満の値は使えません"
+  "can't have a time zone or fractions of a second": "タイムゾーンや秒未満の値は使えません",
+  "Mo": "月",
+  "Tu": "火",
+  "We": "水",
+  "Th": "木",
+  "Fr": "金",
+  "Sa": "土",
+  "Su": "日",
+  "Pick a date": "日付を選択"
 }

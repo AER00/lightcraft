@@ -55,6 +55,7 @@ pub enum Icon {
     Pencil,
     Photos,
     Clock,
+    Calendar,
     Trash,
     Curve,
     ProfileGrid,
@@ -358,6 +359,14 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Clock => {
             pen.circle(10.0, 10.0, 7.0);
             pen.line(&[(10.0, 5.5), (10.0, 10.0), (13.5, 11.5)]);
+        }
+        Calendar => {
+            // a page with a binding bar, two rings and a marked day
+            pen.rect(3.0, 4.5, 17.0, 17.0, 1.5);
+            pen.line(&[(3.0, 8.5), (17.0, 8.5)]);
+            pen.line(&[(7.0, 2.5), (7.0, 6.0)]);
+            pen.line(&[(13.0, 2.5), (13.0, 6.0)]);
+            pen.rect(11.0, 11.5, 14.0, 14.5, 0.5);
         }
         Trash => {
             pen.line(&[(3.0, 5.5), (17.0, 5.5)]);

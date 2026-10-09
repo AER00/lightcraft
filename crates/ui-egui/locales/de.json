@@ -1923,5 +1923,13 @@
   "This group is empty: add a rule or remove it.": "Diese Gruppe ist leer: Füge eine Regel hinzu oder entferne sie.",
   "needs something to look for (or use “are empty”)": "braucht einen Suchbegriff (oder „sind leer“)",
   "needs something to look for (or use “aren't empty”)": "braucht einen Suchbegriff (oder „sind nicht leer“)",
-  "can't have a time zone or fractions of a second": "darf keine Zeitzone und keine Sekundenbruchteile haben"
+  "can't have a time zone or fractions of a second": "darf keine Zeitzone und keine Sekundenbruchteile haben",
+  "Mo": "Mo",
+  "Tu": "Di",
+  "We": "Mi",
+  "Th": "Do",
+  "Fr": "Fr",
+  "Sa": "Sa",
+  "Su": "So",
+  "Pick a date": "Datum wählen"
 }
