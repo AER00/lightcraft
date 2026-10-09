@@ -2,6 +2,11 @@
 
 ## October 2026
 
+### Masking
+- Drag anywhere inside the selected radial gradient's ellipse to move it, including rotated
+  ellipses and radial components in compound masks. Edge and rotation handles keep their existing
+  functions, and one Undo restores the entire drag.
+
 ### Albums tree
 - Album folders fold with the same disclosure triangle as Local, By Date, Folders and Keywords.
 - Right-click a folder ▸ New ▸ Create Album… / Create Smart Album… / Create Smart Album from Filter… / Create Folder…
@@ -32,13 +37,19 @@
   belonged to another command moves to the new one. Menus show the new keys; agents use `app.setShortcut`.
 
 ### RAW decoding
+- Samsung SRW files without compression now open as raws: NX5, NX10, NX11, NX20, NX200, NX210, NX1000, NX1100, EX1
+  and WB2000. The compressed ones (NX1, NX30, NX300, NX500, NX2000, NX3000, NX3300, NX mini) still open from their
+  camera JPEG. Photos already imported pick the change up on Reload.
 - Canon CR2 and Pentax PEF raws get the same starting look fitted to the camera's own JPEG as ARW, NEF, RW2, RAF
   and CR3, instead of opening flat and desaturated (issue #310). Photos already imported pick it up when re-rendered.
 - JPEG XL compressed DNGs (DNG 1.7) now open: lossless tiles decode sample for sample (checked on synthetic files);
-  lossy tiles decode too, but no real file has checked them yet. A JPEG XL preview stored in the DNG is used like an
+  lossy tiles decode too, keeping the raw values above 1.0 instead of clipping them (checked on one real file). A tile that cannot be decoded makes the file open from its embedded
+  preview, with the reason, instead of showing a black tile. A JPEG XL preview stored in the DNG is used like an
   embedded JPEG.
 - Apple ProRAW's gain table map (its local tone mapping, `ProfileGainTableMap`) is now read and kept when a photo is
-  exported or converted to DNG. It is not applied to the render: Lightroom Classic renders ProRAW without it.
+  exported or converted to DNG. It is not applied by default: Lightroom Classic renders ProRAW without it. To see a
+  ProRAW the way the iPhone renders it, turn on Profile ▸ Camera local tone mapping (shown for photos that carry the
+  map); the option is per photo, so presets and Copy Settings carry it.
 - iPhone ProRAW and other DNGs that carry their own segmentation mattes (DNG semantic masks) use them for the Select
   Sky, Subject and Background masks instead of our heuristics, so the sky is selected where the camera found it
   (checked on one CC0 iPhone 12 Pro ProRAW). Photos without mattes are unchanged.

@@ -153,6 +153,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         control(app, ui, &d, "profile.amount", true);
         ui.add_space(6.0);
     }
+    // a raw carrying its own local tone mapping (Apple ProRAW's gain table map): off renders it as
+    // Lightroom Classic does, on as the camera does
+    if app.session.source_info(id).local_tone.is_some() {
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 0, bottom: 10 }).show(ui, |ui| {
+            let mut on = d.profile.camera_local_tone;
+            let r = ui.checkbox(&mut on, crate::i18n::tr("Camera local tone mapping"));
+            crate::widgets::register(ui.ctx(), "check:profile.cameraLocalTone", r.rect);
+            if r.on_hover_text(crate::i18n::tr("Apply the local tone mapping stored in the raw (Apple ProRAW), as the camera renders it")).changed() {
+                let _ = app.run("develop.merge", json!({"settings": {"profile": {"camera_local_tone": on}}, "label": "Camera Local Tone Mapping"}));
+            }
+        });
+    }
     divider(ui);
 
     section(app, ui, &d, "light", "Light", |app, ui, d| {

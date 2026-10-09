@@ -40,6 +40,78 @@ fn develop(h: &Headless) -> lightcraft_develop::DevelopSettings {
 }
 
 #[test]
+fn radial_body_drag_moves_rotated_components_and_undoes_once() {
+    let mut h = detail("panel.masking");
+    exec(&mut h, "mask.add", json!({"kind": "luminanceRange"}));
+    exec(&mut h, "mask.addComponent", json!({"kind": "radial", "op": "add", "center": [0.45, 0.5], "rx": 0.22, "ry": 0.1, "angle": 40}));
+    let before = develop(&h);
+    // Well away from the pin and edge/rotation grips, inside a rotated ellipse.
+    pointer(
+        &mut h,
+        json!([{"kind": "down", "x": 0.51, "y": 0.56}, {"kind": "drag", "x": 0.54, "y": 0.58},
+        {"kind": "drag", "x": 0.61, "y": 0.66}, {"kind": "up", "x": 0.61, "y": 0.66}]),
+    );
+    let after = develop(&h);
+    let MaskShape::Radial { center, rx, ry, angle, feather, invert } = &after.masks[0].components[1].shape else { panic!("radial") };
+    assert!((center.x - 0.55).abs() < 0.005 && (center.y - 0.6).abs() < 0.005, "{center:?}");
+    let MaskShape::Radial { rx: old_rx, ry: old_ry, angle: old_angle, feather: old_feather, invert: old_invert, .. } =
+        &before.masks[0].components[1].shape
+    else {
+        panic!("radial")
+    };
+    assert_eq!((rx, ry, angle, feather, invert), (old_rx, old_ry, old_angle, old_feather, old_invert));
+    assert_eq!(after.masks[0].components[0], before.masks[0].components[0], "only the hit component moves");
+    exec(&mut h, "edit.undo", json!({}));
+    assert_eq!(develop(&h), before, "one undo reverses the entire drag");
+    exec(&mut h, "edit.redo", json!({}));
+    assert_eq!(develop(&h), after);
+    // The bounding-box corner is outside the ellipse, even for an inverted radial mask.
+    exec(&mut h, "mask.component", json!({"component": 1, "action": "invert"}));
+    let outside_before = develop(&h);
+    pointer(
+        &mut h,
+        json!([{"kind": "down", "x": 0.35, "y": 0.75}, {"kind": "drag", "x": 0.4, "y": 0.8},
+        {"kind": "up", "x": 0.4, "y": 0.8}]),
+    );
+    assert_eq!(develop(&h), outside_before, "outside the ellipse must not move it");
+    // Hiding pins does not disable dragging the selected ellipse body.
+    exec(&mut h, "view.maskPins", json!({"show": false}));
+    pointer(
+        &mut h,
+        json!([{"kind": "down", "x": 0.61, "y": 0.66}, {"kind": "drag", "x": 0.66, "y": 0.71},
+        {"kind": "up", "x": 0.66, "y": 0.71}]),
+    );
+    let MaskShape::Radial { center, .. } = develop(&h).masks[0].components[1].shape.clone() else { panic!("radial") };
+    assert!((center.x - 0.6).abs() < 0.005 && (center.y - 0.65).abs() < 0.005, "{center:?}");
+}
+
+#[test]
+fn radial_body_drag_keeps_resize_and_rotation_handles() {
+    let mut h = detail("panel.masking");
+    exec(&mut h, "mask.add", json!({"kind": "radial", "center": [0.5, 0.5], "rx": 0.18, "ry": 0.1}));
+    for handle in [1, 5] {
+        let widget = format!("maskHandle:1:0:{handle}");
+        let rect = h.app.widgets.iter().find(|(id, _)| *id == widget).unwrap().1;
+        let image = h.app.image_rect.unwrap();
+        let q = rect.center();
+        let x = (q.x - image.left()) / image.width();
+        let y = (q.y - image.top()) / image.height();
+        pointer(
+            &mut h,
+            json!([{"kind": "down", "x": x, "y": y}, {"kind": "drag", "x": x + 0.03, "y": y + 0.03},
+            {"kind": "up", "x": x + 0.03, "y": y + 0.03}]),
+        );
+        let MaskShape::Radial { center, rx, angle, .. } = develop(&h).masks[0].components[0].shape.clone() else { panic!("radial") };
+        assert!((center.x - 0.5).abs() < 0.005 && (center.y - 0.5).abs() < 0.005, "a handle must not translate the mask");
+        if handle == 1 {
+            assert!(rx > 0.19, "resize grip changes radius");
+        } else {
+            assert!(angle.abs() > 1.0, "rotation grip changes angle");
+        }
+    }
+}
+
+#[test]
 fn mask_overlay_keys_and_pins() {
     use lightcraft_pipeline::{MaskView, Overlay};
     let mut h = detail("panel.masking");
