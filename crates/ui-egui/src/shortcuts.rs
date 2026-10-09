@@ -261,8 +261,9 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
 
 fn matches(i: &egui::InputState, m: Modifiers, k: Key) -> bool {
     // the windowing layer turns ⌘C / ⌘X / ⌘V (with any other modifiers held) and the keyboard's
-    // Copy / Cut / Paste keys into these on Windows and Linux (macOS's menu bar takes them first)
-    let clipboard = Modifiers { command: true, ..i.modifiers };
+    // Copy / Cut / Paste keys into these on Windows and Linux (macOS's menu bar takes them first);
+    // without ⌘/Ctrl held they came from a key that is the plain command (Windows' ⇧Insert pastes)
+    let clipboard = if i.modifiers.command { i.modifiers } else { Modifiers::COMMAND };
     i.events.iter().any(|e| {
         let (key, physical_key, modifiers) = match e {
             egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } => (key, physical_key, modifiers),

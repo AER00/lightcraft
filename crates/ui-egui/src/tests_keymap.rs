@@ -162,3 +162,17 @@ fn clipboard_events_run_the_copy_and_paste_shortcuts() {
     h.settle(SETTLE);
     assert!(matches!(h.app.ui.dialog, Some(Dialog::PasteSettings { .. })), "⇧Ctrl+V: {:?}", h.app.ui.dialog);
 }
+
+/// Windows also pastes with ⇧Insert and cuts with ⇧Delete: the clipboard events they become are
+/// the plain Paste / Cut, not ⇧Ctrl+V (Paste Selected Settings).
+#[test]
+fn shift_insert_pastes_plainly() {
+    let mut h = demo();
+    h.events.push(egui::Event::Copy);
+    h.settle(SETTLE);
+    let undo = h.app.session.undo.len();
+    h.events.extend([egui::Event::ModifiersChanged(egui::Modifiers::SHIFT), egui::Event::Paste("text".into())]);
+    h.settle(SETTLE);
+    assert_eq!(h.app.ui.dialog, None, "no Paste Selected Settings");
+    assert_eq!(h.app.session.undo.len(), undo + 1, "the settings were pasted");
+}
