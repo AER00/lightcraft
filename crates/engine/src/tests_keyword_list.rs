@@ -250,3 +250,15 @@ fn a_new_set_doesnt_take_a_sets_name() {
     assert!(err.contains("already"), "{err}");
     assert_eq!(set_named(&mut s, "Travel")["keywords"], json!(["harbour", "lisbon"]), "left as it was");
 }
+
+/// Set names match whatever the case of any of their letters, for every set command alike.
+#[test]
+fn set_names_match_whatever_their_case() {
+    let mut s = Session::with_demo();
+    s.execute("keyword.saveSet", &json!({"name": "ÉTÉ", "keywords": ["sunset"]})).unwrap();
+    s.execute("keyword.useSet", &json!({"name": "Recent Keywords"})).unwrap();
+    s.execute("keyword.useSet", &json!({"name": "été"})).unwrap();
+    assert_eq!(s.execute("keyword.sets", &json!({})).unwrap()["current"], "ÉTÉ");
+    s.execute("keyword.deleteSet", &json!({"name": "été"})).unwrap();
+    assert!(set_named(&mut s, "ÉTÉ").is_null(), "deleted");
+}

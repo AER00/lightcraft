@@ -72,6 +72,12 @@ pub struct KeywordSet {
     pub keywords: Vec<String>,
 }
 
+/// Two set names (or recent keywords) are the same whatever the case of any of their letters, as
+/// keywords are.
+fn same_set(a: &str, b: &str) -> bool {
+    lightcraft_catalog::keywords::same(a.trim(), b.trim())
+}
+
 /// The set name meaning "the nine most recently added keywords".
 pub const RECENT: &str = "Recent Keywords";
 
@@ -82,7 +88,7 @@ pub fn note_recent(s: &mut Session, added: &[String]) {
         if k.is_empty() {
             continue;
         }
-        s.recent_keywords.retain(|x| !x.eq_ignore_ascii_case(&k));
+        s.recent_keywords.retain(|x| !same_set(x, &k));
         s.recent_keywords.insert(0, k);
     }
     s.recent_keywords.truncate(9);
@@ -107,7 +113,7 @@ pub fn slots(typed: &[String]) -> Vec<String> {
 
 /// The nine keywords ⌥1–⌥9 apply: the current set's, or the recent ones.
 pub fn current_keywords(s: &Session) -> Vec<String> {
-    let set = s.keyword_set.as_deref().and_then(|n| s.keyword_sets.iter().find(|x| x.name.eq_ignore_ascii_case(n)));
+    let set = s.keyword_set.as_deref().and_then(|n| s.keyword_sets.iter().find(|x| same_set(&x.name, n)));
     let mut v = set.map_or_else(|| s.recent_keywords.clone(), |x| x.keywords.clone());
     v.truncate(9);
     v
@@ -125,13 +131,13 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "keyword.sets", "Keyword Sets", [], None, "{} → {sets: [{name, keywords}], current, keywords: the nine ⌥1–⌥9 apply}", always, |s, _| Ok(keyword_sets_json(s))),
         cmd!("keyword.useSet", "Use Keyword Set", [], None, "{name} (\"Recent Keywords\" = the recently added ones)", always, |s, p| {
             let name = str_param(p, "name").map(str::trim).unwrap_or(RECENT);
-            s.keyword_set = if name.eq_ignore_ascii_case(RECENT) || name.is_empty() {
+            s.keyword_set = if same_set(name, RECENT) || name.is_empty() {
                 None
             } else {
                 Some(
                     s.keyword_sets
                         .iter()
-                        .find(|x| x.name.eq_ignore_ascii_case(name))
+                        .find(|x| same_set(&x.name, name))
                         .ok_or_else(|| bad("keyword.useSet", format!("no keyword set `{name}`")))?
                         .name
                         .clone(),
@@ -150,10 +156,10 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 let name = str_param(p, "name")
                     .map(str::trim)
-                    .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case(RECENT))
+                    .filter(|n| !n.is_empty() && !same_set(n, RECENT))
                     .ok_or_else(|| bad("keyword.saveSet", "missing or reserved `name`"))?
                     .to_string();
-                let same_name = |x: &KeywordSet, n: &str| x.name.to_lowercase() == n.to_lowercase();
+                let same_name = |x: &KeywordSet, n: &str| same_set(&x.name, n);
                 // the set it renames, if any (an empty `replace` is none)
                 let renames = match str_param(p, "replace").map(str::trim).filter(|o| !o.is_empty()) {
                     Some(old) => Some(
@@ -201,11 +207,11 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("keyword.deleteSet", "Delete Keyword Set", [], None, "{name}", always, |s, p| {
             let name = str_param(p, "name").ok_or_else(|| bad("keyword.deleteSet", "missing `name`"))?;
             let before = s.keyword_sets.len();
-            s.keyword_sets.retain(|x| !x.name.eq_ignore_ascii_case(name));
+            s.keyword_sets.retain(|x| !same_set(&x.name, name));
             if s.keyword_sets.len() == before {
                 return Err(bad("keyword.deleteSet", format!("no keyword set `{name}`")));
             }
-            if s.keyword_set.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(name)) {
+            if s.keyword_set.as_deref().is_some_and(|c| same_set(c, name)) {
                 s.keyword_set = None;
             }
             s.save_prefs()?;
