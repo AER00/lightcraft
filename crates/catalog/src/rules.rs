@@ -209,15 +209,22 @@ fn number_problem(field: &str, v: &Value) -> Option<String> {
     number(v).filter(|n| n.is_finite()).is_none().then(|| format!("`{field}` needs a number, not {v}"))
 }
 
-/// An Album rule's value: an album that exists and holds photos itself (not a smart album).
+/// The album an Album rule names: its id as a whole number, written as a number (`3`, `3.0`) or a
+/// numeric string (`"3"`). The check, the matcher and the editor all read it this way.
+pub fn album_rule_id(value: &Value) -> Option<crate::AlbumId> {
+    number(value).filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0).map(|n| crate::AlbumId(n as u64))
+}
+
+/// An Album rule's value: an album that exists and holds photos itself (not a smart album, not a
+/// folder of albums).
 fn album_problem(v: &Value, cat: &Catalog) -> Option<String> {
     if v.is_null() {
         return Some("choose an album".into());
     }
-    let id = number(v).filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0);
-    match id.and_then(|n| cat.album(crate::AlbumId(n as u64))) {
+    match album_rule_id(v).and_then(|id| cat.album(id)) {
         None => Some(format!("no album {v}")),
         Some(a) if a.is_smart() => Some(format!("album {v} is a smart album; only plain albums can be tested")),
+        Some(a) if a.folder => Some(format!("album {v} is a folder; choose an album in it")),
         Some(_) => None,
     }
 }
@@ -656,7 +663,7 @@ impl Rule {
             "sharpness" => num_op(op, p.analysis.map(|a| a.sharpness as f64), value),
             "bestOfGroup" => yes(p.analysis.is_some_and(|a| a.best || a.group.is_none())),
             "album" => {
-                let id = number(value).map(|v| crate::AlbumId(v as u64));
+                let id = album_rule_id(value);
                 id.is_some_and(|a| cat.album(a).is_some_and(|al| !al.is_smart()) && cat.album_contains(a, p)) == (op == "is")
             }
             _ => false,
@@ -683,6 +690,19 @@ impl RuleSet {
             Rule::Group { group } => group.depends_on_now(),
             Rule::Field { op, .. } => op == "inLast" || op == "notInLast",
         })
+    }
+
+    /// Bring rules saved by older versions up to date, keeping what they meant: an Album rule with
+    /// an operator from when Album was a number field (≥, between…) always matched as "isn't", and
+    /// now says so. Commands and the editor apply it before checking.
+    pub fn upgrade(&mut self) {
+        for rule in &mut self.rules {
+            match rule {
+                Rule::Group { group } => group.upgrade(),
+                Rule::Field { field, op, .. } if field == "album" && op != "is" && op != "isNot" => *op = "isNot".into(),
+                Rule::Field { .. } => {}
+            }
+        }
     }
 
     /// The rules that can't mean anything, in order: an unknown field, an operator the field
@@ -1248,6 +1268,42 @@ mod tests {
         assert_eq!(ops, ["is", "isNot"]);
         let r = rs(json!({"rules": [{"field": "album", "op": "gte", "value": 1}]}));
         assert_eq!(r.check(&Catalog::new()).first().map(|p| p.message.as_str()), Some("`album` has no operator `gte`"));
+    }
+
+    /// An Album rule names its album by id, written as a number or a numeric string, the same way
+    /// for the check, the matcher and the editor. A folder holds albums, not photos, so it can't be
+    /// tested.
+    #[test]
+    fn album_rule_ids() {
+        use crate::{Album, AlbumId, Op};
+        assert_eq!(album_rule_id(&json!(3)), Some(AlbumId(3)));
+        assert_eq!(album_rule_id(&json!("3")), Some(AlbumId(3)));
+        assert_eq!(album_rule_id(&json!(3.0)), Some(AlbumId(3)));
+        for v in [json!(1.5), json!(-1), json!("x"), json!(null)] {
+            assert_eq!(album_rule_id(&v), None, "{v}");
+        }
+        let mut cat = Catalog::new();
+        cat.apply(Op::AddAlbum { album: Album { folder: true, ..Album::new(AlbumId(4), "Trips") } }).unwrap();
+        let p = rs(json!({"rules": [{"field": "album", "op": "is", "value": 4}]})).check(&cat);
+        assert!(p.first().is_some_and(|p| p.message.contains("folder")), "{p:?}");
+    }
+
+    /// Album rules saved before Album offered only "is" / "isn't" (≥, between… from when it was a
+    /// number field) always meant "isn't" to the matcher; upgrading says so, so they check again.
+    #[test]
+    fn old_album_operators_upgrade_to_isnt() {
+        let mut r = rs(json!({"rules": [
+            {"field": "album", "op": "gte", "value": 1},
+            {"field": "album", "op": "is", "value": 1},
+            {"field": "rating", "op": "gte", "value": 3},
+            {"group": {"rules": [{"field": "album", "op": "between", "value": [1, 2]}]}}
+        ]}));
+        r.upgrade();
+        let ops = serde_json::to_value(&r).unwrap().to_string();
+        assert!(ops.contains(r#""field":"album","op":"isNot","value":1"#), "{ops}");
+        assert!(ops.contains(r#""field":"album","op":"is","value":1"#), "{ops}");
+        assert!(ops.contains(r#""field":"rating","op":"gte""#), "other fields keep theirs: {ops}");
+        assert!(ops.contains(r#""field":"album","op":"isNot","value":[1,2]"#), "inside groups too: {ops}");
     }
 
     /// The field menu shows every rule field once: at the top level or in exactly one group,

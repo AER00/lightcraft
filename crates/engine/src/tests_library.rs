@@ -515,3 +515,20 @@ fn smart_rule_values_are_checked_by_commands() {
         .to_string();
     assert!(e.contains("rule 1: no rating 0–5 is ≥ 9"), "{e}");
 }
+
+/// A smart album saved with an old album operator (≥, from when Album was a number field) can
+/// still be edited: its rule is read as the "isn't" it always meant.
+#[test]
+fn old_album_operator_rules_stay_editable() {
+    use lightcraft_catalog::{Album, AlbumId, Op};
+    let mut s = crate::Session::with_demo();
+    let trip = s.execute("album.create", &serde_json::json!({"name": "Trip", "addSelected": false})).unwrap()["id"].as_u64().unwrap();
+    let rules: lightcraft_catalog::Filter =
+        serde_json::from_value(serde_json::json!({"ruleSet": {"rules": [{"field": "album", "op": "gte", "value": trip}]}})).unwrap();
+    let id = s.catalog.alloc_album_id();
+    s.catalog.apply(Op::AddAlbum { album: Album { smart: Some(Box::new(rules)), ..Album::new(id, "Old") } }).unwrap();
+    s.execute("album.setRules", &serde_json::json!({"id": id.0, "rules": {"rating": 2}})).unwrap();
+    let saved = serde_json::to_string(&s.catalog.album(AlbumId(id.0)).unwrap().smart).unwrap();
+    assert!(saved.contains(r#""op":"isNot""#), "{saved}");
+    s.execute("library.filter", &serde_json::json!({"ruleSet": {"rules": [{"field": "album", "op": "lte", "value": trip}]}})).unwrap();
+}

@@ -331,6 +331,9 @@ pub fn specs() -> Vec<CommandSpec> {
                     return Err(bad("library.filter", "a folder is already shown (library.source): show another source first"));
                 }
                 // checked like a smart album's rules: an unknown field or a value that can't match is an error, not an empty grid
+                if let Some(rules) = f.rule_set.as_mut() {
+                    rules.upgrade();
+                }
                 if let Some(problems) = f.rule_set.as_ref().map(|rs| rs.check(&s.catalog)).filter(|p| !p.is_empty()) {
                     return Err(bad("library.filter", problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")));
                 }
@@ -1279,11 +1282,16 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// `base` with a partial Filter (JSON) merged on top.
-/// `patch` merged onto `base`, unchecked (see [`merge_rules`]).
+/// `patch` merged onto `base`, its rules brought up to date (`RuleSet::upgrade`), unchecked (see
+/// [`merge_rules`]).
 fn merge_filter(base: &lightcraft_catalog::Filter, patch: &Value, c: &str) -> Result<lightcraft_catalog::Filter> {
     let mut v = serde_json::to_value(base).unwrap_or_default();
     lightcraft_develop::presets::deep_merge(&mut v, patch);
-    serde_json::from_value(v).map_err(|e| bad(c, e.to_string()))
+    let mut f: lightcraft_catalog::Filter = serde_json::from_value(v).map_err(|e| bad(c, e.to_string()))?;
+    if let Some(rules) = f.rule_set.as_mut() {
+        rules.upgrade();
+    }
+    Ok(f)
 }
 
 /// `patch` merged onto `base`, refused when its rule set has problems (`RuleSet::check`).
