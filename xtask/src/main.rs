@@ -356,6 +356,18 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/data/Sony/ILCE-7RM2/12-bit-uncompressed.ARW",
         "71e0888396ef52c7e6a990b4e72ebb4d8413a1fc1c35bada449870539cef6e39",
     ),
+    // older DSLRs whose SR2SubIFD keeps the black level elsewhere than the bodies above (#535): A500 (27152-byte
+    // layout, like the A450/A550), A700 (62112 bytes)
+    (
+        "arw-sony-a500.arw",
+        "https://raw.pixls.us/data/Sony/DSLR-A500/DSC02421.ARW",
+        "1407fb596a391df67c15b90026a1a76702a2e7386dbdff2f0815b903ea49cead",
+    ),
+    (
+        "arw-sony-a700.arw",
+        "https://raw.pixls.us/data/Sony/DSLR-A700/DSC07249.ARW",
+        "3159e28892bf0771d01525cd4b6190f9c15bbb19fa2fab6d2515ced0594e8f40",
+    ),
     // CR2 colour-filter layouts differ by model (issue #85): CR2CFAPattern 3 (GBRG) and 1 (RGGB) samples
     (
         "cr2-canon-40d.cr2",

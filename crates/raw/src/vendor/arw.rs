@@ -17,8 +17,9 @@
 //! White balance: the raw IFD's `0x7313` levels when present (bodies from about 2017 on); otherwise the
 //! `WB_RGBLevels` of the maker note's enciphered `Tag2010` block (see [`DECIPHER`] and [`TAG2010_WB`]). Without
 //! either, an ARW opened with unit multipliers, i.e. a strong green cast (issue #148). Black level: the raw IFD's
-//! `0x7310`, else the level stored in the encrypted `SR2SubIFD` (see [`SR2_BLACK_AT`]; 800 rather than the
-//! default 512 on 1″-sensor bodies such as the RX100 series), else 512 (14-bit) / 128 (12-bit).
+//! `0x7310`, else the level stored in the encrypted `SR2SubIFD` (see [`SR2_HEAD_KEYSTREAM`]; 800 rather than the
+//! default 512 on 1″-sensor bodies such as the RX100 series), else 512 (14-bit) / 128 (12-bit). Downsized lossless
+//! (YCbCr) data sit [`YCBCR_OFFSET`] above that.
 //!
 //! Also: uncompressed 16-bit ARW, and lossless-compressed ARW (Compression 7, ILCE-7M4 and later): LJ92 tiles whose
 //! frames hold one 2×2 CFA cell per four-component sample ([`read_quad_tiles`]). Other lossless-JPEG layouts go
@@ -302,6 +303,18 @@ fn read_quad_tiles(bytes: &[u8], info: &ImageInfo) -> Result<Vec<u16>> {
     Ok(out)
 }
 
+/// Sony's downsized lossless ARWs (M and S sizes: linear YCbCr, already white-balanced) are stored this far above the
+/// sensor black level the raw IFD records (`0x7310`, 512 in every file seen); their reference levels say Y black 0.
+/// Measured against a full-size coding of the same scene shot seconds apart, on the pixels where both camera JPEGs
+/// agree: YCbCr = k · (full-size − black) · WB + b, with b 1015–1052 and green k 0.98–1.02, on 11 of 12 files from
+/// four bodies (ILCE-7M4 M, S and APS-C S; ILCE-7RM5 M, S and S35 S; ILCE-7CR M, S and S35 S; ILCE-9M3 M, S and
+/// APS-C S; the twelfth's reference was shot 24 s later, 7 % brighter). Their darkest 0.1 % lies at 1047–1127. So
+/// black and white both move up by 512: the scale stays the full-size raw's, and an M/S file renders like its
+/// full-size twin. Subtracting only 512 left a pedestal of 3 % of white, lifting the shadows (issue #535).
+const YCBCR_OFFSET: f32 = 512.0;
+/// White of the YCbCr data before [`YCBCR_OFFSET`]: the reference levels' Y white (required by [`read_ycbcr_tiles`]).
+const YCBCR_WHITE: f32 = 16383.0;
+
 /// Downsized M/S ARWs are linear YCbCr 4:2:0 / 4:2:2, not CFA, despite retaining dummy CFA tags.
 /// T.81 supplies the lossless coding; TIFF 6.0 supplies the YCbCr coefficients and reference
 /// levels. Sony's reference chroma black and white are identical (the neutral offset).
@@ -371,23 +384,40 @@ fn read_ycbcr_tiles(bytes: &[u8], info: &ImageInfo, raw: &Ifd, mode: Mode) -> Re
 const SR2_SUBIFD_OFFSET: u16 = 0x7200;
 const SR2_SUBIFD_LENGTH: u16 = 0x7201;
 const SR2_SUBIFD_KEY: u16 = 0x7221;
-/// Black level inside the encrypted `SR2SubIFD` (bodies that do not write `0x7310` in the raw IFD), recovered by
-/// black-box known-plaintext analysis of CC0 raw.pixls.us samples; no description of Sony's cipher was used.
+/// The encrypted `SR2SubIFD` (bodies that do not write `0x7310` in the raw IFD keep their black level only there)
+/// is a TIFF directory whose bytes are XOR-ed with a keystream. Everything below was recovered by black-box
+/// known-plaintext analysis of CC0 raw.pixls.us samples; no description of Sony's cipher and no decoder source was
+/// used. Plaintext came from the plain `0x7310` some bodies also write and from the decrypted directory ExifTool
+/// prints (`exiftool -v3`, used as a tool).
 ///
-/// Every Sony ARW we examined (16 files, 15 bodies, 2012–2021) stores the same key (`11 22 33 44`), so its
-/// keystream is the same in every file. The DSC-RX100M6 and ILCE-7M3 also write their black levels in plain form
-/// (`0x7310`: 800 and 512); XOR-ing their `SR2SubIFD`s against each other matched `pack(512×4) ^ pack(800×4)` at
-/// exactly one position, byte 2510, which gave the eight keystream bytes there. Applied to the other files at that
-/// position they decode to four equal levels that agree with each sensor's dark-pixel floor: 800 on every 1″-sensor
-/// body (RX10, RX100 … RX100M5), 512 on the APS-C/full-frame ones (NEX-5N/6, SLT-A77, ILCE-6000/7/7M2/7RM2), in
-/// both `SR2SubIFD` sizes seen (29252 and 56958 bytes). Newer layouts (ILCE-7M4, 35398 bytes) put other data there
-/// and are rejected by the plausibility checks; those bodies write `0x7310` anyway.
-const SR2_BLACK_AT: usize = 2510;
-const SR2_BLACK_KEYSTREAM: [u8; 8] = [0x43, 0xcb, 0x86, 0xb6, 0x11, 0xd2, 0x1a, 0x73];
+/// Every ARW examined stores the same key (`11 22 33 44`), and the keystream depends only on the position in the
+/// `SR2SubIFD`: the same bytes at each position in 115 files from 97 bodies (DSLR-A200 to ILCE-9M3) and 15 directory layouts
+/// (lengths 25150 … 62112 bytes). In all of them the directory's first entry is the black level (tag `0x7310`,
+/// SHORT, count 4), whose value lives at a layout-dependent position (1638 … 2786). So the first entry is
+/// decrypted ([`SR2_HEAD_KEYSTREAM`]) to find that position, and the value is decrypted with the keystream known
+/// for it ([`SR2_BLACK_KEYSTREAMS`]). Reading a fixed position instead (2510, right for the 29252, 33210 and
+/// 56958-byte layouts) read other data on the DSLR-A450/A500/A550 (27152 bytes: 354–365) and the DSLR-A700
+/// (62112 bytes: 975), whose black is 512 by ExifTool and by the data floor (issue #535).
 const SR2_KEY: [u8; 4] = [0x11, 0x22, 0x33, 0x44];
+/// Keystream of the `SR2SubIFD`'s first 14 bytes: entry count and first entry (tag, type, count, value offset).
+/// The first 16 keystream bytes were identical in all 115 files.
+const SR2_HEAD_KEYSTREAM: [u8; 14] = [0x54, 0xc2, 0xc4, 0xd6, 0x49, 0xc4, 0x78, 0xbc, 0x34, 0xae, 0x2f, 0x8e, 0x25, 0xd8];
+/// Keystream at the black-level value, by its position in the `SR2SubIFD`, for the layouts of bodies without a
+/// plain `0x7310` (bodies with one: 2030, 2102, 2186, 2558 and 2786; not needed). 1638: DSLR-A700 (and the
+/// undecoded A200/A300/A350); 2166: DSLR-A450/A500/A550 (and the undecoded A230 … A390, A850, A900); 2418:
+/// DSLR-A560/A580, NEX-3/5/C3, SLT-A33/A35/A55; 2510: NEX-5N … NEX-7, SLT-A37 … A99, ILCE-3000 … 7RM2, ILCA-68/77M2/
+/// 99M2, RX10/RX100/RX1 series. Each was the same in every file whose black level sits there (4, 10, 8 and 55
+/// files), and decodes to that file's black level (512, or 800 on the 1″ sensors) at its dark-pixel floor.
+const SR2_BLACK_KEYSTREAMS: [(usize, [u8; 8]); 4] = [
+    (1638, [0x18, 0x95, 0x65, 0xf0, 0x18, 0x8f, 0x61, 0xc6]),
+    (2166, [0xc6, 0x17, 0x02, 0xcb, 0x89, 0x21, 0xbc, 0x43]),
+    (2418, [0xd1, 0xef, 0xda, 0xfe, 0x50, 0xf3, 0xd0, 0xbe]),
+    (2510, [0x43, 0xcb, 0x86, 0xb6, 0x11, 0xd2, 0x1a, 0x73]),
+];
 
-/// The per-channel black level from the encrypted `SR2SubIFD` (see [`SR2_BLACK_AT`]), in 14-bit units; `None`
-/// unless the file uses the known key and the four decoded levels are equal and plausible.
+/// The per-channel black level from the encrypted `SR2SubIFD` (see [`SR2_HEAD_KEYSTREAM`]), in 14-bit units; `None`
+/// unless the file uses the known key, the directory's first entry is a black level at a known position and the
+/// four decoded levels are equal and plausible.
 fn sr2_black(bytes: &[u8], ifd0: &Ifd, order: lightcraft_tiff::ByteOrder) -> Option<f32> {
     let private = ifd0.bytes(t::DNG_PRIVATE_DATA)?;
     let at = order.read_u32(private, 0)? as u64;
@@ -397,17 +427,26 @@ fn sr2_black(bytes: &[u8], ifd0: &Ifd, order: lightcraft_tiff::ByteOrder) -> Opt
         return None;
     }
     let (start, len) = (usize::try_from(sr2.u64(SR2_SUBIFD_OFFSET)?).ok()?, usize::try_from(sr2.u64(SR2_SUBIFD_LENGTH)?).ok()?);
-    if len < SR2_BLACK_AT + 8 {
-        return None;
-    }
-    sr2_black_levels(bytes.get(start.checked_add(SR2_BLACK_AT)?..start.checked_add(SR2_BLACK_AT + 8)?)?, order)
+    sr2_black_in(bytes.get(start..start.checked_add(len)?)?, start, order)
 }
 
-/// Decipher the eight `SR2SubIFD` bytes at [`SR2_BLACK_AT`] into one black level (the mean of four near-equal,
-/// plausible per-channel levels).
-fn sr2_black_levels(cipher: &[u8], order: lightcraft_tiff::ByteOrder) -> Option<f32> {
-    let plain: Vec<u8> = cipher.iter().zip(SR2_BLACK_KEYSTREAM).map(|(c, k)| c ^ k).collect();
-    let levels: Vec<u16> = (0..4).filter_map(|i| order.read_u16(&plain, 2 * i)).collect();
+/// [`sr2_black`] on the encrypted `SR2SubIFD` bytes `block`, which start at file offset `start` (the directory's
+/// value offsets are file offsets).
+fn sr2_black_in(block: &[u8], start: usize, order: lightcraft_tiff::ByteOrder) -> Option<f32> {
+    let head: Vec<u8> = block.get(..SR2_HEAD_KEYSTREAM.len())?.iter().zip(SR2_HEAD_KEYSTREAM).map(|(c, k)| c ^ k).collect();
+    let (tag, kind, count, value_at) = (order.read_u16(&head, 2)?, order.read_u16(&head, 4)?, order.read_u32(&head, 6)?, order.read_u32(&head, 10)?);
+    if tag != BLACK_LEVEL || kind != 3 || count != 4 {
+        return None;
+    }
+    let pos = usize::try_from(value_at).ok()?.checked_sub(start)?;
+    let &(_, keystream) = SR2_BLACK_KEYSTREAMS.iter().find(|(p, _)| *p == pos)?;
+    let plain: Vec<u8> = block.get(pos..pos.checked_add(8)?)?.iter().zip(keystream).map(|(c, k)| c ^ k).collect();
+    sr2_black_levels(&plain, order)
+}
+
+/// One black level from the four deciphered per-channel levels (their mean), when they are near-equal and plausible.
+fn sr2_black_levels(plain: &[u8], order: lightcraft_tiff::ByteOrder) -> Option<f32> {
+    let levels: Vec<u16> = (0..4).filter_map(|i| order.read_u16(plain, 2 * i)).collect();
     let (&lo, &hi) = (levels.iter().min()?, levels.iter().max()?);
     (levels.len() == 4 && (64..=4096).contains(&lo) && hi - lo <= 64).then(|| levels.iter().map(|&v| f32::from(v)).sum::<f32>() / 4.0)
 }
@@ -507,14 +546,15 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     };
     let default_black = if scale_bits >= 14 { 512.0 } else { 128.0 };
     let black = match raw.f64s(BLACK_LEVEL).as_deref() {
-        Some(v) if linear_rgb && !v.is_empty() => BlackLevel::uniform((v.iter().sum::<f64>() / v.len() as f64) as f32),
+        Some(v) if linear_rgb && !v.is_empty() => BlackLevel::uniform((v.iter().sum::<f64>() / v.len() as f64) as f32 + YCBCR_OFFSET),
         Some([a, b, c, d]) => {
             BlackLevel { repeat_rows: 2, repeat_cols: 2, values: vec![*a as f32, *b as f32, *c as f32, *d as f32], ..Default::default() }
         }
+        _ if linear_rgb => BlackLevel::uniform(default_black + YCBCR_OFFSET),
         _ => BlackLevel::uniform(sr2_black(bytes, ifd0, tiff.order).filter(|_| scale_bits >= 14).unwrap_or(default_black)),
     };
     let white = if linear_rgb {
-        16383.0
+        YCBCR_WHITE + YCBCR_OFFSET
     } else {
         raw.f64(t::WHITE_LEVEL).map(|v| v as f32).filter(|v| *v > 0.0).unwrap_or_else(|| super::white_from_data(samples, scale_bits))
     };
@@ -591,6 +631,9 @@ mod tests {
         assert!(full.cfa.is_none());
         assert_eq!(full.data.len(), 48);
         assert_eq!(full.wb_multipliers, Some([1.0; 3]));
+        // the YCbCr data sit 512 above the recorded sensor black level; white moves with it
+        assert_eq!((full.black.mean(), full.white_at(0)), (1024.0, 16895.0));
+        assert_eq!((header.black.mean(), header.white_at(0)), (1024.0, 16895.0));
         let RawData::U16(ref pixels) = full.data else {
             panic!("integer ARW");
         };
@@ -735,14 +778,72 @@ mod tests {
     #[test]
     fn sr2_black_level_decodes_and_rejects_garbage() {
         use lightcraft_tiff::ByteOrder::Little;
-        let cipher =
-            |levels: [u16; 4]| -> Vec<u8> { levels.iter().flat_map(|v| v.to_le_bytes()).zip(SR2_BLACK_KEYSTREAM).map(|(p, k)| p ^ k).collect() };
-        assert_eq!(sr2_black_levels(&cipher([800; 4]), Little), Some(800.0));
-        assert_eq!(sr2_black_levels(&cipher([512, 512, 514, 512]), Little), Some(512.5));
-        assert_eq!(sr2_black_levels(&cipher([65320, 64928, 65260, 488]), Little), None); // ILCE-7M4's layout
-        assert_eq!(sr2_black_levels(&cipher([0; 4]), Little), None);
-        assert_eq!(sr2_black_levels(&cipher([800; 4])[..5], Little), None);
+        let plain = |levels: [u16; 4]| -> Vec<u8> { levels.iter().flat_map(|v| v.to_le_bytes()).collect() };
+        assert_eq!(sr2_black_levels(&plain([800; 4]), Little), Some(800.0));
+        assert_eq!(sr2_black_levels(&plain([512, 512, 514, 512]), Little), Some(512.5));
+        assert_eq!(sr2_black_levels(&plain([65320, 64928, 65260, 488]), Little), None);
+        assert_eq!(sr2_black_levels(&plain([0; 4]), Little), None);
+        assert_eq!(sr2_black_levels(&plain([800; 4])[..5], Little), None);
         assert_eq!(sr2_black_levels(&[], Little), None);
+    }
+
+    /// An encrypted `SR2SubIFD` of `len` bytes at file offset `start` whose first entry is a black level stored at
+    /// `value_pos` (relative), holding `levels`; `other` puts four more levels at position 2510 (where the old
+    /// fixed read looked).
+    fn sr2_block(start: usize, len: usize, tag: u16, value_pos: usize, levels: [u16; 4], other: Option<[u16; 4]>) -> Vec<u8> {
+        let mut plain = vec![0u8; len];
+        plain[0..2].copy_from_slice(&180u16.to_le_bytes());
+        plain[2..4].copy_from_slice(&tag.to_le_bytes());
+        plain[4..6].copy_from_slice(&3u16.to_le_bytes());
+        plain[6..10].copy_from_slice(&4u32.to_le_bytes());
+        plain[10..14].copy_from_slice(&((start + value_pos) as u32).to_le_bytes());
+        for (i, v) in levels.iter().enumerate() {
+            plain[value_pos + 2 * i..value_pos + 2 * i + 2].copy_from_slice(&v.to_le_bytes());
+        }
+        if let Some(o) = other {
+            for (i, v) in o.iter().enumerate() {
+                plain[2510 + 2 * i..2510 + 2 * i + 2].copy_from_slice(&v.to_le_bytes());
+            }
+        }
+        // encrypt the bytes whose keystream is known (the rest stays plain: it is never read)
+        for (b, k) in plain.iter_mut().zip(SR2_HEAD_KEYSTREAM) {
+            *b ^= k;
+        }
+        for (pos, ks) in SR2_BLACK_KEYSTREAMS {
+            if let Some(dst) = plain.get_mut(pos..pos + 8) {
+                for (b, k) in dst.iter_mut().zip(ks) {
+                    *b ^= k;
+                }
+            }
+        }
+        plain
+    }
+
+    #[test]
+    fn sr2_black_level_follows_the_first_entry_to_its_layout() {
+        use lightcraft_tiff::ByteOrder::Little;
+        let start = 37584;
+        // every layout with a known keystream, e.g. the DSLR-A700's (62112 bytes, value at 1638) and the
+        // DSLR-A450/A500/A550's (27152 bytes, value at 2166)
+        for (pos, _) in SR2_BLACK_KEYSTREAMS {
+            for level in [512, 800] {
+                let block = sr2_block(start, 27152, BLACK_LEVEL, pos, [level; 4], None);
+                assert_eq!(sr2_black_in(&block, start, Little), Some(f32::from(level)), "value at {pos}");
+            }
+        }
+        // the A700's layout holds four other equal values at 2510 (975 each); the old fixed read took those
+        let a700 = sr2_block(start, 62112, BLACK_LEVEL, 1638, [512; 4], Some([975; 4]));
+        assert_eq!(sr2_black_in(&a700, start, Little), Some(512.0));
+        // not a black-level entry, a value at a position without a known keystream, outside the block, before it
+        assert_eq!(sr2_black_in(&sr2_block(start, 27152, 0x7311, 2166, [512; 4], None), start, Little), None);
+        assert_eq!(sr2_black_in(&sr2_block(start, 27152, BLACK_LEVEL, 2030, [512; 4], None), start, Little), None);
+        assert_eq!(sr2_black_in(&sr2_block(start, 27152, BLACK_LEVEL, 2166, [512; 4], None)[..2170], start, Little), None);
+        let block = sr2_block(start, 27152, BLACK_LEVEL, 2166, [512; 4], None);
+        assert_eq!(sr2_black_in(&block, start + 4000, Little), None, "value offset before the block");
+        assert_eq!(sr2_black_in(&block[..10], start, Little), None, "truncated directory");
+        assert_eq!(sr2_black_in(&[], start, Little), None);
+        // implausible levels at a known position
+        assert_eq!(sr2_black_in(&sr2_block(start, 27152, BLACK_LEVEL, 2166, [4; 4], None), start, Little), None);
     }
 
     #[test]

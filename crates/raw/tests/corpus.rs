@@ -357,6 +357,67 @@ fn corpus_sony_pre2017_colour_metadata() {
     eprintln!("pre-2017 Sony ARW colour metadata checked on {seen} files");
 }
 
+/// Issue #535: Sony black levels against the data. The SR2SubIFD keeps the black level at a position that depends
+/// on its layout (the DSLR-A500 and A700 read 365 and 975 from a fixed position, where ExifTool and the data say
+/// 512), and the downsized lossless M and S codings (linear YCbCr) sit 512 above the recorded level (1024, with
+/// white moved by the same 512). Each file's darkest 0.1 % per channel must lie just above its black level: a black
+/// level that is too low leaves a pedestal, one that is too high clips the shadows.
+#[test]
+fn corpus_sony_black_levels_sit_at_the_data_floor() {
+    use lightcraft_raw::RawData;
+    let dir = corpus_root().join("raw");
+    // (file, black, white): SR2SubIFD black at three layouts, a plain 0x7310, and the lossless L / M / S codings
+    let cases = [
+        ("arw-sony-a500.arw", 512.0, None),
+        ("arw-sony-a700.arw", 512.0, None),
+        ("arw-sony-rx100m3.arw", 800.0, None),
+        ("arw-sony-a7m4-lossless-l.arw", 512.0, Some(16383.0)),
+        ("arw-sony-a7m4-lossless-m.arw", 1024.0, Some(16895.0)),
+        ("arw-sony-a7m4-lossless-s.arw", 1024.0, Some(16895.0)),
+    ];
+    let mut seen = 0;
+    for (name, black, white) in cases {
+        let bytes = match std::fs::read(dir.join(name)) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("skip: {name} absent");
+                continue;
+            }
+            Err(e) => panic!("{name}: {e}"),
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(img.black.mean(), black, "{name}: black level");
+        if let Some(white) = white {
+            assert_eq!(img.white_at(0), white, "{name}: white level");
+        }
+        let RawData::U16(ref data) = img.data else { panic!("{name}: integer samples expected") };
+        // per CFA position (2×2) or per colour sample, inside the default crop, about a million samples each
+        let channels = if img.cpp == 3 { 3 } else { 4 };
+        let (a, c) = (img.active_area, img.crop);
+        let step = (c.width * c.height / 1_000_000).max(1);
+        let mut samples = vec![Vec::new(); channels];
+        for (k, (x, y)) in (c.y..c.y + c.height).flat_map(|y| (c.x..c.x + c.width).map(move |x| (x + a.x, y + a.y))).enumerate() {
+            if (k / 2) % step != 0 {
+                continue;
+            }
+            if img.cpp == 3 {
+                for (s, v) in samples.iter_mut().enumerate() {
+                    v.push(data[(y * img.width + x) * 3 + s]);
+                }
+            } else {
+                samples[(y % 2) * 2 + x % 2].push(data[y * img.width + x]);
+            }
+        }
+        for (i, mut v) in samples.into_iter().enumerate() {
+            v.sort_unstable();
+            let floor = f32::from(v[v.len() / 1000]);
+            assert!((black - 64.0..=black + 128.0).contains(&floor), "{name}: channel {i}: darkest 0.1 % at {floor}, black level {black}");
+        }
+        seen += 1;
+    }
+    eprintln!("Sony black levels checked against the data floor on {seen} files");
+}
+
 /// The embedded JPEG as linear RGB, reduced to `gw × gh` cells.
 fn jpeg_cells(jpeg: &[u8], gw: usize, gh: usize) -> Vec<[f64; 3]> {
     use zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
