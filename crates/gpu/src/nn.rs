@@ -509,7 +509,6 @@ fn conv_source(bm: u32, bn: u32, bk: u32) -> String {
         .replace("{{BM}}", &bm.to_string())
         .replace("{{BN}}", &bn.to_string())
         .replace("{{BK}}", &bk.to_string())
-        .replace("{{A_VECS}}", &(bk * bm / 4).to_string())
         .replace("{{B_VECS}}", &(bk * bn / 4).to_string())
 }
 
@@ -900,6 +899,7 @@ mod tests {
 
     fn worst(a: &[f32], b: &[f32]) -> f32 {
         assert_eq!(a.len(), b.len());
+        assert!(a.iter().chain(b).all(|v| v.is_finite()), "non-finite denoise output");
         let scale = b.iter().fold(1e-3f32, |m, v| m.max(v.abs()));
         a.iter().zip(b).fold(0f32, |m, (x, y)| m.max((x - y).abs())) / scale
     }
@@ -920,6 +920,21 @@ mod tests {
             let e = worst(&got, &want);
             eprintln!("{}: tile {tile}, {ch} channels, depth {depth}: off by {e:e} of the output's size", g.adapter());
             assert!(e < 2e-4, "tile {tile}, {ch} channels, depth {depth}: the GPU is off by {e:e} of the output's size");
+        }
+    }
+
+    // Issue #479: several pixels loaded by different invocations shared a vec4,
+    // so lane writes raced on Metal. Exercise a partial block repeatedly with new
+    // inputs; stale shared-memory values must never leak into the next dispatch.
+    #[test]
+    fn partial_tiles_remain_correct_when_reusing_a_runner() {
+        let n = net(3, 4, 0, 8);
+        let Some(g) = gpu(&n, 3) else { return };
+        for seed in 100..112 {
+            let x = picture(4 * 3 * 3, seed);
+            let want = reference::run(&n, 3, &x).unwrap();
+            let e = worst(&g.run(&x).unwrap(), &want);
+            assert!(e < 2e-4, "seed {seed}: off by {e:e}");
         }
     }
 
@@ -1020,7 +1035,6 @@ mod tests {
             .replace("{{BM}}", &bm.to_string())
             .replace("{{BN}}", &bn.to_string())
             .replace("{{BK}}", &bk.to_string())
-            .replace("{{A_VECS}}", &(bk * bm / 4).to_string())
             .replace("{{B_VECS}}", &(bk * bn / 4).to_string());
         let d = dev().unwrap();
         let layout = conv_bgl(d);
