@@ -345,6 +345,17 @@ impl Catalog {
         self.keyword_path(path).is_some()
     }
 
+    /// Where a keyword typed for a photo goes: inside the default parent when it is a new name (Put
+    /// New Keywords Inside This Keyword); a keyword the library has, or a path typed whole, as
+    /// typed (cleaned).
+    pub fn typed_keyword(&self, typed: &str) -> String {
+        let k = clean(typed);
+        match self.default_keyword_parent() {
+            Some(parent) if !k.is_empty() && !k.contains(SEP) && !self.has_keyword(&k) => format!("{parent}{SEP}{k}"),
+            _ => k,
+        }
+    }
+
     /// `path` with each level the library has spelled as the library spells it (`TRAVEL|Rome` next
     /// to `travel|italy` is `travel|Rome`).
     fn spelled(&self, path: &str) -> String {
@@ -1010,6 +1021,19 @@ mod tests {
         c.apply(Op::SetKeyword { path: "Events|Weddings".into(), info: Some(KeywordInfo::default()) }).unwrap();
         assert_eq!(c.keyword_suggestions(&[], "wed", 5), ["Events|Weddings"]);
         assert!(!c.keyword_suggestions(&["events|weddings".into()], "wed", 5).contains(&"Events|Weddings".to_string()), "not one it has");
+    }
+
+    /// A new name typed for a photo goes inside the default parent; a keyword the library has, and
+    /// a path typed whole, don't.
+    #[test]
+    fn typed_new_keywords_go_inside_the_default_parent() {
+        let (mut c, _) = lib(&[&["beach"], &["Events"]]);
+        assert_eq!(c.typed_keyword(" Weddings "), "Weddings", "no default parent");
+        let op = c.set_default_parent_ops(Some("events")).unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(c.typed_keyword("Weddings"), "Events|Weddings");
+        assert_eq!(c.typed_keyword("BEACH"), "BEACH", "the library has it");
+        assert_eq!(c.typed_keyword("Places|Lisbon"), "Places|Lisbon");
     }
 
     #[test]

@@ -400,3 +400,20 @@ fn a_tick_box_doesnt_start_a_drag() {
     assert_eq!(h.app.ui.dragging_keyword, None);
     release(&mut h, from + egui::vec2(0.0, 60.0));
 }
+
+/// Keywords typed in the Keywords panel's box go inside the default parent too when they are
+/// new (Lightroom Classic's Put New Keywords Inside This Keyword); keywords the library has, and
+/// paths typed whole, stay as typed.
+#[test]
+fn typed_keywords_go_inside_the_default_parent() {
+    let (mut h, ids) = keywords_panel();
+    run(&mut h, "keyword.create", json!({"name": "Events"}));
+    run(&mut h, "keyword.setDefaultParent", json!({"keyword": "Events"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keyword"}));
+    ask(&mut h, "ui.text", json!({"text": "Birthdays, mountains, Places|Lisbon"}));
+    ask(&mut h, "ui.key", json!({"key": "Enter"}));
+    let k = keywords_of(&h, ids[0]);
+    for want in ["Events|Birthdays", "mountains", "Places|Lisbon"] {
+        assert!(k.contains(&want.to_string()), "{want}: {k:?}");
+    }
+}

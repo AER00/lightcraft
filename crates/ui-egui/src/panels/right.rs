@@ -776,7 +776,8 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text(crate::i18n::tr("Add keyword")).desired_width(f32::INFINITY));
         register(ui.ctx(), "field:keyword", r.rect);
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
-            let kws: Vec<String> = text.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            // a new name goes inside the default parent (Put New Keywords Inside This Keyword)
+            let kws: Vec<String> = text.split(',').map(|s| app.session.catalog.typed_keyword(s)).filter(|s| !s.is_empty()).collect();
             let _ = app.run("photo.setMeta", json!({"addKeywords": kws}));
             text.clear();
         }
