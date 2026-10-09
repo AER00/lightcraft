@@ -67,3 +67,22 @@ fn only_the_cross_removes_a_keyword() {
     ask(&mut h, "ui.clickWidget", json!({"id": "keywordChipRemove:beach"}));
     assert!(ids.iter().all(|id| !keywords_of(&h, *id).contains(&"beach".to_string())), "× took it off both");
 }
+
+/// A chip's menu acts on the selection, never on the whole library: give a keyword only some have
+/// to all of them, take it off them, show its photos, or edit it (Edit Keyword Tag). Deleting a
+/// keyword from every photo of the library is the Keyword List's.
+#[test]
+fn a_chips_menu_acts_on_the_selection() {
+    let (mut h, ids) = two_selected();
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordChip:Weddings", "button": "right"}));
+    for item in ["add", "remove", "show", "edit"] {
+        assert!(has(&h, &format!("keywordChipMenu:{item}")), "{item}");
+    }
+    assert!(!has(&h, "keywordChipMenu:delete"), "no library-wide delete");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordChipMenu:add"}));
+    assert!(ids.iter().all(|id| keywords_of(&h, *id).contains(&"Weddings".to_string())), "given to both");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordChip:Weddings", "button": "right"}));
+    assert!(!has(&h, "keywordChipMenu:add"), "both have it now");
+    ask(&mut h, "ui.clickWidget", json!({"id": "keywordChipMenu:edit"}));
+    assert!(matches!(&h.app.ui.dialog, Some(crate::state::Dialog::KeywordTag { editing: Some(k), .. }) if k == "Weddings"), "{:?}", h.app.ui.dialog);
+}

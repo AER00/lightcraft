@@ -9,6 +9,30 @@ use crate::LightcraftApp;
 use crate::theme::Tokens;
 use crate::widgets::register;
 
+/// A chip's menu: it acts on the selected photos (deleting a keyword from the whole library is the
+/// Keyword List's).
+fn menu(app: &mut LightcraftApp, ui: &mut egui::Ui, chip: &Chip) {
+    let item = |ui: &mut egui::Ui, id: &str, label: &str| {
+        let r = ui.button(label);
+        register(ui.ctx(), format!("keywordChipMenu:{id}"), r.rect);
+        r.clicked()
+    };
+    if !chip.on_all() && item(ui, "add", crate::i18n::tr("Add to All Selected Photos")) {
+        let _ = app.run("photo.setMeta", json!({"addKeywords": [chip.path]}));
+    }
+    if item(ui, "remove", crate::i18n::tr("Remove from Selected Photos")) {
+        let _ = app.run("photo.setMeta", json!({"removeKeywords": [chip.path]}));
+    }
+    if item(ui, "show", crate::i18n::tr("Show Photos with Keyword")) {
+        super::left::browse_all_photos(app, true);
+        let _ = app.run("library.filter", json!({"keyword": chip.path}));
+    }
+    ui.separator();
+    if item(ui, "edit", crate::i18n::tr("Edit Keyword Tag…")) {
+        app.ui.dialog = Some(super::keyword_list::edit_dialog(app, &chip.path));
+    }
+}
+
 /// The selection's keywords as chips: the name (right-click for its menu), and × to take it off
 /// every selected photo. One only some of them have is marked with an asterisk.
 pub fn chip_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
@@ -43,22 +67,8 @@ pub fn chip_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
                 label
             });
-            let k = chip.path.clone();
-            shown.inner.context_menu(|ui| {
-                if ui.button(crate::i18n::tr("Remove from Photo")).clicked() {
-                    let _ = app.run("photo.setMeta", json!({"removeKeywords": [k]}));
-                }
-                if ui.button(crate::i18n::tr("Show Photos with Keyword")).clicked() {
-                    let _ = app.run("library.filter", json!({"keyword": k}));
-                }
-                ui.separator();
-                if ui.button(crate::i18n::tr("Rename Keyword…")).clicked() {
-                    app.ui.dialog = Some(crate::state::Dialog::RenameKeyword { from: k.clone(), to: k.clone() });
-                }
-                if ui.button(crate::i18n::tr("Delete Keyword")).clicked() {
-                    let _ = app.run("keyword.delete", json!({"keyword": k}));
-                }
-            });
+            let chip = chip.clone();
+            shown.inner.context_menu(|ui| menu(app, ui, &chip));
         }
     });
 }
