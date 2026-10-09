@@ -1182,6 +1182,40 @@ mod tests {
         assert_eq!(info.camera_tone.is_some(), look.is_some());
     }
 
+    /// A public ILCE-7CR sample (skipped without the corpus) takes its colour from the bundled ILCE-7CR profile and
+    /// passes the acceptance gates with it: the fitted look keeps the profile's matrix and table, which the photo's
+    /// own fit (the fallback when a profile is rejected) would not.
+    #[test]
+    fn corpus_a7cr_uses_the_bundled_profile() {
+        let path = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+            .join("raw/arw-sony-a7cr-lossless-l.arw");
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("skip: {} absent", path.display());
+                return;
+            }
+            Err(e) => panic!("{}: {e}", path.display()),
+        };
+        let (_, json) = crate::camera_profiles::BUNDLED.iter().find(|(m, _)| *m == "ILCE-7CR").expect("ILCE-7CR is built in");
+        let bundled: crate::camera_profiles::CameraProfile = serde_json::from_str(json).unwrap();
+        let used = crate::camera_profiles::get("ILCE-7CR").expect("ILCE-7CR profile");
+        assert_eq!(*used, bundled, "a local ILCE-7CR profile overrides the built-in one; remove it to run this test");
+        let raw = lightcraft_raw::decode(&bytes).unwrap();
+        assert_eq!(raw.metadata.model.as_deref(), Some("ILCE-7CR"));
+        let transform = lightcraft_raw::color::camera_transform(&raw, lightcraft_raw::color::as_shot_white_xy(&raw));
+        let look = fit_preview(&raw, &bytes, &transform).expect("fit accepted");
+        let expected = bundled.matrix().mul(&transform.matrix.inverse().unwrap());
+        for (row, want) in look.matrix.0.iter().zip(expected.0) {
+            for (got, want) in row.iter().zip(want) {
+                assert!((got - want).abs() < 1e-12, "the look's matrix is not the profile's: {:?} vs {:?}", look.matrix.0, expected.0);
+            }
+        }
+        assert_eq!(look.hue_sat, bundled.hue_sat, "the look's table is not the profile's");
+    }
+
     /// A public D7500 NEF (skipped without the corpus): its look is fitted to its own JPEG and white
     /// balance is relative to the as-shot look.
     #[test]
