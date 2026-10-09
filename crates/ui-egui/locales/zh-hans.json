@@ -1744,7 +1744,7 @@
   "Separated by commas": "用逗号分隔",
   "Keyword Tag Options": "关键字标记选项",
   "Include on Export": "导出时包含",
-  "Export Containing Keywords": "导出包含的关键字",
+  "Export Containing Keywords": "导出上级关键字",
   "Export Synonyms": "导出同义词",
   "Create Keyword Tag": "创建关键字标记",
   "Edit Keyword Tag": "编辑关键字标记",

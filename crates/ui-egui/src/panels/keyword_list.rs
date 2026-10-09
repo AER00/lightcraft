@@ -563,4 +563,31 @@ mod tests {
         let (c, ids) = library(&[&["Ärzte", "ÄRZTE"], &[]]);
         assert_eq!(Ticks::of(&c, &ids).tick("ärzte"), Tick::Some);
     }
+
+    /// The labels the Keyword List and its dialogs pass to `tr` through variables (out of reach of
+    /// a literal search) are translated in every language.
+    #[test]
+    fn labels_passed_through_variables_are_translated() {
+        use crate::i18n::Locale;
+        let labels = [
+            "Include on Export",
+            "Export Containing Keywords",
+            "Export Synonyms",
+            "Person",
+            "Merge Keywords",
+            "No keywords yet",
+            "No keywords match",
+            "Add to Selected Photos",
+            "Remove from Selected Photos",
+        ];
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("locales");
+        for code in ["de", "es", "pt-br", "ru", "ja", "zh-hans", "zh-hant"] {
+            let text = std::fs::read_to_string(dir.join(format!("{code}.json"))).unwrap();
+            let catalog: std::collections::HashMap<String, String> = serde_json::from_str(&text).unwrap();
+            for label in labels {
+                assert!(catalog.contains_key(label), "{code}: “{label}”");
+            }
+        }
+        assert_eq!(Locale::ALL.len(), 8, "a language added: list its file above");
+    }
 }

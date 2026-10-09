@@ -904,7 +904,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     Dialog::FaceModel { info, .. } if !informational && info["download"].is_string() => "Download",
                     Dialog::FaceModel { .. } if !informational => "Install",
                     Dialog::ConfirmDelete { .. } | Dialog::DeleteKeyword { .. } => "Delete",
-                    Dialog::MoveKeyword { .. } => "Merge",
+                    // (not "Merge": that is photo merging, HDR / panorama, in some languages)
+                    Dialog::MoveKeyword { .. } => "Merge Keywords",
                     Dialog::KeywordTag { editing: None, .. } => "Create",
                     Dialog::KeywordTag { .. } => "Save",
                     Dialog::RemoveFolder { .. } => "Remove",
