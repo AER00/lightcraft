@@ -2,6 +2,19 @@
 
 ## October 2026
 
+### Albums tree
+- Album folders fold with the same disclosure triangle as Local, By Date, Folders and Keywords.
+- Right-click a folder ▸ New ▸ Create Album… / Create Smart Album… / Create Smart Album from Filter… / Create Folder…
+  makes it inside that folder (`dialog.newAlbum`, `dialog.newFolder`, `dialog.smartAlbum`, `dialog.newSmartAlbum` take `parent`).
+- Drag an album or folder onto a folder to move it there (a closed folder opens after 0.6 s under the pointer; a
+  "Top Level" strip under the tree takes it back out; Esc cancels). Drop on the top or bottom half of another album,
+  or the edge of another folder, to place it before or after it: that folder is then ordered by hand. Right-click ▸
+  Sort Contents A–Z (or ＋ ▸ Sort Albums A–Z at the top level) goes back to by name. To put a folder after an open
+  folder, fold that folder first (the bottom of an open folder means "inside"). Agents use `album.reorder`
+  (`id`, `parent?`, `before?`) and `album.sort`.
+- The catalog format is now version 3 (`Album.order`, `Op::SetAlbumOrder`). Once this version has opened a library,
+  older versions refuse it, as with every format change.
+
 ### Library keyboard culling
 - Colour labels tint thumbnail surrounds in Square Grid and the Detail filmstrip, and a translucent footer along the bottom of the photo in Photo Grid. Label confirmations use a matching pale colour.
 - Setting or clearing a colour label shows a brief bottom confirmation, like rating a photo; custom label names appear in the message too.
