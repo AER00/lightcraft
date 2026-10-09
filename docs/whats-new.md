@@ -260,6 +260,9 @@
   lost everything at quit; a temporary session shows a banner the whole time and never writes to your library.
 
 ### Editing
+- Optional remote SAM 3: keep the native editor local and run Object, Describe, and detail
+  inference on a Mac through SSH. Saved masks still render and export offline.
+  See [remote Metal inference](ai-masks.md#remote-metal-inference).
 - AI masks with SAM 3 (Object and Describe in the Masking panel): click an object to select it (⌥-click leaves a
   part out), or type what to select ("sky", "the red car", "car, road"); both combine with other masks, have an
   Edge setting, and get a sharper zoomed-in pass in the background. The model runs inside LightCraft in pure Rust

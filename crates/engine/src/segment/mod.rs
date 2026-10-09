@@ -157,7 +157,14 @@ impl Segmenter {
     /// Whether this build can compute AI masks at all.
     pub const AVAILABLE: bool = cfg!(feature = "sam");
 
-    /// Whether the model's files are in place.
+    pub fn remote_endpoint(&self) -> Option<String> {
+        #[cfg(feature = "sam")]
+        return lightcraft_segment::remote::configured();
+        #[cfg(not(feature = "sam"))]
+        None
+    }
+
+    /// Whether the local model files are in place.
     pub fn installed(&self) -> bool {
         #[cfg(feature = "sam")]
         if let Some(dir) = &self.dir {
@@ -229,6 +236,10 @@ impl Segmenter {
     pub fn model_dir(&self) -> Result<PathBuf, String> {
         if !Self::AVAILABLE {
             return Err("AI masks are not available in this build".into());
+        }
+        #[cfg(feature = "sam")]
+        if lightcraft_segment::remote::configured().is_some() {
+            return Ok(PathBuf::new());
         }
         let dir = self.dir.clone().ok_or("no folder is set for the SAM 3 model")?;
         if self.installed() {
