@@ -40,7 +40,8 @@
 - Canon CR2 and Pentax PEF raws get the same starting look fitted to the camera's own JPEG as ARW, NEF, RW2, RAF
   and CR3, instead of opening flat and desaturated (issue #310). Photos already imported pick it up when re-rendered.
 - JPEG XL compressed DNGs (DNG 1.7) now open: lossless tiles decode sample for sample (checked on synthetic files);
-  lossy tiles decode too, but no real file has checked them yet. A JPEG XL preview stored in the DNG is used like an
+  lossy tiles decode too, keeping the raw values above 1.0 instead of clipping them (checked on one real file). A tile that cannot be decoded makes the file open from its embedded
+  preview, with the reason, instead of showing a black tile. A JPEG XL preview stored in the DNG is used like an
   embedded JPEG.
 - Apple ProRAW's gain table map (its local tone mapping, `ProfileGainTableMap`) is now read and kept when a photo is
   exported or converted to DNG. It is not applied to the render: Lightroom Classic renders ProRAW without it.
