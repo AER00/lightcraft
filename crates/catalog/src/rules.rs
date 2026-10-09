@@ -1012,14 +1012,14 @@ mod tests {
         yes(json!({"rules": [{"field": "fileName", "op": "startsWith", "value": "img_"}, {"field": "fileName", "op": "endsWith", "value": ".cr2"}]}));
         // file path: the whole string (spaces included), either separator, case-insensitive
         let mut fp = photo(3);
-        fp.source = Source::File { path: "D:\\Photos\\Aliah Ira Polanco-Grylls\\2026\\IMG_0042.CR2".into() };
+        fp.source = Source::File { path: "D:\\Photos\\Lake Como Wedding-Day\\2026\\IMG_0042.CR2".into() };
         let fpm = |v: serde_json::Value| rs(v).matches(&fp, &cat);
-        assert!(fpm(json!({"rules": [{"field": "filePath", "op": "contains", "value": "/Aliah Ira Polanco-Grylls/"}]})));
-        assert!(!fpm(json!({"rules": [{"field": "filePath", "op": "contains", "value": "/Ira Aliah/"}]})));
-        assert!(!fpm(json!({"rules": [{"field": "filePath", "op": "contains", "value": "Polanco Grylls"}]})));
+        assert!(fpm(json!({"rules": [{"field": "filePath", "op": "contains", "value": "/Lake Como Wedding-Day/"}]})));
+        assert!(!fpm(json!({"rules": [{"field": "filePath", "op": "contains", "value": "/Como Lake/"}]})));
+        assert!(!fpm(json!({"rules": [{"field": "filePath", "op": "contains", "value": "Wedding Day"}]})));
         assert!(fpm(json!({"rules": [{"field": "filePath", "op": "notContains", "value": "/Other/"}]})));
         assert!(fpm(json!({"rules": [{"field": "filePath", "op": "startsWith", "value": "d:/photos/"}]})));
-        no(json!({"rules": [{"field": "filePath", "op": "contains", "value": "/Aliah/"}]})); // demo photo has no path
+        no(json!({"rules": [{"field": "filePath", "op": "contains", "value": "/Lake/"}]})); // demo photo has no path
         yes(json!({"rules": [{"field": "filePath", "op": "isEmpty"}]}));
         yes(json!({"rules": [{"field": "camera", "op": "contains", "value": "x2"}, {"field": "title", "op": "isEmpty"}]}));
         yes(json!({"rules": [{"field": "iso", "op": "between", "value": [800, 3200]}, {"field": "aperture", "op": "lte", "value": "f/4"}]}));
