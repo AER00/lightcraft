@@ -178,3 +178,37 @@ fn dragging_the_angle_field_is_one_undo_step() {
     assert!(angle(&h) > 0.0, "dragged right: {}", angle(&h));
     assert_eq!(h.app.session.undo.len(), undo + 1, "one step for the whole drag");
 }
+
+/// Rotating in the margin beside a narrow photo keeps the readout next to the pointer: it is kept
+/// on the canvas, not pinned to the photo's edge.
+#[test]
+fn the_readout_follows_the_pointer_in_the_margin() {
+    let mut h = crop_tool();
+    let img = h.app.image_rect.expect("the photo on screen");
+    let canvas = h.app.canvas_rect.expect("the canvas");
+    assert!(img.left() - canvas.left() > 150.0, "this test needs a margin beside the photo");
+    let at = egui::pos2(canvas.left() + 40.0, img.center().y);
+    let x = (at.x - img.left()) / img.width();
+    let r = h.request(
+        "ui.pointer",
+        json!({"events": [{"kind": "down", "x": x, "y": 0.4}, {"kind": "drag", "x": x, "y": 0.45}, {"kind": "drag", "x": x, "y": 0.5}]}),
+        T,
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let readout = h.app.widgets.iter().find(|(w, _)| w == "cropAngleReadout").map(|(_, r)| *r).expect("the readout while rotating");
+    assert!(readout.distance_to_pos(at) < 60.0, "{readout:?} near {at:?}");
+}
+
+/// Placing the readout never panics, whatever the bounds (a NaN or an empty rect).
+#[test]
+fn placing_the_readout_never_panics() {
+    use crate::panels::detail::readout_rect;
+    let size = egui::vec2(50.0, 20.0);
+    for bounds in [egui::Rect::NAN, egui::Rect::NOTHING, egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(10.0, 10.0))] {
+        let r = readout_rect(egui::pos2(5.0, 5.0), size, bounds);
+        assert_eq!(r.size(), size, "{bounds:?}");
+    }
+    let r = readout_rect(egui::pos2(f32::NAN, 5.0), size, egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 100.0)));
+    assert_eq!(r.size(), size);
+}

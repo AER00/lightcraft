@@ -1323,7 +1323,8 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         let _ = app.run("develop.endInteraction", json!({}));
     }
     if let Some(at) = readout_at {
-        angle_readout(ui, at, shown_angle, map.rect);
+        // the canvas (the loupe's own rect), not the photo: rotating happens in the margin around it
+        angle_readout(ui, at, shown_angle, resp.rect);
     }
     let _ = id;
 }
@@ -1339,7 +1340,14 @@ pub(crate) fn crop_angle_label(angle: f64) -> String {
 
 /// Where the angle readout of `size` goes for a pointer `at`: below right of it, flipped to the
 /// left / above where that would leave `bounds`, then kept inside them.
-fn readout_rect(at: Pos2, size: egui::Vec2, bounds: Rect) -> Rect {
+pub(crate) fn readout_rect(at: Pos2, size: egui::Vec2, bounds: Rect) -> Rect {
+    // without a real pointer or bounds (NaN, an empty rect) there is nothing to keep it in; and
+    // f32::clamp panics on NaN, so only finite numbers get there
+    if !at.is_finite() || !bounds.is_finite() || !bounds.is_positive() {
+        let at = if at.is_finite() { at } else { bounds.min.max(Pos2::ZERO) };
+        let at = if at.is_finite() { at } else { Pos2::ZERO };
+        return Rect::from_min_size(at + vec2(18.0, 14.0), size);
+    }
     let x = if at.x + 18.0 + size.x > bounds.right() { at.x - 18.0 - size.x } else { at.x + 18.0 };
     let y = if at.y + 14.0 + size.y > bounds.bottom() { at.y - 14.0 - size.y } else { at.y + 14.0 };
     let x = x.clamp(bounds.left(), (bounds.right() - size.x).max(bounds.left()));
@@ -1361,8 +1369,8 @@ fn rotate_cursor(ui: &egui::Ui, at: Pos2) {
     register(ui.ctx(), "cropRotateCursor", r);
 }
 
-/// While rotating: the angle, next to the pointer, kept on the canvas (`bounds`): on the pointer's
-/// other side when it would run past an edge.
+/// While rotating: the angle, next to the pointer, kept inside `bounds` (the canvas): on the
+/// pointer's other side when it would run past an edge.
 fn angle_readout(ui: &egui::Ui, at: Pos2, angle: f64, bounds: Rect) {
     let t = Tokens::get(ui.ctx());
     let p = top_painter(ui, "crop-angle-readout");
