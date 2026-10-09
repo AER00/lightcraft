@@ -1416,7 +1416,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 if !left.is_empty() {
                     msg.push_str(&crate::i18n::tr_format!(
                         " — left out, as a keyword list can't hold them: {names}",
-                        names = left.iter().take(5).copied().collect::<Vec<_>>().join(" · ")
+                        // escaped: a line break in a name would break the toast
+                        names = left.iter().take(5).map(|n| n.escape_debug().to_string()).collect::<Vec<_>>().join(" · ")
                     ));
                 }
                 app.toast(&ctx, msg);

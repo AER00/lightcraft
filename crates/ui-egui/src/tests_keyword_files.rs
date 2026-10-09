@@ -86,6 +86,10 @@ fn exporting_keywords_names_what_it_left_out() {
     let r = run(&mut h, "file.exportKeywords", json!({"path": path.to_string_lossy()}));
     assert_eq!(r["ok"], true, "{r}");
     assert!(toast(&h).contains("Travel|[draft]"), "{}", toast(&h));
+    // a name with a line break in it shows on one line
+    run(&mut h, "photo.setMeta", json!({"ids": [id], "addKeywords": ["Line\nbreak"]}));
+    run(&mut h, "file.exportKeywords", json!({"path": path.to_string_lossy()}));
+    assert!(toast(&h).contains("Line\\nbreak") && !toast(&h).contains('\n'), "{}", toast(&h));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
