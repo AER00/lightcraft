@@ -44,13 +44,13 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 6 | 0 | 3 | 2 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 17 | 5 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
+| X. Cross-cutting behaviours (BEHAV) | 18 | 5 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 82 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 75 | 3 | 3 | 1 | 49/52 (94%) | 23/24 (96%) |
 | Lightroom Classic extras | 32 | 11 | 39 | 9 | — | 22/24 (92%) |
-| **Total** | 393 | 36 | 86 | 36 | 193/200 (97%) | 142/152 (93%) |
+| **Total** | 394 | 36 | 86 | 36 | 193/200 (97%) | 142/152 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.8%** of 515 in-scope rows — P0 98.2% of 200 · P1 95.7% of 152 · P2 42.0% of 162.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.8%** of 516 in-scope rows — P0 98.2% of 200 · P1 95.7% of 152 · P2 42.3% of 163.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -519,6 +519,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-PANEL-RESIZE | Resizable side panels | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`resizable_side`), `crates/ui-egui/src/state.rs` (`LEFT_WIDTH`, `RIGHT_WIDTH`), `crates/ui-egui/src/tests_panels.rs` | drag the left sidebar's right edge (200–480 pt) or the right panel's left edge (250–520 pt); the photo area keeps ≥ 360 pt; widths are kept across panels, views and restarts (`leftWidth` / `rightWidth` in the UI state); the Presets column stays fixed |
 | LR-BEHAV-EMPTY-STATES | Empty states | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`empty_message`) | |
 | LR-BEHAV-TOOLTIPS | Tooltips with shortcuts | P0 | ✅ | `crates/ui-egui/src/panels/bottombar.rs` | |
+| LR-BEHAV-HEADLESS | Headless UI snapshots | P2 | ✅ | `apps/lightcraft-cli/src/main.rs`, `crates/ui-egui/src/headless.rs`, `docs/control-protocol.md` | `snapshot` rasterizes the UI and defaults photo development to the CPU before the first frame, without adapter discovery; scaled dimensions are validated before allocation, and UI zoom preserves the requested physical viewport; JSON-lines control scripts are supported |
 | LR-BEHAV-ACCESS | Accessibility | P2 | 🟡 | `crates/ui-egui/src/widgets.rs`, `crates/ui-egui/src/panels/grid.rs` | AccessKit (VoiceOver / Narrator / AT-SPI): sliders announce control and value, buttons / icon buttons / dropdowns / section headers / sources their labels and state, grid thumbnails file name, rating, flag and label; the canvas tools (crop, masks) are pointer-only; not audited with a screen reader |
 | LR-BEHAV-LOCALE | Language options | P2 | ✅ | `cmd:app.language.english`, `cmd:app.language.simplifiedChinese`, `cmd:app.language.traditionalChinese`, `cmd:app.language.japanese`, `cmd:app.language.portuguese`, `cmd:app.language.spanish`, `cmd:app.language.german`, `cmd:app.language.russian` | Edit > Language lists every language in the table and the active one is checked; shared with Settings > General (docs/localization.md) |
 | LR-BEHAV-LOCALIZE | Localisation | P2 | 🟡 | `crates/ui-egui/src/i18n.rs`, `crates/ui-egui/locales/`, `docs/localization.md`, `docs/localization-zh-hans.md`, `docs/localization-zh-hant.md`, `docs/localization-ja.md`, `docs/localization-pt-br.md`, `docs/localization-es.md`, `docs/localization-de.md`, `docs/localization-ru.md` | One table entry per language (code, endonym, ISO 15924 script, catalog): English, Simplified Chinese, Traditional Chinese (Taiwan), Japanese, Brazilian Portuguese, Spanish, German and Russian UI with a persisted language preference and craft-fonts regular/bold faces per script; menus, edit, crop/masks, settings, import/export and primary progress messages. Adding a language is a table entry plus two catalogs. Stock presets/profiles, history steps, library headings, date headings and capture times are localised (user-named items stay verbatim); the German catalog covers every existing catalog key, command/control label and rule-editor label; the other catalogs fall back to English for messages they lack. Technical errors remain English; release notes are translated in German; Traditional Chinese borrows the Simplified Chinese face (no TC face in craft-fonts yet), and the web build embeds only the Japanese face. |
