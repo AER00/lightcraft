@@ -70,12 +70,29 @@ impl Detector {
     /// A detector from YuNet-architecture ONNX bytes (a retrained model of the same shape works too).
     pub fn new(onnx: &[u8]) -> Result<Detector, DetectError> {
         let g = graph::load(onnx).map_err(|e| DetectError::Model(e.to_string()))?;
+        let outputs = g.outputs.clone();
         let net = Net::new(g)?;
         let side = match net.input_shape() {
             Some(&[1, 3, h, w]) if h == w && (64..=4096).contains(&h) && h % 32 == 0 => h,
             _ => return Err(DetectError::Model("the model's input is not a fixed square image [1, 3, N, N] with N a multiple of 32".into())),
         };
+        let shapes = net.validate_input(&[1, 3, side, side])?;
+        for stride in STRIDES {
+            for (kind, components) in [("cls", 1), ("obj", 1), ("bbox", 4), ("kps", 10)] {
+                let name = format!("{kind}_{stride}");
+                let index = outputs.iter().position(|n| n == &name).ok_or_else(|| DetectError::Model(format!("the model has no output `{name}`")))?;
+                let count = shapes.get(index).and_then(|s| s.iter().try_fold(1usize, |n, d| n.checked_mul(*d)));
+                if count != Some((side / stride) * (side / stride) * components) {
+                    return Err(DetectError::Model(format!("the output `{name}` has the wrong shape")));
+                }
+            }
+        }
         Ok(Detector { net, side })
+    }
+
+    /// The square input side, used to check an installed manifest.
+    pub fn input_side(&self) -> usize {
+        self.side
     }
 
     /// Find faces in an upright `width` × `height` photo of 8-bit RGB pixels (`rgb` is `width * height * 3` bytes).
@@ -270,7 +287,7 @@ mod tests {
 
     #[test]
     fn bad_input_is_an_error_not_a_panic() {
-        let Some(d) = detector() else { return };
+        let d = Detector::new(&crate::synthetic::tiny_detector_model()).unwrap();
         let o = Options::default();
         assert!(d.detect(&[], 0, 0, &o).is_err());
         assert!(d.detect(&[0; 12], 2, 3, &o).is_err(), "wrong byte count");
@@ -281,7 +298,23 @@ mod tests {
     }
 
     #[test]
+    fn missing_decoder_outputs_are_refused_at_load_time() {
+        let mut bytes = crate::synthetic::tiny_detector_model();
+        let mut i = 0;
+        while i + 5 <= bytes.len() {
+            if &bytes[i..i + 5] == b"cls_8" {
+                bytes[i..i + 5].copy_from_slice(b"bad_8");
+            }
+            i += 1;
+        }
+        let error = Detector::new(&bytes).err().unwrap().to_string();
+        assert!(error.contains("cls_8"), "{error}");
+    }
+
+    #[test]
     fn a_model_that_is_not_yunet_shaped_is_refused() {
+        let d = Detector::new(&crate::synthetic::tiny_detector_model()).unwrap();
+        assert!(d.detect(&[128; 3], 1, 1, &Options::default()).unwrap().is_empty());
         assert!(Detector::new(b"nonsense").is_err());
         assert!(Detector::new(&crate::synthetic::embedder_model(512)).is_err());
         if let Some(bytes) = model() {

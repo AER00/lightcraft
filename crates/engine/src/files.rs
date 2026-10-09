@@ -404,8 +404,16 @@ fn fit_box(max_edge: usize) -> lightcraft_codecs::DecodeOptions {
 }
 
 /// Filesystem-backed embedded-preview hook (native).
+///
+/// Reads the whole file to find the preview, so it holds the memory gate for twice the file's size (the file and the
+/// decoded preview): background work (the face scan) waits for room, interactive work is counted and never waits.
 pub fn fs_preview_loader() -> PreviewLoader {
-    Arc::new(|path: &str, max_edge: usize| embedded_preview_srgb(&std::fs::read(path).ok()?, max_edge))
+    Arc::new(|path: &str, max_edge: usize| {
+        let len = std::fs::metadata(path).map(|m| usize::try_from(m.len()).unwrap_or(usize::MAX)).unwrap_or(0);
+        let gate = crate::memory::work_gate();
+        let _permit = if crate::memory::is_background() { gate.acquire(len.saturating_mul(2)) } else { gate.acquire_urgent(len.saturating_mul(2)) };
+        embedded_preview_srgb(&std::fs::read(path).ok()?, max_edge)
+    })
 }
 
 /// Filesystem-backed hooks (native). On the web the host installs bytes-based hooks instead.
@@ -417,7 +425,7 @@ pub fn fs_preview_loader() -> PreviewLoader {
 /// yields to them.
 pub fn fs_hooks() -> (FileLoader, FileProbe) {
     let loader: FileLoader = Arc::new(|path: &str, max_edge: usize| {
-        let len = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
+        let len = std::fs::metadata(path).map(|m| usize::try_from(m.len()).unwrap_or(usize::MAX)).unwrap_or(0);
         let weight = len * if max_edge <= crate::media::SourceLevel::Thumb.max_edge() { 3 } else { 6 };
         let gate = crate::memory::work_gate();
         let _permit = if crate::memory::is_background() { gate.acquire(weight) } else { gate.acquire_urgent(weight) };
@@ -428,7 +436,7 @@ pub fn fs_hooks() -> (FileLoader, FileProbe) {
         r
     });
     let probe: FileProbe = Arc::new(|path: &str| {
-        let len = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
+        let len = std::fs::metadata(path).map(|m| usize::try_from(m.len()).unwrap_or(usize::MAX)).unwrap_or(0);
         let _permit = crate::memory::work_gate().acquire(len);
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
         probe_bytes(path, &bytes)

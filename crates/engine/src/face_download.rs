@@ -69,13 +69,14 @@ impl Downloads {
     /// Start fetching `spec` into `<models dir>/.downloads/`. Different models can download side by side; the same
     /// one is started once.
     pub fn start(&mut self, spec: Download, models_dir: &Path) -> Result<(), String> {
-        if self.jobs.get(spec.id).is_some_and(|j| matches!(j.get(), State::Running { .. })) {
+        if self.jobs.get(spec.id.as_str()).is_some_and(|j| matches!(j.get(), State::Running { .. })) {
             return Err("that model is already downloading".into());
         }
         let staging = models_dir.join(STAGING);
         std::fs::create_dir_all(&staging).map_err(|e| format!("could not create the download folder: {e}"))?;
         let shared = Arc::new(Shared::new(spec.size_bytes));
         let worker = shared.clone();
+        let id = spec.id.clone();
         std::thread::Builder::new()
             .name("face-model-download".into())
             .spawn(move || {
@@ -85,7 +86,7 @@ impl Downloads {
                 }
             })
             .map_err(|e| format!("could not start the download: {e}"))?;
-        self.jobs.insert(spec.id.to_string(), shared);
+        self.jobs.insert(id, shared);
         Ok(())
     }
 
@@ -187,7 +188,7 @@ fn explain(e: &lightcraft_fetch::DownloadError) -> String {
 /// Fetch `spec` from `mirror` (the address without the file name) into `staging`, check it and leave it there.
 #[cfg(not(target_arch = "wasm32"))]
 fn fetch(spec: &Download, mirror: &str, staging: &Path, shared: &Shared) -> Result<(), lightcraft_fetch::DownloadError> {
-    let file = lightcraft_fetch::FileSpec { name: spec.file_name, size: Some(spec.size_bytes), sha256: Some(spec.sha256), max: spec.size_bytes };
+    let file = lightcraft_fetch::FileSpec { name: &spec.file_name, size: Some(spec.size_bytes), sha256: Some(&spec.sha256), max: spec.size_bytes };
     lightcraft_fetch::download(&[file], &[mirror.to_string()], staging, &lightcraft_fetch::Options::default(), &shared.cancel, &mut |p| {
         shared.set(State::Running { bytes: p.done.min(spec.size_bytes), total: spec.size_bytes });
     })
@@ -200,7 +201,7 @@ fn fetch(_: &Download, _: &str, _: &Path, _: &Shared) -> Result<(), String> {
 
 /// The whole job: reuse a verified earlier copy, else fetch, check and stage. Always ends in a final [`State`].
 fn run(spec: &Download, mirror: &str, staging: &Path, shared: &Shared) {
-    let target = staging.join(spec.file_name);
+    let target = staging.join(&spec.file_name);
     let part = staging.join(format!("{}.part", spec.file_name));
     match fetch(spec, mirror, staging, shared) {
         Ok(()) => shared.set(State::Done { path: target, sha256: spec.sha256.to_string() }),
@@ -236,17 +237,13 @@ mod tests {
         d
     }
 
-    fn leak(s: String) -> &'static str {
-        Box::leak(s.into_boxed_str())
-    }
-
     fn spec_for(bytes: &[u8]) -> Download {
         Download {
-            id: "test-model",
-            url: "https://example.invalid/m/test-model.onnx",
-            file_name: "test-model.onnx",
+            id: "test-model".into(),
+            url: "https://example.invalid/m/test-model.onnx".into(),
+            file_name: "test-model.onnx".into(),
             size_bytes: bytes.len() as u64,
-            sha256: leak(sha256_hex(bytes)),
+            sha256: sha256_hex(bytes),
         }
     }
 

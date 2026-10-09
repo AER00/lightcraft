@@ -401,6 +401,58 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// Naming a face in the loupe: point at an unnamed face, click its "Add name" label, type, Enter. Needs the
+    /// recognition runtime only for the background indexer, so the naming itself is tested whatever the build.
+    #[test]
+    fn naming_a_face_in_the_loupe() {
+        use crate::state::NameEdit;
+        use lightcraft_catalog::Op;
+        let mut h = demo([1400.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let id = h.app.session.active().unwrap();
+        let mut meta = h.app.session.catalog.photo(id).unwrap().meta.clone();
+        meta.regions = vec![lightcraft_meta::Region {
+            rect: lightcraft_geom::Rect { x0: 0.3, y0: 0.2, x1: 0.55, y1: 0.6 },
+            kind: lightcraft_meta::RegionKind::Face,
+            name: None,
+            description: None,
+        }];
+        h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+        h.request("ui.set", json!({"view": "detail", "right": "none"}), t);
+        h.settle(SETTLE);
+        // pointing at the box shows the invitation; clicking it opens the name box
+        h.request("ui.pointer", json!({"events": [{"kind": "move", "x": 0.42, "y": 0.4}]}), t);
+        h.step();
+        h.step();
+        let r = h.request("ui.clickWidget", json!({"id": "regionLabel:0"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        assert!(matches!(&h.app.ui.name_edit, Some(NameEdit { index: 0, .. })), "{:?}", h.app.ui.name_edit);
+        // Escape closes it without naming anything
+        let r = h.request("ui.key", json!({"key": "escape"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+        assert!(h.app.ui.name_edit.is_none(), "{:?}", h.app.ui.name_edit);
+        assert_eq!(h.app.session.catalog.photo(id).unwrap().meta.regions[0].name, None);
+        // open it again, type a name, Enter: the face is named, in one undo step
+        h.request("ui.pointer", json!({"events": [{"kind": "move", "x": 0.42, "y": 0.4}]}), t);
+        h.step();
+        h.step();
+        h.request("ui.clickWidget", json!({"id": "regionLabel:0"}), t);
+        h.step();
+        h.step();
+        let undo = h.app.session.undo.len();
+        h.request("ui.text", json!({"text": "Ann"}), t);
+        h.step();
+        h.request("ui.key", json!({"key": "enter"}), t);
+        h.step();
+        h.step();
+        assert_eq!(h.app.session.catalog.photo(id).unwrap().meta.regions[0].name.as_deref(), Some("Ann"));
+        assert_eq!(h.app.session.undo.len(), undo + 1);
+        assert!(h.app.ui.name_edit.is_none());
+    }
+
     /// Adding a face model: the dialog shows the file's terms, the model is installed only once they are
     /// accepted, and a file LightCraft cannot use only says why.
     #[test]
@@ -413,7 +465,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         h.app.session.face_models_dir = Some(dir.join("models"));
         let model = dir.join("Mine.onnx");
-        std::fs::write(&model, lightcraft_faces::synthetic::embedder_model(512)).unwrap();
+        std::fs::write(&model, lightcraft_faces::synthetic::tiny_embedder_model(512)).unwrap();
         let open = |h: &mut Headless, path: &std::path::Path| {
             h.request("engine.execute", json!({"command": "dialog.faceModel", "params": {"path": path.to_string_lossy()}}), t)
         };
@@ -439,7 +491,10 @@ mod tests {
         assert_eq!(r["ok"], true, "{r}");
         let listed = h.app.run("faces.models.list", json!({})).unwrap();
         assert!(listed["models"].as_array().unwrap().iter().any(|m| m["installed"] == true && m["known"] == false), "{listed}");
-        assert!(h.app.ui.dialog.is_none());
+        // installed, in use and recognition on: back in Settings ▸ Faces, where the scan can be watched
+        assert_eq!(h.app.ui.dialog, Some(Dialog::Settings { tab: "faces".into() }));
+        assert_eq!(listed["enabled"], true);
+        h.app.ui.dialog = None;
 
         // a file that is not a usable model says why and offers no install
         let junk = dir.join("junk.onnx");
@@ -488,6 +543,330 @@ mod tests {
         let w = h.request("ui.widgets", json!({"filter": "faces:"}), Duration::from_secs(10));
         assert!(w.to_string().contains("faces:download:yunet-2023mar"), "{w}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Pressing Download in Settings shows the model's terms first and fetches nothing until they are accepted; a build
+    /// that cannot run recognition models offers no download. The licence dialog replaces Settings, which it was opened from.
+    #[test]
+    fn download_shows_the_terms_first_and_fetches_nothing_until_accepted() {
+        use crate::state::Dialog;
+        let mut h = demo([1400.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let dir = std::env::temp_dir().join(format!("lc-ui-facedl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        h.app.session.face_models_dir = Some(dir.join("models"));
+        h.request("engine.execute", json!({"command": "app.settings", "params": {"tab": "faces"}}), t);
+        h.settle(SETTLE);
+        h.step();
+        let runtime = h.app.session.execute("faces.models.list", &json!({})).unwrap()["runtime"] == true;
+        let r = h.request("ui.clickWidget", json!({"id": "faces:download:sface-2021dec"}), t);
+        if !runtime {
+            assert_eq!(r["ok"], false, "a build that cannot run the model offers no download: {r}");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+        let Some(dlg) = h.app.ui.dialog.clone() else { panic!("no dialog") };
+        let Dialog::FaceModel { path, info, accepted } = &dlg else { panic!("the terms did not replace Settings: {dlg:?}") };
+        assert_eq!((info["download"].as_str(), *accepted, path.as_str()), (Some("sface-2021dec"), false, ""));
+        assert_eq!(info["model"]["licence"]["commercial"], "unknown");
+        // OK does nothing until the terms are accepted, and nothing has been fetched
+        assert!(crate::panels::dialogs::confirm_dialog(&mut h.app, &dlg).is_err());
+        assert_eq!(h.app.session.execute("faces.models.downloads", &json!({})).unwrap()["downloads"], json!([]));
+        // cancelling leaves it that way
+        h.request("ui.key", json!({"key": "escape"}), t);
+        h.step();
+        assert!(h.app.ui.dialog.is_none());
+        assert_eq!(h.app.session.execute("faces.models.downloads", &json!({})).unwrap()["downloads"], json!([]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Until face recognition is set up, the People view and the loupe's name box say so and offer the next step: with no
+    /// model, a button that opens Settings ▸ Faces; with a model installed but recognition off, one that switches it on.
+    #[test]
+    fn people_and_the_name_box_offer_to_set_face_recognition_up() {
+        use crate::state::{Dialog, ViewMode};
+        use lightcraft_catalog::Op;
+        let mut h = demo([1400.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let dir = std::env::temp_dir().join(format!("lc-ui-facesetup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        h.app.session.face_models_dir = Some(dir.join("models"));
+        let runtime = h.app.session.execute("faces.models.list", &json!({})).unwrap()["runtime"] == true;
+        let id = h.app.session.active().unwrap();
+        let mut meta = h.app.session.catalog.photo(id).unwrap().meta.clone();
+        meta.regions = vec![lightcraft_meta::Region {
+            rect: lightcraft_geom::Rect { x0: 0.3, y0: 0.2, x1: 0.55, y1: 0.6 },
+            kind: lightcraft_meta::RegionKind::Face,
+            name: None,
+            description: None,
+        }];
+        h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+        let offers = |h: &mut Headless| h.request("ui.widgets", json!({}), t).to_string().contains("\"faces:setup\"");
+
+        h.request("engine.execute", json!({"command": "view.people"}), t);
+        h.settle(SETTLE);
+        h.step();
+        assert_eq!(h.app.ui.view, ViewMode::People);
+        if !runtime {
+            assert!(!offers(&mut h), "a build that cannot run recognition offers nothing");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        // no model: the offer is there, and one click lands in Settings ▸ Faces
+        assert!(offers(&mut h));
+        let r = h.request("ui.clickWidget", json!({"id": "faces:setup"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+        assert_eq!(h.app.ui.dialog, Some(Dialog::Settings { tab: "faces".into() }));
+        h.app.ui.dialog = None;
+
+        // the loupe's name box offers it too, and its button leaves for Settings with the box closed
+        h.request("ui.set", json!({"view": "detail", "right": "none"}), t);
+        h.settle(SETTLE);
+        h.request("ui.pointer", json!({"events": [{"kind": "move", "x": 0.42, "y": 0.4}]}), t);
+        h.step();
+        h.step();
+        h.request("ui.clickWidget", json!({"id": "regionLabel:0"}), t);
+        h.step();
+        h.step();
+        assert!(h.app.ui.name_edit.is_some() && offers(&mut h), "the name box offers the setup");
+        let r = h.request("ui.clickWidget", json!({"id": "faces:setup"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+        assert!(h.app.ui.name_edit.is_none());
+        assert_eq!(h.app.ui.dialog, Some(Dialog::Settings { tab: "faces".into() }));
+        h.app.ui.dialog = None;
+
+        // a model installed but recognition off: "Turn on" does it on the spot
+        let model = dir.join("Mine.onnx");
+        std::fs::write(&model, lightcraft_faces::synthetic::tiny_embedder_model(512)).unwrap();
+        let installed = h.app.run("faces.models.install", json!({"path": model.to_string_lossy(), "acknowledged": true, "activate": false})).unwrap();
+        h.app.run("faces.models.select", json!({"id": installed["installed"]["id"]})).unwrap();
+        h.app.caches.faces_epoch += 1;
+        h.request("engine.execute", json!({"command": "view.people"}), t);
+        h.settle(SETTLE);
+        h.step();
+        assert!(offers(&mut h));
+        assert_eq!(h.app.session.execute("faces.models.list", &json!({})).unwrap()["enabled"], false);
+        let r = h.request("ui.clickWidget", json!({"id": "faces:setup"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+        assert_eq!(h.app.session.execute("faces.models.list", &json!({})).unwrap()["enabled"], true);
+        assert_eq!(h.app.ui.dialog, None, "nothing to go to Settings for");
+        h.step();
+        assert!(!offers(&mut h), "once it is on the offer is gone");
+        h.settle(SETTLE);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A click on a person's card opens their page, which shows only cropped faces (one per face, not per photo); a click
+    /// on one opens its photo; Back, the People button and Escape return to everyone.
+    #[test]
+    fn a_persons_page_shows_their_faces_and_back_returns_to_everyone() {
+        use crate::state::ViewMode;
+        use lightcraft_catalog::Op;
+        let mut h = demo([1400.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let ids: Vec<_> = h.app.session.catalog.photos().map(|p| p.id).take(3).collect();
+        let face = |x: f64, name: &str| lightcraft_meta::Region {
+            rect: lightcraft_geom::Rect { x0: x, y0: 0.2, x1: x + 0.25, y1: 0.6 },
+            kind: lightcraft_meta::RegionKind::Face,
+            name: Some(name.to_string()),
+            description: None,
+        };
+        // Jane Doe twice in the first photo and once in the second; John Roe in the third
+        for (id, regions) in [
+            (ids[0], vec![face(0.1, "Jane Doe"), face(0.5, "jane doe")]),
+            (ids[1], vec![face(0.3, "Jane Doe")]),
+            (ids[2], vec![face(0.3, "John Roe")]),
+        ] {
+            let mut meta = h.app.session.catalog.photo(id).unwrap().meta.clone();
+            meta.regions = regions;
+            h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+        }
+        let open_people = |h: &mut Headless| {
+            h.request("engine.execute", json!({"command": "view.people"}), t);
+            h.settle(SETTLE);
+            h.step();
+        };
+        open_people(&mut h);
+        assert_eq!((h.app.ui.view, h.app.ui.person_page.clone()), (ViewMode::People, None));
+        // the card opens the page: a face tile for each of the three faces, not a tile per photo
+        let r = h.request("ui.clickWidget", json!({"id": "person:Jane Doe"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+        assert_eq!((h.app.ui.view, h.app.ui.person_page.as_deref()), (ViewMode::People, Some("Jane Doe")));
+        let widgets = h.request("ui.widgets", json!({}), t).to_string();
+        for (id, index) in [(ids[0], 0), (ids[0], 1), (ids[1], 0)] {
+            assert!(widgets.contains(&format!("\"person-face:{}:{index}\"", id.0)), "a tile for each face: {widgets}");
+        }
+        assert!(!widgets.contains(&format!("\"person-face:{}:0\"", ids[2].0)), "someone else's face is not on the page");
+        // a face opens its photo in the detail view
+        h.request("ui.clickWidget", json!({"id": format!("person-face:{}:0", ids[1].0)}), t);
+        h.step();
+        h.step();
+        assert_eq!((h.app.ui.view, h.app.session.active()), (ViewMode::Detail, Some(ids[1])));
+        // back to the page, then each way out of it
+        h.request("engine.execute", json!({"command": "view.person", "params": {"name": "Jane Doe"}}), t);
+        h.step();
+        assert_eq!((h.app.ui.view, h.app.ui.person_page.as_deref()), (ViewMode::People, Some("Jane Doe")));
+        let r = h.request("ui.clickWidget", json!({"id": "person:back"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+        assert_eq!(h.app.ui.person_page, None);
+        h.request("engine.execute", json!({"command": "view.person", "params": {"name": "Jane Doe"}}), t);
+        h.request("ui.key", json!({"key": "escape"}), t);
+        h.step();
+        assert_eq!((h.app.ui.view, h.app.ui.person_page.clone()), (ViewMode::People, None), "Escape goes back to everyone");
+        h.request("engine.execute", json!({"command": "view.person", "params": {"name": "John Roe"}}), t);
+        open_people(&mut h);
+        assert_eq!(h.app.ui.person_page, None, "the People button shows everyone");
+        // a missing or empty name is refused
+        assert_eq!(h.request("engine.execute", json!({"command": "view.person", "params": {}}), t)["ok"], false);
+        assert_eq!(h.request("engine.execute", json!({"command": "view.person", "params": {"name": "  "}}), t)["ok"], false);
+    }
+
+    /// The People view lists the unnamed faces below the named people: select some (a click each, or all), type a name,
+    /// press Enter, and they are all named at once, in one undo step; the new person appears among the named.
+    #[test]
+    fn unnamed_faces_are_selected_and_named_together() {
+        use lightcraft_catalog::Op;
+        let mut h = demo([1400.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let ids: Vec<_> = h.app.session.catalog.photos().map(|p| p.id).take(3).collect();
+        let face = |x: f64, name: Option<&str>| lightcraft_meta::Region {
+            rect: lightcraft_geom::Rect { x0: x, y0: 0.2, x1: x + 0.2, y1: 0.55 },
+            kind: lightcraft_meta::RegionKind::Face,
+            name: name.map(str::to_string),
+            description: None,
+        };
+        for (id, regions) in [
+            (ids[0], vec![face(0.1, Some("Jane Doe")), face(0.5, None)]),
+            (ids[1], vec![face(0.3, None), face(0.6, None)]),
+            (ids[2], vec![face(0.3, None)]),
+        ] {
+            let mut meta = h.app.session.catalog.photo(id).unwrap().meta.clone();
+            meta.regions = regions;
+            h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+        }
+        h.request("engine.execute", json!({"command": "view.people"}), t);
+        h.settle(SETTLE);
+        h.step();
+        h.step();
+        let tiles = |h: &mut Headless| h.request("ui.widgets", json!({"filter": "unnamed-face:"}), t)["result"].as_array().map_or(0, Vec::len);
+        // the named person is a card, and the four unnamed faces are tiles below
+        let r = h.request("ui.clickWidget", json!({"id": "person:Jane Doe"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.request("engine.execute", json!({"command": "view.people"}), t);
+        h.step();
+        h.step();
+        assert_eq!(tiles(&mut h), 4);
+        // select two (nothing is named by selecting), and the naming bar appears
+        for (id, i) in [(ids[1], 0), (ids[2], 0)] {
+            let r = h.request("ui.clickWidget", json!({"id": format!("unnamed-face:{}:{i}", id.0)}), t);
+            assert_eq!(r["ok"], true, "{r}");
+            h.step();
+            h.step();
+        }
+        assert_eq!(h.app.ui.unnamed_selected.len(), 2);
+        let bar = h.request("ui.widgets", json!({"filter": "unnamed:"}), t).to_string();
+        assert!(bar.contains("unnamed:name") && bar.contains("unnamed:clear"), "{bar}");
+        assert!(h.request("ui.widgets", json!({"filter": "field:unnamedName"}), t).to_string().contains("field:unnamedName"));
+        // type a name and press Enter: both faces are named, in one undo step, and the selection is gone
+        let undo = h.app.session.undo.len();
+        h.request("ui.text", json!({"text": "Ann Example"}), t);
+        h.step();
+        h.request("ui.key", json!({"key": "enter"}), t);
+        h.step();
+        h.step();
+        let named = |h: &Headless, id: lightcraft_catalog::PhotoId, i: usize| h.app.session.catalog.photo(id).unwrap().meta.regions[i].name.clone();
+        assert_eq!((named(&h, ids[1], 0), named(&h, ids[2], 0)), (Some("Ann Example".to_string()), Some("Ann Example".to_string())));
+        assert_eq!(named(&h, ids[1], 1), None, "a face that was not selected stays unnamed");
+        assert_eq!(h.app.session.undo.len(), undo + 1, "one step for both");
+        assert!(h.app.ui.unnamed_selected.is_empty() && h.app.ui.unnamed_name.is_empty());
+        h.settle(SETTLE);
+        h.step();
+        assert_eq!(tiles(&mut h), 2, "the named faces left the unnamed list");
+        assert_eq!(h.app.session.catalog.people().len(), 2, "and the new person is among the named");
+        // select all, then clear: nothing is named
+        h.request("ui.clickWidget", json!({"id": "unnamed:selectAll"}), t);
+        h.step();
+        h.step();
+        assert_eq!(h.app.ui.unnamed_selected.len(), 2);
+        h.request("ui.clickWidget", json!({"id": "unnamed:clear"}), t);
+        h.step();
+        assert!(h.app.ui.unnamed_selected.is_empty());
+        // undo gives the two faces back
+        h.request("engine.execute", json!({"command": "edit.undo"}), t);
+        h.step();
+        assert_eq!(named(&h, ids[1], 0), None);
+    }
+
+    /// A screenful of faces larger than the picture cache's usual budget (96) is all kept: with a fixed budget the same few
+    /// tiles were evicted and re-requested every frame and stayed blank.
+    #[test]
+    fn a_screenful_of_small_faces_is_not_evicted_and_left_blank() {
+        use lightcraft_catalog::Op;
+        let mut h = demo([1500.0, 1000.0]);
+        let t = Duration::from_secs(20);
+        let ids: Vec<_> = h.app.session.catalog.photos().map(|p| p.id).collect();
+        // seven unnamed faces in every photo of the demo library
+        for id in &ids {
+            let mut meta = h.app.session.catalog.photo(*id).unwrap().meta.clone();
+            meta.regions = (0..7)
+                .map(|k| lightcraft_meta::Region {
+                    rect: lightcraft_geom::Rect { x0: 0.05 + 0.12 * k as f64, y0: 0.2, x1: 0.15 + 0.12 * k as f64, y1: 0.45 },
+                    kind: lightcraft_meta::RegionKind::Face,
+                    name: None,
+                    description: None,
+                })
+                .collect();
+            h.app.session.commit("setup", Op::SetMeta { id: *id, meta: Box::new(meta) }).unwrap();
+        }
+        // the smallest faces, so a lot of them fit on the screen
+        h.request("ui.set", json!({"thumbSize": 90.0, "view": "people"}), t);
+        h.settle(SETTLE);
+        h.step();
+        let drawn = h.request("ui.widgets", json!({"filter": "unnamed-face:"}), t)["result"].as_array().map_or(0, Vec::len);
+        assert!(drawn > 96, "the test needs more faces on screen than the usual budget, got {drawn}");
+        // the pictures are made and kept, well beyond the old budget (a few demo photos share a scene, so two faces can share a
+        // picture: the count is a little under the number of tiles)
+        let started = Instant::now();
+        while h.app.renderer.variant_textures() < drawn - 20 && started.elapsed() < Duration::from_secs(20) {
+            h.step();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let kept = h.app.renderer.variant_textures();
+        assert!(kept > 96 + 30, "{kept} pictures kept for {drawn} faces on screen");
+        // and they stay: many more frames, and none is evicted to be asked for again
+        for _ in 0..30 {
+            h.step();
+        }
+        assert!(h.app.renderer.variant_textures() >= kept, "{} pictures kept after more frames, {kept} before", h.app.renderer.variant_textures());
+    }
+
+    /// `ui.inspect` says how hard the face scan is allowed to work and whether the window counts as in front, so a slow
+    /// scan can be told from a stuck one.
+    #[test]
+    fn inspect_reports_the_face_scan_pace() {
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        h.settle(SETTLE);
+        h.step();
+        let r = h.request("ui.inspect", json!({}), t);
+        let scan = &r["result"]["faceScan"];
+        assert!(["pause", "light", "normal", "full"].contains(&scan["pace"].as_str().unwrap_or("")), "{scan}");
+        assert!(scan["focused"].is_boolean() && scan["pending"].is_u64() && scan["indexed"].is_u64(), "{scan}");
     }
 
     /// Profile browser: live variant thumbnails, hover previews in the loupe without touching the

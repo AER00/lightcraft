@@ -1,15 +1,17 @@
 //! A small CPU interpreter for the convolutional networks LightCraft bundles (the YuNet face detector).
 //!
-//! It runs exactly the operators such a network uses (Conv, Relu, Sigmoid, MaxPool, Resize by whole-number
-//! nearest-neighbour scales, Add, Transpose, Reshape) on float32 NCHW tensors with a batch of one, and refuses
-//! anything else with an error, so an unknown model fails to load rather than computing nonsense. It is pure
-//! Rust with no dependencies, and the inner loops are row-wise multiply-adds over slices that the compiler can
-//! vectorise. Every shape, stride and size comes from the file, so all of them are checked.
+//! It runs checked convolution, affine/activation, broadcast, pooling, matrix and shape operators on
+//! float32 tensors. Unsupported semantics fail at load time. Dense convolutions use bounded im2col and
+//! single-thread GEMM; depthwise convolutions use row-wise Rust loops. Every file-derived shape is checked.
 //!
-//! This is not a general runtime: models users install run on `tract` (see the plan), not here.
+//! The same checked float32 engine runs YuNet and installed SFace/AuraFace recognisers.
+//! Unknown operators, attributes and shapes are rejected before recognition starts.
 
 use std::collections::HashMap;
 use std::rc::Rc;
+
+mod kernels;
+mod shape;
 
 use crate::graph::{Data, Graph, Node};
 
@@ -43,7 +45,7 @@ pub struct Tensor {
 impl Tensor {
     pub fn new(shape: Vec<usize>, data: Vec<f32>) -> Result<Tensor> {
         let n = shape.iter().try_fold(1usize, |a, d| a.checked_mul(*d));
-        if n != Some(data.len()) {
+        if shape.len() > 8 || shape.contains(&0) || n.is_none_or(|n| n > MAX_TENSOR) || n != Some(data.len()) || data.iter().any(|v| !v.is_finite()) {
             return shape_err(format!("{} values do not fill the shape {shape:?}", data.len()));
         }
         Ok(Tensor { shape, data })
@@ -51,7 +53,12 @@ impl Tensor {
 
     fn zeros(shape: Vec<usize>) -> Result<Tensor> {
         match shape.iter().try_fold(1usize, |a, d| a.checked_mul(*d)) {
-            Some(n) if n <= MAX_TENSOR => Ok(Tensor { shape, data: vec![0.0; n] }),
+            Some(n) if n > 0 && n <= MAX_TENSOR && shape.len() <= 8 && !shape.contains(&0) => {
+                let mut data = Vec::new();
+                data.try_reserve_exact(n).map_err(|_| NetError::Shape("not enough memory for a model tensor".into()))?;
+                data.resize(n, 0.0);
+                Ok(Tensor { shape, data })
+            }
             _ => shape_err("a tensor would be too large"),
         }
     }
@@ -62,59 +69,14 @@ pub struct Net {
     graph: Graph,
 }
 
-/// Which operators and attribute combinations are supported, checked once when the network is built.
+/// Validate semantics rather than silently ignoring unknown or mistyped attributes.
 fn check(node: &Node, g: &Graph) -> Result<()> {
-    let weight = |i: usize| node.inputs.get(i).and_then(|n| g.weights.get(n));
-    match node.op.as_str() {
-        "Conv" => {
-            let Some(w) = weight(1) else { return unsupported("a Conv without constant weights") };
-            if w.dims.len() != 4 || !matches!(w.data, Data::F32(_)) {
-                return unsupported("a Conv that is not a 2-D float convolution");
-            }
-            if node.ints("dilations").is_some_and(|d| d.iter().any(|v| *v != 1)) {
-                return unsupported("a dilated Conv");
-            }
-            if node.string("auto_pad").is_some_and(|s| s != "NOTSET") {
-                return unsupported("a Conv with auto_pad");
-            }
-            if node.inputs.get(2).is_some_and(|b| !b.is_empty() && !g.weights.contains_key(b)) {
-                return unsupported("a Conv with a computed bias");
-            }
-        }
-        "Relu" | "Sigmoid" | "Add" => {}
-        "MaxPool" => {
-            if node.int("ceil_mode").unwrap_or(0) != 0 || node.ints("kernel_shape").is_none_or(|k| k.len() != 2) {
-                return unsupported("this MaxPool");
-            }
-            if node.ints("dilations").is_some_and(|d| d.iter().any(|v| *v != 1)) {
-                return unsupported("a dilated MaxPool");
-            }
-        }
-        "Resize" => {
-            if node.string("mode").unwrap_or("nearest") != "nearest" {
-                return unsupported("a Resize that is not nearest-neighbour");
-            }
-            if !node.inputs.get(2).is_some_and(|s| g.weights.contains_key(s)) {
-                return unsupported("a Resize without constant scales");
-            }
-        }
-        "Transpose" => {
-            if node.ints("perm").is_none() {
-                return unsupported("a Transpose without a permutation");
-            }
-        }
-        "Reshape" => {
-            if !node.inputs.get(1).is_some_and(|s| matches!(g.weights.get(s).map(|w| &w.data), Some(Data::I64(_)))) {
-                return unsupported("a Reshape with a computed shape");
-            }
-        }
-        other => return unsupported(format!("the operator `{other}`")),
-    }
-    Ok(())
+    shape::check(node, g)
 }
 
 impl Net {
     pub fn new(graph: Graph) -> Result<Net> {
+        shape::check_graph(&graph)?;
         for n in &graph.nodes {
             check(n, &graph)?;
         }
@@ -126,8 +88,18 @@ impl Net {
         self.graph.inputs.first().map(|(_, s)| s.as_slice())
     }
 
+    /// Infer and check every intermediate without allocating its pixel data.
+    /// Recognition calls this at load time with the manifest's fixed input.
+    pub fn validate_input(&self, shape: &[usize]) -> Result<Vec<Vec<usize>>> {
+        shape::infer(&self.graph, shape)
+    }
+
     /// Run the network on `input` (its single input); returns each output by name.
     pub fn run(&self, input: Tensor) -> Result<Vec<(String, Tensor)>> {
+        shape::tensor(&input.shape, input.data.len(), &input.data)?;
+        self.validate_input(&input.shape)?;
+        let mut scratch = kernels::Scratch::default();
+        let profile = std::env::var_os("LIGHTCRAFT_PROFILE").is_some();
         let g = &self.graph;
         let Some((input_name, _)) = g.inputs.first() else { return shape_err("the model has no input") };
         // when each value is last read, so big intermediates are dropped as soon as nothing needs them
@@ -145,19 +117,38 @@ impl Net {
         for (i, node) in g.nodes.iter().enumerate() {
             let get = |idx: usize| -> Result<Rc<Tensor>> {
                 let name = node.inputs.get(idx).ok_or_else(|| NetError::Shape(format!("{} is missing an input", node.op)))?;
+                if let Some(value) = values.get(name) {
+                    return Ok(value.clone());
+                }
+                if let Some(crate::graph::Weight { dims, data: Data::F32(data) }) = g.weights.get(name) {
+                    return Ok(Rc::new(Tensor::new(dims.clone(), data.clone())?));
+                }
                 values.get(name).cloned().ok_or_else(|| NetError::Shape(format!("`{name}` is read before it is computed")))
             };
+            let started = web_time::Instant::now();
             let out = match node.op.as_str() {
-                "Conv" => conv(node, &*get(0)?, g)?,
+                "Conv" => kernels::conv(node, &*get(0)?, g, &mut scratch)?,
                 "Relu" => map(&*get(0)?, |v| v.max(0.0)),
                 "Sigmoid" => map(&*get(0)?, |v| 1.0 / (1.0 + (-v).exp())),
-                "Add" => add(&*get(0)?, &*get(1)?)?,
+                "Add" | "Sub" | "Mul" => kernels::binary(node.op.as_str(), &*get(0)?, &*get(1)?)?,
+                "PRelu" => kernels::prelu(node, &*get(0)?, g)?,
+                "BatchNormalization" => kernels::batch_norm(node, &*get(0)?, g)?,
+                "Gemm" => kernels::gemm(node, &*get(0)?, g)?,
+                "Flatten" => kernels::flatten(node, &*get(0)?)?,
+                "Dropout" | "Identity" => (*get(0)?).clone(),
+                "GlobalAveragePool" => kernels::global_average(&*get(0)?)?,
                 "MaxPool" => max_pool(node, &*get(0)?)?,
                 "Resize" => resize(node, &*get(0)?, g)?,
                 "Transpose" => transpose(node, &*get(0)?)?,
                 "Reshape" => reshape(node, &*get(0)?, g)?,
                 other => return unsupported(format!("the operator `{other}`")),
             };
+            if out.data.iter().any(|v| !v.is_finite()) {
+                return shape_err(format!("{} produced non-finite values", node.op));
+            }
+            if profile {
+                eprintln!("[faces-cpu] layer {i} {} {:?}: {:.3} ms", node.op, out.shape, started.elapsed().as_secs_f64() * 1000.0);
+            }
             let Some(name) = node.outputs.first() else { return shape_err("a node has no output") };
             values.insert(name.clone(), Rc::new(out));
             for name in &node.inputs {
@@ -169,8 +160,9 @@ impl Net {
         g.outputs
             .iter()
             .map(|name| {
-                let t = values.get(name).ok_or_else(|| NetError::Shape(format!("output `{name}` was never computed")))?;
-                Ok((name.clone(), (**t).clone()))
+                let t = values.remove(name).ok_or_else(|| NetError::Shape(format!("output `{name}` was never computed")))?;
+                let t = Rc::try_unwrap(t).map_err(|_| NetError::Shape(format!("output `{name}` is still shared")))?;
+                Ok((name.clone(), t))
             })
             .collect()
     }
@@ -178,13 +170,6 @@ impl Net {
 
 fn map(x: &Tensor, f: impl Fn(f32) -> f32) -> Tensor {
     Tensor { shape: x.shape.clone(), data: x.data.iter().map(|v| f(*v)).collect() }
-}
-
-fn add(a: &Tensor, b: &Tensor) -> Result<Tensor> {
-    if a.shape != b.shape {
-        return unsupported("an Add that broadcasts");
-    }
-    Ok(Tensor { shape: a.shape.clone(), data: a.data.iter().zip(&b.data).map(|(x, y)| x + y).collect() })
 }
 
 /// `[1, c, h, w]` → `(c, h, w)`.
@@ -218,7 +203,7 @@ fn pair(node: &Node, name: &str, default: usize) -> Result<(usize, usize)> {
     }
 }
 
-fn conv(node: &Node, x: &Tensor, g: &Graph) -> Result<Tensor> {
+fn conv_direct(node: &Node, x: &Tensor, g: &Graph) -> Result<Tensor> {
     let (cin, h, w) = chw(x)?;
     let weight = node.inputs.get(1).and_then(|n| g.weights.get(n)).ok_or_else(|| NetError::Shape("a Conv lost its weights".into()))?;
     let Data::F32(wd) = &weight.data else { return unsupported("non-float Conv weights") };
@@ -238,7 +223,8 @@ fn conv(node: &Node, x: &Tensor, g: &Graph) -> Result<Tensor> {
     };
     let (sh, sw) = pair(node, "strides", 1)?;
     let (pt, pl, pb, pr) = pads(node)?;
-    let (ph, pw) = (h + pt + pb, w + pl + pr);
+    let ph = h.checked_add(pt).and_then(|v| v.checked_add(pb)).ok_or_else(|| NetError::Shape("Conv padding overflow".into()))?;
+    let pw = w.checked_add(pl).and_then(|v| v.checked_add(pr)).ok_or_else(|| NetError::Shape("Conv padding overflow".into()))?;
     if ph < kh || pw < kw {
         return shape_err("the Conv kernel is larger than its input");
     }
@@ -353,9 +339,10 @@ fn resize(node: &Node, x: &Tensor, g: &Graph) -> Result<Tensor> {
 }
 
 fn transpose(node: &Node, x: &Tensor) -> Result<Tensor> {
+    let default_perm: Vec<i64> = (0..x.shape.len() as i64).rev().collect();
     let perm: Vec<usize> = node
         .ints("perm")
-        .unwrap_or(&[])
+        .unwrap_or(&default_perm)
         .iter()
         .map(|p| usize::try_from(*p).map_err(|_| NetError::Shape("a negative permutation".into())))
         .collect::<Result<_>>()?;
@@ -368,7 +355,8 @@ fn transpose(node: &Node, x: &Tensor) -> Result<Tensor> {
     // strides of the input, in elements
     let mut in_strides = vec![1usize; rank];
     for i in (0..rank.saturating_sub(1)).rev() {
-        in_strides[i] = in_strides.get(i + 1).copied().unwrap_or(1) * x.shape.get(i + 1).copied().unwrap_or(1);
+        let v = in_strides.get(i + 1).copied().unwrap_or(1) * x.shape.get(i + 1).copied().unwrap_or(1);
+        *in_strides.get_mut(i).ok_or_else(|| NetError::Shape("missing transpose stride".into()))? = v;
     }
     let strides_for_out: Vec<usize> = perm.iter().filter_map(|p| in_strides.get(*p).copied()).collect();
     let mut out = Tensor::zeros(out_shape.clone())?;
@@ -577,3 +565,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod recognition_tests;

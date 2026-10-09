@@ -9,6 +9,9 @@ default-run = "lightcraft"
 [lints]
 workspace = true
 
+[features]
+default = []
+
 [dependencies]
 lightcraft-engine = { workspace = true, features = ["sam"] }
 lightcraft-sysmem = { workspace = true }
