@@ -16,6 +16,9 @@ pub enum Packing {
     Lsb,
     /// Each sample stored in 16 bits in file byte order, regardless of `bits`.
     Word16,
+    /// MSB-first bit stream inside 32-bit words stored in file byte order ([`unpack_words32_msb`]); rows start on a
+    /// word boundary.
+    Words32Msb,
 }
 
 enum ChunkPx {
@@ -263,6 +266,7 @@ fn unpack_chunk(
         (16, _) | (_, Packing::Word16) => (row_n * 2, 1),
         (_, Packing::Msb) => ((row_n * bits as usize).div_ceil(8), 2),
         (_, Packing::Lsb) => ((row_n * bits as usize).div_ceil(8), 3),
+        (_, Packing::Words32Msb) => ((row_n * bits as usize).div_ceil(32) * 4, 4),
     };
     for y in 0..ch {
         let s = src.get(y * row_bytes..).unwrap_or(&[]);
@@ -272,6 +276,7 @@ fn unpack_chunk(
             0 => row.iter_mut().zip(s).for_each(|(o, &b)| *o = b as u16),
             1 => read_u16s(s, order, row),
             2 => unpack_msb(s, bits, row),
+            4 => unpack_words32_msb(s, order, bits, row),
             _ => unpack_lsb(s, bits, row),
         }
         if factor > 0 {
