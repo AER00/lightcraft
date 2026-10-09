@@ -100,7 +100,8 @@ Headless screenshot dimensions must be finite and at least one logical point, wi
 positive scale. Rounded output must be at least one pixel per edge, at most 16,384 pixels
 per edge and 64 million pixels in total. `snapshot` and `ui.resize` reject requests outside
 these limits before layout or rasterization; supplied resize dimensions must be numbers.
-UI zoom changes text and control sizes while preserving the snapshot viewport's requested
+An interface zoom (egui's zoom factor; the keyboard never changes it — ⌘= / ⌘− / ⌘0 zoom the
+photo, issue #566) changes text and control sizes while preserving the snapshot viewport's requested
 physical pixel dimensions. Later `ui.resize` requests use current egui points; validation
 and rasterization both convert them to native viewport points before rounding the output
 pixels. A native edge below one point after zooming out is valid if it rounds to at least
