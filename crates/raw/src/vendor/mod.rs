@@ -13,6 +13,7 @@ pub mod pef;
 pub mod raf;
 mod rafc;
 pub mod rw2;
+pub mod srw;
 
 use crate::{BlackLevel, Cfa, Rect};
 use lightcraft_tiff::Tiff;
