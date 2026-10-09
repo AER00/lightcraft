@@ -61,22 +61,30 @@ fn chip(ui: &mut egui::Ui, path: &str, partial: bool, cross: bool) -> (egui::Res
     let measure = |s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), color).size().x;
     let shown = chip_label(path, partial, room, measure);
     let w = measure(&shown) + 16.0 + cross_w;
-    let (rect, resp) = ui.allocate_exact_size(vec2(w, 22.0), Sense::click());
+    // the row places it; its name and × answer under ids of their own keyword, so an open menu
+    // stays with its keyword when the chips change
+    let (rect, _) = ui.allocate_exact_size(vec2(w, 22.0), Sense::hover());
+    let id = egui::Id::new(("keyword-chip", path.to_lowercase(), cross));
+    let body = Rect::from_min_max(rect.min, pos2(rect.right() - cross_w, rect.bottom()));
+    let full = path.replace('|', " › ");
+    let resp = ui.interact(body, id, Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &full));
+    let x = cross.then(|| {
+        let xr = Rect::from_center_size(pos2(rect.right() - 11.0, rect.center().y), vec2(14.0, 14.0));
+        let xresp = ui.interact(xr, id.with("remove"), Sense::click());
+        let said = crate::i18n::tr_format!("Remove “{name}”", name = full);
+        xresp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &said));
+        xresp
+    });
     ui.painter().rect_stroke(rect, 10.0, egui::Stroke::new(1.0, t.field_border), egui::StrokeKind::Inside);
-    if resp.hovered() {
+    if resp.hovered() || x.as_ref().is_some_and(egui::Response::hovered) {
         ui.painter().rect_filled(rect.shrink(1.0), 10.0, t.hover.gamma_multiply(0.5));
     }
     ui.painter().text(pos2(rect.left() + 8.0, rect.center().y), Align2::LEFT_CENTER, &shown, font.clone(), color);
-    let body = Rect::from_min_max(rect.min, pos2(rect.right() - cross_w, rect.bottom()));
-    let x = cross.then(|| {
-        let xr = Rect::from_center_size(pos2(rect.right() - 11.0, rect.center().y), vec2(14.0, 14.0));
-        let xresp = ui.interact(xr, resp.id.with("remove"), Sense::click());
-        ui.painter().text(xr.center(), Align2::CENTER_CENTER, "×", t.font(13.0), if xresp.hovered() { t.text } else { t.text_dim });
-        xresp
-    });
-    let mut body_resp = resp;
-    body_resp.rect = body;
-    (body_resp, x)
+    if let Some(x) = &x {
+        ui.painter().text(x.rect.center(), Align2::CENTER_CENTER, "×", t.font(13.0), if x.hovered() { t.text } else { t.text_dim });
+    }
+    (resp, x)
 }
 
 /// A chip's menu: it acts on the selected photos (deleting a keyword from the whole library is the
@@ -310,5 +318,28 @@ mod tests {
         let (mut c, ids) = library(&[&["beach"]]);
         c.apply(Op::SetKeyword { path: "Beach".into(), info: Some(KeywordInfo::default()) }).unwrap();
         assert_eq!(shown(&chips(&c, &ids)), [("Beach", 1, 1)]);
+    }
+
+    /// Screen readers hear a chip by its whole keyword (even when cut short on screen) and its ×
+    /// as removing that keyword.
+    #[test]
+    fn chips_describe_themselves() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        ctx.enable_accesskit();
+        let mut found = Vec::new();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.set_max_width(120.0);
+                let _ = chip(ui, "Places|Portugal|Lisbon|Belém tower", true, true);
+            });
+            out.textures_delta.clear();
+            if let Some(update) = out.platform_output.accesskit_update.take() {
+                found = update.nodes.iter().map(|(_, n)| (format!("{:?}", n.role()), n.label().unwrap_or_default().to_string())).collect();
+            }
+        }
+        let has = |role: &str, label: &str| found.iter().any(|(r, l)| r == role && l == label);
+        assert!(has("Button", "Places › Portugal › Lisbon › Belém tower"), "{found:?}");
+        assert!(has("Button", "Remove “Places › Portugal › Lisbon › Belém tower”"), "{found:?}");
     }
 }
