@@ -538,3 +538,62 @@ fn a_cancelled_synchronize_does_nothing_more() {
     let r = commit.finish(&mut s);
     assert_eq!((r.imported, s.undo.len()), (0, steps_before));
 }
+
+/// Ready a synchronize of the trip folder and do its work, keeping the steps for the test to
+/// commit when it likes.
+fn readied(s: &mut Session, dir: &Scratch, choice: crate::sync::SyncChoice) -> (Vec<crate::sync::SyncStep>, crate::sync::SyncCommit) {
+    let changes = crate::sync::scan(s, &dir.path("trip"), false).unwrap();
+    let (work, commit) = crate::sync::SyncJob::start(s, changes, choice).unwrap();
+    let mut steps = Vec::new();
+    work.run(&crate::sync::SyncProgress::default(), |step| {
+        steps.push(step);
+        true
+    });
+    (steps, commit)
+}
+
+#[test]
+fn steps_for_a_library_that_was_closed_meanwhile_are_not_applied() {
+    let dir = Scratch::new("switched");
+    let mut s = library(&dir);
+    write_png(&dir.path("trip/c.png"), 3);
+    std::fs::remove_file(dir.path("trip/day1/b.png")).unwrap();
+    let choice = crate::sync::SyncChoice { remove_missing: true, ..Default::default() };
+    let (steps, mut commit) = readied(&mut s, &dir, choice);
+    // File › Open Library while the work runs: another catalog, whose photo ids mean other photos
+    s.library_identity = std::sync::Arc::new(());
+    let before = holdings(&s);
+    let undo = s.undo.len();
+    for step in steps {
+        commit.apply(&mut s, step);
+    }
+    let r = commit.finish(&mut s);
+    assert_eq!(holdings(&s), before, "nothing landed in the other library");
+    assert_eq!(s.undo.len(), undo);
+    assert_eq!((r.imported, r.removed), (0, 0), "{r:?}");
+    assert!(!r.failed.is_empty(), "and the report says why: {r:?}");
+}
+
+#[test]
+fn an_undo_pressed_while_synchronizing_is_not_folded_into_it() {
+    let dir = Scratch::new("undo-mid");
+    let mut s = library(&dir);
+    let a = s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
+    s.execute("photo.rate", &json!({"ids": [a.0], "rating": 4})).unwrap();
+    write_png(&dir.path("trip/c.png"), 3);
+    std::fs::remove_file(dir.path("trip/day1/b.png")).unwrap();
+    let choice = crate::sync::SyncChoice { remove_missing: true, ..Default::default() };
+    let (mut steps, mut commit) = readied(&mut s, &dir, choice);
+    assert!(steps.len() >= 2, "an import step and a remove step");
+    let first = steps.remove(0);
+    commit.apply(&mut s, first);
+    // the person presses Undo between two steps of the run
+    s.execute("edit.undo", &json!({})).unwrap();
+    for step in steps {
+        commit.apply(&mut s, step);
+    }
+    commit.finish(&mut s);
+    // undoing the run's last step never takes the rating with it
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.photo(a).unwrap().rating, 4, "the earlier, unrelated step stays");
+}
