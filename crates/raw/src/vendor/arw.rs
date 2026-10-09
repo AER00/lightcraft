@@ -338,7 +338,7 @@ fn read_ycbcr_tiles(bytes: &[u8], info: &ImageInfo, raw: &Ifd, mode: Mode) -> Re
         .map(|c| {
             let src = chunk_bytes(bytes, c).ok_or_else(|| RawError::Corrupt("YCbCr tile outside file".into()))?;
             let limit = (c.width as usize).checked_mul(c.height as usize).and_then(|n| n.checked_mul(3)).ok_or(RawError::Limit("tile too large"))?;
-            let f = ljpeg::decode_subsampled(src, limit)?;
+            let f = ljpeg::decode_subsampled(src, limit, ljpeg::Prediction::Geometric)?;
             if f.width != c.width as usize || f.height != c.height as usize {
                 return Err(RawError::Corrupt("Sony YCbCr tile dimensions".into()));
             }
