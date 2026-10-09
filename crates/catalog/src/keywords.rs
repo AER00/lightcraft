@@ -24,6 +24,11 @@ pub fn clean(k: &str) -> String {
     k.split(SEP).map(str::trim).filter(|s| !s.is_empty()).collect::<Vec<_>>().join("|")
 }
 
+/// The same name, whatever the case of any of its letters (not only ASCII ones).
+pub fn same(a: &str, b: &str) -> bool {
+    a == b || a.to_lowercase() == b.to_lowercase()
+}
+
 /// `k` is `parent` or one of its descendants (`parent|…`), ignoring case.
 pub fn is_under(k: &str, parent: &str) -> bool {
     let (k, p) = (k.to_lowercase(), parent.to_lowercase());
@@ -204,7 +209,7 @@ impl Catalog {
                 match list.get_mut(&path.to_lowercase()) {
                     Some(there) => {
                         for s in l.info.synonyms {
-                            if !there.info.synonyms.iter().any(|x| x.eq_ignore_ascii_case(&s)) {
+                            if !there.info.synonyms.iter().any(|x| same(x, &s)) {
                                 there.info.synonyms.push(s);
                             }
                         }
@@ -224,7 +229,7 @@ impl Catalog {
         if from.is_empty() || to.is_empty() {
             return Err(CatalogError::Invalid("keyword names can't be empty".into()));
         }
-        if is_under(&to, &from) && !to.eq_ignore_ascii_case(&from) {
+        if is_under(&to, &from) && !same(&to, &from) {
             return Err(CatalogError::Invalid("can't move a keyword below itself".into()));
         }
         let mut ops = self.keyword_ops(|kws| kws.iter().map(|k| if is_under(k, &from) { reparent(k, &from, &to) } else { k.clone() }).collect());
@@ -246,7 +251,7 @@ impl Catalog {
     /// Merge several keywords (with their children) into `into`.
     pub fn merge_keywords_ops(&self, from: &[String], into: &str) -> Result<Op> {
         let into = clean(into);
-        let from: Vec<String> = from.iter().map(|f| clean(f)).filter(|f| !f.is_empty() && !f.eq_ignore_ascii_case(&into)).collect();
+        let from: Vec<String> = from.iter().map(|f| clean(f)).filter(|f| !f.is_empty() && !same(f, &into)).collect();
         if into.is_empty() || from.is_empty() {
             return Err(CatalogError::Invalid("merge needs keywords and a target".into()));
         }
@@ -270,7 +275,7 @@ impl Catalog {
         let info = |path: &str| self.keyword_info(path).unwrap_or(&defaults);
         let mut out = ExportKeywords::default();
         let push = |v: &mut Vec<String>, s: &str| {
-            if !s.is_empty() && !v.iter().any(|x| x.eq_ignore_ascii_case(s)) {
+            if !s.is_empty() && !v.iter().any(|x| same(x, s)) {
                 v.push(s.to_string());
             }
         };
@@ -363,7 +368,7 @@ impl Catalog {
             Some(p) => format!("{}{SEP}{leaf}", self.keyword_path(&p).unwrap_or(p)),
             None => leaf.to_string(),
         };
-        if to.eq_ignore_ascii_case(&from) {
+        if same(&to, &from) {
             return Ok(Op::Batch { ops: vec![] });
         }
         if !merge && self.has_keyword(&to) {
@@ -389,7 +394,7 @@ impl Catalog {
         };
         let mut ops = Vec::new();
         if to != from {
-            if !to.eq_ignore_ascii_case(&from) && self.has_keyword(&to) {
+            if !same(&to, &from) && self.has_keyword(&to) {
                 return Err(CatalogError::KeywordExists(to));
             }
             if let Op::Batch { ops: renamed } = self.rename_keyword_ops(&from, &to)? {
@@ -412,7 +417,7 @@ impl Catalog {
     /// first, at most `n`, never one of `current`.
     pub fn keyword_suggestions(&self, current: &[String], prefix: &str, n: usize) -> Vec<String> {
         let all = self.keywords();
-        let has = |k: &str| current.iter().any(|c| c.eq_ignore_ascii_case(k));
+        let has = |k: &str| current.iter().any(|c| same(c, k));
         let q = prefix.trim().to_lowercase();
         let mut scored: Vec<(i64, String)> = if !q.is_empty() {
             all.into_iter()
@@ -777,6 +782,21 @@ mod tests {
         c.apply(Op::SetKeyword { path: "Events|Weddings".into(), info: Some(quiet) }).unwrap();
         let (flat, _) = exported(&c, &["Places|Lisbon", "Events|Weddings"]);
         assert_eq!(flat, ["Lisbon", "Lisboa", "Weddings", "Events"]);
+    }
+
+    /// Names match whatever the case of any letter, not only ASCII ones: changing only the case of
+    /// "Ärzte" is a rename, not a clash with itself, and moving it where it is changes nothing.
+    #[test]
+    fn names_match_whatever_the_case_of_any_letter() {
+        let (mut c, ids) = lib(&[&["Ärzte|Wien"]]);
+        let op = c.edit_keyword_ops("ärzte", "ÄRZTE", KeywordInfo::default()).unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(kws(&c, ids[0]), ["ÄRZTE|Wien"]);
+        assert_eq!(c.move_keyword_ops("ärzte|wien", Some("ärzte"), false).unwrap(), Op::Batch { ops: vec![] });
+        let op = c.rename_keyword_ops("ärzte", "Ärzte").unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(kws(&c, ids[0]), ["Ärzte|Wien"]);
+        assert!(c.create_keyword_ops("ärzte", KeywordInfo::default(), &[]).is_err(), "exists");
     }
 
     #[test]
