@@ -316,7 +316,6 @@ fn chroma_gains(planes: &Planes, preview: &Preview, active: Rect) -> Option<(f64
 /// (word 0), located by searching the CC0 samples for the values ExifTool reports.
 fn average_black_at(version: i16) -> Option<usize> {
     Some(match version {
-        3 => 163,
         6 | 7 | 9 => 231,
         10 | 11 => 276,
         12 | 13 | 15 => 326,
@@ -324,17 +323,13 @@ fn average_black_at(version: i16) -> Option<usize> {
     })
 }
 
-/// The sensor's black level in raw counts and the black pedestal carried by the luma samples, from `ColorData`.
-/// The pedestal is 0 on every sample but the 40D's (`ColorDataVersion` 3), whose luma floor is 512 in the file (the
-/// darkest pixels read 524–544, and the maker note repeats 512 in words 663–673).
-fn colour_data_levels(words: &[u64]) -> (Option<f32>, f32) {
-    let version = words.first().map_or(0, |&v| v as u16 as i16);
-    let pedestal = if version == 3 { 512.0 } else { 0.0 };
-    let black = average_black_at(version).and_then(|at| words.get(at..at + 4)).and_then(|q| {
-        let (lo, hi) = (q.iter().min()?, q.iter().max()?);
-        ((256..=4096).contains(lo) && hi - lo <= 8).then(|| q.iter().sum::<u64>() as f32 / 4.0)
-    });
-    (black, pedestal)
+/// The sensor's black level in raw counts from `ColorData` (`None` for versions whose position is not known, and
+/// when the four values are not plausible and near-equal).
+fn colour_data_black(words: &[u64]) -> Option<f32> {
+    let version = words.first().map(|&v| v as u16 as i16)?;
+    let q = words.get(average_black_at(version)?..)?.get(..4)?;
+    let (lo, hi) = (q.iter().min()?, q.iter().max()?);
+    ((256..=4096).contains(lo) && hi - lo <= 8).then(|| q.iter().sum::<u64>() as f32 / 4.0)
 }
 
 /// Decode a Canon sRAW / mRAW CR2 into linear white-balanced camera RGB (`cpp` 3).
@@ -360,9 +355,9 @@ pub(super) fn decode(bytes: &[u8], tiff: &Tiff, raw: &Ifd, mode: Mode) -> Result
         }
     }
     let colour_data = mn.as_ref().and_then(|m| m.ifd.value(COLOR_BALANCE).map(|v| words(v, m.order)));
-    let (black_counts, pedestal) = colour_data.as_deref().map_or((None, 0.0), colour_data_levels);
+    let black_counts = colour_data.as_deref().and_then(colour_data_black);
     // 1.0 = a CFA CR2 of the same body at full 14-bit scale; see LUMA_GAIN
-    let white = pedestal + LUMA_GAIN * (SENSOR_FULL - black_counts.unwrap_or(0.0));
+    let white = LUMA_GAIN * (SENSOR_FULL - black_counts.unwrap_or(0.0));
 
     let data = match mode {
         Mode::Header => Vec::new(),
@@ -387,7 +382,7 @@ pub(super) fn decode(bytes: &[u8], tiff: &Tiff, raw: &Ifd, mode: Mode) -> Result
         data: RawData::U16(data),
         cfa: None,
         bits: 14,
-        black: BlackLevel::uniform(pedestal),
+        black: BlackLevel::uniform(0.0),
         white: vec![white],
         active_area: active,
         crop: Rect::new(0, 0, active.width, active.height),
@@ -559,22 +554,22 @@ mod tests {
     }
 
     #[test]
-    fn colour_data_levels_by_version() {
+    fn colour_data_black_by_version() {
         let mut w = vec![0u64; 400];
         w[0] = 7;
         w[231..235].copy_from_slice(&[2048, 2047, 2048, 2048]);
-        assert_eq!(colour_data_levels(&w), (Some(2047.75), 0.0));
+        assert_eq!(colour_data_black(&w), Some(2047.75));
         w[0] = 12;
-        assert_eq!(colour_data_levels(&w).0, None); // the black level of another version lives elsewhere
+        assert_eq!(colour_data_black(&w), None); // the black level of another version lives elsewhere
         w[326..330].copy_from_slice(&[512, 512, 511, 512]);
-        assert_eq!(colour_data_levels(&w).0, Some(511.75));
+        assert_eq!(colour_data_black(&w), Some(511.75));
         w[326..330].copy_from_slice(&[512, 512, 100, 512]); // implausible
-        assert_eq!(colour_data_levels(&w).0, None);
+        assert_eq!(colour_data_black(&w), None);
         w[0] = 3;
-        assert_eq!(colour_data_levels(&w).1, 512.0); // the 40D's luma floor
+        assert_eq!(colour_data_black(&w), None); // no position known: black 0
         w[0] = 65533; // -3
-        assert_eq!(colour_data_levels(&w), (None, 0.0));
-        assert_eq!(colour_data_levels(&[]), (None, 0.0));
-        assert_eq!(colour_data_levels(&[7, 1, 2]), (None, 0.0));
+        assert_eq!(colour_data_black(&w), None);
+        assert_eq!(colour_data_black(&[]), None);
+        assert_eq!(colour_data_black(&[7, 1, 2]), None);
     }
 }
