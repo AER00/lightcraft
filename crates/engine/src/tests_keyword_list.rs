@@ -262,3 +262,45 @@ fn set_names_match_whatever_their_case() {
     s.execute("keyword.deleteSet", &json!({"name": "été"})).unwrap();
     assert!(set_named(&mut s, "ÉTÉ").is_null(), "deleted");
 }
+
+/// Export Keywords writes the keyword list file, and names the keywords Capture One's importer
+/// refuses (it allows none of ; , < > in a list); without a path it gives the text.
+#[test]
+fn exporting_keywords_writes_the_list() {
+    let dir = temp_dir("export-keywords");
+    let mut s = Session::with_demo();
+    let id = s.visible_cloned()[0].0;
+    s.execute("photo.setMeta", &json!({"ids": [id], "keywords": ["Places|Lisbon", "fish, chips"]})).unwrap();
+    let path = dir.join("keywords.txt");
+    let r = s.execute("keyword.export", &json!({"path": path.to_string_lossy()})).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("Places\n\tLisbon\n"), "{text}");
+    assert!(r["keywords"].as_u64().unwrap() >= 3, "{r}");
+    assert_eq!(r["captureOneRefuses"], json!(["fish, chips"]), "{r}");
+    let r = s.execute("keyword.export", &json!({})).unwrap();
+    assert_eq!(r["text"].as_str(), Some(text.as_str()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Import Keywords reads a keyword list file (or text) as one undo step and says what it added;
+/// a file it can't read says which line, and nothing is taken.
+#[test]
+fn importing_keywords_reads_a_list() {
+    let dir = temp_dir("import-keywords");
+    let mut s = Session::with_demo();
+    let path = dir.join("vocabulary.utf8");
+    std::fs::write(&path, "[Places]\r\n\tPortugal\r\n\t\tLisbon\r\n").unwrap();
+    let undo = s.undo.len();
+    let r = s.execute("keyword.import", &json!({"path": path.to_string_lossy()})).unwrap();
+    assert_eq!((r["added"].as_u64(), r["updated"].as_u64()), (Some(3), Some(0)), "{r}");
+    assert_eq!(s.undo.len(), undo + 1);
+    assert!(s.catalog.has_keyword("Places|Portugal|Lisbon"));
+    let r = s.execute("keyword.import", &json!({"text": "Events\n\t{celebrations}\n"})).unwrap();
+    assert_eq!(r["added"], 1);
+    let err = s.execute("keyword.import", &json!({"text": "Events\n\t\tWeddings\n"})).unwrap_err().to_string();
+    assert!(err.contains("line 2"), "{err}");
+    std::fs::write(dir.join("bad.txt"), [0xff, 0xfe, 0x00, 0x41]).unwrap();
+    assert!(s.execute("keyword.import", &json!({"path": dir.join("bad.txt").to_string_lossy()})).is_err(), "not UTF-8: refused");
+    assert!(s.execute("keyword.import", &json!({})).is_err(), "a path or text");
+    let _ = std::fs::remove_dir_all(&dir);
+}
