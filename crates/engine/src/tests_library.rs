@@ -621,3 +621,19 @@ fn smart_album_excluding_a_smart_album() {
     let travel_json = list.as_array().unwrap().iter().find(|a| a["id"] == travel).cloned().unwrap();
     assert!(travel_json["rulesText"].as_str().unwrap_or("").contains("album isn't “Excluded Photos”"), "{travel_json}");
 }
+
+/// "Update Rules from Current Filter" refuses a loop too: showing A ("Album isn't B") and
+/// updating B from that view would make B test itself.
+#[test]
+fn rules_from_the_view_cant_loop() {
+    let mut s = crate::Session::with_demo();
+    let b = s.execute("album.createSmart", &serde_json::json!({"name": "B", "rules": {"rating": 2}})).unwrap()["id"].as_u64().unwrap();
+    let rules = serde_json::json!({"ruleSet": {"rules": [{"field": "album", "op": "isNot", "value": b}]}});
+    let a = s.execute("album.createSmart", &serde_json::json!({"name": "A", "rules": rules})).unwrap()["id"].as_u64().unwrap();
+    s.execute("library.source", &serde_json::json!({"kind": "album", "id": a})).unwrap();
+    let before = s.catalog.album(lightcraft_catalog::AlbumId(b)).unwrap().smart.clone();
+    let r = s.execute("album.setRules", &serde_json::json!({"id": b, "fromView": true}));
+    assert!(r.is_err_and(|e| e.to_string().contains("would make this album include itself")), "refused");
+    assert_eq!(s.catalog.album(lightcraft_catalog::AlbumId(b)).unwrap().smart, before, "B unchanged");
+    assert!(s.catalog.smart_album_problems(lightcraft_catalog::AlbumId(b)).is_empty());
+}

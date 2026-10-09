@@ -1059,7 +1059,10 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
             let _ = app.run("dialog.smartAlbum", json!({"id": a.id.0}));
         }
         if a.is_smart() && ui.button(crate::i18n::tr("Update Rules from Current Filter")).clicked() {
-            let _ = app.run("album.setRules", json!({"id": a.id.0, "fromView": true}));
+            // refused when the view would make the album test itself: say why
+            if let Err(e) = app.run("album.setRules", json!({"id": a.id.0, "fromView": true})) {
+                app.toast(ui.ctx(), e);
+            }
         }
         if !a.folder {
             // export: show the album, select its photos, then the dialog / a preset

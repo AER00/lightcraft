@@ -860,7 +860,22 @@ pub fn specs() -> Vec<CommandSpec> {
                 let id = album_param(p, "id", "album.setRules")?;
                 let cur = s.catalog.album(id).and_then(|a| a.smart.as_deref().cloned()).ok_or_else(|| bad("album.setRules", "not a smart album"))?;
                 let rules = if bool_or(p, "fromView", false) {
-                    view_rules(s)
+                    // the view is saved as it is, but never as a loop (showing A, which tests this
+                    // album, and saving that view here would make it test itself)
+                    let view = view_rules(s);
+                    let loops: Vec<String> = view
+                        .rule_set
+                        .as_ref()
+                        .map(|r| r.check_for(&s.catalog, Some(id)))
+                        .unwrap_or_default()
+                        .iter()
+                        .filter(|p| p.issue == lightcraft_catalog::rules::Issue::AlbumLoop)
+                        .map(ToString::to_string)
+                        .collect();
+                    if !loops.is_empty() {
+                        return Err(bad("album.setRules", loops.join("; ")));
+                    }
+                    view
                 } else {
                     let replace = bool_or(p, "replace", false);
                     let folder = cur.library_folder.clone();
