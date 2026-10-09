@@ -1241,6 +1241,45 @@ mod tests {
         assert_eq!(named(&h, ids[1], 0), None);
     }
 
+    /// The name field under the unnamed faces is a shared text field: right-click ▸ Paste puts the
+    /// clipboard's name in, and Esc leaves the field and clears the selection, as Clear does.
+    #[test]
+    fn the_unnamed_faces_name_field_pastes_and_escape_clears() {
+        use lightcraft_catalog::Op;
+        let mut h = demo([1400.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let id = h.app.session.catalog.photos().map(|p| p.id).next().unwrap();
+        let mut meta = h.app.session.catalog.photo(id).unwrap().meta.clone();
+        meta.regions = vec![lightcraft_meta::Region {
+            rect: lightcraft_geom::Rect { x0: 0.3, y0: 0.2, x1: 0.5, y1: 0.55 },
+            kind: lightcraft_meta::RegionKind::Face,
+            name: None,
+            description: None,
+        }];
+        h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+        h.request("engine.execute", json!({"command": "view.people"}), t);
+        h.settle(SETTLE);
+        h.view.clipboard = "Wedding Guest".into();
+        for (widget, button) in [
+            (format!("unnamed-face:{}:0", id.0), "left"),
+            ("field:unnamedName".to_string(), "left"),
+            ("field:unnamedName".to_string(), "right"),
+            ("field:unnamedName:paste".to_string(), "left"),
+        ] {
+            let r = h.request("ui.clickWidget", json!({"id": widget, "button": button}), t);
+            assert_eq!(r["ok"], true, "{widget}: {r}");
+            h.step();
+            h.step();
+            h.step();
+        }
+        assert_eq!(h.app.ui.unnamed_name, "Wedding Guest");
+        assert_eq!(h.app.ui.unnamed_selected.len(), 1, "still naming");
+        h.request("ui.key", json!({"key": "Escape"}), t);
+        h.step();
+        h.step();
+        assert!(h.app.ui.unnamed_selected.is_empty() && h.app.ui.unnamed_name.is_empty(), "Esc cleared the selection and the name");
+    }
+
     /// A screenful of faces larger than the picture cache's usual budget (96) is all kept: with a fixed budget the same few
     /// tiles were evicted and re-requested every frame and stayed blank.
     #[test]
