@@ -88,11 +88,16 @@ const SENSOR_CLIP: f32 = 0.99;
 /// when the refit misses the acceptance gates the look on all pixels is kept. So no photo loses
 /// its look and none switches attempt (a refit that just clears the gate on all pixels must not
 /// replace a look fitted away from edges). A photo that had no look gets one when the search
-/// without the clipped pixels finds it.
+/// without the clipped pixels finds it, and otherwise the [`fit_partial`] look when that is clearly
+/// closer to the camera JPEG than the neutral fallback.
 fn fit_look(sensor: &Rgb32f, reference: &Rgb32f, clipped: &[bool], colour: Option<(Mat3, Option<HsvTable>)>) -> Option<CameraLook> {
     let unclipped = without_clipped(sensor, clipped);
     let Some((look, attempt)) = search_ordered(sensor, reference, colour.clone(), TONE_FITS) else {
-        return unclipped.and_then(|u| search_ordered(&u, reference, colour, TONE_FITS)).map(|(look, _)| look);
+        return unclipped
+            .as_ref()
+            .and_then(|u| search_ordered(u, reference, colour, TONE_FITS))
+            .map(|(look, _)| look)
+            .or_else(|| fit_partial(unclipped.as_ref().unwrap_or(sensor), reference));
     };
     let Some(unclipped) = unclipped else { return Some(look) };
     let refit = fit_attempt(&unclipped, reference, &colour, attempt);
@@ -605,6 +610,106 @@ fn fit_pairs_on(
         return None;
     }
     Some(look)
+}
+
+/// Weight of the photo's own colour matrix in a [`fit_partial`] look; the rest is the identity (the
+/// neutral fallback's generic camera ≈ sRGB colour). On the CC0 archive's proxies, with the
+/// matrix at full weight 2 of the 83 colourful photos without a look came out more than 2° further
+/// from the camera's hues than the neutral fallback, at half weight none (median hue error 8.1° →
+/// 4.4°; the generic colour alone: 9.6°, as the tone and chroma curves make its hue errors visible).
+const PARTIAL_MATRIX_WEIGHT: f64 = 0.5;
+
+/// Smallest rank correlation of scene and camera JPEG luminance over a [`fit_partial`] look's pairs:
+/// the JPEG must show the same picture. A look that only matches the brightness distribution of an
+/// unrelated picture can still beat the dark neutral fallback pixel for pixel. On the CC0 archive's
+/// proxies the accepted full looks have 0.55 or more, lens-corrected compacts without one 0.53–0.77,
+/// three old Coolpix files whose raw decodes wrongly 0.07–0.27.
+const PARTIAL_MIN_RANK_CORRELATION: f64 = 0.5;
+
+/// Spearman rank correlation of the scene's and the JPEG's luminance over `pairs`.
+fn rank_correlation(pairs: &[([f64; 3], [f64; 3])]) -> f64 {
+    let ranks = |values: Vec<f64>| {
+        let mut order: Vec<usize> = (0..values.len()).collect();
+        order.sort_by(|a, b| values[*a].total_cmp(&values[*b]));
+        let mut ranks = vec![0.0; values.len()];
+        for (rank, i) in order.into_iter().enumerate() {
+            ranks[i] = rank as f64;
+        }
+        ranks
+    };
+    let scene = ranks(pairs.iter().map(|(x, _)| luma(*x)).collect());
+    let jpeg = ranks(pairs.iter().map(|(_, y)| luma(*y)).collect());
+    let mean = (pairs.len() as f64 - 1.0) / 2.0;
+    let (covariance, variance) =
+        scene.iter().zip(&jpeg).fold((0.0, 0.0), |(c, v), (a, b)| (c + (a - mean) * (b - mean), v + (a - mean) * (a - mean)));
+    if variance > 0.0 { covariance / variance } else { 0.0 }
+}
+
+/// A partial look for a photo whose full look misses the acceptance gates (lens-corrected JPEGs of
+/// compacts, dull or nearly colourless scenes): the tone curve by quantile matching, which needs
+/// no pixel-exact registration and was the largest part of the neutral fallback's error (rendered
+/// 9–22 L* too dark), the chroma curve (the fallback kept about a third of the camera's
+/// colourfulness), and, when the scene has enough colour to learn one (the full look's condition),
+/// the photo's own colour matrix at [`PARTIAL_MATRIX_WEIGHT`]. No hue/saturation table. Tried on
+/// all pixels and then, like the full look, on the pixels away from edges; used only when it cuts
+/// the held-out squared error to below [`MIN_IMPROVEMENT`] of the neutral fallback's, in linear
+/// and in gamma-encoded display values, and when the JPEG shows the same picture
+/// ([`PARTIAL_MIN_RANK_CORRELATION`]). There is no limit on its own error: it only has to be clearly
+/// closer to the camera JPEG than what the photo would get otherwise.
+fn fit_partial(sensor: &Rgb32f, reference: &Rgb32f) -> Option<CameraLook> {
+    [None, Some(EDGE_CONTRAST)].into_iter().find_map(|edge_limit| fit_partial_on(sensor, reference, edge_limit))
+}
+
+fn fit_partial_on(sensor: &Rgb32f, reference: &Rgb32f, edge_limit: Option<f32>) -> Option<CameraLook> {
+    // as for a known colour model: enough signal for the tone, but no monochrome reference
+    let (pairs, bright) = collect_pairs(sensor, reference, 0.005, edge_limit)?;
+    let related = rank_correlation(&pairs);
+    if related < PARTIAL_MIN_RANK_CORRELATION {
+        if lightcraft_pipeline::profiling() {
+            eprintln!("[profile] camera look partial: luminance rank correlation {related:.3}, not the same picture");
+        }
+        return None;
+    }
+    let spread = |y: &[f64; 3]| y.iter().copied().fold(f64::NEG_INFINITY, f64::max) - y.iter().copied().fold(f64::INFINITY, f64::min);
+    let colourful = pairs.iter().filter(|(_, y)| spread(y) > 0.05).count() >= pairs.len() / 20;
+    let matrix = match colourful.then(|| fit_matrix(&pairs)).flatten() {
+        Some(own) => Mat3(std::array::from_fn(|r| {
+            std::array::from_fn(|c| Mat3::IDENTITY.0[r][c] + PARTIAL_MATRIX_WEIGHT * (own.0[r][c] - Mat3::IDENTITY.0[r][c]))
+        })),
+        None => Mat3::IDENTITY,
+    };
+    let tone_pairs: Vec<_> =
+        pairs.iter().enumerate().filter(|(i, _)| i % 3 != 0).map(|(_, (x, y))| (luma(matrix.apply(*x).map(|v| v.max(0.0))), luma(*y))).collect();
+    let mut look = CameraLook { matrix, tone: fit_tone(tone_pairs)?, hue_sat: None };
+    if let Some(tone) = fit_chroma(&bright, &look) {
+        look.tone = tone;
+    }
+    let (tone, neutral) = (ToneMap::camera(&look.tone, 0.0, 0.0, 0.0), ToneMap::new(0.0, 0.0, 0.0));
+    let encoded = |v: f64| v.max(0.0).powf(1.0 / 2.2);
+    let (mut before, mut after, mut before_encoded, mut after_encoded, mut samples) = (0.0, 0.0, 0.0, 0.0, 0);
+    for (x, target) in pairs.iter().step_by(3) {
+        let (fallback, partial) = (displayed(*x, &neutral), displayed(matrix.apply(*x), &tone));
+        for c in 0..3 {
+            before += (fallback[c] - target[c]).powi(2);
+            after += (partial[c] - target[c]).powi(2);
+            before_encoded += (encoded(fallback[c]) - encoded(target[c])).powi(2);
+            after_encoded += (encoded(partial[c]) - encoded(target[c])).powi(2);
+            samples += 1;
+        }
+    }
+    if lightcraft_pipeline::profiling() {
+        eprintln!(
+            "[profile] camera look partial (tone{}{}) holdout RMS {:.5} -> {:.5} ({samples} channels{})",
+            if look.tone.chroma().iter().any(|k| *k != 1.0) { ", chroma" } else { "" },
+            if matrix != Mat3::IDENTITY { ", damped matrix" } else { "" },
+            (before / samples.max(1) as f64).sqrt(),
+            (after / samples.max(1) as f64).sqrt(),
+            if edge_limit.is_some() { ", away from edges" } else { "" }
+        );
+    }
+    let better =
+        after.is_finite() && after_encoded.is_finite() && after < before * MIN_IMPROVEMENT && after_encoded < before_encoded * MIN_IMPROVEMENT;
+    (samples > 0 && better).then_some(look)
 }
 
 /// Linear Rec.2020 D65 → linear ProPhoto RGB D50, the space DNG hue/saturation tables work in.
@@ -1597,5 +1702,121 @@ mod tests {
         let swapped = fit_pairs_ordered(&sensor, &reference, None, &[ToneFit::ConditionalMedian, ToneFit::Quantile]).unwrap();
         let conditional = fit_pairs_ordered(&sensor, &reference, None, &[ToneFit::ConditionalMedian]).unwrap();
         assert_eq!(swapped.tone, conditional.tone);
+    }
+
+    /// The camera look of `scene` (the known matrix of these tests, then a bright camera curve).
+    fn bright_camera(p: [f32; 3]) -> [f32; 3] {
+        let known = Mat3([[1.8, -0.4, -0.1], [-0.2, 1.5, -0.1], [-0.05, -0.3, 1.7]]);
+        let q = known.apply_f32(p);
+        let y = luminance_2020(q);
+        if y <= 0.0 { [0.0; 3] } else { q.map(|v| v * (1.0 - (-4.0 * y).exp()) / y) }
+    }
+
+    /// Mean squared error (all channels, display-linear) of `render` against `target` over `scene`.
+    fn mean_error(scene: &Rgb32f, target: impl Fn([f32; 3]) -> [f32; 3], render: impl Fn([f64; 3]) -> [f64; 3]) -> f64 {
+        let error: f64 = scene
+            .data
+            .iter()
+            .map(|x| {
+                let (p, t) = (render(x.map(f64::from)), target(*x));
+                (0..3).map(|c| (p[c] - f64::from(t[c])).powi(2)).sum::<f64>()
+            })
+            .sum();
+        error / (3 * scene.data.len()) as f64
+    }
+
+    /// A colourful scene with fine detail everywhere (foliage) whose camera JPEG is lens-corrected:
+    /// barrel distortion moves the picture by up to about 4 proxy pixels toward the corners, so the
+    /// detail no longer pairs with itself and no global look passes the gates, on all pixels or
+    /// away from edges. The partial look still follows the camera's brightness, colourfulness and
+    /// hues: on the registered scene it is far closer to the camera than the neutral fallback,
+    /// which renders the scene dark and grey.
+    #[test]
+    fn partial_look_when_a_lens_corrected_jpeg_misses_the_gates() {
+        let (w, h) = (96usize, 64usize);
+        let scene = |u: f32, v: f32| -> [f32; 3] {
+            let base = 0.1 * (1.0 + 0.6 * (0.05 * u + 0.04 * v).sin());
+            let detail = 1.0 + 0.8 * (1.7 * u).sin() * (1.3 * v).sin();
+            let y = base * detail;
+            [y * (0.6 + 0.5 * (0.07 * u).sin().abs()), y, y * (0.5 + 0.6 * (0.09 * v + 0.03 * u).cos().abs())]
+        };
+        let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+        let mut sensor = Rgb32f::new(w, h);
+        let mut reference = sensor.clone();
+        for y in 0..h {
+            for x in 0..w {
+                let (dx, dy) = (x as f32 - cx, y as f32 - cy);
+                let k = 1.0 + 0.08 * (dx * dx + dy * dy) / (cx * cx);
+                sensor.data[y * w + x] = scene(x as f32, y as f32);
+                reference.data[y * w + x] = bright_camera(scene(cx + dx * k, cy + dy * k));
+            }
+        }
+        assert!(fit_pairs(&sensor, &reference).is_none(), "the full look misses the gates");
+        let look = fit_look(&sensor, &reference, &vec![false; w * h], None).expect("a partial look instead of the neutral fallback");
+        assert!(look.hue_sat.is_none());
+        assert_ne!(look.matrix, Mat3::IDENTITY, "a colourful scene gets the damped matrix");
+        // on the registered scene, against what the camera renders
+        let tone = ToneMap::camera(&look.tone, 0.0, 0.0, 0.0);
+        let neutral = ToneMap::new(0.0, 0.0, 0.0);
+        let partial = mean_error(&sensor, bright_camera, |x| displayed(look.matrix.apply(x), &tone));
+        let fallback = mean_error(&sensor, bright_camera, |x| displayed(x, &neutral));
+        assert!(partial < fallback * 0.25, "partial {partial:.5}, neutral fallback {fallback:.5}");
+        assert!(tone.apply(0.05) < tone.apply(0.2) && tone.apply(0.2) < tone.apply(0.8));
+    }
+
+    /// An overcast, nearly colourless scene (under 5% of the pixels coloured, so no colour matrix is
+    /// learnt and the full look is never tried) whose camera renders it two stops brighter than the
+    /// neutral fallback: the partial look is the tone curve (and chroma curve) alone.
+    #[test]
+    fn partial_look_brightens_a_dull_scene_without_learning_colour() {
+        let (w, h) = (96usize, 64usize);
+        let mut sensor = Rgb32f::new(w, h);
+        for (i, p) in sensor.data.iter_mut().enumerate() {
+            let ev = 0.01 + (i % 37) as f32 * 0.004;
+            let tint = if i % 50 == 0 { 1.3 } else { 1.0 + (i % 5) as f32 * 0.004 };
+            *p = [ev * tint, ev, ev * (2.0 - tint)];
+        }
+        let camera = |p: [f32; 3]| {
+            let y = luminance_2020(p);
+            p.map(|v| v * (1.0 - (-12.0 * y).exp()) / y)
+        };
+        let mut reference = sensor.clone();
+        reference.map_in_place(camera);
+        assert!(fit_pairs(&sensor, &reference).is_none(), "too little colour for the full look");
+        let look = fit_look(&sensor, &reference, &vec![false; w * h], None).expect("a partial look");
+        assert_eq!(look.matrix, Mat3::IDENTITY, "no colour matrix from a colourless scene");
+        let tone = ToneMap::camera(&look.tone, 0.0, 0.0, 0.0);
+        let neutral = ToneMap::new(0.0, 0.0, 0.0);
+        let lightness =
+            |tone: &ToneMap| sensor.data.iter().map(|p| f64::from(tone.apply(luminance_2020(*p)))).sum::<f64>() / sensor.data.len() as f64;
+        let target = reference.data.iter().map(|p| f64::from(luminance_2020(*p))).sum::<f64>() / reference.data.len() as f64;
+        assert!((lightness(&tone) / target - 1.0).abs() < 0.05, "{} vs {target}", lightness(&tone));
+        assert!(lightness(&neutral) < target * 0.6, "the neutral fallback is far darker");
+    }
+
+    /// When the neutral fallback already matches the camera JPEG, or the JPEG is unrelated or
+    /// monochrome, the partial look isn't clearly better and the photo keeps the neutral fallback.
+    #[test]
+    fn partial_look_only_when_clearly_better_than_the_neutral_fallback() {
+        let (w, h) = (96usize, 64usize);
+        let mut sensor = Rgb32f::new(w, h);
+        for (i, p) in sensor.data.iter_mut().enumerate() {
+            let ev = 0.02 + (i % 41) as f32 * 0.012;
+            *p = [ev * (0.7 + (i % 11) as f32 * 0.05), ev, ev * (0.7 + (i % 13) as f32 * 0.045)];
+        }
+        let none = vec![false; w * h];
+        // the camera renders exactly as the neutral fallback: nothing to gain
+        let neutral = ToneMap::new(0.0, 0.0, 0.0);
+        let mut reference = sensor.clone();
+        reference.map_in_place(|p| displayed(p.map(f64::from), &neutral).map(|v| v as f32));
+        assert!(fit_partial(&sensor, &reference).is_none(), "no clear gain over the fallback");
+        // an unrelated picture
+        for (i, p) in reference.data.iter_mut().enumerate() {
+            *p = [0.05 + (i % 7) as f32 * 0.07, 0.05 + (i % 19) as f32 * 0.02, 0.05 + (i % 29) as f32 * 0.01];
+        }
+        assert!(fit_look(&sensor, &reference, &none, None).is_none(), "unrelated JPEG");
+        // a black-and-white JPEG of the scene
+        reference.data.iter_mut().zip(&sensor.data).for_each(|(r, s)| *r = [0.8 * luminance_2020(*s).sqrt(); 3]);
+        assert!(fit_look(&sensor, &reference, &none, None).is_none(), "monochrome JPEG");
     }
 }
