@@ -456,3 +456,22 @@ fn random_sort_has_no_date_headers() {
     let ids = many(&mut c, 5);
     assert!(c.date_runs(&ids, SortKey::Random, GroupBy::Day).is_empty());
 }
+
+/// Reload stores the lens data a file carries; the inverse (through the journal's JSON) takes it back.
+#[test]
+fn set_embedded_lens_is_undoable_and_journaled() {
+    let mut c = Catalog::default();
+    let a = c.alloc_photo_id();
+    c.apply(Op::AddPhoto {
+        photo: Box::new(Photo::new(a, Source::File { path: "/x.rw2".into() }, "x.rw2", "RW2", 4000, 3000, "2026-10-06T00:00:00")),
+    })
+    .unwrap();
+    let lens = lightcraft_develop::EmbeddedLens { warp: Some(Default::default()), vignette: None };
+    let op = Op::SetEmbeddedLens { id: a, lens: Some(Box::new(lens)) };
+    let op: Op = serde_json::from_str(&serde_json::to_string(&op).unwrap()).unwrap();
+    let inv = c.apply(op).unwrap();
+    assert_eq!(c.photo(a).unwrap().embedded_lens, Some(lens));
+    let inv: Op = serde_json::from_str(&serde_json::to_string(&inv).unwrap()).unwrap();
+    c.apply(inv).unwrap();
+    assert_eq!(c.photo(a).unwrap().embedded_lens, None);
+}
