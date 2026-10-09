@@ -113,6 +113,9 @@ pub struct Env {
     /// The albums an Album rule can test: (id, name shown, with its folder when it is in one),
     /// sorted by that name.
     pub albums: Vec<(u64, String)>,
+    /// The smart albums it can test, the same way: not the album being edited, nor one that tests
+    /// it (that would loop back).
+    pub smart_albums: Vec<(u64, String)>,
 }
 
 /// The album of `albums` an Album rule's value names, read as the catalog reads it (`3`, `"3"`).
@@ -121,20 +124,30 @@ fn chosen_album<'a>(v: &Value, albums: &'a [(u64, String)]) -> Option<&'a (u64, 
     albums.iter().find(|a| a.0 == id.0)
 }
 
-/// An Album rule's value: one of the plain albums, picked by name.
+/// An Album rule's value: an album or a smart album, picked by name.
 fn album_value(ui: &mut egui::Ui, v: &mut Value, salt: &str, env: &Env) {
-    let chosen = chosen_album(v, &env.albums);
+    let chosen = chosen_album(v, &env.albums).or_else(|| chosen_album(v, &env.smart_albums));
     let cur = chosen.map(|a| a.0);
     let text = chosen.map_or_else(|| crate::i18n::tr("Choose an album…").to_string(), |a| a.1.clone());
     let r = egui::ComboBox::from_id_salt(format!("{salt}-album")).width(160.0).selected_text(text).show_ui(ui, |ui| {
-        for (id, name) in &env.albums {
-            let r = ui.selectable_label(cur == Some(*id), name);
+        let mut item = |ui: &mut egui::Ui, id: u64, name: &str| {
+            let r = ui.selectable_label(cur == Some(id), name);
             register(ui.ctx(), format!("ruleAlbumItem:{id}:{salt}"), r.rect);
             if r.clicked() {
                 *v = json!(id);
             }
+        };
+        for (id, name) in &env.albums {
+            item(ui, *id, name);
         }
-        if env.albums.is_empty() {
+        if !env.smart_albums.is_empty() {
+            ui.separator();
+            ui.label(RichText::new(crate::i18n::tr("Smart Albums")).weak().small());
+            for (id, name) in &env.smart_albums {
+                item(ui, *id, name);
+            }
+        }
+        if env.albums.is_empty() && env.smart_albums.is_empty() {
             ui.label(crate::i18n::tr("No albums yet"));
         }
     });

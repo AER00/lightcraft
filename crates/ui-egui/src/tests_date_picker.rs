@@ -101,3 +101,16 @@ fn escape_closes_only_the_calendar() {
     assert!(!has(&h, "datePickerCell:2026-01-20:rules-0"), "the calendar closed");
     assert!(h.app.ui.dialog.is_some(), "the editor stays open");
 }
+
+/// Esc with a dropdown open (here the field menu) closes the dropdown, not the editor.
+#[test]
+fn escape_closes_only_a_dropdown() {
+    let mut h = editor(json!([{"field": "rating", "op": "gte", "value": 3}]));
+    click(&mut h, "ruleField:rules-0");
+    assert!(has(&h, "ruleFieldItem:rating:rules-0"));
+    let r = h.request("ui.key", json!({"key": "Escape"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(!has(&h, "ruleFieldItem:rating:rules-0"), "the menu closed");
+    assert!(h.app.ui.dialog.is_some(), "the editor stays open");
+}

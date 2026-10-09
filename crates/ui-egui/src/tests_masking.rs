@@ -381,7 +381,7 @@ fn smart_album_editor_marks_bad_rules_and_blocks_ok() {
     assert!(h.app.session.catalog.albums().any(|a| a.name == "Checked"));
 }
 
-/// An Album rule picks its album from a list of the plain albums, not by typing an id.
+/// An Album rule picks its album from a list of the albums and smart albums, not by typing an id.
 #[test]
 fn smart_album_editor_picks_an_album_from_a_list() {
     let mut h = detail("panel.edit");
@@ -397,7 +397,7 @@ fn smart_album_editor_picks_an_album_from_a_list() {
     h.settle(SETTLE);
     let has = |h: &Headless, id: String| h.app.widgets.iter().any(|(w, _)| *w == id);
     assert!(has(&h, format!("ruleAlbumItem:{trip}:rules-0")), "plain albums are offered");
-    assert!(!has(&h, format!("ruleAlbumItem:{smart}:rules-0")), "smart albums can't be tested");
+    assert!(has(&h, format!("ruleAlbumItem:{smart}:rules-0")), "smart albums too");
     let r = h.request("ui.clickWidget", json!({"id": format!("ruleAlbumItem:{trip}:rules-0")}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
@@ -478,6 +478,35 @@ fn sidebar_marks_smart_albums_with_problems() {
     exec(&mut h, "album.delete", json!({"id": trip}));
     h.settle(SETTLE);
     assert!(marked(&h), "its album is gone");
+}
+
+/// Editing "Excluded Photos" while "Travel" tests it: the list offers neither the album itself nor
+/// Travel (testing it would loop back), and a rule set to Travel by other means is marked.
+#[test]
+fn smart_album_editor_keeps_albums_from_including_themselves() {
+    let mut h = detail("panel.edit");
+    let trip = exec(&mut h, "album.create", json!({"name": "Trip", "addSelected": false}))["id"].as_u64().unwrap();
+    let excluded = exec(&mut h, "album.createSmart", json!({"name": "Excluded Photos", "rules": {"rating": 1}}))["id"].as_u64().unwrap();
+    let rules = json!({"ruleSet": {"rules": [{"field": "album", "op": "isNot", "value": excluded}]}});
+    let travel = exec(&mut h, "album.createSmart", json!({"name": "Travel", "rules": rules}))["id"].as_u64().unwrap();
+    exec(&mut h, "dialog.smartAlbum", json!({"id": excluded}));
+    let set = |h: &mut Headless, value: serde_json::Value| {
+        let Some(crate::state::Dialog::SmartRules { rules, .. }) = &mut h.app.ui.dialog else { panic!("no rule editor") };
+        rules.rules = vec![serde_json::from_value(json!({"field": "album", "op": "is", "value": value})).unwrap()];
+        h.settle(SETTLE);
+    };
+    set(&mut h, json!(null));
+    let r = h.request("ui.clickWidget", json!({"id": "ruleAlbum:rules-0"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let has = |h: &Headless, id: String| h.app.widgets.iter().any(|(w, _)| *w == id);
+    assert!(has(&h, format!("ruleAlbumItem:{trip}:rules-0")));
+    assert!(!has(&h, format!("ruleAlbumItem:{excluded}:rules-0")), "not itself");
+    assert!(!has(&h, format!("ruleAlbumItem:{travel}:rules-0")), "not an album that tests it");
+    let _ = h.request("ui.key", json!({"key": "Escape"}), T);
+    h.settle(SETTLE);
+    set(&mut h, json!(travel));
+    assert!(has(&h, "ruleProblem:rules-0".to_string()), "a loop is marked");
 }
 
 #[test]

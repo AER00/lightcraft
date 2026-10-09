@@ -761,8 +761,11 @@ mod tests {
         assert_eq!(problem_text_in(Locale::Ja, &p[0]), "タイトル：検索する語句が必要です（または「が空」を使用）");
         let g = problems(serde_json::json!([{"group": {"rules": []}}]));
         assert_eq!(problem_text_in(Locale::En, &g[0]), "This group is empty: add a rule or remove it.");
-        // the issues, and the operators their hints name, in every language
+        // the issues, the operators their hints name and the album picker's words, in every language
         for language in Locale::ALL.iter().filter(|l| **l != Locale::En) {
+            for word in ["Choose an album…", "No albums yet", "Smart Albums", "Fix the marked rules to save this album."] {
+                assert!(language.catalog().contains_key(word), "{} lacks {word:?}", language.code());
+            }
             for issue in Issue::ALL {
                 assert!(language.catalog().contains_key(issue.text()), "{} lacks {:?}", language.code(), issue.text());
             }

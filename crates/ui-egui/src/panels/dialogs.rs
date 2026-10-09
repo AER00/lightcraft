@@ -63,6 +63,11 @@ pub const WHATS_NEW: &str = include_str!("../../../../docs/whats-new.md");
 pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let Some(mut dlg) = app.ui.dialog.clone() else { return };
     let at_start = dlg.clone();
+    // Esc with a popup open in the dialog (a dropdown, a date picker's calendar) closes the popup
+    // only: claimed before the dialog is drawn, since the popup is gone once it has handled the key
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && egui::Popup::is_any_open(ctx) {
+        crate::widgets::take_escape(ctx);
+    }
     let t = Tokens::get(ctx);
     let screen = ctx.content_rect();
     // The backdrop is an area below the dialog window (a bare `Middle` layer painter would be
@@ -244,27 +249,15 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ui.add_space(6.0);
                     // checked before drawing, so each row marks its own problem
                     let env = crate::panels::rules_editor::Env {
-                        problems: rules.check(&app.session.catalog),
+                        problems: rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)),
                         today: (app.session.clock)(),
-                        albums: {
-                            let cat = &app.session.catalog;
-                            let mut albums: Vec<(u64, String)> = cat
-                                .albums()
-                                .filter(|a| !a.is_smart() && !a.folder)
-                                .map(|a| {
-                                    // "Folder / Album", so albums of the same name in two folders differ
-                                    let folder = a.parent.and_then(|f| cat.album(f)).map(|f| f.name.as_str());
-                                    (a.id.0, folder.map_or_else(|| a.name.clone(), |f| format!("{f} / {}", a.name)))
-                                })
-                                .collect();
-                            albums.sort_by_key(|a| a.1.to_lowercase());
-                            albums
-                        },
+                        albums: album_choices(&app.session.catalog, *id, false),
+                        smart_albums: album_choices(&app.session.catalog, *id, true),
                     };
                     egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
                         crate::panels::rules_editor::edit(ui, rules, "rules", 0, &[], &env);
                     });
-                    let problems = rules.check(&app.session.catalog);
+                    let problems = rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId));
                     // the folder an album made from a folder view carries is not in the editor, but it counts
                     let folder = id.and_then(|id| app.session.catalog.album(lightcraft_catalog::AlbumId(id))).and_then(|a| a.smart.as_deref().and_then(|f| f.library_folder.clone()));
                     let f = lightcraft_catalog::Filter { rule_set: Some(rules.clone()), library_folder: folder, ..Default::default() };
@@ -856,7 +849,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let can_confirm = informational
                     || !matches!(&dlg, Dialog::DenoiseModel { accepted: false, .. } | Dialog::FaceModel { accepted: false, .. })
                         // smart-album rules that can't mean anything wait to be fixed
-                        && !matches!(&dlg, Dialog::SmartRules { rules, .. } if !rules.check(&app.session.catalog).is_empty());
+                        && !matches!(&dlg, Dialog::SmartRules { id, rules, .. } if !rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)).is_empty());
                 let r = (!ok.is_empty()).then(|| ui.add_enabled(can_confirm, egui::Button::new(crate::i18n::tr(ok))));
                 if let Some(r) = &r {
                     crate::widgets::register(ui.ctx(), "button:dialogOk", r.rect);
@@ -1040,6 +1033,25 @@ fn created_in(app: &mut LightcraftApp, command: &str, params: serde_json::Value)
     Ok(r)
 }
 
+/// The albums (`smart` false) or smart albums an Album rule in smart album `editing` can test, as
+/// (id, "Folder / Name"), sorted by name: no folders, and no smart album that is `editing` itself
+/// or tests it (that would loop back).
+fn album_choices(cat: &lightcraft_catalog::Catalog, editing: Option<u64>, smart: bool) -> Vec<(u64, String)> {
+    let editing = editing.map(lightcraft_catalog::AlbumId);
+    let mut albums: Vec<(u64, String)> = cat
+        .albums()
+        .filter(|a| !a.folder && a.is_smart() == smart)
+        .filter(|a| editing.is_none_or(|e| a.id != e && !cat.album_reaches(a.id, e)))
+        .map(|a| {
+            // "Folder / Album", so albums of the same name in two folders differ
+            let folder = a.parent.and_then(|f| cat.album(f)).map(|f| f.name.as_str());
+            (a.id.0, folder.map_or_else(|| a.name.clone(), |f| format!("{f} / {}", a.name)))
+        })
+        .collect();
+    albums.sort_by_key(|a| a.1.to_lowercase());
+    albums
+}
+
 pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_json::Value, String> {
     match dlg {
         Dialog::SamModel { then, .. } => {
@@ -1100,7 +1112,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         }
         Dialog::SmartRules { id, name, rules, parent } => {
             // refused before anything changes (not even the name)
-            if let Some(problem) = rules.check(&app.session.catalog).first() {
+            if let Some(problem) = rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)).first() {
                 return Err(problem.to_string());
             }
             let name = if name.trim().is_empty() { "Smart Album".to_string() } else { name.trim().to_string() };
