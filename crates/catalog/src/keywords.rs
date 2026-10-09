@@ -43,6 +43,11 @@ pub fn reparent(k: &str, from: &str, to: &str) -> String {
     std::iter::once(to).filter(|t| !t.is_empty()).chain(rest).collect::<Vec<_>>().join("|")
 }
 
+/// The keyword of `from` that `k` is under, the closest one when several are (`a|b` before `a`).
+pub fn closest<'a>(k: &str, from: &'a [String]) -> Option<&'a String> {
+    from.iter().filter(|f| is_under(k, f)).max_by_key(|f| f.split(SEP).count())
+}
+
 /// Keep the first of case-insensitively equal keywords.
 fn dedupe(v: &mut Vec<String>) {
     let mut seen = std::collections::HashSet::new();
@@ -201,10 +206,12 @@ impl Catalog {
     /// one already there merges into it (that one's attributes stay, the synonyms gather).
     fn list_move_ops(&self, from: &[String], to: &str) -> Vec<Op> {
         self.list_ops(|list| {
-            let moving: Vec<String> = list.iter().filter(|(_, l)| from.iter().any(|f| is_under(&l.path, f))).map(|(k, _)| k.clone()).collect();
-            for key in moving {
-                let Some(l) = list.remove(&key) else { continue };
-                let Some(f) = from.iter().find(|f| is_under(&l.path, f)) else { continue };
+            // every moving listing leaves first, then each lands: one landing where another is
+            // about to leave isn't merged into it
+            let moving: Vec<String> = list.iter().filter(|(_, l)| closest(&l.path, from).is_some()).map(|(k, _)| k.clone()).collect();
+            let left: Vec<ListedKeyword> = moving.iter().filter_map(|key| list.remove(key)).collect();
+            for l in left {
+                let Some(f) = closest(&l.path, from) else { continue };
                 let path = reparent(&l.path, f, to);
                 match list.get_mut(&path.to_lowercase()) {
                     Some(there) => {
@@ -258,9 +265,8 @@ impl Catalog {
         if from.iter().any(|f| is_under(&into, f)) {
             return Err(CatalogError::Invalid("can't merge a keyword into one below it".into()));
         }
-        let mut ops = self.keyword_ops(|kws| {
-            kws.iter().map(|k| from.iter().find(|f| is_under(k, f)).map(|f| reparent(k, f, &into)).unwrap_or_else(|| k.clone())).collect()
-        });
+        let mut ops =
+            self.keyword_ops(|kws| kws.iter().map(|k| closest(k, &from).map(|f| reparent(k, f, &into)).unwrap_or_else(|| k.clone())).collect());
         ops.extend(self.list_move_ops(&from, &into));
         Ok(Op::Batch { ops })
     }
@@ -827,6 +833,30 @@ mod tests {
         let op = c.purge_unused_keywords_ops();
         c.apply(op).unwrap();
         assert!(listed(&c).is_empty(), "only a deleted photo has it: unused");
+    }
+
+    /// Merging several keywords moves each keyword under them by the closest one, whatever the
+    /// order they are given in, and every listing lands where its keyword does: one landing where
+    /// another is about to leave isn't merged into it.
+    #[test]
+    fn merging_overlapping_keywords_keeps_every_listing() {
+        let (mut c, ids) = lib(&[&["a|b|c"], &["a|c"]]);
+        let person = KeywordInfo { person: true, ..KeywordInfo::default() };
+        c.apply(Op::SetKeyword { path: "a|b|c".into(), info: Some(person.clone()) }).unwrap();
+        c.apply(Op::SetKeyword { path: "a|c".into(), info: Some(with_synonyms(&["sea"])) }).unwrap();
+        let op = c.merge_keywords_ops(&["a|b".into(), "a|c".into()], "a").unwrap();
+        c.apply(op).unwrap();
+        assert_eq!((kws(&c, ids[0]), kws(&c, ids[1])), (vec!["a|c".to_string()], vec!["a".to_string()]));
+        assert_eq!(listed(&c), [("a".to_string(), with_synonyms(&["sea"])), ("a|c".to_string(), person)]);
+        // the order of the keywords merged doesn't matter
+        let merged = |from: [&str; 2]| {
+            let (mut c, ids) = lib(&[&["a|b|c", "a|d"]]);
+            let op = c.merge_keywords_ops(&from.map(String::from), "x").unwrap();
+            c.apply(op).unwrap();
+            kws(&c, ids[0])
+        };
+        assert_eq!(merged(["a", "a|b"]), merged(["a|b", "a"]));
+        assert_eq!(merged(["a", "a|b"]), ["x|c", "x|d"]);
     }
 
     #[test]

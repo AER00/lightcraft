@@ -1,7 +1,7 @@
 //! Library-wide keyword commands: list (tree with counts), suggestions, rename, delete, merge;
 //! keyword sets (nine keywords a keystroke away: ⌥1–⌥9) and Recent Keywords.
 
-use lightcraft_catalog::keywords::{KeywordInfo, clean, is_under, reparent};
+use lightcraft_catalog::keywords::{KeywordInfo, clean, closest, is_under, reparent};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, str_param};
@@ -390,7 +390,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let op = s.catalog.merge_keywords_ops(&from, &into).map_err(|e| bad("keyword.merge", e.to_string()))?;
                 let (from, into) = (from.iter().map(|f| clean(f)).collect::<Vec<_>>(), clean(&into));
                 commit_keywords(s, "Merge Keywords", op, |k| {
-                    Some(match from.iter().find(|f| is_under(k, f)) {
+                    Some(match closest(k, &from) {
                         Some(f) => reparent(k, f, &into),
                         None => k.to_string(),
                     })
