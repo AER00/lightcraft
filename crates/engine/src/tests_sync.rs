@@ -237,3 +237,36 @@ fn a_scan_is_stale_once_the_library_changed() {
     let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip")})).unwrap();
     assert_eq!(r["imported"], 0, "the library changed: it looked again: {r}");
 }
+
+#[test]
+fn a_cancelled_scan_stops_checking_files() {
+    let dir = Scratch::new("cancel");
+    let mut s = library(&dir);
+    std::fs::remove_file(dir.path("trip/day1/b.png")).unwrap();
+    let input = crate::sync::SyncInput::new(&mut s, &dir.path("trip")).unwrap();
+    let progress = crate::import::ScanProgress::default();
+    progress.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    let c = crate::sync::scan_with(input, &progress);
+    assert!(c.missing.is_empty() && c.metadata.is_empty(), "{c:?}");
+}
+
+#[test]
+fn many_photos_are_checked_in_parallel_with_the_same_answer() {
+    let dir = Scratch::new("many");
+    for i in 0..40u8 {
+        write_png(&dir.path(&format!("big/{i:02}.png")), i);
+    }
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [dir.path("big")]})).unwrap();
+    for i in (0..40u8).step_by(3) {
+        std::fs::remove_file(dir.path(&format!("big/{i:02}.png"))).unwrap();
+    }
+    for i in (1..40u8).step_by(5) {
+        write_sidecar(&dir.path(&format!("big/{i:02}.png")), 2, Duration::ZERO);
+    }
+    let r = scan(&mut s, &dir.path("big"));
+    let expect_missing: Vec<String> = (0..40u8).step_by(3).map(|i| dir.path(&format!("big/{i:02}.png"))).collect();
+    let expect_meta: Vec<String> = (1..40u8).step_by(5).filter(|i| i % 3 != 0).map(|i| dir.path(&format!("big/{i:02}.png"))).collect();
+    assert_eq!(paths(&r, "missing"), expect_missing);
+    assert_eq!(paths(&r, "metadata"), expect_meta);
+}

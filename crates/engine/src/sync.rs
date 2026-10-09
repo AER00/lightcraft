@@ -131,9 +131,20 @@ impl SyncInput {
 }
 
 /// Find what changed in the folder (see the module docs). Reads the disk, never the session.
+///
+/// Both halves wait on the disk (a network share answers each file slowly), so they run at once:
+/// the look for new files (which probes them on its own threads) beside the checks of the
+/// library's photos, which run on several threads too. Stops early when `progress.cancel` is set.
 pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
     let SyncInput { folder, revision, scan, photos, labels } = input;
-    let out = crate::import::scan_with(scan, std::slice::from_ref(&folder), progress);
+    let (out, checks) = std::thread::scope(|sc| {
+        let photos = &photos;
+        let labels = &labels;
+        let checks = sc.spawn(move || check_photos(photos, labels, progress));
+        let out = crate::import::scan_with(scan, std::slice::from_ref(&folder), progress);
+        // (a check that panicked counts as nothing found; the scan still reports the rest)
+        (out, checks.join().unwrap_or_default())
+    });
     let mut changes = FolderChanges { path: folder, probes: out.probes, revision, ..Default::default() };
     for c in out.candidates {
         match (&c.duplicate, &c.error) {
@@ -143,18 +154,69 @@ pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
             (None, None) => changes.new.push(c),
         }
     }
-    for (p, naming) in &photos {
+    for ((p, _), check) in photos.iter().zip(checks) {
         let Some(file) = crate::cmd::missing::checked_path(p) else { continue };
-        if cfg!(target_arch = "wasm32") {
-            continue;
-        }
-        if !Path::new(file).exists() {
-            changes.missing.push(FolderPhoto { id: p.id.0, path: file.to_string() });
-        } else if p.copy_of.is_none() && sidecar_has_news(&labels, p, *naming) {
-            changes.metadata.push(FolderPhoto { id: p.id.0, path: file.to_string() });
+        let found = FolderPhoto { id: p.id.0, path: file.to_string() };
+        match check {
+            Check::Missing => changes.missing.push(found),
+            Check::News => changes.metadata.push(found),
+            Check::Nothing => {}
         }
     }
     changes
+}
+
+/// What checking one photo of the folder found.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Check {
+    #[default]
+    Nothing,
+    Missing,
+    News,
+}
+
+fn check_photo(p: &Photo, naming: SidecarNaming, labels: &Catalog) -> Check {
+    let Some(file) = crate::cmd::missing::checked_path(p) else { return Check::Nothing };
+    if !Path::new(file).exists() {
+        Check::Missing
+    } else if p.copy_of.is_none() && sidecar_has_news(labels, p, naming) {
+        Check::News
+    } else {
+        Check::Nothing
+    }
+}
+
+/// [`check_photo`] for each photo, in order, on several threads (each file is a wait on the
+/// disk, not work for the CPU). Photos not reached before a cancel count as nothing found.
+fn check_photos(photos: &[(Arc<Photo>, SidecarNaming)], labels: &Catalog, progress: &ScanProgress) -> Vec<Check> {
+    use std::sync::atomic::Ordering::Relaxed;
+    if cfg!(target_arch = "wasm32") {
+        return vec![Check::Nothing; photos.len()];
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let n = crate::import::workers(photos.len());
+        if n > 1 {
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            let found = std::sync::Mutex::new(vec![Check::Nothing; photos.len()]);
+            std::thread::scope(|sc| {
+                for _ in 0..n {
+                    sc.spawn(|| {
+                        while !progress.cancel.load(Relaxed) {
+                            let i = next.fetch_add(1, Relaxed);
+                            let Some((p, naming)) = photos.get(i) else { break };
+                            let c = check_photo(p, *naming, labels);
+                            if let Some(slot) = found.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_mut(i) {
+                                *slot = c;
+                            }
+                        }
+                    });
+                }
+            });
+            return found.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+    photos.iter().map(|(p, naming)| if progress.cancel.load(Relaxed) { Check::Nothing } else { check_photo(p, *naming, labels) }).collect()
 }
 
 /// [`scan_with`] on the calling thread.

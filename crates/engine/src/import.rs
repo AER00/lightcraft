@@ -1044,7 +1044,7 @@ fn name_family(name: &str) -> String {
 
 /// Threads for `jobs` file reads (probes, copies) at once.
 #[cfg(not(target_arch = "wasm32"))]
-fn workers(jobs: usize) -> usize {
+pub(crate) fn workers(jobs: usize) -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(1, 8).min(jobs.max(1))
 }
 
