@@ -220,5 +220,6 @@
   "Added {n} keyword{}": "Se añadieron {n} palabra{} clave",
   "; {n} gained synonyms": "; {n} recibieron sinónimos",
   "Exported {n} keyword{}": "Se exportaron {n} palabra{} clave",
-  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One no importa una lista con ; , < o > en una palabra clave: {names}"
+  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One no importa una lista con ; , < o > en una palabra clave: {names}",
+  " — left out, as a keyword list can't hold them: {names}": " — omitidas, porque una lista de palabras clave no puede contenerlas: {names}"
 }

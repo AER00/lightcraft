@@ -220,5 +220,6 @@
   "Added {n} keyword{}": "{n}件のキーワードを追加しました{:.0}",
   "; {n} gained synonyms": "。{n}件に同義語を追加",
   "Exported {n} keyword{}": "{n}件のキーワードを書き出しました{:.0}",
-  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One は ; , < > を含むキーワードがあるリストを読み込みません: {names}"
+  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One は ; , < > を含むキーワードがあるリストを読み込みません: {names}",
+  " — left out, as a keyword list can't hold them: {names}": " — キーワードリストに書けないため省略: {names}"
 }

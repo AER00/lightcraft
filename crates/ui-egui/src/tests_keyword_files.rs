@@ -74,3 +74,17 @@ fn exporting_keywords_warns_about_capture_one() {
     assert!(toast(&h).contains("Capture One"), "{}", toast(&h));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A keyword the list format can't hold is left out of the file, and the toast names it.
+#[test]
+fn exporting_keywords_names_what_it_left_out() {
+    let dir = temp_dir("export-left-out");
+    let mut h = app();
+    let id = h.app.session.visible_cloned()[0].0;
+    run(&mut h, "photo.setMeta", json!({"ids": [id], "addKeywords": ["Travel|[draft]"]}));
+    let path = dir.join("keywords.txt");
+    let r = run(&mut h, "file.exportKeywords", json!({"path": path.to_string_lossy()}));
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(toast(&h).contains("Travel|[draft]"), "{}", toast(&h));
+    let _ = std::fs::remove_dir_all(&dir);
+}

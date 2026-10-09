@@ -428,11 +428,26 @@ impl Catalog {
 
     /// The keyword list as a file (Lightroom Classic's format, [`parse_keyword_list`]): every
     /// keyword of the tree, those inside one indented a tab more, synonyms in braces under their
-    /// keyword, a keyword left out of export in square brackets; by name.
-    pub fn keyword_list_text(&self) -> String {
-        fn write(c: &Catalog, nodes: &[KeywordNode], depth: usize, out: &mut String) {
+    /// keyword, a keyword left out of export in square brackets; by name. Also names what the format
+    /// can't hold and so is left out (a keyword, with those inside it, as its path; a synonym as
+    /// `path {synonym}`), so the file always reads back.
+    pub fn keyword_list_text(&self) -> (String, Vec<String>) {
+        // a name the list would read as something else, or not at all
+        fn unwritable(name: &str) -> bool {
+            name.trim().is_empty()
+                || name != name.trim()
+                || name.chars().any(char::is_control)
+                || (name.starts_with('[') && name.ends_with(']'))
+                || (name.starts_with('{') && name.ends_with('}'))
+        }
+        fn write(c: &Catalog, nodes: &[KeywordNode], depth: usize, out: &mut String, left: &mut Vec<String>) {
             let tabs = "\t".repeat(depth);
             for n in nodes {
+                // the keywords inside go with it: under its parent they'd be other keywords
+                if depth >= MAX_LEVELS || unwritable(&n.name) {
+                    left.push(n.path.clone());
+                    continue;
+                }
                 let info = c.keyword_info(&n.path).cloned().unwrap_or_default();
                 if info.include_on_export {
                     out.push_str(&format!("{tabs}{}\n", n.name));
@@ -440,14 +455,18 @@ impl Catalog {
                     out.push_str(&format!("{tabs}[{}]\n", n.name));
                 }
                 for s in &info.synonyms {
-                    out.push_str(&format!("{tabs}\t{{{s}}}\n"));
+                    if unwritable(s) || s.contains(SEP) {
+                        left.push(format!("{} {{{s}}}", n.path));
+                    } else {
+                        out.push_str(&format!("{tabs}\t{{{s}}}\n"));
+                    }
                 }
-                write(c, &n.children, depth + 1, out);
+                write(c, &n.children, depth + 1, out, left);
             }
         }
-        let mut out = String::new();
-        write(self, &self.keyword_tree(), 0, &mut out);
-        out
+        let (mut out, mut left) = (String::new(), Vec::new());
+        write(self, &self.keyword_tree(), 0, &mut out, &mut left);
+        (out, left)
     }
 
     /// Import a keyword list (read with [`parse_keyword_list`]) — one batch: the keywords the
@@ -1224,7 +1243,7 @@ mod tests {
         c.apply(Op::SetKeyword { path: "Places".into(), info: Some(KeywordInfo { include_on_export: false, ..KeywordInfo::default() }) }).unwrap();
         c.apply(Op::SetKeyword { path: "Places|Lisbon".into(), info: Some(with_synonyms(&["Lisboa"])) }).unwrap();
         c.apply(Op::SetKeyword { path: "Events|Weddings".into(), info: Some(KeywordInfo::default()) }).unwrap();
-        assert_eq!(c.keyword_list_text(), "beach\nEvents\n\tWeddings\n[Places]\n\tLisbon\n\t\t{Lisboa}\n");
+        assert_eq!(c.keyword_list_text().0, "beach\nEvents\n\tWeddings\n[Places]\n\tLisbon\n\t\t{Lisboa}\n");
     }
 
     /// Reading a list gives each keyword's path and attributes: what was written comes back, and a
@@ -1293,6 +1312,30 @@ mod tests {
     fn a_repeated_keyword_keeps_its_first_spelling() {
         let read = parse_keyword_list("Events\n\tWeddings\nevents\n\tBirthdays\n").unwrap();
         assert_eq!(read.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["Events", "Events|Weddings", "Events|Birthdays"]);
+    }
+
+    /// What the list can't hold is left out and named, so the file always reads back: a name the
+    /// format would read as something else (in brackets or braces), one with a line break, a
+    /// synonym with one, a keyword nested deeper than a list goes; and the keywords inside one left
+    /// out go with it.
+    #[test]
+    fn an_exported_keyword_list_always_reads_back() {
+        let deep = (0..=MAX_LEVELS).map(|i| format!("level {i}")).collect::<Vec<_>>().join("|");
+        let (mut c, _) = lib(&[&["Travel|[draft]", "{todo}|Lisbon", "Weddings", "Line\nbreak", deep.as_str()]]);
+        c.apply(Op::SetKeyword { path: "Weddings".into(), info: Some(with_synonyms(&["marriage", "two\nlines"])) }).unwrap();
+        let (text, unwritable) = c.keyword_list_text();
+        let read = parse_keyword_list(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        assert!(read.iter().any(|(p, _)| p == "Travel"));
+        assert!(read.iter().all(|(p, _)| !p.contains("draft") && !p.contains("todo") && !p.contains("Line")), "{text}");
+        let weddings = read.iter().find(|(p, _)| p == "Weddings").map(|(_, i)| i.synonyms.clone());
+        assert_eq!(weddings, Some(vec!["marriage".to_string()]));
+        let deepest = read.iter().map(|(p, _)| p.split(SEP).count()).max();
+        assert_eq!(deepest, Some(MAX_LEVELS));
+        assert!(unwritable.contains(&"Travel|[draft]".to_string()), "{unwritable:?}");
+        assert!(unwritable.contains(&"{todo}".to_string()), "{unwritable:?}");
+        assert!(unwritable.contains(&"Line\nbreak".to_string()), "{unwritable:?}");
+        assert!(unwritable.contains(&"Weddings {two\nlines}".to_string()), "{unwritable:?}");
+        assert!(unwritable.iter().any(|u| u.ends_with(&format!("level {MAX_LEVELS}"))), "{unwritable:?}");
     }
 
     /// A big list reads and imports at once, against a big library too: 40,000 keywords used to take

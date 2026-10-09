@@ -277,9 +277,23 @@ fn exporting_keywords_writes_the_list() {
     assert!(text.contains("Places\n\tLisbon\n"), "{text}");
     assert!(r["keywords"].as_u64().unwrap() >= 3, "{r}");
     assert_eq!(r["captureOneRefuses"], json!(["fish, chips"]), "{r}");
+    assert_eq!(r["unwritable"], json!([]), "{r}");
     let r = s.execute("keyword.export", &json!({})).unwrap();
     assert_eq!(r["text"].as_str(), Some(text.as_str()));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A keyword the format can't hold is left out of the file and named, so the file reads back.
+#[test]
+fn exporting_keywords_names_what_the_list_cant_hold() {
+    let mut s = Session::with_demo();
+    let id = s.visible_cloned()[0].0;
+    s.execute("photo.setMeta", &json!({"ids": [id], "keywords": ["Travel|[draft]", "Travel|Lisbon"]})).unwrap();
+    let r = s.execute("keyword.export", &json!({})).unwrap();
+    assert_eq!(r["unwritable"], json!(["Travel|[draft]"]), "{r}");
+    let text = r["text"].as_str().unwrap();
+    assert!(text.contains("Travel\n\tLisbon\n") && !text.contains("draft"), "{text}");
+    s.execute("keyword.import", &json!({"text": text})).unwrap();
 }
 
 /// Import Keywords reads a keyword list file (or text) as one undo step and says what it added;

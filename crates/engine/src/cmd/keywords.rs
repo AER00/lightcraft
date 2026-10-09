@@ -427,17 +427,17 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export Keywords",
             [],
             None,
-            "{path?} — the keyword list as a file (Lightroom Classic's format, which Capture One, Photo Supreme and Bridge read) → {keywords, captureOneRefuses: keywords with ; , < > that Capture One's importer refuses, text when there is no path}",
+            "{path?} — the keyword list as a file (Lightroom Classic's format, which Capture One, Photo Supreme and Bridge read) → {keywords, captureOneRefuses: keywords with ; , < > that Capture One's importer refuses, unwritable: keywords left out because the format can't hold them (a name in brackets or braces, a line break, deeper than 64 levels; a synonym as \"path {synonym}\"), text when there is no path}",
             always,
             |s, p| {
-                let text = s.catalog.keyword_list_text();
+                let (text, unwritable) = s.catalog.keyword_list_text();
                 let keywords = text.lines().filter(|l| !l.trim_start().starts_with('{')).count();
                 let refuses: Vec<String> = text
                     .lines()
                     .map(|l| l.trim().trim_start_matches('[').trim_end_matches(']').to_string())
                     .filter(|l| !l.starts_with('{') && l.contains(CAPTURE_ONE_REFUSES))
                     .collect();
-                let mut r = json!({"keywords": keywords, "captureOneRefuses": refuses});
+                let mut r = json!({"keywords": keywords, "captureOneRefuses": refuses, "unwritable": unwritable});
                 match str_param(p, "path").map(str::trim).filter(|x| !x.is_empty()) {
                     Some(path) => {
                         std::fs::write(path, &text).map_err(|e| crate::EngineError::Other(format!("{path}: {e}")))?;

@@ -220,5 +220,6 @@
   "Added {n} keyword{}": "已加入 {n} 個關鍵字{:.0}",
   "; {n} gained synonyms": "；{n} 個獲得了同義詞",
   "Exported {n} keyword{}": "已匯出 {n} 個關鍵字{:.0}",
-  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One 不會匯入關鍵字中含有 ; , < 或 > 的清單：{names}"
+  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One 不會匯入關鍵字中含有 ; , < 或 > 的清單：{names}",
+  " — left out, as a keyword list can't hold them: {names}": " — 已省略，關鍵字清單無法容納: {names}"
 }

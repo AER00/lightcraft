@@ -1406,6 +1406,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                         names = refuses.iter().take(5).copied().collect::<Vec<_>>().join(" · ")
                     ));
                 }
+                // what the format can't hold (a name in brackets, a line break…) isn't in the file
+                let left: Vec<&str> = v["unwritable"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                if !left.is_empty() {
+                    msg.push_str(&crate::i18n::tr_format!(
+                        " — left out, as a keyword list can't hold them: {names}",
+                        names = left.iter().take(5).copied().collect::<Vec<_>>().join(" · ")
+                    ));
+                }
                 app.toast(&ctx, msg);
             }
             return Some(r);

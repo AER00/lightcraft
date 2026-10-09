@@ -220,5 +220,6 @@
   "Added {n} keyword{}": "{n} Stichwort/Stichwörter hinzugefügt{:.0}",
   "; {n} gained synonyms": "; {n} erhielten Synonyme",
   "Exported {n} keyword{}": "{n} Stichwort/Stichwörter exportiert{:.0}",
-  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One importiert keine Liste mit ; , < oder > in einem Stichwort: {names}"
+  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One importiert keine Liste mit ; , < oder > in einem Stichwort: {names}",
+  " — left out, as a keyword list can't hold them: {names}": " — ausgelassen, weil eine Stichwortliste sie nicht aufnehmen kann: {names}"
 }
