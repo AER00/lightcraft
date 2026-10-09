@@ -68,7 +68,10 @@ stay in the local library, so later adjustments and exports work without the con
 The worker requires Metal and accepts one editing connection at a time. It loads weights
 on demand and releases them when the client disconnects or remains idle for ten minutes.
 Both endpoints require loopback addresses: SSH provides authentication and encryption.
-The listener has no independent authentication; do not expose it through a public proxy.
+The listener has no independent authentication; do not expose it through a public proxy. Any
+process of any user on the worker Mac can connect to it, and on the editing computer a local
+process listening on the port while the tunnel is down receives the rendered model input, so use
+this only on machines whose local users you trust.
 
 No local weights are required in remote mode. An unavailable worker produces an explicit
 error, not a silent CPU fallback. Restore the tunnel and retry. Unset
