@@ -157,3 +157,16 @@ fn keywords_given_to_photos_are_stored_cleaned() {
     assert_eq!(keywords_of(&s, id), ["beach", "Ärzte", "sea"]);
     assert!(s.execute("keyword.info", &json!({"keyword": "beach"})).is_ok());
 }
+
+/// Rename, merge and delete say how many photos they changed, as before the keyword list: the
+/// list's own changes aren't photos.
+#[test]
+fn keyword_actions_count_the_photos_they_change() {
+    let mut s = Session::with_demo();
+    let id = s.visible_cloned()[0].0;
+    s.execute("keyword.create", &json!({"name": "Weddings", "synonyms": ["marriage"]})).unwrap();
+    assert_eq!(s.execute("keyword.rename", &json!({"from": "Weddings", "to": "Marriages"})).unwrap()["changed"], 0);
+    s.execute("photo.setMeta", &json!({"ids": [id], "addKeywords": ["Marriages"]})).unwrap();
+    assert_eq!(s.execute("keyword.rename", &json!({"from": "Marriages", "to": "Weddings"})).unwrap()["changed"], 1);
+    assert_eq!(s.execute("keyword.delete", &json!({"keyword": "weddings"})).unwrap()["changed"], 1);
+}

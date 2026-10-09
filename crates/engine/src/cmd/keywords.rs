@@ -15,20 +15,24 @@ fn strs(p: &Value, key: &str) -> Vec<String> {
     }
 }
 
-/// Commit a keyword batch; returns how many changes it made. The keyword filter follows a renamed
-/// keyword and is cleared when its keyword is deleted.
+/// Commit a keyword batch; returns `{changed: photos changed, listed: keyword list changes}`. The
+/// keyword filter follows a renamed keyword and is cleared when its keyword is deleted.
 fn commit_keywords(s: &mut Session, label: &str, op: lightcraft_catalog::Op, follow: impl Fn(&str) -> Option<String>) -> Result<Value> {
-    let n = match &op {
-        lightcraft_catalog::Op::Batch { ops } => ops.len(),
-        _ => 1,
+    use lightcraft_catalog::Op;
+    let (photos, listed) = match &op {
+        Op::Batch { ops } => {
+            (ops.iter().filter(|o| matches!(o, Op::SetMeta { .. })).count(), ops.iter().filter(|o| matches!(o, Op::SetKeyword { .. })).count())
+        }
+        Op::SetMeta { .. } => (1, 0),
+        _ => (0, 1),
     };
-    if n > 0 {
+    if photos + listed > 0 {
         s.commit(label, op)?;
     }
     if let Some(k) = s.filter.keyword.clone() {
         s.filter.keyword = follow(&k);
     }
-    Ok(json!({"changed": n}))
+    Ok(json!({"changed": photos, "listed": listed}))
 }
 
 /// A keyword's attributes from command params over `base`: those not given keep their value.
@@ -324,7 +328,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, _| {
                 let op = s.catalog.purge_unused_keywords_ops();
                 let r = commit_keywords(s, "Purge Unused Keywords", op, |k| Some(k.to_string()))?;
-                Ok(json!({"purged": r["changed"]}))
+                Ok(json!({"purged": r["listed"]}))
             }
         ),
         cmd!(
