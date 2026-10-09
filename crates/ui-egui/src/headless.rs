@@ -662,6 +662,22 @@ mod tests {
         assert_eq!(r["ok"], false, "an unknown action is refused: {r}");
     }
 
+    /// `ui.clickWidget` right-clicks with `button: "right"`, as `ui.click` does (MCP `click`
+    /// passes it on with a widget): a filmstrip photo's context menu opens.
+    #[test]
+    fn click_widget_right_clicks() {
+        let mut h = demo([1200.0, 760.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.settle(SETTLE);
+        let cell = h.app.widgets.iter().find(|(w, _)| w.starts_with("film:")).map(|(w, _)| w.clone()).expect("a filmstrip photo");
+        assert!(!egui::Popup::is_any_open(&h.view.ctx));
+        let r = h.request("ui.clickWidget", json!({"id": cell, "button": "right"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert!(egui::Popup::is_any_open(&h.view.ctx), "its context menu");
+    }
+
     #[test]
     fn demo_grid_snapshot_has_ui_pixels() {
         let t0 = Instant::now();

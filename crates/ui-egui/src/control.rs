@@ -201,10 +201,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
                 app.synthetic.push(egui::Event::PointerMoved(at));
             } else if req.method == "ui.clickWidget" {
                 let n = p.get("count").and_then(Value::as_u64).unwrap_or(1);
+                let button = if s("button") == Some("right") { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
                 app.synthetic.push(egui::Event::PointerMoved(at));
                 for _ in 0..n {
-                    app.synthetic.push(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: m });
-                    app.synthetic.push(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: m });
+                    app.synthetic.push(egui::Event::PointerButton { pos: at, button, pressed: true, modifiers: m });
+                    app.synthetic.push(egui::Event::PointerButton { pos: at, button, pressed: false, modifiers: m });
                 }
             } else {
                 let to = egui::pos2(
