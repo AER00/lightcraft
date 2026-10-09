@@ -118,6 +118,29 @@ fn albums_crud() {
     s.execute("album.delete", &json!({"id": f})).unwrap();
 }
 
+/// Given an album and a folder, when something is created inside each, then only the folder
+/// accepts it: the sidebar only lists children of folders, so a child of a plain album would
+/// be invisible.
+#[test]
+fn albums_and_smart_albums_are_created_only_inside_folders() {
+    let mut s = demo();
+    let folder = s.execute("album.create", &json!({"name": "Trips", "folder": true})).unwrap()["id"].as_u64().unwrap();
+    let album = s.execute("album.create", &json!({"name": "Best", "parent": folder})).unwrap()["id"].as_u64().unwrap();
+    for (cmd, params) in [
+        ("album.create", json!({"name": "Nested", "parent": album})),
+        ("album.create", json!({"name": "Nested", "folder": true, "parent": album})),
+        ("album.createSmart", json!({"name": "Nested", "parent": album})),
+        ("album.create", json!({"name": "Nested", "parent": 987_654})),
+    ] {
+        assert!(s.execute(cmd, &params).is_err(), "{cmd} {params} must be refused");
+    }
+    let n = s.catalog.albums().count();
+    let sub = s.execute("album.create", &json!({"name": "Sub", "folder": true, "parent": folder})).unwrap()["id"].as_u64().unwrap();
+    let smart = s.execute("album.createSmart", &json!({"name": "Rated", "parent": sub})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(s.catalog.albums().count(), n + 2);
+    assert_eq!(s.catalog.album(lightcraft_catalog::AlbumId(smart)).unwrap().parent, Some(lightcraft_catalog::AlbumId(sub)));
+}
+
 #[test]
 fn filters_and_delete_restore() {
     let mut s = demo();
