@@ -247,22 +247,18 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
                     crate::widgets::register(ui.ctx(), "field:smartName", r.rect);
                     ui.add_space(6.0);
-                    // checked before drawing, so each row marks its own problem
-                    let env = crate::panels::rules_editor::Env {
-                        problems: rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)),
-                        today: (app.session.clock)(),
-                        albums: album_entries(&app.session.catalog, *id),
-                    };
+                    // the folder an album made from a folder view carries is not in the editor, but it counts
+                    let folder = id.and_then(|id| app.session.catalog.album(lightcraft_catalog::AlbumId(id))).and_then(|a| a.smart.as_deref().and_then(|f| f.library_folder.clone()));
+                    // problems, count and albums: cached until the catalog or the rules change (not per frame)
+                    let now = (app.session.clock)();
+                    let view = app.caches.rules_view(&app.session.catalog, rules, *id, folder, &now);
+                    let env = crate::panels::rules_editor::Env { problems: view.problems.clone(), today: now, albums: view.albums.clone() };
                     egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
                         crate::panels::rules_editor::edit(ui, rules, "rules", 0, &[], &env);
                     });
-                    let problems = rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId));
-                    // the folder an album made from a folder view carries is not in the editor, but it counts
-                    let folder = id.and_then(|id| app.session.catalog.album(lightcraft_catalog::AlbumId(id))).and_then(|a| a.smart.as_deref().and_then(|f| f.library_folder.clone()));
-                    let f = lightcraft_catalog::Filter { rule_set: Some(rules.clone()), library_folder: folder, ..Default::default() };
-                    let n = if problems.is_empty() { app.session.catalog.query(&f, &Default::default()).len() } else { 0 };
+                    let n = view.count;
                     ui.add_space(4.0);
-                    if problems.is_empty() {
+                    if view.problems.is_empty() {
                         ui.label(
                             egui::RichText::new(crate::i18n::tr_format!("{n} photo{} match · updates automatically as photos change", if n == 1 { "" } else { "s" }, n = n))
                                 .color(t.text_dim),
@@ -1034,7 +1030,7 @@ fn created_in(app: &mut LightcraftApp, command: &str, params: serde_json::Value)
 
 /// The albums an Album rule in smart album `editing` picks from, in the sidebar's order: the album
 /// itself and any smart album that tests it (testing it back would loop) are blocked, with why.
-fn album_entries(cat: &lightcraft_catalog::Catalog, editing: Option<u64>) -> Vec<crate::album_picker::AlbumEntry> {
+pub(crate) fn album_entries(cat: &lightcraft_catalog::Catalog, editing: Option<u64>) -> Vec<crate::album_picker::AlbumEntry> {
     let editing = editing.map(lightcraft_catalog::AlbumId);
     crate::album_picker::entries_from(cat, |a| match editing {
         Some(e) if a.id == e => Some(crate::i18n::tr("This is the album you're editing").to_string()),

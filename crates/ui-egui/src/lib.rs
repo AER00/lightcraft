@@ -1068,6 +1068,12 @@ pub struct Caches {
     album_counts: Option<(u64, std::sync::Arc<std::collections::HashMap<lightcraft_catalog::AlbumId, usize>>)>,
     /// How often the album counts were recomputed (tests check that unchanged frames don't).
     pub album_count_scans: usize,
+    /// What the open smart-album rule dialog shows besides the rules ([`Caches::rules_view`]).
+    rules_view: Option<(u64, std::sync::Arc<RulesView>)>,
+    pub rules_view_scans: usize,
+    /// The problems of every saved smart album that has some ([`Caches::smart_album_problems`]).
+    smart_problems: Option<(u64, std::sync::Arc<std::collections::HashMap<lightcraft_catalog::AlbumId, Vec<lightcraft_catalog::rules::Problem>>>)>,
+    pub smart_problem_scans: usize,
     /// AI denoise: what the pump last saw, the model list and the downloads being watched.
     pub denoise: panels::denoise::Ui,
     /// Bumped when a face model is installed, removed or chosen, so Settings re-reads the list at once.
@@ -1115,6 +1121,14 @@ pub struct FilterValues {
     pub cameras: Vec<String>,
     pub lenses: Vec<String>,
     pub keywords: Vec<String>,
+}
+
+/// What the smart-album rule dialog shows besides the rules themselves: their problems (each row
+/// marks its own), how many photos they match and the albums an Album rule picks from.
+pub struct RulesView {
+    pub problems: Vec<lightcraft_catalog::rules::Problem>,
+    pub count: usize,
+    pub albums: Vec<album_picker::AlbumEntry>,
 }
 
 pub(crate) fn key_of(parts: impl std::hash::Hash) -> u64 {
@@ -1244,6 +1258,56 @@ impl Caches {
     /// all bump its revision) and — only while some smart album has an "in the last…" rule —
     /// when `now` (the session clock, ISO) enters a new minute, so such counts follow the clock
     /// within a minute without rescanning every frame.
+    /// [`RulesView`] for `rules` edited in smart album `editing` (`None`: a new album), within
+    /// `folder` when it was made from a folder view: worked out again only when the catalog, the
+    /// rules, the language or (for "in the last…" rules) the minute changes, not every frame.
+    pub fn rules_view(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+        rules: &lightcraft_catalog::RuleSet,
+        editing: Option<u64>,
+        folder: Option<String>,
+        now: &str,
+    ) -> std::sync::Arc<RulesView> {
+        let relative = rules.depends_on_now();
+        let minute = if relative { now.get(..16).unwrap_or(now) } else { "" };
+        let k = key_of((cat.revision, serde_json::to_string(rules).unwrap_or_default(), editing, &folder, minute, i18n::language().code()));
+        if let Some((key, v)) = &self.rules_view
+            && *key == k
+        {
+            return v.clone();
+        }
+        if relative {
+            lightcraft_catalog::rules::set_now(Some(now.to_string()));
+        }
+        let problems = rules.check_for(cat, editing.map(lightcraft_catalog::AlbumId));
+        let filter = lightcraft_catalog::Filter { rule_set: Some(rules.clone()), library_folder: folder, ..Default::default() };
+        let count = if problems.is_empty() { cat.query(&filter, &Default::default()).len() } else { 0 };
+        let v = std::sync::Arc::new(RulesView { problems, count, albums: panels::dialogs::album_entries(cat, editing) });
+        self.rules_view_scans += 1;
+        self.rules_view = Some((k, v.clone()));
+        v
+    }
+
+    /// The problems of every saved smart album that has some (`Catalog::smart_album_problems`),
+    /// for the sidebar's ⚠ marks: worked out again only when the catalog changes.
+    pub fn smart_album_problems(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+    ) -> std::sync::Arc<std::collections::HashMap<lightcraft_catalog::AlbumId, Vec<lightcraft_catalog::rules::Problem>>> {
+        if let Some((rev, v)) = &self.smart_problems
+            && *rev == cat.revision
+        {
+            return v.clone();
+        }
+        let v: std::sync::Arc<std::collections::HashMap<_, _>> = std::sync::Arc::new(
+            cat.albums().filter(|a| a.is_smart()).map(|a| (a.id, cat.smart_album_problems(a.id))).filter(|(_, p)| !p.is_empty()).collect(),
+        );
+        self.smart_problem_scans += 1;
+        self.smart_problems = Some((cat.revision, v.clone()));
+        v
+    }
+
     pub fn album_counts(
         &mut self,
         cat: &lightcraft_catalog::Catalog,
@@ -1317,6 +1381,42 @@ mod cache_tests {
         assert_eq!(c.album_counts(&cat, "2026-09-30T13:00:10")[&AlbumId(11)], 0);
         assert_eq!(c.album_count_scans, 4);
         lightcraft_catalog::rules::set_now(None);
+    }
+
+    /// The rule dialog's problems, live count and album list are worked out once per change to the
+    /// catalog or the rules, not every frame; so are the sidebar's smart-album problems.
+    #[test]
+    fn rule_dialog_and_problems_are_cached_until_something_changes() {
+        let mut cat = Catalog::default();
+        let mut c = super::Caches::default();
+        for i in 0..3u64 {
+            cat.apply(photo(i + 1, "2026-09-30T11:00:00", if i == 0 { 5 } else { 1 })).unwrap();
+        }
+        let rules =
+            |v: u64| -> RuleSet { serde_json::from_value(serde_json::json!({"rules": [{"field": "rating", "op": "gte", "value": v}]})).unwrap() };
+        let now = "2026-09-30T12:00:00";
+        let view = c.rules_view(&cat, &rules(3), None, None, now);
+        assert_eq!((view.count, view.problems.len()), (1, 0));
+        for _ in 0..10 {
+            c.rules_view(&cat, &rules(3), None, None, now);
+        }
+        assert_eq!(c.rules_view_scans, 1, "unchanged frames reuse it");
+        assert_eq!(c.rules_view(&cat, &rules(1), None, None, now).count, 3, "a rule change");
+        assert_eq!(c.rules_view(&cat, &rules(9), None, None, now).problems.len(), 1);
+        cat.apply(Op::SetRating { id: PhotoId(2), rating: 4 }).unwrap();
+        assert_eq!(c.rules_view(&cat, &rules(3), None, None, now).count, 2, "a catalog change");
+        assert_eq!(c.rules_view_scans, 4);
+        // the sidebar's problems
+        cat.apply(Op::AddAlbum { album: lightcraft_catalog::Album::new(AlbumId(20), "Trip") }).unwrap();
+        cat.apply(smart(21, serde_json::json!({"rules": [{"field": "album", "op": "is", "value": 20}]}))).unwrap();
+        assert!(c.smart_album_problems(&cat).get(&AlbumId(21)).is_none_or(Vec::is_empty));
+        for _ in 0..10 {
+            c.smart_album_problems(&cat);
+        }
+        assert_eq!(c.smart_problem_scans, 1);
+        cat.apply(Op::RemoveAlbum { id: AlbumId(20) }).unwrap();
+        assert!(c.smart_album_problems(&cat).get(&AlbumId(21)).is_some_and(|p| !p.is_empty()), "its album is gone");
+        assert_eq!(c.smart_problem_scans, 2);
     }
 
     /// Without "in the last…" rules the clock never causes a rescan.
