@@ -260,9 +260,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     );
                 }
                 Dialog::NewSmartAlbum { name, .. } => {
-                    let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
-                    r.request_focus();
-                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if dialog_field(ui, "field:smartAlbumName", name, "Name") {
                         confirm = true;
                     }
                     let rules = app.session.view_rules();
@@ -410,17 +408,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 }
                 Dialog::RenameKeyword { from, to } => {
                     let n = app.session.catalog.photos().filter(|p| p.meta.keywords.iter().any(|k| lightcraft_catalog::keywords::is_under(k, from))).count();
-                    // the name, selected so typing replaces it; Esc cancels the dialog (below)
-                    let r = crate::text_field::TextField::singleline("field:keywordName", to)
-                        .hint(crate::i18n::tr("New name"))
-                        .width(f32::INFINITY)
-                        .select_on_focus(true)
-                        .show(ui);
-                    // the field keeps the focus, but leaves it to its own menu
-                    if !r.editing {
-                        r.response.request_focus();
-                    }
-                    if r.ending == Some(crate::text_field::Ending::Return) {
+                    if dialog_field(ui, "field:keywordName", to, "New name") {
                         confirm = true;
                     }
                     ui.label(
@@ -431,10 +419,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 }
                 Dialog::MergeKeywords { from, into } => {
                     ui.label(egui::RichText::new(crate::i18n::tr_format!("Replace {} with:", from.iter().map(|f| format!("“{f}”")).collect::<Vec<_>>().join(", "))).color(t.text_label));
-                    let r = ui.add(egui::TextEdit::singleline(into).hint_text(crate::i18n::tr("Keyword")).desired_width(f32::INFINITY));
-                    crate::widgets::register(ui.ctx(), "field:keywordInto", r.rect);
-                    r.request_focus();
-                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if dialog_field(ui, "field:keywordInto", into, "Keyword") {
                         confirm = true;
                     }
                     let options: Vec<String> = app
@@ -453,16 +438,12 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     });
                 }
                 Dialog::TextPrompt { value, hint, .. } => {
-                    let r = ui.add(egui::TextEdit::singleline(value).hint_text(crate::i18n::tr(hint.as_str())).desired_width(f32::INFINITY));
-                    r.request_focus();
-                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if dialog_field(ui, "field:prompt", value, hint) {
                         confirm = true;
                     }
                 }
                 Dialog::NewAlbum { name, .. } | Dialog::RenameAlbum { name, .. } => {
-                    let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
-                    r.request_focus();
-                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if dialog_field(ui, "field:albumName", name, "Name") {
                         confirm = true;
                     }
                 }
@@ -1301,4 +1282,16 @@ fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, label: &str, id: &str, option
             }
         }
     });
+}
+
+/// A dialog's one text field: it keeps the focus (except while its own menu has it) and opens
+/// with its text selected, so typing replaces it. True when Return confirms the dialog; Esc
+/// cancels the dialog (`show`). Taking the focus back with a bare `TextEdit` every frame hid the
+/// focus Return gives up, and Return did nothing.
+fn dialog_field(ui: &mut egui::Ui, widget: &str, text: &mut String, hint: &str) -> bool {
+    let r = crate::text_field::TextField::singleline(widget, text).hint(crate::i18n::tr(hint)).width(f32::INFINITY).select_on_focus(true).show(ui);
+    if !r.editing {
+        r.response.request_focus();
+    }
+    r.ending == Some(crate::text_field::Ending::Return)
 }

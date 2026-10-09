@@ -1600,6 +1600,50 @@ mod tests {
         assert!(keywords(&h).contains(&"weddings".to_string()), "renamed nothing: {:?}", keywords(&h));
     }
 
+    /// Return confirms the one-field dialogs: New Album, Rename Album, New Smart Album, Merge
+    /// Keywords and a text prompt (here: renaming an album). Their name opens selected, so typing
+    /// replaces it. Return did nothing: the field took the focus back on every frame, so egui never
+    /// reported the focus Return gives up.
+    #[test]
+    fn return_confirms_the_one_field_dialogs() {
+        use crate::state::Dialog;
+        let mut h = demo([1200.0, 800.0]);
+        let t = Duration::from_secs(10);
+        let first = h.app.session.visible_cloned()[0].0;
+        h.request("engine.execute", json!({"command": "photo.setMeta", "params": {"ids": [first], "addKeywords": ["holiday"]}}), t);
+        let album = |h: &Headless, name: &str| h.app.session.catalog.albums().find(|a| a.name == name).map(|a| a.id.0);
+        let garden = album(&h, "Garden").expect("the demo's Garden album");
+        let confirm = |h: &mut Headless, dialog: Dialog, typed: &str| {
+            h.app.ui.dialog = Some(dialog);
+            h.settle(SETTLE);
+            for (method, params) in [("ui.text", json!({"text": typed})), ("ui.key", json!({"key": "Enter"}))] {
+                let r = h.request(method, params, t);
+                assert_eq!(r["ok"], true, "{r}");
+                h.settle(SETTLE);
+            }
+            assert_eq!(h.app.ui.dialog, None, "Return confirmed the dialog ({typed})");
+        };
+        confirm(&mut h, Dialog::NewAlbum { name: String::new(), folder: false, parent: None }, "Weddings");
+        assert!(album(&h, "Weddings").is_some(), "New Album");
+        confirm(&mut h, Dialog::RenameAlbum { id: garden, name: "Garden".into() }, "Flowers");
+        assert_eq!(album(&h, "Flowers"), Some(garden), "Rename Album");
+        confirm(&mut h, Dialog::NewSmartAlbum { name: "Smart Album".into(), parent: None }, "Everything");
+        assert!(album(&h, "Everything").is_some(), "New Smart Album");
+        confirm(&mut h, Dialog::MergeKeywords { from: vec!["holiday".into()], into: String::new() }, "travel");
+        let keywords = h.app.session.catalog.photo(lightcraft_catalog::PhotoId(first)).unwrap().meta.keywords.clone();
+        assert!(keywords.contains(&"travel".to_string()) && !keywords.contains(&"holiday".to_string()), "Merge Keywords: {keywords:?}");
+        let prompt = Dialog::TextPrompt {
+            title: "Rename Album".into(),
+            hint: "Name".into(),
+            value: "Flowers".into(),
+            command: "album.rename".into(),
+            params: json!({"id": garden}),
+            key: "name".into(),
+        };
+        confirm(&mut h, prompt, "Botanical");
+        assert_eq!(album(&h, "Botanical"), Some(garden), "the text prompt");
+    }
+
     /// The sidebar's file-system checks run on worker threads and add rows when they land, which
     /// moves every row below them: `busy()` counts them, so `settle` waits for them before a test
     /// reads widget positions (a click aimed at a stale rect hits the neighbouring row).
