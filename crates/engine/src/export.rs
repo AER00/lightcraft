@@ -1324,6 +1324,9 @@ pub struct PreparedExport {
     work: Work,
     /// The library's originals, which [`run_batch`] never writes over (shared by a batch).
     guard: std::sync::Arc<crate::originals::OriginalGuard>,
+    /// Estimated working memory of [`Self::run`] (bytes), held from [`crate::memory::export_gate`]
+    /// while it runs beside other photos of a batch.
+    weight: usize,
 }
 
 struct RenderWork {
@@ -1373,25 +1376,42 @@ fn prepare_guarded(
 ) -> Result<PreparedExport, String> {
     let p = session.catalog.photo(id).ok_or("no such photo")?;
     let file_name = o.file_name_for(p, seq);
-    let work = if o.format.is_rendered() {
+    let (full_px, long) = ((p.width as usize).saturating_mul(p.height as usize), p.width.max(p.height) as usize);
+    let (work, weight) = if o.format.is_rendered() {
         let (w, h) = output_size(p, o);
         let meta = export_metadata(p, o);
         let job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
-        Work::Render(Box::new(RenderWork { job, meta, opts: o.clone() }))
+        let weight = render_weight(full_px, long, job.level, w.saturating_mul(h));
+        (Work::Render(Box::new(RenderWork { job, meta, opts: o.clone() })), weight)
     } else {
         let lightcraft_catalog::Source::File { path } = &p.source else {
             return Err(format!("{} is a generated demo photo: it has no original file to export", p.file_name));
         };
-        Work::File {
+        let dng = (o.format == ExportFormat::Dng).then_some(o.dng_compression);
+        // the file's bytes; a DNG also decodes the raw data (16-bit samples) and writes it again
+        let weight = (p.file_size as usize).saturating_add(if dng.is_some() { full_px.saturating_mul(6) } else { 0 });
+        let work = Work::File {
             path: path.clone(),
             read: session.media.file_bytes.clone(),
             packet: crate::sidecar::sidecar_packet(p, &session.catalog),
-            dng: (o.format == ExportFormat::Dng).then_some(o.dng_compression),
+            dng,
             label: p.file_name.clone(),
             size: (p.width as usize, p.height as usize),
-        }
+        };
+        (work, weight)
     };
-    Ok(PreparedExport { photo: id, file_name, work, guard })
+    Ok(PreparedExport { photo: id, file_name, work, guard, weight })
+}
+
+/// Working memory of rendering a photo of `full_px` pixels (long edge `long`) from source level
+/// `level` into `out_px` output pixels: the decoded source (linear RGB f32, 12 B/px) plus the
+/// pipeline's planes and the encoded output (~36 B per output pixel). Measured: a 24 MP export
+/// peaks at ~1.2 GB, one at 2048 px from the 2560 px preview at ~150 MB.
+fn render_weight(full_px: usize, long: usize, level: crate::media::SourceLevel, out_px: usize) -> usize {
+    let edge = level.max_edge().min(long.max(1));
+    let scale = edge as f64 / long.max(1) as f64;
+    let src_px = (full_px as f64 * scale * scale).min(usize::MAX as f64 / 64.0) as usize;
+    src_px.saturating_mul(12).saturating_add(out_px.saturating_mul(36))
 }
 
 impl PreparedExport {
@@ -1501,6 +1521,11 @@ fn sidecar_path(main: &str, ext: &str) -> String {
 /// policy. `progress(done, next file)` is called before each photo; returning false cancels the
 /// rest. Returns one JSON object per photo: `{path, width, height, bytes, sidecars}`,
 /// `{skipped: path}` or (unless `stop_on_error`) `{photo, file, error}`.
+///
+/// Several photos render side by side ([`export_parallelism`], within the memory of
+/// [`crate::memory::export_gate`]), so one photo's decode, encode or GPU wait overlaps another's
+/// render (issue #496). Paths, writes, results and `progress` still follow the batch order, and the
+/// files are the same as one at a time.
 pub fn run_batch(
     items: Vec<PreparedExport>,
     o: &ExportOptions,
@@ -1510,31 +1535,226 @@ pub fn run_batch(
     stop_on_error: bool,
     progress: &mut dyn FnMut(usize, &str) -> bool,
 ) -> Result<Vec<serde_json::Value>, String> {
-    use serde_json::json;
-    let join = |a: &str, b: &str| if a.is_empty() { b.to_string() } else { format!("{}/{b}", a.trim_end_matches('/')) };
-    let dir = if o.subfolder.is_empty() { to.dir.clone() } else { join(&to.dir, &o.subfolder) };
-    let single = items.len() == 1;
-    let mut taken = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for (i, item) in items.into_iter().enumerate() {
-        if !progress(i, &item.file_name) {
-            break;
+    let lanes = export_parallelism(items.len());
+    run_batch_with(items, &mut Placer::new(o, to, write, exists, stop_on_error), progress, lanes)
+}
+
+/// How many photos of a batch of `n` render side by side. Each render already spreads its rows
+/// over every core; the others fill the cores while it decodes, encodes or waits for the GPU.
+/// One on wasm32 (no threads).
+pub fn export_parallelism(n: usize) -> usize {
+    if cfg!(target_arch = "wasm32") {
+        return 1;
+    }
+    let cores = std::thread::available_parallelism().map_or(1, |c| c.get());
+    (cores / 4).clamp(1, 4).min(n.max(1))
+}
+
+/// [`run_batch`] with `lanes` photos in flight (the calling thread is one of them).
+fn run_batch_with(
+    items: Vec<PreparedExport>,
+    placer: &mut Placer<'_>,
+    progress: &mut dyn FnMut(usize, &str) -> bool,
+    lanes: usize,
+) -> Result<Vec<serde_json::Value>, String> {
+    placer.single = items.len() == 1;
+    if lanes <= 1 || items.len() <= 1 {
+        for (i, item) in items.into_iter().enumerate() {
+            if !progress(i, &item.file_name) {
+                break;
+            }
+            let (photo, name, guard) = (item.photo, item.file_name.clone(), item.guard.clone());
+            placer.place(photo, name, &guard, run_gated(item))?;
         }
-        let (photo, name, guard) = (item.photo, item.file_name.clone(), item.guard.clone());
-        let e = match item.run() {
-            Ok(e) => e,
-            Err(err) if stop_on_error => return Err(err),
-            Err(err) => {
-                out.push(json!({"photo": photo.0, "file": name, "error": err}));
+        return Ok(std::mem::take(&mut placer.out));
+    }
+    let heads: Vec<_> = items.iter().map(|i| (i.photo, i.file_name.clone(), i.guard.clone())).collect();
+    let queue = Queue {
+        lane: std::sync::Mutex::new(Lane { items: items.into_iter().map(Some).collect(), next: 0, placed: 0, stop: false, done: Default::default() }),
+        cv: std::sync::Condvar::new(),
+        ahead: lanes,
+    };
+    std::thread::scope(|sc| {
+        for k in 1..lanes {
+            let q = &queue;
+            // a lane that can't start leaves its photos to the others (and to this thread)
+            if std::thread::Builder::new().name(format!("export-{k}")).spawn_scoped(sc, move || q.work()).is_err() {
+                break;
+            }
+        }
+        let placed = || {
+            for (i, (photo, name, guard)) in heads.into_iter().enumerate() {
+                if !progress(i, &name) {
+                    break;
+                }
+                let e = queue.result(i);
+                placer.place(photo, name, &guard, e)?;
+            }
+            Ok::<_, String>(())
+        };
+        let r = placed();
+        queue.stop();
+        r
+    })?;
+    Ok(std::mem::take(&mut placer.out))
+}
+
+/// Run one photo's export holding its working memory from [`crate::memory::export_gate`]; a panic
+/// becomes that photo's error, not the batch's end.
+fn run_gated(item: PreparedExport) -> Result<Exported, String> {
+    let _held = crate::memory::export_gate().acquire(item.weight);
+    let what = format!("exporting {}", item.file_name);
+    crate::guard::catch(&what, || item.run()).and_then(|r| r)
+}
+
+/// The photos of a batch shared by its lanes: each lane takes the next one, at most
+/// [`Queue::ahead`] past the last placed. That bounds the finished files waiting in memory for
+/// their turn too (their working memory is given back to the gate as soon as they are encoded).
+struct Queue {
+    lane: std::sync::Mutex<Lane>,
+    cv: std::sync::Condvar,
+    ahead: usize,
+}
+
+struct Lane {
+    items: Vec<Option<PreparedExport>>,
+    /// The next photo to start.
+    next: usize,
+    /// Photos handed to the placer so far.
+    placed: usize,
+    stop: bool,
+    done: std::collections::HashMap<usize, Result<Exported, String>>,
+}
+
+impl Lane {
+    fn take_next(&mut self) -> Option<(usize, PreparedExport)> {
+        let i = self.next;
+        let item = self.items.get_mut(i)?.take()?;
+        self.next += 1;
+        Some((i, item))
+    }
+}
+
+impl Queue {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Lane> {
+        self.lane.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn wait<'a>(&self, g: std::sync::MutexGuard<'a, Lane>) -> std::sync::MutexGuard<'a, Lane> {
+        self.cv.wait(g).unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn finish(&self, i: usize, r: Result<Exported, String>) {
+        self.lock().done.insert(i, r);
+        self.cv.notify_all();
+    }
+
+    /// A lane thread: run photos until none is left or the batch stops.
+    fn work(&self) {
+        loop {
+            let mut l = self.lock();
+            let (i, item) = loop {
+                if l.stop || l.next >= l.items.len() {
+                    return;
+                }
+                if l.next < l.placed.saturating_add(self.ahead) {
+                    match l.take_next() {
+                        Some(t) => break t,
+                        None => return,
+                    }
+                }
+                l = self.wait(l);
+            };
+            drop(l);
+            self.finish(i, run_gated(item));
+        }
+    }
+
+    /// Photo `i`'s result, waiting for it; run here when no lane has started it yet.
+    fn result(&self, i: usize) -> Result<Exported, String> {
+        let mut l = self.lock();
+        loop {
+            if let Some(r) = l.done.remove(&i) {
+                l.placed = i + 1;
+                drop(l);
+                self.cv.notify_all();
+                return r;
+            }
+            if l.next == i {
+                let Some((_, item)) = l.take_next() else {
+                    return Err("export: photo missing from the batch".into());
+                };
+                drop(l);
+                self.finish(i, run_gated(item));
+                l = self.lock();
                 continue;
+            }
+            l = self.wait(l);
+        }
+    }
+
+    fn stop(&self) {
+        self.lock().stop = true;
+        self.cv.notify_all();
+    }
+}
+
+/// Where a batch's files go: each photo's path (subfolder, conflict policy, sidecars, never an
+/// original) and its write, in batch order.
+struct Placer<'a> {
+    o: &'a ExportOptions,
+    to: &'a Destination,
+    dir: String,
+    single: bool,
+    taken: std::collections::HashSet<String>,
+    out: Vec<serde_json::Value>,
+    write: &'a mut dyn FnMut(&str, &[u8]) -> Result<(), String>,
+    exists: &'a dyn Fn(&str) -> bool,
+    stop_on_error: bool,
+}
+
+fn join_path(a: &str, b: &str) -> String {
+    if a.is_empty() { b.to_string() } else { format!("{}/{b}", a.trim_end_matches('/')) }
+}
+
+impl<'a> Placer<'a> {
+    fn new(
+        o: &'a ExportOptions,
+        to: &'a Destination,
+        write: &'a mut dyn FnMut(&str, &[u8]) -> Result<(), String>,
+        exists: &'a dyn Fn(&str) -> bool,
+        stop_on_error: bool,
+    ) -> Placer<'a> {
+        let dir = if o.subfolder.is_empty() { to.dir.clone() } else { join_path(&to.dir, &o.subfolder) };
+        Placer { o, to, dir, single: false, taken: Default::default(), out: Vec::new(), write, exists, stop_on_error }
+    }
+
+    /// Place photo `photo`'s export result (file `name`): write it and record the outcome. `Err`
+    /// only when it failed and `stop_on_error` is set.
+    fn place(
+        &mut self,
+        photo: lightcraft_catalog::PhotoId,
+        name: String,
+        guard: &crate::originals::OriginalGuard,
+        e: Result<Exported, String>,
+    ) -> Result<(), String> {
+        use serde_json::json;
+        let (o, dir, exists) = (self.o, &self.dir, self.exists);
+        let e = match e {
+            Ok(e) => e,
+            Err(err) if self.stop_on_error => return Err(err),
+            Err(err) => {
+                self.out.push(json!({"photo": photo.0, "file": name, "error": err}));
+                return Ok(());
             }
         };
         // the exported file and its sidecars
         let group = |main: &str| std::iter::once(main.to_string()).chain(e.sidecars.iter().map(|(x, _)| sidecar_path(main, x))).collect::<Vec<_>>();
-        let path = match to.exact.as_deref().filter(|_| single) {
+        let path = match self.to.exact.as_deref().filter(|_| self.single) {
             Some(p) => Ok(p.to_string()),
             None => {
-                let path = join(&dir, &e.file_name);
+                let path = join_path(dir, &e.file_name);
+                let taken = &self.taken;
                 let busy = |main: &str| group(main).iter().any(|p| taken.contains(p) || exists(p));
                 if !busy(&path) {
                     Ok(path)
@@ -1542,12 +1762,12 @@ pub fn run_batch(
                     match o.conflict {
                         Conflict::Overwrite => Ok(path),
                         Conflict::Skip => {
-                            out.push(json!({"skipped": path}));
-                            continue;
+                            self.out.push(json!({"skipped": path}));
+                            return Ok(());
                         }
                         Conflict::Unique => {
                             let (stem, ext) = e.file_name.rsplit_once('.').map_or((e.file_name.as_str(), None), |(a, b)| (a, Some(b)));
-                            let name = |n: usize| join(&dir, &ext.map_or(format!("{stem}-{n}"), |x| format!("{stem}-{n}.{x}")));
+                            let name = |n: usize| join_path(dir, &ext.map_or(format!("{stem}-{n}"), |x| format!("{stem}-{n}.{x}")));
                             (2..1_000_000).map(name).find(|p| !busy(p)).ok_or_else(|| format!("{path}: no free file name"))
                         }
                     }
@@ -1555,6 +1775,7 @@ pub fn run_batch(
             }
         };
         let file = path.clone().unwrap_or_else(|_| name.clone());
+        let write = &mut *self.write;
         let written = path.and_then(|path| {
             let files = group(&path);
             // never over an original, whatever the conflict policy or the exact path said
@@ -1571,14 +1792,14 @@ pub fn run_batch(
         });
         match written {
             Ok((path, files, sidecars)) => {
-                taken.extend(files);
-                out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars}));
+                self.taken.extend(files);
+                self.out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars}));
             }
-            Err(err) if stop_on_error => return Err(err),
-            Err(err) => out.push(json!({"photo": photo.0, "file": file, "error": err})),
+            Err(err) if self.stop_on_error => return Err(err),
+            Err(err) => self.out.push(json!({"photo": photo.0, "file": file, "error": err})),
         }
+        Ok(())
     }
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -2224,5 +2445,104 @@ mod tests {
         // the Export dialog's sliders (1–15 % size, 5–100 % opacity, 2–100 % width) stay inside the accepted ranges
         assert!(WATERMARK_SIZE_RANGE.0 <= 0.01 && WATERMARK_SIZE_RANGE.1 >= 0.15);
         assert!(WATERMARK_IMAGE_WIDTH_RANGE.0 <= 0.02 && WATERMARK_IMAGE_WIDTH_RANGE.1 >= 1.0);
+    }
+
+    /// A batch with `lanes` photos in flight into a fake folder `out` (nothing exists there):
+    /// results, writes (path, bytes) and progress calls; `progress` returns false at `cancel_at`.
+    #[allow(clippy::type_complexity)]
+    fn lanes_batch(
+        s: &mut crate::Session,
+        ids: &[lightcraft_catalog::PhotoId],
+        o: &ExportOptions,
+        lanes: usize,
+        stop_on_error: bool,
+        cancel_at: usize,
+    ) -> (Result<Vec<serde_json::Value>, String>, Vec<(String, Vec<u8>)>, Vec<(usize, String)>) {
+        let items = prepare_batch(s, ids, o).unwrap();
+        let to = Destination { dir: "out".into(), exact: None };
+        let mut written = Vec::new();
+        let mut write = |p: &str, b: &[u8]| {
+            written.push((p.to_string(), b.to_vec()));
+            Ok(())
+        };
+        let mut seen = Vec::new();
+        let mut progress = |i: usize, name: &str| {
+            seen.push((i, name.to_string()));
+            i < cancel_at
+        };
+        let files = run_batch_with(items, &mut Placer::new(o, &to, &mut write, &|_| false, stop_on_error), &mut progress, lanes);
+        (files, written, seen)
+    }
+
+    /// The files of a batch without their byte counts: a GPU render (when another test turns the
+    /// GPU off mid-run) may differ from a CPU one by an LSB, never in name, size or order.
+    fn shape(files: &[serde_json::Value]) -> Vec<serde_json::Value> {
+        files.iter().map(|f| json!({"path": f["path"], "width": f["width"], "height": f["height"], "error": f["error"]})).collect()
+    }
+
+    // Issue #496: photos rendered side by side give the same files, names, order and progress as
+    // one at a time, and a cancel stops at the same photo
+    #[test]
+    fn side_by_side_batches_match_one_at_a_time() {
+        let mut s = crate::Session::with_demo();
+        let ids: Vec<_> = s.visible().iter().copied().take(5).collect();
+        // one name for all: the Unique numbering follows the order the files are placed in
+        let o = ExportOptions::from_json(&json!({"format": "png", "width": 40, "naming": "same"}));
+        let (files, written, seen) = lanes_batch(&mut s, &ids, &o, 1, true, usize::MAX);
+        let files = files.unwrap();
+        let paths: Vec<_> = written.iter().map(|(p, _)| p.clone()).collect();
+        assert_eq!(paths, ["out/same.png", "out/same-2.png", "out/same-3.png", "out/same-4.png", "out/same-5.png"]);
+        let heights: std::collections::HashSet<_> = files.iter().map(|f| f["height"].as_u64()).collect();
+        assert!(heights.len() > 1, "photos of different shapes show the order: {files:?}");
+        for lanes in [2, 3, 8] {
+            let (f, w, sn) = lanes_batch(&mut s, &ids, &o, lanes, true, usize::MAX);
+            assert_eq!(shape(&f.unwrap()), shape(&files), "{lanes} lanes");
+            assert_eq!(w.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>(), paths, "{lanes} lanes");
+            assert_eq!(sn, seen, "{lanes} lanes");
+        }
+        let (f, w, sn) = lanes_batch(&mut s, &ids, &o, 3, true, 2);
+        assert_eq!(shape(&f.unwrap()), shape(&files[..2]));
+        assert_eq!((w.len(), sn.len()), (2, 3), "photos past the cancel are never written");
+    }
+
+    // A photo that fails is reported in its place while the others are exported; with
+    // stop_on_error the batch ends there and nothing after it is written
+    #[test]
+    fn side_by_side_batches_report_failures_in_order() {
+        use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+        let mut s = crate::Session::with_demo();
+        let mut ids: Vec<_> = s.visible().iter().copied().take(3).collect();
+        let gone =
+            Photo::new(PhotoId(9_496), Source::File { path: "no/such/dir/gone.jpg".into() }, "gone.jpg", "JPEG", 600, 400, "2026-10-09T00:00:00");
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(gone) }).unwrap();
+        ids.insert(1, PhotoId(9_496));
+        let o = ExportOptions::from_json(&json!({"format": "jpeg", "width": 40}));
+        let (files, written, _) = lanes_batch(&mut s, &ids, &o, 3, false, usize::MAX);
+        let files = files.unwrap();
+        assert_eq!(files.len(), 4);
+        assert_eq!((files[1]["photo"].as_u64(), files[1]["file"].as_str()), (Some(9_496), Some("gone.jpg")), "{files:?}");
+        assert!(files[1]["error"].is_string());
+        assert!([0, 2, 3].iter().all(|&i| files[i]["path"].is_string()), "{files:?}");
+        assert_eq!(written.len(), 3);
+        let one = lanes_batch(&mut s, &ids, &o, 1, false, usize::MAX).0.unwrap();
+        assert_eq!(shape(&files), shape(&one));
+
+        let (r, written, _) = lanes_batch(&mut s, &ids, &o, 3, true, usize::MAX);
+        assert!(r.is_err());
+        assert_eq!(written.len(), 1, "only the photo before the failure");
+    }
+
+    #[test]
+    fn export_weights_follow_the_source_and_output_sizes() {
+        use crate::media::SourceLevel;
+        let mb = |b: usize| b >> 20;
+        // a full-size 24 MP export (measured peak ~1.2 GB)
+        assert_eq!(mb(render_weight(6000 * 4000, 6000, SourceLevel::Full, 6000 * 4000)), 1098);
+        // 2048 px from the 2560 px preview (measured ~150 MB)
+        assert_eq!(mb(render_weight(6000 * 4000, 6000, SourceLevel::Preview, 2048 * 1365)), 145);
+        // a photo smaller than the preview level is its own source
+        assert_eq!(render_weight(1000 * 500, 1000, SourceLevel::Preview, 0), 1000 * 500 * 12);
+        assert_eq!(render_weight(0, 0, SourceLevel::Full, 0), 0);
+        assert!(render_weight(usize::MAX, 1, SourceLevel::Full, usize::MAX) > 0, "no overflow");
     }
 }

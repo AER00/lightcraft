@@ -269,7 +269,8 @@ lightcraft --control 7980 ~/Pictures/trip
 - **GPU-accelerated, CPU-exact.** The whole develop pipeline runs as wgpu compute kernels (Metal / Vulkan / DX12),
   checked against the CPU pipeline to within 1/255. On a 24 MP raw (Apple M4 Pro): a slider update re-renders in
   ~4 ms, a cold 2.5 MP loupe in ~30 ms, and a full-size export in ~0.3 s including a parallel JPEG encode.
-  Without a GPU the same pipeline runs on all CPU cores, redoing only the stages a slider affects.
+  Without a GPU the same pipeline runs on all CPU cores, redoing only the stages a slider affects. Batch exports
+  render several photos side by side, so one's decode and encode overlap another's render.
 - **Instant culling.** Opening a raw shows its embedded camera preview or cached render within ~0.1 s while the
   full render follows (~0.2–0.5 s for 24 MP). The next and previous photos are prepared in the background, so stepping
   through a shoot takes ~50 ms per photo.
