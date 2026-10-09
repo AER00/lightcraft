@@ -41,12 +41,12 @@ pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransf
     if !transform.matrix_is_fallback || !file_local_look(raw.format) {
         return None;
     }
-    let (sensor, reference) = proxies(raw, bytes, transform, PROXY)?;
+    let (sensor, reference, clipped) = proxies(raw, bytes, transform, PROXY)?;
     // A camera profile pooled from many photos knows colours this photo shows too little of;
     // try its colour first and fit tone/chroma per photo (DRO and picture styles vary).
     let profile = raw.metadata.model.as_deref().and_then(crate::camera_profiles::get);
     let colour = profile.as_ref().and_then(|p| Some((p.matrix().mul(&transform.matrix.inverse()?), p.hue_sat.clone())));
-    let look = fit_pairs_with(&sensor, &reference, colour)?;
+    let look = fit_look(&sensor, &reference, &clipped, colour)?;
     if lightcraft_pipeline::profiling() {
         eprintln!(
             "[profile] {:?} camera look: {:?}, {:?}, hue/sat table {}, camera profile available {}",
@@ -60,9 +60,73 @@ pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransf
     Some(look)
 }
 
+/// Sensor level (normalised, white = 1) at or above which a raw channel counts as clipped, as in
+/// the render's highlight reconstruction.
+const SENSOR_CLIP: f32 = 0.99;
+
+/// The photo's look, refitted without the proxy pixels whose sensor values are clipped.
+///
+/// A clipped raw pixel no longer records the scene's colour: with one channel held at the clip
+/// level while the others keep rising, a white overcast sky comes out magenta or blue through the
+/// camera matrix, while the camera JPEG shows it white. As correspondences such pixels teach the
+/// colour matrix to pull colours toward grey, and the chroma curve to remove colour at their
+/// display luminance (on a Z 6II forest under a clipped sky the curve cut colourfulness above
+/// display luminance 0.4 to 13–19%, and every one of its samples there was clipped). The render
+/// rebuilds clipped highlights separately (`lightcraft_raw::highlight`), so the look is fitted on
+/// what the sensor measured.
+///
+/// The search on all pixels decides, as before, whether the photo gets a look and which attempt
+/// of [`search_ordered`] gives it; only that attempt is refitted without the clipped pixels, and
+/// when the refit misses the acceptance gates the look on all pixels is kept. So no photo loses
+/// its look and none switches attempt (a refit that just clears the gate on all pixels must not
+/// replace a look fitted away from edges). A photo that had no look gets one when the search
+/// without the clipped pixels finds it.
+fn fit_look(sensor: &Rgb32f, reference: &Rgb32f, clipped: &[bool], colour: Option<(Mat3, Option<HsvTable>)>) -> Option<CameraLook> {
+    let unclipped = without_clipped(sensor, clipped);
+    let Some((look, attempt)) = search_ordered(sensor, reference, colour.clone(), TONE_FITS) else {
+        return unclipped.and_then(|u| search_ordered(&u, reference, colour, TONE_FITS)).map(|(look, _)| look);
+    };
+    let Some(unclipped) = unclipped else { return Some(look) };
+    let refit = fit_attempt(&unclipped, reference, &colour, attempt);
+    if refit.is_none() && lightcraft_pipeline::profiling() {
+        eprintln!("[profile] camera look: no fit without the clipped pixels on the accepted attempt, keeping the fit on all pixels");
+    }
+    Some(refit.unwrap_or(look))
+}
+
+/// `sensor` with its clipped pixels set to NaN (left out of every training pair), or `None` when
+/// none is clipped.
+fn without_clipped(sensor: &Rgb32f, clipped: &[bool]) -> Option<Rgb32f> {
+    if clipped.len() != sensor.data.len() || !clipped.iter().any(|c| *c) {
+        return None;
+    }
+    let mut out = sensor.clone();
+    for (p, c) in out.data.iter_mut().zip(clipped) {
+        if *c {
+            *p = [f32::NAN; 3];
+        }
+    }
+    if lightcraft_pipeline::profiling() {
+        eprintln!(
+            "[profile] camera look: {} of {} proxy pixels have a clipped sensor channel",
+            clipped.iter().filter(|c| **c).count(),
+            clipped.len()
+        );
+    }
+    Some(out)
+}
+
+/// 1 where any channel of a camera-RGB pixel is at or above [`SENSOR_CLIP`], else 0.
+fn clip_mask(camera: &Rgb32f) -> Rgb32f {
+    let mut mask = camera.clone();
+    mask.map_in_place(|p| if p.iter().any(|v| *v >= SENSOR_CLIP) { [1.0; 3] } else { [0.0; 3] });
+    mask
+}
+
 /// Same-size proxies of the sensor (white-balanced, baseline exposure, through `transform`'s
-/// matrix: the generic camera ≈ sRGB model) and of the file's embedded camera JPEG (linear Rec.2020).
-fn proxies(raw: &RawImage, bytes: &[u8], transform: &CameraTransform, size: usize) -> Option<(Rgb32f, Rgb32f)> {
+/// matrix: the generic camera ≈ sRGB model) and of the file's embedded camera JPEG (linear Rec.2020),
+/// and per proxy pixel whether any sensor sample it covers is clipped.
+fn proxies(raw: &RawImage, bytes: &[u8], transform: &CameraTransform, size: usize) -> Option<(Rgb32f, Rgb32f, Vec<bool>)> {
     let edge = (2 * size).max(384) as u32;
     let decoded = crate::files::decode_raw_preview(bytes, lightcraft_codecs::DecodeOptions { max_size: Some((edge, edge)), max_pixels: 64_000_000 })?;
     let mut reference = decoded.to_working();
@@ -87,23 +151,28 @@ fn proxies(raw: &RawImage, bytes: &[u8], transform: &CameraTransform, size: usiz
     // Fixed, bounded proxy: the selected look cannot depend on thumbnail/export resolution.
     let k = (crop.width.max(crop.height).div_ceil(edge as usize).max(2)).div_ceil(2) * 2;
     let mut sensor = sensor_proxy(raw, k, edge as usize)?;
+    let mut clipped = clip_mask(&sensor);
     let gain = 2f32.powf(transform.baseline_exposure as f32);
     let to_working = |p: [f32; 3]| transform.matrix.apply_f32(std::array::from_fn(|i| p[i] * transform.wb[i] * gain));
     if raw.format == RawFormat::Cr3 {
         // Orient the camera JPEG and the sensor identically before collecting pixel correspondences.
         sensor = sensor.into_oriented(raw.orientation);
+        clipped = clipped.into_oriented(raw.orientation);
         reference = reference.into_oriented(raw.orientation);
         sensor.map_in_place(to_working);
         // Canon's JPEG can be cropped differently from the sensor. Estimate only that common
         // framing from edge directions, independently of the subsequent colour fit.
-        sensor = align_cr3_framing(sensor, &reference);
+        (sensor, clipped) = align_cr3_framing(sensor, clipped, &reference);
     }
     let mut sensor = fit(&sensor, size, size, Filter::Box);
     let reference = fit(&reference, sensor.width, sensor.height, Filter::Box);
+    // A proxy pixel is clipped when any sample it averages is (outside the CR3 framing the mask is
+    // NaN: those pixels are left out of the pairs anyway).
+    let clipped: Vec<bool> = fit(&clipped, sensor.width, sensor.height, Filter::Box).data.iter().map(|p| p[0] > 0.0).collect();
     if raw.format != RawFormat::Cr3 {
         sensor.map_in_place(to_working);
     }
-    Some((sensor, reference))
+    Some((sensor, reference, clipped))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -230,15 +299,19 @@ fn estimate_cr3_framing(sensor: &Rgb32f, reference: &Rgb32f) -> Option<Cr3Framin
     Some(best.1)
 }
 
-fn align_cr3_framing(sensor: Rgb32f, reference: &Rgb32f) -> Rgb32f {
-    let Some(framing) = estimate_cr3_framing(&sensor, reference) else { return sensor };
-    let (w, h) = (sensor.width, sensor.height);
-    let mut aligned = Rgb32f::new(w, h);
-    for (i, pixel) in aligned.data.iter_mut().enumerate() {
-        let (x, y) = framing.source((i % w) as f32 + 0.5, (i / w) as f32 + 0.5, w, h);
-        *pixel = if x >= 0.5 && y >= 0.5 && x <= w as f32 - 0.5 && y <= h as f32 - 0.5 { sensor.sample_bilinear(x, y) } else { [f32::NAN; 3] };
-    }
-    aligned
+/// The sensor proxy and its clip mask (same size), both moved to the camera JPEG's framing.
+fn align_cr3_framing(sensor: Rgb32f, clipped: Rgb32f, reference: &Rgb32f) -> (Rgb32f, Rgb32f) {
+    let Some(framing) = estimate_cr3_framing(&sensor, reference) else { return (sensor, clipped) };
+    let apply = |image: &Rgb32f| {
+        let (w, h) = (image.width, image.height);
+        let mut aligned = Rgb32f::new(w, h);
+        for (i, pixel) in aligned.data.iter_mut().enumerate() {
+            let (x, y) = framing.source((i % w) as f32 + 0.5, (i / w) as f32 + 0.5, w, h);
+            *pixel = if x >= 0.5 && y >= 0.5 && x <= w as f32 - 0.5 && y <= h as f32 - 0.5 { image.sample_bilinear(x, y) } else { [f32::NAN; 3] };
+        }
+        aligned
+    };
+    (apply(&sensor), apply(&clipped))
 }
 
 /// Colour training pairs of one raw for a camera profile: white-balanced camera RGB (with the
@@ -249,8 +322,10 @@ pub(crate) fn profile_pairs(raw: &RawImage, bytes: &[u8]) -> Option<Vec<([f64; 3
         return None;
     }
     let transform = lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
-    let (sensor, reference) = proxies(raw, bytes, &transform, PROFILE_PROXY)?;
+    let (sensor, reference, clipped) = proxies(raw, bytes, &transform, PROFILE_PROXY)?;
     let to_camera = transform.matrix.inverse()?;
+    // clipped sensor pixels don't record the scene's colour (see `fit_look`)
+    let sensor = without_clipped(&sensor, &clipped).unwrap_or(sensor);
     let (pairs, _) = collect_pairs(&sensor, &reference, 0.05, None)?;
     Some(pairs.into_iter().map(|(x, y)| (to_camera.apply(x), y)).collect())
 }
@@ -263,7 +338,7 @@ pub(crate) fn fit_profile(pairs: &[([f64; 3], [f64; 3])]) -> Option<(Mat3, Optio
 }
 
 fn sensor_proxy(raw: &RawImage, k: usize, edge: usize) -> Option<Rgb32f> {
-    Some(match raw.develop_binned(k, 0.99).ok()? {
+    Some(match raw.develop_binned(k, SENSOR_CLIP).ok()? {
         Some(sensor) => sensor,
         None if raw.cpp == 3 && raw.cfa.is_none() => fit(&raw.develop(lightcraft_raw::Method::Bilinear).ok()?, edge, edge, Filter::Box),
         None => return None,
@@ -389,42 +464,66 @@ fn fit_matrix(pairs: &[([f64; 3], [f64; 3])]) -> Option<Mat3> {
 }
 
 /// Neighbourhood luminance ratio above which a pixel counts as an edge for the second attempt
-/// of [`fit_pairs_with`]. Camera JPEGs are often lens-corrected (Sony "Distortion Comp.: Auto",
+/// of [`search_ordered`]. Camera JPEGs are often lens-corrected (Sony "Distortion Comp.: Auto",
 /// compacts and kit zooms): on a 51 mm ILCE-7RM2 shot of a glass façade the JPEG is up to 15 px
 /// of 1440 (about one proxy pixel) off the raw, and the fit failed the gate on the mismatched
 /// window frames alone (held-out RMS 0.111; 0.059 for the same shot with distortion correction
 /// off). Away from edges: 0.049. Issue #232.
 const EDGE_CONTRAST: f32 = 3.0;
 
-/// The photo's look: its own matrix (with and without a hue/saturation table), or the given
-/// colour model (a camera profile's, in the sensor proxy's space), each completed with a tone
-/// and chroma curve fitted to this photo. When the fit on all pixels fails the acceptance gates,
-/// it is tried once more on the pixels away from edges (same gates): there colour pairs stay
-/// valid when the camera JPEG's geometry differs slightly from the raw's.
+/// The look on all pixels (the search of [`search_ordered`] with [`TONE_FITS`]), as before
+/// clipped pixels were left out.
+#[cfg(test)]
 fn fit_pairs_with(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>) -> Option<CameraLook> {
-    fit_pairs_ordered(sensor, reference, colour, &[ToneFit::Quantile, ToneFit::ConditionalMedian])
+    fit_pairs_ordered(sensor, reference, colour, TONE_FITS)
 }
 
-/// [`fit_pairs_with`] with the tone fits to try, in order: the first whose look passes the
-/// acceptance gates is used. Quantile matching comes first because it cannot produce flat steps;
-/// the conditional-median fit follows because on a few photos (compacts, early Micro Four Thirds)
-/// its slightly lower held-out error is what clears the gates, and a photo must not lose its look
-/// to the change of fit. The whole search (all pixels, then away from edges, with and without the
-/// camera profile's colour) runs with one tone fit before the next is tried, so the fallback
-/// accepts exactly what the previous releases accepted.
+/// The look from [`search_ordered`] without its attempt.
+#[cfg(test)]
 fn fit_pairs_ordered(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>, order: &[ToneFit]) -> Option<CameraLook> {
-    let has_profile = colour.is_some();
+    search_ordered(sensor, reference, colour, order).map(|(look, _)| look)
+}
+
+/// The tone fits the search tries, in order: the first whose look passes the acceptance gates is
+/// used. Quantile matching comes first because it cannot produce flat steps; the
+/// conditional-median fit follows because on a few photos (compacts, early Micro Four Thirds) its
+/// slightly lower held-out error is what clears the gates, and a photo must not lose its look to
+/// the change of fit.
+const TONE_FITS: &[ToneFit] = &[ToneFit::Quantile, ToneFit::ConditionalMedian];
+
+/// One attempt of the search: tone fit, the camera profile's colour or the photo's own, all pixels
+/// or only those away from edges.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Attempt {
+    tone: ToneFit,
+    profile: bool,
+    away_from_edges: bool,
+}
+
+/// The photo's look and the attempt that produced it: its own matrix (with and without a
+/// hue/saturation table), or the given colour model (a camera profile's, in the sensor proxy's
+/// space), each completed with a tone and chroma curve fitted to this photo. Per tone fit in
+/// `order`: the camera profile's colour (when there is one), then the photo's own, as a different
+/// picture style can make a camera profile fail the gates; each fitted on all pixels and, when that
+/// fails the gates, once more on the pixels away from edges (same gates): there colour pairs stay
+/// valid when the camera JPEG's geometry differs slightly from the raw's (issue #232). The whole
+/// search runs with one tone fit before the next is tried, so the conditional-median fallback
+/// accepts exactly what the previous releases accepted.
+fn search_ordered(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>, order: &[ToneFit]) -> Option<(CameraLook, Attempt)> {
+    let profiles: &[bool] = if colour.is_some() { &[true, false] } else { &[false] };
     order.iter().find_map(|&tone| {
-        // A different picture style can make a camera profile fail the gates. Preserve the
-        // photo's own colour fit before resorting to the neutral fallback.
-        fit_candidate(sensor, reference, colour.clone(), tone).or_else(|| has_profile.then(|| fit_candidate(sensor, reference, None, tone)).flatten())
+        profiles.iter().find_map(|&profile| {
+            [false, true].into_iter().find_map(|away_from_edges| {
+                let attempt = Attempt { tone, profile, away_from_edges };
+                fit_attempt(sensor, reference, &colour, attempt).map(|look| (look, attempt))
+            })
+        })
     })
 }
 
-/// One candidate colour model, fitted on all pixels and, when that fails the gates, once more on
-/// the pixels away from edges (issue #232).
-fn fit_candidate(sensor: &Rgb32f, reference: &Rgb32f, colour: Option<(Mat3, Option<HsvTable>)>, tone: ToneFit) -> Option<CameraLook> {
-    fit_pairs_on(sensor, reference, colour.clone(), None, tone).or_else(|| fit_pairs_on(sensor, reference, colour, Some(EDGE_CONTRAST), tone))
+fn fit_attempt(sensor: &Rgb32f, reference: &Rgb32f, colour: &Option<(Mat3, Option<HsvTable>)>, attempt: Attempt) -> Option<CameraLook> {
+    let colour = if attempt.profile { colour.clone() } else { None };
+    fit_pairs_on(sensor, reference, colour, attempt.away_from_edges.then_some(EDGE_CONTRAST), attempt.tone)
 }
 
 fn fit_pairs_on(
@@ -1354,6 +1453,110 @@ mod tests {
             *dst = p.map(|v| v * scale);
         }
         (sensor, reference)
+    }
+
+    /// A camera rendering with constant colourfulness (no highlight bleaching) of a colourful scene
+    /// under a bright neutral sky, whose sensor pixels are clipped: one channel held at the clip
+    /// level turns the white sky magenta in the raw while the camera JPEG keeps it white. Returns
+    /// the sensor proxy, the JPEG proxy and the clip mask.
+    fn clipped_sky_scene() -> (Rgb32f, Rgb32f, Vec<bool>) {
+        let known = Mat3([[1.8, -0.4, -0.1], [-0.2, 1.5, -0.1], [-0.05, -0.3, 1.7]]);
+        let (w, h) = (96usize, 64usize);
+        let mut sensor = Rgb32f::new(w, h);
+        let mut reference = sensor.clone();
+        let mut clipped = vec![false; w * h];
+        let mut seed = 0x2545_f491_u32;
+        let mut next = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            f32::from((seed >> 16) as u16) / 65536.0
+        };
+        let camera = |p: [f32; 3]| {
+            let y = luminance_2020(p);
+            let o = 1.0 - (-2.5 * y).exp();
+            p.map(|v| (v * o / y).clamp(0.0, 0.97))
+        };
+        // the sky: a quarter of the frame, white in the scene and in the JPEG
+        let neutral = known.inverse().unwrap().apply_f32([0.32; 3]);
+        for (i, (src, dst)) in sensor.data.iter_mut().zip(&mut reference.data).enumerate() {
+            let scene = if i < w * h / 4 {
+                clipped[i] = true;
+                let sky = neutral.map(|v| v * (0.8 + 0.4 * next()));
+                *dst = camera(known.apply_f32(sky));
+                // the green sample clips, red and blue (after white balance) go on rising
+                *src = [sky[0] * 1.35, sky[1] * 0.85, sky[2] * 1.4];
+                continue;
+            } else {
+                // colourful foliage, leaves, bark and bright flowers from dark to light
+                let ev = 0.02 + next() * 0.4;
+                [ev * (0.6 + next() * 0.8), ev, ev * (0.5 + next() * 0.8)]
+            };
+            *src = scene;
+            *dst = camera(known.apply_f32(scene));
+        }
+        (sensor, reference, clipped)
+    }
+
+    /// Mean colourfulness (distance from neutral of luminance-normalised RGB) of the unclipped
+    /// pixels rendered with `look`, over that of the camera JPEG, per display-luminance band.
+    fn colourfulness_ratio(look: &CameraLook, sensor: &Rgb32f, reference: &Rgb32f, clipped: &[bool], band: std::ops::Range<f64>) -> f64 {
+        let chroma = |p: [f64; 3]| {
+            let y = luma(p);
+            p.iter().map(|v| (v / y - 1.0).powi(2)).sum::<f64>().sqrt()
+        };
+        let tone = ToneMap::camera(&look.tone, 0.0, 0.0, 0.0);
+        let (mut rendered, mut camera) = (0.0, 0.0);
+        for ((x, y), c) in sensor.data.iter().zip(&reference.data).zip(clipped) {
+            let y = y.map(f64::from);
+            if *c || !band.contains(&luma(y)) {
+                continue;
+            }
+            rendered += chroma(displayed(look.matrix.apply(x.map(f64::from)), &tone));
+            camera += chroma(y);
+        }
+        rendered / camera
+    }
+
+    /// Clipped sensor pixels are left out of the look's training pairs: a clipped white sky no longer
+    /// dulls the colour matrix or makes the chroma curve remove colour at the sky's brightness.
+    #[test]
+    fn clipped_sky_does_not_dull_the_look() {
+        let (sensor, reference, clipped) = clipped_sky_scene();
+        let old = fit_pairs(&sensor, &reference).expect("the earlier fit accepts the look");
+        let new = fit_look(&sensor, &reference, &clipped, None).expect("look without the clipped pixels");
+        let (mid, bright) = (0.1..0.35, 0.35..0.75);
+        let old_ratio = (
+            colourfulness_ratio(&old, &sensor, &reference, &clipped, mid.clone()),
+            colourfulness_ratio(&old, &sensor, &reference, &clipped, bright.clone()),
+        );
+        let new_ratio =
+            (colourfulness_ratio(&new, &sensor, &reference, &clipped, mid), colourfulness_ratio(&new, &sensor, &reference, &clipped, bright));
+        // with the clipped sky in the pairs, the bright colours lose much of their colour
+        assert!(old_ratio.1 < 0.8, "earlier fit: colourfulness vs camera {old_ratio:?}, chroma {:?}", old.tone.chroma());
+        // without it, the render keeps the camera's colourfulness at every brightness
+        for r in [new_ratio.0, new_ratio.1] {
+            assert!((0.9..1.1).contains(&r), "colourfulness vs camera {new_ratio:?}, chroma {:?}", new.tone.chroma());
+        }
+        assert!(new.tone.chroma().iter().all(|k| *k > 0.85), "no colour cut: {:?}", new.tone.chroma());
+    }
+
+    /// When the accepted attempt misses the gates without the clipped pixels (here: too few pixels
+    /// left), the look fitted on all pixels is kept unchanged.
+    #[test]
+    fn clipped_fit_falls_back_to_all_pixels() {
+        let (sensor, reference, _) = clipped_sky_scene();
+        let all = fit_pairs(&sensor, &reference).unwrap();
+        // nearly everything clipped: too few pairs remain, the earlier look is used unchanged
+        let mut clipped = vec![true; sensor.data.len()];
+        clipped[..100].iter_mut().for_each(|c| *c = false);
+        let fallback = fit_look(&sensor, &reference, &clipped, None).expect("the fallback keeps the look");
+        assert_eq!((fallback.matrix.0, fallback.tone), (all.matrix.0, all.tone));
+        // nothing clipped: the same look as before, exactly
+        let none = fit_look(&sensor, &reference, &vec![false; sensor.data.len()], None).unwrap();
+        assert_eq!((none.matrix.0, none.tone), (all.matrix.0, all.tone));
+        // without clipped pixels the refit keeps the accepted attempt (here: all pixels, own colour, quantile tone)
+        let (_, attempt) = search_ordered(&sensor, &reference, None, TONE_FITS).unwrap();
+        assert_eq!(attempt, Attempt { tone: ToneFit::Quantile, profile: false, away_from_edges: false });
+        assert!(without_clipped(&sensor, &[true; 3]).is_none(), "a mask of another size is ignored");
     }
 
     /// Quantile matching is tried first; the conditional-median fit is the fallback and is used
