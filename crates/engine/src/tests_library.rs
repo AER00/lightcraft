@@ -555,3 +555,19 @@ fn set_rules_with_a_name_is_one_step() {
     s.execute("album.setRules", &serde_json::json!({"id": id, "name": "  ", "rules": {"rating": 5}})).unwrap();
     assert_eq!(album(&s).name, "Old");
 }
+
+/// albums.list says which smart albums have rules that no longer check, and why.
+#[test]
+fn album_list_reports_problems() {
+    let mut s = crate::Session::with_demo();
+    let trip = s.execute("album.create", &serde_json::json!({"name": "Trip", "addSelected": false})).unwrap()["id"].as_u64().unwrap();
+    let rules = serde_json::json!({"ruleSet": {"rules": [{"field": "album", "op": "is", "value": trip}]}});
+    let id = s.execute("album.createSmart", &serde_json::json!({"name": "In Trip", "rules": rules})).unwrap()["id"].as_u64().unwrap();
+    let find = |s: &mut crate::Session| {
+        let list = s.execute("albums.list", &serde_json::json!({})).unwrap();
+        list.as_array().unwrap().iter().find(|a| a["id"] == id).cloned().unwrap()
+    };
+    assert_eq!(find(&mut s)["problems"], serde_json::json!([]));
+    s.execute("album.delete", &serde_json::json!({"id": trip})).unwrap();
+    assert_eq!(find(&mut s)["problems"], serde_json::json!([format!("rule 1: no album {trip}")]));
+}

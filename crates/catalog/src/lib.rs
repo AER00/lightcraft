@@ -330,6 +330,15 @@ impl Catalog {
         }
     }
 
+    /// What is wrong with a saved smart album's rules now (`RuleSet::check`, after
+    /// `RuleSet::upgrade`): typically a rule testing an album that has since been deleted. Empty
+    /// for a sound smart album, a plain album or no album.
+    pub fn smart_album_problems(&self, id: AlbumId) -> Vec<rules::Problem> {
+        let Some(mut rules) = self.albums.get(&id).and_then(|a| a.smart.as_ref()).and_then(|f| f.rule_set.clone()) else { return Vec::new() };
+        rules.upgrade();
+        rules.check(self)
+    }
+
     /// The photos of an album: the stored list, or a smart album's current matches (id order).
     pub fn album_photos(&self, id: AlbumId) -> Vec<PhotoId> {
         match self.albums.get(&id) {

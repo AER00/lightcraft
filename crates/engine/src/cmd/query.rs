@@ -44,6 +44,8 @@ fn album_json(a: &Album, all: &[Album], cat: &lightcraft_catalog::Catalog) -> Va
         v["smart"] = json!(true);
         v["rules"] = serde_json::to_value(rules).unwrap_or_default();
         v["rulesText"] = json!(rules.describe());
+        // rules that no longer check (an album they test was deleted…), as `rule 1: …`
+        v["problems"] = json!(cat.smart_album_problems(a.id).iter().map(ToString::to_string).collect::<Vec<_>>());
     }
     v
 }

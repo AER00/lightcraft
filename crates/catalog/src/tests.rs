@@ -456,3 +456,23 @@ fn random_sort_has_no_date_headers() {
     let ids = many(&mut c, 5);
     assert!(c.date_runs(&ids, SortKey::Random, GroupBy::Day).is_empty());
 }
+
+/// A saved smart album whose rules no longer check (the album a rule tests was deleted) is found,
+/// with its problems; a good one has none; an old album operator is read as it was meant.
+#[test]
+fn smart_album_problems_flag_stale_rules() {
+    let mut c = Catalog::new();
+    c.apply(Op::AddAlbum { album: Album::new(AlbumId(1), "Trip") }).unwrap();
+    let smart = |id: u64, rules: serde_json::Value| {
+        let f: Filter = serde_json::from_value(serde_json::json!({"ruleSet": {"rules": rules}})).unwrap();
+        Album { smart: Some(Box::new(f)), ..Album::new(AlbumId(id), "Smart") }
+    };
+    c.apply(Op::AddAlbum { album: smart(2, serde_json::json!([{"field": "album", "op": "is", "value": 1}])) }).unwrap();
+    c.apply(Op::AddAlbum { album: smart(3, serde_json::json!([{"field": "album", "op": "gte", "value": 1}])) }).unwrap();
+    assert!(c.smart_album_problems(AlbumId(2)).is_empty());
+    assert!(c.smart_album_problems(AlbumId(3)).is_empty(), "an old operator is upgraded, not a problem");
+    assert!(c.smart_album_problems(AlbumId(1)).is_empty(), "a plain album has no rules");
+    c.apply(Op::RemoveAlbum { id: AlbumId(1) }).unwrap();
+    let p = c.smart_album_problems(AlbumId(2));
+    assert_eq!(p.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["rule 1: no album 1".to_string()]);
+}
