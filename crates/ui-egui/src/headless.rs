@@ -2005,6 +2005,28 @@ mod tests {
         assert_eq!(h.app.session.undo.len(), undo0 + 1);
     }
 
+    /// A slider's typed value is a shared text field: right-click ▸ Paste replaces the value
+    /// (selected when the field opens) and Return applies it; the menu doesn't close the field.
+    #[test]
+    fn a_slider_value_pastes_from_its_menu() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "edit"}), t);
+        h.settle(SETTLE);
+        h.view.clipboard = "0.75".into();
+        for (id, button) in
+            [("sliderValue:light.exposure", "left"), ("sliderField:light.exposure", "right"), ("sliderField:light.exposure:paste", "left")]
+        {
+            let r = h.request("ui.clickWidget", json!({"id": id, "button": button}), t);
+            assert_eq!(r["ok"], true, "{id}: {r}");
+            h.settle(SETTLE);
+        }
+        h.request("ui.key", json!({"key": "Enter"}), t);
+        h.settle(SETTLE);
+        let exposure = h.app.session.develop_of(h.app.session.active().unwrap()).unwrap().light.exposure;
+        assert!((exposure - 0.75).abs() < 1e-9, "{exposure}");
+    }
+
     /// The eye on a section header switches the section off and on again, one undo step each
     /// (issue #316).
     #[test]

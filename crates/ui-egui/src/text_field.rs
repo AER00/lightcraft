@@ -25,6 +25,8 @@ pub struct TextFieldResponse {
     pub response: Response,
     /// Set on the frame an edit ends.
     pub ending: Option<Ending>,
+    /// An edit is under way: the field has the focus, or its menu does.
+    pub editing: bool,
 }
 
 impl TextFieldResponse {
@@ -221,8 +223,9 @@ impl<'a> TextField<'a> {
         if ending.is_some() {
             memo = Memo::default();
         }
+        let editing = ending.is_none() && (response.has_focus() || memo.away || memo.menu_open || memo.action.is_some());
         ui.data_mut(|d| d.insert_temp(id.with("memo"), memo));
-        TextFieldResponse { response, ending }
+        TextFieldResponse { response, ending, editing }
     }
 }
 
