@@ -614,9 +614,9 @@ fn fit_pairs_on(
 
 /// Weight of the photo's own colour matrix in a [`fit_partial`] look; the rest is the identity (the
 /// neutral fallback's generic camera ≈ sRGB colour). On the CC0 archive's proxies, with the
-/// matrix at full weight 2 of the 83 colourful photos without a look came out more than 2° further
-/// from the camera's hues than the neutral fallback, at half weight none (median hue error 8.1° →
-/// 4.4°; the generic colour alone: 9.6°, as the tone and chroma curves make its hue errors visible).
+/// matrix at full weight 2 of the 23 colourful photos without a look came out more than 2° further
+/// from the camera's hues than the neutral fallback, at half weight none (median hue error 9.6° with
+/// the generic colour, which the tone and chroma curves make visible, 5.1° at half weight).
 const PARTIAL_MATRIX_WEIGHT: f64 = 0.5;
 
 /// Smallest rank correlation of scene and camera JPEG luminance over a [`fit_partial`] look's pairs:
