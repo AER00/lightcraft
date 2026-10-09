@@ -681,46 +681,35 @@ fn fit_chroma(pairs: &[([f64; 3], [f64; 3])], look: &CameraLook) -> Option<Camer
     (after.is_finite() && after < before).then_some(fitted)
 }
 
-fn median(values: &mut [f64]) -> Option<f64> {
-    values.sort_by(f64::total_cmp);
-    values.get(values.len() / 2).copied()
-}
-
-fn fit_tone(mut pairs: Vec<(f64, f64)>) -> Option<CameraTone> {
+/// The camera's tone curve from scene/JPEG luminance pairs, by quantile matching: knot `i` pairs
+/// the median of the `i`-th 1/32 of the sorted scene luminances with the median of the `i`-th
+/// 1/32 of the sorted JPEG luminances. A tone curve is monotone, so it maps each quantile of the
+/// scene to the same quantile of the JPEG; matching the two distributions needs no pixel-exact
+/// registration and is increasing by construction.
+///
+/// Binning the pairs by scene luminance and taking the JPEG's median per bin instead (followed by
+/// isotonic pooling) fails on real files: camera JPEGs are lens-corrected and sharpened, so on a
+/// 96 px proxy of a busy scene neighbouring pairs disagree by more than the gap between bins.
+/// The conditional medians then zig-zag, pooling turns them into flat steps (13 of 31 segments
+/// on a Z 6II forest, issue #475) that render as posterised patches, and regression toward the
+/// mean flattens both ends of the curve (lifted blacks, dull highlights).
+fn fit_tone(pairs: Vec<(f64, f64)>) -> Option<CameraTone> {
     if pairs.len() < 128 || !pairs.iter().all(|(x, y)| x.is_finite() && *x > 0.0 && y.is_finite()) {
         return None;
     }
-    pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut xs: Vec<f64> = pairs.iter().map(|p| p.0).collect();
+    let mut ys: Vec<f64> = pairs.iter().map(|p| p.1).collect();
+    xs.sort_by(f64::total_cmp);
+    ys.sort_by(f64::total_cmp);
+    let n = xs.len();
     let mut knots = [[0.0; 2]; 32];
     for (i, knot) in knots.iter_mut().enumerate() {
-        let bin = pairs.get(i * pairs.len() / 32..(i + 1) * pairs.len() / 32)?;
-        let mut xs: Vec<_> = bin.iter().map(|p| p.0).collect();
-        let mut ys: Vec<_> = bin.iter().map(|p| p.1).collect();
-        *knot = [median(&mut xs)? as f32, median(&mut ys)? as f32];
+        let (a, b) = (i * n / 32, (i + 1) * n / 32);
+        let mid = a + (b - a) / 2;
+        *knot = [*xs.get(mid)? as f32, *ys.get(mid)? as f32];
     }
     if knots[31][0] < knots[0][0] * 1.5 {
         return None;
-    }
-    // Pool adjacent violating bins (isotonic regression): no reversals or arbitrary polynomial.
-    let mut blocks: Vec<(f32, usize)> = Vec::new();
-    for knot in knots {
-        blocks.push((knot[1], 1));
-        while blocks.len() >= 2 {
-            let (a, an) = *blocks.get(blocks.len() - 2)?;
-            let (b, bn) = *blocks.last()?;
-            if a <= b {
-                break;
-            }
-            blocks.truncate(blocks.len() - 2);
-            blocks.push(((a * an as f32 + b * bn as f32) / (an + bn) as f32, an + bn));
-        }
-    }
-    let mut i = 0;
-    for (y, n) in blocks {
-        for knot in knots.get_mut(i..i + n)? {
-            knot[1] = y;
-        }
-        i += n;
     }
     CameraTone::new(knots)
 }
@@ -1227,5 +1216,32 @@ mod tests {
         assert!(fit_pairs(&sensor, &reference).is_none());
         reference.data.truncate(8);
         assert!(fit_pairs(&sensor, &reference).is_none());
+    }
+
+    /// A busy scene whose JPEG is the camera curve of the scene two proxy pixels to the right (a
+    /// lens-corrected preview): the fitted curve follows the camera's and has no flat steps.
+    #[test]
+    fn tone_fit_has_no_steps_on_a_misregistered_jpeg() {
+        let camera = |x: f64| 0.6 * x.powf(0.55) / (1.0 + 0.2 * x);
+        let (w, h) = (96usize, 64usize);
+        let mut seed = 0x2545_f491_u32;
+        let mut scene = Vec::with_capacity(w * h);
+        for _ in 0..w * h {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            scene.push(0.01 * (5.0 * f64::from(seed >> 8) / f64::from(1u32 << 24)).exp());
+        }
+        let pairs: Vec<(f64, f64)> =
+            (0..h).flat_map(|y| (0..w - 2).map(move |x| (y * w + x, y * w + x + 2))).map(|(i, j)| (scene[i], camera(scene[j]))).collect();
+        let curve = fit_tone(pairs).unwrap();
+        let mut sorted = scene.clone();
+        sorted.sort_by(f64::total_cmp);
+        let (lo, hi) = (sorted[sorted.len() / 50], sorted[sorted.len() * 49 / 50]);
+        let mut x = lo;
+        while x < hi {
+            let (a, b) = (curve.apply(x as f32), curve.apply((x * 1.02) as f32));
+            assert!(b > a, "flat step at {x}: {a} -> {b}");
+            assert!((f64::from(a) / camera(x) - 1.0).abs() < 0.05, "at {x}: {a} vs {}", camera(x));
+            x *= 1.02;
+        }
     }
 }
