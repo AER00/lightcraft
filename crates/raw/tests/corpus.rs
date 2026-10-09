@@ -357,6 +357,37 @@ fn corpus_sony_pre2017_colour_metadata() {
     eprintln!("pre-2017 Sony ARW colour metadata checked on {seen} files");
 }
 
+/// Issue #535: pre-2017 Sony bodies without crop tags shot in the camera's 16:9 mode. The ILCE-7SM2 records the
+/// 16:9 size in `FullImageSize`, the DSLR-A580 only in the Exif image size; both crops are centred vertically (each
+/// camera JPEG registered on its raw) and drop the right-edge padding, so the image matches its JPEG's aspect ratio
+/// and gets a camera look.
+#[test]
+fn corpus_sony_16x9_crops() {
+    let dir = corpus_root().join("raw");
+    let mut seen = 0;
+    for (name, (x, y, w, h)) in [("arw-sony-a7sm2-16x9.arw", (0, 232, 4240, 2384)), ("arw-sony-a580-16x9.arw", (0, 260, 4912, 2760))] {
+        let bytes = match std::fs::read(dir.join(name)) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("skip: {name} absent");
+                continue;
+            }
+            Err(e) => panic!("{name}: {e}"),
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let c = img.crop;
+        assert_eq!((c.x, c.y, c.width, c.height), (x, y, w, h), "{name}: crop");
+        let jpeg = embedded_preview(&bytes).unwrap_or_else(|| panic!("{name}: no preview"));
+        let mut d = zune_jpeg::JpegDecoder::new(zune_core::bytestream::ZCursor::new(&jpeg));
+        d.decode_headers().unwrap();
+        let info = d.info().unwrap();
+        let (aspect, preview) = (c.width as f64 / c.height as f64, info.width as f64 / info.height as f64);
+        assert!((aspect / preview - 1.0).abs() < 0.02, "{name}: crop aspect {aspect} vs camera JPEG {preview}");
+        seen += 1;
+    }
+    eprintln!("Sony 16:9 crops checked on {seen} files");
+}
+
 /// The embedded JPEG as linear RGB, reduced to `gw × gh` cells.
 fn jpeg_cells(jpeg: &[u8], gw: usize, gh: usize) -> Vec<[f64; 3]> {
     use zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
