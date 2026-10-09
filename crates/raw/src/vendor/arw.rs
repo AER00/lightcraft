@@ -42,6 +42,10 @@ const REFERENCE_BLACK_WHITE: u16 = 532;
 /// Maker-note tags (ExifTool Sony tag names): the enciphered `Tag2010` block and `FullImageSize` (height, width).
 const MN_TAG2010: u16 = 0x2010;
 const MN_FULL_IMAGE_SIZE: u16 = 0xb02b;
+/// Maker-note `FileFormat` (ExifTool Sony tag names): `1 0 0 0` is SR2, `2 0 0 0` ARW 1.0, `3 …` and later ARW 2.x+.
+/// The DSC-R1's SR2 stores 16-bit samples that are spread uniformly over 2–65340 (median ~33000, three quarters
+/// above any white level): encrypted, so it is refused and opens from its preview instead of decoding to noise.
+const MN_FILE_FORMAT: u16 = 0xb000;
 
 /// Inverse of Sony's maker-note byte substitution. ExifTool's Sony tag documentation states that the data of
 /// tags `0x2010`, `0x9050` and `0x94xx` "is encrypted by a simple substitution cipher" (no decoder source was
@@ -413,11 +417,8 @@ fn sr2_black_levels(cipher: &[u8], order: lightcraft_tiff::ByteOrder) -> Option<
 }
 
 /// The image area for files without Sony's crop tags (`0x74c7/0x74c8`, written since about 2017): the DNG-style
-/// default crop when the raw IFD has one, else the maker note's `FullImageSize` (the camera JPEG's size) anchored
-/// at the top-left. Older bodies store a few columns of padding at the right edge of the raw frame (constant
-/// values, 8–32 columns on the samples we checked) inside a frame 16–48 pixels wider than `FullImageSize`, so
-/// the anchored crop removes them while keeping the CFA phase.
-fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, w: usize, h: usize) -> Rect {
+/// default crop when the raw IFD has one, else the image size the camera records (see [`recorded_size_crop`]).
+fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, exif_size: Option<(u64, u64)>, w: usize, h: usize) -> Rect {
     let full = Rect::new(0, 0, w, h);
     if let (Some([x, y]), Some([cw, ch])) = (raw.u64s(t::DEFAULT_CROP_ORIGIN).as_deref(), raw.u64s(t::DEFAULT_CROP_SIZE).as_deref())
         && *cw > 0
@@ -426,12 +427,35 @@ fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, w: usize, h: usize
         return Rect::new(*x as usize, *y as usize, *cw as usize, *ch as usize).clipped(w, h);
     }
     match mn.and_then(|m| m.ifd.u64s(MN_FULL_IMAGE_SIZE)).as_deref() {
-        // only a plausible trim: never more than 64 pixels per side, never an enlargement
-        Some([fh, fw]) if *fw as usize <= w && *fh as usize <= h && *fw as usize + 64 >= w && *fh as usize + 64 >= h => {
-            Rect::new(0, 0, *fw as usize, *fh as usize)
-        }
+        Some([fh, fw]) => recorded_size_crop((*fw, *fh), exif_size, w, h).unwrap_or(full),
         _ => full,
     }
+}
+
+/// The crop for the maker note's `FullImageSize` `full` (width, height: the camera JPEG's size) and the Exif image
+/// size `exif` (`PixelXDimension` × `PixelYDimension`) in a `w × h` frame; `None` when they don't describe a crop of
+/// it. Older bodies store a few columns of padding at the right edge of the raw frame (constant values, 8–32 columns
+/// on the samples we checked) inside a frame 16–48 pixels wider than `FullImageSize`, so the crop is anchored at
+/// the left, which removes them while keeping the CFA phase. In the camera's 3:2 mode it is also anchored at the
+/// top. An in-camera aspect ratio narrower than the frame (16:9) is centred vertically, as measured by registering
+/// each camera JPEG on its raw (the ILCE-7SM2's 4240 × 2384 at y 228–232 of 2848; the DSLR-A580's 4912 × 2760 at
+/// y 258–262 of 3280; issue #535): its height comes from `FullImageSize` (ILCE-7SM2) or, when that still says
+/// 3:2, from an Exif image size of the same width (DSLR-A580).
+fn recorded_size_crop(full: (u64, u64), exif: Option<(u64, u64)>, w: usize, h: usize) -> Option<Rect> {
+    let (fw, fh) = (usize::try_from(full.0).ok()?, usize::try_from(full.1).ok()?);
+    // only a plausible trim of the width: never more than 64 pixels, never an enlargement
+    if fw == 0 || fh == 0 || fw > w || fw.saturating_add(64) < w || fh > h {
+        return None;
+    }
+    let height = match exif.and_then(|(ew, eh)| Some((usize::try_from(ew).ok()?, usize::try_from(eh).ok()?))) {
+        Some((ew, eh)) if ew == fw && eh > 0 && eh < fh => eh,
+        _ => fh,
+    };
+    if height.saturating_add(64) >= h {
+        return Some(Rect::new(0, 0, fw, height));
+    }
+    // an in-camera aspect ratio: at least half the frame's height, centred (an even offset keeps the CFA phase)
+    (height * 2 >= h).then(|| Rect::new(0, ((h - height) / 2) & !1, fw, height))
 }
 
 fn raw_ifd(tiff: &Tiff) -> Option<&Ifd> {
@@ -445,6 +469,13 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
     let raw = raw_ifd(&tiff).ok_or_else(|| RawError::Unsupported("ARW without a CFA image IFD (old ARW or SR2)".into()))?;
+    let mn = tiff
+        .exif()
+        .and_then(|e| e.get(t::MAKER_NOTE))
+        .and_then(|e| makernote::parse_makernote(bytes, e.offset, e.count() as u64, tiff.order, &ifd0.string(t::MAKE).unwrap_or_default()));
+    if mn.as_ref().and_then(|m| m.ifd.u64s(MN_FILE_FORMAT)).as_deref() == Some(&[1, 0, 0, 0]) {
+        return Err(RawError::Unsupported("Sony SR2 (DSC-R1): the raw data is encrypted, not decoded yet".into()));
+    }
     let info = raw.image()?;
     let (w, h) = (info.width as usize, info.height as usize);
     if w * h > crate::MAX_SAMPLES {
@@ -519,10 +550,6 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         raw.f64(t::WHITE_LEVEL).map(|v| v as f32).filter(|v| *v > 0.0).unwrap_or_else(|| super::white_from_data(samples, scale_bits))
     };
     let model = ifd0.string(t::MODEL).unwrap_or_default();
-    let mn = tiff
-        .exif()
-        .and_then(|e| e.get(t::MAKER_NOTE))
-        .and_then(|e| makernote::parse_makernote(bytes, e.offset, e.count() as u64, tiff.order, &ifd0.string(t::MAKE).unwrap_or_default()));
     let wb = raw
         .f64s(WB_RGGB)
         .filter(|v| v.len() == 4 && v[1] > 0.0 && v[0] > 0.0 && v[3] > 0.0)
@@ -533,7 +560,10 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         .or_else(|| mn.as_ref().and_then(|m| tag2010_wb(&model, m.ifd.bytes(MN_TAG2010)?, m.order)));
     let crop = match (raw.u64s(CROP_TOP_LEFT).as_deref(), raw.u64s(CROP_SIZE).as_deref()) {
         (Some([x, y]), Some([cw, ch])) if *cw > 0 && *ch > 0 => Rect::new(*x as usize, *y as usize, *cw as usize, *ch as usize).clipped(w, h),
-        _ => default_crop(raw, mn.as_ref(), w, h),
+        _ => {
+            let exif_size = tiff.exif().and_then(|e| Some((e.u64(t::PIXEL_X_DIMENSION)?, e.u64(t::PIXEL_Y_DIMENSION)?)));
+            default_crop(raw, mn.as_ref(), exif_size, w, h)
+        }
     };
     let mut metadata = lightcraft_meta::from_tiff(&tiff);
     metadata.width = Some(crop.width as u32);
@@ -597,6 +627,64 @@ mod tests {
         assert_eq!(&pixels[..3], &[1140, 929, 1000]);
         let developed = full.develop(crate::Method::Bilinear).unwrap();
         assert_eq!((developed.width, developed.height), (4, 4));
+    }
+
+    #[test]
+    fn recorded_size_crops_in_camera_aspect_ratios() {
+        // 3:2: anchored at the top-left, as before (ILCE-7S, DSLR-A700 whose Exif size is the whole frame)
+        assert_eq!(recorded_size_crop((4240, 2832), Some((4240, 2832)), 4288, 2848), Some(Rect::new(0, 0, 4240, 2832)));
+        assert_eq!(recorded_size_crop((4272, 2848), Some((4288, 2856)), 4288, 2856), Some(Rect::new(0, 0, 4272, 2848)));
+        assert_eq!(recorded_size_crop((4240, 2832), None, 4288, 2848), Some(Rect::new(0, 0, 4240, 2832)));
+        // 16:9 from FullImageSize (ILCE-7SM2) and from the Exif size when FullImageSize says 3:2 (DSLR-A580): centred
+        assert_eq!(recorded_size_crop((4240, 2384), Some((4240, 2384)), 4288, 2848), Some(Rect::new(0, 232, 4240, 2384)));
+        assert_eq!(recorded_size_crop((4912, 3264), Some((4912, 2760)), 4928, 3280), Some(Rect::new(0, 260, 4912, 2760)));
+        // offsets stay even (CFA phase)
+        assert_eq!(recorded_size_crop((4240, 2386), None, 4288, 2848).map(|r| r.y), Some(230));
+        // not a crop of this frame: wider than it, far narrower, under half its height, empty, hostile values
+        assert_eq!(recorded_size_crop((4300, 2832), None, 4288, 2848), None);
+        assert_eq!(recorded_size_crop((4000, 2832), None, 4288, 2848), None);
+        assert_eq!(recorded_size_crop((4240, 1000), None, 4288, 2848), None);
+        assert_eq!(recorded_size_crop((0, 2832), None, 4288, 2848), None);
+        assert_eq!(recorded_size_crop((u64::MAX, u64::MAX), Some((u64::MAX, 1)), 4288, 2848), None);
+        assert_eq!(recorded_size_crop((4240, 2832), Some((4240, 0)), 4288, 2848), Some(Rect::new(0, 0, 4240, 2832)));
+    }
+
+    /// A Sony CFA file whose maker note carries only `FileFormat` (tag 0xb000) = `format`.
+    fn sony_with_file_format(format: [u8; 4]) -> Vec<u8> {
+        use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value};
+        // Sony maker note: 12-byte header, then an IFD (one entry whose 4-byte value is stored inline)
+        let mut note = b"SONY DSC \0\0\0".to_vec();
+        note.extend(1u16.to_le_bytes());
+        note.extend(MN_FILE_FORMAT.to_le_bytes());
+        note.extend(1u16.to_le_bytes()); // BYTE
+        note.extend(4u32.to_le_bytes());
+        note.extend(format);
+        note.extend(0u32.to_le_bytes());
+        let mut exif = IfdBuilder::new();
+        exif.set(t::MAKER_NOTE, Value::Undefined(note));
+        let mut raw = IfdBuilder::new();
+        raw.set(t::MAKE, Value::Ascii("SONY".into()));
+        raw.set(t::MODEL, Value::Ascii("DSC-R1".into()));
+        raw.set(t::IMAGE_WIDTH, Value::Long(vec![8]));
+        raw.set(t::IMAGE_LENGTH, Value::Long(vec![4]));
+        raw.set(t::BITS_PER_SAMPLE, Value::Short(vec![14]));
+        raw.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
+        raw.set(t::PHOTOMETRIC, Value::Short(vec![photometric::CFA]));
+        raw.set(t::COMPRESSION, Value::Short(vec![1]));
+        raw.set_child(t::EXIF_IFD, exif);
+        raw.set_image(ImageData::Strips { rows_per_strip: 4, strips: vec![vec![0x10u8; 8 * 4 * 2]] });
+        TiffWriter::default().write(&[raw]).unwrap()
+    }
+
+    #[test]
+    fn sr2_is_refused_not_decoded_as_noise() {
+        for mode in [Mode::Header, Mode::Full] {
+            let err = decode(&sony_with_file_format([1, 0, 0, 0]), mode).unwrap_err();
+            assert!(matches!(err, RawError::Unsupported(ref m) if m.contains("SR2")), "{mode:?}: {err:?}");
+            // the same file as an ARW 2.x decodes
+            let ok = decode(&sony_with_file_format([3, 0, 0, 0]), mode);
+            assert!(ok.is_ok(), "{mode:?}: {ok:?}");
+        }
     }
 
     /// A 32767-compressed ARW whose single strip is `strip` bytes for a 32 x 4 image.

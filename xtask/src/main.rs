@@ -356,6 +356,19 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/data/Sony/ILCE-7RM2/12-bit-uncompressed.ARW",
         "71e0888396ef52c7e6a990b4e72ebb4d8413a1fc1c35bada449870539cef6e39",
     ),
+    // pre-2017 bodies in the camera's 16:9 mode (#535): the ILCE-7SM2 records it in FullImageSize, the DSLR-A580 only
+    // in the Exif image size; and the DSC-R1's SR2, whose raw data is encrypted (opens from its preview)
+    (
+        "arw-sony-a7sm2-16x9.arw",
+        "https://raw.pixls.us/data/Sony/ILCE-7SM2/DSC01005.ARW",
+        "46044fb6a9c805f2b4915cd4970316b4d04b0566bcf5287afaad3ef648d7a3db",
+    ),
+    (
+        "arw-sony-a580-16x9.arw",
+        "https://raw.pixls.us/data/Sony/DSLR-A580/RAW_SONY_A580.ARW",
+        "5b0924d39151239dce19e92e08318f4f62a5a8ac276bd7180ec8463d2cfee709",
+    ),
+    ("arw-sony-r1-sr2.sr2", "https://raw.pixls.us/data/Sony/DSC-R1/_DSC1477.SR2", "921c5f2513dd1671a9089e73fc778fc3573bc4cb70a3a555d0414661d0e62274"),
     // CR2 colour-filter layouts differ by model (issue #85): CR2CFAPattern 3 (GBRG) and 1 (RGGB) samples
     (
         "cr2-canon-40d.cr2",
