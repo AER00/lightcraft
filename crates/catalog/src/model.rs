@@ -336,13 +336,13 @@ impl Photo {
     pub fn develops_raw(&self) -> bool {
         self.kind == MediaKind::Raw && self.preview_only.is_none()
     }
-    /// The current ARW, NEF, RW2, RAF, CR3, CR2 and PEF readers have vendor WB multipliers but no measured camera
+    /// The current ARW, NEF, RW2, RAF, CR3, CR2, PEF and SRW readers have vendor WB multipliers but no measured camera
     /// illuminant. Use adjustments relative to the camera's as-shot look, as for rendered
     /// photographs (the engine's `camera_preview::file_local_look` covers the same formats; RWL and
     /// RAW are Leica's and the oldest Panasonic bodies' names for RW2 files).
     pub fn relative_wb(&self) -> bool {
         self.develops_raw()
-            && ["ARW", "NEF", "NRW", "RW2", "RWL", "RAW", "RAF", "CR3", "CR2", "PEF"].iter().any(|f| self.format.eq_ignore_ascii_case(f))
+            && ["ARW", "NEF", "NRW", "RW2", "RWL", "RAW", "RAF", "CR3", "CR2", "PEF", "SRW"].iter().any(|f| self.format.eq_ignore_ascii_case(f))
     }
     /// The develop settings import gave this photo: [`Photo::camera_defaults`], or the user's
     /// default preset applied on top of them ([`Photo::import_look`]).
@@ -450,6 +450,7 @@ mod edited_tests {
             ("a.raw", "RAW", true),
             ("a.raf", "rAf", true),
             ("a.cr3", "cr3", true),
+            ("a.srw", "SRW", true),
             ("a.dng", "DNG", false),
         ] {
             let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, name, format, 10, 10, "2026-10-01T00:00:00");
