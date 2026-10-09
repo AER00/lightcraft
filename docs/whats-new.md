@@ -8,7 +8,9 @@
   Culling.
 - New fields: Keyword Count ("2 or more", "exactly 2"…), People and People Count (named faces), Shutter Speed (written
   as 1/250), File Extension, Video Duration, Copy Name, In a Stack, Alt Text, City, State / Province, Country, Long
-  Edge, Short Edge, Aspect Ratio (landscape / portrait / square), Cropped and Treatment (color / monochrome).
+  Edge, Short Edge, Aspect Ratio (landscape / portrait / square), Cropped and Treatment (color / black & white).
+- Choice values read as words in every language: "Public Domain", "Picked", "Black & White" rather than ids like
+  `publicDomain` (rules and agents keep using the ids; `album.ruleFields` adds `choiceLabels`).
 - Any Searchable Text also finds the state / province, alt text, people and a virtual copy's name.
 
 ### Albums tree
