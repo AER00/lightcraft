@@ -30,10 +30,12 @@ pub fn is_under(k: &str, parent: &str) -> bool {
     k == p || k.strip_prefix(&p).is_some_and(|rest| rest.starts_with(SEP))
 }
 
-/// Replace the `from` prefix of `k` (which [`is_under`] `from`) with `to`.
+/// Replace the `from` prefix of `k` (which [`is_under`] `from`) with `to`. By levels, not bytes:
+/// `from` may be written in another case, which can change a letter's length (ẞ / ß).
 fn reparent(k: &str, from: &str, to: &str) -> String {
-    let rest = &k[from.len().min(k.len())..];
-    if to.is_empty() { rest.trim_start_matches(SEP).to_string() } else { format!("{to}{rest}") }
+    let skip = from.split(SEP).filter(|s| !s.trim().is_empty()).count();
+    let rest: Vec<&str> = k.split(SEP).filter(|s| !s.trim().is_empty()).skip(skip).collect();
+    std::iter::once(to).filter(|t| !t.is_empty()).chain(rest).collect::<Vec<_>>().join("|")
 }
 
 /// Keep the first of case-insensitively equal keywords.
@@ -476,6 +478,19 @@ mod tests {
         assert_eq!(tree_paths(&c.keyword_tree()), [("beach".to_string(), 1)]);
         c.apply(undo).unwrap();
         assert_eq!(c.to_snapshot(), before);
+    }
+
+    /// Renaming matches names whatever their case, also where a letter's case changes its length
+    /// (ẞ is three bytes, ß two): the levels below are kept whole, never cut mid-letter.
+    #[test]
+    fn renaming_keeps_the_levels_below_whatever_the_case() {
+        let (mut c, ids) = lib(&[&["straße|nord"], &["ßa|ü"]]);
+        let op = c.rename_keyword_ops("STRAẞE", "Road").unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(kws(&c, ids[0]), ["Road|nord"]);
+        let op = c.rename_keyword_ops("ẞA", "Weg").unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(kws(&c, ids[1]), ["Weg|ü"]);
     }
 
     #[test]
