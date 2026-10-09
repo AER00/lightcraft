@@ -10,6 +10,8 @@
 //! photo has them, or given attributes ([`KeywordInfo`]: synonyms, export options, person). The
 //! tree is the keyword list together with the keywords photos carry.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{Catalog, CatalogError, Meta, Op, Result};
@@ -164,8 +166,47 @@ impl Catalog {
             .collect()
     }
 
-    /// Rename `from` (and the keywords below it) to `to` on every photo — one batch. Renaming onto
-    /// an existing keyword merges the two.
+    /// `SetKeyword` ops turning the keyword list into what `f` makes of it (lower-case path →
+    /// listing): what it no longer has is taken off first, then what is new or changed is set.
+    fn list_ops(&self, f: impl FnOnce(&mut BTreeMap<String, ListedKeyword>)) -> Vec<Op> {
+        let before = &self.keyword_list;
+        let mut after = before.clone();
+        f(&mut after);
+        let gone = before.iter().filter(|(k, _)| !after.contains_key(*k)).map(|(_, l)| Op::SetKeyword { path: l.path.clone(), info: None });
+        let set = after
+            .iter()
+            .filter(|(k, l)| before.get(*k) != Some(*l))
+            .map(|(_, l)| Op::SetKeyword { path: l.path.clone(), info: Some(l.info.clone()) });
+        gone.chain(set).collect()
+    }
+
+    /// The keyword list once the keywords under each of `from` move to `to`: a listing landing on
+    /// one already there merges into it (that one's attributes stay, the synonyms gather).
+    fn list_move_ops(&self, from: &[String], to: &str) -> Vec<Op> {
+        self.list_ops(|list| {
+            let moving: Vec<String> = list.iter().filter(|(_, l)| from.iter().any(|f| is_under(&l.path, f))).map(|(k, _)| k.clone()).collect();
+            for key in moving {
+                let Some(l) = list.remove(&key) else { continue };
+                let Some(f) = from.iter().find(|f| is_under(&l.path, f)) else { continue };
+                let path = reparent(&l.path, f, to);
+                match list.get_mut(&path.to_lowercase()) {
+                    Some(there) => {
+                        for s in l.info.synonyms {
+                            if !there.info.synonyms.iter().any(|x| x.eq_ignore_ascii_case(&s)) {
+                                there.info.synonyms.push(s);
+                            }
+                        }
+                    }
+                    None => {
+                        list.insert(path.to_lowercase(), ListedKeyword { path, info: l.info });
+                    }
+                }
+            }
+        })
+    }
+
+    /// Rename `from` (and the keywords below it) to `to` on every photo and in the keyword list —
+    /// one batch. Renaming onto an existing keyword merges the two.
     pub fn rename_keyword_ops(&self, from: &str, to: &str) -> Result<Op> {
         let (from, to) = (clean(from), clean(to));
         if from.is_empty() || to.is_empty() {
@@ -174,17 +215,20 @@ impl Catalog {
         if is_under(&to, &from) && !to.eq_ignore_ascii_case(&from) {
             return Err(CatalogError::Invalid("can't move a keyword below itself".into()));
         }
-        let ops = self.keyword_ops(|kws| kws.iter().map(|k| if is_under(k, &from) { reparent(k, &from, &to) } else { k.clone() }).collect());
+        let mut ops = self.keyword_ops(|kws| kws.iter().map(|k| if is_under(k, &from) { reparent(k, &from, &to) } else { k.clone() }).collect());
+        ops.extend(self.list_move_ops(std::slice::from_ref(&from), &to));
         Ok(Op::Batch { ops })
     }
 
-    /// Remove `keyword` and the keywords below it from every photo.
+    /// Remove `keyword` and the keywords below it from every photo and from the keyword list.
     pub fn delete_keyword_ops(&self, keyword: &str) -> Result<Op> {
         let k = clean(keyword);
         if k.is_empty() {
             return Err(CatalogError::Invalid("empty keyword".into()));
         }
-        Ok(Op::Batch { ops: self.keyword_ops(|kws| kws.iter().filter(|x| !is_under(x, &k)).cloned().collect()) })
+        let mut ops = self.keyword_ops(|kws| kws.iter().filter(|x| !is_under(x, &k)).cloned().collect());
+        ops.extend(self.list_ops(|list| list.retain(|_, l| !is_under(&l.path, &k))));
+        Ok(Op::Batch { ops })
     }
 
     /// Merge several keywords (with their children) into `into`.
@@ -197,9 +241,10 @@ impl Catalog {
         if from.iter().any(|f| is_under(&into, f)) {
             return Err(CatalogError::Invalid("can't merge a keyword into one below it".into()));
         }
-        let ops = self.keyword_ops(|kws| {
+        let mut ops = self.keyword_ops(|kws| {
             kws.iter().map(|k| from.iter().find(|f| is_under(k, f)).map(|f| reparent(k, f, &into)).unwrap_or_else(|| k.clone())).collect()
         });
+        ops.extend(self.list_move_ops(&from, &into));
         Ok(Op::Batch { ops })
     }
 
@@ -353,6 +398,84 @@ mod tests {
         assert_eq!(undo, Op::SetKeyword { path: "Weddings".into(), info: Some(KeywordInfo::default()) });
         c.apply(undo).unwrap();
         assert_eq!(c.keyword_info("weddings"), Some(&KeywordInfo::default()));
+    }
+
+    fn listed(c: &Catalog) -> Vec<(String, KeywordInfo)> {
+        let mut v: Vec<(String, KeywordInfo)> = c.listed_keywords().map(|k| (k.path.clone(), k.info.clone())).collect();
+        v.sort_by_key(|(p, _)| p.to_lowercase());
+        v
+    }
+
+    fn with_synonyms(words: &[&str]) -> KeywordInfo {
+        KeywordInfo { synonyms: words.iter().map(|w| w.to_string()).collect(), ..KeywordInfo::default() }
+    }
+
+    /// Renaming (or moving) a keyword takes its attributes and its listed children along, photos
+    /// or not, in the same undo step.
+    #[test]
+    fn renaming_a_keyword_carries_its_listing_along() {
+        let (mut c, ids) = lib(&[&["travel|italy"]]);
+        c.apply(Op::SetKeyword { path: "travel".into(), info: Some(with_synonyms(&["trip"])) }).unwrap();
+        c.apply(Op::SetKeyword { path: "travel|Spain".into(), info: Some(KeywordInfo::default()) }).unwrap();
+        let before = c.to_snapshot();
+        let op = c.rename_keyword_ops("Travel", "Places|Europe").unwrap();
+        let undo = c.apply(op).unwrap();
+        assert_eq!(kws(&c, ids[0]), ["Places|Europe|italy"]);
+        assert_eq!(
+            listed(&c),
+            [("Places|Europe".to_string(), with_synonyms(&["trip"])), ("Places|Europe|Spain".to_string(), KeywordInfo::default())]
+        );
+        c.apply(undo).unwrap();
+        assert_eq!(c.to_snapshot(), before);
+    }
+
+    /// A keyword only the list holds (no photos) can be renamed too.
+    #[test]
+    fn a_keyword_without_photos_can_be_renamed() {
+        let mut c = Catalog::new();
+        c.apply(Op::SetKeyword { path: "weddings".into(), info: Some(KeywordInfo::default()) }).unwrap();
+        let op = c.rename_keyword_ops("weddings", "Events|Weddings").unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(listed(&c), [("Events|Weddings".to_string(), KeywordInfo::default())]);
+    }
+
+    /// Merging keeps the target's attributes and adds the merged keyword's synonyms to them; a target
+    /// not listed yet takes the merged keyword's attributes.
+    #[test]
+    fn merging_keeps_the_targets_attributes_and_gathers_synonyms() {
+        let (mut c, _) = lib(&[&["holiday"], &["travel"]]);
+        let person = KeywordInfo { person: true, ..with_synonyms(&["trip"]) };
+        c.apply(Op::SetKeyword { path: "travel".into(), info: Some(person.clone()) }).unwrap();
+        c.apply(Op::SetKeyword {
+            path: "holiday".into(),
+            info: Some(KeywordInfo { include_on_export: false, ..with_synonyms(&["vacation", "Trip"]) }),
+        })
+        .unwrap();
+        let op = c.merge_keywords_ops(&["holiday".into()], "travel").unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(listed(&c), [("travel".to_string(), KeywordInfo { person: true, ..with_synonyms(&["trip", "vacation"]) })]);
+        // onto a keyword that isn't listed: it takes the merged one's attributes
+        let mut c = Catalog::new();
+        c.apply(Op::SetKeyword { path: "holiday".into(), info: Some(with_synonyms(&["vacation"])) }).unwrap();
+        let op = c.merge_keywords_ops(&["holiday".into()], "Travel").unwrap();
+        c.apply(op).unwrap();
+        assert_eq!(listed(&c), [("Travel".to_string(), with_synonyms(&["vacation"]))]);
+    }
+
+    /// Deleting a keyword takes it, and the keywords below it, off the list as well as off photos.
+    #[test]
+    fn deleting_a_keyword_takes_it_off_the_list() {
+        let (mut c, _) = lib(&[&["travel|italy"], &["beach"]]);
+        for path in ["travel", "travel|spain", "beach"] {
+            c.apply(Op::SetKeyword { path: path.into(), info: Some(KeywordInfo::default()) }).unwrap();
+        }
+        let before = c.to_snapshot();
+        let op = c.delete_keyword_ops("travel").unwrap();
+        let undo = c.apply(op).unwrap();
+        assert_eq!(listed(&c), [("beach".to_string(), KeywordInfo::default())]);
+        assert_eq!(tree_paths(&c.keyword_tree()), [("beach".to_string(), 1)]);
+        c.apply(undo).unwrap();
+        assert_eq!(c.to_snapshot(), before);
     }
 
     #[test]
