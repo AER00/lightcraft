@@ -109,12 +109,20 @@ fn synchronize(h: &mut Headless) {
     assert!(h.step_until(T, |h| h.app.sync_run.is_none()), "the work finishes");
 }
 
-/// Tick "Remove missing photos" and wait until the click has landed (a click is queued input).
+/// Tick "Remove missing photos" and wait until the click has landed. A click is queued input:
+/// on a loaded machine the dialog can still be settling into place when it arrives, so it is
+/// clicked again (at the box's current place) until it lands.
 fn tick_remove_missing(h: &mut Headless) {
-    let r = h.request("ui.clickWidget", json!({"id": "syncRemoveMissing"}), T);
-    assert_eq!(r["ok"], true, "{r}");
-    let ticked = h.step_until(T, |h| matches!(h.app.ui.dialog, Some(Dialog::SynchronizeFolder { remove_missing: true, .. })));
-    assert!(ticked, "ticked");
+    let ticked = |h: &Headless| matches!(h.app.ui.dialog, Some(Dialog::SynchronizeFolder { remove_missing: true, .. }));
+    for _ in 0..5 {
+        h.step();
+        let r = h.request("ui.clickWidget", json!({"id": "syncRemoveMissing"}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        if h.step_until(Duration::from_secs(3), ticked) {
+            return;
+        }
+    }
+    panic!("the box never ticked: {:?}", h.app.ui.dialog);
 }
 
 fn counts(h: &Headless) -> crate::state::SyncCounts {
