@@ -283,3 +283,20 @@ fn leaving_the_angle_field_applies_the_angle() {
     assert!((angle(&h) - 4.5).abs() < 1e-9, "applied on leaving: {}", angle(&h));
     assert_eq!(h.app.session.undo.len(), undo + 1);
 }
+
+/// A move or resize drag keeps its own pointer when it runs past the box (the box stops at the
+/// photo's edge): the rotation glyph would say the drag rotates.
+#[test]
+fn moving_the_box_never_shows_rotation() {
+    let mut h = crop_tool();
+    let r = h.request(
+        "ui.pointer",
+        json!({"events": [{"kind": "down", "x": 0.5, "y": 0.5}, {"kind": "drag", "x": 0.8, "y": 0.5}, {"kind": "drag", "x": 1.2, "y": 0.5}]}),
+        T,
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!(h.last_cursor, egui::CursorIcon::Move, "still moving");
+    assert!(!has(&h, "cropRotateCursor"));
+    assert_eq!(angle(&h), 0.0, "nothing rotated");
+}

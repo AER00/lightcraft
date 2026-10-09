@@ -1254,12 +1254,19 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     // with ⌘ held a drag draws a level line (the straighten crosshair, set above), not a rotation
     let straightening = !rotating && ui.input(|i| i.modifiers.command);
     if let Some(hq) = pointer.filter(|_| !straightening) {
-        let near = handles.iter().position(|h| h.distance(hq) < 12.0).filter(|_| !rotating);
+        // a move or resize drag keeps its pointer wherever it goes, even past the box
+        let held = match app.gesture {
+            Some(Gesture::CropHandle { handle, .. }) => Some(usize::from(handle)),
+            _ => None,
+        };
+        let near = held.or_else(|| handles.iter().position(|h| h.distance(hq) < 12.0)).filter(|_| !rotating);
         let cursor = match near {
             Some(0 | 2) => egui::CursorIcon::ResizeNwSe,
             Some(1 | 3) => egui::CursorIcon::ResizeNeSw,
             Some(4 | 6) => egui::CursorIcon::ResizeVertical,
-            Some(_) => egui::CursorIcon::ResizeHorizontal,
+            Some(5 | 7) => egui::CursorIcon::ResizeHorizontal,
+            // 8: the whole box
+            Some(_) => egui::CursorIcon::Move,
             None if inside(hq) && !rotating => egui::CursorIcon::Move,
             // a drag here rotates: no system cursor shows that, so draw a curved double arrow
             None => {
