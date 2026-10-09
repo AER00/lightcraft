@@ -2,6 +2,15 @@
 
 ## October 2026
 
+### Folder colour labels
+- Right-click a folder (or a disk other than the startup disk) in the sidebar's Folders section ▸ Set Color Label ▸ a colour or None. The row
+  shows the label's dot before its photo count. Agents use `folder.label` (`path`, `label`); `library.folders`
+  reports each row's `label`.
+- A label follows its folder when it is renamed or moved in LightCraft, together with the labels of the folders
+  inside it; undo and redo carry them back and forth.
+- The catalog format is now version 4 (`Catalog.folder_records`, `Op::SetFolderRecord`). Once this version has
+  opened a library, older versions refuse it, as with every format change.
+
 ### Masking
 - Drag anywhere inside the selected radial gradient's ellipse to move it, including rotated
   ellipses and radial components in compound masks. Edge and rotation handles keep their existing
