@@ -170,3 +170,16 @@ fn keyword_actions_count_the_photos_they_change() {
     assert_eq!(s.execute("keyword.rename", &json!({"from": "Marriages", "to": "Weddings"})).unwrap()["changed"], 1);
     assert_eq!(s.execute("keyword.delete", &json!({"keyword": "weddings"})).unwrap()["changed"], 1);
 }
+
+/// ⌥1–⌥9 take a set's keyword off the selected photos when they all have it, whatever the case of
+/// any of its letters (the set has "ärzte", the photos "ÄRZTE" and "ärzte").
+#[test]
+fn a_set_keyword_toggles_whatever_its_case() {
+    let mut s = Session::with_demo();
+    let ids: Vec<u64> = s.visible_cloned().iter().take(2).map(|p| p.0).collect();
+    s.execute("photo.setMeta", &json!({"ids": [ids[0]], "keywords": ["ÄRZTE"]})).unwrap();
+    s.execute("photo.setMeta", &json!({"ids": [ids[1]], "keywords": ["ärzte"]})).unwrap();
+    s.execute("keyword.saveSet", &json!({"name": "Clinic", "keywords": ["ärzte"]})).unwrap();
+    s.execute("keyword.toggleFromSet", &json!({"index": 1, "ids": ids})).unwrap();
+    assert!(ids.iter().all(|id| keywords_of(&s, *id).is_empty()), "taken off both");
+}
