@@ -183,3 +183,49 @@ fn a_set_keyword_toggles_whatever_its_case() {
     s.execute("keyword.toggleFromSet", &json!({"index": 1, "ids": ids})).unwrap();
     assert!(ids.iter().all(|id| keywords_of(&s, *id).is_empty()), "taken off both");
 }
+
+fn set_named(s: &mut Session, name: &str) -> serde_json::Value {
+    let sets = s.execute("keyword.sets", &json!({})).unwrap();
+    sets["sets"].as_array().unwrap().iter().find(|x| x["name"] == name).cloned().unwrap_or(serde_json::Value::Null)
+}
+
+/// Edit Keyword Set: a set's nine slots keep their places, so each keyword stays on its ⌥ key; an
+/// empty slot is allowed and does nothing.
+#[test]
+fn a_keyword_sets_slots_keep_their_places() {
+    let mut s = Session::with_demo();
+    let id = s.visible_cloned()[0].0;
+    s.execute("keyword.saveSet", &json!({"name": "Weddings", "keywords": [" ceremony ", "", "reception", ""]})).unwrap();
+    assert_eq!(set_named(&mut s, "Weddings")["keywords"], json!(["ceremony", "", "reception"]), "trailing empty slots go");
+    let before = keywords_of(&s, id);
+    let r = s.execute("keyword.toggleFromSet", &json!({"index": 2, "ids": [id]})).unwrap();
+    assert_eq!((r["changed"].as_u64(), keywords_of(&s, id)), (Some(0), before), "⌥2 is empty: nothing");
+    s.execute("keyword.toggleFromSet", &json!({"index": 3, "ids": [id]})).unwrap();
+    assert!(keywords_of(&s, id).contains(&"reception".to_string()), "⌥3 is reception");
+}
+
+/// A set holds each keyword once, whatever its case: a second one leaves its slot empty.
+#[test]
+fn a_keyword_set_holds_each_keyword_once() {
+    let mut s = Session::with_demo();
+    s.execute("keyword.saveSet", &json!({"name": "Travel", "keywords": ["Lisbon", "harbour", "LISBON"]})).unwrap();
+    assert_eq!(set_named(&mut s, "Travel")["keywords"], json!(["Lisbon", "harbour"]));
+}
+
+/// Renaming a set keeps its place among the sets and keeps it current; a name another set has is
+/// refused.
+#[test]
+fn renaming_a_keyword_set_keeps_its_place() {
+    let mut s = Session::with_demo();
+    s.execute("keyword.saveSet", &json!({"name": "Weddings", "keywords": ["ceremony"]})).unwrap();
+    s.execute("keyword.saveSet", &json!({"name": "Travel", "keywords": ["harbour"]})).unwrap();
+    s.execute("keyword.useSet", &json!({"name": "Weddings"})).unwrap();
+    let r = s.execute("keyword.saveSet", &json!({"name": "Ceremonies", "replace": "weddings", "keywords": ["ceremony", "rings"]})).unwrap();
+    let names: Vec<String> = r["sets"].as_array().unwrap().iter().map(|x| x["name"].as_str().unwrap().to_string()).collect();
+    assert_eq!(names, ["Recent Keywords", "Ceremonies", "Travel"]);
+    assert_eq!(r["current"], "Ceremonies");
+    assert_eq!(r["keywords"], json!(["ceremony", "rings"]));
+    let err = s.execute("keyword.saveSet", &json!({"name": "travel", "replace": "Ceremonies", "keywords": []})).unwrap_err().to_string();
+    assert!(err.contains("already"), "{err}");
+    assert!(s.execute("keyword.saveSet", &json!({"name": "Rings", "replace": "Lisbon", "keywords": []})).is_err(), "no such set");
+}

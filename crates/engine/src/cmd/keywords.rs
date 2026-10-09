@@ -89,6 +89,22 @@ pub fn note_recent(s: &mut Session, added: &[String]) {
     let _ = s.save_prefs();
 }
 
+/// A set's slots as typed: each cleaned in its place (an empty one is an empty slot, so the others
+/// keep their ⌥ keys), each keyword once whatever its case (a second one leaves its slot empty),
+/// nine at most, no empty ones at the end.
+pub fn slots(typed: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for k in typed.iter().take(9) {
+        let k = clean(k);
+        let twice = !k.is_empty() && out.iter().any(|x| lightcraft_catalog::keywords::same(x, &k));
+        out.push(if twice { String::new() } else { k });
+    }
+    while out.last().is_some_and(String::is_empty) {
+        out.pop();
+    }
+    out
+}
+
 /// The nine keywords ⌥1–⌥9 apply: the current set's, or the recent ones.
 pub fn current_keywords(s: &Session) -> Vec<String> {
     let set = s.keyword_set.as_deref().and_then(|n| s.keyword_sets.iter().find(|x| x.name.eq_ignore_ascii_case(n)));
@@ -129,7 +145,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save Keyword Set",
             [],
             None,
-            "{name, keywords?: [up to 9] (default: the current nine)} — replaces a set of that name and makes it current",
+            "{name, keywords?: [up to 9, \"\" = an empty slot] (default: the current nine), replace?: the set it renames} — replaces a set of that name (or `replace`, in its place) and makes it current",
             always,
             |s, p| {
                 let name = str_param(p, "name")
@@ -137,16 +153,28 @@ pub fn specs() -> Vec<CommandSpec> {
                     .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case(RECENT))
                     .ok_or_else(|| bad("keyword.saveSet", "missing or reserved `name`"))?
                     .to_string();
-                let mut keywords: Vec<String> = if p.get("keywords").is_some() {
-                    strs(p, "keywords").iter().map(|k| clean(k)).filter(|k| !k.is_empty()).collect()
-                } else {
-                    current_keywords(s)
-                };
-                keywords.truncate(9);
+                let keywords = if p.get("keywords").is_some() { slots(&strs(p, "keywords")) } else { current_keywords(s) };
                 let set = KeywordSet { name: name.clone(), keywords };
-                match s.keyword_sets.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
-                    Some(x) => *x = set,
-                    None => s.keyword_sets.push(set),
+                let same_name = |x: &KeywordSet, n: &str| x.name.to_lowercase() == n.to_lowercase();
+                match str_param(p, "replace").map(str::trim) {
+                    // rename: in its place, onto a name no other set has
+                    Some(old) => {
+                        let at = s
+                            .keyword_sets
+                            .iter()
+                            .position(|x| same_name(x, old))
+                            .ok_or_else(|| bad("keyword.saveSet", format!("no keyword set `{old}`")))?;
+                        if s.keyword_sets.iter().enumerate().any(|(i, x)| i != at && same_name(x, &name)) {
+                            return Err(bad("keyword.saveSet", format!("there is a keyword set “{name}” already")));
+                        }
+                        if let Some(x) = s.keyword_sets.get_mut(at) {
+                            *x = set;
+                        }
+                    }
+                    None => match s.keyword_sets.iter_mut().find(|x| same_name(x, &name)) {
+                        Some(x) => *x = set,
+                        None => s.keyword_sets.push(set),
+                    },
                 }
                 s.keyword_set = Some(name);
                 s.save_prefs()?;
@@ -179,7 +207,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     .and_then(Value::as_u64)
                     .filter(|i| (1..=9).contains(i))
                     .ok_or_else(|| bad("keyword.toggleFromSet", "`index` must be 1..9"))?;
-                let Some(k) = current_keywords(s).get(i as usize - 1).cloned() else {
+                // (an empty slot does nothing)
+                let Some(k) = current_keywords(s).get(i as usize - 1).cloned().filter(|k| !k.is_empty()) else {
                     return Ok(json!({"changed": 0}));
                 };
                 let ids = s.targets(p);
