@@ -789,9 +789,9 @@ mod tests_color;
 #[cfg(test)]
 mod tests_export;
 #[cfg(test)]
-mod tests_folders;
-#[cfg(test)]
 mod tests_face_models;
+#[cfg(test)]
+mod tests_folders;
 #[cfg(test)]
 mod tests_forget_local;
 #[cfg(test)]

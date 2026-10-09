@@ -402,8 +402,8 @@ fn services(ctx: egui::Context, log_file: Option<&std::path::Path>) -> Services 
         })),
         pick_model_file: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .set_title("Add a Face Recognition Model")
-                .add_filter("Face models (ONNX)", &["onnx"])
+                .set_title(lightcraft_ui_egui::i18n::tr("Add a Face Recognition Model"))
+                .add_filter_nocase(lightcraft_ui_egui::i18n::tr("Face models (ONNX)"), &["onnx"])
                 .pick_file()
                 .map(|p| vec![p.to_string_lossy().to_string()])
                 .unwrap_or_default()

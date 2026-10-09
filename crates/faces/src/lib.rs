@@ -4,8 +4,8 @@
 //! own can be one drop and one licence prompt.
 //!
 //! Everything here treats model files and manifests as hostile input: sizes are capped, numbers must be
-//! finite and sane, and a malformed file is an error, never a panic. Running a model (the `tract` runtime)
-//! is not part of this crate yet.
+//! finite and sane, and a malformed file is an error, never a panic. Model execution is not part of
+//! this crate yet.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 

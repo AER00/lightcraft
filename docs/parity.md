@@ -42,7 +42,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | S. Export (EXP) | 15 | 1 | 2 | 0 | 7/7 (100%) | 7/7 (100%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
-| V. Preferences (PREF) | 6 | 0 | 3 | 2 | 1/1 (100%) | 4/4 (100%) |
+| V. Preferences (PREF) | 6 | 1 | 2 | 2 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 17 | 5 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 82 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
