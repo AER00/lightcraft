@@ -33,15 +33,34 @@ pub const BASE_SLOPE: f32 = 1.56;
 /// Base shoulder position: scene EV above grey at which the default curve reaches half display.
 pub const BASE_WHITE_EV: f32 = 1.30;
 
-/// EV the white point moves per 100 of Whites, up and down.
+/// EV the white point moves for each Whites notch, at −100, −75 … +100 (see [`whites_ev`]).
 ///
-/// Lightroom lifts the upper tones far harder than it trims them, so one
-/// symmetric gain cannot express it: with a single 1.6 the Whites slider was
-/// 2.4x too strong on the way down. These two come from the same measurement as
-/// [`BASE_SLOPE`] -- Lightroom's own response columns, at ±50 and ±100, against
-/// this formula -- and cut its mean error from 20.2/255 to 8.3.
-pub const WHITES_UP: f32 = 1.00;
-pub const WHITES_DOWN: f32 = 0.42;
+/// The reference's Whites does not only move the shoulder, which is what this curve used to do
+/// through a single pair of coefficients (`WHITES_UP` / `WHITES_DOWN`): it moves the shoulder
+/// *and* the log-slope. Fitting both to its renders beats the shoulder alone by 2–3x at every
+/// notch — 0.062 vs 0.019 in encoded sRGB at +100 — and the two move together, so the slope is
+/// `WHITES_SLOPE` times this. The same control that validates [`Blacks`] applies here: fitting
+/// this shoulder to LightCraft's own Whites recovers the old coefficients to 0.02 EV with a
+/// residual of 0.004, so the family is identified, and the two parameters are not — the tied fit
+/// is as good as the free one to four decimals.
+///
+/// Asymmetric and convex, like the reference's other sliders: per unit it is 0.0042 EV at −100
+/// against 0.0175 at +100. One parameter serves the whole range, but not one *coefficient*.
+const WHITES_KNOTS: [f32; 9] = [-0.420, -0.357, -0.267, -0.147, 0.0, 0.115, 0.388, 0.904, 1.753];
+
+/// The log-slope move that comes with a white-point move of [`whites_ev`] (measured, tied).
+const WHITES_SLOPE: f32 = 0.425;
+
+/// EV the white point moves at `whites` (−100..=100, clamped), interpolating [`WHITES_KNOTS`].
+fn whites_ev(whites: f64) -> f32 {
+    if !whites.is_finite() {
+        return 0.0;
+    }
+    let x = ((whites.clamp(-100.0, 100.0) as f32) + 100.0) / 25.0;
+    let i = (x as usize).min(WHITES_KNOTS.len() - 2);
+    let u = x - i as f32;
+    WHITES_KNOTS[i] + (WHITES_KNOTS[i + 1] - WHITES_KNOTS[i]) * u
+}
 
 /// The tone LUT spans `LUT_MIN_EV..LUT_MAX_EV` around grey in `LUT_N` steps.
 pub const LUT_MIN_EV: f32 = -14.0;
@@ -268,11 +287,11 @@ impl ToneMap {
     /// separately — it is a per-channel curve over this map's output, not part of it.
     pub fn new(contrast: f64, whites: f64) -> ToneMap {
         let c = (contrast / 100.0) as f32;
-        let slope = BASE_SLOPE + if c >= 0.0 { 0.55 * c } else { 0.4 * c };
-        let w = (whites / 100.0) as f32;
+        // Whites moves the white point and the log-slope together (see [`WHITES_KNOTS`]).
+        let dew = whites_ev(whites);
+        let slope = BASE_SLOPE + if c >= 0.0 { 0.55 * c } else { 0.4 * c } + WHITES_SLOPE * dew;
         // Shoulder: scene luminance (after contrast) that maps to half display.
-        let white_ev = BASE_WHITE_EV - if w >= 0.0 { WHITES_UP * w } else { WHITES_DOWN * w };
-        let wl = GREY * 2f32.powf(white_ev);
+        let wl = GREY * 2f32.powf(BASE_WHITE_EV - dew);
         let pre = 1.0 + GREY / wl; // keep grey near grey
         let lut = (0..LUT_N)
             .map(|i| {
@@ -595,5 +614,64 @@ mod tests {
     /// The encode these landmark rows are quoted in.
     fn srgb_to_lin_test(x: f32) -> f32 {
         if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
+    }
+
+    /// What the reference's Whites slider does, read off its own renders: a scene luminance that
+    /// renders at a given encoded level with Whites at 0, and the encoded level it renders at with
+    /// the slider at `whites`. Same three cameras as [`Self::blacks_curve_matches_the_reference_transfer`].
+    /// The tolerance is the fit — the old shoulder-only coefficients missed these rows by up to
+    /// 0.071, and in the other direction: they darkened the shadows on a negative Whites.
+    #[test]
+    fn whites_curve_matches_the_reference_transfer() {
+        const TOL: f32 = 0.035;
+        // (whites, scene luminance, measured encoded out) -- the encoded baseline level is in the
+        // comment, 0.25 / 0.50 / 0.75 / 0.90 top to bottom of each block.
+        let rows: [(f64, f32, f32); 16] = [
+            (-100.0, 0.039_50, 0.2400),
+            (-100.0, 0.111_98, 0.4643),
+            (-100.0, 0.273_11, 0.6693),
+            (-100.0, 0.596_72, 0.8094),
+            (-50.0, 0.039_50, 0.2415),
+            (-50.0, 0.111_98, 0.4721),
+            (-50.0, 0.273_11, 0.7003),
+            (-50.0, 0.596_72, 0.8573),
+            (50.0, 0.039_50, 0.2598),
+            (50.0, 0.111_98, 0.5450),
+            (50.0, 0.273_11, 0.8248),
+            (50.0, 0.596_72, 0.9543),
+            (100.0, 0.039_50, 0.3395),
+            (100.0, 0.111_98, 0.7357),
+            (100.0, 0.273_11, 0.9457),
+            (100.0, 0.596_72, 0.9920),
+        ];
+        for (whites, scene, want) in rows {
+            let got = lin_to_srgb_test(ToneMap::new(0.0, whites).apply(scene));
+            assert!((got - want).abs() < TOL, "Whites {whites} at {scene}: {got} vs {want}");
+        }
+        // One parameter, and it is asymmetric: +100 moves the white point 4x as far as the
+        // reference used to be said to, and the slope follows it.
+        assert_eq!(whites_ev(0.0), 0.0);
+        assert!((whites_ev(100.0) - 1.753).abs() < 1e-6);
+        assert!((whites_ev(-100.0) + 0.420).abs() < 1e-6);
+        // Not the linear pair it replaced (1.00 up, 0.42 down): convex both ways, and asymmetric.
+        assert!(whites_ev(50.0) < 0.5 * whites_ev(100.0), "convex: {}", whites_ev(50.0));
+        assert!(-whites_ev(-50.0) > 0.5 * -whites_ev(-100.0), "convex: {}", whites_ev(-50.0));
+        assert!(whites_ev(100.0) > 4.0 * -whites_ev(-100.0), "up beats down");
+        let mut previous = f32::NEG_INFINITY;
+        for w in (-100..=100).step_by(5) {
+            let d = whites_ev(w as f64);
+            assert!(d > previous, "Whites {w}");
+            previous = d;
+        }
+        // clamping, and hostile input is neutral rather than a curve
+        assert_eq!(whites_ev(1e9), whites_ev(100.0));
+        assert_eq!(whites_ev(-1e9), whites_ev(-100.0));
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(whites_ev(bad), 0.0, "{bad}");
+        }
+        // a negative Whites darkens the top; a positive one lifts everything
+        let base = ToneMap::new(0.0, 0.0);
+        assert!(ToneMap::new(0.0, -100.0).apply(0.6) < base.apply(0.6));
+        assert!(ToneMap::new(0.0, 100.0).apply(0.1) > base.apply(0.1));
     }
 }
