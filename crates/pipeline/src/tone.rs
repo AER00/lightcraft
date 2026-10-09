@@ -1,8 +1,9 @@
 //! The global tone map: scene luminance → display-linear luminance.
 //!
-//! Built in the log domain around middle grey (0.18): contrast scales the log-exposure about grey,
-//! whites move the shoulder, blacks move the toe. The shoulder is a logistic in the exposed
-//! luminance, so it rolls off smoothly into white instead of clipping.
+//! Built in the log domain around middle grey (0.18): contrast scales the log-exposure about grey
+//! and whites move the shoulder. The shoulder is a logistic in the exposed luminance, so it rolls
+//! off smoothly into white instead of clipping. Blacks is not part of that curve — it is a separate
+//! per-channel curve over the result, see [`Blacks`].
 //!
 //! The base defaults are not the neutral log-slope of 1: [`BASE_SLOPE`] and [`BASE_WHITE_EV`] carry
 //! the default response of the reference raw developer, so an unedited raw looks like the photo its
@@ -141,6 +142,109 @@ impl CameraTone {
     }
 }
 
+/// The Blacks slider's own curve, in the display domain — which is where the reference applies it.
+///
+/// It is not a constant added to the shadow end of the tone curve. It is a second curve run over
+/// the tone-mapped value, `out = ((x − t)/(1 − t))^p`, where `t` is a black point that only exists
+/// on the negative side (a positive Blacks is anchored at 0, since a lift that raised black would
+/// fog the shadows) and `p` is the curvature. The reference runs it over the channels, not over
+/// luminance — though, as `a` below records, not uniformly so.
+///
+/// Nothing below is a coefficient of anyone's code: [`BLACKS_KNOTS`] was measured off the
+/// reference's own renders — five values either side of zero, on three cameras (a Canon 5D Mark
+/// III, a Pixel 4a and a Fujifilm X100S) — by binning each channel of the render at Blacks = V by
+/// that channel's own value in the render at Blacks = 0, and fitting this formula. The three
+/// cameras agree to within ~2 %, so this is a property of the slider and not of a photo.
+///
+/// The old model — a constant lift added in display-linear — is wrong in kind, not just in size:
+/// at +100 it lifted a level rendering at 0.05 up to 0.20 where the reference gives 0.11, and at
+/// −100 it left a level at 0.25 at 0.13 where the reference crushes it to 0.03. Mean colour error
+/// against the reference over the slider's range falls from 1.6–11.0 to 0.7–2.1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Blacks {
+    t: f32,
+    p: f32,
+    a: f32,
+}
+
+/// Measured `(t, p, a)` at −100, −75, −50, −25, 0, +25, +50, +75, +100 (see [`Blacks`]).
+///
+/// `a` is how per-channel the reference's result is, as a share of the per-channel curve against
+/// the same curve applied to luminance with the colour scaled to match — which is what [`ToneMap`]
+/// does, so it is the fraction of the two this stage blends. Each was fitted to minimise the colour
+/// error against the reference's renders, and reproduces the fractions reported independently in
+/// review (per-channel at +25, ~0.4 at +100). `t` is zero above −25: the reference puts no black
+/// point on a positive Blacks.
+const BLACKS_KNOTS: [(f32, f32, f32); 9] = [
+    (0.0516, 1.2308, 0.88),
+    (0.0232, 1.1412, 0.98),
+    (0.0100, 1.0805, 0.99),
+    (0.0038, 1.0349, 0.99),
+    (0.0, 1.0, 1.0),
+    (0.0, 0.9735, 1.0),
+    (0.0, 0.9070, 0.72),
+    (0.0, 0.8478, 0.52),
+    (0.0, 0.7914, 0.40),
+];
+
+impl Blacks {
+    /// The curve at neutral settings: exactly the identity.
+    pub const IDENTITY: Blacks = Blacks { t: 0.0, p: 1.0, a: 1.0 };
+
+    /// The curve for `blacks` in −100..=100 (Lightroom slider units; clamped, non-finite is 0).
+    pub fn new(blacks: f64) -> Blacks {
+        if !blacks.is_finite() {
+            return Self::IDENTITY;
+        }
+        let x = ((blacks.clamp(-100.0, 100.0) as f32) + 100.0) / 25.0;
+        let i = (x as usize).min(BLACKS_KNOTS.len() - 2);
+        let u = x - i as f32;
+        let (lo, hi) = (BLACKS_KNOTS[i], BLACKS_KNOTS[i + 1]);
+        Blacks { t: lo.0 + (hi.0 - lo.0) * u, p: lo.1 + (hi.1 - lo.1) * u, a: lo.2 + (hi.2 - lo.2) * u }
+    }
+
+    /// Whether this curve is the identity, so a caller can skip it.
+    #[inline]
+    pub fn is_identity(&self) -> bool {
+        *self == Self::IDENTITY
+    }
+
+    /// The black point (`0.0` unless the slider is negative).
+    #[inline]
+    pub fn black_point(&self) -> f32 {
+        self.t
+    }
+
+    /// The curvature.
+    #[inline]
+    pub fn power(&self) -> f32 {
+        self.p
+    }
+
+    /// The share of the result that is per-channel (1 = entirely).
+    #[inline]
+    pub fn share(&self) -> f32 {
+        self.a
+    }
+
+    /// The luminance blend factor, or `None` when the result is purely per-channel.
+    #[inline]
+    pub fn blend(&self) -> Option<f32> {
+        (self.a < 1.0).then_some(self.a)
+    }
+
+    /// The curve on one channel, `x` in display-linear 0..1 (anything above 1 is treated as 1).
+    /// Mirrors `blacks_apply` in `finish.wgsl` exactly, NaN included.
+    #[inline]
+    pub fn apply(&self, x: f32) -> f32 {
+        if x <= 0.0 || x.is_nan() {
+            return 0.0;
+        }
+        let u = ((x - self.t) / (1.0 - self.t)).clamp(0.0, 1.0);
+        if self.p == 1.0 { u } else { u.powf(self.p) }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ToneMap {
     lut: Vec<f32>,
@@ -148,9 +252,9 @@ pub struct ToneMap {
 }
 
 impl ToneMap {
-    pub fn camera(curve: &CameraTone, contrast: f64, whites: f64, blacks: f64) -> ToneMap {
-        let adjustment = Self::display(contrast, whites, blacks);
-        let neutral = contrast == 0.0 && whites == 0.0 && blacks == 0.0;
+    pub fn camera(curve: &CameraTone, contrast: f64, whites: f64) -> ToneMap {
+        let adjustment = Self::display(contrast, whites, 0.0);
+        let neutral = contrast == 0.0 && whites == 0.0;
         let lut = (0..LUT_N)
             .map(|i| {
                 let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
@@ -160,8 +264,9 @@ impl ToneMap {
             .collect();
         ToneMap { lut, chroma: curve.chroma }
     }
-    /// `contrast`, `whites`, `blacks` in −100..100 (Lightroom slider units).
-    pub fn new(contrast: f64, whites: f64, blacks: f64) -> ToneMap {
+    /// `contrast`, `whites` in −100..100 (Lightroom slider units). Blacks is [`Blacks`], applied
+    /// separately — it is a per-channel curve over this map's output, not part of it.
+    pub fn new(contrast: f64, whites: f64) -> ToneMap {
         let c = (contrast / 100.0) as f32;
         let slope = BASE_SLOPE + if c >= 0.0 { 0.55 * c } else { 0.4 * c };
         let w = (whites / 100.0) as f32;
@@ -169,26 +274,13 @@ impl ToneMap {
         let white_ev = BASE_WHITE_EV - if w >= 0.0 { WHITES_UP * w } else { WHITES_DOWN * w };
         let wl = GREY * 2f32.powf(white_ev);
         let pre = 1.0 + GREY / wl; // keep grey near grey
-        let b = (blacks / 100.0) as f32;
         let lut = (0..LUT_N)
             .map(|i| {
                 let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
                 let y = GREY * 2f32.powf(ev * slope) * pre;
                 // logistic shoulder: y/(y + wl) is 0 at black and rises to 1 without ever
                 // reaching it, so highlights compress smoothly instead of clipping
-                let mut o = y / (y + wl);
-                // Toe: blacks < 0 crushes, > 0 lifts.
-                if b < 0.0 {
-                    // Smooth max(0, o − k) (a soft knee), renormalized so 1 stays 1.
-                    let k = -b * 0.035;
-                    let e = 0.004;
-                    let soft = |v: f32| ((v - k) + ((v - k) * (v - k) + e * e).sqrt()) * 0.5;
-                    o = (soft(o) - soft(0.0)) / (soft(1.0) - soft(0.0));
-                } else if b > 0.0 {
-                    let k = b * 0.03;
-                    o = k + (1.0 - k) * o;
-                }
-                o.clamp(0.0, 1.0)
+                (y / (y + wl)).clamp(0.0, 1.0)
             })
             .collect();
         ToneMap { lut, chroma: DEFAULT_CHROMA }
@@ -285,7 +377,7 @@ mod tests {
     #[test]
     fn chroma_curve_is_identity_unless_set_and_survives_serde() {
         let plain = CameraTone::new(knots()).unwrap();
-        let map = ToneMap::camera(&plain, 0.0, 0.0, 0.0);
+        let map = ToneMap::camera(&plain, 0.0, 0.0);
         assert!([0.0, 0.3, 0.77, 1.0, 2.0].iter().all(|o| map.chroma_scale(*o) == 1.0));
         // smart previews written before the chroma curve existed still load (identity)
         let old = serde_json::json!({ "knots": knots() });
@@ -293,7 +385,7 @@ mod tests {
         let tone = plain.with_chroma([1.4, 1.3, 1.1, 1.0, 0.7, 0.4, 0.25, 0.2]).unwrap();
         let back: CameraTone = serde_json::from_value(serde_json::to_value(tone).unwrap()).unwrap();
         assert_eq!(back, tone);
-        let map = ToneMap::camera(&tone, 0.0, 0.0, 0.0);
+        let map = ToneMap::camera(&tone, 0.0, 0.0);
         assert!((map.chroma_scale(0.0) - 1.4).abs() < 1e-6 && (map.chroma_scale(1.0) - 0.2).abs() < 1e-6);
         assert!((map.chroma_scale(0.5 / 7.0) - 1.35).abs() < 1e-5, "interpolates between nodes");
         assert_eq!(map.chroma_scale(f32::NAN), 1.0);
@@ -306,7 +398,7 @@ mod tests {
 
     #[test]
     fn default_raw_curve_carries_the_fitted_chroma_curve() {
-        let map = ToneMap::new(0.0, 0.0, 0.0);
+        let map = ToneMap::new(0.0, 0.0);
         // The reference's default rendering is punchy in the shadows and bleaches its highlights
         // toward white, where a purely luminance-preserving curve would sit at 1.0 throughout.
         assert!(map.chroma_scale(0.0) > 1.05, "shadows: {}", map.chroma_scale(0.0));
@@ -328,7 +420,7 @@ mod tests {
             [x, 1.0 - (-3.0 * x).exp()]
         });
         let curve = CameraTone::new(knots).unwrap();
-        let base = ToneMap::camera(&curve, 0.0, 0.0, 0.0);
+        let base = ToneMap::camera(&curve, 0.0, 0.0);
         assert_eq!(base.apply(0.0), 0.0);
         assert!(base.apply(0.1) < base.apply(0.2));
         let mut previous = 0.0;
@@ -340,7 +432,7 @@ mod tests {
             previous = v;
         }
         assert!((base.apply(0.1) - curve.apply(0.1)).abs() < 0.001);
-        assert!(ToneMap::camera(&curve, 50.0, 0.0, 0.0).apply(0.3) > base.apply(0.3));
+        assert!(ToneMap::camera(&curve, 50.0, 0.0).apply(0.3) > base.apply(0.3));
         let mut invalid = knots;
         invalid[1][0] = invalid[0][0];
         assert!(CameraTone::new(invalid).is_none());
@@ -349,14 +441,27 @@ mod tests {
 
     #[test]
     fn monotone_and_bounded() {
-        for (c, w, b) in [(0.0, 0.0, 0.0), (100.0, 100.0, -100.0), (-100.0, -100.0, 100.0), (50.0, -30.0, -40.0)] {
-            let t = ToneMap::new(c, w, b);
+        for (c, w) in [(0.0, 0.0), (100.0, 100.0), (-100.0, -100.0), (50.0, -30.0)] {
+            let t = ToneMap::new(c, w);
             let mut prev = -1.0;
             for i in 0..2000 {
                 let y = 1e-5 * 1.012f32.powi(i);
                 let o = t.apply(y);
                 assert!((0.0..=1.0).contains(&o));
-                assert!(o >= prev - 1e-6, "{c} {w} {b} at {y}: {o} < {prev}");
+                assert!(o >= prev - 1e-6, "{c} {w} at {y}: {o} < {prev}");
+                prev = o;
+            }
+        }
+        // Blacks is its own curve now, so it gets its own sweep -- over the whole slider, and
+        // over both sides of the point where it hands over to the luminance blend.
+        for b in (-100..=100).step_by(5) {
+            let blacks = Blacks::new(b as f64);
+            let mut prev = -1.0;
+            for i in 0..1200 {
+                let x = 1e-6 * 1.02f32.powi(i);
+                let o = blacks.apply(x);
+                assert!((0.0..=1.0).contains(&o), "blacks {b} at {x}: {o}");
+                assert!(o >= prev - 1e-6, "blacks {b} at {x}: {o} < {prev}");
                 prev = o;
             }
         }
@@ -384,7 +489,7 @@ mod tests {
 
     #[test]
     fn default_curve_matches_the_reference_developer() {
-        let t = ToneMap::new(0.0, 0.0, 0.0);
+        let t = ToneMap::new(0.0, 0.0);
         // Point the constants at measured scenes rather than at themselves: these are the
         // reference developer's untouched default response, read off exposure ladders on the same
         // files (see `BASE_SLOPE`). Loose bounds -- the tolerance is the fit, not this test.
@@ -406,7 +511,7 @@ mod tests {
 
     #[test]
     fn default_curve_is_monotone_bounded_and_off_black() {
-        let t = ToneMap::new(0.0, 0.0, 0.0);
+        let t = ToneMap::new(0.0, 0.0);
         assert_eq!(t.apply(0.0), 0.0);
         let mut prev = -1.0;
         for i in 0..=8000 {
@@ -421,12 +526,74 @@ mod tests {
 
     #[test]
     fn sliders_move_the_right_way() {
-        let base = ToneMap::new(0.0, 0.0, 0.0);
-        let contrast = ToneMap::new(60.0, 0.0, 0.0);
+        let base = ToneMap::new(0.0, 0.0);
+        let contrast = ToneMap::new(60.0, 0.0);
         assert!(contrast.apply(0.05) < base.apply(0.05));
         assert!(contrast.apply(0.8) > base.apply(0.8));
-        assert!(ToneMap::new(0.0, 60.0, 0.0).apply(0.8) > base.apply(0.8));
-        assert!(ToneMap::new(0.0, 0.0, -60.0).apply(0.01) < base.apply(0.01));
-        assert!(ToneMap::new(0.0, 0.0, 60.0).apply(0.01) > base.apply(0.01));
+        assert!(ToneMap::new(0.0, 60.0).apply(0.8) > base.apply(0.8));
+        // Blacks no longer moves the tone map at all; it has its own curve.
+        assert!(Blacks::new(-60.0).apply(0.01) < Blacks::IDENTITY.apply(0.01));
+        assert!(Blacks::new(60.0).apply(0.01) > Blacks::IDENTITY.apply(0.01));
+    }
+
+    /// What the reference's Blacks slider does, in encoded sRGB, read off its own renders: each
+    /// row is one channel of one of three cameras (Canon 5D Mark III, Pixel 4a, Fujifilm X100S),
+    /// at the given slider value, grouped by the channel's own value in the render at Blacks = 0.
+    /// The tolerance is the fit, not this test -- the old constant lift missed these rows by up to
+    /// 0.10 in encoded sRGB, which is what the model exists to fix.
+    #[test]
+    fn blacks_curve_matches_the_reference_transfer() {
+        const TOL: f32 = 0.035;
+        let rows: [(f64, f32, f32); 20] = [
+            (-100.0, 0.05, 0.0003),
+            (-100.0, 0.10, 0.0005),
+            (-100.0, 0.25, 0.0264),
+            (-100.0, 0.50, 0.3654),
+            (-100.0, 0.75, 0.6954),
+            (-50.0, 0.05, 0.0008),
+            (-50.0, 0.10, 0.0171),
+            (-50.0, 0.25, 0.1876),
+            (-50.0, 0.50, 0.4643),
+            (-50.0, 0.75, 0.7361),
+            (50.0, 0.05, 0.0852),
+            (50.0, 0.10, 0.1397),
+            (50.0, 0.25, 0.2921),
+            (50.0, 0.50, 0.5348),
+            (50.0, 0.75, 0.7643),
+            (100.0, 0.05, 0.1165),
+            (100.0, 0.10, 0.1846),
+            (100.0, 0.25, 0.3458),
+            (100.0, 0.50, 0.5792),
+            (100.0, 0.75, 0.7808),
+        ];
+        for (blacks, x, want) in rows {
+            let curve = Blacks::new(blacks);
+            let got = lin_to_srgb_test(curve.apply(srgb_to_lin_test(x)));
+            assert!((got - want).abs() < TOL, "Blacks {blacks} at {x}: {got} vs {want}");
+        }
+        // Negative Blacks puts a black point below the shadows; a positive one is anchored at 0,
+        // so it can lift the shadows without fogging them.
+        assert!(Blacks::new(-100.0).black_point() > 0.04);
+        assert_eq!(Blacks::new(100.0).black_point(), 0.0);
+        assert_eq!(Blacks::new(100.0).apply(0.0), 0.0);
+        // the reference stops being purely per-channel above +25
+        assert!(Blacks::new(-100.0).blend().is_some());
+        assert!(Blacks::new(25.0).blend().is_none());
+        assert_eq!(Blacks::new(100.0).blend(), Some(0.4));
+        // neutral is the identity, exactly; hostile input is not a curve
+        assert!(Blacks::new(0.0).is_identity());
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(Blacks::new(bad).is_identity(), "{bad}");
+        }
+        assert!(Blacks::new(-1e9).black_point() >= Blacks::new(-100.0).black_point());
+        assert_eq!(Blacks::new(1e9), Blacks::new(100.0));
+        assert_eq!(Blacks::IDENTITY.apply(f32::NAN), 0.0);
+        assert_eq!(Blacks::IDENTITY.apply(-1.0), 0.0);
+        assert_eq!(Blacks::new(-50.0).apply(2.0), 1.0);
+    }
+
+    /// The encode these landmark rows are quoted in.
+    fn srgb_to_lin_test(x: f32) -> f32 {
+        if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
     }
 }

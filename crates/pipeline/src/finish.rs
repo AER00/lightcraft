@@ -11,7 +11,7 @@ use crate::colorops::ColorOps;
 use crate::geometry::Frame;
 use crate::local::log_lum;
 use crate::output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc};
-use crate::tone::ToneMap;
+use crate::tone::{Blacks, ToneMap};
 use crate::{Prepared, SourceInfo, for_rows};
 
 #[inline]
@@ -153,6 +153,9 @@ pub struct FinishParams {
     /// A LUT profile and its amount (0..2), applied to the display-encoded colour.
     pub lut: Option<(std::sync::Arc<crate::lut::Lut3d>, f32)>,
     pub tone: ToneMap,
+    /// The Blacks curve, applied per channel after the tone map. Identity for display-referred
+    /// sources, where [`ToneMap::display`] still owns the Blacks slider.
+    pub blacks: Blacks,
     pub ops: ColorOps,
     /// Calibration: primaries matrix (row-major, linear Rec.2020) and shadows tint (−1..1).
     pub calib: Option<[[f32; 3]; 3]>,
@@ -224,12 +227,13 @@ impl FinishParams {
             calib: if calibration { crate::colorops::calibration_matrix(&s.calibration) } else { None },
             shadow_tint: if calibration { (s.calibration.shadows_tint / 100.0) as f32 } else { 0.0 },
             tone: if let Some(curve) = info.camera_tone.as_ref().filter(|_| info.raw) {
-                ToneMap::camera(curve, s.light.contrast, s.light.whites, s.light.blacks)
+                ToneMap::camera(curve, s.light.contrast, s.light.whites)
             } else if info.raw {
-                ToneMap::new(s.light.contrast, s.light.whites, s.light.blacks)
+                ToneMap::new(s.light.contrast, s.light.whites)
             } else {
                 ToneMap::display(s.light.contrast, s.light.whites, s.light.blacks)
             },
+            blacks: if info.raw { Blacks::new(s.light.blacks) } else { Blacks::IDENTITY },
             lut: crate::lut::get(&s.profile.id).map(|l| (l, (s.profile.amount / 100.0).clamp(0.0, 2.0) as f32)),
             ops: ColorOps::new(s),
             curves: curve_luts(&s.curve),
@@ -496,6 +500,22 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             if mx > 1.0 {
                 let t = ((mx - 1.0) / (mx - o).max(1e-6)).clamp(0.0, 1.0);
                 d = d.map(|v| v + (o - v) * t);
+            }
+
+            // --- blacks (per channel, over the tone map; `d` is in 0..1 by now)
+            if !fp.blacks.is_identity() {
+                let pch = d.map(|v| fp.blacks.apply(v));
+                d = match fp.blacks.blend() {
+                    None => pch,
+                    Some(a) => {
+                        let y = luminance_2020(d);
+                        let g = if y > 1e-9 { fp.blacks.apply(y) / y } else { 0.0 };
+                        std::array::from_fn(|i| {
+                            let lum = d[i] * g;
+                            lum + (pch[i] - lum) * a
+                        })
+                    }
+                };
             }
 
             // --- colour
