@@ -773,6 +773,10 @@ mod tests {
         assert_eq!(problem_text_in(Locale::En, &g[0]), "This group is empty: add a rule or remove it.");
         // the issues, the operators their hints name and the album picker's words, in every language
         for language in Locale::ALL.iter().filter(|l| **l != Locale::En) {
+            // the field menu: every field and every group, so it never mixes languages
+            for label in lightcraft_catalog::rules::FIELDS.iter().map(|f| f.1).chain(lightcraft_catalog::rules::FIELD_GROUPS.iter().map(|g| g.0)) {
+                assert!(language.catalog().contains_key(label), "{} lacks the rule label {label:?}", language.code());
+            }
             for word in [
                 "Choose an album…",
                 "No albums yet",

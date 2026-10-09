@@ -1779,5 +1779,17 @@
   "Search albums": "Buscar álbumes",
   "No albums match": "Ningún álbum coincide",
   "This is the album you're editing": "Es el álbum que estás editando",
-  "It tests this album, so testing it back would loop": "Comprueba este álbum, así que comprobarlo a su vez crearía un bucle"
+  "It tests this album, so testing it back would loop": "Comprueba este álbum, así que comprobarlo a su vez crearía un bucle",
+  "Copy Name": "Nombre de la copia",
+  "In a Stack": "En una pila",
+  "File Extension": "Extensión del archivo",
+  "Video Duration": "Duración del vídeo",
+  "Keyword Count": "Número de palabras clave",
+  "People Count": "Número de personas",
+  "Shutter Speed": "Velocidad de obturación",
+  "Cropped": "Recortada",
+  "Keywords & People": "Palabras clave y personas",
+  "Description": "Descripción",
+  "Camera Info": "Información de la cámara",
+  "Develop": "Edición"
 }

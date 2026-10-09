@@ -1783,5 +1783,15 @@
   "Search albums": "アルバムを検索",
   "No albums match": "一致するアルバムはありません",
   "This is the album you're editing": "編集中のアルバムです",
-  "It tests this album, so testing it back would loop": "このアルバムを条件にしているため、逆に指定すると循環します"
+  "It tests this album, so testing it back would loop": "このアルバムを条件にしているため、逆に指定すると循環します",
+  "Copy Name": "コピー名",
+  "File Extension": "拡張子",
+  "Video Duration": "ビデオの長さ",
+  "Keyword Count": "キーワード数",
+  "People Count": "人数",
+  "Shutter Speed": "シャッター速度",
+  "Keywords & People": "キーワードと人物",
+  "Description": "説明",
+  "Camera Info": "カメラ情報",
+  "Develop": "編集"
 }

@@ -1776,8 +1776,20 @@
   "Su": "Dom",
   "Pick a date": "Escolher uma data",
   "would make this album include itself through other smart albums": "faria este álbum incluir a si mesmo por meio de outros álbuns inteligentes",
-  "Search albums": "Buscar álbuns",
+  "Search albums": "Pesquisar álbuns",
   "No albums match": "Nenhum álbum corresponde",
   "This is the album you're editing": "É o álbum que você está editando",
-  "It tests this album, so testing it back would loop": "Ele testa este álbum, então testá-lo de volta criaria um ciclo"
+  "It tests this album, so testing it back would loop": "Ele testa este álbum, então testá-lo de volta criaria um ciclo",
+  "Copy Name": "Nome da cópia",
+  "In a Stack": "Em uma pilha",
+  "File Extension": "Extensão do arquivo",
+  "Video Duration": "Duração do vídeo",
+  "Keyword Count": "Número de palavras-chave",
+  "People Count": "Número de pessoas",
+  "Shutter Speed": "Velocidade do obturador",
+  "Cropped": "Recortada",
+  "Keywords & People": "Palavras-chave e pessoas",
+  "Description": "Descrição",
+  "Camera Info": "Informações da câmera",
+  "Develop": "Edição"
 }

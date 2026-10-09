@@ -1779,5 +1779,17 @@
   "Search albums": "搜索相册",
   "No albums match": "没有匹配的相册",
   "This is the album you're editing": "这是正在编辑的相册",
-  "It tests this album, so testing it back would loop": "它引用了此相册，反过来引用会形成循环"
+  "It tests this album, so testing it back would loop": "它引用了此相册，反过来引用会形成循环",
+  "Copy Name": "副本名称",
+  "In a Stack": "在堆叠中",
+  "File Extension": "文件扩展名",
+  "Video Duration": "视频时长",
+  "Keyword Count": "关键字数量",
+  "People Count": "人物数量",
+  "Shutter Speed": "快门速度",
+  "Cropped": "已裁剪",
+  "Keywords & People": "关键字与人物",
+  "Description": "描述",
+  "Camera Info": "相机信息",
+  "Develop": "编辑"
 }

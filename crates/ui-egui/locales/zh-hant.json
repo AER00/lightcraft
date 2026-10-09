@@ -1779,5 +1779,17 @@
   "Search albums": "搜尋相簿",
   "No albums match": "沒有符合的相簿",
   "This is the album you're editing": "這是正在編輯的相簿",
-  "It tests this album, so testing it back would loop": "它引用了此相簿，反過來引用會形成循環"
+  "It tests this album, so testing it back would loop": "它引用了此相簿，反過來引用會形成循環",
+  "Copy Name": "副本名稱",
+  "In a Stack": "在堆疊中",
+  "File Extension": "副檔名",
+  "Video Duration": "影片長度",
+  "Keyword Count": "關鍵字數量",
+  "People Count": "人物數量",
+  "Shutter Speed": "快門速度",
+  "Cropped": "已裁切",
+  "Keywords & People": "關鍵字與人物",
+  "Description": "描述",
+  "Camera Info": "相機資訊",
+  "Develop": "編輯"
 }
