@@ -377,9 +377,9 @@ impl Photo {
         d
     }
     /// The file name's extension without the dot, as written (`CR2` for `IMG_0042.CR2`); empty
-    /// when the name has none.
+    /// when the name has none (`README`, a dot file such as `.hidden`).
     pub fn extension(&self) -> &str {
-        self.file_name.rsplit_once('.').map_or("", |(_, ext)| ext)
+        self.file_name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty()).map_or("", |(_, ext)| ext)
     }
     /// Width and height in pixels as the photo is shown: turned by its orientation and cut by its
     /// crop. Straightening and Constrain Crop shrink the crop without changing its shape, so the
@@ -394,7 +394,7 @@ impl Photo {
     }
     /// Cropped or straightened.
     pub fn is_cropped(&self) -> bool {
-        self.develop.crop.geometry != lightcraft_develop::Crop::default().geometry
+        !self.develop.crop.geometry.is_identity()
     }
     /// How many keywords the photo has: a hierarchical keyword (`travel|italy|rome`) is one, and
     /// the same keyword in different case or with stray spaces counts once; blank ones don't count.

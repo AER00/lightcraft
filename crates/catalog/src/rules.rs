@@ -727,6 +727,8 @@ mod tests {
         assert!(m(&p, "extension", "isEmpty", json!(null)), "no dot, no extension");
         p.file_name = "archive.tar.gz".into();
         assert!(m(&p, "extension", "is", json!("gz")));
+        p.file_name = ".hidden".into();
+        assert!(m(&p, "extension", "isEmpty", json!(null)), "a dot file has no extension");
         assert!(m(&p, "copyName", "isEmpty", json!(null)));
         p.copy_name = Some("Black and white".into());
         assert!(m(&p, "copyName", "contains", json!("black")));
