@@ -504,6 +504,16 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "430b4f1be4e53a011861b63294ad19fdc0353ec3ea62104f77d4c193e3dd3fc8",
     ),
     (
+        "nef-nikon-zf-he.nef",
+        "https://raw.pixls.us/download/data/Nikon/Z%20f/DSC_0043.NEF",
+        "98d6ca8e6c98048ca7ffed68ccaeda7b2b9f03807f0d320d97d5678db21748c2",
+    ),
+    (
+        "nef-nikon-zf-lossless.nef",
+        "https://raw.pixls.us/download/data/Nikon/Z%20f/DSC_0040.NEF",
+        "83c82be0be8865d796096dfbcc8ef2abf5af1bd37db44dfad6715070b0c99d15",
+    ),
+    (
         "nrw-nikon-b700-uncompressed.nrw",
         "https://raw.pixls.us/getfile.php/1621/nice/Nikon%20-%20COOLPIX%20B700%20-%2012bit%2012bit%20uncompressed%20%284:3%29.NRW",
         "a175d5892304e79282add07eacf4bdc498ca3f050af48cf989c080355b4735ec",
