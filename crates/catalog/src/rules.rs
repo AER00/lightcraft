@@ -443,6 +443,15 @@ pub(crate) fn evaluating<T>(id: crate::AlbumId, f: impl FnOnce() -> T) -> Option
     Some(f())
 }
 
+/// How a summary names an Album rule's album: “Name”, or `#9` when there is no such album.
+pub fn album_name(value: &Value, cat: Option<&Catalog>) -> String {
+    let id = album_rule_id(value);
+    match id.and_then(|id| cat.and_then(|c| c.album(id))) {
+        Some(a) => format!("“{}”", a.name),
+        None => id.map_or_else(|| value.to_string(), |id| format!("#{}", id.0)),
+    }
+}
+
 /// What a yes/no rule's value means: `true`, `"yes"`, `1` (or `1.0`) or no value is yes; `false`,
 /// `"no"`, `0` is no (strings in any case); `None` for anything else, which matches nothing.
 pub fn bool_value(value: &Value) -> Option<bool> {
@@ -915,6 +924,16 @@ impl RuleSet {
 
     /// A short readable summary ("rating is ≥ 3 and keywords contains travel").
     pub fn describe(&self) -> String {
+        self.describe_in(None)
+    }
+
+    /// [`RuleSet::describe`] naming the albums Album rules test ("album isn't “Excluded
+    /// Photos”"); one that is gone shows as `#9`.
+    pub fn describe_with(&self, cat: &Catalog) -> String {
+        self.describe_in(Some(cat))
+    }
+
+    fn describe_in(&self, cat: Option<&Catalog>) -> String {
         let join = match self.mode {
             Match::All => " and ",
             Match::Any => " or ",
@@ -924,11 +943,12 @@ impl RuleSet {
             .rules
             .iter()
             .map(|r| match r {
-                Rule::Group { group } => format!("({})", group.describe()),
+                Rule::Group { group } => format!("({})", group.describe_in(cat)),
                 Rule::Field { field, op, value } => {
                     let label = field_label(field).unwrap_or(field).to_lowercase();
                     let op = field_kind(field).and_then(|k| ops_for(k).iter().find(|o| o.0 == op)).map_or(op.as_str(), |o| o.1);
                     let v = match value {
+                        _ if field == "album" && cat.is_some() => album_name(value, cat),
                         _ if field_kind(field) == Some(Kind::Bool) => {
                             bool_value(value).map_or_else(|| value.to_string(), |b| bool_label(b).to_lowercase())
                         }

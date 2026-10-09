@@ -549,3 +549,18 @@ fn smart_album_loops_are_refused_and_survived() {
         assert!(c.smart_album_problems(AlbumId(a)).iter().any(|p| p.issue == crate::rules::Issue::AlbumLoop), "album {a} is reported");
     }
 }
+
+/// Summaries name the albums Album rules test ("album isn't “Excluded Photos”"), not their ids;
+/// one that is gone shows as its number.
+#[test]
+fn summaries_name_albums() {
+    let mut c = Catalog::new();
+    c.apply(Op::AddAlbum { album: Album::new(AlbumId(4), "Excluded Photos") }).unwrap();
+    let rules: RuleSet = serde_json::from_value(serde_json::json!({"rules": [
+        {"field": "keywords", "op": "contains", "value": "travel"},
+        {"group": {"match": "any", "rules": [{"field": "album", "op": "isNot", "value": 4}, {"field": "album", "op": "is", "value": 9}]}}]}))
+    .unwrap();
+    assert_eq!(rules.describe_with(&c), "keywords contains travel and (album isn't “Excluded Photos” or album is #9)");
+    let f = Filter { rule_set: Some(rules), ..Default::default() };
+    assert!(f.describe_with(&c).contains("album isn't “Excluded Photos”"));
+}

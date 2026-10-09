@@ -616,4 +616,8 @@ fn smart_album_excluding_a_smart_album() {
         &serde_json::json!({"id": excluded, "rules": {"ruleSet": {"rules": [{"field": "album", "op": "is", "value": travel}]}}, "replace": true}),
     );
     assert!(looped.is_err_and(|e| e.to_string().contains("would make this album include itself")), "a loop is refused");
+    // agents read the album by name in the summary
+    let list = s.execute("albums.list", &serde_json::json!({})).unwrap();
+    let travel_json = list.as_array().unwrap().iter().find(|a| a["id"] == travel).cloned().unwrap();
+    assert!(travel_json["rulesText"].as_str().unwrap_or("").contains("album isn't “Excluded Photos”"), "{travel_json}");
 }

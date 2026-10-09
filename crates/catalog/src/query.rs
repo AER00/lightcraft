@@ -160,6 +160,15 @@ fn has_person(p: &Photo, name: &str) -> bool {
 impl Filter {
     /// Human-readable summary of the active rules (smart album tooltips, `album.list`).
     pub fn describe(&self) -> String {
+        self.describe_in(None)
+    }
+
+    /// [`Filter::describe`] naming the albums its rules test (`RuleSet::describe_with`).
+    pub fn describe_with(&self, cat: &crate::Catalog) -> String {
+        self.describe_in(Some(cat))
+    }
+
+    fn describe_in(&self, cat: Option<&crate::Catalog>) -> String {
         let mut v: Vec<String> = Vec::new();
         if self.rating > 0 {
             let op = match self.rating_op {
@@ -207,7 +216,7 @@ impl Filter {
             v.push(format!("“{}”", self.text.trim()));
         }
         if let Some(rs) = self.rule_set.as_ref().filter(|r| !r.rules.is_empty()) {
-            v.push(rs.describe());
+            v.push(cat.map_or_else(|| rs.describe(), |c| rs.describe_with(c)));
         }
         if v.is_empty() { "all photos".into() } else { v.join(", ") }
     }

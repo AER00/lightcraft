@@ -318,7 +318,7 @@ pub fn color_label(catalog: &lightcraft_catalog::Catalog, label: lightcraft_cata
 /// A legacy smart-album filter summary, using the same display labels as filter chips.
 pub fn filter_label(filter: &lightcraft_catalog::Filter, catalog: &lightcraft_catalog::Catalog) -> String {
     if language() == Locale::En {
-        filter.describe()
+        filter.describe_with(catalog)
     } else {
         lightcraft_engine::filter_chips(filter, catalog)
             .iter()
@@ -378,8 +378,8 @@ fn bool_text_in(language: Locale, b: bool) -> &'static str {
 }
 
 /// A rule summary for display, keeping free-text rule values verbatim.
-pub fn rules_label(rules: &lightcraft_catalog::RuleSet) -> String {
-    fn describe(rules: &lightcraft_catalog::RuleSet, depth: usize) -> String {
+pub fn rules_label(rules: &lightcraft_catalog::RuleSet, catalog: &lightcraft_catalog::Catalog) -> String {
+    fn describe(rules: &lightcraft_catalog::RuleSet, catalog: &lightcraft_catalog::Catalog, depth: usize) -> String {
         use lightcraft_catalog::{
             Match, Rule,
             rules::{FIELDS, Kind, ops_for},
@@ -391,11 +391,13 @@ pub fn rules_label(rules: &lightcraft_catalog::RuleSet) -> String {
             .rules
             .iter()
             .map(|rule| match rule {
-                Rule::Group { group } => format!("({})", describe(group, depth + 1)),
+                Rule::Group { group } => format!("({})", describe(group, catalog, depth + 1)),
                 Rule::Field { field, op, value } => {
                     let Some((_, label, kind)) = FIELDS.iter().find(|entry| entry.0 == field) else { return field.clone() };
                     let operator = ops_for(*kind).iter().find(|entry| entry.0 == op).map_or(op.as_str(), |entry| entry.1);
                     let text = match kind {
+                        // the album's name, as people know it (a user's name is never translated)
+                        Kind::Album => lightcraft_catalog::rules::album_name(value, Some(catalog)),
                         Kind::Choice(_) => value.as_str().map_or_else(|| value.to_string(), |id| choice_text(field, id).to_string()),
                         Kind::Bool => lightcraft_catalog::rules::bool_value(value).map_or_else(|| value.to_string(), |b| bool_text(b).to_string()),
                         _ if matches!(op.as_str(), "inLast" | "notInLast") => format!(
@@ -417,7 +419,7 @@ pub fn rules_label(rules: &lightcraft_catalog::RuleSet) -> String {
         if rules.mode == Match::None { format!("{} ({text})", tr("none of")) } else { text }
     }
     // Preserve the established source-language summary.
-    if language() == Locale::En { rules.describe() } else { describe(rules, 0) }
+    if language() == Locale::En { rules.describe_with(catalog) } else { describe(rules, catalog, 0) }
 }
 
 #[cfg(test)]
@@ -865,7 +867,16 @@ mod tests {
             mode: lightcraft_catalog::Match::All,
             rules: vec![lightcraft_catalog::Rule::Field { field: "keywords".into(), op: "contains".into(), value: serde_json::json!("Color") }],
         };
-        assert_eq!(rules_label(&rules), "Stichwörter enthält Color");
+        let mut catalog = lightcraft_catalog::Catalog::new();
+        catalog
+            .apply(lightcraft_catalog::Op::AddAlbum { album: lightcraft_catalog::Album::new(lightcraft_catalog::AlbumId(4), "Ausgeschlossen") })
+            .unwrap();
+        assert_eq!(rules_label(&rules, &catalog), "Stichwörter enthält Color");
+        let album = lightcraft_catalog::RuleSet {
+            mode: lightcraft_catalog::Match::All,
+            rules: vec![lightcraft_catalog::Rule::Field { field: "album".into(), op: "isNot".into(), value: serde_json::json!(4) }],
+        };
+        assert!(rules_label(&album, &catalog).ends_with(" “Ausgeschlossen”"), "{}", rules_label(&album, &catalog));
         let rules = lightcraft_catalog::RuleSet {
             mode: lightcraft_catalog::Match::All,
             rules: vec![lightcraft_catalog::Rule::Field {
@@ -874,13 +885,13 @@ mod tests {
                 value: serde_json::json!("publicDomain"),
             }],
         };
-        assert!(rules_label(&rules).ends_with(" Gemeinfrei"), "{}", rules_label(&rules));
+        assert!(rules_label(&rules, &catalog).ends_with(" Gemeinfrei"), "{}", rules_label(&rules, &catalog));
         for value in [serde_json::json!(false), serde_json::json!("false")] {
             let rules = lightcraft_catalog::RuleSet {
                 mode: lightcraft_catalog::Match::All,
                 rules: vec![lightcraft_catalog::Rule::Field { field: "edited".into(), op: "is".into(), value }],
             };
-            assert!(rules_label(&rules).ends_with(" Nein"), "{}", rules_label(&rules));
+            assert!(rules_label(&rules, &catalog).ends_with(" Nein"), "{}", rules_label(&rules, &catalog));
         }
         let filter = lightcraft_catalog::Filter {
             labels: vec![lightcraft_catalog::ColorLabel::Red, lightcraft_catalog::ColorLabel::Blue],
