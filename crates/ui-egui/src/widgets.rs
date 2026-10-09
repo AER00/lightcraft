@@ -153,7 +153,7 @@ pub fn typed_value(spec: &ControlSpec, text: &str) -> Option<f64> {
 }
 
 /// A slider's value as shown next to its label.
-fn shown_value(spec: &ControlSpec, v: f64) -> String {
+pub(crate) fn shown_value(spec: &ControlSpec, v: f64) -> String {
     let shown = if spec.id == "wb.temp" { format!("{v:.0}") } else { spec.format(v).replace("+0.00", "0").replace("-0.00", "0") };
     if shown == "+0" || shown == "-0" { "0".to_string() } else { shown }
 }

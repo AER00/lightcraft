@@ -1248,16 +1248,27 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         let s = to_straight(n, d.crop.geometry.angle, frame);
         d.crop.geometry.rect.contains(Point::new(s.x.clamp(-1.0, 2.0), s.y))
     };
-    if let Some(hq) = resp.hover_pos() {
-        let near = handles.iter().position(|h| h.distance(hq) < 12.0);
-        ui.ctx().set_cursor_icon(match near {
+    // while rotating, the pointer may leave the canvas: it still shows rotation and the angle
+    let rotating = matches!(app.gesture, Some(Gesture::CropRotate { .. }));
+    let pointer = resp.hover_pos().or_else(|| if rotating { ui.input(|i| i.pointer.latest_pos()) } else { None });
+    if let Some(hq) = pointer {
+        let near = handles.iter().position(|h| h.distance(hq) < 12.0).filter(|_| !rotating);
+        let cursor = match near {
             Some(0 | 2) => egui::CursorIcon::ResizeNwSe,
             Some(1 | 3) => egui::CursorIcon::ResizeNeSw,
             Some(4 | 6) => egui::CursorIcon::ResizeVertical,
             Some(_) => egui::CursorIcon::ResizeHorizontal,
-            None if inside(hq) => egui::CursorIcon::Move,
-            None => egui::CursorIcon::Alias,
-        });
+            None if inside(hq) && !rotating => egui::CursorIcon::Move,
+            // a drag here rotates: no system cursor shows that, so draw a curved double arrow
+            None => {
+                rotate_cursor(ui, hq);
+                egui::CursorIcon::None
+            }
+        };
+        ui.ctx().set_cursor_icon(cursor);
+        if rotating {
+            angle_readout(ui, hq, d.crop.geometry.angle);
+        }
     }
     // double-click inside the crop box applies the crop (same as Return / Done)
     if resp.double_clicked()
@@ -1309,6 +1320,40 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         let _ = app.run("develop.endInteraction", json!({}));
     }
     let _ = id;
+}
+
+/// The crop angle as the rotation readout shows it: like the Straighten value, in degrees.
+pub(crate) fn crop_angle_label(angle: f64) -> String {
+    let shown =
+        lightcraft_develop::controls::find("crop.angle").map_or_else(|| format!("{angle:.2}"), |spec| crate::widgets::shown_value(spec, angle));
+    // the slider's format turns a rounded −0.00 into "0": every zero reads as the slider at rest
+    let shown = if shown == "0" { "0.00".to_string() } else { shown };
+    format!("{shown}°")
+}
+
+/// On top of everything (the tooltip layer), so neither the photo nor a panel covers it.
+fn top_painter(ui: &egui::Ui, name: &'static str) -> egui::Painter {
+    ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new(name)))
+}
+
+/// The rotation pointer: a curved double arrow on a dark disc, so it reads over any photo.
+fn rotate_cursor(ui: &egui::Ui, at: Pos2) {
+    let p = top_painter(ui, "crop-rotate-cursor");
+    let r = Rect::from_center_size(at, vec2(22.0, 22.0));
+    p.circle_filled(at, 12.0, Color32::from_black_alpha(150));
+    crate::icons::paint(&p, r.shrink(2.0), crate::icons::Icon::RotateDrag, Color32::WHITE);
+    register(ui.ctx(), "cropRotateCursor", r);
+}
+
+/// While rotating: the angle, next to the pointer.
+fn angle_readout(ui: &egui::Ui, at: Pos2, angle: f64) {
+    let t = Tokens::get(ui.ctx());
+    let p = top_painter(ui, "crop-angle-readout");
+    let galley = p.layout_no_wrap(crop_angle_label(angle), t.font(12.5), Color32::WHITE);
+    let rect = Rect::from_min_size(at + vec2(18.0, 14.0), galley.size() + vec2(12.0, 6.0));
+    p.rect_filled(rect, 4.0, Color32::from_black_alpha(170));
+    p.galley(rect.min + vec2(6.0, 3.0), galley, Color32::WHITE);
+    register(ui.ctx(), "cropAngleReadout", rect);
 }
 
 /// Guided Upright: draw up to four guides along lines that should be vertical or horizontal. Guides are

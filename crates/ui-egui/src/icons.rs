@@ -67,6 +67,8 @@ pub enum Icon {
     Subject,
     Picker,
     Rotate,
+    /// A curved line with an arrow at both ends: drag to rotate, either way (the crop tool's pointer).
+    RotateDrag,
     Flip,
     Invert,
     Dots,
@@ -427,6 +429,12 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Rotate => {
             pen.arc(10.0, 10.0, 6.5, 200.0, 470.0);
             pen.line(&[(3.0, 5.5), (4.0, 9.0), (7.5, 8.0)]);
+        }
+        RotateDrag => {
+            // the upper arc of a circle, an arrowhead at each end pointing along it
+            pen.arc(10.0, 14.0, 7.5, 200.0, 340.0);
+            pen.line(&[(0.8, 9.6), (3.0, 11.9), (6.1, 11.0)]);
+            pen.line(&[(19.2, 9.6), (17.0, 11.9), (13.9, 11.0)]);
         }
         Flip => {
             pen.line(&[(10.0, 2.5), (10.0, 17.5)]);
