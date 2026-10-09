@@ -11,6 +11,9 @@ workspace = true
 
 [features]
 default = []
+# Open HEIC/HEIF photos (the optional lightcraft-heif crate). Not default so distributors choose
+# it (HEVC patents); build with `--features heif` to include it.
+heif = ["lightcraft-codecs/heif"]
 
 [dependencies]
 lightcraft-engine = { workspace = true, features = ["sam"] }
@@ -32,8 +35,3 @@ rfd = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { workspace = true }
-
-[features]
-# Open HEIC/HEIF photos (the optional lightcraft-heif crate). Not default so distributors choose
-# it (HEVC patents); build with `--features heif` to include it.
-heif = ["lightcraft-codecs/heif"]
