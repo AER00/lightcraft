@@ -52,6 +52,36 @@ Or check a project-scoped `.mcp.json` into your repo:
 }
 ```
 
+### Codex
+
+The macOS release includes a separate `lightcraft-cli-<version>-macos-universal.zip`;
+unpack it alongside the desktop app if you do not want to build from source. Use the CLI
+and app from the same release. Verify both downloads against that release's `SHA256SUMS.txt`.
+
+Register the CLI's stdio server with Codex using its **absolute** installed path:
+
+```sh
+# Headless: a persistent library whose edits survive MCP restarts.
+codex mcp add lightcraft -- "/absolute/path/lightcraft-cli" mcp --library "/absolute/path/library"
+
+# Live desktop: start the app on the matching loopback port first.
+"/absolute/path/LightCraft.app/Contents/MacOS/LightCraft" --library "/absolute/path/library" --control 7980
+codex mcp add lightcraft-app -- "/absolute/path/lightcraft-cli" mcp --connect 127.0.0.1:7980
+```
+
+Choose one mode for a library: a headless server cannot open a library already locked by
+the desktop app. Connect mode edits the window's actual library and reconnects after the
+app restarts. An external library path keeps the catalog on that drive. Copy/move imports
+default to the library's `Originals/` folder; add-mode imports keep the originals at their
+existing paths. The library path does not relocate settings, logs or optional models (see
+the README's settings/log locations). Make sure an external drive is mounted before
+starting either process.
+
+`codex mcp list` confirms registration, not a successful tool call. After adding the server,
+restart the client's MCP connections and verify `doc_inspect` or `query_photos` against the
+expected library before editing. Configuration options are in the
+[Codex MCP documentation](https://developers.openai.com/codex/mcp/).
+
 ### Other clients (Claude Desktop, Cursor, …)
 
 Every stdio MCP client takes the same shape: a `command` plus `args`. For example
