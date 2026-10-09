@@ -78,15 +78,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         row(app, ui, r, &selection, &ticks, filter.trim().is_empty());
     }
     ui.add_space(12.0);
-    // the drag ends with the button's release, wherever it is
-    if app.ui.dragging_keyword.is_some() {
-        let (released, down) = ui.input(|i| (i.pointer.any_released(), i.pointer.any_down()));
-        if released || !down {
-            app.ui.dragging_keyword = None;
-        } else if let (Some(k), Some(p)) = (app.ui.dragging_keyword.clone(), pointer) {
-            drag_label(ui.ctx(), &k, p);
-        }
-    }
 }
 
 /// After the keyword `from` became `to` (renamed, moved or merged), the list's pick and open
@@ -119,11 +110,21 @@ fn shown_under(ui: &egui::Ui, rect: Rect, pointer: Option<egui::Pos2>) -> bool {
     pointer.is_some_and(|p| rect.contains(p) && ui.clip_rect().contains(p))
 }
 
-/// The dragged keyword's name, following the pointer.
-fn drag_label(ctx: &egui::Context, keyword: &str, at: egui::Pos2) {
+/// A keyword being dragged, each frame (after the panels, which take the drop): its name follows
+/// the pointer, and the drag ends with the button's release wherever it is (the list may be gone
+/// by then) or with Esc.
+pub fn drag_feedback(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let Some(keyword) = app.ui.dragging_keyword.clone() else { return };
+    let (released, down, at, esc) =
+        ctx.input(|i| (i.pointer.any_released(), i.pointer.any_down(), i.pointer.latest_pos(), i.key_pressed(egui::Key::Escape)));
+    if released || !down || esc {
+        app.ui.dragging_keyword = None;
+        return;
+    }
+    let Some(at) = at else { return };
     let t = Tokens::get(ctx);
     ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
-    let name = keyword.rsplit('|').next().unwrap_or(keyword).to_string();
+    let name = keyword.rsplit('|').next().unwrap_or(&keyword).to_string();
     egui::Area::new(egui::Id::new("drag-keyword")).order(egui::Order::Tooltip).interactable(false).fixed_pos(at + vec2(14.0, 10.0)).show(ctx, |ui| {
         egui::Frame::NONE.fill(t.accent).corner_radius(10.0).inner_margin(egui::Margin::symmetric(9, 3)).show(ui, |ui| {
             ui.label(egui::RichText::new(name).color(Color32::WHITE).font(t.semibold(12.0)));
@@ -199,8 +200,9 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Row, selection: &[PhotoId
     let state = ticks.tick(&r.path);
     let boxr = Rect::from_center_size(pos2(x + 22.0, cy), vec2(13.0, 13.0));
     let on = !selection.is_empty();
-    let tb =
-        ui.interact(boxr.expand(3.0), egui::Id::new(("keyword-list-tick", r.path.to_lowercase())), if on { Sense::click() } else { Sense::hover() });
+    // (it senses drags too, so a press there that moves doesn't pick the keyword up)
+    let sense = if on { Sense::click_and_drag() } else { Sense::hover() };
+    let tb = ui.interact(boxr.expand(3.0), egui::Id::new(("keyword-list-tick", r.path.to_lowercase())), sense);
     register(ui.ctx(), format!("keywordCheck:{}", r.path), boxr);
     let edge = if on { t.text_label } else { t.text_dim.gamma_multiply(0.5) };
     match state {

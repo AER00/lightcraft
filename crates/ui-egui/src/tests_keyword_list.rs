@@ -245,6 +245,7 @@ fn a_keyword_cant_be_dropped_inside_itself() {
     drag(&mut h, "keywordRow:Portugal", "keywordRow:Portugal|Lisbon");
     assert_eq!((keywords_of(&h, ids[0]), h.app.session.undo.len()), (vec!["Portugal|Lisbon".to_string()], undo));
     assert_eq!(h.app.ui.dialog, None);
+    assert_eq!(h.app.ui.toast, None, "not even tried: no error to show");
 }
 
 /// Dropping a keyword where one of that name is already (Italy has a Rome) asks before merging
@@ -342,4 +343,60 @@ fn the_list_follows_its_keywords() {
     drag(&mut h, "keywordRow:Lisbon", "keywordRow:Portugal");
     assert!(has(&h, "keywordRow:Portugal|Lisbon"), "its new parent opened");
     assert_eq!(h.app.ui.keyword_list_selected.as_deref(), Some("Portugal|Lisbon"));
+}
+
+/// Press at `from`, move in steps to `to` (each a frame), without releasing.
+fn press_and_move(h: &mut Headless, from: egui::Pos2, to: egui::Pos2) {
+    let press = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    h.events.extend([egui::Event::PointerMoved(from), press(from, true)]);
+    h.step();
+    for i in 1..=8 {
+        h.events.push(egui::Event::PointerMoved(from + (to - from) * (i as f32 / 8.0)));
+        h.step();
+    }
+}
+
+fn release(h: &mut Headless, at: egui::Pos2) {
+    h.events.push(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.settle(SETTLE);
+}
+
+/// Esc gives up a keyword drag: released on another keyword afterwards, it stays where it is.
+#[test]
+fn escape_gives_up_a_keyword_drag() {
+    let (mut h, ids) = keywords_panel_at([1400.0, 2400.0]);
+    run(&mut h, "photo.setMeta", json!({"ids": [ids[0]], "keywords": ["Lisbon"]}));
+    run(&mut h, "keyword.create", json!({"name": "Portugal", "parent": null}));
+    let (from, to) = (center(&h, "keywordRow:Lisbon"), center(&h, "keywordRow:Portugal"));
+    press_and_move(&mut h, from, to);
+    assert_eq!(h.app.ui.dragging_keyword.as_deref(), Some("Lisbon"), "dragging");
+    h.events.push(egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
+    h.step();
+    assert_eq!(h.app.ui.dragging_keyword, None, "given up");
+    release(&mut h, to);
+    assert_eq!(keywords_of(&h, ids[0]), ["Lisbon"]);
+}
+
+/// A drag ends with the button's release even when the Keyword List went away meanwhile (another
+/// panel opened): it doesn't linger to the next time the list is shown.
+#[test]
+fn a_keyword_drag_ends_without_the_list() {
+    let (mut h, _) = keywords_panel_at([1400.0, 2400.0]);
+    let from = center(&h, "keywordRow:mountains");
+    press_and_move(&mut h, from, from + egui::vec2(-300.0, 0.0));
+    assert_eq!(h.app.ui.dragging_keyword.as_deref(), Some("mountains"));
+    h.app.ui.right = crate::state::RightPanel::Info;
+    h.step();
+    release(&mut h, from + egui::vec2(-300.0, 0.0));
+    assert_eq!(h.app.ui.dragging_keyword, None);
+}
+
+/// Pressing on a tick box and moving doesn't pick the keyword up.
+#[test]
+fn a_tick_box_doesnt_start_a_drag() {
+    let (mut h, _) = keywords_panel_at([1400.0, 2400.0]);
+    let from = center(&h, "keywordCheck:mountains");
+    press_and_move(&mut h, from, from + egui::vec2(0.0, 60.0));
+    assert_eq!(h.app.ui.dragging_keyword, None);
+    release(&mut h, from + egui::vec2(0.0, 60.0));
 }
