@@ -410,10 +410,17 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 }
                 Dialog::RenameKeyword { from, to } => {
                     let n = app.session.catalog.photos().filter(|p| p.meta.keywords.iter().any(|k| lightcraft_catalog::keywords::is_under(k, from))).count();
-                    let r = ui.add(egui::TextEdit::singleline(to).hint_text(crate::i18n::tr("New name")).desired_width(f32::INFINITY));
-                    crate::widgets::register(ui.ctx(), "field:keywordName", r.rect);
-                    r.request_focus();
-                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    // the name, selected so typing replaces it; Esc cancels the dialog (below)
+                    let r = crate::text_field::TextField::singleline("field:keywordName", to)
+                        .hint(crate::i18n::tr("New name"))
+                        .width(f32::INFINITY)
+                        .select_on_focus(true)
+                        .show(ui);
+                    // the field keeps the focus, but leaves it to its own menu
+                    if !r.editing {
+                        r.response.request_focus();
+                    }
+                    if r.ending == Some(crate::text_field::Ending::Return) {
                         confirm = true;
                     }
                     ui.label(

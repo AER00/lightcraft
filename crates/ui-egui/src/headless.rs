@@ -1560,6 +1560,46 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// Rename Keyword's name field is a shared text field. It opens with the name selected, so
+    /// typing replaces it, and Return renames; right-click ▸ Paste works too; Esc cancels the
+    /// dialog and renames nothing.
+    #[test]
+    fn the_rename_keyword_field_selects_pastes_and_cancels() {
+        let mut h = demo([1200.0, 800.0]);
+        let t = Duration::from_secs(10);
+        let first = h.app.session.visible_cloned()[0].0;
+        h.request("engine.execute", json!({"command": "photo.setMeta", "params": {"ids": [first], "addKeywords": ["travel"]}}), t);
+        let keywords = |h: &Headless| h.app.session.catalog.photo(lightcraft_catalog::PhotoId(first)).unwrap().meta.keywords.clone();
+        let open = |h: &mut Headless, name: &str| {
+            h.app.ui.dialog = Some(crate::state::Dialog::RenameKeyword { from: name.into(), to: name.into() });
+            h.settle(SETTLE);
+        };
+        let ask = |h: &mut Headless, method: &str, params: serde_json::Value| {
+            let r = h.request(method, params.clone(), t);
+            assert_eq!(r["ok"], true, "{method} {params}: {r}");
+            h.settle(SETTLE);
+        };
+        // typing replaces the selected name
+        open(&mut h, "travel");
+        ask(&mut h, "ui.text", json!({"text": "trips"}));
+        ask(&mut h, "ui.key", json!({"key": "Enter"}));
+        assert!(keywords(&h).contains(&"trips".to_string()) && !keywords(&h).contains(&"travel".to_string()), "{:?}", keywords(&h));
+        assert_eq!(h.app.ui.dialog, None);
+        // the menu's Paste
+        open(&mut h, "trips");
+        h.view.clipboard = "weddings".into();
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:keywordName", "button": "right"}));
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:keywordName:paste"}));
+        ask(&mut h, "ui.key", json!({"key": "Enter"}));
+        assert!(keywords(&h).contains(&"weddings".to_string()), "{:?}", keywords(&h));
+        // Esc cancels
+        open(&mut h, "weddings");
+        ask(&mut h, "ui.text", json!({"text": "parties"}));
+        ask(&mut h, "ui.key", json!({"key": "Escape"}));
+        assert_eq!(h.app.ui.dialog, None, "Esc closed the dialog");
+        assert!(keywords(&h).contains(&"weddings".to_string()), "renamed nothing: {:?}", keywords(&h));
+    }
+
     /// The sidebar's file-system checks run on worker threads and add rows when they land, which
     /// moves every row below them: `busy()` counts them, so `settle` waits for them before a test
     /// reads widget positions (a click aimed at a stale rect hits the neighbouring row).
