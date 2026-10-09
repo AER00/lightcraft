@@ -63,11 +63,15 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     // Source
     ("album", "Album", Kind::Number),
     ("virtualCopy", "Virtual Copy", Kind::Bool),
+    ("copyName", "Copy Name", Kind::Text),
+    ("stacked", "In a Stack", Kind::Bool),
     // File
     ("fileName", "Filename", Kind::Text),
+    ("extension", "File Extension", Kind::Text),
     ("filePath", "File Path", Kind::Text),
     ("kind", "File Type", Kind::Choice(&["image", "raw", "video"])),
     ("format", "File Format", Kind::Text),
+    ("duration", "Video Duration", Kind::Number),
     // Date
     ("captureDate", "Capture Date", Kind::Date),
     ("importDate", "Import Date", Kind::Date),
@@ -80,6 +84,7 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     // Description
     ("title", "Title", Kind::Text),
     ("caption", "Caption", Kind::Text),
+    ("altText", "Alt Text", Kind::Text),
     ("creator", "Creator", Kind::Text),
     ("copyright", "Copyright", Kind::Text),
     ("copyrightStatus", "Copyright Status", Kind::Choice(&["copyrighted", "publicDomain", "unknown"])),
@@ -92,11 +97,19 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     ("iso", "ISO Speed", Kind::Number),
     // Location
     ("location", "Location", Kind::Text),
+    ("city", "City", Kind::Text),
+    ("state", "State / Province", Kind::Text),
+    ("country", "Country", Kind::Text),
     ("hasGps", "Has GPS", Kind::Bool),
     // Size
+    ("longEdge", "Long Edge", Kind::Number),
+    ("shortEdge", "Short Edge", Kind::Number),
+    ("aspect", "Aspect Ratio", Kind::Choice(&["landscape", "portrait", "square"])),
     ("megapixels", "Megapixels", Kind::Number),
     // Develop
     ("edited", "Has Edits", Kind::Bool),
+    ("cropped", "Cropped", Kind::Bool),
+    ("treatment", "Treatment", Kind::Choice(&["color", "monochrome"])),
     // Assisted Culling
     ("sharpness", "Focus (assisted culling)", Kind::Number),
     ("bestOfGroup", "Best of Similar Shots", Kind::Bool),
@@ -108,15 +121,15 @@ pub const TOP_LEVEL_FIELDS: &[&str] = &["rating", "flag", "label", "text"];
 /// The field menu's submenus: (label, fields), in order. Every field of [`FIELDS`] is either here
 /// once or in [`TOP_LEVEL_FIELDS`].
 pub const FIELD_GROUPS: &[(&str, &[&str])] = &[
-    ("Source", &["album", "virtualCopy"]),
-    ("File", &["fileName", "filePath", "kind", "format"]),
+    ("Source", &["album", "virtualCopy", "copyName", "stacked"]),
+    ("File", &["fileName", "extension", "filePath", "kind", "format", "duration"]),
     ("Date", &["captureDate", "importDate", "editDate"]),
     ("Keywords & People", &["keywords", "keywordCount", "person", "personCount"]),
-    ("Description", &["title", "caption", "creator", "copyright", "copyrightStatus"]),
+    ("Description", &["title", "caption", "altText", "creator", "copyright", "copyrightStatus"]),
     ("Camera Info", &["camera", "lens", "focalLength", "aperture", "shutterSpeed", "iso"]),
-    ("Location", &["location", "hasGps"]),
-    ("Size", &["megapixels"]),
-    ("Develop", &["edited"]),
+    ("Location", &["location", "city", "state", "country", "hasGps"]),
+    ("Size", &["longEdge", "shortEdge", "aspect", "megapixels"]),
+    ("Develop", &["edited", "cropped", "treatment"]),
     ("Assisted Culling", &["sharpness", "bestOfGroup"]),
 ];
 
@@ -260,6 +273,20 @@ fn num_op(op: &str, have: Option<f64>, value: &Value) -> bool {
     }
 }
 
+/// `landscape`, `portrait` or `square` (edges within 1 %) for a `w × h` frame; `None` when it has no area.
+fn aspect((w, h): (f64, f64)) -> Option<&'static str> {
+    if !(w > 0.0 && h > 0.0) {
+        return None;
+    }
+    Some(if (w - h).abs() <= 0.01 * w.max(h) {
+        "square"
+    } else if w > h {
+        "landscape"
+    } else {
+        "portrait"
+    })
+}
+
 /// A shutter-speed rule's value in seconds: camera notation (`1/250`) or a number; an operand
 /// that isn't a time becomes `null`, which matches nothing.
 fn shutter_value(value: &Value) -> Value {
@@ -351,6 +378,13 @@ impl Rule {
             "edited" => p.is_edited() == value.as_bool().unwrap_or(true),
             "hasGps" => m.gps.is_some() == value.as_bool().unwrap_or(true),
             "virtualCopy" => p.copy_of.is_some() == value.as_bool().unwrap_or(true),
+            "copyName" => text(p.copy_name.as_deref().unwrap_or("")),
+            "stacked" => cat.stack_of(p.id).is_some() == value.as_bool().unwrap_or(true),
+            "cropped" => p.is_cropped() == value.as_bool().unwrap_or(true),
+            "treatment" => {
+                let t = if p.develop.treatment == lightcraft_develop::Treatment::Bw { "monochrome" } else { "color" };
+                (t == want) == (op == "is")
+            }
             "keywords" => names_op(op, &m.keywords, &want),
             "keywordCount" => num_op(op, Some(p.keyword_count() as f64), value),
             "person" => names_op(op, &p.people(), &want),
@@ -372,6 +406,8 @@ impl Rule {
                 text(&all)
             }
             "fileName" => text(&p.file_name),
+            "extension" => text_op(op, p.extension(), want.trim_start_matches('.')),
+            "duration" => num_op(op, p.duration.filter(|d| d.is_finite()), value),
             "filePath" => {
                 // `/` and `\` both separate, whatever platform the catalog came from; demo photos have no path
                 let path = match &p.source {
@@ -389,6 +425,10 @@ impl Rule {
             "format" => text(&p.format),
             "title" => text(&m.title),
             "caption" => text(&m.caption),
+            "altText" => text(&m.alt_text),
+            "city" => text(&m.city),
+            "state" => text(&m.state),
+            "country" => text(&m.country),
             "camera" => text(&m.camera),
             "lens" => text(&m.lens),
             "location" => text(&[m.location.as_str(), &m.city, &m.state, &m.country].join(" ")),
@@ -405,6 +445,11 @@ impl Rule {
             "iso" => num_op(op, m.iso.map(|v| v as f64), value),
             "aperture" => num_op(op, m.aperture.map(|v| v as f64), value),
             "focalLength" => num_op(op, m.focal_mm.map(|v| v as f64), value),
+            "longEdge" | "shortEdge" => {
+                let (w, h) = p.shown_size();
+                num_op(op, Some(if field == "longEdge" { w.max(h) } else { w.min(h) }.round()), value)
+            }
+            "aspect" => (aspect(p.shown_size()) == Some(want.as_str())) == (op == "is"),
             "megapixels" => num_op(op, Some(p.width as f64 * p.height as f64 / 1e6), value),
             "sharpness" => num_op(op, p.analysis.map(|a| a.sharpness as f64), value),
             "bestOfGroup" => p.analysis.is_some_and(|a| a.best || a.group.is_none()) == value.as_bool().unwrap_or(true),
@@ -663,6 +708,95 @@ mod tests {
         }
     }
 
+    /// File Extension ignores case and a leading dot; Copy Name, Alt Text, City, State /
+    /// Province and Country are text fields of their own (Location still matches all of them).
+    #[test]
+    fn file_source_description_and_location_rules() {
+        let cat = Catalog::new();
+        let mut p = photo(1); // IMG_0042.CR2
+        let m = |p: &Photo, field: &str, op: &str, value: serde_json::Value| {
+            rs(json!({"rules": [{"field": field, "op": op, "value": value}]})).matches(p, &cat)
+        };
+        assert!(m(&p, "extension", "is", json!("cr2")) && m(&p, "extension", "is", json!(".CR2")));
+        assert!(!m(&p, "extension", "is", json!("jpg")));
+        p.file_name = "README".into();
+        assert!(m(&p, "extension", "isEmpty", json!(null)), "no dot, no extension");
+        p.file_name = "archive.tar.gz".into();
+        assert!(m(&p, "extension", "is", json!("gz")));
+        assert!(m(&p, "copyName", "isEmpty", json!(null)));
+        p.copy_name = Some("Black and white".into());
+        assert!(m(&p, "copyName", "contains", json!("black")));
+        p.meta.alt_text = "A red kite over a hill".into();
+        assert!(m(&p, "altText", "contains", json!("kite")));
+        p.meta.city = "Porto".into();
+        p.meta.state = "Porto District".into();
+        p.meta.country = "Portugal".into();
+        assert!(m(&p, "city", "is", json!("porto")) && m(&p, "state", "startsWith", json!("porto")) && m(&p, "country", "is", json!("portugal")));
+        assert!(!m(&p, "city", "is", json!("portugal")), "City tests only the city");
+        assert!(m(&p, "location", "contains", json!("portugal")), "Location still covers the country");
+    }
+
+    /// In a Stack, Video Duration (seconds; photos have none), Cropped and Treatment.
+    #[test]
+    fn source_file_and_develop_rules() {
+        use crate::{Op, Stack, StackId};
+        let mut cat = Catalog::new();
+        let a = photo(1);
+        let b = photo(2);
+        let c = photo(3);
+        for p in [&a, &b, &c] {
+            cat.apply(Op::AddPhoto { photo: Box::new(p.clone()) }).unwrap();
+        }
+        cat.apply(Op::AddStack { stack: Stack { id: StackId(1), photos: vec![a.id, b.id], collapsed: false } }).unwrap();
+        let m = |p: &Photo, field: &str, op: &str, value: serde_json::Value| {
+            rs(json!({"rules": [{"field": field, "op": op, "value": value}]})).matches(p, &cat)
+        };
+        assert!(m(&a, "stacked", "is", json!(true)) && m(&b, "stacked", "is", json!(true)));
+        assert!(m(&c, "stacked", "is", json!(false)));
+        let mut v = photo(4);
+        assert!(!m(&v, "duration", "gte", json!(0)), "a photo has no duration");
+        v.duration = Some(95.0);
+        assert!(m(&v, "duration", "gt", json!(60)) && m(&v, "duration", "between", json!([90, 120])));
+        let mut d = photo(5);
+        assert!(m(&d, "cropped", "is", json!(false)) && m(&d, "treatment", "is", json!("color")));
+        let mut s = (*d.develop).clone();
+        s.crop.geometry.rect = lightcraft_geom::Rect::new(0.1, 0.0, 0.9, 1.0);
+        s.treatment = lightcraft_develop::Treatment::Bw;
+        d.develop = std::sync::Arc::new(s);
+        assert!(m(&d, "cropped", "is", json!(true)) && m(&d, "treatment", "is", json!("monochrome")));
+        assert!(m(&d, "treatment", "isNot", json!("color")));
+        let mut s = (*d.develop).clone();
+        s.crop = Default::default();
+        s.crop.geometry.angle = 2.0;
+        d.develop = std::sync::Arc::new(s);
+        assert!(m(&d, "cropped", "is", json!(true)), "straightening counts as a crop");
+    }
+
+    /// Size follows the photo as shown: rotated a quarter turn a landscape frame is a portrait, and
+    /// a crop changes its edges. Long / Short Edge are in pixels.
+    #[test]
+    fn size_rules_follow_orientation_and_crop() {
+        let cat = Catalog::new();
+        let mut p = photo(1); // 6000 × 4000
+        let m = |p: &Photo, field: &str, op: &str, value: serde_json::Value| {
+            rs(json!({"rules": [{"field": field, "op": op, "value": value}]})).matches(p, &cat)
+        };
+        assert!(m(&p, "aspect", "is", json!("landscape")) && m(&p, "longEdge", "is", json!(6000)) && m(&p, "shortEdge", "is", json!(4000)));
+        let mut s = (*p.develop).clone();
+        s.orientation = lightcraft_geom::Orientation::Rotate90;
+        p.develop = std::sync::Arc::new(s.clone());
+        assert!(m(&p, "aspect", "is", json!("portrait")) && m(&p, "longEdge", "is", json!(6000)));
+        // a square crop of the rotated frame: 4000 wide, 4000 of its 6000 tall
+        s.crop.geometry.rect = lightcraft_geom::Rect::new(0.0, 1.0 / 6.0, 1.0, 5.0 / 6.0);
+        p.develop = std::sync::Arc::new(s);
+        assert!(m(&p, "aspect", "is", json!("square")) && m(&p, "longEdge", "is", json!(4000)));
+        assert!(m(&p, "aspect", "isNot", json!("portrait")));
+        let empty = Photo::new(PhotoId(9), Source::Demo { scene: 0 }, "x.jpg", "JPEG", 0, 0, "2026-09-20T10:00:00");
+        assert!(
+            !m(&empty, "aspect", "is", json!("landscape")) && !m(&empty, "aspect", "is", json!("square")) && m(&empty, "longEdge", "is", json!(0))
+        );
+    }
+
     /// The field menu shows every rule field once: at the top level or in exactly one group,
     /// and [`FIELDS`] lists them in menu order.
     #[test]
@@ -687,12 +821,15 @@ mod tests {
                 assert_eq!(field_group(f), Some(group), "{f}");
             }
         };
-        same(&["fileName", "filePath", "kind", "format"], "File");
+        same(&["fileName", "extension", "filePath", "kind", "format", "duration"], "File");
+        same(&["album", "virtualCopy", "copyName", "stacked"], "Source");
+        same(&["longEdge", "shortEdge", "aspect", "megapixels"], "Size");
+        same(&["edited", "cropped", "treatment"], "Develop");
         same(&["camera", "lens", "focalLength", "aperture", "shutterSpeed", "iso"], "Camera Info");
         same(&["captureDate", "importDate", "editDate"], "Date");
         same(&["keywords", "keywordCount", "person", "personCount"], "Keywords & People");
-        same(&["title", "caption", "creator", "copyright", "copyrightStatus"], "Description");
-        same(&["location", "hasGps"], "Location");
+        same(&["title", "caption", "altText", "creator", "copyright", "copyrightStatus"], "Description");
+        same(&["location", "city", "state", "country", "hasGps"], "Location");
         for f in ["rating", "flag", "label", "text"] {
             assert_eq!(field_group(f), None, "{f} stays at the top level");
         }

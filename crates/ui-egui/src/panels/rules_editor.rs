@@ -63,9 +63,10 @@ fn number_value(ui: &mut egui::Ui, v: &mut Value, field: &str) {
         "iso" => (0.0, 409_600.0, 10.0),
         "aperture" => (0.0, 64.0, 0.05),
         "keywordCount" | "personCount" => (0.0, 1000.0, 0.05),
+        "longEdge" | "shortEdge" => (0.0, 100_000.0, 10.0),
         _ => (0.0, 100_000.0, 0.5),
     };
-    let whole = matches!(field, "rating" | "iso" | "album" | "keywordCount" | "personCount");
+    let whole = matches!(field, "rating" | "iso" | "album" | "keywordCount" | "personCount" | "longEdge" | "shortEdge");
     let dv = egui::DragValue::new(&mut n).range(lo..=hi).speed(speed);
     let dv = if whole { dv.fixed_decimals(0) } else { dv.max_decimals(2) };
     if ui.add(dv).changed() {

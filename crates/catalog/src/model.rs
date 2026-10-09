@@ -376,6 +376,26 @@ impl Photo {
         }
         d
     }
+    /// The file name's extension without the dot, as written (`CR2` for `IMG_0042.CR2`); empty
+    /// when the name has none.
+    pub fn extension(&self) -> &str {
+        self.file_name.rsplit_once('.').map_or("", |(_, ext)| ext)
+    }
+    /// Width and height in pixels as the photo is shown: turned by its orientation and cut by its
+    /// crop. Straightening and Constrain Crop shrink the crop without changing its shape, so the
+    /// aspect is exact and the edges can read a little larger than an export.
+    pub fn shown_size(&self) -> (f64, f64) {
+        let (w, h) = (self.width as f64, self.height as f64);
+        let (w, h) = if self.develop.orientation.swaps_axes() { (h, w) } else { (w, h) };
+        let r = self.develop.crop.geometry.rect;
+        // a crop read from a file or an agent is hostile: no NaN, nothing outside the frame
+        let part = |len: f64| if len.is_finite() { len.clamp(0.0, 1.0) } else { 1.0 };
+        (w * part(r.width()), h * part(r.height()))
+    }
+    /// Cropped or straightened.
+    pub fn is_cropped(&self) -> bool {
+        self.develop.crop.geometry != lightcraft_develop::Crop::default().geometry
+    }
     /// How many keywords the photo has: a hierarchical keyword (`travel|italy|rome`) is one, and
     /// the same keyword in different case or with stray spaces counts once; blank ones don't count.
     pub fn keyword_count(&self) -> usize {
