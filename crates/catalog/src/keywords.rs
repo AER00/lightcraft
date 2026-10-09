@@ -311,7 +311,8 @@ impl Catalog {
         out
     }
 
-    /// The keyword is in the tree: listed or on a photo, itself or one below it.
+    /// The keyword is in the tree: listed or on a library photo (not one in Recently Deleted or
+    /// only browsed), itself or one below it.
     pub fn has_keyword(&self, path: &str) -> bool {
         self.keyword_path(path).is_some()
     }
@@ -330,7 +331,7 @@ impl Catalog {
         let levels = k.split(SEP).count();
         let listed = self.keyword_list.values().map(|l| &l.path);
         listed
-            .chain(self.photos().flat_map(|p| p.meta.keywords.iter()))
+            .chain(self.photos().filter(|p| p.in_library()).flat_map(|p| p.meta.keywords.iter()))
             .find(|x| is_under(x, &k))
             .map(|x| x.split(SEP).map(str::trim).filter(|s| !s.is_empty()).take(levels).collect::<Vec<_>>().join("|"))
     }
@@ -406,9 +407,10 @@ impl Catalog {
         Ok(Op::Batch { ops })
     }
 
-    /// Take off the keyword list the keywords no photo has, nor any keyword below them — one batch.
+    /// Take off the keyword list the keywords no library photo has, nor any keyword below them — one
+    /// batch.
     pub fn purge_unused_keywords_ops(&self) -> Op {
-        let used: Vec<&String> = self.photos().flat_map(|p| p.meta.keywords.iter()).collect();
+        let used: Vec<&String> = self.photos().filter(|p| p.in_library()).flat_map(|p| p.meta.keywords.iter()).collect();
         Op::Batch { ops: self.list_ops(|list| list.retain(|_, l| used.iter().any(|k| is_under(k, &l.path)))) }
     }
 
@@ -811,6 +813,20 @@ mod tests {
         let op = c.edit_keyword_ops("events", "Occasions", KeywordInfo::default()).unwrap();
         c.apply(op).unwrap();
         assert_eq!(listed(&c).iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["Occasions", "Occasions|Weddings"]);
+    }
+
+    /// Photos in Recently Deleted don't count: a keyword only they have isn't in the tree, so it
+    /// can be created again and is purged as unused, and its spelling there isn't the library's.
+    #[test]
+    fn deleted_photos_dont_hold_keywords() {
+        let (mut c, ids) = lib(&[&["Weddings"], &["travel"]]);
+        c.apply(Op::SetDeleted { id: ids[0], deleted: true }).unwrap();
+        assert!(!c.has_keyword("weddings"));
+        assert!(c.create_keyword_ops("weddings", KeywordInfo::default(), &[]).is_ok());
+        c.apply(Op::SetKeyword { path: "Weddings".into(), info: Some(KeywordInfo::default()) }).unwrap();
+        let op = c.purge_unused_keywords_ops();
+        c.apply(op).unwrap();
+        assert!(listed(&c).is_empty(), "only a deleted photo has it: unused");
     }
 
     #[test]
