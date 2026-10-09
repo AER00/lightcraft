@@ -179,6 +179,33 @@ fn dragging_the_angle_field_is_one_undo_step() {
     assert_eq!(h.app.session.undo.len(), undo + 1, "one step for the whole drag");
 }
 
+/// Typing into the Angle field one key at a time applies the angle once, on Return: no undo step
+/// or render per keystroke, no half-typed angles (-3° on the way to -3.25°).
+#[test]
+fn typing_in_the_angle_field_applies_on_return() {
+    let mut h = crop_tool();
+    let r = h.request("ui.clickWidget", json!({"id": "cropAngleField"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    for key in ["a", "Backspace"] {
+        let r = h.request("ui.key", json!({"key": key, "cmd": key == "a"}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    }
+    h.settle(SETTLE);
+    let (before, undo) = (angle(&h), h.app.session.undo.len());
+    for ch in ["-", "3", ".", "2", "5"] {
+        let r = h.request("ui.text", json!({"text": ch}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+    }
+    assert_eq!((angle(&h), h.app.session.undo.len()), (before, undo), "nothing applied while typing");
+    let r = h.request("ui.key", json!({"key": "Enter"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!((angle(&h) + 3.25).abs() < 1e-9, "applied on Return: {}", angle(&h));
+    assert_eq!(h.app.session.undo.len(), undo + 1, "as one undo step");
+}
+
 /// Rotating in the margin beside a narrow photo keeps the readout next to the pointer: it is kept
 /// on the canvas, not pinned to the photo's edge.
 #[test]

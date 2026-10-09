@@ -196,14 +196,19 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                         .clamp_existing_to_range(false)
                         .speed(0.05)
                         .fixed_decimals(2)
-                        .suffix("°"),
+                        .suffix("°")
+                        // a typed angle applies on Return (or leaving the field), not keystroke by
+                        // keystroke: no half-typed angles, one undo step
+                        .update_while_editing(false),
                 );
                 crate::widgets::register(ui.ctx(), "cropAngleField", r.rect);
                 // a drag on the field is one undo step, like the slider's
                 if r.drag_started() {
                     let _ = app.run("develop.beginInteraction", json!({"label": "Straighten"}));
                 }
-                if r.changed() && angle.is_finite() {
+                // egui reports a change while text is typed even when the value isn't updated yet:
+                // apply only a new angle
+                if r.changed() && angle.is_finite() && angle != d.crop.geometry.angle {
                     let _ = app.run("crop.straighten", json!({"angle": (angle.clamp(spec.min, spec.max) * 100.0).round() / 100.0}));
                 }
                 if r.drag_stopped() {
