@@ -134,7 +134,7 @@ Tools taking `id` make that photo active first; without it they act on the activ
 | `set_ui {state}` | Merge UI state, e.g. `{"view": "detail"}` |
 | `list_widgets {filter?}` / `click {widget \| x,y, count?}` | Widgets by automation id; real egui clicks |
 | `press_key {key, cmd?, shift?, alt?}` / `type_text {text}` | Keyboard input (shortcuts) |
-| `clipboard {action, text?}` | Cut, copy or paste in the focused text field (⌘X / ⌘C / ⌘V); `inspect_ui` → `copied` is what was copied |
+| `clipboard {action, text?}` | Cut, copy or paste in the focused text field (⌘X / ⌘C / ⌘V; refused when none has the focus; cut and copy write the system clipboard); `inspect_ui` → `copied` is what was copied |
 | `pointer_gesture {events}` | Gestures in normalized image coordinates (brush strokes, gradients, crop handles) |
 
 In headless mode these return a tool error explaining how to start the app.

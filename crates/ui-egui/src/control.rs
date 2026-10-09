@@ -278,6 +278,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
         // what the system does for ⌘X / ⌘C / ⌘V in a text field: paste `text`, or (without it)
         // what the system clipboard holds
         "ui.clipboard" => {
+            // outside a text field ⌘C / ⌘V are the app's shortcuts (and the macOS menu bar's):
+            // agents run those as commands (`develop.copy`, `develop.paste`)
+            if !ctx.text_edit_focused() {
+                return err("ui.clipboard: no text field has the focus (click one first)");
+            }
             match s("action") {
                 Some("cut") => app.synthetic.push(egui::Event::Cut),
                 Some("copy") => app.synthetic.push(egui::Event::Copy),

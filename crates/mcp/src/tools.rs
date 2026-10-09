@@ -308,7 +308,7 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
             tool(
                 "clipboard",
                 "Cut, copy or paste",
-                "Cut, copy or paste in the focused text field, as ⌘X / ⌘C / ⌘V do. `paste` pastes `text`, or what the system clipboard holds without it. inspect_ui → `copied` is the text the app last copied.",
+                "Cut, copy or paste in the focused text field (click one first), as ⌘X / ⌘C / ⌘V do; cut and copy write the system clipboard. `paste` pastes `text`, or what the system clipboard holds without it. inspect_ui → `copied` is the text the app last copied.",
                 json!({"action": {"type": "string", "enum": ["cut", "copy", "paste"]}, "text": {"type": "string"}}),
                 &["action"],
             ),

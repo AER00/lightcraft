@@ -662,6 +662,23 @@ mod tests {
         assert_eq!(r["ok"], false, "an unknown action is refused: {r}");
     }
 
+    /// `ui.clipboard` acts in a text field: with none focused it is refused, rather than doing
+    /// what ⌘V does there on one platform (paste edit settings) and nothing on another.
+    #[test]
+    fn the_clipboard_method_needs_a_text_field() {
+        let mut h = demo([1200.0, 760.0]);
+        let t = Duration::from_secs(10);
+        h.settle(SETTLE);
+        let undo = h.app.session.undo.len();
+        for action in ["copy", "paste"] {
+            let r = h.request("ui.clipboard", json!({"action": action, "text": "travel"}), t);
+            assert_eq!(r["ok"], false, "{action}: {r}");
+            assert!(r["error"].as_str().is_some_and(|e| e.contains("text field")), "{r}");
+        }
+        h.settle(SETTLE);
+        assert_eq!(h.app.session.undo.len(), undo, "nothing was pasted");
+    }
+
     /// `ui.clickWidget` right-clicks with `button: "right"`, as `ui.click` does (MCP `click`
     /// passes it on with a widget): a filmstrip photo's context menu opens.
     #[test]
