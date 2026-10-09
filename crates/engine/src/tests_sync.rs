@@ -361,3 +361,35 @@ fn synchronizing_is_one_undo_step_even_with_a_full_undo_history() {
     assert_eq!(undo["undone"], "Synchronize Folder");
     assert_eq!(holdings(&s), before, "one step undoes the import and the removal");
 }
+
+#[test]
+fn a_scan_stays_current_while_only_other_folders_change() {
+    let dir = Scratch::new("current");
+    let mut s = library(&dir);
+    write_png(&dir.path("other/x.png"), 9);
+    s.execute("library.import", &json!({"paths": [dir.path("other")]})).unwrap();
+    write_png(&dir.path("trip/c.png"), 3);
+    scan(&mut s, &dir.path("trip"));
+    // something elsewhere in the library changes while the dialog is open (a background import…)
+    let x = s.catalog.photos().find(|p| p.file_name == "x.png").unwrap().id;
+    s.execute("photo.rate", &json!({"ids": [x.0], "rating": 3})).unwrap();
+    let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip"), "scanned": true})).unwrap();
+    assert_eq!(r["imported"], 1, "{r}");
+}
+
+#[test]
+fn a_change_to_the_folders_photos_makes_the_scan_stale() {
+    let dir = Scratch::new("stale-folder");
+    let mut s = library(&dir);
+    write_png(&dir.path("trip/c.png"), 3);
+    scan(&mut s, &dir.path("trip"));
+    let a = s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
+    s.execute("photo.rate", &json!({"ids": [a.0], "rating": 2})).unwrap();
+    // the dialog asks for exactly what it showed: refused, never redone on the spot
+    let e = s.execute("folder.synchronize", &json!({"path": dir.path("trip"), "scanned": true})).unwrap_err().to_string();
+    assert!(e.contains("scan again"), "{e}");
+    assert_eq!(s.catalog.photos().filter(|p| p.in_library()).count(), 2, "nothing was done");
+    // an agent that just asks to synchronize gets a fresh scan
+    let r = s.execute("folder.synchronize", &json!({"path": dir.path("trip")})).unwrap();
+    assert_eq!(r["imported"], 1, "{r}");
+}

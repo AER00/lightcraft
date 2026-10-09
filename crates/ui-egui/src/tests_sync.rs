@@ -149,3 +149,35 @@ fn cancel_leaves_the_library_as_it_was() {
     assert_eq!(in_library(&h), vec!["a.png", "b.png"]);
     assert!(h.app.session.folder_changes.is_none(), "the scan is let go");
 }
+
+#[test]
+fn an_agents_scan_is_kept_between_frames() {
+    let dir = Scratch::new("agent");
+    let mut h = changed_folder(&dir);
+    let r = h.request("engine.execute", json!({"command": "folder.scanChanges", "params": {"path": dir.path("trip")}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    for _ in 0..5 {
+        h.step();
+    }
+    assert!(h.app.session.folder_changes.is_some(), "the app doesn't drop a scan it didn't make");
+}
+
+#[test]
+fn a_scan_gone_stale_in_the_dialog_is_made_again_in_the_background() {
+    let dir = Scratch::new("restale");
+    let mut h = changed_folder(&dir);
+    open_and_scan(&mut h, &dir.path("trip"));
+    // a photo of the folder changes while the dialog is open
+    let a = h.app.session.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
+    let r = h.request("engine.execute", json!({"command": "photo.rate", "params": {"ids": [a.0], "rating": 3}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert_eq!(r["ok"], false, "not done on a stale scan: {r}");
+    assert_eq!(in_library(&h), vec!["a.png", "b.png"]);
+    assert!(matches!(h.app.ui.dialog, Some(Dialog::SynchronizeFolder { .. })), "the dialog stays open");
+    let rescanned = h.step_until(T, |h| matches!(&h.app.ui.dialog, Some(Dialog::SynchronizeFolder { counts: Some(_), .. })));
+    assert!(rescanned, "and scans again");
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(in_library(&h), vec!["a.png", "b.png", "c.png"]);
+}

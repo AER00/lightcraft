@@ -245,6 +245,8 @@ pub struct LightcraftApp {
     pub scan: Option<import::ScanTask>,
     /// A Synchronize Folder scan in progress (feeds its dialog).
     pub sync: Option<sync::SyncTask>,
+    /// `session.folder_changes` came from the Synchronize Folder dialog (and goes with it).
+    pub sync_owns_changes: bool,
     /// A Lightroom catalog inspect/import in progress.
     pub lightroom: Option<lightroom_import::LightroomTask>,
     /// Last terminal Lightroom result, exposed by the command's status/wait response.
@@ -317,6 +319,7 @@ impl LightcraftApp {
             import: None,
             scan: None,
             sync: None,
+            sync_owns_changes: false,
             lightroom: None,
             lightroom_last: None,
             export: None,

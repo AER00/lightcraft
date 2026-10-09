@@ -881,6 +881,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         | Dialog::NewAlbum { .. }
                         | Dialog::NewSmartAlbum { .. }
                         | Dialog::SmartRules { .. }
+                        | Dialog::SynchronizeFolder { .. }
                 ) =>
             {
                 app.toast(ctx, e)

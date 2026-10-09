@@ -50,12 +50,15 @@ pub fn open(app: &mut LightcraftApp, path: &str, name: &str, disk: bool) -> Resu
     Ok(())
 }
 
-/// Stop a running scan and let go of a finished one.
+/// Stop a running scan and let go of a finished one the dialog made (one an agent made with
+/// `folder.scanChanges` is the agent's).
 fn cancel(app: &mut LightcraftApp) {
     if let Some(t) = app.sync.take() {
         t.progress.cancel.store(true, Ordering::Relaxed);
     }
-    app.session.folder_changes = None;
+    if std::mem::take(&mut app.sync_owns_changes) {
+        app.session.folder_changes = None;
+    }
 }
 
 /// Collect a finished scan into the dialog (called every frame). A scan whose dialog was closed
@@ -66,7 +69,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         _ => None,
     };
     let Some(open_for) = open_for else {
-        if app.sync.is_some() || app.session.folder_changes.is_some() {
+        if app.sync.is_some() || app.sync_owns_changes {
             cancel(app);
         }
         return;
@@ -98,6 +101,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         moved: changes.moved.len(),
     };
     app.session.folder_changes = Some(changes);
+    app.sync_owns_changes = true;
     if let Some(Dialog::SynchronizeFolder { counts, .. }) = &mut app.ui.dialog {
         *counts = Some(c);
     }
@@ -166,8 +170,17 @@ pub fn confirm(app: &mut LightcraftApp, dlg: &Dialog) -> Result<Value, String> {
     };
     let r = app.run(
         "folder.synchronize",
-        json!({"path": path, "disk": disk, "importNew": import_new, "relinkMoved": relink_moved, "removeMissing": remove_missing, "readMetadata": read_metadata}),
+        json!({"path": path, "disk": disk, "scanned": true, "importNew": import_new, "relinkMoved": relink_moved, "removeMissing": remove_missing, "readMetadata": read_metadata}),
     );
-    app.session.folder_changes = None;
+    app.sync_owns_changes = false;
+    if r.is_err() {
+        // (the folder changed since the scan, or went offline): look again, in the background
+        let (path, disk) = (path.clone(), *disk);
+        let name = match dlg {
+            Dialog::SynchronizeFolder { name, .. } => name.clone(),
+            _ => String::new(),
+        };
+        open(app, &path, &name, disk)?;
+    }
     r
 }

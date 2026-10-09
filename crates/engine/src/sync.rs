@@ -42,7 +42,6 @@ const MAX_SIDECAR_BYTES: u64 = 16 * 1024 * 1024;
 /// What a scan of a folder needs, taken from the session so it can run on a worker thread.
 pub struct SyncInput {
     folder: String,
-    revision: u64,
     scan: ScanInput,
     /// The library's photos in the folder, each with how its sidecar is named.
     photos: Vec<(Arc<Photo>, SidecarNaming)>,
@@ -73,9 +72,10 @@ pub struct FolderChanges {
     /// The probes of the new files, kept for the import that follows.
     #[serde(skip)]
     probes: HashMap<String, ProbeInfo>,
-    /// The catalog revision the scan was made against.
+    /// The folder's photos as the scan saw them: the scan is current while they are the same
+    /// records (any change to one replaces it in the catalog).
     #[serde(skip)]
-    revision: u64,
+    seen: Vec<Arc<Photo>>,
 }
 
 /// A photo of the folder and its file.
@@ -147,7 +147,7 @@ impl SyncInput {
         }
         let photos = ids.iter().filter_map(|id| s.catalog.photo(*id).map(|p| (Arc::clone(p), s.sidecar_naming(*id)))).collect();
         let (scan, _) = ScanInput::new(s, &[path.to_string()]);
-        Ok(SyncInput { folder: path.to_string(), revision: s.catalog.revision, scan, photos, labels: s.catalog.clone() })
+        Ok(SyncInput { folder: path.to_string(), scan, photos, labels: s.catalog.clone() })
     }
 }
 
@@ -157,9 +157,10 @@ impl SyncInput {
 /// the look for new files (which probes them on its own threads) beside the checks of the
 /// library's photos, which run on several threads too. Stops early when `progress.cancel` is set.
 pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
-    let SyncInput { folder, revision, scan, photos, labels } = input;
+    let SyncInput { folder, scan, photos, labels } = input;
+    let seen: Vec<Arc<Photo>> = photos.iter().map(|(p, _)| Arc::clone(p)).collect();
     if !cfg!(target_arch = "wasm32") && !Path::new(&folder).is_dir() {
-        return FolderChanges { path: folder, revision, offline: true, ..Default::default() };
+        return FolderChanges { path: folder, seen, offline: true, ..Default::default() };
     }
     // (no threads on the web: one after the other there)
     #[cfg(target_arch = "wasm32")]
@@ -173,7 +174,7 @@ pub fn scan_with(input: SyncInput, progress: &ScanProgress) -> FolderChanges {
         // (a check that panicked counts as nothing found; the scan still reports the rest)
         (out, checks.join().unwrap_or_default())
     });
-    let mut changes = FolderChanges { path: folder, revision, ..Default::default() };
+    let mut changes = FolderChanges { path: folder, seen, ..Default::default() };
     for ((p, _), check) in photos.iter().zip(checks) {
         let Some(file) = crate::cmd::missing::checked_path(p) else { continue };
         let found = FolderPhoto { id: p.id.0, path: file.to_string() };
@@ -290,12 +291,21 @@ fn not_there(path: &str) -> EngineError {
 }
 
 impl Session {
-    /// The last scan ([`Session::folder_changes`]) if it is of folder `path` and nothing changed
-    /// in the library since: what the person was shown is what gets done. Used once.
+    /// The last scan ([`Session::folder_changes`]) if it is of folder `path` and still current:
+    /// the folder holds the same photos, none of them changed. What the person was shown is what
+    /// gets done. Used once. (Changes elsewhere in the library don't matter.)
     pub fn take_folder_changes(&mut self, path: &str) -> Option<FolderChanges> {
         let c = self.folder_changes.take()?;
-        let same = lightcraft_catalog::query::folder_key(&c.path) == lightcraft_catalog::query::folder_key(path);
-        (same && c.revision == self.catalog.revision).then_some(c)
+        if lightcraft_catalog::query::folder_key(&c.path) != lightcraft_catalog::query::folder_key(path) {
+            return None;
+        }
+        let f = Filter { library_folder: Some(path.to_string()), ..Default::default() };
+        let mut now: Vec<PhotoId> = self.catalog.query(&f, &Sort::default());
+        let mut then: Vec<PhotoId> = c.seen.iter().map(|p| p.id).collect();
+        now.sort();
+        then.sort();
+        let unchanged = now == then && c.seen.iter().all(|p| self.catalog.photo(p.id).is_some_and(|q| Arc::ptr_eq(p, q)));
+        unchanged.then_some(c)
     }
 }
 
