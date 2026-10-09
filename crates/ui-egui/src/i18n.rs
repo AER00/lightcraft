@@ -492,6 +492,9 @@ mod tests {
         set_language(Locale::Ja);
         assert_eq!(tr_format!("Imported {} photo{}", 12, "s"), "12枚を読み込みました");
         assert_eq!(tr_format!("Exported {ok} of {total} photo{}", "s", ok = 4, total = 12), "12枚中4枚を書き出しました");
+        set_language(Locale::Fr);
+        assert_eq!(tr_format!("Imported {} photo{}", 12, "s"), "12 photos importée(s)");
+        assert_eq!(tr_format!("Imported {} photo{}", 1, ""), "1 photo importée(s)");
         // Format specs survive translation: precision, sign, and values a language reorders.
         for language in Locale::ALL {
             set_language(*language);

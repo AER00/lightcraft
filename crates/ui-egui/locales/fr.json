@@ -1732,5 +1732,7 @@
   "Pending photo action cancelled": "Action de photo en attente annulée",
   "Pending photo action cancelled because its library or photo changed": "Action de photo en attente annulée car sa bibliothèque ou sa photo a changé",
   "ONNX model": "Modèle ONNX",
-  "commercial use subject to GPL conditions": "usage commercial soumis aux conditions de la GPL"
+  "commercial use subject to GPL conditions": "usage commercial soumis aux conditions de la GPL",
+  "Camera local tone mapping": "Mappage local des tons de l’appareil",
+  "Apply the local tone mapping stored in the raw (Apple ProRAW), as the camera renders it": "Appliquer le mappage local des tons enregistré dans le fichier raw (Apple ProRAW), comme le rend l’appareil"
 }
