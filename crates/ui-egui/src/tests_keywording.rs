@@ -86,3 +86,24 @@ fn a_chips_menu_acts_on_the_selection() {
     ask(&mut h, "ui.clickWidget", json!({"id": "keywordChipMenu:edit"}));
     assert!(matches!(&h.app.ui.dialog, Some(crate::state::Dialog::KeywordTag { editing: Some(k), .. }) if k == "Weddings"), "{:?}", h.app.ui.dialog);
 }
+
+/// The "Add keyword" box is a shared text field: right-click ▸ Paste fills it, Return gives the
+/// keywords to every selected photo, and Esc gives up what was typed.
+#[test]
+fn the_add_keyword_box_pastes_adds_and_gives_up() {
+    let (mut h, ids) = two_selected();
+    h.view.clipboard = "travel, sunset".into();
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keyword", "button": "right"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keyword:paste"}));
+    ask(&mut h, "ui.key", json!({"key": "Enter"}));
+    for id in &ids {
+        let k = keywords_of(&h, *id);
+        assert!(k.contains(&"travel".to_string()) && k.contains(&"sunset".to_string()), "{k:?}");
+    }
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keyword"}));
+    ask(&mut h, "ui.text", json!({"text": "harbour"}));
+    ask(&mut h, "ui.key", json!({"key": "Escape"}));
+    ask(&mut h, "ui.clickWidget", json!({"id": "field:keyword"}));
+    ask(&mut h, "ui.key", json!({"key": "Enter"}));
+    assert!(ids.iter().all(|id| !keywords_of(&h, *id).contains(&"harbour".to_string())), "Esc gave it up");
+}
