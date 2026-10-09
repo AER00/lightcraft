@@ -473,7 +473,16 @@ impl Catalog {
                 ops = renamed;
             }
         }
-        ops.push(Op::SetKeyword { path: to, info: Some(info) });
+        // set the attributes only when they change something: an unlisted keyword with the default
+        // ones stays unlisted
+        let now = self.keyword_info(&from).cloned();
+        let changed = match &now {
+            Some(now) => *now != info || to != from,
+            None => info != KeywordInfo::default(),
+        };
+        if changed {
+            ops.push(Op::SetKeyword { path: to, info: Some(info) });
+        }
         Ok(Op::Batch { ops })
     }
 
@@ -882,7 +891,7 @@ mod tests {
         assert_eq!(c.keyword_path("EVENTS").as_deref(), Some("Events"));
         let op = c.edit_keyword_ops("events", "Occasions", KeywordInfo::default()).unwrap();
         c.apply(op).unwrap();
-        assert_eq!(listed(&c).iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["Occasions", "Occasions|Weddings"]);
+        assert_eq!(tree_paths(&c.keyword_tree()), [("Occasions".to_string(), 0), ("Occasions|Weddings".to_string(), 0)]);
     }
 
     /// Photos in Recently Deleted don't count: a keyword only they have isn't in the tree, so it
@@ -972,6 +981,20 @@ mod tests {
         c.apply(op).unwrap();
         assert_eq!(listed(&c).iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["travel|Rome"]);
         assert_eq!(tree_paths(&c.keyword_tree())[0].0, "travel");
+    }
+
+    /// An edit that changes nothing is nothing: no listing, no undo step.
+    #[test]
+    fn an_edit_that_changes_nothing_is_nothing() {
+        let (mut c, _) = lib(&[&["beach"]]);
+        assert_eq!(c.edit_keyword_ops("beach", "beach", KeywordInfo::default()).unwrap(), Op::Batch { ops: vec![] });
+        c.apply(Op::SetKeyword { path: "beach".into(), info: Some(with_synonyms(&["shore"])) }).unwrap();
+        assert_eq!(c.edit_keyword_ops("BEACH", "beach", with_synonyms(&["shore"])).unwrap(), Op::Batch { ops: vec![] });
+        // renamed with the default attributes: the photos change, nothing is listed
+        let (mut c, _) = lib(&[&["beach"]]);
+        let op = c.edit_keyword_ops("beach", "Shore", KeywordInfo::default()).unwrap();
+        c.apply(op).unwrap();
+        assert!(listed(&c).is_empty());
     }
 
     #[test]
