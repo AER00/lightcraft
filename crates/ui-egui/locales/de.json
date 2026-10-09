@@ -2027,5 +2027,7 @@
   "Discarding smart previews": "Smart-Vorschauen werden verworfen",
   "Importing Lightroom catalog": "Lightroom-Katalog wird importiert",
   "Reading Lightroom catalog": "Lightroom-Katalog wird gelesen",
-  "Merging": "Zusammenfügen"
+  "Merging": "Zusammenfügen",
+  "Downloading model": "Modell wird heruntergeladen",
+  "Finding faces": "Gesichter werden gesucht"
 }

@@ -1872,5 +1872,7 @@
   "Discarding smart previews": "正在丢弃智能预览",
   "Importing Lightroom catalog": "正在导入 Lightroom 目录",
   "Reading Lightroom catalog": "正在读取 Lightroom 目录",
-  "Merging": "正在合并"
+  "Merging": "正在合并",
+  "Downloading model": "正在下载模型",
+  "Finding faces": "正在查找人脸"
 }

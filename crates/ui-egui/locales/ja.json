@@ -1874,5 +1874,7 @@
   "Discarding smart previews": "スマートプレビューを破棄中",
   "Importing Lightroom catalog": "Lightroom カタログを読み込み中",
   "Reading Lightroom catalog": "Lightroom カタログを読み取り中",
-  "Merging": "合成中"
+  "Merging": "合成中",
+  "Downloading model": "モデルをダウンロード中",
+  "Finding faces": "顔を検索中"
 }
