@@ -114,3 +114,36 @@ fn the_straighten_value_says_it_can_be_typed() {
         h.painted_text().iter().filter(|t| t.contains("lick")).collect::<Vec<_>>()
     );
 }
+
+/// With ⌘ held a drag draws a level line instead of rotating, so the pointer is the crosshair, not
+/// the rotation arrow.
+#[test]
+fn command_held_shows_the_straighten_crosshair() {
+    let mut h = crop_tool();
+    let img = h.app.image_rect.expect("the photo on screen");
+    h.events.push(egui::Event::ModifiersChanged(egui::Modifiers::COMMAND));
+    h.events.push(egui::Event::PointerMoved(egui::pos2(img.left() - 24.0, img.center().y)));
+    h.settle(SETTLE);
+    assert_eq!(h.last_cursor, egui::CursorIcon::Crosshair);
+    assert!(!has(&h, "cropRotateCursor"));
+}
+
+/// Rotating with the pointer at the canvas's corner keeps the angle readout on the canvas (and so
+/// on screen), rather than spilling past its edge.
+#[test]
+fn the_readout_stays_on_the_canvas() {
+    let mut h = crop_tool();
+    let img = h.app.image_rect.expect("the photo on screen");
+    let canvas = h.app.canvas_rect.expect("the canvas");
+    let corner = canvas.right_bottom() - egui::vec2(4.0, 4.0);
+    let (x, y) = ((corner.x - img.left()) / img.width(), (corner.y - img.top()) / img.height());
+    let r = h.request(
+        "ui.pointer",
+        json!({"events": [{"kind": "down", "x": x, "y": y - 0.1}, {"kind": "drag", "x": x, "y": y - 0.05}, {"kind": "drag", "x": x, "y": y}]}),
+        T,
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let readout = h.app.widgets.iter().find(|(w, _)| w == "cropAngleReadout").map(|(_, r)| *r).expect("the readout while rotating");
+    assert!(canvas.contains_rect(readout), "{readout:?} in {canvas:?}");
+}

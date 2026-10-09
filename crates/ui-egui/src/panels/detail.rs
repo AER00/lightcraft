@@ -1251,7 +1251,9 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     // while rotating, the pointer may leave the canvas: it still shows rotation and the angle
     let rotating = matches!(app.gesture, Some(Gesture::CropRotate { .. }));
     let pointer = resp.hover_pos().or_else(|| if rotating { ui.input(|i| i.pointer.latest_pos()) } else { None });
-    if let Some(hq) = pointer {
+    // with ⌘ held a drag draws a level line (the straighten crosshair, set above), not a rotation
+    let straightening = !rotating && ui.input(|i| i.modifiers.command);
+    if let Some(hq) = pointer.filter(|_| !straightening) {
         let near = handles.iter().position(|h| h.distance(hq) < 12.0).filter(|_| !rotating);
         let cursor = match near {
             Some(0 | 2) => egui::CursorIcon::ResizeNwSe,
@@ -1266,10 +1268,10 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
             }
         };
         ui.ctx().set_cursor_icon(cursor);
-        if rotating {
-            angle_readout(ui, hq, d.crop.geometry.angle);
-        }
     }
+    // the angle next to the pointer, drawn once this frame's rotation is applied (below)
+    let readout_at = pointer.filter(|_| rotating);
+    let mut shown_angle = d.crop.geometry.angle;
     // double-click inside the crop box applies the crop (same as Return / Done)
     if resp.double_clicked()
         && let Some(q) = resp.interact_pointer_pos()
@@ -1310,7 +1312,8 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
                 let c = map.screen(Point::new(0.5, 0.5));
                 let a = (q - c).angle();
                 let ang = (start_angle + (a - a0).to_degrees() as f64).clamp(-45.0, 45.0);
-                let _ = app.run("crop.straighten", json!({"angle": (ang * 100.0).round() / 100.0}));
+                shown_angle = (ang * 100.0).round() / 100.0;
+                let _ = app.run("crop.straighten", json!({"angle": shown_angle}));
             }
             _ => {}
         }
@@ -1318,6 +1321,9 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     if resp.drag_stopped() {
         app.gesture = None;
         let _ = app.run("develop.endInteraction", json!({}));
+    }
+    if let Some(at) = readout_at {
+        angle_readout(ui, at, shown_angle, map.rect);
     }
     let _ = id;
 }
@@ -1329,6 +1335,16 @@ pub(crate) fn crop_angle_label(angle: f64) -> String {
     // the slider's format turns a rounded −0.00 into "0": every zero reads as the slider at rest
     let shown = if shown == "0" { "0.00".to_string() } else { shown };
     format!("{shown}°")
+}
+
+/// Where the angle readout of `size` goes for a pointer `at`: below right of it, flipped to the
+/// left / above where that would leave `bounds`, then kept inside them.
+fn readout_rect(at: Pos2, size: egui::Vec2, bounds: Rect) -> Rect {
+    let x = if at.x + 18.0 + size.x > bounds.right() { at.x - 18.0 - size.x } else { at.x + 18.0 };
+    let y = if at.y + 14.0 + size.y > bounds.bottom() { at.y - 14.0 - size.y } else { at.y + 14.0 };
+    let x = x.clamp(bounds.left(), (bounds.right() - size.x).max(bounds.left()));
+    let y = y.clamp(bounds.top(), (bounds.bottom() - size.y).max(bounds.top()));
+    Rect::from_min_size(pos2(x, y), size)
 }
 
 /// On top of everything (the tooltip layer), so neither the photo nor a panel covers it.
@@ -1345,12 +1361,13 @@ fn rotate_cursor(ui: &egui::Ui, at: Pos2) {
     register(ui.ctx(), "cropRotateCursor", r);
 }
 
-/// While rotating: the angle, next to the pointer.
-fn angle_readout(ui: &egui::Ui, at: Pos2, angle: f64) {
+/// While rotating: the angle, next to the pointer, kept on the canvas (`bounds`): on the pointer's
+/// other side when it would run past an edge.
+fn angle_readout(ui: &egui::Ui, at: Pos2, angle: f64, bounds: Rect) {
     let t = Tokens::get(ui.ctx());
     let p = top_painter(ui, "crop-angle-readout");
     let galley = p.layout_no_wrap(crop_angle_label(angle), t.font(12.5), Color32::WHITE);
-    let rect = Rect::from_min_size(at + vec2(18.0, 14.0), galley.size() + vec2(12.0, 6.0));
+    let rect = readout_rect(at, galley.size() + vec2(12.0, 6.0), bounds);
     p.rect_filled(rect, 4.0, Color32::from_black_alpha(170));
     p.galley(rect.min + vec2(6.0, 3.0), galley, Color32::WHITE);
     register(ui.ctx(), "cropAngleReadout", rect);
