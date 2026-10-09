@@ -425,6 +425,15 @@ fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, w: usize, h: usize
     {
         return Rect::new(*x as usize, *y as usize, *cw as usize, *ch as usize).clipped(w, h);
     }
+    // The standard default crop is in raw-array coordinates. SonyCropTopLeft can instead start at
+    // zero after sensor margins (e.g. ILCE-7RM4A: x=0 versus DefaultCropOrigin x=32). Prefer the
+    // explicit standard origin so the image and its embedded distortion share the correct centre.
+    if let (Some([x, y]), Some([cw, ch])) = (raw.u64s(CROP_TOP_LEFT).as_deref(), raw.u64s(CROP_SIZE).as_deref())
+        && *cw > 0
+        && *ch > 0
+    {
+        return Rect::new(*x as usize, *y as usize, *cw as usize, *ch as usize).clipped(w, h);
+    }
     match mn.and_then(|m| m.ifd.u64s(MN_FULL_IMAGE_SIZE)).as_deref() {
         // only a plausible trim: never more than 64 pixels per side, never an enlargement
         Some([fh, fw]) if *fw as usize <= w && *fh as usize <= h && *fw as usize + 64 >= w && *fh as usize + 64 >= h => {
@@ -527,10 +536,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
             [(v[0] / g) as f32, 1.0, (v[3] / g) as f32]
         })
         .or_else(|| mn.as_ref().and_then(|m| tag2010_wb(&model, m.ifd.bytes(MN_TAG2010)?, m.order)));
-    let crop = match (raw.u64s(CROP_TOP_LEFT).as_deref(), raw.u64s(CROP_SIZE).as_deref()) {
-        (Some([x, y]), Some([cw, ch])) if *cw > 0 && *ch > 0 => Rect::new(*x as usize, *y as usize, *cw as usize, *ch as usize).clipped(w, h),
-        _ => default_crop(raw, mn.as_ref(), w, h),
-    };
+    let crop = default_crop(raw, mn.as_ref(), w, h);
     let mut metadata = lightcraft_meta::from_tiff(&tiff);
     metadata.width = Some(crop.width as u32);
     metadata.height = Some(crop.height as u32);
@@ -552,7 +558,10 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         // makes a neutral surface magenta. WB edits remain relative to this as-shot RGB.
         wb_multipliers: if linear_rgb { Some([1.0; 3]) } else { wb },
         linearized: false,
-        opcodes: OpcodeLists::default(),
+        opcodes: OpcodeLists {
+            list3: if linear_rgb { Vec::new() } else { super::arw_lens::distortion(raw, Rect::new(0, 0, w, h), crop).into_iter().collect() },
+            ..Default::default()
+        },
         metadata,
     };
     img.validate_for(mode)?;

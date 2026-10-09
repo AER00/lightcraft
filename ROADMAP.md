@@ -36,7 +36,7 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 | User | Readiness | What blocks them |
 |---|---:|---|
 | JPEG / DNG shooter, single machine | ~85% | Fidelity polish, AI masks |
-| Nikon / Sony / Panasonic / older-Canon raw shooter | ~65% | Camera colour fidelity and coverage (ARW, NEF and RW2 preview estimates are only a starting point); Panasonic compacts and kit zooms also miss their embedded distortion correction |
+| Nikon / Sony / Panasonic / older-Canon raw shooter | ~65% | Camera colour fidelity and coverage (ARW, NEF and RW2 preview estimates are only a starting point); embedded distortion is supported for Panasonic / Leica RW2 and Sony Bayer ARW 16-sample tables (24–105 / 200–600 tested); other lens metadata needs coverage and validation |
 | Fujifilm raw shooter | ~65% | Uncompressed and lossless/lossy compressed RAF decoded; camera colour calibration remains missing. Verified on 13 bodies, including 14/16-bit GFX; see `docs/raf-compression.md` |
 | Canon CR3 / Olympus compressed-raw shooter | ~45% | CR3 lossless Bayer and version 0x100/0x200 C-RAW develop from sensor data (M50, R100, R8 verified pixel for pixel); other CRX variants and compressed ORF open as embedded JPEG previews. Camera colour and broader model verification remain |
 | Lightroom Classic power user | ~45% | Print, Book, Map, publish, tethering |
@@ -57,7 +57,8 @@ Priorities, in order. Each points at tracker rows in [`docs/parity.md`](docs/par
    checked for plausible colour; fix per-model bugs (#85).
 4. **Render fidelity suite** (LR-BEHAV-RENDER-FIDELITY, P1): measure our output against Lightroom on the same CC0 raws
    (references stay in the local `plan/`), then tune against the numbers.
-5. **Lens profiles of our own** (LR-EDIT-OPTICS-PROFILE, P1).
+5. **Lens profiles of our own** (LR-EDIT-OPTICS-PROFILE, P1): DNG, Panasonic / Leica RW2 and Sony Bayer ARW
+   embedded distortion are supported; broaden validation and decode remaining vignetting / lateral CA metadata.
 6. **AI model strategy** (maintainer decision): which permissively licensed models (or our own training) for
    segmentation masks and denoise. Bayer denoise inference is implemented in pure Rust with an opt-in GPL model; release policy and independently licensed weights remain open. Unblocks M12 and Enhance. Face detection and recognition run on our own checked Rust engine. Object / Describe masks now
    run Meta's SAM 3 in pure Rust (optional, user-consented download under the non-OSI SAM License; CDN mirrors still
