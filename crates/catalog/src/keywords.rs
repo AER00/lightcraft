@@ -1196,6 +1196,23 @@ mod tests {
         );
     }
 
+    /// Photo Supreme's Formatted Vocabulary File is the same format: plain text with Windows line
+    /// ends and no byte-order mark, a top-level category in square brackets (an organizing keyword,
+    /// left out of export), keywords a tab further in at each level.
+    #[test]
+    fn a_photo_supreme_vocabulary_file_reads() {
+        let file = "[Places]\r\n\tPortugal\r\n\t\tLisbon\r\n\t\t\tAlfama\r\n\t\tPorto\r\n\tSpain\r\n\t\tSeville\r\n";
+        let read = parse_keyword_list(file).unwrap();
+        let paths: Vec<&str> = read.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(
+            paths,
+            ["Places", "Portugal", "Portugal|Lisbon", "Portugal|Lisbon|Alfama", "Portugal|Porto", "Spain", "Spain|Seville"]
+                .map(|p| if p == "Places" { p.to_string() } else { format!("Places|{p}") })
+        );
+        assert!(!read[0].1.include_on_export, "the category organizes: it isn't exported");
+        assert!(read[1..].iter().all(|(_, i)| i.include_on_export));
+    }
+
     /// A list that can't be read says which line and why, and nothing of it is taken.
     #[test]
     fn a_bad_keyword_list_says_which_line() {
