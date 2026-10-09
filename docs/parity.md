@@ -241,7 +241,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-HDR-MODE | HDR editing | P2 | ⬜ | | |
 | LR-EDIT-LIGHT-EXPOSURE | Exposure | P0 | ✅ | `ctl:light.exposure` | |
 | LR-EDIT-LIGHT-CONTRAST | Contrast | P0 | ✅ | `ctl:light.contrast` | |
-| LR-EDIT-LIGHT-HIGHLIGHTS | Highlights | P0 | ✅ | `ctl:light.highlights` | |
+| LR-EDIT-LIGHT-HIGHLIGHTS | Highlights | P0 | ✅ | `ctl:light.highlights`, `crates/raw/src/highlight.rs` | what Highlights pulls down in a raw's clipped areas is rebuilt by `highlight::reconstruct`: partly clipped pixels take the colour of the unclipped pixels around them, counted by how close to clipping they are (dark wires and branches across a bright cloud no longer tint it) and not from the few pixels next to clipping that demosaicing mixed with clipped samples, and are drawn toward neutral as more of their channels clip (none at one channel well below the others' clip, half-way at two, neutral at three, without steps); binned previews and thumbnails decide clipping per sample before averaging (`develop_binned_masked`), so a block with one clipped specular sample stays its mean instead of jumping to the clip level, which reconstruction turned into green speckles at 500 px (issue #548) |
 | LR-EDIT-LIGHT-SHADOWS | Shadows | P0 | ✅ | `ctl:light.shadows` | |
 | LR-EDIT-LIGHT-WHITES | Whites | P0 | ✅ | `ctl:light.whites` | |
 | LR-EDIT-LIGHT-BLACKS | Blacks | P0 | ✅ | `ctl:light.blacks` | |
