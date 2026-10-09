@@ -1918,7 +1918,6 @@
   "can't match any rating from 0 to 5": "passt zu keiner Bewertung von 0 bis 5",
   "needs an album": "braucht ein Album",
   "names an album that no longer exists": "nennt ein Album, das es nicht mehr gibt",
-  "can't test a smart album; choose a plain album": "kann kein Smart-Album prüfen; wähle ein normales Album",
   "can't test a folder; choose an album in it": "kann keinen Ordner prüfen; wähle ein Album darin",
   "This group is empty: add a rule or remove it.": "Diese Gruppe ist leer: Füge eine Regel hinzu oder entferne sie.",
   "needs something to look for (or use “are empty”)": "braucht einen Suchbegriff (oder „sind leer“)",
@@ -1931,5 +1930,6 @@
   "Fr": "Fr",
   "Sa": "Sa",
   "Su": "So",
-  "Pick a date": "Datum wählen"
+  "Pick a date": "Datum wählen",
+  "would make this album include itself through other smart albums": "würde dieses Album über andere Smart-Alben sich selbst enthalten lassen"
 }

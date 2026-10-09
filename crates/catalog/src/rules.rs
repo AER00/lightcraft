@@ -193,7 +193,7 @@ pub enum Issue {
     NoRatingMatches,
     ChooseAlbum,
     NoSuchAlbum,
-    SmartAlbum,
+    AlbumLoop,
     FolderAlbum,
     EmptyGroup,
 }
@@ -220,7 +220,7 @@ impl Issue {
         Issue::NoRatingMatches,
         Issue::ChooseAlbum,
         Issue::NoSuchAlbum,
-        Issue::SmartAlbum,
+        Issue::AlbumLoop,
         Issue::FolderAlbum,
         Issue::EmptyGroup,
     ];
@@ -248,7 +248,7 @@ impl Issue {
             Issue::NoRatingMatches => "can't match any rating from 0 to 5",
             Issue::ChooseAlbum => "needs an album",
             Issue::NoSuchAlbum => "names an album that no longer exists",
-            Issue::SmartAlbum => "can't test a smart album; choose a plain album",
+            Issue::AlbumLoop => "would make this album include itself through other smart albums",
             Issue::FolderAlbum => "can't test a folder; choose an album in it",
             Issue::EmptyGroup => "This group is empty: add a rule or remove it.",
         }
@@ -259,7 +259,7 @@ impl Issue {
 type Found = Option<(Issue, String)>;
 
 /// What is wrong with one rule, if anything ([`RuleSet::check`]).
-fn field_problem(field: &str, op: &str, value: &Value, cat: &Catalog) -> Found {
+fn field_problem(field: &str, op: &str, value: &Value, cat: &Catalog, owner: Option<crate::AlbumId>) -> Found {
     let Some(kind) = field_kind(field) else { return Some((Issue::UnknownField, format!("unknown field `{field}`"))) };
     if !ops_for(kind).iter().any(|o| o.0 == op) {
         return Some((Issue::NoSuchOperator, format!("`{field}` has no operator `{op}`")));
@@ -269,7 +269,7 @@ fn field_problem(field: &str, op: &str, value: &Value, cat: &Catalog) -> Found {
     }
     match kind {
         Kind::Bool => bool_value(value).is_none().then(|| (Issue::NotYesNo, format!("`{field}` is yes or no, not {value}"))),
-        Kind::Album => album_problem(value, cat),
+        Kind::Album => album_problem(value, cat, owner),
         Kind::Number => {
             let each = match value {
                 Value::Array(a) if op == "between" && a.len() == 2 => a.iter().find_map(|v| number_problem(field, v)),
@@ -317,15 +317,18 @@ pub fn album_rule_id(value: &Value) -> Option<crate::AlbumId> {
     number(value).filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0).map(|n| crate::AlbumId(n as u64))
 }
 
-/// An Album rule's value: an album that exists and holds photos itself (not a smart album, not a
-/// folder of albums).
-fn album_problem(v: &Value, cat: &Catalog) -> Found {
+/// An Album rule's value: an album that exists and holds photos (a plain or a smart album, not a
+/// folder of albums), and, for the rules of `owner`, not one that leads back to it (a smart album
+/// testing itself, directly or through others).
+fn album_problem(v: &Value, cat: &Catalog, owner: Option<crate::AlbumId>) -> Found {
     if v.is_null() {
         return Some((Issue::ChooseAlbum, "choose an album".into()));
     }
     match album_rule_id(v).and_then(|id| cat.album(id)) {
         None => Some((Issue::NoSuchAlbum, format!("no album {v}"))),
-        Some(a) if a.is_smart() => Some((Issue::SmartAlbum, format!("album {v} is a smart album; only plain albums can be tested"))),
+        Some(a) if owner.is_some_and(|o| a.id == o || cat.album_reaches(a.id, o)) => {
+            Some((Issue::AlbumLoop, format!("album {v} would make this album include itself")))
+        }
         Some(a) if a.folder => Some((Issue::FolderAlbum, format!("album {v} is a folder; choose an album in it"))),
         Some(_) => None,
     }
@@ -403,6 +406,41 @@ fn choice_problem(field: &str, value: &Value, choices: &[(&str, &str)], cat: &Ca
     });
     let ids: Vec<&str> = choices.iter().map(|c| c.0).collect();
     (!known).then(|| (Issue::NotAChoice, format!("`{field}` is one of {}, not {value}", ids.join(", "))))
+}
+
+thread_local! {
+    /// The smart albums whose rules are being evaluated on this thread, outermost first.
+    static EVALUATING: std::cell::RefCell<Vec<crate::AlbumId>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// How deep smart albums may test smart albums before the innermost counts as holding nothing.
+const MAX_ALBUM_DEPTH: usize = 32;
+
+/// Run `f` as the evaluation of smart album `id`'s rules: `None` (so it holds nothing) when `id`
+/// is already being evaluated (a loop the check would refuse, saved anyway) or the chain is
+/// deeper than [`MAX_ALBUM_DEPTH`]. Loops cost one pass round them, never a stack overflow.
+pub(crate) fn evaluating<T>(id: crate::AlbumId, f: impl FnOnce() -> T) -> Option<T> {
+    let entered = EVALUATING.with_borrow_mut(|stack| {
+        let ok = !stack.contains(&id) && stack.len() < MAX_ALBUM_DEPTH;
+        if ok {
+            stack.push(id);
+        }
+        ok
+    });
+    if !entered {
+        return None;
+    }
+    // leaves the stack as it was, however `f` ends
+    struct Leave;
+    impl Drop for Leave {
+        fn drop(&mut self) {
+            EVALUATING.with_borrow_mut(|stack| {
+                stack.pop();
+            });
+        }
+    }
+    let _leave = Leave;
+    Some(f())
 }
 
 /// What a yes/no rule's value means: `true`, `"yes"`, `1` (or `1.0`) or no value is yes; `false`,
@@ -786,7 +824,8 @@ impl Rule {
             "bestOfGroup" => yes(p.analysis.is_some_and(|a| a.best || a.group.is_none())),
             "album" => {
                 let id = album_rule_id(value);
-                id.is_some_and(|a| cat.album(a).is_some_and(|al| !al.is_smart()) && cat.album_contains(a, p)) == (op == "is")
+                // a smart album's photos are its matches; one being evaluated (a loop) holds none
+                id.is_some_and(|a| cat.album_contains(a, p)) == (op == "is")
             }
             _ => false,
         }
@@ -832,21 +871,40 @@ impl RuleSet {
     /// no, a plain album…), text with nothing to look for, an empty group. Commands refuse a rule
     /// set with problems; the editor shows them. `cat` knows the albums and colour-label names.
     pub fn check(&self, cat: &Catalog) -> Vec<Problem> {
+        self.check_for(cat, None)
+    }
+
+    /// [`RuleSet::check`] for the rules of smart album `owner` (`None`: a new album or a filter),
+    /// which also refuses an Album rule that would make `owner` include itself.
+    pub fn check_for(&self, cat: &Catalog, owner: Option<crate::AlbumId>) -> Vec<Problem> {
         let mut out = Vec::new();
-        self.check_into(cat, &mut Vec::new(), &mut out);
+        self.check_into(cat, owner, &mut Vec::new(), &mut out);
         out
     }
 
-    fn check_into(&self, cat: &Catalog, path: &mut Vec<usize>, out: &mut Vec<Problem>) {
+    /// The albums the Album rules test, groups included, in order.
+    pub fn albums_tested(&self) -> Vec<crate::AlbumId> {
+        let mut out = Vec::new();
+        for rule in &self.rules {
+            match rule {
+                Rule::Group { group } => out.extend(group.albums_tested()),
+                Rule::Field { field, value, .. } if field == "album" => out.extend(album_rule_id(value)),
+                Rule::Field { .. } => {}
+            }
+        }
+        out
+    }
+
+    fn check_into(&self, cat: &Catalog, owner: Option<crate::AlbumId>, path: &mut Vec<usize>, out: &mut Vec<Problem>) {
         for (i, rule) in self.rules.iter().enumerate() {
             path.push(i);
             match rule {
                 Rule::Group { group } if group.rules.is_empty() => {
                     out.push(Problem { path: path.clone(), field: None, issue: Issue::EmptyGroup, message: "an empty group".into() })
                 }
-                Rule::Group { group } => group.check_into(cat, path, out),
+                Rule::Group { group } => group.check_into(cat, owner, path, out),
                 Rule::Field { field, op, value } => {
-                    if let Some((issue, message)) = field_problem(field, op, value, cat) {
+                    if let Some((issue, message)) = field_problem(field, op, value, cat, owner) {
                         out.push(Problem { path: path.clone(), field: Some(field.clone()), issue, message });
                     }
                 }
@@ -1327,10 +1385,10 @@ mod tests {
         ok(r("title", "isEmpty", json!(null)));
         bad(r("title", "contains", json!("  ")), "something to look for");
         bad(r("keywords", "startsWith", json!("")), "something to look for");
-        // albums: a plain album that exists
+        // albums: one that exists, plain or smart
         ok(r("album", "is", json!(1)));
         bad(r("album", "is", json!(999)), "no album 999");
-        bad(r("album", "is", json!(2)), "smart album");
+        ok(r("album", "is", json!(2)));
         // groups: an empty one is a mistake; problems inside one say where they are
         let p = rs(json!({"rules": [r("rating", "gte", json!(3)), {"group": {"match": "any", "rules": []}}]})).check(&cat);
         assert_eq!(p.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["rule 2: an empty group".to_string()]);

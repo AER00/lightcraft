@@ -1763,7 +1763,6 @@
   "can't match any rating from 0 to 5": "no coincide con ninguna valoración de 0 a 5",
   "needs an album": "necesita un álbum",
   "names an album that no longer exists": "indica un álbum que ya no existe",
-  "can't test a smart album; choose a plain album": "no puede comprobar un álbum inteligente; elige un álbum normal",
   "can't test a folder; choose an album in it": "no puede comprobar una carpeta; elige un álbum dentro",
   "This group is empty: add a rule or remove it.": "Este grupo está vacío: añade una regla o quítalo.",
   "needs something to look for (or use “are empty”)": "necesita algo que buscar (o usa «están vacíos»)",
@@ -1776,5 +1775,6 @@
   "Fr": "Vi",
   "Sa": "Sá",
   "Su": "Do",
-  "Pick a date": "Elegir una fecha"
+  "Pick a date": "Elegir una fecha",
+  "would make this album include itself through other smart albums": "haría que este álbum se incluyera a sí mismo a través de otros álbumes inteligentes"
 }

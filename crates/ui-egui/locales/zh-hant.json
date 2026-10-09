@@ -1763,7 +1763,6 @@
   "can't match any rating from 0 to 5": "不符合 0 到 5 的任何評分",
   "needs an album": "需要選擇相簿",
   "names an album that no longer exists": "指定的相簿已不存在",
-  "can't test a smart album; choose a plain album": "無法判斷智慧型相簿；請選擇一般相簿",
   "can't test a folder; choose an album in it": "無法判斷資料夾；請選擇其中的相簿",
   "This group is empty: add a rule or remove it.": "此群組為空：請新增規則或將其移除。",
   "needs something to look for (or use “are empty”)": "需要要尋找的內容（或使用「為空」）",
@@ -1776,5 +1775,6 @@
   "Fr": "五",
   "Sa": "六",
   "Su": "日",
-  "Pick a date": "選擇日期"
+  "Pick a date": "選擇日期",
+  "would make this album include itself through other smart albums": "會透過其他智慧型相簿讓此相簿包含自身"
 }

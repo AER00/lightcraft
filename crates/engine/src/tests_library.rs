@@ -571,3 +571,49 @@ fn album_list_reports_problems() {
     s.execute("album.delete", &serde_json::json!({"id": trip})).unwrap();
     assert_eq!(find(&mut s)["problems"], serde_json::json!([format!("rule 1: no album {trip}")]));
 }
+
+/// "Travel" = keywords contain travel, but not in "Excluded Photos" (red or rejected): the counts
+/// follow, and Excluded Photos can't then test Travel back (a loop).
+#[test]
+fn smart_album_excluding_a_smart_album() {
+    let mut s = crate::Session::with_demo();
+    let excluded = s
+        .execute(
+            "album.createSmart",
+            &serde_json::json!({"name": "Excluded Photos", "rules": {"ruleSet": {"match": "any", "rules": [
+                {"field": "label", "op": "is", "value": "red"}, {"field": "flag", "op": "is", "value": "reject"}]}}}),
+        )
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let keyword = s.catalog.photos().flat_map(|p| p.meta.keywords.clone()).next().expect("a demo keyword");
+    let travel = s
+        .execute(
+            "album.createSmart",
+            &serde_json::json!({"name": "Travel", "rules": {"ruleSet": {"rules": [
+                {"field": "keywords", "op": "contains", "value": keyword}, {"field": "album", "op": "isNot", "value": excluded}]}}}),
+        )
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let count = |s: &crate::Session| s.catalog.album_count(lightcraft_catalog::AlbumId(travel));
+    let want = |s: &crate::Session| {
+        s.catalog
+            .photos()
+            .filter(|p| !p.deleted && p.meta.keywords.iter().any(|k| k.to_lowercase().contains(&keyword.to_lowercase())))
+            .filter(|p| p.label != Some(lightcraft_catalog::ColorLabel::Red) && p.flag != lightcraft_catalog::Flag::Reject)
+            .count()
+    };
+    assert_eq!(count(&s), want(&s));
+    // reject one of Travel's photos: it leaves Travel
+    let before = count(&s);
+    let id = s.catalog.photos().find(|p| s.catalog.album_contains(lightcraft_catalog::AlbumId(travel), p)).map(|p| p.id).expect("a travel photo");
+    s.execute("photo.flag", &serde_json::json!({"ids": [id.0], "flag": "reject"})).unwrap();
+    assert_eq!(count(&s), before - 1);
+    // Excluded Photos testing Travel back would include itself
+    let looped = s.execute(
+        "album.setRules",
+        &serde_json::json!({"id": excluded, "rules": {"ruleSet": {"rules": [{"field": "album", "op": "is", "value": travel}]}}, "replace": true}),
+    );
+    assert!(looped.is_err_and(|e| e.to_string().contains("would make this album include itself")), "a loop is refused");
+}

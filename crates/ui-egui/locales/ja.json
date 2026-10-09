@@ -1767,7 +1767,6 @@
   "can't match any rating from 0 to 5": "0〜5 のどの評価にも一致しません",
   "needs an album": "アルバムを選択してください",
   "names an album that no longer exists": "存在しないアルバムが指定されています",
-  "can't test a smart album; choose a plain album": "スマートアルバムは判定できません。通常のアルバムを選択してください",
   "can't test a folder; choose an album in it": "フォルダーは判定できません。中のアルバムを選択してください",
   "This group is empty: add a rule or remove it.": "このグループは空です。条件を追加するか、グループを削除してください。",
   "needs something to look for (or use “are empty”)": "検索する語句が必要です（または「が空」を使用）",
@@ -1780,5 +1779,6 @@
   "Fr": "金",
   "Sa": "土",
   "Su": "日",
-  "Pick a date": "日付を選択"
+  "Pick a date": "日付を選択",
+  "would make this album include itself through other smart albums": "ほかのスマートアルバムを通じて、このアルバム自身を含むことになります"
 }

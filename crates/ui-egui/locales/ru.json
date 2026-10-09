@@ -1435,7 +1435,6 @@
   "can't match any rating from 0 to 5": "не подходит ни к одной оценке от 0 до 5",
   "needs an album": "нужен альбом",
   "names an album that no longer exists": "указан альбом, которого больше нет",
-  "can't test a smart album; choose a plain album": "нельзя проверять смарт-альбом; выберите обычный альбом",
   "can't test a folder; choose an album in it": "нельзя проверять папку; выберите альбом в ней",
   "This group is empty: add a rule or remove it.": "Эта группа пуста: добавьте условие или удалите её.",
   "needs something to look for (or use “are empty”)": "нужно указать, что искать (или выберите «пусты»)",
@@ -1468,5 +1467,6 @@
   "Fr": "Пт",
   "Sa": "Сб",
   "Su": "Вс",
-  "Pick a date": "Выбрать дату"
+  "Pick a date": "Выбрать дату",
+  "would make this album include itself through other smart albums": "альбом включал бы сам себя через другие смарт-альбомы"
 }

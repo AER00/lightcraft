@@ -816,7 +816,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     return Err(bad("album.createSmart", "empty name"));
                 }
                 let rules = match p.get("rules") {
-                    Some(r) => merge_rules(&lightcraft_catalog::Filter::default(), r, "album.createSmart", &s.catalog)?,
+                    Some(r) => merge_rules(&lightcraft_catalog::Filter::default(), r, "album.createSmart", &s.catalog, None)?,
                     None => view_rules(s),
                 };
                 let parent = p.get("parent").and_then(Value::as_u64).map(AlbumId);
@@ -865,7 +865,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     let replace = bool_or(p, "replace", false);
                     let folder = cur.library_folder.clone();
                     let base = if replace { Default::default() } else { cur };
-                    let mut r = merge_rules(&base, p.get("rules").unwrap_or(&Value::Null), "album.setRules", &s.catalog)?;
+                    let mut r = merge_rules(&base, p.get("rules").unwrap_or(&Value::Null), "album.setRules", &s.catalog, Some(id))?;
                     // the rules dialog has no folder field: replacing its rules keeps the folder
                     // unless the call says (`libraryFolder: null`) to drop it
                     if replace && p.get("rules").and_then(|r| r.get("libraryFolder")).is_none() {
@@ -1300,10 +1300,18 @@ fn merge_filter(base: &lightcraft_catalog::Filter, patch: &Value, c: &str) -> Re
     Ok(f)
 }
 
-/// `patch` merged onto `base`, refused when its rule set has problems (`RuleSet::check`).
-fn merge_rules(base: &lightcraft_catalog::Filter, patch: &Value, c: &str, cat: &lightcraft_catalog::Catalog) -> Result<lightcraft_catalog::Filter> {
+/// `patch` merged onto `base`, refused when its rule set has problems (`RuleSet::check_for`;
+/// `owner` is the smart album the rules are for, so testing an album that leads back to it is a
+/// problem too).
+fn merge_rules(
+    base: &lightcraft_catalog::Filter,
+    patch: &Value,
+    c: &str,
+    cat: &lightcraft_catalog::Catalog,
+    owner: Option<AlbumId>,
+) -> Result<lightcraft_catalog::Filter> {
     let f = merge_filter(base, patch, c)?;
-    let problems = f.rule_set.as_ref().map(|r| r.check(cat)).unwrap_or_default();
+    let problems = f.rule_set.as_ref().map(|r| r.check_for(cat, owner)).unwrap_or_default();
     if !problems.is_empty() {
         return Err(bad(c, problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")));
     }

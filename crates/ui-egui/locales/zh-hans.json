@@ -1763,7 +1763,6 @@
   "can't match any rating from 0 to 5": "不匹配 0 到 5 的任何星级",
   "needs an album": "需要选择相册",
   "names an album that no longer exists": "指定的相册已不存在",
-  "can't test a smart album; choose a plain album": "无法判断智能相册；请选择普通相册",
   "can't test a folder; choose an album in it": "无法判断文件夹；请选择其中的相册",
   "This group is empty: add a rule or remove it.": "此组为空：请添加规则或将其删除。",
   "needs something to look for (or use “are empty”)": "需要要查找的内容（或使用“为空”）",
@@ -1776,5 +1775,6 @@
   "Fr": "五",
   "Sa": "六",
   "Su": "日",
-  "Pick a date": "选择日期"
+  "Pick a date": "选择日期",
+  "would make this album include itself through other smart albums": "会通过其他智能相册让此相册包含自身"
 }

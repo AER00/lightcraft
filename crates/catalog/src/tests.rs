@@ -476,3 +476,76 @@ fn smart_album_problems_flag_stale_rules() {
     let p = c.smart_album_problems(AlbumId(2));
     assert_eq!(p.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["rule 1: no album 1".to_string()]);
 }
+
+/// A smart album can test another smart album: "Keywords contain travel" and "Album isn't Excluded
+/// Photos" (red or rejected) leaves out the excluded photos, and follows that album's rules as they
+/// change.
+#[test]
+fn a_smart_album_can_exclude_another() {
+    let mut c = Catalog::new();
+    let smart = |id: u64, name: &str, rules: serde_json::Value| {
+        let f: Filter = serde_json::from_value(serde_json::json!({"ruleSet": rules})).unwrap();
+        Album { smart: Some(Box::new(f)), ..Album::new(AlbumId(id), name) }
+    };
+    c.apply(Op::AddAlbum {
+        album: smart(
+            1,
+            "Excluded Photos",
+            serde_json::json!({"match": "any", "rules": [
+            {"field": "label", "op": "is", "value": "red"}, {"field": "flag", "op": "is", "value": "reject"}]}),
+        ),
+    })
+    .unwrap();
+    let travel = |c: &mut Catalog, name: &str, label: Option<ColorLabel>, flag: Flag| {
+        let id = c.alloc_photo_id();
+        let mut p = Photo::new(id, Source::Demo { scene: 1 }, name, "JPEG", 6000, 4000, "2026-09-30T10:00:00");
+        p.meta.keywords = vec!["travel".into()];
+        p.label = label;
+        p.flag = flag;
+        c.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        id
+    };
+    let keep = travel(&mut c, "keep.jpg", None, Flag::Pick);
+    let red = travel(&mut c, "red.jpg", Some(ColorLabel::Red), Flag::None);
+    let rejected = travel(&mut c, "rejected.jpg", None, Flag::Reject);
+    let rules: RuleSet = serde_json::from_value(serde_json::json!({"rules": [
+        {"field": "keywords", "op": "contains", "value": "travel"}, {"field": "album", "op": "isNot", "value": 1}]}))
+    .unwrap();
+    assert!(rules.check(&c).is_empty(), "a smart album can be tested: {:?}", rules.check(&c));
+    let matched = |c: &Catalog| c.photos().filter(|p| rules.matches(p, c)).map(|p| p.id).collect::<Vec<_>>();
+    assert_eq!(matched(&c), vec![keep]);
+    // "is" works the other way round
+    let inside: RuleSet = serde_json::from_value(serde_json::json!({"rules": [{"field": "album", "op": "is", "value": 1}]})).unwrap();
+    assert_eq!(c.photos().filter(|p| inside.matches(p, &c)).count(), 2);
+    let _ = (red, rejected);
+}
+
+/// An album can't include itself, directly or through other smart albums: the check refuses the
+/// loop for the album being edited, and a loop saved anyway (an older version, a hand-edited file)
+/// neither recurses forever nor crashes; it is reported and its rule matches nothing.
+#[test]
+fn smart_album_loops_are_refused_and_survived() {
+    let mut c = Catalog::new();
+    let refers = |to: u64| -> Filter {
+        serde_json::from_value(serde_json::json!({"ruleSet": {"rules": [{"field": "album", "op": "isNot", "value": to}]}})).unwrap()
+    };
+    let smart = |id: u64, f: Filter| Album { smart: Some(Box::new(f)), ..Album::new(AlbumId(id), "S") };
+    // A → B → C
+    c.apply(Op::AddAlbum { album: smart(3, Filter::default()) }).unwrap();
+    c.apply(Op::AddAlbum { album: smart(2, refers(3)) }).unwrap();
+    c.apply(Op::AddAlbum { album: smart(1, refers(2)) }).unwrap();
+    let rules = |to: u64| refers(to).rule_set.unwrap();
+    assert!(rules(1).check_for(&c, Some(AlbumId(3))).iter().any(|p| p.issue == crate::rules::Issue::AlbumLoop), "C → A closes A → B → C → A");
+    assert!(rules(3).check_for(&c, Some(AlbumId(3))).iter().any(|p| p.issue == crate::rules::Issue::AlbumLoop), "an album testing itself");
+    assert!(rules(1).check_for(&c, None).is_empty(), "a new album can't be in a loop yet");
+    assert!(rules(3).check_for(&c, Some(AlbumId(1))).is_empty(), "A testing C again is no loop");
+    assert!(!c.album_reaches(AlbumId(3), AlbumId(1)) && c.album_reaches(AlbumId(1), AlbumId(3)));
+    // a loop saved anyway: C → A
+    c.apply(Op::SetAlbumRules { id: AlbumId(3), rules: Box::new(refers(1)) }).unwrap();
+    let id = photo(&mut c, "a.jpg", "2026-09-01T10:00:00");
+    let p = c.photo(id).unwrap().clone();
+    for a in [1, 2, 3] {
+        let _ = c.album_contains(AlbumId(a), &p); // returns, no stack overflow
+        assert!(c.smart_album_problems(AlbumId(a)).iter().any(|p| p.issue == crate::rules::Issue::AlbumLoop), "album {a} is reported");
+    }
+}

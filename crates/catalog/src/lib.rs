@@ -324,10 +324,37 @@ impl Catalog {
     /// no smart album).
     pub fn album_contains(&self, id: AlbumId, p: &Photo) -> bool {
         match self.albums.get(&id) {
-            Some(Album { smart: Some(rules), .. }) => !p.deleted && rules.matches(p, self),
+            // guarded: a smart album testing smart albums can't loop or recurse without end
+            Some(Album { smart: Some(rules), .. }) => !p.deleted && rules::evaluating(id, || rules.matches(p, self)).unwrap_or(false),
             Some(a) => a.photos.contains(&p.id),
             None => false,
         }
+    }
+
+    /// Whether smart album `from` tests `to`, directly or through the smart albums it tests (the
+    /// rules of `from` would then change when those of `to` do). Loops in saved rules end the
+    /// search, they don't repeat it.
+    pub fn album_reaches(&self, from: AlbumId, to: AlbumId) -> bool {
+        let mut seen: Vec<AlbumId> = Vec::new();
+        let mut next = vec![from];
+        while let Some(a) = next.pop() {
+            if seen.contains(&a) {
+                continue;
+            }
+            seen.push(a);
+            let tested = self
+                .albums
+                .get(&a)
+                .and_then(|al| al.smart.as_ref())
+                .and_then(|f| f.rule_set.as_ref())
+                .map(rules::RuleSet::albums_tested)
+                .unwrap_or_default();
+            if tested.contains(&to) {
+                return true;
+            }
+            next.extend(tested);
+        }
+        false
     }
 
     /// What is wrong with a saved smart album's rules now (`RuleSet::check`, after
@@ -336,7 +363,7 @@ impl Catalog {
     pub fn smart_album_problems(&self, id: AlbumId) -> Vec<rules::Problem> {
         let Some(mut rules) = self.albums.get(&id).and_then(|a| a.smart.as_ref()).and_then(|f| f.rule_set.clone()) else { return Vec::new() };
         rules.upgrade();
-        rules.check(self)
+        rules.check_for(self, Some(id))
     }
 
     /// The photos of an album: the stored list, or a smart album's current matches (id order).
