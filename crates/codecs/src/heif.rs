@@ -54,8 +54,8 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     // The decoder re-reads the container; trust its output's shape, not the probe's.
     let buf = if decoded.sixteen_bit {
         let mut v = Vec::with_capacity(decoded.data.len() / 2);
-        for pair in decoded.data.chunks_exact(2).filter_map(|p| <[u8; 2]>::try_from(p).ok()) {
-            v.push(u16::from_ne_bytes(pair));
+        for pair in decoded.data.as_chunks::<2>().0 {
+            v.push(u16::from_ne_bytes(*pair));
         }
         Buf::U16(v)
     } else {
