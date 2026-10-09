@@ -146,15 +146,15 @@ pub fn field_group(field: &str) -> Option<&'static str> {
     FIELD_GROUPS.iter().find(|g| g.1.contains(&field)).map(|g| g.0)
 }
 
-/// What a yes/no rule's value means: `true`, `"yes"`, `1` or no value is yes; `false`, `"no"`, `0`
-/// is no (strings in any case); `None` for anything else, which matches nothing.
+/// What a yes/no rule's value means: `true`, `"yes"`, `1` (or `1.0`) or no value is yes; `false`,
+/// `"no"`, `0` is no (strings in any case); `None` for anything else, which matches nothing.
 pub fn bool_value(value: &Value) -> Option<bool> {
     match value {
         Value::Bool(b) => Some(*b),
         Value::Null => Some(true),
-        Value::Number(n) => match n.as_u64() {
-            Some(1) => Some(true),
-            Some(0) => Some(false),
+        Value::Number(n) => match n.as_f64() {
+            Some(1.0) => Some(true),
+            Some(0.0) => Some(false),
             _ => None,
         },
         Value::String(s) => match s.trim().to_lowercase().as_str() {
@@ -907,13 +907,13 @@ mod tests {
     /// are yes. Anything else is reported, not silently taken as yes.
     #[test]
     fn yes_no_values() {
-        for v in [json!(true), json!("true"), json!("Yes"), json!(1), json!(null)] {
+        for v in [json!(true), json!("true"), json!("Yes"), json!(1), json!(1.0), json!(null)] {
             assert_eq!(bool_value(&v), Some(true), "{v}");
         }
-        for v in [json!(false), json!("false"), json!(" NO "), json!(0)] {
+        for v in [json!(false), json!("false"), json!(" NO "), json!(0), json!(0.0)] {
             assert_eq!(bool_value(&v), Some(false), "{v}");
         }
-        for v in [json!("maybe"), json!(2), json!([true]), json!({"x": 1})] {
+        for v in [json!("maybe"), json!(2), json!(0.5), json!(-1), json!([true]), json!({"x": 1})] {
             assert_eq!(bool_value(&v), None, "{v}");
         }
         assert_eq!((bool_label(true), bool_label(false)), ("Yes", "No"));
