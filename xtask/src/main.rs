@@ -268,7 +268,11 @@ fn cmd_ci() -> Result<(), String> {
                 run(c, "cargo clippy -p lightcraft-codecs --features heif --all-targets -- -D warnings")?;
                 let mut c = cargo();
                 c.args(["test", "-p", "lightcraft-codecs", "-p", "lightcraft-heif", "--features", "lightcraft-codecs/heif"]);
-                run(c, "cargo test -p lightcraft-codecs -p lightcraft-heif --features lightcraft-codecs/heif")
+                run(c, "cargo test -p lightcraft-codecs -p lightcraft-heif --features lightcraft-codecs/heif")?;
+                // the engine's HEIC import test, with the decoder (the workspace run checks the error)
+                let mut c = cargo();
+                c.args(["test", "-p", "lightcraft-engine", "--lib", "--features", "lightcraft-codecs/heif", "heic"]);
+                run(c, "cargo test -p lightcraft-engine --lib --features lightcraft-codecs/heif heic")
             }),
         ),
         (

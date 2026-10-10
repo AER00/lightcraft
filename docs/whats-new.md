@@ -204,6 +204,12 @@
 - HEIC / HEIF photos (iPhone and Mac) open now: the optional `lightcraft-heif` crate (heic-rs, pure Rust) behind
   codecs' `heif` feature — 8- and 10-bit, alpha, grid tiles, the container's rotation/mirror/crop, ICC, EXIF and XMP.
   Off by default (HEVC patents are the distributor's call, same as PhotoCraft); official builds pass `--features heif`.
+- HEIC colours now match libheif to within one code value (they were up to ~10 off): the HEVC stream's own
+  full-range/matrix signalling is honoured (iPhone photos are full range), chroma is upsampled like libheif, grids
+  take their tiles' ICC profile, and `imir` mirrors the way libheif writes it. Importing a HEIC reads its size from
+  the container instead of decoding it; small previews use the file's embedded thumbnail. The release packages
+  (macOS, Windows, Linux, FreeBSD, Nix) now really are built with HEIC support; a build without it reports
+  "HEIC/HEIF support isn't included in this build" for each `.heic`/`.heif` at import.
 
 ### Presets and profiles
 - Import presets from other editors: XMP presets, classic `.lrtemplate` files, "DNG presets" from mobile apps and `.zip`
