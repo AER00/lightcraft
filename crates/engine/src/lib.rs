@@ -25,6 +25,7 @@ pub mod crs_masks;
 pub mod demo;
 pub mod denoise;
 pub mod devices;
+pub mod display;
 pub mod export;
 pub mod face_download;
 #[cfg(not(target_arch = "wasm32"))]

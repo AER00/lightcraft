@@ -254,6 +254,15 @@ impl FinishParams {
             view: frame.view.map_or([0.0, 0.0, w as f32, h as f32], |v| [v.x as f32, v.y as f32, v.full_w as f32, v.full_h as f32]),
         }
     }
+
+    /// Render into a display's primaries (sRGB curve) instead of the output space, soft proof
+    /// included (see [`crate::DisplaySpace`]).
+    pub fn for_display(&mut self, d: &crate::DisplaySpace, proof: Option<crate::Proof>) {
+        self.to_out = d.from_working;
+        self.out_luma = d.luma;
+        self.out_trc = OutputTrc::Srgb;
+        self.proof = proof.map(|pr| pr.params_display(d));
+    }
 }
 
 /// The base tone map (scene → display luminance, with Contrast, Whites and Blacks) of `s`'s
@@ -271,10 +280,21 @@ pub fn base_tone(s: &DevelopSettings, info: &SourceInfo) -> ToneMap {
     }
 }
 
-pub(crate) fn finish(p: &Prepared, s: &DevelopSettings, frame: &Frame, info: &SourceInfo, space: OutputSpace, proof: Option<crate::Proof>) -> Rgba8 {
+pub(crate) fn finish(
+    p: &Prepared,
+    s: &DevelopSettings,
+    frame: &Frame,
+    info: &SourceInfo,
+    space: OutputSpace,
+    display: Option<&crate::DisplaySpace>,
+    proof: Option<crate::Proof>,
+) -> Rgba8 {
     let (w, h) = (p.img.width, p.img.height);
     let mut fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
     fp.proof = proof.map(|pr| pr.params(space));
+    if let Some(d) = display {
+        fp.for_display(d, proof);
+    }
     let trc = fp.out_trc;
     let data = finish_with(p, &fp, false, |e| match trc {
         OutputTrc::Srgb => [enc(e[0]), enc(e[1]), enc(e[2]), 255],

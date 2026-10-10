@@ -104,6 +104,12 @@
 - The catalog format is now version 4 (`Catalog.folder_records`, `Op::SetFolderRecord`). Once this version has
   opened a library, older versions refuse it, as with every format change.
 
+### Monitor profiles
+- Settings ▸ Display ▸ Choose Profile… shows photos through your monitor's ICC profile (matrix/TRC or LUT-based), so
+  colours are right on wide-gamut and calibrated displays instead of oversaturated. The Detail view renders straight
+  into the display's own gamut; thumbnails and other previews are converted to it. Histograms, the preview caches
+  and exports don't change. Agents use `app.displayProfile`. See [display profiles](display-profiles.md).
+
 ### Masking
 - Drag anywhere inside the selected radial gradient's ellipse to move it, including rotated
   ellipses and radial components in compound masks. Edge and rotation handles keep their existing

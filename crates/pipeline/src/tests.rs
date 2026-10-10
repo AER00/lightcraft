@@ -360,6 +360,46 @@ fn soft_proof_maps_into_the_proof_gamut_and_flags_what_does_not_fit() {
     assert!(red(&pro) < n, "ProPhoto holds more than sRGB");
 }
 
+/// A preview for a monitor with a display profile renders into the display's primaries: for a
+/// display that *is* a standard space, exactly what an 8-bit render into that space gives.
+#[test]
+fn display_space_renders_like_the_matching_output_space() {
+    use crate::{DisplaySpace, OutputSpace, Proof};
+    let src = scene();
+    let mut s = DevelopSettings::default();
+    s.color.saturation = 100.0;
+    s.color.vibrance = 100.0;
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let req = |space, display, proof| RenderRequest { space, display, proof, ..RenderRequest::fit(120, 120) };
+    for space in [OutputSpace::Srgb, OutputSpace::DisplayP3] {
+        let d = DisplaySpace::of(space, 7).unwrap();
+        let want = render(&src, &info, &s, &req(space, None, None)).image;
+        let got = render(&src, &info, &s, &req(OutputSpace::Srgb, Some(d), None)).image;
+        assert!(max_diff(&got, &want) <= 1, "{space:?}: {}", max_diff(&got, &want));
+    }
+    // a wide display shows the saturated colours sRGB clips
+    let srgb = render(&src, &info, &s, &req(OutputSpace::Srgb, None, None)).image;
+    let p3 = render(&src, &info, &s, &req(OutputSpace::Srgb, Some(DisplaySpace::of(OutputSpace::DisplayP3, 1).unwrap()), None)).image;
+    assert!(max_diff(&srgb, &p3) > 4);
+
+    // soft proofing on a display: the display gamut warning is about *this* display
+    let blue = |img: &lightcraft_raster::Rgba8| img.data.iter().filter(|p| p[2] == 255 && p[0] == 0 && p[1] < 80).count();
+    let pro = Some(Proof { space: OutputSpace::ProPhoto, dest_warning: false, display_warning: true });
+    let on_srgb = blue(&render(&src, &info, &s, &req(OutputSpace::Srgb, Some(DisplaySpace::of(OutputSpace::Srgb, 2).unwrap()), pro)).image);
+    let on_wide = blue(&render(&src, &info, &s, &req(OutputSpace::Srgb, Some(DisplaySpace::of(OutputSpace::Rec2020, 3).unwrap()), pro)).image);
+    assert!(on_srgb > 0 && on_wide < on_srgb, "{on_srgb} {on_wide}");
+    let plain = blue(&render(&src, &info, &s, &req(OutputSpace::Srgb, None, pro)).image);
+    assert_eq!(plain, on_srgb, "an sRGB display warns like no display profile");
+}
+
+#[test]
+fn display_space_rejects_degenerate_matrices() {
+    use crate::DisplaySpace;
+    assert!(DisplaySpace::new(lightcraft_color::Mat3([[1.0, 1.0, 0.0], [1.0, 1.0, 0.0], [0.0, 0.0, 1.0]]), 1).is_none());
+    assert!(DisplaySpace::new(lightcraft_color::Mat3([[f64::NAN, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]), 1).is_none());
+    assert!(DisplaySpace::new(lightcraft_color::Mat3::IDENTITY, 1).is_some());
+}
+
 #[test]
 fn tint_negative_is_green_and_positive_is_magenta() {
     use lightcraft_develop::WbMode;

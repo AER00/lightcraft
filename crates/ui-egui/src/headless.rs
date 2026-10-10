@@ -3007,6 +3007,97 @@ mod tests {
         assert_eq!(h.app.ui.dialog, Some(crate::state::Dialog::About), "switching tabs keeps the dialog open");
     }
 
+    /// Settings ▸ Display / `app.displayProfile`: previews are shown through the monitor profile
+    /// (the loupe rendered for the display, thumbnails converted from sRGB, the histogram still
+    /// sRGB); a file that can't be used is an error, or, as the setting, reported with previews
+    /// left sRGB.
+    #[test]
+    fn display_profile_converts_previews() {
+        use crate::render::Slot;
+        let dir = std::env::temp_dir().join(format!("lightcraft-display-ui-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p3 = dir.join("p3.icc");
+        std::fs::write(&p3, lightcraft_codecs::icc::write_named(lightcraft_codecs::NamedSpace::DisplayP3)).unwrap();
+        let bad = dir.join("bad.icc");
+        std::fs::write(&bad, b"not a profile").unwrap();
+        let (p3, bad) = (p3.to_string_lossy().to_string(), bad.to_string_lossy().to_string());
+
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        let thumb_slot =
+            |h: &Headless| h.app.renderer.textures.keys().copied().filter(|s| matches!(s, Slot::Thumb(_))).min_by_key(|s| format!("{s:?}"));
+        let ready = |h: &Headless| {
+            h.app.renderer.textures.get(&Slot::Main).is_some_and(|t| t.pixels.is_some())
+                && thumb_slot(h).is_some()
+                && !h.app.renderer.is_pending(Slot::Main)
+        };
+        assert!(h.step_until(SETTLE, ready));
+        h.settle(SETTLE);
+        let rgba = |c: &egui::ColorImage| lightcraft_raster::Rgba8 {
+            width: c.size[0],
+            height: c.size[1],
+            data: c.pixels.iter().map(|p| p.to_array()).collect(),
+        };
+        let tex = |h: &Headless, s: Slot| rgba(h.app.renderer.textures.get(&s).and_then(|t| t.pixels.clone()).as_deref().unwrap());
+        let thumb = thumb_slot(&h).unwrap();
+        let (main0, thumb0) = (tex(&h, Slot::Main), tex(&h, thumb));
+        let hist0 = h.app.renderer.textures[&Slot::Main].histogram.clone().unwrap();
+
+        // the command loads it (and keeps it as the setting); textures are made again
+        let r = h.request("engine.execute", json!({"command": "app.displayProfile", "params": {"path": p3}}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["result"]["kind"], "matrix");
+        assert_eq!(h.app.ui.settings.display_profile, p3);
+        let d = h.app.renderer.display().cloned().unwrap();
+        assert!(h.step_until(SETTLE, |h| ready(h) && h.app.renderer.textures.contains_key(&thumb)));
+        h.settle(SETTLE);
+        let (main1, thumb1) = (tex(&h, Slot::Main), tex(&h, thumb));
+        let mut want = thumb0.clone();
+        d.profile.from_srgb(&mut want).unwrap();
+        let max_diff = |a: &lightcraft_raster::Rgba8, b: &lightcraft_raster::Rgba8| {
+            a.data.iter().zip(&b.data).flat_map(|(p, q)| (0..3).map(move |k| (p[k] as i32 - q[k] as i32).abs())).max().unwrap_or(0)
+        };
+        assert_eq!((thumb1.width, thumb1.height), (thumb0.width, thumb0.height));
+        assert!(max_diff(&thumb1, &want) <= 1, "thumbnails are converted from sRGB: {}", max_diff(&thumb1, &want));
+        assert_ne!(thumb1, thumb0);
+        // the loupe: rendered for the display; colours sRGB holds look as they did
+        assert_eq!((main1.width, main1.height), (main0.width, main0.height));
+        assert_ne!(main1, main0);
+        let mut main_want = main0.clone();
+        d.profile.from_srgb(&mut main_want).unwrap();
+        let mean = main1.data.iter().zip(&main_want.data).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum::<f64>()
+            / (3 * main1.data.len()) as f64;
+        assert!(mean < 1.5, "{mean}");
+        let hist1 = h.app.renderer.textures[&Slot::Main].histogram.clone().unwrap();
+        assert_eq!(hist1.total, hist0.total, "the histogram stays sRGB");
+
+        // a bad file: an error, nothing changes
+        let r = h.request("engine.execute", json!({"command": "app.displayProfile", "params": {"path": bad}}), t);
+        assert_eq!(r["ok"], false, "{r}");
+        assert_eq!(h.app.renderer.display_id(), Some(d.id()));
+        assert_eq!(h.app.ui.settings.display_profile, p3);
+        // …chosen as the setting (Settings ▸ Display), it is reported and previews go back to sRGB
+        h.app.ui.settings.display_profile = bad.clone();
+        h.step();
+        assert!(h.app.display_error.as_deref().is_some_and(|e| e.contains("not a valid ICC profile")), "{:?}", h.app.display_error);
+        assert_eq!(h.app.renderer.display_id(), None);
+        // the Display tab shows it
+        let r = h.request("engine.execute", json!({"command": "app.settings", "params": {"tab": "display"}}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+        // none: sRGB again
+        let r = h.request("engine.execute", json!({"command": "app.displayProfile", "params": {"path": null}}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(r["result"]["path"].is_null());
+        assert!(h.app.ui.settings.display_profile.is_empty() && h.app.display_error.is_none());
+        assert!(h.step_until(SETTLE, |h| ready(h) && h.app.renderer.textures.contains_key(&thumb)));
+        h.settle(SETTLE);
+        assert_eq!(tex(&h, thumb), thumb0, "back to the sRGB thumbnail");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Settings (⌘,): tabs switch, app settings change the UI state, library settings go through
     /// the engine; the delete confirmation guards ⌫.
     #[test]
@@ -3016,7 +3107,7 @@ mod tests {
         let r = h.request("ui.key", json!({"key": ",", "cmd": true}), t);
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(h.app.ui.dialog, Some(crate::state::Dialog::Settings { tab: "general".into() }));
-        for tab in ["import", "performance", "interface", "general"] {
+        for tab in ["import", "performance", "display", "interface", "general"] {
             let r = h.request("ui.clickWidget", json!({"id": format!("button:settingsTab-{tab}")}), t);
             assert_eq!(r["ok"], true, "{tab}: {r}");
             assert_eq!(h.app.ui.dialog, Some(crate::state::Dialog::Settings { tab: tab.into() }));
