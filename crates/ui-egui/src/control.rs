@@ -340,6 +340,14 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
             ok(Value::Null)
         }
+        "ui.zoomFactor" => match f("factor") {
+            // egui's interface scale (its keyboard shortcuts are off: Cmd+= / Cmd+- zoom the photo)
+            Some(factor) if factor.is_finite() && (0.5..=3.0).contains(&factor) => {
+                ctx.set_zoom_factor(factor as f32);
+                ok(Value::Null)
+            }
+            _ => err("ui.zoomFactor: factor must be a number from 0.5 to 3"),
+        },
         "ui.screenshot" => {
             // never over a photo's original
             if let Some(Err(e)) = s("path").map(|path| app.session.check_write_target(path)) {

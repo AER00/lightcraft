@@ -42,6 +42,7 @@ mode ([mcp.md](mcp.md)) is a thin layer over this channel. Implementation:
 | `ui.set` | partial UI state, e.g. `{"view": "detail"}` | Resulting UI state |
 | `ui.dialog.confirm` / `ui.dialog.cancel` | — | Close the open dialog |
 | `ui.resize` | `{width, height}` | Resize the window |
+| `ui.zoomFactor` | `{factor}` | Set the interface scale (0.5–3; egui's zoom keys are off, Cmd+= / Cmd+- zoom the photo) |
 | `ui.screenshot` | `{path?, headless?}` | `{path, width, height}` once the frame (with finished renders) is captured. `headless: true` draws the UI on the CPU (no compositor needed); a windowed capture that gets no frame within 2 s falls back to headless automatically |
 | `engine.execute {command: "app.export", params}` | export params (see `docs/mcp.md`), plus `preset`, `dir` / `path`, `ids`, `background` | Writes the files and returns `{files}`; with `background: true` (what the Export dialog and menus use) it returns `{background: true, total}` at once and the batch runs on a worker thread — poll `ui.inspect` → `export` |
 | `ui.render` | `{id?, size?, path?}` | Render a photo (PNG to `path`), `{width, height}` |
@@ -106,7 +107,8 @@ Headless screenshot dimensions must be finite and at least one logical point, wi
 positive scale. Rounded output must be at least one pixel per edge, at most 16,384 pixels
 per edge and 64 million pixels in total. `snapshot` and `ui.resize` reject requests outside
 these limits before layout or rasterization; supplied resize dimensions must be numbers.
-UI zoom changes text and control sizes while preserving the snapshot viewport's requested
+An interface zoom (egui's zoom factor; the keyboard never changes it — ⌘= / ⌘− / ⌘0 zoom the
+photo, issue #566) changes text and control sizes while preserving the snapshot viewport's requested
 physical pixel dimensions. Later `ui.resize` requests use current egui points; validation
 and rasterization both convert them to native viewport points before rounding the output
 pixels. A native edge below one point after zooming out is valid if it rounds to at least

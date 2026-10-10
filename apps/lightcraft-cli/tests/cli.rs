@@ -236,11 +236,8 @@ fn snapshot_script_failure_exits_non_zero() {
 #[test]
 fn snapshot_ui_zoom_keeps_requested_pixel_dimensions() {
     let script = tmp("snap-ui-zoom.jsonl");
-    std::fs::write(
-        &script,
-        format!("{}\n{}\n", json!({"method": "ui.key", "params": {"key": "Plus", "cmd": true}}), json!({"method": "ui.inspect"})),
-    )
-    .unwrap();
+    std::fs::write(&script, format!("{}\n{}\n", json!({"method": "ui.zoomFactor", "params": {"factor": 1.1}}), json!({"method": "ui.inspect"})))
+        .unwrap();
     for (size, scale, expected) in [("400x240", "1", (400, 240)), ("345x200", "0.9", (311, 180))] {
         let out = tmp(&format!("snap-ui-zoom-{scale}.png"));
         let o = Command::new(BIN)

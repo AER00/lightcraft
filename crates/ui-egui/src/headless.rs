@@ -453,20 +453,14 @@ mod tests {
         {
             let mut view = HeadlessView::new();
             for frame in 0..9 {
-                let key = match frame {
-                    1 => Some(egui::Key::Plus),
-                    5 => Some(egui::Key::Minus),
-                    _ => None,
-                };
-                let mut raw = HeadlessView::raw_input(size, scale, frame as f64 / 60.0, vec![]);
-                if let Some(key) = key {
-                    let modifiers = egui::Modifiers { command: true, ..Default::default() };
-                    raw.events.push(egui::Event::ModifiersChanged(modifiers));
-                    raw.events.extend(vec![
-                        egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers },
-                        egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers },
-                    ]);
+                // the interface scale changes between frames (Cmd+Plus / Cmd+Minus are the
+                // photo's zoom, issue #566: egui's own keyboard zoom is off)
+                match frame {
+                    1 => view.ctx.set_zoom_factor(1.1),
+                    5 => view.ctx.set_zoom_factor(1.0),
+                    _ => {}
                 }
+                let raw = HeadlessView::raw_input(size, scale, frame as f64 / 60.0, vec![]);
                 view.run(raw, |ui| {
                     ui.label("UI zoom changes layout, keeping the host viewport size");
                 });
@@ -489,7 +483,8 @@ mod tests {
         app.ui.settings.gpu = false;
         let mut h = Headless::new(app, [480.0, 320.0], 2.0);
         let t = Duration::from_secs(5);
-        assert_eq!(h.request("ui.key", json!({"key": "Plus", "cmd": true}), t)["ok"], true);
+        h.view.ctx.set_zoom_factor(1.1);
+        assert_eq!(h.request("ui.inspect", json!({}), t)["ok"], true);
         assert!(h.view.ctx.zoom_factor() > 1.0);
         let main = h.view.ctx.clone();
         let screenshot = h.app.headless_screenshot(&main, true).unwrap();
@@ -506,7 +501,9 @@ mod tests {
             app.ui.settings.gpu = false;
             let mut h = Headless::new(app, [480.0, 320.0], scale);
             let t = Duration::from_secs(5);
-            assert_eq!(h.request("ui.key", json!({"key": "Plus", "cmd": true}), t)["ok"], true);
+            assert_eq!(h.request("ui.zoomFactor", json!({"factor": 1.1}), t)["ok"], true);
+            h.step();
+            assert!(h.view.ctx.zoom_factor() > 1.0);
             let native_size = resized_viewport([320.0, 240.0], scale, h.view.ctx.zoom_factor()).unwrap();
             let expected = native_viewport_pixels([native_size.x, native_size.y], scale).unwrap();
             assert_eq!(h.request("ui.resize", json!({"width": 320, "height": 240}), t)["ok"], true);
@@ -538,7 +535,8 @@ mod tests {
         app.ui.settings.gpu = false;
         let mut h = Headless::new(app, [480.0, 320.0], 0.9);
         let t = Duration::from_secs(5);
-        assert_eq!(h.request("ui.key", json!({"key": "Minus", "cmd": true}), t)["ok"], true);
+        h.view.ctx.set_zoom_factor(0.9);
+        h.step();
         assert!((h.view.ctx.zoom_factor() - 0.9).abs() < 0.001);
         assert_eq!(h.request("ui.resize", json!({"width": 150, "height": 150}), t)["ok"], true);
         assert_eq!(h.size, egui::vec2(135.0, 135.0));
