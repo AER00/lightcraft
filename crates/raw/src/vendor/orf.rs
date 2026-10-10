@@ -20,6 +20,14 @@
 //!   layout (it matches the embedded thumbnails), the maker note's entries `0x1017`/`0x1018` hold the red and
 //!   blue gain (first value, 256 = 1.0; checked against neutral areas of the thumbnail), and nothing states a
 //!   black level or an active area.
+//! - 12-bit blocks (E-300, E-500, E-330; the E-M5 Mark II and PEN-F high-resolution files): one strip of 12.8 bits
+//!   per pixel, `width * 8 / 5` bytes per row, made of 16-byte blocks. A block is 15 sample bytes followed by one
+//!   pad byte that is always zero; the 15 bytes are a little-endian 120-bit string holding ten 12-bit samples, sample
+//!   `i` at bits `[12 i, 12 i + 12)`, i.e. per byte triple `s0 = b0 | (b1 & 15) << 8`, `s1 = b1 >> 4 | b2 << 4`, left
+//!   to right. The layout was first recalled only roughly ("ten pixels, then a skipped byte"); the pad position
+//!   (last), the bit order and the pixel order were fixed by measurement on the CC0 files 2878 (E-300), 3540 (E-500)
+//!   and 3624 (E-330), as was the sensor-origin RGGB anchoring (the maker-note crop offsets are odd). The E-M5 Mark II
+//!   and PEN-F files were only checked for smoothness, not for CFA anchoring or black level.
 //! - Olympus's compressed ORF (most interchangeable-lens bodies since ~2008) is not decoded: no permissively
 //!   licensed description exists. It reports [`RawError::Unsupported`]; the embedded preview still works.
 //! - The colour-filter layout is the file's Exif `CFAPattern`: GRBG on the E-1 and E-400, RGGB on the XZ-2, where
@@ -78,6 +86,30 @@ pub(crate) fn unpack_row_le32_msb(src: &[u8], bits: u32, out: &mut [u16]) {
         })
         .collect();
     unpack_msb(&swapped, bits, out);
+}
+
+/// Unpack one row of 12-bit samples stored as 16-byte blocks: ten little-endian 12-bit fields in bytes 0..15, byte 15
+/// a pad. `src` must hold exactly `out.len() / 10` blocks (`out.len()` a multiple of 10).
+pub(crate) fn unpack_row_blocks16(src: &[u8], out: &mut [u16]) -> Result<()> {
+    if !out.len().is_multiple_of(10) || src.len() != out.len() / 10 * 16 {
+        return Err(RawError::Corrupt("ORF 12-bit block row has the wrong size".into()));
+    }
+    let (blocks, _) = src.as_chunks::<16>();
+    let (pixels, _) = out.as_chunks_mut::<10>();
+    for (block, px) in blocks.iter().zip(pixels) {
+        for k in 0..5 {
+            let (b0, b1, b2) = (block[3 * k] as u16, block[3 * k + 1] as u16, block[3 * k + 2] as u16);
+            px[2 * k] = b0 | (b1 & 15) << 8;
+            px[2 * k + 1] = b1 >> 4 | b2 << 4;
+        }
+    }
+    Ok(())
+}
+
+/// Whether the strip is the 12.8 bits per pixel block layout: a single strip, rows a whole number of 16-byte
+/// blocks of ten pixels.
+fn is_block16(w: usize, n: usize, total: u64, chunks: usize) -> bool {
+    chunks == 1 && w.is_multiple_of(10) && total.checked_mul(10) == (n as u64).checked_mul(16)
 }
 
 /// The layout found from the samples, for files without the Exif tag: GRBG when the greens sit on the main
@@ -169,6 +201,20 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     } else if total >= (n as u64) * 2 {
         let d = read_image(bytes, &info, tiff.order, Packing::Word16)?;
         (d, 16)
+    } else if is_block16(w, n, total, chunks.len()) {
+        let src = chunk_bytes(bytes, &chunks[0]).ok_or_else(|| RawError::Corrupt("ORF strip outside file".into()))?;
+        let stride = w / 10 * 16;
+        if src.len() as u64 != total || src.len() / stride != h {
+            return Err(RawError::Corrupt("ORF strip shorter than its rows".into()));
+        }
+        let d = if mode == Mode::Full || stated.is_none() {
+            let mut d = vec![0u16; n];
+            d.par_chunks_mut(w).enumerate().try_for_each(|(y, row)| unpack_row_blocks16(&src[y * stride..(y + 1) * stride], row))?;
+            d
+        } else {
+            Vec::new()
+        };
+        (RawData::U16(d), 12)
     } else if total * 8 >= (n as u64) * 12 && total * 8 < (n as u64) * 13 && chunks.len() == 1 {
         let src = chunk_bytes(bytes, &chunks[0]).ok_or_else(|| RawError::Corrupt("ORF strip outside file".into()))?;
         // the depth is fixed here, so a header-only probe needs the samples only when the file doesn't state its
@@ -538,5 +584,72 @@ mod tests {
         assert_eq!(crate::decode(&bytes).unwrap().data, RawData::U16(px));
         let bytes = orf(w as u32, h as u32, 16, vec![0; 40]);
         assert!(matches!(crate::decode(&bytes), Err(RawError::Unsupported(_))));
+    }
+
+    /// Pack samples into 16-byte blocks: ten little-endian 12-bit fields, then a zero pad byte.
+    fn pack_blocks(samples: &[u16]) -> Vec<u8> {
+        samples
+            .chunks(10)
+            .flat_map(|c| {
+                let mut v = 0u128;
+                for (i, s) in c.iter().enumerate() {
+                    v |= (*s as u128 & 0xfff) << (12 * i);
+                }
+                let mut b = v.to_le_bytes();
+                b[15] = 0;
+                b
+            })
+            .collect()
+    }
+
+    #[test]
+    fn block16_round_trip() {
+        let (w, h) = (20usize, 4usize);
+        let samples: Vec<u16> = (0..w * h).map(|i| ((i * 509 + 17) % 4096) as u16).collect();
+        let strip = pack_blocks(&samples);
+        assert_eq!(strip.len(), w * h * 16 / 10);
+        let mut out = vec![0u16; w * h];
+        for (y, row) in out.chunks_mut(w).enumerate() {
+            unpack_row_blocks16(&strip[y * 32..(y + 1) * 32], row).unwrap();
+        }
+        assert_eq!(out, samples);
+        // a known block: s0 = b0 | (b1 & 15) << 8, s1 = b1 >> 4 | b2 << 4
+        let mut px = [0u16; 10];
+        let mut blk = [0u8; 16];
+        blk[..3].copy_from_slice(&[0x21, 0x43, 0x65]);
+        unpack_row_blocks16(&blk, &mut px).unwrap();
+        assert_eq!(&px[..2], &[0x321, 0x654]);
+        // the whole file through the decoder
+        let bytes = orf_with(w as u32, h as u32, 16, strip, Some(RGGB));
+        let r = crate::decode(&bytes).unwrap();
+        assert_eq!(r.bits, 12);
+        let RawData::U16(d) = &r.data else { panic!() };
+        assert_eq!(d, &samples);
+    }
+
+    #[test]
+    fn block16_routing() {
+        assert!(is_block16(3360, 3360 * 2504, 13461504, 1));
+        assert!(!is_block16(3360, 3360 * 2504, 3360 * 2504 * 12 / 8, 1)); // XZ-2: exactly 12.0 bpp
+        assert!(!is_block16(3360, 3360 * 2504, 13461504, 2));
+        assert!(!is_block16(3365, 3365 * 100, 3365 * 100 * 16 / 10, 1));
+        // the 12.0 bpp layout still decodes through its own branch
+        let bytes = orf_with(8, 2, 12, vec![0u8; 8 * 2 * 12 / 8], Some(RGGB));
+        assert!(crate::decode(&bytes).is_ok());
+    }
+
+    #[test]
+    fn block16_short_input_is_an_error() {
+        let mut px = [0u16; 10];
+        assert!(unpack_row_blocks16(&[0u8; 15], &mut px).is_err());
+        assert!(unpack_row_blocks16(&[0u8; 32], &mut px).is_err());
+        assert!(unpack_row_blocks16(&[], &mut px).is_err());
+        let mut odd = [0u16; 7];
+        assert!(unpack_row_blocks16(&[0u8; 16], &mut odd).is_err());
+        // a truncated file never panics
+        let bytes = orf_with(20, 4, 16, pack_blocks(&[5u16; 80]), Some(RGGB));
+        for cut in [bytes.len() - 1, bytes.len() - 40, bytes.len() / 2, 100] {
+            let _ = crate::decode(&bytes[..cut]);
+        }
     }
 }
