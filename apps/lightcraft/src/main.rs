@@ -78,8 +78,16 @@ impl eframe::App for App {
         if let Err(e) = self.0.session.close_library() {
             log::error!("saving the library failed: {e}");
         }
+        // last, with everything saved: no render may be inside the GPU driver when the process ends
+        if !self.0.shutdown(EXIT_WAIT) {
+            log::warn!("quit: background work was still running after {EXIT_WAIT:?}");
+        }
     }
 }
+
+/// How long quitting waits for renders that are running (issue #620). A GPU render takes well under
+/// a second; anything slower gives way to quitting.
+const EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The window's renderer (egui-wgpu): eframe's defaults, with LightCraft's backend choice — DX12
 /// alone on Windows unless `LIGHTCRAFT_GPU_BACKEND` / `WGPU_BACKEND` say otherwise (issue #136:

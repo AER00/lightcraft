@@ -736,6 +736,23 @@ impl LightcraftApp {
         }
     }
 
+    /// The process is about to end (settings and library are saved by then): make sure nothing is
+    /// inside the GPU driver when it does (issue #620: a render running on a worker thread while
+    /// the process exits crashes in the driver). No GPU work starts from here on; the render
+    /// workers get up to `timeout` to finish their jobs, and what is left of it goes to GPU work
+    /// on other threads (export, denoise, the device warm-up). `false`: the deadline passed first
+    /// (the host exits anyway). The app renders nothing afterwards.
+    pub fn shutdown(&mut self, timeout: std::time::Duration) -> bool {
+        lightcraft_engine::gpu::begin_shutdown();
+        #[cfg(not(target_arch = "wasm32"))]
+        let t0 = std::time::Instant::now();
+        let stopped = self.renderer.shutdown(timeout);
+        #[cfg(not(target_arch = "wasm32"))]
+        let timeout = timeout.saturating_sub(t0.elapsed());
+        let idle = lightcraft_engine::gpu::wait_idle(timeout);
+        stopped && idle
+    }
+
     /// Per-frame logic before layout (control channel, renders, shortcuts, drops).
     pub fn logic(&mut self, ctx: &egui::Context) {
         i18n::set_language(self.ui.language);
