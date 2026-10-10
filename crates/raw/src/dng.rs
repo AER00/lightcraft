@@ -125,6 +125,15 @@ pub(crate) fn decode_as(bytes: &[u8], mode: Mode, format: RawFormat) -> Result<R
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
     let raw = raw_ifd(&tiff).ok_or_else(|| RawError::Corrupt("DNG without a raw image IFD".into()))?;
+    // GoPro's GPR: a DNG whose raw data is VC-5 coded, which is not decoded (yet). Named here, before
+    // the generic "TIFF compression 9" of the chunk decoder. Header mode still describes the file
+    // (a GPR has no embedded preview, and a library keeps the photo with this reason shown, as it
+    // does for any file whose pixels fail to decode, rather than refusing to import it).
+    if mode == Mode::Full
+        && let Some(c) = raw.u16(t::COMPRESSION).filter(|&c| c == t::compression::VC5)
+    {
+        return Err(RawError::Unsupported(format!("DNG compression {c} (GoPro VC-5) is not decoded yet")));
+    }
     let info = raw.image()?;
     let (w, h, cpp) = (info.width as usize, info.height as usize, info.samples_per_pixel as usize);
     if !(1..=4).contains(&cpp) {

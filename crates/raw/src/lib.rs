@@ -942,6 +942,32 @@ mod tests {
         assert_eq!(probe(&g), None);
     }
 
+    /// A GoPro GPR (a DNG with VC-5 coded raw data, Compression 9) is refused by the full decode with
+    /// a reason that names the format, whatever its tile bytes hold; the header probe still
+    /// describes it (so it imports).
+    #[test]
+    fn gopro_vc5_dng_is_unsupported_with_a_clear_reason() {
+        let mut ifd = IfdBuilder::new();
+        ifd.set(t::NEW_SUBFILE_TYPE, Value::Long(vec![0]));
+        ifd.set(t::IMAGE_WIDTH, Value::Long(vec![32]));
+        ifd.set(t::IMAGE_LENGTH, Value::Long(vec![16]));
+        ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![16]));
+        ifd.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
+        ifd.set(t::PHOTOMETRIC, Value::Short(vec![32803]));
+        ifd.set(t::COMPRESSION, Value::Short(vec![9]));
+        ifd.set(t::DNG_VERSION, Value::Byte(vec![1, 4, 0, 0]));
+        ifd.set(t::CFA_REPEAT_PATTERN_DIM, Value::Short(vec![2, 2]));
+        ifd.set(t::CFA_PATTERN_EP, Value::Byte(vec![0, 1, 1, 2]));
+        ifd.set_image(ImageData::Tiles { tile_width: 32, tile_height: 16, tiles: vec![vec![0x5au8; 400]] });
+        let bytes = write(&[ifd]);
+        assert_eq!(probe(&bytes), Some(RawFormat::Dng));
+        let want = "DNG compression 9 (GoPro VC-5) is not decoded yet";
+        let Err(RawError::Unsupported(why)) = decode(&bytes) else { panic!("expected Unsupported from decode") };
+        assert_eq!(why, want);
+        let info = probe_info(&bytes).expect("header probe describes the file");
+        assert_eq!((info.width, info.height), (32, 16));
+    }
+
     /// Compression 99 (not a registered TIFF value; Leaf MOS tiles) marks a raw even without a CFA tag.
     #[test]
     fn private_compression_99_is_a_raw() {
