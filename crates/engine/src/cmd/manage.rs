@@ -197,7 +197,11 @@ pub fn specs() -> Vec<CommandSpec> {
                         each = Some(t);
                     } else {
                         let anchor = s.active().filter(|a| targets.contains(a)).unwrap_or(targets[0]);
-                        let from = iso_seconds(&base(s, anchor)).ok_or_else(|| bad(c, "the photo's date doesn't parse"))?;
+                        let anchor_date = base(s, anchor);
+                        // An impossible calendar date cannot anchor changes to the other photos.
+                        let from = normalize_iso(anchor_date.trim().get(..10).unwrap_or(""))
+                            .and_then(|_| iso_seconds(&anchor_date))
+                            .ok_or_else(|| bad(c, "the photo's date doesn't parse"))?;
                         delta += iso_seconds(&t).unwrap_or(from) - from;
                     }
                 }
