@@ -40,6 +40,10 @@
 - Samsung SRW files without compression now open as raws: NX5, NX10, NX11, NX20, NX200, NX210, NX1000, NX1100, EX1
   and WB2000. The compressed ones (NX1, NX30, NX300, NX500, NX2000, NX3000, NX3300, NX mini) still open from their
   camera JPEG. Photos already imported pick the change up on Reload.
+- Canon CR2 raws no longer open too dark with blocked-up shadows: the black level was measured over border columns
+  that light already reaches (left of the image area Canon records), 4 % of the range too high on the EOS 6D. It is
+  now measured on the masked columns alone (8 corpus bodies, EOS 40D to 5DS R). On a 6D photo the starting render
+  moved from ΔE00 7.6 to 5.2 against Lightroom's.
 - Canon CR2 and Pentax PEF raws get the same starting look fitted to the camera's own JPEG as ARW, NEF, RW2, RAF
   and CR3, instead of opening flat and desaturated (issue #310). Photos already imported pick it up when re-rendered.
 - JPEG XL compressed DNGs (DNG 1.7) now open: lossless tiles decode sample for sample (checked on synthetic files);
