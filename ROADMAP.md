@@ -164,7 +164,8 @@ The milestone estimates in the table above were made before work started and are
   published alongside GPL code); decoder source is never read. Still open: freedom-to-operate review for local
   Laplacian filters, PatchMatch and HEVC (HEIC).
 - **Look parity** with Adobe's default rendering is tuned by eye today; the planned fidelity suite (LR-BEHAV-RENDER-FIDELITY)
-  turns it into measured comparisons against local-only Lightroom references.
+  turns it into measured comparisons against local-only Lightroom references. Retuning changes existing edits, so it
+  ships as a new process version (`docs/process-versions.md`): photos keep their look until they are updated.
 
 ## Raw format coverage and known gaps
 
