@@ -868,7 +868,8 @@ impl LightcraftApp {
                     let undo0 = app.session.undo.len();
                     app.import = Some(import::ImportTask::new(paths, params, undo0, false).auto());
                 };
-                if let Err(e) = tasks::spawn(self, LABEL, work, done) {
+                // listed every few seconds: quiet, no row in the activity stack
+                if let Err(e) = tasks::spawn(self, LABEL, None, work, done) {
                     log::warn!("{e}");
                 }
             }

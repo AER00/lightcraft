@@ -329,3 +329,34 @@ fn final_merge_shows_a_row_and_cancels() {
     assert_eq!(toast, "HDR merge cancelled");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn find_missing_shows_an_indeterminate_row() {
+    let mut h = demo();
+    let dir = std::env::temp_dir().join(format!("lc-activity-findmissing-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // run directly, not through a request (which runs frames): the search of an empty folder is over at once, but its
+    // result is applied between frames, and the row is there until then
+    let r = crate::menus::run_ui_command(&mut h.app, "file.findMissing", &json!({"folder": dir.to_string_lossy()})).unwrap().unwrap();
+    assert_eq!(r["background"], true, "{r}");
+    let rows = h.app.session.activity.list();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!((rows[0].kind, rows[0].label.as_str()), ("findMissing", "Find Missing Photos"));
+    assert_eq!((rows[0].total, rows[0].cancellable), (0, false), "indeterminate, no ✕");
+    assert!(h.step_until(T, |h| h.app.tasks.is_empty()));
+    assert!(h.app.session.activity.list().is_empty(), "the row goes with the task");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn auto_import_listing_has_no_row() {
+    let mut h = demo();
+    let dir = std::env::temp_dir().join(format!("lc-activity-autoimport-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    h.app.session.import_defaults.auto_folder = Some(dir.to_string_lossy().to_string());
+    // the watched folder is listed every few seconds, quietly
+    assert!(h.step_until(Duration::from_secs(10), |h| h.app.tasks.is_running("Auto Import")));
+    assert!(h.app.session.activity.list().is_empty(), "{:?}", h.app.session.activity.list());
+    h.app.session.import_defaults.auto_folder = None;
+    let _ = std::fs::remove_dir_all(dir);
+}
