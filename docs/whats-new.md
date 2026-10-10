@@ -4,7 +4,7 @@
 
 ### Activity stack
 - Long-running tasks show in one place, top left under the top bar, as in Lightroom Classic (issue #345): imports and
-  folder scans, exports, Build / Smart Previews, Lightroom catalog import, Photo Merge, model downloads, the face scan,
+  folder scans, exports (and the contact sheet PDF), Synchronize Folder, Build / Smart Previews, Lightroom catalog import, Photo Merge, model downloads, the face scan,
   AI Denoise and Find Missing Photos. Each row has the task's name, a progress bar, the count and what it is working
   on; ✕ stops the tasks that can stop. Three rows show, then "+N more". The separate export panel and the progress
   windows and toasts are gone.
@@ -101,7 +101,7 @@
   file is gone, photos whose file was renamed or moved within the folder, and XMP sidecars changed by other apps; then
   choose what to do: import the new photos and relink the moved ones (the defaults), move the missing ones to Recently
   Deleted, read the metadata updates. A folder on a disk that isn't connected is reported as such. Synchronizing
-  runs in the background with a progress window and Cancel; everything it does is one undo step, and no file on disk
+  runs in the background with a row in the activity stack (✕ stops it); everything it does is one undo step, and no file on disk
   is touched. Agents use `folder.scanChanges` and `folder.synchronize`.
 
 ### Folder colour labels

@@ -2029,5 +2029,7 @@
   "Reading Lightroom catalog": "Lightroom-Katalog wird gelesen",
   "Merging": "Zusammenfügen",
   "Downloading model": "Modell wird heruntergeladen",
-  "Finding faces": "Gesichter werden gesucht"
+  "Finding faces": "Gesichter werden gesucht",
+  "Synchronizing folder": "Ordner wird synchronisiert",
+  "Looking for changes": "Änderungen werden gesucht"
 }

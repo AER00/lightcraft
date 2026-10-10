@@ -216,6 +216,26 @@ mod contact_sheet_tests {
     }
 
     #[test]
+    fn contact_sheet_export_shows_a_row_and_its_cross_stops_it() {
+        let mut app = LightcraftApp::new(
+            lightcraft_engine::Session::with_demo(),
+            crate::Services { write_shared: Some(Arc::new(|_, _| Ok(()))), ..Default::default() },
+        );
+        let ids: Vec<_> = app.session.catalog.photos().take(24).map(|p| p.id.0).collect();
+        start_contact_sheet(&mut app, &json!({"path": "Sheet.pdf", "ids": ids})).unwrap();
+        let rows = app.session.activity.list();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!((rows[0].kind, rows[0].label.as_str(), rows[0].total), ("export", "Exporting contact sheet", 24));
+        assert!(rows[0].cancellable);
+        app.session.activity.cancel(rows[0].id).unwrap();
+        assert!(app.export.as_ref().unwrap().cancel.load(Ordering::Relaxed), "the stack's ✕ stops the sheet");
+        let task = app.export.take().unwrap();
+        assert!(task.rx.recv_timeout(Duration::from_secs(20)).unwrap().is_err(), "a stopped sheet is not written");
+        drop(task);
+        assert!(app.session.activity.list().is_empty(), "the row goes with the export");
+    }
+
+    #[test]
     fn cancelled_contact_sheet_never_calls_writer() {
         let mut app = LightcraftApp::new(
             lightcraft_engine::Session::with_demo(),

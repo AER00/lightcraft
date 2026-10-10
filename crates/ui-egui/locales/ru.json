@@ -1588,5 +1588,7 @@
   "Merging": "Слияние",
   "Downloading model": "Загрузка модели",
   "Finding faces": "Поиск лиц",
-  "Quit Anyway": "Всё равно выйти"
+  "Quit Anyway": "Всё равно выйти",
+  "Synchronizing folder": "Синхронизация папки",
+  "Looking for changes": "Поиск изменений"
 }

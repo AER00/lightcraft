@@ -1874,5 +1874,7 @@
   "Reading Lightroom catalog": "正在讀取 Lightroom 目錄",
   "Merging": "正在合併",
   "Downloading model": "正在下載模型",
-  "Finding faces": "正在尋找臉孔"
+  "Finding faces": "正在尋找臉孔",
+  "Synchronizing folder": "正在同步資料夾",
+  "Looking for changes": "正在尋找變更"
 }
