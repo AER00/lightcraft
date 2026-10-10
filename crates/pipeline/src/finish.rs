@@ -538,7 +538,16 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             // --- tone map on luminance, highlight desaturation
             let yl = luminance_2020(c);
             let o = tone.apply(yl);
-            let mut d = if yl > 1e-9 { c.map(|v| v * o / yl) } else { [0.0; 3] };
+            // The reference's tone stage works on the channels, not on luminance: a bright colour
+            // desaturates as its channels clip one by one. A camera look stays on luminance (see
+            // `ToneMap::per_channel`).
+            let mut d = if tone.per_channel() {
+                c.map(|v| tone.apply(v))
+            } else if yl > 1e-9 {
+                c.map(|v| v * o / yl)
+            } else {
+                [0.0; 3]
+            };
             let k = tone.chroma_scale(o);
             if k != 1.0 {
                 d = d.map(|v| o + (v - o) * k);

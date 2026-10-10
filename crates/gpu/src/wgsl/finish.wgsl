@@ -423,11 +423,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         c = calibrate(c);
     }
 
-    // --- tone map on luminance, highlight desaturation
+    // --- tone map, highlight desaturation
+    // The default raw curve acts on the channels like the reference's does; a camera look, fitted
+    // as a whole-image curve, stays on luminance (see `ToneMap::per_channel`).
     let yl = lum2020(c);
     let o = tone_apply(yl);
     var d = vec3<f32>(0.0);
-    if (yl > 1e-9) {
+    if (pu(F_PER_CHANNEL) != 0u) {
+        d = vec3<f32>(tone_apply(c.x), tone_apply(c.y), tone_apply(c.z));
+    } else if (yl > 1e-9) {
         d = c * o / yl;
     }
     let k = chroma_scale(o);

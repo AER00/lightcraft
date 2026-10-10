@@ -407,6 +407,8 @@ impl Blacks {
 pub struct ToneMap {
     lut: Vec<f32>,
     chroma: [f32; CHROMA_N],
+    /// Apply the curve to each channel, not to luminance. See [`ToneMap::per_channel`].
+    per_channel: bool,
 }
 
 impl ToneMap {
@@ -433,7 +435,7 @@ impl ToneMap {
                 whites_display(y, dew)
             })
             .collect();
-        ToneMap { lut, chroma: curve.chroma }
+        ToneMap { lut, chroma: curve.chroma, per_channel: false }
     }
     /// `contrast`, `whites` in −100..100 (Lightroom slider units). Blacks is [`Blacks`], applied
     /// separately — it is a per-channel curve over this map's output, not part of it.
@@ -476,7 +478,7 @@ impl ToneMap {
                 o.clamp(0.0, peak)
             })
             .collect();
-        ToneMap { lut, chroma: DEFAULT_CHROMA }
+        ToneMap { lut, chroma: NO_CHROMA, per_channel: true }
     }
 
     /// Tone map for display-referred sources: identity at neutral settings.
@@ -522,7 +524,23 @@ impl ToneMap {
                 o.clamp(0.0, peak)
             })
             .collect();
-        ToneMap { lut, chroma: NO_CHROMA }
+        ToneMap { lut, chroma: NO_CHROMA, per_channel: false }
+    }
+
+    /// Whether the curve is applied to each channel rather than to luminance.
+    ///
+    /// The default raw curve is, because that is what the reference's tone stage does: it acts on
+    /// the channels, so a bright colour desaturates as its channels clip one by one. Across twelve
+    /// bodies, whole-render ΔE against Lightroom falls from 3.49 to 3.13 at neutral and from 9.36
+    /// to 7.65 at Whites +100 (chroma there 0.70 → 0.88), with 8 and 10 of the twelve better. The
+    /// default curve therefore also carries no chroma curve: `DEFAULT_CHROMA` existed to put back
+    /// the saturation that mapping luminance had thrown away.
+    ///
+    /// A camera look does *not*: it is a per-file fit of the whole image, so it stays on luminance.
+    /// Forcing it per channel was measured too and is clearly worse — the same split, for the same
+    /// reason, as Whites.
+    pub fn per_channel(&self) -> bool {
+        self.per_channel
     }
 
     /// The table (`LUT_N` entries, see [`ToneMap::apply`]).
@@ -602,20 +620,38 @@ mod tests {
     }
 
     #[test]
-    fn default_raw_curve_carries_the_fitted_chroma_curve() {
-        let map = ToneMap::new(0.0, 0.0);
+    fn the_default_raw_curve_bleaches_highlights_per_channel() {
         // The reference's default rendering is punchy in the shadows and bleaches its highlights
-        // toward white, where a purely luminance-preserving curve would sit at 1.0 throughout.
-        assert!(map.chroma_scale(0.0) > 1.05, "shadows: {}", map.chroma_scale(0.0));
-        assert!(map.chroma_scale(1.0) < 0.5, "highlights: {}", map.chroma_scale(1.0));
-        let mut last = map.chroma_scale(0.0);
-        for i in 1..=100 {
-            let k = map.chroma_scale(i as f32 / 100.0);
-            assert!(k <= last + 1e-6, "falls with luminance (at {i})");
-            last = k;
-        }
+        // toward white. That used to be put back by a fitted chroma curve over a
+        // luminance-preserving map; it now comes from the map acting on the *channels*, so a
+        // bright colour loses saturation as its channels clip one by one. So the chroma curve is
+        // the identity, and the map says it is per channel.
+        let map = ToneMap::new(0.0, 0.0);
+        assert!(map.per_channel(), "the default raw curve acts on the channels");
+        assert!([0.0, 0.5, 1.0].iter().all(|o| map.chroma_scale(*o) == 1.0));
+
+        // A bright saturated colour really does lose saturation, against the luminance-preserving
+        // mapping the per-channel stage replaced.
+        let bright = [2.0f32, 1.2, 0.4];
+        let per: Vec<f32> = bright.iter().map(|v| map.apply(*v)).collect();
+        let yl = 0.2126 * bright[0] + 0.7152 * bright[1] + 0.0722 * bright[2];
+        let o = map.apply(yl);
+        let lum: Vec<f32> = bright.iter().map(|v| v * o / yl).collect();
+        let ratio = |v: &[f32]| (v[0] - v[2]) / v[0].max(1e-6);
+        assert!(ratio(&per) < ratio(&lum), "per channel must desaturate: {} vs {}", ratio(&per), ratio(&lum));
+
+        // A camera look is fitted as a whole-image curve, so it stays on luminance -- forcing it
+        // per channel was measured and is clearly worse.
+        let knots = std::array::from_fn(|i| {
+            let x = 0.005 * 1.15f32.powi(i as i32);
+            [x, 1.0 - (-3.0 * x).exp()]
+        });
+        let curve = CameraTone::new(knots).unwrap();
+        assert!(!ToneMap::camera(&curve, 0.0, 0.0).per_channel());
         // A display-referred source still renders exactly as the file.
-        assert!([0.0, 0.5, 1.0].iter().all(|o| ToneMap::display(0.0, 0.0, 0.0).chroma_scale(*o) == 1.0));
+        let disp = ToneMap::display(0.0, 0.0, 0.0);
+        assert!(!disp.per_channel());
+        assert!([0.0, 0.5, 1.0].iter().all(|o| disp.chroma_scale(*o) == 1.0));
     }
 
     #[test]

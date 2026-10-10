@@ -524,6 +524,12 @@ fn matte_kind(name: &str) -> Option<lightcraft_pipeline::masks::MatteKind> {
 /// The curve is the reference's own and acts on its channels, so it carries the same colourfulness
 /// as the default curve; applied to luminance alone the file renders flat. Unlike a camera look
 /// fitted from a JPEG there is nothing here to fit a chroma curve against, so it takes the default.
+///
+/// This path still maps luminance and lets that chroma curve put the colour back, because it shares
+/// `ToneMap::camera` with a look fitted from a JPEG, where the curve is a whole-image fit and
+/// luminance is right. The default raw curve (`ToneMap::hdr_scaled`) is a separate, per-channel
+/// stage; moving a file-carried `ProfileToneCurve`, which is per channel by spec, onto it is
+/// unmeasured and left open.
 pub(crate) fn dng_tone_curve(curve: &lightcraft_raw::profile::ToneCurve) -> Option<lightcraft_pipeline::tone::CameraTone> {
     let knots: [[f32; 2]; 32] = std::array::from_fn(|i| {
         let x = 2f32.powf(-12.0 + 12.0 * i as f32 / 31.0);
