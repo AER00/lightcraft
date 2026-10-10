@@ -51,6 +51,61 @@ const WHITES_KNOTS: [f32; 9] = [-0.420, -0.357, -0.267, -0.147, 0.0, 0.115, 0.38
 /// The log-slope move that comes with a white-point move of [`whites_ev`] (measured, tied).
 const WHITES_SLOPE: f32 = 0.425;
 
+/// Slope of [`whites_scale`] against the frame's highlight percentile (measured, normalised).
+const WHITES_SCALE_SLOPE: f32 = 3.9025;
+/// The highlight percentile at which the per-photo multiplier is exactly 1 (the corpus mean).
+const WHITES_SCALE_MID: f32 = 0.860010;
+/// Rails on the multiplier, so an extreme frame cannot run away with the curve. The measured
+/// spread over ten bodies is 0.23..1.69, so these only ever catch input the corpus never showed.
+const WHITES_SCALE_MIN: f32 = 0.20;
+const WHITES_SCALE_MAX: f32 = 2.00;
+
+/// The per-photo scale on positive Whites travel, from the frame's own highlight level.
+///
+/// Positive Whites is not one curve. Measured across ten camera bodies — binning the reference's
+/// own render at Whites = V by its render at 0, per channel, so the slider is isolated from
+/// everything the two engines disagree about — the white-point move fitted per *photo* spans
+/// 0.66..4.15 EV at +100 where [`WHITES_KNOTS`] holds one number, and the fixed value is off by
+/// more than 0.35 EV on nine of the ten. That is the residual this scale removes; no better
+/// constant can, because the spread is 6x and no value sits near the middle of it.
+///
+/// The reference stretches toward a white point the photo's own highlights set, so a frame that
+/// already has bright highlights needs a *smaller* move. One statistic carries it: the 99th
+/// percentile of the sRGB-*encoded* display luma of a small proxy render of the frame at Whites =
+/// 0 (see `local::frame_highlight`), cross-validated by holding out a whole camera body. Against
+/// the per-photo amount the reference asks for, that statistic correlates −0.41 at +25, −0.65 at
+/// +50, −0.79 at +75 and **−0.84 at +100** — weaker than the −0.98 the relation was first fitted
+/// against, because that used a percentile of the full-resolution render while this proxy skips
+/// the camera colour transform. The strongest agreement is where the term matters most.
+///
+/// The percentile must be taken in the encoded domain: a percentile does not commute with the
+/// transfer curve, and taking it in display-linear shifts every reading by ~0.2 and drops the
+/// +100 correlation from −0.84 to −0.66.
+///
+/// Negative Whites is the opposite — its per-body spread is 0.04..0.08 EV, one curve — so
+/// [`whites_ev_scaled`] applies the scale to positive travel only and the curve below zero is
+/// untouched. The relation is normalised so the average photo keeps [`WHITES_KNOTS`] exactly
+/// (mean multiplier 1.0 over the corpus), rather than also taking the ~36 % stronger mean the
+/// same fit would give, which is as likely to be this engine's own profile error on unusual
+/// bodies as the reference's true level.
+///
+/// This is the one slider where a per-photo statistic survived measurement: across the rest of
+/// the Basic panel no usable one was found (Highlights and Shadows fit well but their parameters
+/// are not identifiable; Contrast, Exposure, Vibrance and Saturation are fixed or resist).
+pub fn whites_scale(highlight_p99: f32) -> f32 {
+    if !highlight_p99.is_finite() {
+        return 1.0;
+    }
+    let m = 1.0 - WHITES_SCALE_SLOPE * (highlight_p99 - WHITES_SCALE_MID);
+    m.clamp(WHITES_SCALE_MIN, WHITES_SCALE_MAX)
+}
+
+/// EV the white point moves at `whites`, with the per-photo [`whites_scale`] on positive travel.
+fn whites_ev_scaled(whites: f64, scale: f32) -> f32 {
+    let dew = whites_ev(whites);
+    if dew > 0.0 && scale.is_finite() { dew * scale.clamp(WHITES_SCALE_MIN, WHITES_SCALE_MAX) } else { dew }
+}
+
 /// EV the white point moves at `whites` (−100..=100, clamped), interpolating [`WHITES_KNOTS`].
 fn whites_ev(whites: f64) -> f32 {
     if !whites.is_finite() {
@@ -60,6 +115,31 @@ fn whites_ev(whites: f64) -> f32 {
     let i = (x as usize).min(WHITES_KNOTS.len() - 2);
     let u = x - i as f32;
     WHITES_KNOTS[i] + (WHITES_KNOTS[i + 1] - WHITES_KNOTS[i]) * u
+}
+
+/// [`whites_ev`]'s move as a display→display map, for a curve this module did not build.
+///
+/// The move belongs to the slider, not to the curve under it: measured on files whose tone comes
+/// from the camera's own look, the reference's Whites transfer is described by the same family as
+/// on the default curve, and at the same residual (0.013–0.033 against 0.019 over the corpus). So
+/// rather than re-deriving it for every camera look — or, as this used to do, approximating it
+/// with a display-domain lift that left Whites nearly inert on such files — invert the neutral
+/// curve to scene EV, apply the move there, and map forward again.
+///
+/// This is not a derivation of what the reference does under a camera curve; it is the
+/// composition that reproduces the transfer that was measured.
+fn whites_display(o: f32, dew: f32) -> f32 {
+    if dew == 0.0 || !o.is_finite() || o <= 0.0 || o >= 1.0 {
+        return o;
+    }
+    let wl0 = GREY * 2f32.powf(BASE_WHITE_EV);
+    // Invert the neutral curve: o = y/(y + wl0) with y = GREY·2^(ev·BASE_SLOPE)·pre0.
+    let d = o.min(1.0 - 1e-6);
+    let ev = ((wl0 * d / (1.0 - d)) / (GREY * (1.0 + GREY / wl0))).log2() / BASE_SLOPE;
+    let slope = BASE_SLOPE + WHITES_SLOPE * dew;
+    let wl = GREY * 2f32.powf(BASE_WHITE_EV - dew);
+    let y = GREY * 2f32.powf(ev * slope) * (1.0 + GREY / wl);
+    (y / (y + wl)).clamp(0.0, 1.0)
 }
 
 /// The tone LUT spans `LUT_MIN_EV..LUT_MAX_EV` around grey in `LUT_N` steps.
@@ -279,13 +359,25 @@ pub struct ToneMap {
 
 impl ToneMap {
     pub fn camera(curve: &CameraTone, contrast: f64, whites: f64) -> ToneMap {
-        let adjustment = Self::display(contrast, whites, 0.0);
-        let neutral = contrast == 0.0 && whites == 0.0;
+        Self::camera_scaled(curve, contrast, whites, 1.0)
+    }
+
+    /// [`ToneMap::camera`] with the per-photo positive-Whites scale ([`whites_scale`]) applied.
+    pub fn camera_scaled(curve: &CameraTone, contrast: f64, whites: f64, whites_scale: f32) -> ToneMap {
+        // Whites is the measured scene-domain move of the white point and the log-slope (see
+        // [`WHITES_KNOTS`]), applied here over the camera curve's output as the display→display map
+        // that move is equivalent to — see [`whites_display`]. This used to route Whites through
+        // [`ToneMap::display`] alongside Contrast, a display-domain lift whose reach is a fraction
+        // of a stop: on a file carrying a camera look that left Whites almost inert (measured dew
+        // +0.26 where the reference moves +2.60 at +100), which is most of the error there.
+        let dew = whites_ev_scaled(whites, whites_scale);
+        let adjustment = Self::display(contrast, 0.0, 0.0);
+        let neutral = contrast == 0.0 && dew == 0.0;
         let lut = (0..LUT_N)
             .map(|i| {
                 let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
                 let y = curve.apply(GREY * 2f32.powf(ev));
-                if neutral { y } else { adjustment.apply(y) }
+                whites_display(if neutral { y } else { adjustment.apply(y) }, dew)
             })
             .collect();
         ToneMap { lut, chroma: curve.chroma }
@@ -302,10 +394,15 @@ impl ToneMap {
     /// white point moved up by the headroom, so the result stays monotone, never exceeds `peak`,
     /// and reaches it there (within the table's range).
     pub fn hdr(contrast: f64, whites: f64, peak: f32) -> ToneMap {
+        Self::hdr_scaled(contrast, whites, peak, 1.0)
+    }
+
+    /// [`ToneMap::hdr`] with the per-photo positive-Whites scale ([`whites_scale`]) applied.
+    pub fn hdr_scaled(contrast: f64, whites: f64, peak: f32, whites_scale: f32) -> ToneMap {
         let peak = if peak.is_finite() { peak.max(1.0) } else { 1.0 };
         let c = (contrast / 100.0) as f32;
         // Whites moves the white point and the log-slope together (see [`WHITES_KNOTS`]).
-        let dew = whites_ev(whites);
+        let dew = whites_ev_scaled(whites, whites_scale);
         let slope = BASE_SLOPE + if c >= 0.0 { 0.55 * c } else { 0.4 * c } + WHITES_SLOPE * dew;
         // Shoulder: scene luminance (after contrast) that maps to half display.
         let wl = GREY * 2f32.powf(BASE_WHITE_EV - dew);
@@ -760,5 +857,81 @@ mod tests {
         let base = ToneMap::new(0.0, 0.0);
         assert!(ToneMap::new(0.0, -100.0).apply(0.6) < base.apply(0.6));
         assert!(ToneMap::new(0.0, 100.0).apply(0.1) > base.apply(0.1));
+    }
+
+    /// The per-photo scale on positive Whites, against the ten-body fit it came from.
+    #[test]
+    fn whites_scale_is_the_measured_highlight_relation() {
+        // Exactly 1 at the corpus mean, and falling as the frame's own highlights get brighter.
+        assert!((whites_scale(WHITES_SCALE_MID) - 1.0).abs() < 1e-6);
+        let mut previous = f32::INFINITY;
+        for i in 0..=12 {
+            let p = 0.70 + i as f32 * 0.02;
+            let m = whites_scale(p);
+            assert!(m < previous, "p99 {p}: {m} !< {previous}");
+            previous = m;
+        }
+        // The ends of the measured corpus land where they were measured (0.9992 -> 0.46 for the
+        // brightest-highlight body, 0.7334 -> 1.49 for the dimmest).
+        assert!((whites_scale(0.9992) - 0.46).abs() < 0.02, "{}", whites_scale(0.9992));
+        assert!((whites_scale(0.7334) - 1.49).abs() < 0.02, "{}", whites_scale(0.7334));
+        // The rails hold, and hostile input is neutral rather than a curve.
+        assert_eq!(whites_scale(1.5), WHITES_SCALE_MIN);
+        assert_eq!(whites_scale(0.0), WHITES_SCALE_MAX);
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(whites_scale(bad), 1.0, "{bad}");
+        }
+    }
+
+    /// The scale moves positive Whites only: at and below zero the curve cannot tell it is there.
+    #[test]
+    fn whites_scale_touches_positive_whites_only() {
+        for w in [-100.0, -50.0, -1.0, 0.0] {
+            for s in [WHITES_SCALE_MIN, 0.5, 1.0, WHITES_SCALE_MAX] {
+                assert_eq!(ToneMap::hdr(0.0, w, 1.0).lut(), ToneMap::hdr_scaled(0.0, w, 1.0, s).lut(), "hdr Whites {w} moved with scale {s}");
+            }
+        }
+        // Above zero it moves it, the way the scale says.
+        let fixed = ToneMap::hdr(0.0, 100.0, 1.0).apply(0.6);
+        assert!(ToneMap::hdr_scaled(0.0, 100.0, 1.0, 1.5).apply(0.6) > fixed);
+        assert!(ToneMap::hdr_scaled(0.0, 100.0, 1.0, 0.5).apply(0.6) < fixed);
+        // A hostile scale falls back to the fixed curve rather than poisoning the table.
+        for bad in [f32::NAN, f32::INFINITY] {
+            assert_eq!(ToneMap::hdr(0.0, 100.0, 1.0).lut(), ToneMap::hdr_scaled(0.0, 100.0, 1.0, bad).lut(), "{bad}");
+        }
+    }
+
+    /// Whites on a file whose tone comes from a camera look is the measured scene-domain move, not
+    /// the display-domain lift it used to be -- which left it nearly inert there (measured dew
+    /// +0.26 where the reference moves +2.60 at +100), and was most of the error on such files.
+    #[test]
+    fn camera_path_whites_makes_the_measured_move() {
+        let knots = std::array::from_fn(|i| {
+            let x = 0.005 * 1.15f32.powi(i as i32);
+            [x, 1.0 - (-3.0 * x).exp()]
+        });
+        let curve = CameraTone::new(knots).unwrap();
+        let neutral = ToneMap::camera(&curve, 0.0, 0.0);
+        let up = ToneMap::camera(&curve, 0.0, 100.0);
+        let down = ToneMap::camera(&curve, 0.0, -100.0);
+        let moved = up.apply(0.5) - neutral.apply(0.5);
+        assert!(moved > 0.10, "a positive Whites must move the upper tones: {moved}");
+        assert!(down.apply(0.5) < neutral.apply(0.5));
+        // Monotone and bounded across the whole range, at every scale.
+        for scale in [WHITES_SCALE_MIN, 0.5, 1.0, 1.5, WHITES_SCALE_MAX] {
+            let t = ToneMap::camera_scaled(&curve, 0.0, 100.0, scale);
+            let mut previous = -1.0;
+            for i in 0..2400 {
+                let y = 1e-6 * 1.01f32.powi(i);
+                let v = t.apply(y);
+                assert!((0.0..=1.0).contains(&v), "scale {scale} at {y}: {v}");
+                assert!(v >= previous - 1e-6, "scale {scale} at {y}: {v} < {previous}");
+                previous = v;
+            }
+        }
+        assert!(ToneMap::camera_scaled(&curve, 0.0, 100.0, 1.5).apply(0.5) > up.apply(0.5));
+        for w in [-100.0, 0.0] {
+            assert_eq!(ToneMap::camera(&curve, 0.0, w).lut(), ToneMap::camera_scaled(&curve, 0.0, w, 1.5).lut(), "Whites {w}");
+        }
     }
 }

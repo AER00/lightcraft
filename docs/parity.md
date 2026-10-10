@@ -42,15 +42,15 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | S. Export (EXP) | 15 | 2 | 1 | 0 | 7/7 (100%) | 7/7 (100%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
-| V. Preferences (PREF) | 7 | 1 | 2 | 2 | 1/1 (100%) | 5/5 (100%) |
+| V. Preferences (PREF) | 6 | 2 | 2 | 2 | 1/1 (100%) | 4/5 (80%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 18 | 6 | 1 | 1 | 8/8 (100%) | 6/9 (67%) |
 | Y. Menus | 82 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 75 | 3 | 3 | 1 | 49/52 (94%) | 23/24 (96%) |
-| Lightroom Classic extras | 32 | 11 | 39 | 9 | — | 22/24 (92%) |
-| **Total** | 393 | 39 | 84 | 36 | 192/200 (96%) | 142/152 (93%) |
+| Lightroom Classic extras | 33 | 15 | 35 | 9 | — | 23/25 (92%) |
+| **Total** | 397 | 49 | 73 | 36 | 192/200 (96%) | 143/155 (92%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.9%** of 516 in-scope rows — P0 98.0% of 200 · P1 95.7% of 152 · P2 42.9% of 163.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **81.2%** of 519 in-scope rows — P0 98.0% of 200 · P1 95.2% of 155 · P2 47.2% of 163.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -246,7 +246,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-LIGHT-CONTRAST | Contrast | P0 | ✅ | `ctl:light.contrast` | |
 | LR-EDIT-LIGHT-HIGHLIGHTS | Highlights | P0 | ✅ | `ctl:light.highlights`, `crates/raw/src/highlight.rs` | sensor-clipped highlights stay neutral when Highlights (or Exposure, Whites) darkens them: fully clipped content is rebuilt to the neutral of the colour model applied after it, partly clipped content takes its colour from reliable unclipped content nearby (not from dark objects, lens fringes or another surface beside it) and white where there is none, and pale partly clipped content (a white sky) turns white on its way to clipping (#523); binned previews and thumbnails decide clipping per sample before averaging (`develop_binned_masked`, `highlight::reconstruct_masked`), so a block with one clipped specular sample keeps its mean instead of jumping to the clip level, which reconstruction turned into green speckles at 500 px (#548) |
 | LR-EDIT-LIGHT-SHADOWS | Shadows | P0 | ✅ | `ctl:light.shadows` | |
-| LR-EDIT-LIGHT-WHITES | Whites | P0 | ✅ | `ctl:light.whites` | |
+| LR-EDIT-LIGHT-WHITES | Whites | P0 | ✅ | `ctl:light.whites`, `crates/pipeline/src/tone.rs` (`whites_ev`, `whites_scale`, `whites_display`), `crates/pipeline/src/local.rs` (`frame_highlight`) | the white point and the log-slope move together (`WHITES_KNOTS`, `WHITES_SLOPE`); positive Whites is **per-photo**, scaled by the frame's own highlight level — the 99th percentile of the encoded display luma of a ~384 px proxy render at Whites 0 — which correlates −0.84 with the amount the reference moves at +100 and removes 36 % of the transfer error there (see LR-BEHAV-RENDER-FIDELITY). Negative Whites is one fixed curve and is untouched. Files whose tone comes from a camera look take the same measured move, composed as a display→display map (`whites_display`) |
 | LR-EDIT-LIGHT-BLACKS | Blacks | P0 | ✅ | `ctl:light.blacks`, `crates/pipeline/src/tone.rs` (`Blacks`), `crates/pipeline/src/finish.rs` | global Blacks is the reference's measured per-channel curve, applied after the tone map (see LR-BEHAV-RENDER-FIDELITY). The masked (local) Blacks is still the old log-luminance lift |
 | LR-EDIT-LIGHT-CURVE-PARAM | Parametric curve | P0 | ✅ | `ctl:curve.highlights`, `ctl:curve.lights`, `ctl:curve.darks`, `ctl:curve.shadows`, `ctl:curve.split*` | |
 | LR-EDIT-LIGHT-CURVE-POINT | Point curve | P0 | ✅ | `cmd:develop.curve`, `cmd:curve.reset`, `cmd:curve.presets`, `cmd:curve.applyPreset`, `cmd:curve.savePreset`, `cmd:curve.deletePreset`, `cmd:curve.importPresets`, `cmd:curve.exportPresets`, `cmd:file.importCurvePresets`, `cmd:file.exportCurvePresets`, `crates/engine/src/cmd/curves.rs`, `crates/ui-egui/src/panels/edit.rs` | click to add a point; drag a point in both axes (between its neighbours, input / output readout, one undo step per drag); drag empty space to add and drag; double-click removes; reset: double-click a channel selector (that channel), the Reset button under the graph (every curve incl. parametric) or right-click the graph (channel / all); Point Curve preset dropdown: own Linear / Medium Contrast / Strong Contrast, user presets (save the current point curves, delete by right-click; saved with the library), import / export as `.lccurve` JSON |
