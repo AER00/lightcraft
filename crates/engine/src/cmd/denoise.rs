@@ -614,6 +614,7 @@ fn status(s: &mut Session, p: &Value) -> Result<Value> {
 /// `denoise.pump {pace?}`: cheap to call every frame. Takes in what the background job has finished and keeps one going.
 fn pump(s: &mut Session, p: &Value) -> Result<Value> {
     s.denoise_pump(Pace::parse(p.get("pace").and_then(Value::as_str)));
+    s.denoise_track();
     Ok(json!({
         "active": s.denoise.active.is_some(),
         "running": s.denoise_running_json(),
