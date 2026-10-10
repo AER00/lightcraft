@@ -32,7 +32,7 @@ impl Drop for Headless {
 
 impl Default for Headless {
     fn default() -> Self {
-        Self::new(Session::new().with_fs().with_default_denoise_models().with_default_face_models())
+        Self::new(Session::new().with_fs().with_default_denoise_models().with_system_clock().with_default_face_models())
     }
 }
 
@@ -43,7 +43,7 @@ impl Headless {
 
     /// A headless session with the procedurally generated demo library.
     pub fn demo() -> Self {
-        Self::new(Session::with_demo().with_fs().with_default_denoise_models().with_default_face_models())
+        Self::new(Session::with_demo().with_fs().with_default_denoise_models().with_system_clock().with_default_face_models())
     }
 
     fn photo_or_active(&self, p: &Value) -> Result<PhotoId, String> {
@@ -200,6 +200,14 @@ pub fn write_image(path: &Path, img: &Rgba8, quality: u8) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A headless session stamps imports and edits with the system clock, not the engine's fixed test clock.
+    #[test]
+    fn headless_uses_the_system_clock() {
+        const FIXED: &str = "2026-09-30T12:00:00";
+        assert_ne!((Headless::default().session.clock)(), FIXED);
+        assert_ne!((Headless::demo().session.clock)(), FIXED);
+    }
 
     /// `app.export` without `ids` exports the selection (as the desktop app does), else the active photo.
     #[test]
