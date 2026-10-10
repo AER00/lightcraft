@@ -735,7 +735,7 @@ fn wait_activity_empty(s: &Session) {
 fn preview_build_shows_in_activity_until_it_finishes() {
     let mut s = demo();
     let ids: Vec<u64> = s.catalog.photos().take(4).map(|p| p.id.0).collect();
-    let r = s.execute("library.buildPreviews", &json!({"ids": ids, "size": "full"})).unwrap();
+    let r = s.execute("library.buildPreviews", &json!({"ids": ids, "size": "standard", "edge": 256})).unwrap();
     let tasks = s.activity.list();
     assert_eq!(tasks.first().map(|t| (t.kind, t.total, t.label.as_str())), Some(("previews", 4, "Building previews")), "{tasks:?} {r}");
     assert!(tasks[0].cancellable);
