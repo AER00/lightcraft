@@ -17,6 +17,7 @@ fn corpus_root() -> PathBuf {
 const KNOWN_UNSUPPORTED: &[&str] = &[
     "cr3-",           // Unverified CRX coding variants; exact supported cases live in cr3_corpus.rs.
     "orf-olympus-em", // Olympus compressed ORF
+    "-he.nef",        // Nikon High Efficiency (HE / HE★) NEF, issue #193
     "sraw",           // Canon sRAW / mRAW
 ];
 
@@ -224,6 +225,24 @@ fn corpus_nef_compressed_matches_uncompressed() {
 
 /// raw.pixls.us has the same D7500 scene as 12- and 14-bit lossless compressed NEF. Both store black level 400 in
 /// maker note 0x003d (14-bit units): after subtracting the black level and scaling to white, the two must agree.
+/// Issue #193: the Z f's High Efficiency NEF (no `0x0096` table, a JPEG XS codestream) is named as such and keeps a
+/// full-size embedded JPEG to edit, while the same body's Lossless compressed NEF decodes.
+#[test]
+fn corpus_nef_high_efficiency_is_named() {
+    let dir = corpus_root().join("raw");
+    let (Ok(he), Ok(lossless)) = (std::fs::read(dir.join("nef-nikon-zf-he.nef")), std::fs::read(dir.join("nef-nikon-zf-lossless.nef"))) else {
+        eprintln!("skip: Z f samples absent");
+        return;
+    };
+    for result in [decode(&he).map(|_| ()), probe_info(&he).map(|_| ())] {
+        let Err(RawError::Unsupported(why)) = result else { panic!("Z f HE: expected unsupported") };
+        assert!(why.starts_with("Nikon High Efficiency NEF ("), "{why}");
+    }
+    assert!(embedded_preview(&he).is_some_and(|p| p.len() > 1 << 20), "Z f HE: no full-size preview");
+    let img = decode(&lossless).unwrap();
+    assert_eq!((img.width, img.height, img.bits), (6064, 4040, 14));
+}
+
 #[test]
 fn corpus_nef_12_bit_black_level_matches_14_bit() {
     let dir = corpus_root().join("raw");
