@@ -14,7 +14,9 @@ pub struct DevelopSettings {
     pub treatment: Treatment,
     pub wb: WhiteBalance,
     pub light: Light,
-    /// HDR editing: highlights above SDR white, and the SDR rendition derived from them.
+    /// HDR editing: highlights above SDR white, and the SDR rendition derived from them. Not written while it is
+    /// the default, so settings without HDR keep their JSON and `hash64` (and every cached preview stays valid).
+    #[serde(skip_serializing_if = "Hdr::is_default")]
     pub hdr: Hdr,
     pub curve: ToneCurve,
     pub color: ColorAdj,
@@ -973,9 +975,19 @@ impl Hdr {
     pub const DEFAULT_MAX_EV: f64 = 3.0;
     pub const MAX_EV_LIMIT: f64 = 5.0;
 
-    /// Peak linear value of an HDR render relative to SDR white (1.0 when HDR is off).
+    /// Whether these are the default HDR settings (HDR off, nothing changed).
+    pub fn is_default(&self) -> bool {
+        *self == Hdr::default()
+    }
+
+    /// Peak linear value of an HDR render relative to SDR white (1.0 when HDR is off). A non-finite headroom
+    /// (a damaged file or argument) falls back to the default, so the peak is always finite and at least 1.
     pub fn peak(&self) -> f32 {
-        if self.enabled { (self.max_ev.clamp(0.0, Hdr::MAX_EV_LIMIT) as f32).exp2() } else { 1.0 }
+        if !self.enabled {
+            return 1.0;
+        }
+        let ev = if self.max_ev.is_finite() { self.max_ev } else { Hdr::DEFAULT_MAX_EV };
+        (ev.clamp(0.0, Hdr::MAX_EV_LIMIT) as f32).exp2()
     }
 }
 

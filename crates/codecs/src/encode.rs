@@ -395,7 +395,7 @@ pub fn pq_decode(e: f32) -> f32 {
 pub fn encode_avif_pq(width: u32, height: u32, rgb: &[f32], quality: u8, speed: u8, meta: &EncodeMeta) -> Result<Vec<u8>> {
     let (w, h) = (width as usize, height as usize);
     let n = w.checked_mul(h).ok_or_else(|| Error::Encode("image too large".into()))?;
-    if n == 0 || rgb.len() < n * 3 {
+    if n == 0 || n.checked_mul(3).is_none_or(|need| rgb.len() < need) {
         return Err(Error::Encode("HDR AVIF: sample buffer too short".into()));
     }
     #[cfg(all(feature = "avif", not(target_arch = "wasm32")))]
