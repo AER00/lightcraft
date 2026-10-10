@@ -486,11 +486,7 @@ fn word16_order(strip: &[u8], bits: u32, file: lightcraft_tiff::ByteOrder) -> li
 }
 
 /// The raw IFD's DNG-style `DefaultCropOrigin` / `DefaultCropSize`, clipped to the `w × h` frame.
-///
-/// `centred` places that recorded-size window in the middle of the frame (on even offsets, keeping the CFA phase)
-/// instead of at the left: the packed 12-bit frame (DSLR-A900) has no padding at either edge, and its camera JPEG
-/// is centred on the frame.
-fn dng_default_crop(raw: &Ifd, w: usize, h: usize, centred: bool) -> Option<Rect> {
+fn dng_default_crop(raw: &Ifd, w: usize, h: usize) -> Option<Rect> {
     if let (Some([x, y]), Some([cw, ch])) = (raw.u64s(t::DEFAULT_CROP_ORIGIN).as_deref(), raw.u64s(t::DEFAULT_CROP_SIZE).as_deref())
         && *cw > 0
         && *ch > 0
@@ -502,7 +498,11 @@ fn dng_default_crop(raw: &Ifd, w: usize, h: usize, centred: bool) -> Option<Rect
 
 /// The image area for files without Sony's crop tags (`0x74c7/0x74c8`, written since about 2017): the DNG-style
 /// default crop when the raw IFD has one, else the image size the camera records (see [`recorded_size_crop`]).
-fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, exif_size: Option<(u64, u64)>, w: usize, h: usize) -> Rect {
+///
+/// `centred` places that recorded-size window in the middle of the frame (on even offsets, keeping the CFA phase)
+/// instead of at the left: the packed 12-bit frame (DSLR-A900) has no padding at either edge, and its camera JPEG
+/// is centred on the frame.
+fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, exif_size: Option<(u64, u64)>, w: usize, h: usize, centred: bool) -> Rect {
     let full = Rect::new(0, 0, w, h);
     if let Some(crop) = dng_default_crop(raw, w, h) {
         return crop;
