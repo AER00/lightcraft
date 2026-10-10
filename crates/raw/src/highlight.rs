@@ -4,16 +4,20 @@
 //!   magenta/cyan (each channel limited to the smallest white-balanced clip level).
 //! - [`reconstruct`] / [`reconstruct_with`]: where only some channels are clipped, rebuild them from the
 //!   unclipped channels using the chromaticity of reliable unclipped content nearby (bright, away from edges and
-//!   from the clipped pixels themselves; diffused into the clipped region coarse to fine), and neutral where there
-//!   is none within reach. Fully clipped pixels become neutral at the brightest plausible level; partly clipped
-//!   ones fade into it on their way from the first channel clipping to the last.
+//!   from the clipped pixels themselves; diffused into the clipped region coarse to fine) unless both the pixel's
+//!   own channels and the clipped surface's colour just below its clip (the rim) contradict it, and neutral where
+//!   there is none within reach. Right past the rim, the rim's colour carries on. Fully clipped pixels become
+//!   neutral at the brightest plausible level; partly clipped ones fade into it on their way from the first channel
+//!   clipping to the last, pale ones from the start.
 //!
 //! Why the care: the white-balance gains push clipped channels apart (green clips first, red and blue keep
 //! rising), so whatever colour the rebuilt pixels carry is hidden at Neutral only by the tone map's roll-off to
-//! white. Any darkening (Highlights, negative Exposure or Whites) brings it out. Two things used to leak colour
+//! white. Any darkening (Highlights, negative Exposure or Whites) brings it out. Three things used to leak colour
 //! in: the chromaticity of whatever unclipped pixel happened to be nearest (dark foliage, purple and green
-//! fringes along branches, pixels demosaiced from clipped neighbours), and a colour model that does not render
-//! the camera's white-balanced neutral as neutral (a look fitted to the camera's JPEG, a camera profile).
+//! fringes along branches, pixels demosaiced from clipped neighbours); a colour model that does not render the
+//! camera's white-balanced neutral as neutral (a look fitted to the camera's JPEG, a camera profile); and, in a
+//! pale partly clipped sky, the colour of another reliable surface (bright foliage) and the sky's own faint
+//! colour, which darkening and a camera profile turned teal.
 
 use lightcraft_raster::Rgb32f;
 use rayon::prelude::*;
@@ -53,15 +57,28 @@ const SUPPORT: f32 = 0.05;
 /// An unclipped channel above `FLOOR_LO` of its clip level counts more and more as the clip floor it is about to
 /// become (see [`reconstruct_with`]).
 const FLOOR_LO: f32 = 0.75;
-/// Without reliable colour around, a clipped pixel is rebuilt as neutral only as far as it is brighter (or
-/// otherwise unlike) the unclipped pixels nearest its clip: the "rim", unclipped pixels above `RIM_LO` of the
-/// clip level, weighted towards the clip. Up to `NEAR_RIM` stops past the rim (the rim is an average, a little
-/// below the clip) the clipped channels stay at their clip, and over the next `DEPTH` stops they go over to the
-/// neutral guess, so a surface runs into clipping without a step whatever its colour; well past it, or where the
-/// rim is another surface (its colour differs), the neutral guess applies.
+/// A clipped pixel takes its estimated colour (reliable colour around, or the neutral guess) only as far as it is
+/// brighter (or otherwise unlike) the unclipped pixels nearest its clip: the "rim", unclipped pixels above `RIM_LO`
+/// of the clip level, weighted towards the clip, the clipped surface's own colour just below it. Up to `NEAR_RIM`
+/// stops past the rim (the rim is an average, a little below the clip) it is rebuilt with the rim's colour, and
+/// over the next `DEPTH` stops it goes over to the estimate, so a surface runs into clipping without a step
+/// whatever its colour and whatever lent the estimate; well past it, or where the rim is another surface (its
+/// colour differs; a clipped channel differs by at least as much as it lies above the rim's), the estimate applies.
 const RIM_LO: f32 = 0.85;
 const NEAR_RIM: f32 = 0.03;
 const DEPTH: f32 = 0.2;
+/// Reliable colour counts less and less as both the pixel's own channels (see [`contradiction`]) and the rim's
+/// colour contradict it, by `AGREE.0` to `AGREE.1` stops: it is another surface's, like bright foliage below a pale
+/// sky, whose green would turn the sky teal. (Either alone can be wrong: a pixel's own channels are noisy and
+/// can't speak for the channels that clipped, and the rim can be another surface, like a white window frame
+/// around a bright view.)
+const AGREE: (f32, f32) = (0.15, 0.4);
+/// On the way from the first channel clipping to the last, a partly clipped pixel's brightness goes over to the
+/// clipped neutral's in the second half, and so does the colour of a strongly coloured one (saturation relative to
+/// the white above `PALE.1`). A pale one's colour (below `PALE.0`) goes over from the start: the few per cent of
+/// colour left in a pale sky once a channel clipped is as much the estimate's error as the sky's, and darkening
+/// shows it.
+const PALE: (f32, f32) = (0.2, 0.4);
 
 #[inline]
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
@@ -253,6 +270,35 @@ fn push<const N: usize>(levels: &mut [Level<N>], empty: [f32; N], needed: Option
     }
 }
 
+/// How many stops two chromaticities differ by in any channel ratio.
+fn unlike(a: [f32; 3], b: [f32; 3]) -> f32 {
+    let ratio = |i: usize, j: usize| (a[i].max(1e-6) * b[j].max(1e-6)) / (a[j].max(1e-6) * b[i].max(1e-6));
+    [(0, 1), (0, 2), (1, 2)].iter().map(|&(i, j)| ratio(i, j).log2().abs()).fold(0.0f32, f32::max)
+}
+
+/// How far channel `c` of a pixel (sensor values `p`, clipped channels `cl`) only bounds its true value from below:
+/// fully once clipped, and increasingly from `FLOOR_LO` of the clip on, so that nothing compared with it jumps where
+/// it clips.
+fn bound(p: [f32; 3], cl: [bool; 3], clip: f32, c: usize) -> f32 {
+    if cl[c] { 1.0 } else { smoothstep(FLOOR_LO, 1.0, p[c] / clip) }
+}
+
+/// How many stops the channels of a partly clipped pixel (sensor values `p`, white-balanced `q`, clipped channels
+/// `cl`) contradict chromaticity `r`: how far the levels they imply spread, where a clipped channel's only bounds the
+/// level from below (see [`bound`]). 0 for the pixel's own colour, whatever its level.
+fn contradiction(p: [f32; 3], q: [f32; 3], cl: [bool; 3], r: [f32; 3], clip: f32) -> f32 {
+    let (mut lo, mut hi) = (f32::INFINITY, 0f32);
+    for c in 0..3 {
+        let level = q[c] / r[c].max(1e-3);
+        hi = hi.max(level);
+        let w = bound(p, cl, clip, c);
+        if r[c] > 1e-3 && w < 1.0 {
+            lo = lo.min(level / (1.0 - w));
+        }
+    }
+    if hi > 0.0 && lo > 0.0 && lo.is_finite() { (hi / lo).log2().max(0.0) } else { 0.0 }
+}
+
 /// The white-balanced colour of a partly clipped pixel (sensor values `p`, white-balanced `q`, clipped channels
 /// `cl`) whose colour is estimated at chromaticity `r`: clipped channels rebuilt, unclipped ones kept. `None`
 /// when no unclipped channel can tell the level.
@@ -273,10 +319,11 @@ fn rebuild(p: [f32; 3], q: [f32; 3], cl: [bool; 3], r: [f32; 3], clip: f32, max_
     }
     // Two clipped channels must not be left at their clip levels: those differ by the white-balance gains (green
     // clips first), and the pair would show as magenta or red. They keep the estimate's ratio instead, at the level
-    // that lifts each to its clip (no channel above the clipped neutral).
+    // that lifts each to its clip (no channel above the clipped neutral), and so does a channel about to clip (the
+    // same floor, so nothing jumps where it clips).
     let floor = (0..3).filter(|&c| cl[c]).map(|c| q[c] / r[c].max(1e-3)).fold(0.0f32, f32::max);
     let top = r[0].max(r[1]).max(r[2]).max(1e-3);
-    let sum = (sum / k as f32).max(near_clip).max(floor.min(max_level / top));
+    let sum = (sum / k as f32).max(near_clip.max(floor).min(max_level / top));
     Some(std::array::from_fn(|c| if cl[c] { q[c].max(sum * r[c]) } else { q[c] }))
 }
 
@@ -343,20 +390,16 @@ pub fn reconstruct_with(img: &mut Rgb32f, wb: [f32; 3], clip: f32, white: [f32; 
         });
     }
     let Some(field) = levels.first() else { return count };
-    // the rim, only where some clipped pixel lacks reliable colour (level 0 of its pyramid holds the estimate)
-    let untrusted = field.cells.par_iter().enumerate().any(|(i, c)| c[2] < 1.0 && needed(i % field.w, i / field.w));
-    let rims = untrusted
-        .then(|| {
-            let mut levels = vec![rim(img, wb, clip, &needed)];
-            while let Some(l) = levels.last().filter(|l| l.w > 1 || l.h > 1) {
-                let next = pull(l);
-                levels.push(next);
-            }
-            push(&mut levels, [0.0; 4], None);
-            levels
-        })
-        // a rim anywhere at all (else the neutral guess applies throughout)
-        .filter(|levels| levels.last().is_some_and(|top| top.cells.iter().any(|c| c[3] > 0.0)));
+    // the rim (level 0 of its pyramid holds the estimate), if there is one anywhere at all
+    let rims = {
+        let mut levels = vec![rim(img, wb, clip, &needed)];
+        while let Some(l) = levels.last().filter(|l| l.w > 1 || l.h > 1) {
+            let next = pull(l);
+            levels.push(next);
+        }
+        push(&mut levels, [0.0; 4], None);
+        Some(levels).filter(|levels| levels.last().is_some_and(|top| top.cells.iter().any(|c| c[3] > 0.0)))
+    };
     let rim_field = rims.as_ref().and_then(|l| l.first());
     let max_level = wb.iter().cloned().fold(0.0f32, f32::max) * clip;
     img.data.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
@@ -368,22 +411,51 @@ pub fn reconstruct_with(img: &mut Rgb32f, wb: [f32; 3], clip: f32, white: [f32; 
             }
             let q = [p[0] * wb[0], p[1] * wb[1], p[2] * wb[2]];
             // rebuilt with the colour of the reliable content around, and with neutral, blended by how much of it
-            // there is (blending the results, not the colours, keeps the estimate consistent with the pixel's own
-            // unclipped channels all the way)
+            // there is and how well the pixel agrees with it (blending the results, not the colours, keeps the
+            // estimate consistent with the pixel's own unclipped channels all the way)
             let e = sample(field, 2.0, x, y);
-            let trust = e[2].clamp(0.0, 1.0);
-            let local = (trust > 0.0).then(|| rebuild(p, q, cl, [e[0], 1.0 - e[0] - e[1], e[1]], clip, max_level)).flatten();
-            let plain = (trust < 1.0).then(|| rebuild(p, q, cl, neutral, clip, max_level)).flatten().map(|b| {
-                // only as far as the pixel lies past the rim nearest its clip (in every unclipped channel)
-                let Some(rim) = rim_field else { return b };
-                let edge = sample(rim, 4.0, x, y);
-                let past = (0..3)
-                    .filter(|&c| !cl[c])
-                    .map(|c| if edge[c] > 1e-6 && q[c] > 1e-6 { (q[c] / edge[c]).log2().abs() } else { f32::INFINITY })
-                    .fold(0.0f32, f32::max);
+            let borrowed = [e[0], 1.0 - e[0] - e[1], e[1]];
+            let edge = rim_field.map(|rim| sample(rim, 4.0, x, y));
+            let mut trust = e[2].clamp(0.0, 1.0);
+            if trust > 0.0 {
+                let mut off = contradiction(p, q, cl, borrowed, clip);
+                if off > AGREE.0 {
+                    off = off.min(edge.map_or(0.0, |edge| {
+                        let s = edge[0] + edge[1] + edge[2];
+                        if s > 1e-6 { unlike([edge[0] / s, edge[1] / s, edge[2] / s], borrowed) } else { 0.0 }
+                    }));
+                }
+                trust *= 1.0 - smoothstep(AGREE.0, AGREE.1, off);
+            }
+            // either applies only as far as the pixel lies past the rim nearest its clip (in any channel); nearer, the
+            // pixel is rebuilt with the rim's colour
+            let at_rim = edge.and_then(|edge| {
+                // stops between pixel and rim in each channel; a clipped channel's true value lies at least as far
+                // above the rim's as its clip, and no further below (see [`bound`])
+                let ratio = (0..3)
+                    .map(|c| {
+                        let (a, b) = (q[c].max(1e-12), edge[c].max(1e-12));
+                        if a >= b {
+                            return a / b;
+                        }
+                        match bound(p, cl, clip, c) {
+                            w if w <= 0.0 => b / a,
+                            w if w >= 1.0 => 1.0,
+                            w => (b / a).powf(1.0 - w),
+                        }
+                    })
+                    .fold(1.0f32, f32::max);
+                let past = ratio.log2().min(64.0);
                 let k = smoothstep(NEAR_RIM, NEAR_RIM + DEPTH, past);
-                std::array::from_fn(|c| q[c] + (b[c] - q[c]) * k)
+                let s = edge[0] + edge[1] + edge[2];
+                (k < 1.0 && s > 1e-6).then(|| rebuild(p, q, cl, [edge[0] / s, edge[1] / s, edge[2] / s], clip, max_level)).flatten().map(|a| (a, k))
             });
+            let past_rim = |b: [f32; 3]| -> [f32; 3] {
+                let Some((a, k)) = at_rim else { return b };
+                std::array::from_fn(|c| a[c] + (b[c] - a[c]) * k)
+            };
+            let local = (trust > 0.0).then(|| rebuild(p, q, cl, borrowed, clip, max_level)).flatten().map(past_rim);
+            let plain = (trust < 1.0).then(|| rebuild(p, q, cl, neutral, clip, max_level)).flatten().map(past_rim);
             let mut out = match (local, plain) {
                 (Some(a), Some(b)) => std::array::from_fn(|c| b[c] + (a[c] - b[c]) * trust),
                 (Some(a), None) | (None, Some(a)) => a,
@@ -399,12 +471,19 @@ pub fn reconstruct_with(img: &mut Rgb32f, wb: [f32; 3], clip: f32, white: [f32; 
             let above = (0..3).filter(|&c| cl[c]).map(|c| (out[c] / q[c].max(1e-9)).max(1.0).log2()).fold(0.0f32, f32::max);
             let lowest = (0..3).filter(|&c| !cl[c]).map(|c| p[c]).fold(f32::MAX, f32::min);
             let below = (clip / lowest.max(1e-6)).log2().max(0.0);
-            let t = if above > 0.0 && lowest < clip { smoothstep(0.5, 1.0, above / (above + below)) } else { 0.0 };
-            if t > 0.0 {
+            let way = if above > 0.0 && lowest < clip { above / (above + below) } else { 0.0 };
+            // The brightness goes over in the second half of the way, and so does the colour of a strongly coloured
+            // pixel; a pale one's goes over from the start ([`PALE`]).
+            let u = [out[0] / white[0], out[1] / white[1], out[2] / white[2]];
+            let (lo, hi) = (u[0].min(u[1]).min(u[2]), u[0].max(u[1]).max(u[2]));
+            let saturation = if hi > 0.0 && hi.is_finite() { 1.0 - lo.max(0.0) / hi } else { 1.0 };
+            let start = 0.5 * smoothstep(PALE.0, PALE.1, saturation);
+            let (t_level, t_colour) = (smoothstep(0.5, 1.0, way), smoothstep(start, start + 0.5, way));
+            if t_colour > 0.0 {
                 let level = (out[0] + out[1] + out[2]) / total;
                 let full = q.iter().cloned().fold(0.0f32, f32::max).max(max_level);
-                let v = level + (full - level) * t;
-                out = std::array::from_fn(|c| out[c] + (white[c] * v - out[c]) * t);
+                let v = level + (full - level) * t_level;
+                out = std::array::from_fn(|c| out[c] + (white[c] * v - out[c]) * t_colour);
             }
             *px = [out[0] / wb[0], out[1] / wb[1], out[2] / wb[2]];
         }
@@ -450,21 +529,34 @@ mod tests {
         (img, sky)
     }
 
+    /// How far chromaticity `got` lies off the way from `from` to neutral (largest channel difference to the
+    /// nearest point of that way).
+    fn off_the_way_to_neutral(got: [f32; 3], from: [f32; 3]) -> f32 {
+        let d: [f32; 3] = std::array::from_fn(|c| 1.0 / 3.0 - from[c]);
+        let len = d.iter().map(|v| v * v).sum::<f32>();
+        let t = if len > 0.0 { ((0..3).map(|c| (got[c] - from[c]) * d[c]).sum::<f32>() / len).clamp(0.0, 1.0) } else { 0.0 };
+        (0..3).map(|c| (got[c] - (from[c] + d[c] * t)).abs()).fold(0.0, f32::max)
+    }
+
     /// Issue #523: the clipped sky beside a branch took the colour of the branch's fringes and of the branch
-    /// itself (magenta, green), which any darkening of the highlights then showed.
+    /// itself (magenta, green), which any darkening of the highlights then showed. Beside the branch it is now the
+    /// clipped sky away from it: the sky's colour, on its way to neutral.
     #[test]
     fn fringes_and_dark_branches_do_not_tint_a_clipped_sky() {
         let (mut img, sky) = branch_scene();
         assert!(reconstruct(&mut img, WB, 0.99) > 0);
-        let want = chroma(sky);
         let mut worst = 0f32;
         for y in 40..128 {
+            let away = chroma(balanced(img.get(30, y)));
+            assert!(away == chroma(balanced(img.get(170, y))), "row {y}");
+            let off = off_the_way_to_neutral(away, chroma(sky));
+            assert!(off < 0.005, "row {y}: the clipped sky {away:?} is not the sky's colour on its way to neutral ({off})");
             for x in [84, 86, 88, 101, 103, 105] {
                 let got = chroma(balanced(img.get(x, y)));
-                worst = worst.max((0..3).map(|c| (got[c] - want[c]).abs()).fold(0.0, f32::max));
+                worst = worst.max((0..3).map(|c| (got[c] - away[c]).abs()).fold(0.0, f32::max));
             }
         }
-        assert!(worst < 0.01, "clipped sky beside the branch is off the sky's colour by {worst}");
+        assert!(worst < 0.01, "clipped sky beside the branch is off the sky away from it by {worst}");
     }
 
     /// A warm light with red and green clipped: left at their clip levels the pair reads red-magenta (the white
@@ -575,6 +667,51 @@ mod tests {
                 let far = row[1500];
                 assert!(far[1] > 0.95 * far[2], "{width} rows of {height}: {far:?}");
             }
+        }
+    }
+
+    /// Issue #523 (a river photo darkened by Highlights -75): a pale cyan-blue sky (`[1, 1.07, 1.2]` white-balanced)
+    /// brightening from left to right through the point where green clips (and later blue), above bright
+    /// yellow-green foliage, with thin dark branches standing in its lower half. Its rebuilt colour used to lean
+    /// green to teal: the foliage lent its colour to the sky (green rebuilt from it), with a step where green first
+    /// clips, and the sky kept its own pale colour where Lightroom shows white.
+    #[test]
+    fn pale_sky_by_dark_branches_and_foliage_is_not_tinted() {
+        let sky = [1.0, 1.07, 1.2];
+        let (w, h) = (320usize, 96usize);
+        let k = |x: usize| 0.7 * (1.2 * x as f32 / (w - 1) as f32).exp2();
+        let branches = [150usize, 200, 250];
+        let on_branch = |x: usize| branches.iter().any(|&b| (b.saturating_sub(1)..=b + 2).contains(&x));
+        let img0 = Rgb32f::from_fn(w, h, |x, y| {
+            sensor(if y >= 72 {
+                [0.5, 0.6, 0.22]
+            } else if y >= 40 && branches.iter().any(|&b| x == b || x == b + 1) {
+                [0.1, 0.09, 0.04]
+            } else {
+                sky.map(|v| v * k(x))
+            })
+        });
+        let mut img = img0.clone();
+        reconstruct(&mut img, WB, 0.99);
+        let at = |x: usize, y: usize| chroma(balanced(img.get(x, y)));
+        let first = (0..w).find(|&x| img0.get(x, 20)[1] >= 0.99).unwrap_or(0);
+        assert!(first > 0 && first < 150);
+        let diff = |a: [f32; 3], b: [f32; 3]| (0..3).map(|c| (a[c] - b[c]).abs()).fold(0.0, f32::max);
+        for y in [20, 50] {
+            // no step where green clips
+            let step = diff(at(first - 1, y), at(first, y));
+            assert!(step < 0.001, "row {y}: step of {step} where green clips");
+            for x in first..w {
+                // nothing but the sky's colour on its way to neutral (no green from the foliage)...
+                let off = off_the_way_to_neutral(at(x, y), chroma(sky));
+                assert!(on_branch(x) || off < 0.005, "row {y}, x {x}: {:?} is off the sky's way to neutral by {off}", at(x, y));
+                // ... the same beside the branches as above them ...
+                let beside = diff(at(x, y), at(x, 20));
+                assert!(on_branch(x) || beside < 0.005, "row {y}, x {x}: {:?} beside a branch, {:?} above", at(x, y), at(x, 20));
+            }
+            // ... and neutral well before the last channel clips (the sky is 0.7 stops past green's clip there)
+            let end = at(w - 1, y);
+            assert!(end.iter().all(|v| (v - 1.0 / 3.0).abs() < 0.002), "row {y}: {end:?} at the end");
         }
     }
 

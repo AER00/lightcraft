@@ -1069,6 +1069,57 @@ mod tests {
         }
     }
 
+    /// A band clipped in green whose red rises through its own clip from left to right (sensor `[0.985 + 0.01 t, 1,
+    /// 0.8]`, t from 0 to 1 across 320 px), `band` rows at the bottom of the picture, below `strip` rows of a pale
+    /// surface just under the clip (`[0.4, 0.95, 0.8]`: the band's rim, of another colour) and above those `top` rows
+    /// of a strongly coloured reliable surface (`[0.8, 0.35, 0.3]`). Rebuilt and rendered at Exposure -2: the
+    /// rendered colour on either side of where red clips on the band's middle row, and the largest step between
+    /// neighbouring pixels along that row.
+    fn second_clip(top: usize, strip: usize, band: usize) -> ([[u8; 4]; 2], u8) {
+        use lightcraft_pipeline::{RenderRequest, render};
+        let wb = [2.5f32, 1.0, 1.6];
+        let colour = CameraColourModel { wb, matrix: lightcraft_color::Mat3::IDENTITY, gain: 1.0, tables: None, hue_sat: None };
+        let (w, h) = (320usize, top + strip + band);
+        let sensor = Rgb32f::from_fn(w, h, |x, y| {
+            if y < top {
+                [0.8, 0.35, 0.3]
+            } else if y < top + strip {
+                [0.4, 0.95, 0.8]
+            } else {
+                [0.985 + 0.01 * x as f32 / (w - 1) as f32, 1.0, 0.8]
+            }
+        });
+        let y = top + strip + band / 2;
+        let at = (0..w).find(|&x| sensor.get(x, y)[0] >= HIGHLIGHT_CLIP).unwrap();
+        let mut img = sensor.clone();
+        colour.rebuild_highlights(&mut img);
+        colour.apply(&mut img);
+        let mut s = lightcraft_develop::DevelopSettings::default();
+        s.light.exposure = -2.0;
+        let out = render(&img, &SourceInfo { raw: true, ..Default::default() }, &s, &RenderRequest::fit(w, h)).image;
+        let step = |x: usize| {
+            let (a, b) = (out.get(x - 1, y), out.get(x, y));
+            (0..3).map(|c| a[c].abs_diff(b[c])).max().unwrap_or(0)
+        };
+        ([out.get(at - 1, y), out.get(at, y)], (1..w).map(step).max().unwrap_or(0))
+    }
+
+    /// Where a second channel clips within reach of the surface's own rim, the rebuilt colour carries on too. The
+    /// rim's comparison with the pixel used to drop each clipped channel, so a rim far from the pixel in red suddenly
+    /// matched it once red clipped (80 rows of colour, 16 of rim and 32 of band: [237, 124, 153] then
+    /// [205, 181, 168]); and a channel about to clip counted as an uncapped floor that was capped once it clipped
+    /// (without the coloured surface: [198, 195, 178] then [205, 181, 168]).
+    #[test]
+    fn rendered_colour_is_continuous_where_a_second_channel_clips() {
+        for (top, strip, band) in [(80, 16, 32), (0, 16, 32), (80, 16, 4), (200, 4, 8), (16, 64, 16), (8, 32, 24)] {
+            let ([a, b], worst) = second_clip(top, strip, band);
+            let case = format!("{top} rows of colour, {strip} of rim, {band} of band");
+            let step = (0..3).map(|i| a[i].abs_diff(b[i])).max().unwrap_or(0);
+            assert!(step <= 1, "{case}: {a:?} then {b:?} where red clips");
+            assert!(worst <= 3, "{case}: largest step between neighbouring pixels {worst} levels");
+        }
+    }
+
     /// Issue #523 on a public ILCE-7RM4 raw (raw.pixls.us, CC0; skipped without the corpus): a dusk sky clipped in
     /// green behind a poplar. Its rebuilt colour used to come from the tree's foliage and lens fringes, a green halo
     /// on one side of the tree and a magenta one on the other (Highlights -100 or the issue's edit show them).
