@@ -3,8 +3,8 @@
 //! Sources: TIFF 6.0 (the raw image is a standard CFA SubIFD), Laurent Clévy's NEF structure notes (prose: IFD
 //! layout, SubIFDs, maker note header) and the ExifTool Nikon tag-name documentation (`0x000c` WB_RBLevels,
 //! `0x003d` BlackLevel, `0x0096` NEFLinearizationTable). The Huffman-compressed data (compression 34713) is decoded
-//! by [`super::nefc`], which documents its clean-room sources; files it can't decode yet ("lossy after split")
-//! are reported as [`RawError::Unsupported`] and their embedded previews still work. So are High Efficiency NEFs
+//! by [`super::nefc`], which documents its clean-room sources; "lossy after split" files are decoded when their strip follows the
+//! rule documented there; files it can't decode are reported as [`RawError::Unsupported`] and their embedded previews still work. So are High Efficiency NEFs
 //! (HE / HE★, Z 8, Z 9, Z 6III, Z f): they keep compression 34713 but carry a wavelet codestream that starts with
 //! the JPEG XS markers SOC + CAP (ISO/IEC 21122-1, `FF10 FF50`) and have no `0x0096` table (issue #193).
 
