@@ -1,7 +1,8 @@
 //! Background export: the Export dialog, File → Export with Preset and Export with Previous hand
 //! their batch to a worker thread so the window stays responsive. Photos are prepared on the UI
 //! thread ([`lightcraft_engine::export::prepare_export`]: cheap, needs the session) and rendered,
-//! encoded and written on the worker; a progress panel shows the count and a Cancel button.
+//! encoded and written on the worker (several side by side: [`run_batch`]); a progress panel shows
+//! the count and a Cancel button.
 //!
 //! Needs [`crate::Services::write_shared`] (a thread-safe writer); without it (web) the batch runs
 //! synchronously as before.
