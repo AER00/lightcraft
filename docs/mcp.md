@@ -52,6 +52,26 @@ Or check a project-scoped `.mcp.json` into your repo:
 }
 ```
 
+### From an installed release
+
+The release packages ship `lightcraft-cli` alongside the desktop app, so no build is needed:
+
+| Install | CLI |
+|---|---|
+| Windows (MSI) | `C:\Program Files\LightCraft\lightcraft-cli.exe`, not added to `PATH` |
+| Linux (deb, rpm) | `/usr/bin/lightcraft-cli` |
+| macOS | the separate `lightcraft-cli-<version>-macos-universal.zip` release asset (the `.app` holds only the desktop app) |
+
+```sh
+# Windows
+claude mcp add lightcraft -- "C:\Program Files\LightCraft\lightcraft-cli.exe" mcp
+# Linux, or macOS with the CLI unzipped onto PATH
+claude mcp add lightcraft -- lightcraft-cli mcp
+```
+
+An unofficial community plugin, [artcraft-claude-plugin](https://github.com/sawizzle/artcraft-claude-plugin),
+registers the installed ArtCraft apps in Claude Code in one step and adds usage notes for agents.
+
 ### Other clients (Claude Desktop, Cursor, …)
 
 Every stdio MCP client takes the same shape: a `command` plus `args`. For example
