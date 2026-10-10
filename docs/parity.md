@@ -44,7 +44,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 6 | 1 | 2 | 2 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
-| X. Cross-cutting behaviours (BEHAV) | 18 | 5 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
+| X. Cross-cutting behaviours (BEHAV) | 18 | 6 | 1 | 1 | 8/8 (100%) | 6/9 (67%) |
 | Y. Menus | 82 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 75 | 3 | 3 | 1 | 49/52 (94%) | 23/24 (96%) |
 | Lightroom Classic extras | 32 | 11 | 39 | 9 | — | 22/24 (92%) |
@@ -525,6 +525,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-BEHAV-PANEL-RESIZE | Resizable side panels | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`resizable_side`), `crates/ui-egui/src/state.rs` (`LEFT_WIDTH`, `RIGHT_WIDTH`), `crates/ui-egui/src/tests_panels.rs` | drag the left sidebar's right edge (200–480 pt) or the right panel's left edge (250–520 pt); the photo area keeps ≥ 360 pt; widths are kept across panels, views and restarts (`leftWidth` / `rightWidth` in the UI state); the Presets column stays fixed |
 | LR-BEHAV-EMPTY-STATES | Empty states | P1 | ✅ | `crates/ui-egui/src/panels/mod.rs` (`empty_message`) | |
 | LR-BEHAV-TOOLTIPS | Tooltips with shortcuts | P0 | ✅ | `crates/ui-egui/src/panels/bottombar.rs` | |
+| LR-BEHAV-TEXTFIELD | Text fields behave alike | P1 | 🟡 | `crates/ui-egui/src/text_field.rs`, `crates/ui-egui/src/panels/topbar.rs`, `crates/ui-egui/src/widgets.rs`, `crates/ui-egui/src/panels/right.rs` (`meta_field`), `crates/ui-egui/src/panels/dialogs.rs`, `crates/ui-egui/src/panels/unnamed.rs` | one shared field: right-click Cut / Copy / Paste / Select All (no Paste in the browser), Esc gives back the text from before the edit, Return / leaving / Esc reported to the caller, optional select-on-focus; agents use `ui.clipboard` (MCP `clipboard`) and `ui.inspect` → `copied`. Used by Search Photos, slider values, the Info panel's metadata fields (multi-line captions), the one-field dialogs (New / Rename Album, New Smart Album, Rename / Merge Keywords, text prompts) and the unnamed faces' name field so far; the other text fields (most dialogs, import, settings, masking, keywords …) still use egui's own and have no menu |
 | LR-BEHAV-HEADLESS | Headless UI snapshots | P2 | ✅ | `apps/lightcraft-cli/src/main.rs`, `crates/ui-egui/src/headless.rs`, `docs/control-protocol.md` | `snapshot` rasterizes the UI and defaults photo development to the CPU before the first frame, without adapter discovery; scaled dimensions are validated before allocation, and UI zoom preserves the requested physical viewport; JSON-lines control scripts are supported |
 | LR-BEHAV-ACCESS | Accessibility | P2 | 🟡 | `crates/ui-egui/src/widgets.rs`, `crates/ui-egui/src/panels/grid.rs` | AccessKit (VoiceOver / Narrator / AT-SPI): sliders announce control and value, buttons / icon buttons / dropdowns / section headers / sources their labels and state, grid thumbnails file name, rating, flag and label; the canvas tools (crop, masks) are pointer-only; not audited with a screen reader |
 | LR-BEHAV-LOCALE | Language options | P2 | ✅ | `cmd:app.language.english`, `cmd:app.language.simplifiedChinese`, `cmd:app.language.traditionalChinese`, `cmd:app.language.japanese`, `cmd:app.language.portuguese`, `cmd:app.language.spanish`, `cmd:app.language.german`, `cmd:app.language.russian` | Edit > Language lists every language in the table and the active one is checked; shared with Settings > General (docs/localization.md) |
@@ -650,7 +651,7 @@ From `06-shortcuts.md` part 1. Evidence is our binding; conflicts are explained 
 | KEY-GRID | Grid — G | P0 | ✅ | `cmd:view.gridToggle`, `cmd:view.photoGrid` | G toggles Photo Grid ↔ Square Grid |
 | KEY-INFO | Info — I | P0 | ✅ | `cmd:panel.info` | |
 | KEY-KEYWORDS | Keywords — K | P0 | ✅ | `cmd:panel.keywords` | |
-| KEY-CLIPBOARD | Copy / paste edit settings — ⌘C / ⌘V | P0 | ✅ | `cmd:develop.copy`, `cmd:develop.paste` | ⌘X has nothing to cut outside text fields |
+| KEY-CLIPBOARD | Copy / paste edit settings — ⌘C / ⌘V | P0 | ✅ | `cmd:develop.copy`, `cmd:develop.paste`, `crates/ui-egui/src/shortcuts.rs` (`matches`) | ⌘X has nothing to cut outside text fields; on Windows and Linux, where the windowing layer sends Ctrl+C / Ctrl+V as clipboard events rather than key presses, those run the shortcuts too (⇧Insert pastes plainly); there Ctrl+V only arrives while the system clipboard holds text (egui-winit drops it otherwise), so with an empty clipboard Paste Settings needs the menu |
 | KEY-UNDOREDO | Undo / redo — ⌘Z / ⇧⌘Z | P0 | ✅ | `cmd:edit.undo`, `cmd:edit.redo` | |
 | KEY-MINIMIZE | Minimize — ⌘M | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | native Window ▸ Minimize |
 | KEY-AUTO | Auto — ⇧A | P0 | ✅ | `cmd:develop.auto` | |

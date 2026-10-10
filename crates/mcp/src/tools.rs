@@ -306,6 +306,13 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
             ),
             tool("type_text", "Type text", "Type text into the focused field.", json!({"text": {"type": "string"}}), &["text"]),
             tool(
+                "clipboard",
+                "Cut, copy or paste",
+                "Cut, copy or paste in the focused text field (click one first), as ⌘X / ⌘C / ⌘V do; cut and copy write the system clipboard. `paste` pastes `text`, or what the system clipboard holds without it. inspect_ui → `copied` is the text the app last copied.",
+                json!({"action": {"type": "string", "enum": ["cut", "copy", "paste"]}, "text": {"type": "string"}}),
+                &["action"],
+            ),
+            tool(
                 "pointer_gesture",
                 "Pointer gesture",
                 "Replay a pointer gesture on the photo in normalized image coordinates (0..1, origin top-left): brush strokes, gradient drags, crop handles, heal spots. Needs the Detail view.",
@@ -757,6 +764,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         }
         "press_key" => ToolResult::from(b.call("ui.key", obj(args, &["key", "cmd", "shift", "alt", "ctrl"]))),
         "type_text" => ToolResult::from(b.call("ui.text", obj(args, &["text"]))),
+        "clipboard" => ToolResult::from(b.call("ui.clipboard", obj(args, &["action", "text"]))),
         "pointer_gesture" => ToolResult::from(b.call("ui.pointer", obj(args, &["events", "alt", "shift", "cmd"]))),
         other => ToolResult::error(format!("unknown tool `{other}` (see tools/list)")),
     }

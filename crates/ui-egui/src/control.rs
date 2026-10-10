@@ -103,6 +103,7 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         })),
         "hoverPreview": app.hover_preview.as_ref().map(|h| h.label.clone()),
         "status": app.ui.status,
+        "copied": app.copied,
         "notices": app.notices,
         "quitPrompt": app.quit_prompt,
         // how hard the background face scan may work right now, and why it is judged so (see `panels::faces::scan_pace`)
@@ -200,10 +201,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
                 app.synthetic.push(egui::Event::PointerMoved(at));
             } else if req.method == "ui.clickWidget" {
                 let n = p.get("count").and_then(Value::as_u64).unwrap_or(1);
+                let button = if s("button") == Some("right") { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
                 app.synthetic.push(egui::Event::PointerMoved(at));
                 for _ in 0..n {
-                    app.synthetic.push(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: m });
-                    app.synthetic.push(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: m });
+                    app.synthetic.push(egui::Event::PointerButton { pos: at, button, pressed: true, modifiers: m });
+                    app.synthetic.push(egui::Event::PointerButton { pos: at, button, pressed: false, modifiers: m });
                 }
             } else {
                 let to = egui::pos2(
@@ -270,6 +272,26 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
         }
         "ui.text" => {
             app.synthetic.push(egui::Event::Text(s("text").unwrap_or("").to_string()));
+            ctx.request_repaint();
+            ok(Value::Null)
+        }
+        // what the system does for ⌘X / ⌘C / ⌘V in a text field: paste `text`, or (without it)
+        // what the system clipboard holds
+        "ui.clipboard" => {
+            // outside a text field ⌘C / ⌘V are the app's shortcuts (and the macOS menu bar's):
+            // agents run those as commands (`develop.copy`, `develop.paste`)
+            if !ctx.text_edit_focused() {
+                return err("ui.clipboard: no text field has the focus (click one first)");
+            }
+            match s("action") {
+                Some("cut") => app.synthetic.push(egui::Event::Cut),
+                Some("copy") => app.synthetic.push(egui::Event::Copy),
+                Some("paste") => match s("text") {
+                    Some(text) => app.synthetic.push(egui::Event::Paste(text.to_string())),
+                    None => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
+                },
+                _ => return err("ui.clipboard: `action` is cut, copy or paste"),
+            }
             ctx.request_repaint();
             ok(Value::Null)
         }

@@ -38,6 +38,16 @@
   means no (it used to count as yes), and a value that is neither yes nor no is refused.
 - Any Searchable Text also finds the state / province, alt text, people and a virtual copy's name.
 
+### Text fields
+- Right-click Search Photos, a slider's typed value, the Info panel's fields, the name field of New Album, Rename
+  Album, New Smart Album, Rename Keyword, Merge Keywords and similar dialogs, or the name field under unnamed faces for
+  Cut, Copy, Paste and Select All. Esc in them gives back the text from before you started typing (in the Info panel it
+  no longer saves it). Return in those dialogs now confirms them, and their name opens selected. More fields will
+  follow.
+- On Windows and Linux, Ctrl+C outside a text field copies edit settings and Ctrl+V pastes them (⇧Ctrl+V: Paste
+  Selected Settings). Ctrl+V only reaches LightCraft while the system clipboard holds text; otherwise use Edit ▸ Paste Edit
+  Settings.
+
 ### Masking
 - Drag anywhere inside the selected radial gradient's ellipse to move it, including rotated
   ellipses and radial components in compound masks. Edge and rotation handles keep their existing

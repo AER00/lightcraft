@@ -79,6 +79,10 @@ pub struct HeadlessView {
     pixels_per_point: f32,
     size: [usize; 2],
     frames: u64,
+    /// The pretend host's clipboard: what the UI last copied, and what a paste request pastes.
+    pub clipboard: String,
+    /// Events the host owes the next frame (a paste request's paste, as a desktop host sends it).
+    owed: Vec<egui::Event>,
 }
 
 impl Default for HeadlessView {
@@ -92,7 +96,16 @@ impl HeadlessView {
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
         crate::theme::apply(&ctx);
-        HeadlessView { ctx, textures: TextureStore::default(), shapes: vec![], pixels_per_point: 1.0, size: [1600, 1000], frames: 0 }
+        HeadlessView {
+            ctx,
+            textures: TextureStore::default(),
+            shapes: vec![],
+            pixels_per_point: 1.0,
+            size: [1600, 1000],
+            frames: 0,
+            clipboard: String::new(),
+            owed: vec![],
+        }
     }
 
     /// Input for one frame of a `size` (points) viewport at `pixels_per_point`.
@@ -132,12 +145,28 @@ impl HeadlessView {
                 }
             }
         }
+        raw.events.splice(0..0, std::mem::take(&mut self.owed));
         let mut out = self.ctx.run_ui(raw, run_ui);
         self.frames += 1;
         self.textures.apply(std::mem::take(&mut out.textures_delta));
         self.shapes = std::mem::take(&mut out.shapes);
         self.pixels_per_point = out.pixels_per_point;
-        out.viewport_output.remove(&ViewportId::ROOT).map(|v| v.commands).unwrap_or_default()
+        for c in &out.platform_output.commands {
+            if let egui::OutputCommand::CopyText(text) = c {
+                self.clipboard.clone_from(text);
+            }
+        }
+        let commands = out.viewport_output.remove(&ViewportId::ROOT).map(|v| v.commands).unwrap_or_default();
+        // what a desktop host does with a cut, copy or paste request (egui-winit): the event, next frame
+        for c in &commands {
+            match c {
+                ViewportCommand::RequestCut => self.owed.push(egui::Event::Cut),
+                ViewportCommand::RequestCopy => self.owed.push(egui::Event::Copy),
+                ViewportCommand::RequestPaste if !self.clipboard.is_empty() => self.owed.push(egui::Event::Paste(self.clipboard.clone())),
+                _ => {}
+            }
+        }
+        commands
     }
 
     /// Frames run so far.
@@ -451,6 +480,32 @@ mod tests {
 
     use super::*;
 
+    /// The pretend host has a clipboard, as a desktop does: text the UI copies lands in it, and a
+    /// cut, copy or paste request (from a context menu) comes back as that event on the next frame.
+    #[test]
+    fn the_headless_host_has_a_clipboard() {
+        let mut view = HeadlessView::new();
+        let raw = || HeadlessView::raw_input(egui::vec2(200.0, 100.0), 1.0, 0.0, vec![]);
+        view.run(raw(), |ui| ui.ctx().copy_text("Lisbon".into()));
+        assert_eq!(view.clipboard, "Lisbon");
+        for (command, event) in [
+            (ViewportCommand::RequestPaste, egui::Event::Paste("Lisbon".into())),
+            (ViewportCommand::RequestCopy, egui::Event::Copy),
+            (ViewportCommand::RequestCut, egui::Event::Cut),
+        ] {
+            view.run(raw(), |ui| ui.ctx().send_viewport_cmd(command.clone()));
+            let mut seen = vec![];
+            view.run(raw(), |ui| seen = ui.input(|i| i.events.clone()));
+            assert!(seen.contains(&event), "{command:?}: {seen:?}");
+        }
+        // an empty clipboard pastes nothing, as a desktop host does
+        view.clipboard.clear();
+        view.run(raw(), |ui| ui.ctx().send_viewport_cmd(ViewportCommand::RequestPaste));
+        let mut seen = vec![];
+        view.run(raw(), |ui| seen = ui.input(|i| i.events.clone()));
+        assert!(!seen.iter().any(|e| matches!(e, egui::Event::Paste(_))), "{seen:?}");
+    }
+
     #[test]
     fn screenshot_dimensions_are_checked_before_layout() {
         assert_eq!(viewport_pixels([1600.0, 1000.0], 2.0).unwrap(), [3200, 2000]);
@@ -603,6 +658,101 @@ mod tests {
         let mut app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
         app.ui.view = crate::state::ViewMode::PhotoGrid;
         Headless::new(app, size, 1.0)
+    }
+
+    /// Agents cut, copy and paste in a text field as the system does for ⌘X / ⌘C / ⌘V
+    /// (`ui.clipboard`), and `ui.inspect` → `copied` says what the UI last copied.
+    #[test]
+    fn agents_cut_copy_and_paste_in_text_fields() {
+        let mut h = demo([1200.0, 760.0]);
+        let t = Duration::from_secs(10);
+        let ask = |h: &mut Headless, method: &str, params: serde_json::Value| {
+            let r = h.request(method, params.clone(), t);
+            assert_eq!(r["ok"], true, "{method} {params}: {r}");
+            h.step();
+            h.step();
+            r
+        };
+        h.settle(SETTLE);
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:search"}));
+        ask(&mut h, "ui.text", json!({"text": "wedding"}));
+        ask(&mut h, "ui.key", json!({"key": "a", "cmd": true}));
+        ask(&mut h, "ui.clipboard", json!({"action": "copy"}));
+        assert_eq!(ask(&mut h, "ui.inspect", json!({}))["result"]["copied"], "wedding");
+        ask(&mut h, "ui.clipboard", json!({"action": "cut"}));
+        assert_eq!(h.app.ui.search, "");
+        ask(&mut h, "ui.clipboard", json!({"action": "paste", "text": "travel"}));
+        assert_eq!(h.app.ui.search, "travel");
+        let r = h.request("ui.clipboard", json!({"action": "shred"}), t);
+        assert_eq!(r["ok"], false, "an unknown action is refused: {r}");
+    }
+
+    /// `ui.clipboard` acts in a text field: with none focused it is refused, rather than doing
+    /// what ⌘V does there on one platform (paste edit settings) and nothing on another.
+    #[test]
+    fn the_clipboard_method_needs_a_text_field() {
+        let mut h = demo([1200.0, 760.0]);
+        let t = Duration::from_secs(10);
+        h.settle(SETTLE);
+        let undo = h.app.session.undo.len();
+        for action in ["copy", "paste"] {
+            let r = h.request("ui.clipboard", json!({"action": action, "text": "travel"}), t);
+            assert_eq!(r["ok"], false, "{action}: {r}");
+            assert!(r["error"].as_str().is_some_and(|e| e.contains("text field")), "{r}");
+        }
+        h.settle(SETTLE);
+        assert_eq!(h.app.session.undo.len(), undo, "nothing was pasted");
+    }
+
+    /// `ui.clickWidget` right-clicks with `button: "right"`, as `ui.click` does (MCP `click`
+    /// passes it on with a widget): a filmstrip photo's context menu opens.
+    #[test]
+    fn click_widget_right_clicks() {
+        let mut h = demo([1200.0, 760.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.settle(SETTLE);
+        let cell = h.app.widgets.iter().find(|(w, _)| w.starts_with("film:")).map(|(w, _)| w.clone()).expect("a filmstrip photo");
+        assert!(!egui::Popup::is_any_open(&h.view.ctx));
+        let r = h.request("ui.clickWidget", json!({"id": cell, "button": "right"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert!(egui::Popup::is_any_open(&h.view.ctx), "its context menu");
+    }
+
+    /// The search field is a shared text field: right-click ▸ Paste puts the clipboard's text in
+    /// and filters by it.
+    #[test]
+    fn the_search_field_pastes_from_its_menu() {
+        let mut h = demo([1200.0, 760.0]);
+        let t = Duration::from_secs(10);
+        h.settle(SETTLE);
+        h.view.clipboard = "wedding".into();
+        for (id, button) in [("field:search", "right"), ("field:search:paste", "left")] {
+            let r = h.request("ui.clickWidget", json!({"id": id, "button": button}), t);
+            assert_eq!(r["ok"], true, "{id}: {r}");
+            h.settle(SETTLE);
+        }
+        assert_eq!(h.app.ui.search, "wedding");
+        assert_eq!(h.app.session.filter.text, "wedding", "and the library is filtered by it");
+    }
+
+    /// Esc in the search field gives back the search from before the edit, and the filter with it.
+    #[test]
+    fn escape_in_the_search_field_gives_back_the_search() {
+        let mut h = demo([1200.0, 760.0]);
+        let t = Duration::from_secs(10);
+        h.settle(SETTLE);
+        for (method, params) in [("ui.clickWidget", json!({"id": "field:search"})), ("ui.text", json!({"text": "travel"}))] {
+            let r = h.request(method, params, t);
+            assert_eq!(r["ok"], true, "{r}");
+            h.settle(SETTLE);
+        }
+        assert_eq!(h.app.session.filter.text, "travel", "filtered while typing");
+        let r = h.request("ui.key", json!({"key": "Escape"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert_eq!((h.app.ui.search.as_str(), h.app.session.filter.text.as_str()), ("", ""));
     }
 
     #[test]
@@ -1133,6 +1283,45 @@ mod tests {
         assert_eq!(named(&h, ids[1], 0), None);
     }
 
+    /// The name field under the unnamed faces is a shared text field: right-click ▸ Paste puts the
+    /// clipboard's name in, and Esc leaves the field and clears the selection, as Clear does.
+    #[test]
+    fn the_unnamed_faces_name_field_pastes_and_escape_clears() {
+        use lightcraft_catalog::Op;
+        let mut h = demo([1400.0, 900.0]);
+        let t = Duration::from_secs(10);
+        let id = h.app.session.catalog.photos().map(|p| p.id).next().unwrap();
+        let mut meta = h.app.session.catalog.photo(id).unwrap().meta.clone();
+        meta.regions = vec![lightcraft_meta::Region {
+            rect: lightcraft_geom::Rect { x0: 0.3, y0: 0.2, x1: 0.5, y1: 0.55 },
+            kind: lightcraft_meta::RegionKind::Face,
+            name: None,
+            description: None,
+        }];
+        h.app.session.commit("setup", Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+        h.request("engine.execute", json!({"command": "view.people"}), t);
+        h.settle(SETTLE);
+        h.view.clipboard = "Wedding Guest".into();
+        for (widget, button) in [
+            (format!("unnamed-face:{}:0", id.0), "left"),
+            ("field:unnamedName".to_string(), "left"),
+            ("field:unnamedName".to_string(), "right"),
+            ("field:unnamedName:paste".to_string(), "left"),
+        ] {
+            let r = h.request("ui.clickWidget", json!({"id": widget, "button": button}), t);
+            assert_eq!(r["ok"], true, "{widget}: {r}");
+            h.step();
+            h.step();
+            h.step();
+        }
+        assert_eq!(h.app.ui.unnamed_name, "Wedding Guest");
+        assert_eq!(h.app.ui.unnamed_selected.len(), 1, "still naming");
+        h.request("ui.key", json!({"key": "Escape"}), t);
+        h.step();
+        h.step();
+        assert!(h.app.ui.unnamed_selected.is_empty() && h.app.ui.unnamed_name.is_empty(), "Esc cleared the selection and the name");
+    }
+
     /// A screenful of faces larger than the picture cache's usual budget (96) is all kept: with a fixed budget the same few
     /// tiles were evicted and re-requested every frame and stayed blank.
     #[test]
@@ -1396,6 +1585,90 @@ mod tests {
         h.settle(SETTLE);
     }
 
+    /// Rename Keyword's name field is a shared text field. It opens with the name selected, so
+    /// typing replaces it, and Return renames; right-click ▸ Paste works too; Esc cancels the
+    /// dialog and renames nothing.
+    #[test]
+    fn the_rename_keyword_field_selects_pastes_and_cancels() {
+        let mut h = demo([1200.0, 800.0]);
+        let t = Duration::from_secs(10);
+        let first = h.app.session.visible_cloned()[0].0;
+        h.request("engine.execute", json!({"command": "photo.setMeta", "params": {"ids": [first], "addKeywords": ["travel"]}}), t);
+        let keywords = |h: &Headless| h.app.session.catalog.photo(lightcraft_catalog::PhotoId(first)).unwrap().meta.keywords.clone();
+        let open = |h: &mut Headless, name: &str| {
+            h.app.ui.dialog = Some(crate::state::Dialog::RenameKeyword { from: name.into(), to: name.into() });
+            h.settle(SETTLE);
+        };
+        let ask = |h: &mut Headless, method: &str, params: serde_json::Value| {
+            let r = h.request(method, params.clone(), t);
+            assert_eq!(r["ok"], true, "{method} {params}: {r}");
+            h.settle(SETTLE);
+        };
+        // typing replaces the selected name
+        open(&mut h, "travel");
+        ask(&mut h, "ui.text", json!({"text": "trips"}));
+        ask(&mut h, "ui.key", json!({"key": "Enter"}));
+        assert!(keywords(&h).contains(&"trips".to_string()) && !keywords(&h).contains(&"travel".to_string()), "{:?}", keywords(&h));
+        assert_eq!(h.app.ui.dialog, None);
+        // the menu's Paste
+        open(&mut h, "trips");
+        h.view.clipboard = "weddings".into();
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:keywordName", "button": "right"}));
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:keywordName:paste"}));
+        ask(&mut h, "ui.key", json!({"key": "Enter"}));
+        assert!(keywords(&h).contains(&"weddings".to_string()), "{:?}", keywords(&h));
+        // Esc cancels
+        open(&mut h, "weddings");
+        ask(&mut h, "ui.text", json!({"text": "parties"}));
+        ask(&mut h, "ui.key", json!({"key": "Escape"}));
+        assert_eq!(h.app.ui.dialog, None, "Esc closed the dialog");
+        assert!(keywords(&h).contains(&"weddings".to_string()), "renamed nothing: {:?}", keywords(&h));
+    }
+
+    /// Return confirms the one-field dialogs: New Album, Rename Album, New Smart Album, Merge
+    /// Keywords and a text prompt (here: renaming an album). Their name opens selected, so typing
+    /// replaces it. Return did nothing: the field took the focus back on every frame, so egui never
+    /// reported the focus Return gives up.
+    #[test]
+    fn return_confirms_the_one_field_dialogs() {
+        use crate::state::Dialog;
+        let mut h = demo([1200.0, 800.0]);
+        let t = Duration::from_secs(10);
+        let first = h.app.session.visible_cloned()[0].0;
+        h.request("engine.execute", json!({"command": "photo.setMeta", "params": {"ids": [first], "addKeywords": ["holiday"]}}), t);
+        let album = |h: &Headless, name: &str| h.app.session.catalog.albums().find(|a| a.name == name).map(|a| a.id.0);
+        let garden = album(&h, "Garden").expect("the demo's Garden album");
+        let confirm = |h: &mut Headless, dialog: Dialog, typed: &str| {
+            h.app.ui.dialog = Some(dialog);
+            h.settle(SETTLE);
+            for (method, params) in [("ui.text", json!({"text": typed})), ("ui.key", json!({"key": "Enter"}))] {
+                let r = h.request(method, params, t);
+                assert_eq!(r["ok"], true, "{r}");
+                h.settle(SETTLE);
+            }
+            assert_eq!(h.app.ui.dialog, None, "Return confirmed the dialog ({typed})");
+        };
+        confirm(&mut h, Dialog::NewAlbum { name: String::new(), folder: false, parent: None }, "Weddings");
+        assert!(album(&h, "Weddings").is_some(), "New Album");
+        confirm(&mut h, Dialog::RenameAlbum { id: garden, name: "Garden".into() }, "Flowers");
+        assert_eq!(album(&h, "Flowers"), Some(garden), "Rename Album");
+        confirm(&mut h, Dialog::NewSmartAlbum { name: "Smart Album".into(), parent: None }, "Everything");
+        assert!(album(&h, "Everything").is_some(), "New Smart Album");
+        confirm(&mut h, Dialog::MergeKeywords { from: vec!["holiday".into()], into: String::new() }, "travel");
+        let keywords = h.app.session.catalog.photo(lightcraft_catalog::PhotoId(first)).unwrap().meta.keywords.clone();
+        assert!(keywords.contains(&"travel".to_string()) && !keywords.contains(&"holiday".to_string()), "Merge Keywords: {keywords:?}");
+        let prompt = Dialog::TextPrompt {
+            title: "Rename Album".into(),
+            hint: "Name".into(),
+            value: "Flowers".into(),
+            command: "album.rename".into(),
+            params: json!({"id": garden}),
+            key: "name".into(),
+        };
+        confirm(&mut h, prompt, "Botanical");
+        assert_eq!(album(&h, "Botanical"), Some(garden), "the text prompt");
+    }
+
     /// The sidebar's file-system checks run on worker threads and add rows when they land, which
     /// moves every row below them: `busy()` counts them, so `settle` waits for them before a test
     /// reads widget positions (a click aimed at a stale rect hits the neighbouring row).
@@ -1647,6 +1920,49 @@ mod tests {
         assert!(w["result"].to_string().contains("field:copyrightStatus"), "{w}");
     }
 
+    /// Info panel fields are shared text fields. The caption takes several lines: Return starts a
+    /// new one and only leaving the field saves it. Esc gives up an edit (the title stays as it
+    /// was, nothing saved), and right-click ▸ Paste works there too.
+    #[test]
+    fn info_fields_take_lines_esc_and_the_menu() {
+        let mut h = demo([1300.0, 1000.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "info"}), t);
+        h.settle(SETTLE);
+        let meta = |h: &Headless| h.app.session.catalog.photo(h.app.session.active().unwrap()).unwrap().meta.clone();
+        let ask = |h: &mut Headless, method: &str, params: serde_json::Value| {
+            let r = h.request(method, params.clone(), t);
+            assert_eq!(r["ok"], true, "{method} {params}: {r}");
+            h.step();
+            h.step();
+        };
+        let (title, undo) = (meta(&h).title, h.app.session.undo.len());
+        // the caption: two lines, saved on leaving
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:caption"}));
+        ask(&mut h, "ui.key", json!({"key": "A", "cmd": true}));
+        ask(&mut h, "ui.text", json!({"text": "Harbour at dusk"}));
+        ask(&mut h, "ui.key", json!({"key": "Enter"}));
+        ask(&mut h, "ui.text", json!({"text": "Lisbon, 2026"}));
+        assert_eq!(h.app.session.undo.len(), undo, "Return in the caption saves nothing yet");
+        ask(&mut h, "ui.key", json!({"key": "Tab"}));
+        assert_eq!(meta(&h).caption, "Harbour at dusk\nLisbon, 2026");
+        // the title: Esc gives the edit up
+        let undo = h.app.session.undo.len();
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:title"}));
+        ask(&mut h, "ui.text", json!({"text": " (draft)"}));
+        ask(&mut h, "ui.key", json!({"key": "Escape"}));
+        h.settle(SETTLE);
+        assert_eq!((meta(&h).title, h.app.session.undo.len()), (title, undo), "Esc saved nothing");
+        // the menu
+        h.view.clipboard = "Wedding in Sintra".into();
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:title"}));
+        ask(&mut h, "ui.key", json!({"key": "A", "cmd": true}));
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:title", "button": "right"}));
+        ask(&mut h, "ui.clickWidget", json!({"id": "field:title:paste"}));
+        ask(&mut h, "ui.key", json!({"key": "Enter"}));
+        assert_eq!(meta(&h).title, "Wedding in Sintra");
+    }
+
     /// Local: a folder's photos show without joining the library; the breadcrumb, Include
     /// subfolders and Add to My Photos work from the grid header.
     #[test]
@@ -1896,6 +2212,28 @@ mod tests {
         h.request("ui.key", json!({"key": "Enter"}), t);
         assert!((exposure(&h) - 1.5).abs() < 1e-9, "{}", exposure(&h));
         assert_eq!(h.app.session.undo.len(), undo0 + 1);
+    }
+
+    /// A slider's typed value is a shared text field: right-click ▸ Paste replaces the value
+    /// (selected when the field opens) and Return applies it; the menu doesn't close the field.
+    #[test]
+    fn a_slider_value_pastes_from_its_menu() {
+        let mut h = demo([1300.0, 900.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "edit"}), t);
+        h.settle(SETTLE);
+        h.view.clipboard = "0.75".into();
+        for (id, button) in
+            [("sliderValue:light.exposure", "left"), ("sliderField:light.exposure", "right"), ("sliderField:light.exposure:paste", "left")]
+        {
+            let r = h.request("ui.clickWidget", json!({"id": id, "button": button}), t);
+            assert_eq!(r["ok"], true, "{id}: {r}");
+            h.settle(SETTLE);
+        }
+        h.request("ui.key", json!({"key": "Enter"}), t);
+        h.settle(SETTLE);
+        let exposure = h.app.session.develop_of(h.app.session.active().unwrap()).unwrap().light.exposure;
+        assert!((exposure - 0.75).abs() < 1e-9, "{exposure}");
     }
 
     /// The eye on a section header switches the section off and on again, one undo step each
