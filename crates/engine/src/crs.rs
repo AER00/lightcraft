@@ -310,13 +310,19 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
             put(o, "curve.master", c);
         }
     }
-    // Lightroom Classic reads the red / green / blue curves only together with the master 2012
-    // curve: a channel curve without `ToneCurvePV2012` leaves the photo unchanged
+    // Lightroom Classic reads the red / green / blue curves only when the packet holds the master
+    // 2012 curve and all three channel curves (as its own packets always do): a packet missing any
+    // of them imports without channel curves (master + red, master + red + green, or red / green /
+    // blue without the master all leave the photo's channels unchanged there)
     if let Some(c) = curve(props, "crs:ToneCurvePV2012") {
         put(o, "curve.master", c);
-        for (crs, ch) in [("ToneCurvePV2012Red", "red"), ("ToneCurvePV2012Green", "green"), ("ToneCurvePV2012Blue", "blue")] {
-            if let Some(c) = curve(props, &format!("crs:{crs}")) {
-                put(o, &format!("curve.{ch}"), c);
+        let channels = [("ToneCurvePV2012Red", "red"), ("ToneCurvePV2012Green", "green"), ("ToneCurvePV2012Blue", "blue")]
+            .map(|(crs, ch)| (curve(props, &format!("crs:{crs}")), ch));
+        if channels.iter().all(|(c, _)| c.is_some()) {
+            for (c, ch) in channels {
+                if let Some(c) = c {
+                    put(o, &format!("curve.{ch}"), c);
+                }
             }
         }
     }
@@ -710,21 +716,34 @@ mod tests {
     }
 
     #[test]
-    fn channel_curves_need_the_master_curve() {
-        // Lightroom ignores a red / green / blue curve without `ToneCurvePV2012`
-        let packet = |master: &str| {
+    fn channel_curves_need_the_master_and_all_channel_curves() {
+        // Lightroom applies red / green / blue curves only when the master and all three are present
+        let seq = |name: &str, pts: &str| format!("<crs:{name}><rdf:Seq>{pts}</rdf:Seq></crs:{name}>");
+        let identity = "<rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li>";
+        let bent = "<rdf:li>0, 0</rdf:li><rdf:li>64, 40</rdf:li><rdf:li>255, 255</rdf:li>";
+        let packet = |curves: &[String]| {
             format!(
                 r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-          <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:ToneCurveName2012="Custom">{master}
-           <crs:ToneCurvePV2012Green><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>64, 40</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012Green>
-          </rdf:Description></rdf:RDF></x:xmpmeta>"#
+          <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:ToneCurveName2012="Custom">{}
+          </rdf:Description></rdf:RDF></x:xmpmeta>"#,
+                curves.concat()
             )
         };
-        let alone = to_partial(&props(&packet("")), Target::RawAbsolute);
+        let partial = |curves: &[String]| to_partial(&props(&packet(curves)), Target::RawAbsolute);
+        let (master, red, green, blue) = (
+            seq("ToneCurvePV2012", identity),
+            seq("ToneCurvePV2012Red", identity),
+            seq("ToneCurvePV2012Green", bent),
+            seq("ToneCurvePV2012Blue", identity),
+        );
+        // a channel curve alone, or with the master but without its two siblings: ignored
+        let alone = partial(std::slice::from_ref(&green));
         assert!(alone.pointer("/curve/green").is_none(), "{alone}");
-        let master = "<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>";
-        let with = to_partial(&props(&packet(master)), Target::RawAbsolute);
-        assert!(with.pointer("/curve/green").is_some() && with.pointer("/curve/master").is_some(), "{with}");
+        let master_and_green = partial(&[master.clone(), green.clone()]);
+        assert!(master_and_green.pointer("/curve/green").is_none() && master_and_green.pointer("/curve/master").is_some(), "{master_and_green}");
+        // all four: read
+        let all = partial(&[master, red, green, blue]);
+        assert!(["/curve/master", "/curve/red", "/curve/green", "/curve/blue"].iter().all(|p| all.pointer(p).is_some()), "{all}");
     }
 
     fn unmapped(x: &str) -> Vec<String> {

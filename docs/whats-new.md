@@ -98,7 +98,8 @@
   white, empty Point Color slots…) as settings that couldn't be carried over.
 - A preset whose lens-profile switch is off no longer turns off the lens corrections built into a DNG (iPhone ProRAW
   and other files with embedded distortion / vignetting corrections), matching what the preset does elsewhere.
-- A red / green / blue curve in an XMP preset without the master curve is ignored, as Lightroom ignores it.
+- XMP presets apply their red / green / blue curves only when they also have the master curve and all three channel
+  curves, as Lightroom does: a preset with just one channel curve (or no master curve) leaves the channels alone.
 - Imported `.cube` LUT profiles appear in the Profile menu and the profile browser, grouped by their folder, and stay
   favourites across restarts (issue #328).
 
