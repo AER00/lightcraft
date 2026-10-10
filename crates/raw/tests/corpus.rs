@@ -516,11 +516,12 @@ fn corpus_sony_sr2_white_balance() {
     let dir = corpus_root().join("raw");
     // (file, R and B levels)
     let cases = [
-        ("arw-sony-a500.arw", [2212, 1416]),        // 27152-byte SR2SubIFD layout (2.04 / 1.35)
-        ("arw-sony-a33.arw", [2344, 1508]),         // 29000-byte layout (2.29 / 1.48)
-        ("arw-sony-a700.arw", [2128, 1564]),        // 62112-byte layout (too few neutral pixels)
-        ("arw-sony-a3500-5600k.arw", [2932, 1576]), // 5600 K (2.76 / 1.53; Tag2010 1.89 / 3.08)
-        ("arw-sony-a7s-shade.arw", [2932, 1372]),   // Shade (2.90 / 1.32; Tag2010 2.63 / 1.52)
+        ("arw-sony-a500.arw", [2212, 1416]),          // 27152-byte SR2SubIFD layout (2.04 / 1.35)
+        ("arw-sony-a33.arw", [2344, 1508]),           // 29000-byte layout (2.29 / 1.48)
+        ("arw-sony-a700.arw", [2128, 1564]),          // 62112-byte layout (too few neutral pixels)
+        ("arw-sony-a3500-5600k.arw", [2932, 1576]),   // 5600 K (2.76 / 1.53; Tag2010 1.89 / 3.08)
+        ("arw-sony-a7s-shade.arw", [2932, 1372]),     // Shade (2.90 / 1.32; Tag2010 2.63 / 1.52)
+        ("arw-sony-a900-packed12.arw", [2688, 1516]), // packed 12-bit (the maker note's plain 0x0020 block agrees)
     ];
     let mut seen = 0;
     for (name, [r, b]) in cases {
@@ -535,6 +536,22 @@ fn corpus_sony_sr2_white_balance() {
         seen += 1;
     }
     eprintln!("Sony SR2SubIFD white balance checked on {seen} files");
+}
+
+/// The DSLR-A900's packed 12-bit strip decodes (issue #535, item 6): 12 bits on a black of 128, and the camera
+/// JPEG's `FullImageSize` window centred in the frame, which has no padding at either edge.
+#[test]
+fn corpus_sony_a900_packed12() {
+    let name = "arw-sony-a900-packed12.arw";
+    let Ok(bytes) = std::fs::read(corpus_root().join("raw").join(name)) else {
+        eprintln!("skip: {name} absent");
+        return;
+    };
+    let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+    assert_eq!((img.width, img.height, img.bits), (6080, 4048, 12));
+    assert_eq!(img.black.values, vec![128.0]);
+    let c = img.crop;
+    assert_eq!((c.x, c.y, c.width, c.height), (16, 8, 6048, 4032));
 }
 
 /// Issue #535: pre-2017 Sony bodies without crop tags shot in the camera's 16:9 mode. The ILCE-7SM2 records the

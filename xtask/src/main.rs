@@ -420,6 +420,12 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/data/Sony/DSLR-A580/RAW_SONY_A580.ARW",
         "5b0924d39151239dce19e92e08318f4f62a5a8ac276bd7180ec8463d2cfee709",
     ),
+    // packed 12-bit ARW (two pixels per three bytes): the DSLR-A900
+    (
+        "arw-sony-a900-packed12.arw",
+        "https://raw.pixls.us/data/Sony/DSLR-A900/_DSC7969.ARW",
+        "ac7c1532df77c321e8010aa1be60c1b9f245b1ac0db6f38fe617a73aae81af50",
+    ),
     // CR2 colour-filter layouts differ by model (issue #85): CR2CFAPattern 3 (GBRG) and 1 (RGGB) samples
     (
         "cr2-canon-40d.cr2",
