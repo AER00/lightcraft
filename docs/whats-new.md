@@ -145,6 +145,10 @@
 )
 
 ### Reliability
+- The Windows installer asks where to install LightCraft (Program Files by default; upgrades keep the folder you
+  chose) and ends on a page saying it was installed, with a "Launch LightCraft" box. It used to finish without a word,
+  so a successful install looked like nothing had happened (issues #18, #399). Silent installs (`/qn`, `/passive`)
+  show no dialogs and take `INSTALLFOLDER=...`.
 - If the desktop app can't open its window (for example when no graphics device can be used), it now says so in a
   message box that names the log file, instead of quitting without a trace (issue #260).
 - On macOS, single-key shortcuts that appear in the menu bar now work: E, C, H, M, ⇧P, I, K, D, ratings 0–5,

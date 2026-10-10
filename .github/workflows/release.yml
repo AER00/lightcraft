@@ -147,6 +147,7 @@ jobs:
         if: inputs.version != ''
         shell: bash
         run: cargo xtask version set "$LIGHTCRAFT_VERSION"
+      # package.ps1 adds the matching WixToolset.UI/Util.wixext (5.0.2) to the global extension cache.
       - name: Install WiX
         shell: pwsh
         run: dotnet tool install --global wix --version 5.0.2
