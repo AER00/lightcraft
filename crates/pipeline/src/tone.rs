@@ -33,6 +33,58 @@ pub const BASE_SLOPE: f32 = 1.56;
 /// Base shoulder position: scene EV above grey at which the default curve reaches half display.
 pub const BASE_WHITE_EV: f32 = 1.30;
 
+/// The display value Contrast pivots about (measured; the per-value fits agree to 0.05 over
+/// twenty-four bodies, and it does not move with the slider).
+const CONTRAST_PIVOT: f32 = 0.4934;
+
+/// The Contrast slider's exponent is exponential in the slider: `g = exp(-this · contrast)`.
+///
+/// The law itself comes from the reference: fitting an odd-symmetric S about a pivot to its own
+/// transfer at seven slider values over twenty-four bodies gives an exponent table that this
+/// reproduces to within 1 %, landing on exactly `g = 1` (the identity) at neutral.
+///
+/// The coefficients, though, are *calibrated* rather than taken from that table, because the fit
+/// compresses the exponent: applying the fitted value and measuring the result through the same
+/// pipeline came back shallower than asked (g 0.692 where the reference reads 0.634 at +100). So
+/// these are the fitted table divided by the measured compression — 0.832 on the positive arm and
+/// 0.912 on the negative, which differ because an S and an inverse S do not fit alike. Checked by
+/// re-measuring, not assumed.
+///
+/// This replaces a log-slope change about *grey*, which was wrong in two ways at once: ours came
+/// out at g 0.760 with an effective pivot of 0.596 where the reference is 0.634 about 0.507 — too
+/// weak, and pivoting 0.09 too high, so it moved the shadows more than it should and the
+/// highlights less.
+const CONTRAST_LOG_G_POS: f32 = 0.005453;
+const CONTRAST_LOG_G_NEG: f32 = 0.004975;
+
+/// Contrast's exponent: 1.0 at neutral, below 1 (an S) for positive, above 1 (an inverse S) for
+/// negative.
+fn contrast_g(contrast: f64) -> f32 {
+    if !contrast.is_finite() {
+        return 1.0;
+    }
+    let c = contrast.clamp(-100.0, 100.0) as f32;
+    let k = if c >= 0.0 { CONTRAST_LOG_G_POS } else { CONTRAST_LOG_G_NEG };
+    (-k * c).exp()
+}
+
+/// Apply Contrast to a display-*linear* value: an odd-symmetric power about [`CONTRAST_PIVOT`] in
+/// the encoded domain, mirrored to both sides of it.
+///
+/// The pivot is in encoded units because that is where the reference's Contrast acts; taking the
+/// value there and coming back is the same round trip [`whites_display`] makes, and for the same
+/// reason — a display-domain operation cannot be applied to a scene-domain curve directly.
+fn contrast_display(o: f32, g: f32) -> f32 {
+    if g == 1.0 || !o.is_finite() {
+        return o;
+    }
+    let x = lightcraft_color::transfer::linear_to_srgb(o.clamp(0.0, 1.0));
+    let l = CONTRAST_PIVOT.max(1.0 - CONTRAST_PIVOT);
+    let t = ((x - CONTRAST_PIVOT) / l).clamp(-1.0, 1.0);
+    let y = CONTRAST_PIVOT + l * t.abs().powf(g) * t.signum();
+    lightcraft_color::transfer::srgb_to_linear(y.clamp(0.0, 1.0))
+}
+
 /// EV the white point moves for each Whites notch, at −100, −75 … +100 (see [`whites_ev`]).
 ///
 /// The reference's Whites does not only move the shoulder, which is what this curve used to do
@@ -370,14 +422,15 @@ impl ToneMap {
         // [`ToneMap::display`] alongside Contrast, a display-domain lift whose reach is a fraction
         // of a stop: on a file carrying a camera look that left Whites almost inert (measured dew
         // +0.26 where the reference moves +2.60 at +100), which is most of the error there.
+        let g = contrast_g(contrast);
         let dew = whites_ev_scaled(whites, whites_scale);
-        let adjustment = Self::display(contrast, 0.0, 0.0);
-        let neutral = contrast == 0.0 && dew == 0.0;
+        let neutral = g == 1.0 && dew == 0.0;
         let lut = (0..LUT_N)
             .map(|i| {
                 let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
                 let y = curve.apply(GREY * 2f32.powf(ev));
-                whites_display(if neutral { y } else { adjustment.apply(y) }, dew)
+                let y = if neutral { y } else { contrast_display(y, g) };
+                whites_display(y, dew)
             })
             .collect();
         ToneMap { lut, chroma: curve.chroma }
@@ -400,10 +453,11 @@ impl ToneMap {
     /// [`ToneMap::hdr`] with the per-photo positive-Whites scale ([`whites_scale`]) applied.
     pub fn hdr_scaled(contrast: f64, whites: f64, peak: f32, whites_scale: f32) -> ToneMap {
         let peak = if peak.is_finite() { peak.max(1.0) } else { 1.0 };
-        let c = (contrast / 100.0) as f32;
-        // Whites moves the white point and the log-slope together (see [`WHITES_KNOTS`]).
+        // Whites moves the white point and the log-slope together (see [`WHITES_KNOTS`]); Contrast
+        // is not a slope at all but a display-domain S about its own pivot, applied further down.
+        let g = contrast_g(contrast);
         let dew = whites_ev_scaled(whites, whites_scale);
-        let slope = BASE_SLOPE + if c >= 0.0 { 0.55 * c } else { 0.4 * c } + WHITES_SLOPE * dew;
+        let slope = BASE_SLOPE + WHITES_SLOPE * dew;
         // Shoulder: scene luminance (after contrast) that maps to half display.
         let wl = GREY * 2f32.powf(BASE_WHITE_EV - dew);
         let pre = 1.0 + GREY / wl; // keep grey near grey
@@ -413,7 +467,7 @@ impl ToneMap {
                 let y = GREY * 2f32.powf(ev * slope) * pre;
                 // logistic shoulder: y/(y + wl) is 0 at black and rises to 1 without ever
                 // reaching it, so highlights compress smoothly instead of clipping
-                let mut o = (y / (y + wl)).clamp(0.0, 1.0);
+                let mut o = contrast_display((y / (y + wl)).clamp(0.0, 1.0), g);
                 if peak > 1.0 {
                     // HDR: lift highlights above the SDR curve, up to `peak` (see [`ToneMap::hdr`])
                     let top = (BASE_WHITE_EV - dew + peak.log2() + 1.0).max(HDR_FROM_EV + 0.5);
@@ -625,8 +679,7 @@ mod tests {
             // Where the HDR lift has not started, the curve must be the SDR one exactly. The
             // boundary is stated in the curve's own terms rather than as a fixed scene level,
             // because the measured slope moves with Contrast and Whites.
-            let dc = (c / 100.0) as f32;
-            let slope = BASE_SLOPE + if dc >= 0.0 { 0.55 * dc } else { 0.4 * dc } + WHITES_SLOPE * whites_ev(w);
+            let slope = BASE_SLOPE + WHITES_SLOPE * whites_ev(w);
             for peak in [2.0f32, 8.0, 32.0] {
                 let sdr = ToneMap::new(c, w);
                 let t = ToneMap::hdr(c, w, peak);
@@ -932,6 +985,56 @@ mod tests {
         assert!(ToneMap::camera_scaled(&curve, 0.0, 100.0, 1.5).apply(0.5) > up.apply(0.5));
         for w in [-100.0, 0.0] {
             assert_eq!(ToneMap::camera(&curve, 0.0, w).lut(), ToneMap::camera_scaled(&curve, 0.0, w, 1.5).lut(), "Whites {w}");
+        }
+    }
+
+    /// Contrast is the reference's measured S about its own pivot, not a slope about grey.
+    #[test]
+    fn contrast_is_the_measured_s_curve() {
+        // Identity at neutral, exactly, so an untouched render is unchanged.
+        assert_eq!(contrast_g(0.0), 1.0);
+        // Monotone in the slider, and the sign flips at zero: positive deepens, negative flattens.
+        let mut previous = 0.0f32;
+        for v in 1..=100 {
+            let l = contrast_g(v as f64).ln().abs();
+            assert!(l > previous, "contrast {v}: {l} !> {previous}");
+            previous = l;
+        }
+        for v in [10.0, 25.0, 50.0, 100.0] {
+            assert!(contrast_g(v) < 1.0 && contrast_g(-v) > 1.0, "{v}");
+        }
+        // Hostile input is neutral, and the slider clamps.
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(contrast_g(bad), 1.0, "{bad}");
+        }
+        assert_eq!(contrast_g(1e9), contrast_g(100.0));
+        assert_eq!(contrast_g(-1e9), contrast_g(-100.0));
+        // The pivot is the fixed point, whatever the strength, and the map stays in range.
+        let pivot = lightcraft_color::transfer::srgb_to_linear(CONTRAST_PIVOT);
+        for g in [0.6f32, 0.8, 1.0, 1.2, 1.6] {
+            // Loose on purpose: for g < 1 the S has infinite slope at the pivot, so `|t|^g`
+            // magnifies the encode/decode round trip rather than the map being wrong.
+            assert!((contrast_display(pivot, g) - pivot).abs() < 1e-3, "g {g}");
+            let mut previous = -1.0;
+            for i in 0..=1000 {
+                let o = i as f32 / 1000.0;
+                let v = contrast_display(o, g);
+                assert!((0.0..=1.0).contains(&v), "g {g} at {o}: {v}");
+                assert!(v >= previous - 1e-6, "g {g} at {o}: {v} < {previous}");
+                previous = v;
+            }
+        }
+        // A positive Contrast lifts above the pivot and drops below it; a negative one the reverse.
+        let base = ToneMap::new(0.0, 0.0);
+        let deep = ToneMap::new(100.0, 0.0);
+        let flat = ToneMap::new(-100.0, 0.0);
+        for y in [0.02f32, 0.05, 0.1] {
+            assert!(deep.apply(y) < base.apply(y), "shadow {y}");
+            assert!(flat.apply(y) > base.apply(y), "shadow {y}");
+        }
+        for y in [0.6f32, 1.0, 2.0] {
+            assert!(deep.apply(y) > base.apply(y), "highlight {y}");
+            assert!(flat.apply(y) < base.apply(y), "highlight {y}");
         }
     }
 }
