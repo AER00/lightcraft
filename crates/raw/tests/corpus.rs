@@ -19,6 +19,7 @@ const KNOWN_UNSUPPORTED: &[&str] = &[
     "orf-olympus-em", // Olympus compressed ORF
     "-he.nef",        // Nikon High Efficiency (HE / HE★) NEF, issue #193
     "sraw",           // Canon sRAW / mRAW
+    "sony-r1-sr2",    // Sony SR2 (DSC-R1): encrypted raw data, opens from its preview (#535)
 ];
 
 #[test]
@@ -535,6 +536,45 @@ fn corpus_sony_sr2_white_balance() {
         seen += 1;
     }
     eprintln!("Sony SR2SubIFD white balance checked on {seen} files");
+}
+
+/// Issue #535: pre-2017 Sony bodies without crop tags shot in the camera's 16:9 mode. The ILCE-7SM2 records the
+/// 16:9 size in `FullImageSize`, the DSLR-A580 only in the Exif image size; both crops are centred vertically (each
+/// camera JPEG registered on its raw) and drop the right-edge padding, so the image matches its JPEG's aspect ratio
+/// and gets a camera look. The DSC-R1's SR2 stores encrypted samples and must open as its preview, not as noise.
+#[test]
+fn corpus_sony_16x9_crops_and_sr2() {
+    let dir = corpus_root().join("raw");
+    let read = |name: &str| match std::fs::read(dir.join(name)) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("skip: {name} absent");
+            None
+        }
+        Err(e) => panic!("{name}: {e}"),
+    };
+    let mut seen = 0;
+    for (name, (x, y, w, h)) in [("arw-sony-a7sm2-16x9.arw", (0, 232, 4240, 2384)), ("arw-sony-a580-16x9.arw", (0, 260, 4912, 2760))] {
+        let Some(bytes) = read(name) else { continue };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let c = img.crop;
+        assert_eq!((c.x, c.y, c.width, c.height), (x, y, w, h), "{name}: crop");
+        let jpeg = embedded_preview(&bytes).unwrap_or_else(|| panic!("{name}: no preview"));
+        let mut d = zune_jpeg::JpegDecoder::new(zune_core::bytestream::ZCursor::new(&jpeg));
+        d.decode_headers().unwrap();
+        let info = d.info().unwrap();
+        let (aspect, preview) = (c.width as f64 / c.height as f64, info.width as f64 / info.height as f64);
+        assert!((aspect / preview - 1.0).abs() < 0.02, "{name}: crop aspect {aspect} vs camera JPEG {preview}");
+        seen += 1;
+    }
+    if let Some(bytes) = read("arw-sony-r1-sr2.sr2") {
+        for r in [decode(&bytes).map(|_| ()), probe_info(&bytes).map(|_| ())] {
+            assert!(matches!(r, Err(RawError::Unsupported(ref why)) if why.contains("SR2")), "DSC-R1 SR2: {r:?}");
+        }
+        assert!(embedded_preview(&bytes).is_some(), "DSC-R1 SR2: no preview to open");
+        seen += 1;
+    }
+    eprintln!("Sony 16:9 crops and SR2 checked on {seen} files");
 }
 
 /// The embedded JPEG as linear RGB, reduced to `gw × gh` cells.
