@@ -166,6 +166,11 @@
 - Samsung SRW files without compression now open as raws: NX5, NX10, NX11, NX20, NX200, NX210, NX1000, NX1100, EX1
   and WB2000. The compressed ones (NX1, NX30, NX300, NX500, NX2000, NX3000, NX3300, NX mini) still open from their
   camera JPEG. Photos already imported pick the change up on Reload.
+- Raws from 52 camera models (22 Canon, 11 Nikon, 11 Sony, 3 Fujifilm and 5 others, plus their other names) whose
+  camera JPEG can't be fitted no longer open with the neutral fallback: they start from colour matrices fitted to the
+  camera's measured spectral sensitivities, from the Academy Software Foundation's rawtoaces-data. A camera profile
+  and the fit to the photo's own JPEG still come first, so photos that had a fitted look keep it. See
+  [camera preview colour](camera-preview-colour.md#spectral-camera-matrices-and-the-order-of-precedence).
 - Canon CR2 raws no longer open too dark with blocked-up shadows: the black level was measured over border columns
   that light already reaches (left of the image area Canon records), 4 % of the range too high on the EOS 6D. It is
   now measured on the masked columns alone (8 corpus bodies, EOS 40D to 5DS R). On a 6D photo the starting render
