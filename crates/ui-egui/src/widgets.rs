@@ -153,7 +153,7 @@ pub fn typed_value(spec: &ControlSpec, text: &str) -> Option<f64> {
 }
 
 /// A slider's value as shown next to its label.
-fn shown_value(spec: &ControlSpec, v: f64) -> String {
+pub(crate) fn shown_value(spec: &ControlSpec, v: f64) -> String {
     let shown = if spec.id == "wb.temp" { format!("{v:.0}") } else { spec.format(v).replace("+0.00", "0").replace("-0.00", "0") };
     if shown == "+0" || shown == "-0" { "0".to_string() } else { shown }
 }
@@ -180,6 +180,8 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     let value_rect = Rect::from_min_max(pos2(label_rect.right() - 64.0, label_rect.top()), label_rect.max);
     let value_resp = ui.interact(value_rect, id.with("value"), if enabled { Sense::click() } else { Sense::hover() });
     register(ui.ctx(), format!("sliderValue:{}", spec.id), value_rect);
+    // say that an exact value can be typed here (issue #534: an exact crop angle was hard to find)
+    let value_resp = if enabled { value_resp.on_hover_text(crate::i18n::tr("Click to type a value")) } else { value_resp };
     let typing_id = id.with("typing");
     let field_id = id.with("typingField");
     // the text being typed and how many frames the field has been up: it takes the keyboard on its

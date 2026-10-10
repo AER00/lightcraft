@@ -33,6 +33,8 @@ pub mod titlebar;
 pub mod widgets;
 
 #[cfg(test)]
+mod tests_crop_rotate;
+#[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
 mod tests_filmstrip;

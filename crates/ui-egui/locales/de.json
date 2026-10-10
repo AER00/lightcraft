@@ -1891,5 +1891,7 @@
   "ONNX model": "ONNX model",
   "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
   "Decrease Rating": "Bewertung verringern",
-  "Increase Rating": "Bewertung erhöhen"
+  "Increase Rating": "Bewertung erhöhen",
+  "Click to type a value": "Klicken, um einen Wert einzugeben",
+  "Angle": "Winkel"
 }

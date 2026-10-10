@@ -1736,5 +1736,7 @@
   "ONNX model": "ONNX model",
   "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
   "Decrease Rating": "評価を下げる",
-  "Increase Rating": "評価を上げる"
+  "Increase Rating": "評価を上げる",
+  "Click to type a value": "クリックして値を入力",
+  "Angle": "角度"
 }

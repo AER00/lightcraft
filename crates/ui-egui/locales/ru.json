@@ -1409,5 +1409,7 @@
   "ONNX model": "ONNX model",
   "commercial use subject to GPL conditions": "commercial use subject to GPL conditions",
   "Decrease Rating": "Уменьшить оценку",
-  "Increase Rating": "Увеличить оценку"
+  "Increase Rating": "Увеличить оценку",
+  "Click to type a value": "Щёлкните, чтобы ввести значение",
+  "Angle": "Угол"
 }

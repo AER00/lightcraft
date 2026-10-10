@@ -145,6 +145,22 @@ impl HeadlessView {
         self.frames
     }
 
+    /// Every piece of text the last frame painted (labels, tooltips, values), in paint order.
+    pub fn painted_text(&self) -> Vec<String> {
+        fn texts(shape: &egui::epaint::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::epaint::Shape::Text(shape) => out.push(shape.galley.job.text.clone()),
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for shape in &self.shapes {
+            texts(&shape.shape, &mut out);
+        }
+        out
+    }
+
     /// Size in pixels of the last frame.
     pub fn size_px(&self) -> [usize; 2] {
         self.size
@@ -182,6 +198,8 @@ pub struct Headless {
     pub window_maximized: bool,
     /// Window-management commands the app sent (`StartDrag`, `Maximized`, …), oldest first.
     pub window_commands: Vec<ViewportCommand>,
+    /// The pointer cursor the last frame asked for (what a real host would show).
+    pub last_cursor: egui::CursorIcon,
 }
 
 impl Headless {
@@ -210,11 +228,17 @@ impl Headless {
             quit: false,
             window_maximized: false,
             window_commands: vec![],
+            last_cursor: egui::CursorIcon::Default,
         }
     }
 
     pub fn frames(&self) -> u64 {
         self.frames
+    }
+
+    /// Every piece of text the last frame painted ([`HeadlessView::painted_text`]).
+    pub fn painted_text(&self) -> Vec<String> {
+        self.view.painted_text()
     }
 
     /// `app.quit` was requested.
@@ -230,10 +254,13 @@ impl Headless {
         raw.max_texture_side = Some(self.max_texture_side);
         self.app.raw_input_hook(&mut raw);
         let app = &mut self.app;
+        let mut cursor = egui::CursorIcon::Default;
         let commands = self.view.run(raw, |ui| {
             app.logic(ui.ctx());
             app.ui(ui);
+            cursor = ui.ctx().output(|output| output.cursor_icon);
         });
+        self.last_cursor = cursor;
         self.time += FRAME_DT;
         self.frames += 1;
         for c in commands {

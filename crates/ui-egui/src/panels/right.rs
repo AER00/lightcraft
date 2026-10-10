@@ -185,6 +185,49 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if let Some(spec) = ang {
         let out = slider(ui, &spec, d.crop.geometry.angle, true, Some("Straighten"));
         super::edit::apply_slider_out(app, &spec, out, |app, v| app.run("crop.straighten", json!({"angle": v})));
+        // an exact angle, typed (issue #534): a field of its own, besides the slider's value
+        padded(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(crate::i18n::tr("Angle"));
+                let mut angle = d.crop.geometry.angle;
+                let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                let r = ui.add(
+                    egui::DragValue::new(&mut angle)
+                        .range(spec.min..=spec.max)
+                        .clamp_existing_to_range(false)
+                        .speed(0.05)
+                        .fixed_decimals(2)
+                        // as the readout writes it: "+2.50", and every zero "0.00"
+                        .custom_formatter(|v, _| super::detail::crop_angle_label(v).trim_end_matches('°').to_string())
+                        .suffix("°")
+                        // read as the Straighten value reads a typed one: "-3,25" too
+                        .custom_parser(|text| crate::widgets::typed_value(&spec, text.trim().trim_end_matches('°')))
+                        // a typed angle applies on Return (or leaving the field), not keystroke by
+                        // keystroke: no half-typed angles, one undo step
+                        .update_while_editing(false),
+                );
+                crate::widgets::register(ui.ctx(), "cropAngleField", r.rect);
+                // a drag on the field is one undo step, like the slider's
+                if r.drag_started() {
+                    let _ = app.run("develop.beginInteraction", json!({"label": "Straighten"}));
+                }
+                // egui reports a change while text is typed even when the value isn't updated yet:
+                // apply only a new angle
+                // Esc keeps the old angle, but egui applies the typed text on the frame after the
+                // one where Esc took the focus away: remember the Esc for that frame
+                let cancel = egui::Id::new("cropAngleFieldEscaped");
+                let escaped = ui.data_mut(|m| m.remove_temp::<bool>(cancel)).unwrap_or(false);
+                if escape && r.lost_focus() {
+                    ui.data_mut(|m| m.insert_temp(cancel, true));
+                }
+                if r.changed() && !escaped && angle.is_finite() && angle != d.crop.geometry.angle {
+                    let _ = app.run("crop.straighten", json!({"angle": (angle.clamp(spec.min, spec.max) * 100.0).round() / 100.0}));
+                }
+                if r.drag_stopped() {
+                    let _ = app.run("develop.endInteraction", json!({}));
+                }
+            });
+        });
     }
     padded(ui, |ui| {
         ui.horizontal(|ui| {
