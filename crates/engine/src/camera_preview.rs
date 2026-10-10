@@ -1225,6 +1225,30 @@ mod tests {
         assert!(info.relative_wb && info.as_shot_temp == 6500.0 && info.as_shot_tint == 0.0);
     }
 
+    /// The public ILCE-7CR samples (61 MP; skipped without the corpus): lossless compressed L and M and compressed
+    /// ARW2 all get a look fitted to their own JPEG, not the neutral fallback.
+    #[test]
+    fn corpus_a7cr_codings_get_a_camera_look() {
+        let dir = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+            .join("raw");
+        for name in ["arw-sony-a7cr-lossless-l.arw", "arw-sony-a7cr-lossless-m.arw", "arw-sony-a7cr-compressed.arw"] {
+            let bytes = match std::fs::read(dir.join(name)) {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!("skip: {name} absent");
+                    continue;
+                }
+                Err(e) => panic!("{name}: {e}"),
+            };
+            let (img, info) = crate::files::load_bytes(&bytes, 400).unwrap();
+            assert_eq!((img.width, img.height), (400, 267), "{name}: framed in the default crop");
+            assert!(info.camera_tone.is_some(), "{name}: no camera look fitted");
+            assert!(info.relative_wb && info.as_shot_temp == 6500.0 && info.as_shot_tint == 0.0, "{name}");
+        }
+    }
+
     /// A public DC-FZ1000 II RW2 shot at 4:3 on its 3:2 sensor (skipped without the corpus): the default crop is 4:3
     /// while the embedded JPEG shows the whole sensor; the look is still fitted, against the matching part of it.
     #[test]
