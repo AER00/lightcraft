@@ -20,6 +20,7 @@ mod convert;
 pub mod display;
 pub mod encode;
 pub mod exif;
+pub mod gainmap;
 mod heif;
 pub mod icc;
 mod jpeg;
@@ -35,7 +36,8 @@ mod tiff_codec;
 mod webp;
 
 pub use encode::{
-    ChromaSubsampling, EncodeImage, EncodeMeta, Samples, TiffCompression, encode_avif, encode_jpeg, encode_png, encode_tiff, encode_webp_lossless,
+    ChromaSubsampling, EncodeImage, EncodeMeta, HDR_REFERENCE_WHITE_NITS, Samples, TiffCompression, encode_avif, encode_avif_pq, encode_jpeg,
+    encode_png, encode_tiff, encode_webp_lossless,
 };
 pub use sniff::{Format, sniff};
 pub use space::{NamedSpace, SourceSpace, SpaceOrigin, Trc};

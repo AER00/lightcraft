@@ -109,6 +109,10 @@ pub struct DevelopSettings {
     pub treatment: Treatment,
     pub wb: WhiteBalance,
     pub light: Light,
+    /// HDR editing: highlights above SDR white, and the SDR rendition derived from them. Not written while it is
+    /// the default, so settings without HDR keep their JSON and `hash64` (and every cached preview stays valid).
+    #[serde(skip_serializing_if = "Hdr::is_default")]
+    pub hdr: Hdr,
     pub curve: ToneCurve,
     pub color: ColorAdj,
     pub mixer: Mixer,
@@ -144,6 +148,7 @@ impl Default for DevelopSettings {
             treatment: Treatment::Color,
             wb: WhiteBalance::default(),
             light: Light::default(),
+            hdr: Hdr::default(),
             curve: ToneCurve::default(),
             color: ColorAdj::default(),
             mixer: Mixer::default(),
@@ -1025,5 +1030,80 @@ pub struct Enhance {
 impl Enhance {
     pub fn denoise_enabled(&self) -> bool {
         self.denoise_on.unwrap_or(self.denoise > 0.0)
+    }
+}
+
+/// HDR editing. When enabled, an HDR render ([`Hdr::peak`]) keeps highlights above SDR white (1.0)
+/// up to `2^max_ev`; every SDR render (previews on SDR displays, 8/16-bit exports and a gain map's
+/// base image) uses the SDR rendition ([`DevelopSettings::sdr_rendition`]): the same edit with the
+/// `sdr_*` offsets applied.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Hdr {
+    pub enabled: bool,
+    /// Headroom limit: stops above SDR white the HDR render may reach.
+    pub max_ev: f64,
+    /// SDR rendition offsets (−100..100): brightness (±1 EV), then added to the matching sliders.
+    pub sdr_brightness: f64,
+    pub sdr_contrast: f64,
+    pub sdr_highlights: f64,
+    pub sdr_shadows: f64,
+    pub sdr_whites: f64,
+    pub sdr_clarity: f64,
+}
+
+impl Default for Hdr {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_ev: Hdr::DEFAULT_MAX_EV,
+            sdr_brightness: 0.0,
+            sdr_contrast: 0.0,
+            sdr_highlights: 0.0,
+            sdr_shadows: 0.0,
+            sdr_whites: 0.0,
+            sdr_clarity: 0.0,
+        }
+    }
+}
+
+impl Hdr {
+    pub const DEFAULT_MAX_EV: f64 = 3.0;
+    pub const MAX_EV_LIMIT: f64 = 5.0;
+
+    /// Whether these are the default HDR settings (HDR off, nothing changed).
+    pub fn is_default(&self) -> bool {
+        *self == Hdr::default()
+    }
+
+    /// Peak linear value of an HDR render relative to SDR white (1.0 when HDR is off). A non-finite headroom
+    /// (a damaged file or argument) falls back to the default, so the peak is always finite and at least 1.
+    pub fn peak(&self) -> f32 {
+        if !self.enabled {
+            return 1.0;
+        }
+        let ev = if self.max_ev.is_finite() { self.max_ev } else { Hdr::DEFAULT_MAX_EV };
+        (ev.clamp(0.0, Hdr::MAX_EV_LIMIT) as f32).exp2()
+    }
+}
+
+impl DevelopSettings {
+    /// The settings an SDR render uses: unchanged when HDR is off; otherwise HDR off and the
+    /// SDR rendition offsets applied to exposure, contrast, highlights, shadows, whites, clarity.
+    pub fn sdr_rendition(&self) -> std::borrow::Cow<'_, DevelopSettings> {
+        if !self.hdr.enabled {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let h = self.hdr;
+        let mut s = self.clone();
+        s.hdr.enabled = false;
+        let add = |v: f64, d: f64| (v + d).clamp(-100.0, 100.0);
+        s.light.exposure = (s.light.exposure + h.sdr_brightness / 100.0).clamp(-5.0, 5.0);
+        s.light.contrast = add(s.light.contrast, h.sdr_contrast);
+        s.light.highlights = add(s.light.highlights, h.sdr_highlights);
+        s.light.shadows = add(s.light.shadows, h.sdr_shadows);
+        s.light.whites = add(s.light.whites, h.sdr_whites);
+        s.effects.clarity = add(s.effects.clarity, h.sdr_clarity);
+        std::borrow::Cow::Owned(s)
     }
 }
