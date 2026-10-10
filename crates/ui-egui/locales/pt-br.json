@@ -1823,5 +1823,11 @@
   "Add to All Selected Photos": "Adicionar a todas as fotos selecionadas",
   "Will Export": "Será exportado",
   "No keywords are exported": "Nenhuma palavra-chave é exportada",
-  "& Containing": "e as que as contêm"
+  "& Containing": "e as que as contêm",
+  "Edit Set…": "Editar conjunto…",
+  "Edit Keyword Set": "Editar conjunto de palavras-chave",
+  "Keywords (⌥1–⌥9)": "Palavras-chave (⌥1–⌥9)",
+  "A keyword set needs a name": "Um conjunto de palavras-chave precisa de um nome",
+  "Save as a new set": "Salvar como novo conjunto",
+  "Recent Keywords is built in: choose another name": "“Palavras-chave recentes” é fixo: escolha outro nome"
 }

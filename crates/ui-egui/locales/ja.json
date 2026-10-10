@@ -1825,5 +1825,11 @@
   "Add to All Selected Photos": "選択したすべての写真に追加",
   "Will Export": "書き出されるキーワード",
   "No keywords are exported": "書き出されるキーワードはありません",
-  "& Containing": "と親キーワード"
+  "& Containing": "と親キーワード",
+  "Edit Set…": "セットを編集…",
+  "Edit Keyword Set": "キーワードセットを編集",
+  "Keywords (⌥1–⌥9)": "キーワード (⌥1–⌥9)",
+  "A keyword set needs a name": "キーワードセットには名前が必要です",
+  "Save as a new set": "新しいセットとして保存",
+  "Recent Keywords is built in: choose another name": "「最近使用したキーワード」は組み込みです。別の名前を選んでください"
 }

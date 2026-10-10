@@ -596,6 +596,17 @@ pub enum Dialog {
         /// A new keyword is given to the selected photos.
         add_to_selected: bool,
     },
+    /// Edit Keyword Set: a set's name and its nine slots (an empty one is an empty slot). `replaces`:
+    /// the set being edited (renamed when the name changes); `None` saves a new set (from Recent
+    /// Keywords).
+    KeywordSet {
+        replaces: Option<String>,
+        name: String,
+        slots: Vec<String>,
+        /// Save as a new set, leaving the edited one (Lightroom Classic's Save as New Preset).
+        #[serde(default)]
+        as_new: bool,
+    },
     /// Move a keyword inside `parent` (`None`: the top level) where one of its name is already:
     /// asks before merging the two.
     MoveKeyword {

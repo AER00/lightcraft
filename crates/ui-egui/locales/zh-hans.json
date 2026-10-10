@@ -1283,7 +1283,7 @@
   "Set as Target Album (B adds to it)": "设为目标相册 (按 B 添加)",
   "Set as Top of Stack": "设为堆叠顶部",
   "Set date & time": "设置日期和时间",
-  "Set name": "标签集名称",
+  "Set name": "关键字集名称",
   "Set the mix from the photo's colours": "根据照片颜色设置混合",
   "Settings": "设置",
   "Settings file problem": "设置文件有问题",
@@ -1823,5 +1823,11 @@
   "Add to All Selected Photos": "添加到所有所选照片",
   "Will Export": "将导出",
   "No keywords are exported": "没有要导出的关键字",
-  "& Containing": "及上级"
+  "& Containing": "及上级",
+  "Edit Set…": "编辑关键字集…",
+  "Edit Keyword Set": "编辑关键字集",
+  "Keywords (⌥1–⌥9)": "关键字 (⌥1–⌥9)",
+  "A keyword set needs a name": "关键字集需要名称",
+  "Save as a new set": "另存为新关键字集",
+  "Recent Keywords is built in: choose another name": "“最近使用的关键字”为内置集：请另选名称"
 }

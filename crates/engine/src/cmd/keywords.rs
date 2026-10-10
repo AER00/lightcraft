@@ -72,6 +72,12 @@ pub struct KeywordSet {
     pub keywords: Vec<String>,
 }
 
+/// Two set names (or recent keywords) are the same whatever the case of any of their letters, as
+/// keywords are.
+fn same_set(a: &str, b: &str) -> bool {
+    lightcraft_catalog::keywords::same(a.trim(), b.trim())
+}
+
 /// The set name meaning "the nine most recently added keywords".
 pub const RECENT: &str = "Recent Keywords";
 
@@ -82,16 +88,32 @@ pub fn note_recent(s: &mut Session, added: &[String]) {
         if k.is_empty() {
             continue;
         }
-        s.recent_keywords.retain(|x| !x.eq_ignore_ascii_case(&k));
+        s.recent_keywords.retain(|x| !same_set(x, &k));
         s.recent_keywords.insert(0, k);
     }
     s.recent_keywords.truncate(9);
     let _ = s.save_prefs();
 }
 
+/// A set's slots as typed: each cleaned in its place (an empty one is an empty slot, so the others
+/// keep their ⌥ keys), each keyword once whatever its case (a second one leaves its slot empty),
+/// nine at most, no empty ones at the end.
+pub fn slots(typed: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for k in typed.iter().take(9) {
+        let k = clean(k);
+        let twice = !k.is_empty() && out.iter().any(|x| lightcraft_catalog::keywords::same(x, &k));
+        out.push(if twice { String::new() } else { k });
+    }
+    while out.last().is_some_and(String::is_empty) {
+        out.pop();
+    }
+    out
+}
+
 /// The nine keywords ⌥1–⌥9 apply: the current set's, or the recent ones.
 pub fn current_keywords(s: &Session) -> Vec<String> {
-    let set = s.keyword_set.as_deref().and_then(|n| s.keyword_sets.iter().find(|x| x.name.eq_ignore_ascii_case(n)));
+    let set = s.keyword_set.as_deref().and_then(|n| s.keyword_sets.iter().find(|x| same_set(&x.name, n)));
     let mut v = set.map_or_else(|| s.recent_keywords.clone(), |x| x.keywords.clone());
     v.truncate(9);
     v
@@ -109,13 +131,13 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "keyword.sets", "Keyword Sets", [], None, "{} → {sets: [{name, keywords}], current, keywords: the nine ⌥1–⌥9 apply}", always, |s, _| Ok(keyword_sets_json(s))),
         cmd!("keyword.useSet", "Use Keyword Set", [], None, "{name} (\"Recent Keywords\" = the recently added ones)", always, |s, p| {
             let name = str_param(p, "name").map(str::trim).unwrap_or(RECENT);
-            s.keyword_set = if name.eq_ignore_ascii_case(RECENT) || name.is_empty() {
+            s.keyword_set = if same_set(name, RECENT) || name.is_empty() {
                 None
             } else {
                 Some(
                     s.keyword_sets
                         .iter()
-                        .find(|x| x.name.eq_ignore_ascii_case(name))
+                        .find(|x| same_set(&x.name, name))
                         .ok_or_else(|| bad("keyword.useSet", format!("no keyword set `{name}`")))?
                         .name
                         .clone(),
@@ -129,24 +151,53 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save Keyword Set",
             [],
             None,
-            "{name, keywords?: [up to 9] (default: the current nine)} — replaces a set of that name and makes it current",
+            "{name, keywords?: [up to 9, \"\" = an empty slot] (default: the renamed set's, else the current nine), replace?: the set it renames, new?: refuse a name another set has} — replaces a set of that name (or `replace`, in its place) and makes it current",
             always,
             |s, p| {
                 let name = str_param(p, "name")
                     .map(str::trim)
-                    .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case(RECENT))
+                    .filter(|n| !n.is_empty() && !same_set(n, RECENT))
                     .ok_or_else(|| bad("keyword.saveSet", "missing or reserved `name`"))?
                     .to_string();
-                let mut keywords: Vec<String> = if p.get("keywords").is_some() {
-                    strs(p, "keywords").iter().map(|k| clean(k)).filter(|k| !k.is_empty()).collect()
-                } else {
-                    current_keywords(s)
+                let same_name = |x: &KeywordSet, n: &str| same_set(&x.name, n);
+                // the set it renames, if any (an empty `replace` is none)
+                let renames = match str_param(p, "replace").map(str::trim).filter(|o| !o.is_empty()) {
+                    Some(old) => Some(
+                        s.keyword_sets
+                            .iter()
+                            .position(|x| same_name(x, old))
+                            .ok_or_else(|| bad("keyword.saveSet", format!("no keyword set `{old}`")))?,
+                    ),
+                    None => None,
                 };
-                keywords.truncate(9);
+                // keywords not given: the renamed set's own, else the current nine
+                let keywords = if p.get("keywords").is_some() {
+                    slots(&strs(p, "keywords"))
+                } else {
+                    match renames.and_then(|at| s.keyword_sets.get(at)) {
+                        Some(x) => x.keywords.clone(),
+                        None => current_keywords(s),
+                    }
+                };
                 let set = KeywordSet { name: name.clone(), keywords };
-                match s.keyword_sets.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
-                    Some(x) => *x = set,
-                    None => s.keyword_sets.push(set),
+                match renames {
+                    // rename: in its place, onto a name no other set has
+                    Some(at) => {
+                        if s.keyword_sets.iter().enumerate().any(|(i, x)| i != at && same_name(x, &name)) {
+                            return Err(bad("keyword.saveSet", format!("there is a keyword set “{name}” already")));
+                        }
+                        if let Some(x) = s.keyword_sets.get_mut(at) {
+                            *x = set;
+                        }
+                    }
+                    // a new set (`new`) never takes another set's name
+                    None if bool_or(p, "new", false) && s.keyword_sets.iter().any(|x| same_name(x, &name)) => {
+                        return Err(bad("keyword.saveSet", format!("there is a keyword set “{name}” already")));
+                    }
+                    None => match s.keyword_sets.iter_mut().find(|x| same_name(x, &name)) {
+                        Some(x) => *x = set,
+                        None => s.keyword_sets.push(set),
+                    },
                 }
                 s.keyword_set = Some(name);
                 s.save_prefs()?;
@@ -156,11 +207,11 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("keyword.deleteSet", "Delete Keyword Set", [], None, "{name}", always, |s, p| {
             let name = str_param(p, "name").ok_or_else(|| bad("keyword.deleteSet", "missing `name`"))?;
             let before = s.keyword_sets.len();
-            s.keyword_sets.retain(|x| !x.name.eq_ignore_ascii_case(name));
+            s.keyword_sets.retain(|x| !same_set(&x.name, name));
             if s.keyword_sets.len() == before {
                 return Err(bad("keyword.deleteSet", format!("no keyword set `{name}`")));
             }
-            if s.keyword_set.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(name)) {
+            if s.keyword_set.as_deref().is_some_and(|c| same_set(c, name)) {
                 s.keyword_set = None;
             }
             s.save_prefs()?;
@@ -179,7 +230,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     .and_then(Value::as_u64)
                     .filter(|i| (1..=9).contains(i))
                     .ok_or_else(|| bad("keyword.toggleFromSet", "`index` must be 1..9"))?;
-                let Some(k) = current_keywords(s).get(i as usize - 1).cloned() else {
+                // (an empty slot does nothing)
+                let Some(k) = current_keywords(s).get(i as usize - 1).cloned().filter(|k| !k.is_empty()) else {
                     return Ok(json!({"changed": 0}));
                 };
                 let ids = s.targets(p);

@@ -1978,5 +1978,11 @@
   "Add to All Selected Photos": "Allen ausgewählten Fotos hinzufügen",
   "Will Export": "Wird exportiert",
   "No keywords are exported": "Es werden keine Stichwörter exportiert",
-  "& Containing": "& Übergeordnete"
+  "& Containing": "& Übergeordnete",
+  "Edit Set…": "Satz bearbeiten…",
+  "Edit Keyword Set": "Stichwortsatz bearbeiten",
+  "Keywords (⌥1–⌥9)": "Stichwörter (⌥1–⌥9)",
+  "A keyword set needs a name": "Ein Stichwortsatz braucht einen Namen",
+  "Save as a new set": "Als neuen Satz speichern",
+  "Recent Keywords is built in: choose another name": "„Letzte Stichwörter“ ist vorgegeben: Wählen Sie einen anderen Namen"
 }
