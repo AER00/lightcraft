@@ -108,9 +108,16 @@ fn build(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// One photo's smart preview to build or discard: (photo, its file in the smart previews folder,
-/// how to load the original at preview size).
+/// how to load the original at preview size, whether the photo takes the per-file camera look —
+/// `camera_preview::file_local_look`, [`lightcraft_catalog::Photo::relative_wb`]: only those
+/// proxies go stale when the fit changes).
 #[cfg(not(target_arch = "wasm32"))]
-type SmartJob = (lightcraft_catalog::PhotoId, std::path::PathBuf, Option<crate::media::SourceRef>);
+type SmartJob = (lightcraft_catalog::PhotoId, std::path::PathBuf, Option<crate::media::SourceRef>, bool);
+
+/// Held while one proxy is checked and (re)written, so Build Smart Previews and the opening look
+/// refresh ([`refresh_stale_smart_previews`]), on their own threads, never write the same file at once.
+#[cfg(not(target_arch = "wasm32"))]
+static SMART_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// What Build / Discard Smart Previews did.
 #[cfg(not(target_arch = "wasm32"))]
@@ -163,10 +170,11 @@ fn smart_run(
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
     }
-    for (id, path, source) in jobs {
+    for (id, path, source, look) in jobs {
         if state.is_some_and(|st| st.cancel.load(Ordering::Relaxed)) {
             break;
         }
+        let _one = SMART_WRITE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if discard {
             if std::fs::remove_file(&path).is_ok() {
                 n.removed += 1;
@@ -176,7 +184,7 @@ fn smart_run(
             // full drive) is (re)built, and so is one written by an older camera-look fit (see
             // `camera_preview::LOOK_VERSION`) when its original can be read
             let damaged = path.exists();
-            let stale = damaged && crate::smart::is_stale(&path);
+            let stale = look && damaged && crate::smart::is_stale(&path);
             if damaged && !stale && crate::smart::is_valid(&path) {
                 n.built += 1;
             } else {
@@ -246,7 +254,7 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let path = dir.join(crate::smart::file_name(&ph));
         let source = (!discard).then(|| s.media.source_ref(&ph, crate::media::SourceLevel::Preview));
-        jobs.push((id, path, source));
+        jobs.push((id, path, source, ph.relative_wb()));
     }
     let custom = s.smart_previews_dir.is_some();
     if background {
@@ -272,18 +280,24 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
     )
 }
 
-/// Bring smart previews written by an older camera-look fit up to date, once per library open:
-/// on a worker thread (the UI never waits on the drives), each stale proxy is rebuilt from its
-/// original when that can be read and kept as it is when it can't (its header still says it is
-/// stale, so the next open with the original online rebuilds it). Only existing proxies are
-/// touched: none is built, and a missing folder is never created. Returns the thread, if started.
+/// Bring smart previews written by an older camera-look fit up to date, once per fit version: when
+/// the smart previews folder has not been checked at this `LOOK_VERSION` (its marker,
+/// [`crate::smart::look_checked`]), a worker thread (the UI never waits on the drives) looks at the
+/// proxies of the raws that take the per-file camera look, the only ones the fit reaches (JPEG,
+/// PNG… proxies are never rebuilt), and rebuilds the stale ones from their originals. One whose
+/// original can't be read (offline) is kept as it is, still marked stale in its header: Build
+/// Smart Previews rebuilds it once the original is back. Only existing proxies are touched: none
+/// is built, and a missing folder is never created. Returns the thread, if started.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn refresh_stale_smart_previews(s: &mut Session) -> Option<std::thread::JoinHandle<()>> {
     let dir = s.media.smart_dir.clone()?;
+    if !dir.is_dir() || crate::smart::look_checked(&dir) {
+        return None;
+    }
     let max_edge = crate::media::SourceLevel::Preview.max_edge();
-    let photos: Vec<_> = s.catalog.photos().filter(|p| matches!(p.source, lightcraft_catalog::Source::File { .. })).collect();
+    let photos: Vec<_> = s.catalog.photos().filter(|p| matches!(p.source, lightcraft_catalog::Source::File { .. }) && p.relative_wb()).collect();
     let jobs: Vec<SmartJob> =
-        photos.iter().map(|p| (p.id, dir.join(crate::smart::file_name(p)), Some(s.media.origin_ref(&p.source, max_edge)))).collect();
+        photos.iter().map(|p| (p.id, dir.join(crate::smart::file_name(p)), Some(s.media.origin_ref(&p.source, max_edge)), true)).collect();
     std::thread::Builder::new()
         .name("lc-smart-look".into())
         .spawn(move || refresh_stale(&dir, jobs))
@@ -294,14 +308,20 @@ pub(crate) fn refresh_stale_smart_previews(s: &mut Session) -> Option<std::threa
 /// The body of [`refresh_stale_smart_previews`]: rebuild the stale proxies among `jobs`.
 #[cfg(not(target_arch = "wasm32"))]
 fn refresh_stale(dir: &std::path::Path, jobs: Vec<SmartJob>) {
-    let stale: Vec<SmartJob> = jobs.into_iter().filter(|(_, path, _)| crate::smart::is_stale(path)).collect();
-    if stale.is_empty() {
-        return;
+    let stale: Vec<SmartJob> = jobs.into_iter().filter(|(_, path, _, _)| crate::smart::is_stale(path)).collect();
+    if !stale.is_empty() {
+        // `custom`: the folder is there already, and must not be recreated if it went away since
+        match smart_run(dir, true, false, stale, None) {
+            Ok(n) => log::info!("smart previews: {} refreshed to the current camera look, {} kept (original offline)", n.refreshed, n.stale_kept),
+            Err(e) => {
+                // not marked: the next opening tries again
+                log::warn!("smart previews: look refresh: {e}");
+                return;
+            }
+        }
     }
-    // `custom`: the folder is there already, and must not be recreated if it went away since
-    match smart_run(dir, true, false, stale, None) {
-        Ok(n) => log::info!("smart previews: {} refreshed to the current camera look, {} kept (original offline)", n.refreshed, n.stale_kept),
-        Err(e) => log::warn!("smart previews: look refresh: {e}"),
+    if let Err(e) = crate::smart::mark_look_checked(dir) {
+        log::warn!("smart previews: {e}");
     }
 }
 

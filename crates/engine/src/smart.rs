@@ -218,6 +218,29 @@ pub fn is_stale(path: &Path) -> bool {
         .is_some_and(|h| header_look_version(&h) < u64::from(crate::camera_preview::LOOK_VERSION))
 }
 
+/// The marker file in a smart previews folder: the `LOOK_VERSION` its proxies were last checked
+/// at ([`look_checked`]).
+const LOOK_MARKER: &str = "look-version";
+
+/// Whether the smart previews folder `dir` has been checked for stale proxies at this build's
+/// camera-look fit version (or a newer one). A missing or unreadable marker counts as not.
+pub fn look_checked(dir: &Path) -> bool {
+    use std::io::Read;
+    let Ok(f) = std::fs::File::open(dir.join(LOOK_MARKER)) else { return false };
+    let mut text = String::new();
+    if f.take(64).read_to_string(&mut text).is_err() {
+        return false;
+    }
+    text.trim().parse::<u64>().is_ok_and(|v| v >= u64::from(crate::camera_preview::LOOK_VERSION))
+}
+
+/// Record that the proxies in `dir` were checked at this build's camera-look fit version.
+pub fn mark_look_checked(dir: &Path) -> Result<(), String> {
+    let path = dir.join(LOOK_MARKER);
+    lightcraft_catalog::safe_file::write_atomic(&path, format!("{}\n", crate::camera_preview::LOOK_VERSION).as_bytes())
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Load the proxy at `path`.
 pub fn load(path: &Path) -> Result<crate::media::DecodedSource, String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;

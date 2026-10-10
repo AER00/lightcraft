@@ -107,9 +107,11 @@ The fit therefore has a version, `LOOK_VERSION` in `crates/engine/src/camera_pre
 
 A proxy older than the constant is brought up to date by the existing Build Smart Previews path (`smart_run`), which also repairs damaged proxies:
 
-- when the library is opened, a background thread looks at the existing proxies and rebuilds the stale ones from their originals (no proxy is created, nothing is shown, the UI never waits on a drive);
-- Build Smart Previews does the same for the photos it is run on (`refreshed` in its result);
-- when the original can't be read (offline drive), the proxy and its curve are kept exactly as they are. The old version in its header is the mark: the next opening, or the next Build Smart Previews, with the original online rebuilds it. A rebuilt proxy carries the current version, so nothing is rebuilt twice. A proxy is only ever rebuilt from the original, never from another proxy.
+- only proxies of raws that take the per-file look (`file_local_look`: ARW, NEF, RW2, RAF, CR3, CR2, PEF, SRW, ORF…) go stale; the fit never reaches JPEG, PNG, TIFF or DNG proxies, which are never rebuilt for it;
+- when the library is opened and its smart previews folder has not been checked at this `LOOK_VERSION` (the `look-version` marker file in the folder), a background thread looks at those proxies, rebuilds the stale ones from their originals and then writes the marker, so the scan runs once per version bump, not at every opening (no proxy is created, nothing is shown, the UI never waits on a drive);
+- Build Smart Previews does the same for the photos it is run on (`refreshed` in its result), whatever the marker says;
+- when the original can't be read (offline drive), the proxy and its curve are kept exactly as they are (`staleKept`). The old version in its header is the mark: the next Build Smart Previews with the original online rebuilds it. A rebuilt proxy carries the current version, so nothing is rebuilt twice. A proxy is only ever rebuilt from the original, never from another proxy;
+- the two never write the same proxy at once: each proxy is checked and written under one lock.
 
 ## Nikon crop and preview colour metadata
 

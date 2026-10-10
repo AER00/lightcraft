@@ -20,7 +20,10 @@ use lightcraft_raw::{RawFormat, RawImage, color::CameraTransform, profile::HsvTa
 /// **Bump this whenever a change makes the fit give a different result for the same file** (the
 /// fit, its gates, the fallbacks, the camera profiles' effect on it). Do not bump it for changes
 /// that leave the fitted look alone. `RENDER_CACHE_VERSION` covers renders; this covers proxies.
-pub const LOOK_VERSION: u32 = 1;
+///
+/// 1: the fit as of #499's follow-up; 2: Sony DRO (tone curve lowered to Sony's curve without DRO)
+/// and the ILCE-7CR profile (#528, #583, #568, #616).
+pub const LOOK_VERSION: u32 = 2;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {
