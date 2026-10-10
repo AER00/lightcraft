@@ -850,8 +850,17 @@ impl ImportJob {
             }
         }
 
-        // files a preceding scan already probed are not read again (a network share is slow to read)
-        let cached: Vec<Option<ProbeInfo>> = todo.iter().map(|f| self.cache.remove(f)).collect();
+        // files a preceding scan already probed are not read again (a network share is slow to read),
+        // as long as they are still there, as they were: a file gone or changed since is probed again
+        let cached: Vec<Option<ProbeInfo>> = todo
+            .iter()
+            .map(|f| {
+                // (the web's files are not std::fs files: kept as probed)
+                self.cache
+                    .remove(f)
+                    .filter(|info| cfg!(target_arch = "wasm32") || std::fs::metadata(f).is_ok_and(|m| m.is_file() && m.len() == info.file_size))
+            })
+            .collect();
         let missing: Vec<String> = todo.iter().zip(&cached).filter(|(_, c)| c.is_none()).map(|(f, _)| f.clone()).collect();
         let progress = ScanProgress::default();
         let mut fresh = probe_all(self.probe.as_ref(), &missing, &progress).into_iter();
@@ -1045,7 +1054,7 @@ fn name_family(name: &str) -> String {
 
 /// Threads for `jobs` file reads (probes, copies) at once.
 #[cfg(not(target_arch = "wasm32"))]
-fn workers(jobs: usize) -> usize {
+pub(crate) fn workers(jobs: usize) -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(1, 8).min(jobs.max(1))
 }
 

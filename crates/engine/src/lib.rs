@@ -53,6 +53,7 @@ pub mod rename;
 pub mod segment;
 pub mod sidecar;
 pub mod smart;
+pub mod sync;
 mod view;
 pub mod walk;
 
@@ -166,6 +167,9 @@ pub struct Session {
     /// Photos in the current source with no filter on (cached like `visible`).
     total: Option<((u64, String), usize)>,
     pub undo: Vec<UndoEntry>,
+    /// Undo steps committed in this session, ever (the history drops its oldest past 1000, so
+    /// its length can't tell how many steps a command just made; see [`Session::commits`]).
+    commits: u64,
     pub redo: Vec<UndoEntry>,
     pub interaction: Option<Interaction>,
     /// Set by a command whose change must not rewrite the photo's XMP sidecar even with auto-write on
@@ -252,6 +256,9 @@ pub struct Session {
     pub before: std::collections::HashMap<PhotoId, Arc<DevelopSettings>>,
     /// File probes from the last import review (`library.importPreview`), reused by the import.
     pub import_probes: std::collections::HashMap<String, media::ProbeInfo>,
+    /// The last Synchronize Folder scan, which `folder.synchronize` acts on while it is current
+    /// (see [`Session::take_folder_changes`]).
+    pub folder_changes: Option<sync::FolderChanges>,
     /// The last (or running) Build Previews.
     pub preview_build: Option<std::sync::Arc<cmd::previews::PreviewBuild>>,
     /// Develop defaults applied on import (persisted in prefs.json).
@@ -290,6 +297,7 @@ impl Session {
             visible_gen: 0,
             total: None,
             undo: Vec::new(),
+            commits: 0,
             redo: Vec::new(),
             interaction: None,
             skip_auto_write: false,
@@ -334,6 +342,7 @@ impl Session {
             recent_keywords: Vec::new(),
             before: Default::default(),
             import_probes: Default::default(),
+            folder_changes: None,
             preview_build: None,
             import_defaults: import::ImportDefaults::default(),
             cache_mb: 0,
@@ -425,6 +434,7 @@ impl Session {
         let inv = self.catalog.apply(op)?;
         self.pending_log.push(fwd);
         self.undo.push(UndoEntry { label: label.to_string(), op: inv, folder: None });
+        self.commits = self.commits.wrapping_add(1);
         if self.undo.len() > 1000 {
             self.undo.remove(0);
         }
@@ -489,6 +499,12 @@ impl Session {
 
     /// Fold the last `n` undo steps into one (commands that commit step by step because each op
     /// depends on the state the previous one left).
+    /// How many undo steps were committed in this session so far: what a command that commits
+    /// several steps compares before and after to merge them ([`Session::merge_undo`]).
+    pub fn commits(&self) -> u64 {
+        self.commits
+    }
+
     pub fn merge_undo(&mut self, n: usize, label: &str) {
         if n < 2 || n > self.undo.len() {
             return;
@@ -884,5 +900,7 @@ mod tests_segment;
 mod tests_settings_files;
 #[cfg(test)]
 mod tests_spots;
+#[cfg(test)]
+mod tests_sync;
 #[cfg(test)]
 mod tests_xmp;

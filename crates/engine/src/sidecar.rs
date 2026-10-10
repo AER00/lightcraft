@@ -448,6 +448,18 @@ impl Session {
     /// catalogued file shares the stem (`IMG_0001.CR3` + `IMG_0001.JPG`) and owns the stem
     /// sidecar — a raw first, else the first by file name. The others use Full naming
     /// (`IMG_0001.JPG.xmp`), so their metadata never overwrites each other.
+    /// [`Session::sidecar_naming`] for many photos, the catalog's sidecar owners worked out once
+    /// (per photo that is a pass over the whole catalog).
+    pub fn sidecar_namings(&self, ids: &[PhotoId]) -> Vec<SidecarNaming> {
+        let owners = (self.xmp.naming == SidecarNaming::Stem).then(|| StemOwners::of(&self.catalog));
+        ids.iter()
+            .map(|id| match (self.catalog.photo(*id), &owners) {
+                (Some(p), Some(o)) => o.naming(p, self.xmp.naming),
+                _ => self.xmp.naming,
+            })
+            .collect()
+    }
+
     pub fn sidecar_naming(&self, id: PhotoId) -> SidecarNaming {
         match self.catalog.photo(id) {
             Some(p) if self.xmp.naming == SidecarNaming::Stem => StemOwners::of(&self.catalog).naming(p, self.xmp.naming),
@@ -478,9 +490,15 @@ impl Session {
         let p = self.catalog.photo(id).ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?;
         let Some(orig) = file_path(p) else { return Ok(None) };
         let Some((packet, from)) = read_packet(orig, p.kind, self.sidecar_naming(id)) else { return Ok(None) };
-        let sc = parse_sidecar(&packet, crate::crs::Target::for_photo(p))
-            .map_err(|e| EngineError::Other(format!("{}: {e}", from.display())))?
-            .resolve_label(&self.catalog);
+        let sc = parse_sidecar(&packet, crate::crs::Target::for_photo(p)).map_err(|e| EngineError::Other(format!("{}: {e}", from.display())))?;
+        Ok(Some((self.sidecar_op(id, sc)?, from)))
+    }
+
+    /// The op that applies what a sidecar says (already read and parsed, e.g. on a worker
+    /// thread) to photo `id`: the sidecar wins. No file is read.
+    pub fn sidecar_op(&self, id: PhotoId, sc: SidecarData) -> Result<Op> {
+        let p = self.catalog.photo(id).ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?;
+        let sc = sc.resolve_label(&self.catalog);
         let mut q = (**p).clone();
         let develop_changed = merge_into(&mut q, &sc, &(self.clock)());
         let mut ops = vec![
@@ -495,7 +513,7 @@ impl Session {
         if develop_changed {
             ops.extend(self.develop_op(id, (*q.develop).clone(), "Read Metadata from File"));
         }
-        Ok(Some((Op::Batch { ops }, from)))
+        Ok(Op::Batch { ops })
     }
 
     /// Auto-write: sidecars for photos changed by `ops` (errors are logged, not returned).

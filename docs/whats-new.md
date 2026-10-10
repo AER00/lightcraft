@@ -86,6 +86,15 @@
   Selected Settings). Ctrl+V only reaches LightCraft while the system clipboard holds text; otherwise use Edit ▸ Paste Edit
   Settings.
 
+### Synchronize Folder
+- Right-click a folder (or a disk other than the startup disk) in the sidebar's Folders section ▸ Synchronize
+  Folder…. The folder and the folders inside it are scanned in the background for photos added on disk, photos whose
+  file is gone, photos whose file was renamed or moved within the folder, and XMP sidecars changed by other apps; then
+  choose what to do: import the new photos and relink the moved ones (the defaults), move the missing ones to Recently
+  Deleted, read the metadata updates. A folder on a disk that isn't connected is reported as such. Synchronizing
+  runs in the background with a progress window and Cancel; everything it does is one undo step, and no file on disk
+  is touched. Agents use `folder.scanChanges` and `folder.synchronize`.
+
 ### Folder colour labels
 - Right-click a folder (or a disk other than the startup disk) in the sidebar's Folders section ▸ Set Color Label ▸ a colour or None. The row
   shows the label's dot before its photo count. Agents use `folder.label` (`path`, `label`); `library.folders`

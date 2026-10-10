@@ -1251,6 +1251,7 @@ fn row_menu(app: &mut LightcraftApp, resp: &egui::Response, n: &FolderNode) {
     } else if n.path != "/" {
         resp.context_menu(|ui| {
             folder_label_menu(app, ui, n);
+            synchronize_item(app, ui, n, &n.name);
             ui.separator();
             if ui
                 .button(crate::i18n::tr("Remove Disk from Library…"))
@@ -1261,6 +1262,22 @@ fn row_menu(app: &mut LightcraftApp, resp: &egui::Response, n: &FolderNode) {
                 ui.close();
             }
         });
+    }
+}
+
+/// Synchronize Folder… of a Folders row (widget `folderSynchronize`): opens its dialog, which
+/// scans the folder in the background.
+fn synchronize_item(app: &mut LightcraftApp, ui: &mut egui::Ui, n: &FolderNode, name: &str) {
+    let r = ui
+        .button(crate::i18n::tr("Synchronize Folder…"))
+        .on_hover_text(crate::i18n::tr("Find photos added to or missing from this folder on disk, and XMP sidecars changed by other apps"));
+    crate::widgets::register(ui.ctx(), "folderSynchronize", r.rect);
+    if r.clicked() {
+        // a disk, or a folder holding disks, was chosen as such
+        if let Err(e) = crate::sync::open(app, &n.path, name, n.volume || !n.selectable) {
+            app.toast(ui.ctx(), e);
+        }
+        ui.close();
     }
 }
 
@@ -1315,6 +1332,7 @@ fn folder_menu_for_library(app: &mut LightcraftApp, resp: &egui::Response, n: &F
             ui.close();
         }
         folder_label_menu(app, ui, n);
+        synchronize_item(app, ui, n, &label);
         ui.separator();
         if ui
             .button(crate::i18n::tr("Remove from Library…"))

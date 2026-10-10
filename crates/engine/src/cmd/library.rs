@@ -1454,7 +1454,7 @@ fn merge_rules(
 /// Whether `path` lies above a disk: some of its `ids` photos are on a disk (not the startup
 /// disk) that the folder does not lie in. Such a folder (`/Volumes`, `/mnt`…) is not a folder of
 /// one disk but a way to reach several.
-fn covers_other_disks(s: &Session, path: &str, ids: &[PhotoId]) -> bool {
+pub(crate) fn covers_other_disks(s: &Session, path: &str, ids: &[PhotoId]) -> bool {
     ids.iter()
         .filter_map(|id| s.catalog.photo(*id))
         .filter_map(|p| lightcraft_catalog::folders::volume_of(p))
