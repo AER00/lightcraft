@@ -63,8 +63,16 @@ fn dev() -> Result<&'static Dev, String> {
     if let Some(why) = crate::switched_off() {
         return Err(why);
     }
+    // creating the device is GPU work too: not once the process is ending (issue #620)
+    let _work = match DEV.get() {
+        Some(_) => None,
+        None => Some(crate::exit::enter().ok_or(CLOSING)?),
+    };
     DEV.get_or_init(create_device).as_ref().map_err(|e| e.clone())
 }
+
+/// Why nothing runs on the GPU once [`crate::begin_shutdown`] was called.
+const CLOSING: &str = "LightCraft is closing";
 
 fn create_device() -> Result<Dev, String> {
     let Some(backends) = crate::backend::compute_backends() else { return Err("disabled by LIGHTCRAFT_GPU_BACKEND=off".into()) };
@@ -654,6 +662,7 @@ pub struct NetRunner {
 /// Put `net` on the GPU for `tile × tile` input cells, or say why it cannot be (no GPU, a layer or a size the kernels
 /// do not do, the device refusing the buffers). Creates the device on first use and compiles the kernels.
 pub fn runner(net: &Net, tile: usize) -> Result<NetRunner, String> {
+    let _work = crate::exit::enter().ok_or(CLOSING)?;
     let d = dev()?;
     let max_binding = d.limits.max_storage_buffer_binding_size.min(d.limits.max_buffer_size).min(MAX_BUFFER);
     let (layout, layers) = plan(net, tile, max_binding)?;
@@ -840,6 +849,8 @@ impl TileRunner for NetRunner {
         if input.len() != self.shared.layout.in_floats {
             return Err(Error::Input("the tile is not the size the model wants".into()));
         }
+        // one tile is one piece of GPU work: a photo's worth would outlast any wait at exit
+        let Some(_work) = crate::exit::enter() else { return Err(Error::Runtime(CLOSING.into())) };
         let w = self.take()?;
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.execute(&w, input)));
         match r {
