@@ -1507,6 +1507,26 @@ mod tests {
         let plain = probe_bytes("small.tif", &tiff_shell(24, 16, false)).unwrap();
         assert_eq!((plain.kind, plain.preview_only, plain.width, plain.height), (MediaKind::Image, None, 24, 16));
         assert!(lightcraft_raw::probe(&tiff_shell(24, 16, false)).is_none());
+
+        // TIFFs preserving camera Make tags (SONY, NIKON, etc.) are ordinary images, not raws (#281)
+        for make in ["SONY", "NIKON CORPORATION", "PENTAX", "RICOH", "SAMSUNG"] {
+            use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+            let mut ifd0 = IfdBuilder::new();
+            ifd0.set(t::IMAGE_WIDTH, Value::Long(vec![24]));
+            ifd0.set(t::IMAGE_LENGTH, Value::Long(vec![16]));
+            ifd0.set(t::BITS_PER_SAMPLE, Value::Short(vec![8, 8, 8]));
+            ifd0.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![3]));
+            ifd0.set(t::PHOTOMETRIC, Value::Short(vec![2]));
+            ifd0.set(t::COMPRESSION, Value::Short(vec![1]));
+            ifd0.set(t::MAKE, Value::Ascii(make.into()));
+            let px: Vec<u8> = (0..24 * 16).flat_map(|i| [(i % 251) as u8, 128, 200]).collect();
+            ifd0.set_image(ImageData::Strips { rows_per_strip: 16, strips: vec![px] });
+            let bytes = TiffWriter::default().write(&[ifd0]).unwrap();
+            let p = probe_bytes("photo.tif", &bytes).unwrap();
+            assert_eq!((p.kind, p.preview_only, p.width, p.height), (MediaKind::Image, None, 24, 16), "make: {make}");
+            let (img, src) = load_bytes(&bytes, 24).unwrap();
+            assert_eq!((img.width, img.height, src.raw), (24, 16, false), "make: {make}");
+        }
     }
 
     /// Recognised raw containers we don't decode (Minolta MRW here: the preview's first byte is

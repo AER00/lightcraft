@@ -162,23 +162,28 @@ pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
     }
     let make = t.find(lightcraft_tiff::tags::MAKE).and_then(|e| e.value.as_str()).unwrap_or_default().to_ascii_uppercase();
     let has_cfa = has_raw_ifd(&t);
+    // Pentax's reader takes the layout from the Exif `CFAPattern` when no IFD has a CFA photometric (uncompressed
+    // and PackBits PEFs), so for the Pentax family that tag counts as raw evidence too
+    let pentax_raw = has_cfa || t.exif().is_some_and(|e| e.contains(vendor::EXIF_CFA_PATTERN));
+    // Samsung's raw IFD uses private compressions 32769..=32773 (`vendor::srw`), 32773 being PackBits elsewhere
+    let samsung_raw = has_cfa || t.all_ifds().iter().any(|i| i.u16(lightcraft_tiff::tags::COMPRESSION).is_some_and(|c| (32769..=32773).contains(&c)));
     if make.starts_with("CANON") && t.ifds.len() >= 4 && t.ifds[3].u16(lightcraft_tiff::tags::COMPRESSION) == Some(6) {
         return Some(RawFormat::Cr2);
     }
-    if make.starts_with("NIKON") {
-        return Some(if has_cfa || t.all_ifds().len() > 1 { RawFormat::Nef } else { RawFormat::Nrw });
+    if make.starts_with("NIKON") && has_cfa {
+        return Some(if t.all_ifds().len() > 1 { RawFormat::Nef } else { RawFormat::Nrw });
     }
-    if make.starts_with("SONY") {
+    if make.starts_with("SONY") && has_cfa {
         return Some(RawFormat::Arw);
     }
-    if make.starts_with("PENTAX") || make.starts_with("RICOH") {
+    if (make.starts_with("PENTAX") || make.starts_with("RICOH")) && pentax_raw {
         return Some(RawFormat::Pef);
     }
     // a Samsung-branded body built on a Pentax design writes a Pentax-style maker note (the note's own magic)
-    if make.starts_with("SAMSUNG") && has_pentax_maker_note(&t, bytes) {
+    if make.starts_with("SAMSUNG") && pentax_raw && has_pentax_maker_note(&t, bytes) {
         return Some(RawFormat::Pef);
     }
-    if make.starts_with("SAMSUNG") {
+    if make.starts_with("SAMSUNG") && samsung_raw {
         return Some(RawFormat::Srw);
     }
     if dng::is_plain_cfa_tiff(&t, bytes) {
@@ -197,11 +202,15 @@ fn has_pentax_maker_note(t: &Tiff, bytes: &[u8]) -> bool {
 }
 
 /// Whether some IFD is marked as raw: CFA photometric, or a raw-only compression value (99 is not a
-/// registered TIFF compression; Leaf MOS files use it for their tiled 16-bit lossless-JPEG raw).
+/// registered TIFF compression; Leaf MOS files use it for their tiled 16-bit lossless-JPEG raw),
+/// or vendor-specific raw tags (Sony tone curve, CFA pattern, or Pentax compression 65535).
 fn has_raw_ifd(t: &Tiff) -> bool {
     t.all_ifds().iter().any(|i| {
         i.u16(lightcraft_tiff::tags::PHOTOMETRIC) == Some(lightcraft_tiff::tags::photometric::CFA)
-            || i.u16(lightcraft_tiff::tags::COMPRESSION).is_some_and(|c| c == 34713 || c == 32767 || c == 32769 || c == 32770 || c == 99)
+            || i.u16(lightcraft_tiff::tags::COMPRESSION).is_some_and(|c| matches!(c, 34713 | 32767 | 32769 | 32770 | 99 | 65535))
+            || i.contains(0x7010)
+            || i.contains(lightcraft_tiff::tags::CFA_PATTERN_EP)
+            || i.contains(lightcraft_tiff::tags::CFA_REPEAT_PATTERN_DIM)
     })
 }
 
@@ -913,6 +922,25 @@ mod tests {
         assert_eq!(probe(&padded(&[rgb_ifd(16, 12), rgb_ifd(400, 300)])), None);
         // no dimensions at all
         assert_eq!(probe(&padded(&[IfdBuilder::new().with(t::MAKE, Value::Ascii("X".into()))])), None);
+        // raw evidence without a CFA photometric: Pentax's Exif `CFAPattern` (uncompressed / PackBits PEFs) and
+        // Samsung's private compressions (here 32773, PackBits elsewhere: NX1, NX500)
+        let mut pef = rgb_ifd(400, 300);
+        pef.set(t::MAKE, Value::Ascii("PENTAX Corporation".into()));
+        let mut exif = exif_size(400, 300);
+        exif.set(vendor::EXIF_CFA_PATTERN, Value::Undefined(vec![0, 2, 0, 2, 0, 1, 1, 2]));
+        pef.set_child(t::EXIF_IFD, exif);
+        assert_eq!(probe(&padded(&[pef])), Some(RawFormat::Pef));
+        let mut srw = rgb_ifd(400, 300);
+        srw.set(t::MAKE, Value::Ascii("SAMSUNG".into()));
+        srw.set(t::COMPRESSION, Value::Short(vec![32773]));
+        assert_eq!(probe(&padded(&[srw])), Some(RawFormat::Srw));
+        // camera-authored or exported TIFFs preserving camera Make tags remain ordinary images
+        for make in ["SONY", "NIKON CORPORATION", "PENTAX", "RICOH", "SAMSUNG"] {
+            let mut cam = rgb_ifd(400, 300);
+            cam.set(t::MAKE, Value::Ascii(make.into()));
+            cam.set_child(t::EXIF_IFD, exif_size(400, 300));
+            assert_eq!(probe(&padded(&[cam])), None, "{make} TIFF should not be probed as raw");
+        }
     }
 
     // --- containers that are recognised but not decoded, with a preview ---
@@ -1123,17 +1151,23 @@ mod tests {
     /// Samsung file stays with the Samsung format.
     #[test]
     fn samsung_make_with_a_pentax_maker_note_is_pef() {
-        let with_note = |note: &[u8]| {
+        let with_note = |note: &[u8], cfa: bool| {
             let mut ifd = rgb_ifd(16, 12);
+            if cfa {
+                ifd.set(t::PHOTOMETRIC, Value::Short(vec![t::photometric::CFA]));
+            }
             ifd.set(t::MAKE, Value::Ascii("SAMSUNG TECHWIN".into()));
             let mut exif = IfdBuilder::new();
             exif.set(t::MAKER_NOTE, Value::Undefined(note.to_vec()));
             ifd.set_child(t::EXIF_IFD, exif);
             write(&[ifd])
         };
-        assert_eq!(probe(&with_note(b"AOC\0MM\0\x01\0\0\0\0\0\0")), Some(RawFormat::Pef));
-        assert_eq!(probe(&with_note(b"PENTAX \0MM\0\0\0\0\0\0\0")), Some(RawFormat::Pef));
-        assert_eq!(probe(&with_note(b"STMN100\0\0\0\0\0\0\0\0\0")), Some(RawFormat::Srw));
+        assert_eq!(probe(&with_note(b"AOC\0MM\0\x01\0\0\0\0\0\0", true)), Some(RawFormat::Pef));
+        assert_eq!(probe(&with_note(b"PENTAX \0MM\0\0\0\0\0\0\0", true)), Some(RawFormat::Pef));
+        assert_eq!(probe(&with_note(b"STMN100\0\0\0\0\0\0\0\0\0", true)), Some(RawFormat::Srw));
+        // without raw evidence (an RGB image from such a body) neither reader claims it (#281)
+        assert_eq!(probe(&with_note(b"AOC\0MM\0\x01\0\0\0\0\0\0", false)), None);
+        assert_eq!(probe(&with_note(b"STMN100\0\0\0\0\0\0\0\0\0", false)), None);
     }
 
     #[test]
