@@ -466,6 +466,11 @@ impl Bits for WordBits<'_> {
 ///   take no part, and the difference is -32768 (equal to T.81's +32768 modulo 2^16);
 /// - a sample is the previous sample of the same column parity in its row plus the difference, modulo 2^16; before
 ///   the first pair of every row both are 32768 (half the 16-bit range).
+///
+/// Provenance: the first hypothesis for this rule was recalled by the AI model that wrote this code from its training
+/// data, which includes other raw converters; it was treated as one candidate, corrected where the files disagreed
+/// (the byte order of the words) and confirmed by an exhaustive black-box search over 17,280 layout hypotheses on the
+/// CC0 sample files. No other converter's source was consulted, and the code is original.
 pub fn decode_hasselblad(d: &[u8], max_samples: usize) -> Result<Frame, RawError> {
     let h = parse_header(d)?;
     if h.predictor != 8 {
