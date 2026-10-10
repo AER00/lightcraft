@@ -347,17 +347,20 @@ fn corpus_proraw_sky_matte() {
 }
 
 /// Issue #148: Sony ARWs from before ~2017 carry no plain white-balance, black-level or crop tags in the raw IFD.
-/// White balance comes from the maker note's enciphered `Tag2010`, the black level from the encrypted `SR2SubIFD`
-/// and the crop from `FullImageSize`; without them the RX100 III opened bright green. Expected values: the black
-/// levels agree with each sensor's dark-pixel floor, the gains with the neutral sky of the camera JPEG.
+/// White balance and black level come from the encrypted `SR2SubIFD`, the crop from `FullImageSize`; without them
+/// the RX100 III opened bright green. Expected values: the black levels agree with each sensor's dark-pixel floor;
+/// the gains are the `SR2SubIFD`'s `WB_RGGBLevels`, within 4 % of the gains that make the camera JPEG's neutral
+/// pixels neutral (RX100 III 2.59 / 1.69, RX100 2.21 / 2.01, ILCE-7RM2 2.67 / 1.47). Until issue #535 they came
+/// from the maker note's `Tag2010` (2.61 / 1.72, 2.23 / 2.00, 2.58 / 1.46), which differs from what the camera
+/// applied on other files (see `corpus_sony_sr2_white_balance`).
 #[test]
 fn corpus_sony_pre2017_colour_metadata() {
     let dir = corpus_root().join("raw");
     // (file, black, approximate R and B gains, crop width × height)
     let cases = [
-        ("arw-sony-rx100m3.arw", 800.0, [2.61, 1.72], (5472, 3648)),
-        ("arw-sony-rx100.arw", 800.0, [2.23, 2.00], (5472, 3648)),
-        ("arw-sony-a7rm2-12bit-uncompressed.arw", 512.0, [2.58, 1.46], (7952, 5304)),
+        ("arw-sony-rx100m3.arw", 800.0, [2.55, 1.72], (5472, 3648)),
+        ("arw-sony-rx100.arw", 800.0, [2.21, 1.99], (5472, 3648)),
+        ("arw-sony-a7rm2-12bit-uncompressed.arw", 512.0, [2.58, 1.45], (7952, 5304)),
     ];
     let mut seen = 0;
     for (name, black, [r, b], (cw, ch)) in cases {
@@ -440,6 +443,98 @@ fn corpus_sony_a7cr_codings() {
         assert!(r > 0.98, "correlation {r}");
     }
     eprintln!("ILCE-7CR codings checked on {} files", decoded.len());
+}
+
+/// Issue #535: Sony black levels against the data. The SR2SubIFD keeps the black level at a position that depends
+/// on its layout (the DSLR-A500 and A700 read 365 and 975 from a fixed position, where ExifTool and the data say
+/// 512), and the downsized lossless M and S codings (linear YCbCr) sit 512 above the recorded level (1024, with
+/// white moved by the same 512). Each file's darkest 0.1 % per channel must lie just above its black level: a black
+/// level that is too low leaves a pedestal, one that is too high clips the shadows.
+#[test]
+fn corpus_sony_black_levels_sit_at_the_data_floor() {
+    use lightcraft_raw::RawData;
+    let dir = corpus_root().join("raw");
+    // (file, black, white): SR2SubIFD black at three layouts, a plain 0x7310, and the lossless L / M / S codings
+    let cases = [
+        ("arw-sony-a500.arw", 512.0, None),
+        ("arw-sony-a700.arw", 512.0, None),
+        ("arw-sony-rx100m3.arw", 800.0, None),
+        ("arw-sony-a7m4-lossless-l.arw", 512.0, Some(16383.0)),
+        ("arw-sony-a7m4-lossless-m.arw", 1024.0, Some(16895.0)),
+        ("arw-sony-a7m4-lossless-s.arw", 1024.0, Some(16895.0)),
+    ];
+    let mut seen = 0;
+    for (name, black, white) in cases {
+        let bytes = match std::fs::read(dir.join(name)) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("skip: {name} absent");
+                continue;
+            }
+            Err(e) => panic!("{name}: {e}"),
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(img.black.mean(), black, "{name}: black level");
+        if let Some(white) = white {
+            assert_eq!(img.white_at(0), white, "{name}: white level");
+        }
+        let RawData::U16(ref data) = img.data else { panic!("{name}: integer samples expected") };
+        // per CFA position (2×2) or per colour sample, inside the default crop, about a million samples each
+        let channels = if img.cpp == 3 { 3 } else { 4 };
+        let (a, c) = (img.active_area, img.crop);
+        let step = (c.width * c.height / 1_000_000).max(1);
+        let mut samples = vec![Vec::new(); channels];
+        for (k, (x, y)) in (c.y..c.y + c.height).flat_map(|y| (c.x..c.x + c.width).map(move |x| (x + a.x, y + a.y))).enumerate() {
+            if (k / 2) % step != 0 {
+                continue;
+            }
+            if img.cpp == 3 {
+                for (s, v) in samples.iter_mut().enumerate() {
+                    v.push(data[(y * img.width + x) * 3 + s]);
+                }
+            } else {
+                samples[(y % 2) * 2 + x % 2].push(data[y * img.width + x]);
+            }
+        }
+        for (i, mut v) in samples.into_iter().enumerate() {
+            v.sort_unstable();
+            let floor = f32::from(v[v.len() / 1000]);
+            assert!((black - 64.0..=black + 128.0).contains(&floor), "{name}: channel {i}: darkest 0.1 % at {floor}, black level {black}");
+        }
+        seen += 1;
+    }
+    eprintln!("Sony black levels checked against the data floor on {seen} files");
+}
+
+/// Issue #535: the white balance a Sony ARW records as applied, `WB_RGGBLevels`, read from the encrypted
+/// `SR2SubIFD` when the raw IFD has no plain copy. Before, the first three opened with no white balance (green) and
+/// the last two with the maker note's `Tag2010` gains, which there follow the scene rather than the preset used.
+/// Expected levels: ExifTool's decrypted `WB_RGGBLevels` (green 1024). In brackets, the gains that make the
+/// camera JPEG's neutral pixels neutral.
+#[test]
+fn corpus_sony_sr2_white_balance() {
+    let dir = corpus_root().join("raw");
+    // (file, R and B levels)
+    let cases = [
+        ("arw-sony-a500.arw", [2212, 1416]),        // 27152-byte SR2SubIFD layout (2.04 / 1.35)
+        ("arw-sony-a33.arw", [2344, 1508]),         // 29000-byte layout (2.29 / 1.48)
+        ("arw-sony-a700.arw", [2128, 1564]),        // 62112-byte layout (too few neutral pixels)
+        ("arw-sony-a3500-5600k.arw", [2932, 1576]), // 5600 K (2.76 / 1.53; Tag2010 1.89 / 3.08)
+        ("arw-sony-a7s-shade.arw", [2932, 1372]),   // Shade (2.90 / 1.32; Tag2010 2.63 / 1.52)
+    ];
+    let mut seen = 0;
+    for (name, [r, b]) in cases {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            eprintln!("skip: {name} absent");
+            continue;
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let wb = img.wb_multipliers.unwrap_or_else(|| panic!("{name}: no as-shot white balance"));
+        let (er, eb) = (r as f32 / 1024.0, b as f32 / 1024.0);
+        assert!((wb[0] - er).abs() < 1e-4 && wb[1] == 1.0 && (wb[2] - eb).abs() < 1e-4, "{name}: white balance {wb:?}, expected [{er}, 1, {eb}]");
+        seen += 1;
+    }
+    eprintln!("Sony SR2SubIFD white balance checked on {seen} files");
 }
 
 /// The embedded JPEG as linear RGB, reduced to `gw × gh` cells.

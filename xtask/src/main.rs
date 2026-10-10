@@ -363,7 +363,7 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/getfile.php/3480/nice/Sony%20-%20ILCE-7RM4%20-%2014bit%2014bit%20compressed%20%283:2%29.ARW",
         "e6dafe42643f69ab9d1fd00414b7a1f5104df354bb589201600ac934b29b5e4a",
     ),
-    // pre-2017 bodies: white balance only in the enciphered maker note, black level only in the SR2SubIFD (#148)
+    // pre-2017 bodies: white balance and black level only in the encrypted SR2SubIFD (#148)
     (
         "arw-sony-rx100m3.arw",
         "https://raw.pixls.us/data/Sony/DSC-RX100M3/DSC00734.ARW",
@@ -378,6 +378,31 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "arw-sony-a7rm2-12bit-uncompressed.arw",
         "https://raw.pixls.us/data/Sony/ILCE-7RM2/12-bit-uncompressed.ARW",
         "71e0888396ef52c7e6a990b4e72ebb4d8413a1fc1c35bada449870539cef6e39",
+    ),
+    // older DSLRs whose SR2SubIFD keeps the black level elsewhere than the bodies above (#535): A500 (27152-byte
+    // layout, like the A450/A550), A700 (62112 bytes)
+    (
+        "arw-sony-a500.arw",
+        "https://raw.pixls.us/data/Sony/DSLR-A500/DSC02421.ARW",
+        "1407fb596a391df67c15b90026a1a76702a2e7386dbdff2f0815b903ea49cead",
+    ),
+    (
+        "arw-sony-a700.arw",
+        "https://raw.pixls.us/data/Sony/DSLR-A700/DSC07249.ARW",
+        "3159e28892bf0771d01525cd4b6190f9c15bbb19fa2fab6d2515ced0594e8f40",
+    ),
+    // SR2SubIFD white balance (#535): the A500 and A700 above, a third layout of a body that had none before
+    // (SLT-A33, 29000 bytes), and two shots whose maker-note gains differ from the preset applied (5600 K, Shade)
+    ("arw-sony-a33.arw", "https://raw.pixls.us/data/Sony/SLT-A33/DSC01867.ARW", "1a59856394f10d4fadb40f5ab9c6d1c89f473f4dbcdefd216fbbbbf1ad8d21f9"),
+    (
+        "arw-sony-a3500-5600k.arw",
+        "https://raw.pixls.us/data/Sony/ILCE-3500/DSC06923.ARW",
+        "04c4fe04425c3e6fff7c8af0f811923c35e750300373357bd54342150c5505d8",
+    ),
+    (
+        "arw-sony-a7s-shade.arw",
+        "https://raw.pixls.us/data/Sony/ILCE-7S/DSC04125.ARW",
+        "7cc338a0abc8fdad32d61006f1f8f412297b93e040c7efba572eb2bd8f8e8be2",
     ),
     // CR2 colour-filter layouts differ by model (issue #85): CR2CFAPattern 3 (GBRG) and 1 (RGGB) samples
     (
