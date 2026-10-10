@@ -133,6 +133,46 @@ fn new_brush_starts_a_separate_mask_in_paint_mode() {
 }
 
 #[test]
+fn mask_adjustments_hide_overlay_without_disabling_the_mask() {
+    use lightcraft_pipeline::Overlay;
+    let mut h = detail("panel.masking");
+    exec(&mut h, "mask.add", json!({"kind": "linear", "start": [0.5, 0.2], "end": [0.5, 0.7]}));
+    assert!(h.app.ui.mask_overlay);
+
+    // Changing the shape needs the overlay; changing the image needs an unobscured preview.
+    exec(&mut h, "mask.refine", json!({"value": 10.0}));
+    assert!(h.app.ui.mask_overlay);
+    let r = h.request("ui.clickWidget", json!({"id": "slider:exposure", "fx": 0.7}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(!h.app.ui.mask_overlay, "the exposure slider hides the overlay after release");
+    let d = develop(&h);
+    assert!(d.masks[0].adjust.exposure > 0.0);
+    assert!(d.masks[0].visible, "hiding the overlay must not disable the mask");
+    assert_eq!(crate::panels::detail::view_overlay(&h.app, &d), Overlay::None);
+    let mask = d.masks[0].clone();
+
+    let r = h.request("ui.key", json!({"key": "o"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(h.app.ui.mask_overlay, "O can restore the overlay");
+    assert_eq!(develop(&h).masks[0], mask, "toggling the overlay leaves the mask and its effect unchanged");
+    assert!(matches!(crate::panels::detail::view_overlay(&h.app, &develop(&h)), Overlay::Mask { .. }));
+
+    // Failed edits and global adjustments must not hide the mask overlay.
+    assert!(h.app.run("mask.adjust", json!({"id": 999, "values": {"exposure": 1.0}})).is_err());
+    assert!(h.app.ui.mask_overlay);
+    exec(&mut h, "develop.set", json!({"control": "light.exposure", "value": 0.5}));
+    assert!(h.app.ui.mask_overlay);
+
+    // Numeric edits/resets and Amount use the same command path as the sliders.
+    for values in [json!({"exposure": 0.0}), json!({"saturation": 20.0}), json!({"amount": 50.0})] {
+        exec(&mut h, "view.maskOverlay", json!({"show": true}));
+        exec(&mut h, "mask.adjust", json!({"values": values}));
+        assert!(!h.app.ui.mask_overlay);
+    }
+    h.settle(SETTLE);
+}
+
+#[test]
 fn radial_body_drag_moves_rotated_components_and_undoes_once() {
     let mut h = detail("panel.masking");
     exec(&mut h, "mask.add", json!({"kind": "luminanceRange"}));

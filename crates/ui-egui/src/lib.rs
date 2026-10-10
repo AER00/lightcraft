@@ -349,6 +349,11 @@ impl LightcraftApp {
             return r;
         }
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
+        if r.is_ok() && id == "mask.adjust" {
+            // Judge local adjustments on the photo, without the selection overlay obscuring them.
+            // Keep it hidden after release; O / the overlay eye can show it again.
+            self.ui.mask_overlay = false;
+        }
         if r.is_ok() && id == "photo.label" {
             let label = params.get("label").and_then(Value::as_str).and_then(lightcraft_catalog::ColorLabel::parse);
             let text = match label {
