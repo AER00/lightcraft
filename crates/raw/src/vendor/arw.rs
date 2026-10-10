@@ -42,6 +42,23 @@ const REFERENCE_BLACK_WHITE: u16 = 532;
 /// Maker-note tags (ExifTool Sony tag names): the enciphered `Tag2010` block and `FullImageSize` (height, width).
 const MN_TAG2010: u16 = 0x2010;
 const MN_FULL_IMAGE_SIZE: u16 = 0xb02b;
+/// Maker-note `DynamicRangeOptimizer` (ExifTool Sony tag documentation, int32u): 0 Off, 1 Standard, 2 Advanced
+/// Auto, 3 Auto, 8–12 Advanced Lv1–Lv5, 16–23 Lv1–Lv8. Sony writes a second tag of that name, `0xb04f` (0 Off,
+/// 1 Standard, 2 Plus), but it adds nothing: on the 241 Sony raws (75 bodies) of 264 checked that carry both, it
+/// reads 1 whenever `0xb025` is on, whatever the level, and 0 when off; older bodies (DSLR-A100 to A900,
+/// NEX-3/5/C3, SLT-A33/A35/A55) leave it out. `0xb025` was present on all 264 files (98 bodies).
+const MN_DYNAMIC_RANGE_OPTIMIZER: u16 = 0xb025;
+
+/// Whether the camera's Dynamic Range Optimizer (DRO) was on for this shot. DRO is a local tone operator that
+/// brightens darker regions of the camera's JPEG (and the preview embedded in the ARW) but leaves the raw data
+/// alone; the factory default is Auto. `None` when the maker note doesn't record it or holds an undocumented value.
+pub(crate) fn dynamic_range_optimizer(note: &makernote::MakerNote) -> Option<bool> {
+    match note.ifd.u64(MN_DYNAMIC_RANGE_OPTIMIZER)? {
+        0 => Some(false),
+        1..=3 | 8..=12 | 16..=23 => Some(true),
+        _ => None,
+    }
+}
 
 /// Inverse of Sony's maker-note byte substitution. ExifTool's Sony tag documentation states that the data of
 /// tags `0x2010`, `0x9050` and `0x94xx` "is encrypted by a simple substitution cipher" (no decoder source was
@@ -730,6 +747,90 @@ mod tests {
         let mut odd = plain.clone();
         odd[612..614].copy_from_slice(&9000u16.to_le_bytes()); // R/G ≈ 35
         assert!(tag2010_wb("DSC-RX100M3", &encipher(&odd), Little).is_none());
+    }
+
+    /// A Sony-style file: IFD0 (`make`) → Exif → maker note `SONY DSC \0\0\0` + an IFD of `entries` (tag, type,
+    /// count, inline value bytes), the layout of the camera's own notes; `count` overrides the entry count.
+    fn sony_file(order: lightcraft_tiff::ByteOrder, make: &str, entries: &[(u16, u16, u32, [u8; 4])], count: Option<u16>) -> Vec<u8> {
+        use lightcraft_tiff::{ByteOrder, IfdBuilder, TiffWriter, Value};
+        let (u16b, u32b) = match order {
+            ByteOrder::Little => (u16::to_le_bytes as fn(u16) -> [u8; 2], u32::to_le_bytes as fn(u32) -> [u8; 4]),
+            ByteOrder::Big => (u16::to_be_bytes as fn(u16) -> [u8; 2], u32::to_be_bytes as fn(u32) -> [u8; 4]),
+        };
+        let mut note = b"SONY DSC \0\0\0".to_vec();
+        note.extend(u16b(count.unwrap_or(entries.len() as u16)));
+        for &(tag, kind, n, value) in entries {
+            note.extend(u16b(tag));
+            note.extend(u16b(kind));
+            note.extend(u32b(n));
+            note.extend(value);
+        }
+        note.extend(u32b(0));
+        let mut exif = IfdBuilder::new();
+        exif.set(t::MAKER_NOTE, Value::Undefined(note));
+        let mut ifd0 = IfdBuilder::new();
+        ifd0.set(t::MAKE, Value::Ascii(make.into()));
+        ifd0.set(t::MODEL, Value::Ascii("ILCE-7CR".into()));
+        ifd0.set_child(t::EXIF_IFD, exif);
+        TiffWriter::new(order, false).write(&[ifd0]).unwrap()
+    }
+
+    #[test]
+    fn dynamic_range_optimizer_is_read_from_the_sony_note() {
+        use lightcraft_tiff::ByteOrder::{Big, Little};
+        let long = |order, v: u32| match order {
+            Little => v.to_le_bytes(),
+            Big => v.to_be_bytes(),
+        };
+        let short = |order, v: u16| match order {
+            Little => [v.to_le_bytes()[0], v.to_le_bytes()[1], 0, 0],
+            Big => [v.to_be_bytes()[0], v.to_be_bytes()[1], 0, 0],
+        };
+        let dro = |bytes: &[u8]| crate::embedded_preview_dynamic_range_optimized(bytes);
+        for order in [Little, Big] {
+            // every documented value: Off; Standard, Advanced Auto, Auto (the factory default); Advanced Lv1–5; Lv1–8
+            let documented: Vec<u32> = [0, 1, 2, 3].into_iter().chain(8..=12).chain(16..=23).collect();
+            for &value in &documented {
+                let file = sony_file(order, "SONY", &[(MN_DYNAMIC_RANGE_OPTIMIZER, 4, 1, long(order, value))], None);
+                assert_eq!(dro(&file), Some(value != 0), "{order:?} {value}");
+            }
+            // undocumented values say nothing
+            for value in (0..=64).filter(|v| !documented.contains(v)).chain([255, 65535, u32::MAX]) {
+                let file = sony_file(order, "SONY", &[(MN_DYNAMIC_RANGE_OPTIMIZER, 4, 1, long(order, value))], None);
+                assert_eq!(dro(&file), None, "{order:?} {value}");
+            }
+            // stored as a SHORT: same reading
+            assert_eq!(dro(&sony_file(order, "SONY", &[(MN_DYNAMIC_RANGE_OPTIMIZER, 3, 1, short(order, 18))], None)), Some(true));
+            // the coarse 0xb04f alone is not used, nor is an ASCII or empty value
+            assert_eq!(dro(&sony_file(order, "SONY", &[(0xb04f, 3, 1, short(order, 1))], None)), None);
+            assert_eq!(dro(&sony_file(order, "SONY", &[(MN_DYNAMIC_RANGE_OPTIMIZER, 2, 2, *b"3\0\0\0")], None)), None);
+            assert_eq!(dro(&sony_file(order, "SONY", &[(MN_DYNAMIC_RANGE_OPTIMIZER, 4, 0, [0; 4])], None)), None);
+            // other makers' notes are not read as Sony's
+            assert_eq!(dro(&sony_file(order, "NIKON CORPORATION", &[(MN_DYNAMIC_RANGE_OPTIMIZER, 4, 1, long(order, 3))], None)), None);
+        }
+    }
+
+    #[test]
+    fn hostile_sony_notes_are_read_safely() {
+        use lightcraft_tiff::ByteOrder::Little;
+        let entry = [(MN_DYNAMIC_RANGE_OPTIMIZER, 4, 1, 3u32.to_le_bytes())];
+        let good = sony_file(Little, "SONY", &entry, None);
+        assert_eq!(crate::embedded_preview_dynamic_range_optimized(&good), Some(true));
+        // an entry count far beyond the note: at most the entries actually there are read
+        assert_ne!(crate::embedded_preview_dynamic_range_optimized(&sony_file(Little, "SONY", &entry, Some(u16::MAX))), Some(false));
+        // an entry pointing outside the file
+        let outside = [(MN_DYNAMIC_RANGE_OPTIMIZER, 4, 2, 0xffff_fff0u32.to_le_bytes())];
+        assert_eq!(crate::embedded_preview_dynamic_range_optimized(&sony_file(Little, "SONY", &outside, None)), None);
+        // every truncation of a good file, and no file at all
+        for len in 0..good.len() {
+            let _ = crate::embedded_preview_dynamic_range_optimized(&good[..len]);
+        }
+        assert_eq!(crate::embedded_preview_dynamic_range_optimized(b"not a TIFF"), None);
+        assert_eq!(crate::embedded_preview_dynamic_range_optimized(&[]), None);
+        // a Sony file without a maker note
+        let mut ifd0 = lightcraft_tiff::IfdBuilder::new();
+        ifd0.set(t::MAKE, lightcraft_tiff::Value::Ascii("SONY".into()));
+        assert_eq!(crate::embedded_preview_dynamic_range_optimized(&lightcraft_tiff::TiffWriter::new(Little, false).write(&[ifd0]).unwrap()), None);
     }
 
     #[test]
