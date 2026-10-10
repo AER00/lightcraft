@@ -184,7 +184,11 @@ pub fn specs() -> Vec<CommandSpec> {
                 };
                 let ids = s.targets(p);
                 let all = !ids.is_empty()
-                    && ids.iter().all(|id| s.catalog.photo(*id).is_some_and(|ph| ph.meta.keywords.iter().any(|x| x.eq_ignore_ascii_case(&k))));
+                    && ids.iter().all(|id| {
+                        s.catalog
+                            .photo(*id)
+                            .is_some_and(|ph| ph.meta.keywords.iter().any(|x| lightcraft_catalog::keywords::same(&clean(x), &clean(&k))))
+                    });
                 let ids: Vec<u64> = ids.iter().map(|i| i.0).collect();
                 let key = if all { "removeKeywords" } else { "addKeywords" };
                 // applying from Recent Keywords mustn't reshuffle the numbers under the keys

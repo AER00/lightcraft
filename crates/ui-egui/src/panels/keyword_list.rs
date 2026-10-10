@@ -72,7 +72,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.label(egui::RichText::new(crate::i18n::tr(none)).color(t.text_dim));
         });
     }
-    let selection = app.session.selection.ids.clone();
+    let selection = app.session.targets(&serde_json::Value::Null);
     let ticks = app.caches.keyword_ticks(&app.session.catalog, &selection);
     for r in &rows {
         row(app, ui, r, &selection, &ticks, filter.trim().is_empty());
@@ -477,10 +477,10 @@ pub(crate) struct Ticks {
 
 impl Ticks {
     pub(crate) fn of(catalog: &Catalog, photos: &[PhotoId]) -> Ticks {
+        let photos = super::keywording::distinct(catalog, photos);
         let mut counts: std::collections::HashMap<String, usize> = Default::default();
         let mut seen = std::collections::HashSet::new();
-        for id in photos {
-            let Some(p) = catalog.photo(*id) else { continue };
+        for p in &photos {
             seen.clear();
             for k in &p.meta.keywords {
                 let key = lightcraft_catalog::keywords::clean(k).to_lowercase();
@@ -593,6 +593,11 @@ mod tests {
             "No keywords match",
             "Add to Selected Photos",
             "Remove from Selected Photos",
+            "Keywords",
+            "& Containing",
+            "Will Export",
+            "No keywords are exported",
+            "Add to All Selected Photos",
         ];
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("locales");
         for code in ["de", "es", "pt-br", "ru", "ja", "zh-hans", "zh-hant"] {

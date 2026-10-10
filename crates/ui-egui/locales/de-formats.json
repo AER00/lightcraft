@@ -213,5 +213,7 @@
   "Create Keyword Tag Inside “{name}”…": "Stichwort in „{name}“ erstellen…",
   "“{parent}” has a “{name}” already. Merge the two?": "„{parent}“ enthält bereits „{name}“. Beide zusammenführen?",
   "There is a “{name}” at the top level already. Merge the two?": "Auf der obersten Ebene gibt es bereits „{name}“. Beide zusammenführen?",
-  "Added “{keyword}” to {n} photo{}": "„{keyword}“ zu {n} Foto{} hinzugefügt"
+  "Added “{keyword}” to {n} photo{}": "„{keyword}“ zu {n} Foto{} hinzugefügt",
+  "On {have} of {of} selected photos": "Auf {have} von {of} ausgewählten Fotos",
+  "Remove “{name}”": "„{name}“ entfernen"
 }

@@ -262,6 +262,17 @@ pub const RIGHT_WIDTH: PanelWidth = PanelWidth { min: 250.0, default: 270.0, max
 /// The photo area the side panels always leave free (as far as their minimum widths allow).
 pub const MIN_PHOTO_WIDTH: f32 = 360.0;
 
+/// What the Keywording box shows: the keywords (chips to edit), them with the keywords containing
+/// them, or what exported files will carry (read only).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum KeywordingView {
+    #[default]
+    Keywords,
+    Containing,
+    WillExport,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
@@ -449,6 +460,8 @@ pub struct UiState {
     /// The keyword painter: clicking a photo in the grid toggles this keyword on it.
     #[serde(skip)]
     pub keyword_painter: Option<String>,
+    /// What the Keywording box shows (Lightroom Classic's Keyword Tags views).
+    pub keywording_view: KeywordingView,
     /// The Keyword List's open levels (lower-case paths).
     pub keyword_list_open: Vec<String>,
     /// The keyword picked in the Keyword List (− deletes it, Edit edits it).
@@ -795,6 +808,7 @@ impl Default for UiState {
             slideshow: None,
             second_window: false,
             keyword_painter: None,
+            keywording_view: KeywordingView::default(),
             keyword_list_open: Vec::new(),
             keyword_list_selected: None,
             dragging_keyword: None,

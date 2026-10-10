@@ -810,15 +810,20 @@ fn meta_field(app: &mut LightcraftApp, ui: &mut egui::Ui, label: &str, key: &str
 }
 
 fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
-    let Some(p) = app.session.catalog.photo(id).cloned() else { return };
+    // (the box is the selection's: the active photo only says that there is one)
+    if app.session.catalog.photo(id).is_none() {
+        return;
+    }
     header(ui, "Keywords");
     let t = Tokens::get(ui.ctx());
     padded(ui, |ui| {
         let kid = egui::Id::new("kw-input");
         let mut text = ui.data_mut(|d| d.get_temp::<String>(kid).unwrap_or_default());
-        let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text(crate::i18n::tr("Add keyword")).desired_width(f32::INFINITY));
-        register(ui.ctx(), "field:keyword", r.rect);
-        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
+        let r =
+            crate::text_field::TextField::singleline("field:keyword", &mut text).hint(crate::i18n::tr("Add keyword")).width(f32::INFINITY).show(ui);
+        // Return gives the keywords to the selected photos; Esc gives back what was there before
+        // this edit (the shared field does)
+        if r.ending == Some(crate::text_field::Ending::Return) && !text.trim().is_empty() {
             // a new name goes inside the default parent (Put New Keywords Inside This Keyword)
             let kws: Vec<String> = text.split(',').map(|s| app.session.catalog.typed_keyword(s)).filter(|s| !s.is_empty()).collect();
             let _ = app.run("photo.setMeta", json!({"addKeywords": kws}));
@@ -826,49 +831,37 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
         ui.data_mut(|d| d.insert_temp(kid, text));
         ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            for k in &p.meta.keywords {
-                let r =
-                    ui.add(egui::Button::new(egui::RichText::new(format!("{}  ×", k.replace('|', " › "))).color(t.text_label)).corner_radius(10.0));
-                register(ui.ctx(), format!("keywordChip:{k}"), r.rect);
-                if r.clicked() {
-                    let _ = app.run("photo.setMeta", json!({"removeKeywords": [k]}));
-                }
-                r.context_menu(|ui| {
-                    if ui.button(crate::i18n::tr("Remove from Photo")).clicked() {
-                        let _ = app.run("photo.setMeta", json!({"removeKeywords": [k]}));
-                    }
-                    if ui.button(crate::i18n::tr("Show Photos with Keyword")).clicked() {
-                        let _ = app.run("library.filter", json!({"keyword": k}));
-                    }
-                    ui.separator();
-                    if ui.button(crate::i18n::tr("Rename Keyword…")).clicked() {
-                        app.ui.dialog = Some(crate::state::Dialog::RenameKeyword { from: k.clone(), to: k.clone() });
-                    }
-                    if ui.button(crate::i18n::tr("Delete Keyword")).clicked() {
-                        let _ = app.run("keyword.delete", json!({"keyword": k}));
-                    }
-                });
-            }
-        });
+        super::keywording::view_switch(app, ui);
+        ui.add_space(4.0);
+        if app.ui.keywording_view == crate::state::KeywordingView::Keywords {
+            super::keywording::chip_row(app, ui);
+        } else {
+            super::keywording::names_row(app, ui);
+        }
         ui.add_space(10.0);
-        keyword_set(app, ui, &p.meta.keywords);
+        keyword_set(app, ui);
         ui.add_space(8.0);
         // the painter: click photos in the grid to give them (or take away) a keyword
         ui.horizontal(|ui| {
             let pid = egui::Id::new("kw-painter");
             let painting = app.ui.keyword_painter.clone();
             let mut k: String = ui.data(|d| d.get_temp(pid)).unwrap_or_else(|| painting.clone().unwrap_or_default());
-            let r = ui.add_enabled(
-                painting.is_none(),
-                egui::TextEdit::singleline(&mut k).hint_text(crate::i18n::tr("Keyword to paint")).desired_width(130.0),
-            );
-            register(ui.ctx(), "field:keywordPainter", r.rect);
+            // (fixed while painting: Stop first)
+            let field = ui
+                .add_enabled_ui(painting.is_none(), |ui| {
+                    crate::text_field::TextField::singleline("field:keywordPainter", &mut k)
+                        .hint(crate::i18n::tr("Keyword to paint"))
+                        .width(130.0)
+                        .show(ui)
+                })
+                .inner;
             ui.data_mut(|d| d.insert_temp(pid, k.clone()));
             let label = if painting.is_some() { "Stop" } else { "Paint" };
+            let returned = field.ending == Some(crate::text_field::Ending::Return) && painting.is_none() && !k.trim().is_empty();
             if text_button(ui, "keywordPaint", label, painting.is_some())
                 .on_hover_text(crate::i18n::tr("Click photos in the grid to toggle the keyword; Esc stops"))
                 .clicked()
+                || returned
             {
                 let _ = app.run("tool.keywordPainter", json!({"keyword": if painting.is_some() { serde_json::Value::Null } else { json!(k) }}));
             }
@@ -878,7 +871,11 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         // photo's keywords, else the most used ones
         let typed = ui.data(|d| d.get_temp::<String>(kid).unwrap_or_default());
         let last = typed.rsplit(',').next().unwrap_or("").trim().to_string();
-        let suggestions = (*app.caches.suggestions(&app.session.catalog, &p.meta.keywords, &last, 12)).clone();
+        // the keywords every selected photo has: those only some have are still suggested
+        let selection = app.session.targets(&serde_json::Value::Null);
+        let have: Vec<String> =
+            app.caches.keyword_chips(&app.session.catalog, &selection).iter().filter(|c| c.on_all()).map(|c| c.path.clone()).collect();
+        let suggestions = (*app.caches.suggestions(&app.session.catalog, &have, &last, 12)).clone();
         if !suggestions.is_empty() {
             ui.label(egui::RichText::new(crate::i18n::tr("Suggestions")).color(t.text_dim));
             ui.horizontal_wrapped(|ui| {
@@ -901,7 +898,10 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 
 /// The keyword set: pick a set, then nine buttons (⌥1–⌥9) that toggle its keywords on the
 /// selected photos; "Save as Set…" keeps the current nine under a name.
-fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui, have: &[String]) {
+fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    // on: every selected photo has it (⌥1–⌥9 then take it off them); partly on: only some do
+    let selection = app.session.targets(&serde_json::Value::Null);
+    let chips = app.caches.keyword_chips(&app.session.catalog, &selection);
     let t = Tokens::get(ui.ctx());
     let sets = lightcraft_engine::cmd::keywords::keyword_sets_json(&app.session);
     let current = sets["current"].as_str().unwrap_or_default().to_string();
@@ -945,8 +945,10 @@ fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui, have: &[String]) {
     let bw = ((ui.available_width() - 8.0) / 3.0).floor().max(40.0);
     egui::Grid::new("kw-set-grid").num_columns(3).spacing([4.0, 4.0]).show(ui, |ui| {
         for (i, k) in kws.iter().enumerate() {
-            let on = have.iter().any(|x| x.eq_ignore_ascii_case(k));
-            let short = k.rsplit('|').next().unwrap_or(k);
+            let chip = chips.iter().find(|c| lightcraft_catalog::keywords::same(&c.path, &lightcraft_catalog::keywords::clean(k)));
+            let on = chip.is_some_and(|c| c.on_all());
+            let some = chip.is_some() && !on;
+            let short = format!("{}{}", k.rsplit('|').next().unwrap_or(k), if some { " *" } else { "" });
             let r = ui
                 .add_sized(
                     [bw, 22.0],
@@ -954,6 +956,11 @@ fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui, have: &[String]) {
                 )
                 .on_hover_text(format!("{} — ⌥{}", k.replace('|', " › "), i + 1));
             register(ui.ctx(), format!("kwSet:{}", i + 1), r.rect);
+            if on {
+                register(ui.ctx(), format!("kwSetOn:{}", i + 1), r.rect);
+            } else if some {
+                register(ui.ctx(), format!("kwSetSome:{}", i + 1), r.rect);
+            }
             if r.clicked() {
                 let _ = app.run("keyword.toggleFromSet", json!({"index": i + 1}));
             }

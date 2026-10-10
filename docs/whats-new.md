@@ -38,6 +38,16 @@
   means no (it used to count as yes), and a value that is neither yes nor no is refused.
 - Any Searchable Text also finds the state / province, alt text, people and a virtual copy's name.
 
+### Keywording box
+- The chips at the top of the Keywords panel are the keywords of every selected photo, not only the active one's; a
+  keyword only some of them have is marked with an asterisk (hover: how many). Only the × removes a keyword, from
+  every selected photo; a chip's menu acts on the selection (add to all, remove, show photos, edit) and no longer
+  deletes a keyword from the whole library.
+- Switch to & Containing to see the keywords with the keywords containing them, or to Will Export to see what
+  exported files will carry for the selection.
+- The keyword set's buttons and the suggestions follow the selection too; the typing boxes get the Cut / Copy / Paste
+  menu, and Return in the painter's box starts painting.
+
 ### Keyword List
 - The Keywords panel ends with a Keyword List, as in Lightroom Classic: every keyword with its photo count, those no
   photo has yet too. Filter it, tick a keyword to give it to the selected photos (a dash: only some have it), or click
