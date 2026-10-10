@@ -429,8 +429,7 @@ fn word16_order(strip: &[u8], bits: u32, file: lightcraft_tiff::ByteOrder) -> li
     let (mut n, mut over_file, mut over_other) = (0usize, 0usize, 0usize);
     let words = strip.len() / 2;
     let step = (words / 65536).max(1);
-    for i in (0..words).step_by(step) {
-        let b = [strip[2 * i], strip[2 * i + 1]];
+    for &b in strip.as_chunks::<2>().0.iter().step_by(step) {
         n += 1;
         over_file += usize::from(u32::from(file.u16(b)) >= limit);
         over_other += usize::from(u32::from(other.u16(b)) >= limit);
