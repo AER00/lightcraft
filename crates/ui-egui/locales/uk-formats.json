@@ -206,5 +206,20 @@
   "In line for AI Denoise ({ahead} ahead)…": "У черзі на усунення шуму ШІ (попереду: {ahead})…",
   "Running on {}.": "Працює на {}.",
   "{file} · {size}": "{file} · {size}",
-  "•  {assumption}": "•  {assumption}"
+  "•  {assumption}": "•  {assumption}",
+  "Put inside “{parent}”": "Помістити в «{parent}»",
+  "Delete the keyword “{name}”?": "Видалити ключове слово «{name}»?",
+  "It is taken off {count} photo{}, with the keywords below it. Undo brings it back.": "Його буде знято з фото (кількість: {count}{:.0}) разом із вкладеними ключовими словами. Скасування поверне його.",
+  "Create Keyword Tag Inside “{name}”…": "Створити ключове слово в «{name}»…",
+  "“{parent}” has a “{name}” already. Merge the two?": "«{parent}» уже містить «{name}». Об’єднати їх?",
+  "There is a “{name}” at the top level already. Merge the two?": "На верхньому рівні вже є «{name}». Об’єднати їх?",
+  "Added “{keyword}” to {n} photo{}": "«{keyword}» додано до фото: {n}{:.0}",
+  "On {have} of {of} selected photos": "На {have} з {of} вибраних фото",
+  "Remove “{name}”": "Вилучити «{name}»",
+  "There is a keyword set “{name}” already": "Набір ключових слів «{name}» уже існує",
+  "Added {n} keyword{}": "Додано ключових слів: {n}{:.0}",
+  "; {n} gained synonyms": "; отримали синоніми: {n}",
+  "Exported {n} keyword{}": "Експортовано ключових слів: {n}{:.0}",
+  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One не імпортує список, у якому ключове слово містить ; , < або >: {names}",
+  " — left out, as a keyword list can't hold them: {names}": " — пропущено, бо список ключових слів не може їх містити: {names}"
 }

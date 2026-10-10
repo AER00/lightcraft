@@ -1742,10 +1742,10 @@ mod tests {
             let transform = lightcraft_raw::color::camera_transform(&raw, lightcraft_raw::color::as_shot_white_xy(&raw));
             let look = fit_preview(&raw, &bytes, &transform).expect("a camera look");
             // the look fitted to the JPEG, as before this change
-            let (sensor, reference) = proxies(&raw, &bytes, &transform, PROXY).unwrap();
+            let (sensor, reference, clipped) = proxies(&raw, &bytes, &transform, PROXY).unwrap();
             let profile = raw.metadata.model.as_deref().and_then(crate::camera_profiles::get);
             let colour = profile.as_ref().and_then(|p| Some((p.matrix().mul(&transform.matrix.inverse()?), p.hue_sat.clone())));
-            let fitted = fit_pairs_with(&sensor, &reference, colour).unwrap();
+            let fitted = fit_look(&sensor, &reference, &clipped, colour).unwrap();
             if dro {
                 assert_lowered(&fitted, &look, name);
                 for x in lowered {

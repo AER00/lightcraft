@@ -427,7 +427,7 @@ fn sidecar_has_news(labels: &Catalog, p: &Photo, naming: SidecarNaming) -> bool 
         return false;
     }
     let Ok(text) = std::fs::read_to_string(&file) else { return false };
-    let Ok(sc) = crate::sidecar::parse_sidecar(&text, p.kind == lightcraft_catalog::MediaKind::Raw) else { return false };
+    let Ok(sc) = crate::sidecar::parse_sidecar(&text, crate::crs::Target::for_photo(p)) else { return false };
     let sc = sc.resolve_label(labels);
     let mut q = p.clone();
     crate::sidecar::merge_into(&mut q, &sc, "");
@@ -464,7 +464,7 @@ pub struct SyncWork {
     moved: Vec<FolderMoved>,
     missing: Vec<FolderPhoto>,
     /// (photo, its file, how its sidecar is named)
-    sidecars: Vec<(PhotoId, String, SidecarNaming, bool)>,
+    sidecars: Vec<(PhotoId, String, SidecarNaming, crate::crs::Target)>,
 }
 
 /// The catalog half of a synchronize (see [`SyncJob`]).
@@ -518,7 +518,7 @@ impl SyncJob {
                 .zip(namings)
                 .filter_map(|(m, naming)| {
                     let p = s.catalog.photo(PhotoId(m.id))?;
-                    Some((p.id, m.path, naming, p.kind == lightcraft_catalog::MediaKind::Raw))
+                    Some((p.id, m.path, naming, crate::crs::Target::for_photo(p)))
                 })
                 .collect()
         } else {
@@ -590,11 +590,11 @@ impl SyncWork {
             return;
         }
         let mut read = Vec::with_capacity(sidecars.len());
-        for (id, path, naming, raw) in sidecars {
+        for (id, path, naming, target) in sidecars {
             if cancel.load(Relaxed) {
                 break;
             }
-            read.push((id, path.clone(), read_sidecar(&path, naming, raw)));
+            read.push((id, path.clone(), read_sidecar(&path, naming, target)));
             step(1);
         }
         if !read.is_empty() {
@@ -604,14 +604,14 @@ impl SyncWork {
 }
 
 /// Read and parse photo file `path`'s XMP sidecar file.
-fn read_sidecar(path: &str, naming: SidecarNaming, raw: bool) -> std::result::Result<crate::sidecar::SidecarData, String> {
+fn read_sidecar(path: &str, naming: SidecarNaming, target: crate::crs::Target) -> std::result::Result<crate::sidecar::SidecarData, String> {
     let file = crate::sidecar::find_sidecar(path, naming).ok_or_else(|| "no XMP sidecar".to_string())?;
     let len = std::fs::metadata(&file).map_err(|e| format!("{}: {e}", file.display()))?.len();
     if len > MAX_SIDECAR_BYTES {
         return Err(format!("{}: too large for an XMP sidecar", file.display()));
     }
     let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
-    crate::sidecar::parse_sidecar(&text, raw).map_err(|e| format!("{}: {e}", file.display()))
+    crate::sidecar::parse_sidecar(&text, target).map_err(|e| format!("{}: {e}", file.display()))
 }
 
 impl SyncCommit {

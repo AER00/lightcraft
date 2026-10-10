@@ -206,5 +206,20 @@
   "In line for AI Denoise ({ahead} ahead)…": "En attente de la réduction du bruit par IA ({ahead} devant)…",
   "Running on {}.": "En cours d’exécution sur {}.",
   "{file} · {size}": "{file} · {size}",
-  "•  {assumption}": "•  {assumption}"
+  "•  {assumption}": "•  {assumption}",
+  "Put inside “{parent}”": "Placer dans « {parent} »",
+  "Delete the keyword “{name}”?": "Supprimer le mot-clé « {name} » ?",
+  "It is taken off {count} photo{}, with the keywords below it. Undo brings it back.": "Il est retiré de {count} photo{}, avec les mots-clés qu’il contient. Annuler le rétablit.",
+  "Create Keyword Tag Inside “{name}”…": "Créer un mot-clé dans « {name} »…",
+  "“{parent}” has a “{name}” already. Merge the two?": "« {parent} » contient déjà « {name} ». Fusionner les deux ?",
+  "There is a “{name}” at the top level already. Merge the two?": "Il existe déjà « {name} » au premier niveau. Fusionner les deux ?",
+  "Added “{keyword}” to {n} photo{}": "« {keyword} » ajouté à {n} photo{}",
+  "On {have} of {of} selected photos": "Sur {have} des {of} photos sélectionnées",
+  "Remove “{name}”": "Retirer « {name} »",
+  "There is a keyword set “{name}” already": "Un jeu de mots-clés « {name} » existe déjà",
+  "Added {n} keyword{}": "Mots-clés ajoutés : {n}{:.0}",
+  "; {n} gained synonyms": " ; avec de nouveaux synonymes : {n}",
+  "Exported {n} keyword{}": "Mots-clés exportés : {n}{:.0}",
+  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One n’importe pas une liste dont un mot-clé contient ; , < ou > : {names}",
+  " — left out, as a keyword list can't hold them: {names}": " — omis, car une liste de mots-clés ne peut pas les contenir : {names}"
 }

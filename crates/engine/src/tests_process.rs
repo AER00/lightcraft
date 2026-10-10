@@ -196,19 +196,21 @@ fn sidecars_keep_the_process_and_interchange_edits_get_the_latest() {
     // versions, so sidecars written then read as V1)
     put(&mut s, id, NEWER, 0.3);
     let p = s.catalog.photo(id).unwrap().clone();
-    let back = parse_sidecar(&sidecar_packet(&p, &s.catalog), false).unwrap();
+    let back = parse_sidecar(&sidecar_packet(&p, &s.catalog), crate::crs::Target::Rendered).unwrap();
     let Some(DevelopPatch::Full(d)) = &back.develop else { panic!("no lc:settings") };
     assert_eq!((d.process, d.light.exposure), (NEWER, 0.3));
     put(&mut s, id, ProcessVersion::V1, 0.3);
     let packet = sidecar_packet(s.catalog.photo(id).unwrap(), &s.catalog);
     assert!(!packet.contains("process"), "{packet}");
-    let Some(DevelopPatch::Full(d)) = parse_sidecar(&packet, false).unwrap().develop else { panic!("no lc:settings") };
+    let Some(DevelopPatch::Full(d)) = parse_sidecar(&packet, crate::crs::Target::Rendered).unwrap().develop else { panic!("no lc:settings") };
     assert_eq!(d.process, ProcessVersion::V1);
     // a damaged process value reads as V1 and costs nothing else: the sidecar's edits still come back
     for bad in ["-1", "1.5", "\"two\"", "null", "4294967296"] {
         let json = format!(r#"{{"process": {bad}, "light": {{"exposure": 0.5}}}}"#);
         let packet = lightcraft_meta::write_xmp(&lightcraft_meta::Metadata::default(), Some(&json));
-        let Some(DevelopPatch::Full(d)) = parse_sidecar(&packet, false).unwrap().develop else { panic!("{bad}: the edit was dropped") };
+        let Some(DevelopPatch::Full(d)) = parse_sidecar(&packet, crate::crs::Target::Rendered).unwrap().develop else {
+            panic!("{bad}: the edit was dropped")
+        };
         assert_eq!((d.process, d.light.exposure), (ProcessVersion::V1, 0.5), "{bad}");
     }
     // `crs:` edits (other raw developers, Lightroom): their ProcessVersion numbers another
@@ -217,7 +219,7 @@ fn sidecars_keep_the_process_and_interchange_edits_get_the_latest() {
     let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
   <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
     crs:ProcessVersion="11.0" crs:Exposure2012="+1.10" crs:Contrast2012="+20"/></rdf:RDF></x:xmpmeta>"#;
-    let sc = parse_sidecar(xmp, true).unwrap();
+    let sc = parse_sidecar(xmp, crate::crs::Target::RawAbsolute).unwrap();
     let Some(DevelopPatch::Partial(partial)) = &sc.develop else { panic!("no crs: edit") };
     assert!(partial.get("process").is_none(), "{partial}");
     let mut fresh = Photo::new(PhotoId(999), Source::Demo { scene: 1 }, "a.jpg", "JPEG", 10, 10, "2026-10-09T00:00:00");
