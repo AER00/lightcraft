@@ -217,7 +217,11 @@ mod tests {
                 let full = super::super::arw::decode(&file, crate::Mode::Full).unwrap();
                 assert_eq!(header.info(), full.info());
                 assert_eq!(full.opcodes.list3.len(), expected, "{model} {order:?}");
-                assert_eq!(full.crop, Rect::new(2, 2, 30, 20));
+                // the image keeps Sony's crop tags; the warp is centred on the DNG default crop (x 2..32 of 32)
+                assert_eq!(full.crop, Rect::new(0, 2, 30, 20));
+                if let Some(Opcode::WarpRectilinear { center, .. }) = full.opcodes.list3.first() {
+                    assert!((center[0] - 16.5 / 31.0).abs() < 1e-12 && (center[1] - 11.5 / 23.0).abs() < 1e-12, "{center:?}");
+                }
                 let dng = crate::write_dng(&full, &Default::default()).unwrap();
                 assert_eq!(crate::decode(&dng).unwrap().opcodes.list3, full.opcodes.list3);
             }

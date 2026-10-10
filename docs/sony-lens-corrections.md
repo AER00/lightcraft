@@ -35,10 +35,14 @@ internal interpolator. A fixed-size weighted least-squares fit expresses source 
 `r * (k0 + k1*r² + k2*r⁴ + k3*r⁶)`. The fit is rejected if radial error exceeds 0.0005 of the
 half diagonal (about 0.43 px at a 1440 px 3:2 preview), or the mapping folds. Table values are bounded
 and the input must have precisely the supported signed-short layout. Crop offset and normalization
-are converted into DNG's active-area coordinate system before creating the opcode. The standard
-`DefaultCropOrigin` / `DefaultCropSize` take precedence over Sony crop tags: on the tested A7R IVA
-files the former start at raw x=32 and the latter at x=0. The standard origin aligns with Sony
-exports; the old precedence shifted content by eight pixels in a 2376-pixel-wide export.
+are converted into DNG's active-area coordinate system before creating the opcode. The warp's centre
+and normalization come from the standard `DefaultCropOrigin` / `DefaultCropSize` when the file has them,
+not from Sony's crop tags: on the tested A7R IVA files the former start at raw x=32 and the latter at
+x=0, and the standard origin is the one that aligns with Sony's exports. The image itself keeps the
+decoder's crop precedence for every Sony body (Sony's crop tags, then the default crop, then the
+recorded image size), so the framing is unchanged; the opcode's centre is in active-area coordinates,
+so the warp stays on the optical centre either way. On the A7R IVA that framing still sits 32 raw
+pixels left of Sony's exports (eight pixels in a 2376-pixel-wide export).
 
 The main raw-IFD table is important: the similarly named MakerNote table has different values and
 must not be substituted into this formula. Main raw-IFD and SR2SubIFD values agreed in the test files.
@@ -99,7 +103,7 @@ These are **model-boundary regression checks, not new geometric validation of th
 refusing the A7 III tables resolves the unverified corner warp identified in review. The lossless M/S
 files are linear YCbCr and remain excluded independently of the model check. Header and full decode
 must agree for every sample. Synthetic tests also verify both TIFF byte orders, exact model matching,
-standard crop precedence, and that DNG export preserves an accepted warp without adding one to rejected
+that the warp is centred on the standard default crop while the image keeps Sony's crop, and that DNG export preserves an accepted warp without adding one to rejected
 models. The existing independent Sony geometry tests continue to cover the enabled A7R IVA path.
 Re-exporting the 24, 200 and 600 mm reference files after the model restriction produced byte-identical
 corrected PNGs to the earlier validated exports. Isolated headless app checks showed the A7R IVA profile
