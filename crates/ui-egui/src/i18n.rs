@@ -3,8 +3,8 @@
 //! A language is one entry in [`language_table!`] below: its BCP-47 code, the endonym shown in the
 //! Language menus, the ISO 15924 script its text needs (which picks the CJK font fallback), and its
 //! message catalog (`locales/<code>.json`, embedded at build time). Adding a language is that entry
-//! plus its catalogs — every menu and settings surface is built from the table, so nothing else in
-//! the UI changes.
+//! plus its catalogs and the corresponding language command in `menus.rs`. Settings read the
+//! locale table, while menus and the control channel share the command mapping.
 
 use std::{cell::RefCell, collections::BTreeMap, sync::OnceLock};
 
@@ -125,6 +125,7 @@ language_table! {
     De, "de", "Deutsch", "Latn", include_str!("../locales/de.json");
     Ru, "ru", "Русский", "Cyrl", include_str!("../locales/ru.json");
     Fr, "fr", "Français", "Latn", include_str!("../locales/fr.json");
+    Uk, "uk", "Українська", "Cyrl", include_str!("../locales/uk.json");
 }
 
 // The settings file stores the BCP-47 code (`"zh-hans"`), never the Rust variant name, so a
@@ -665,6 +666,7 @@ mod tests {
             ("app.language.spanish", Locale::Es),
             ("app.language.german", Locale::De),
             ("app.language.russian", Locale::Ru),
+            ("app.language.ukrainian", Locale::Uk),
         ];
         // One command per language, and every command reachable from the menu table.
         assert_eq!(commands.len(), Locale::ALL.len());
@@ -818,6 +820,107 @@ mod tests {
         }
     }
 
+    /// Ukrainian's coverage of every catalog message and display label. Gaps are reported, not failed
+    /// (like `catalogs_agree_on_placeholders_and_report_gaps`): a feature PR that adds a label doesn't
+    /// have to ship its Ukrainian text, which shows in English until the translation catches up.
+    #[test]
+    fn ukrainian_coverage_of_catalogs_commands_controls_and_rules_is_reported() {
+        let catalog = Locale::Uk.catalog();
+        let keys: std::collections::BTreeSet<&String> = Locale::ALL.iter().flat_map(|language| language.catalog().keys()).collect();
+        let lacking: Vec<_> = keys.into_iter().filter(|key| !catalog.contains_key(key.as_str())).collect();
+        if !lacking.is_empty() {
+            eprintln!("uk lacks {} catalog message(s) (shown in English): {lacking:?}", lacking.len());
+        }
+        let mut labels: Vec<&str> = lightcraft_engine::command_specs().iter().map(|spec| spec.label).collect();
+        labels.extend(crate::menus::ui_commands().map(|command| command.1).filter(|label| !Locale::ALL.iter().any(|locale| locale.name() == *label)));
+        labels.extend(lightcraft_develop::CONTROLS.iter().map(|control| control.label));
+        labels.extend(crate::panels::settings::TABS.iter().map(|(_, label)| *label));
+        for (_, label, kind) in lightcraft_catalog::rules::FIELDS {
+            labels.push(label);
+            labels.extend(lightcraft_catalog::rules::ops_for(*kind).iter().map(|(_, label)| *label));
+        }
+        labels.extend(lightcraft_engine::rename::TOKENS.iter().map(|token| token.meaning));
+        labels.extend(lightcraft_engine::rename::TEMPLATE_NOTES);
+        let missing: Vec<_> = labels.into_iter().filter(|label| !catalog.contains_key(*label)).collect();
+        if !missing.is_empty() {
+            eprintln!("uk lacks {} display label(s) (shown in English): {missing:?}", missing.len());
+        }
+    }
+
+    #[test]
+    fn ukrainian_switches_persists_formats_dates_and_preserves_values() {
+        use crate::control::{ControlRequest, Outcome};
+        let mut app = crate::LightcraftApp::new(lightcraft_engine::Session::with_demo(), Default::default());
+        app.run("app.language.ukrainian", serde_json::json!({})).unwrap();
+        assert_eq!(app.ui.language, Locale::Uk);
+        assert_eq!(crate::menubar::checked(&app, "app.language.ukrainian"), Some(true));
+        assert_eq!(tr("Light"), "Світло");
+        assert_eq!(tr("Landscape"), "Пейзаж");
+        assert_eq!(tr("Home"), "Домашня тека");
+        assert_eq!(date_group_label("2026-09-20", false), "Неділя, 20.09.2026");
+        assert_eq!(date_group_label("2026-09", false), "09.2026");
+        assert_eq!(display_time("2026-09-20T16:04:05"), "Неділя, 20.09.2026 16:04:05");
+        // Count-neutral labels work for every Ukrainian integer category, with no English suffix.
+        for n in [0, 1, 2, 5, 11, 21, 22, 25, 111] {
+            assert_eq!(tr_format!("Imported {} photo{}", n, if n == 1 { "" } else { "s" }), format!("Імпортовано фото: {n}"));
+            assert_eq!(tr_format!("{} files and {f} folder{}", n, "s", f = n), format!("Файлів: {n}, тек: {n}"));
+            let noun = tr(if n == 1 { "cached picture" } else { "cached pictures" });
+            assert_eq!(tr_format!("{n} {noun}", n = n, noun = noun), format!("Кешовані зображення: {n}"));
+        }
+        // This trailing argument is queue progress, not an English plural suffix.
+        let queued = tr_format!(" · {queued} waiting", queued = 5);
+        assert_eq!(
+            tr_format!("Denoising {name}: {done} of {total} tiles{}", queued, name = "IMG.CR3", done = 1, total = 4),
+            "Усунення шуму IMG.CR3: ділянки — 1 із 4 · очікують: 5"
+        );
+        let name = "Color {title} 日本語";
+        assert_eq!(tr_format!("Added {n} photo{} to “{}”", "s", name, n = 22), format!("До «{name}» додано фото: 22"));
+        assert_eq!(builtin_label("Warm Glow", false), "Warm Glow");
+        assert_eq!(builtin_label("Warm Glow", true), "Тепле сяйво");
+        assert_eq!(tr("photo-{title}.jpg"), "photo-{title}.jpg");
+        assert_eq!(tr("develop.set"), "develop.set");
+        let saved = serde_json::to_string(&app.ui).unwrap();
+        assert!(saved.contains(r#""language":"uk""#));
+        assert_eq!(serde_json::from_str::<crate::state::UiState>(&saved).unwrap().language, Locale::Uk);
+        let ctx = egui::Context::default();
+        for code in ["uk", "uk-UA", "uk_UA.UTF-8", "uk-Cyrl-UA"] {
+            assert_eq!(Locale::parse_tag(code), Some(Locale::Uk));
+            let (request, _) = ControlRequest::new("ui.set", serde_json::json!({"language": code}));
+            let Outcome::Done(reply) = crate::control::handle(&mut app, &ctx, &request) else { panic!("expected reply") };
+            assert_eq!(reply["ok"], true);
+            assert_eq!(language(), Locale::Uk);
+        }
+        set_language(Locale::En);
+    }
+
+    #[test]
+    fn ukrainian_panels_dialogs_and_letters_paint_with_bundled_fonts() {
+        let ctx = fonts_ctx(&[]);
+        let mut app = crate::LightcraftApp::new(lightcraft_engine::Session::with_demo(), Default::default());
+        app.ui.left_panel = true;
+        let text = painted_text(&ctx, &mut app, Locale::Uk);
+        assert!(text.contains("Мої фото") && text.contains("Усі фото"), "{text}");
+        for (command, title) in [("app.about", "Про LightCraft"), ("app.shortcuts", "Клавіатурні скорочення"), ("app.settings", "Налаштування")]
+        {
+            app.ui.dialog = None;
+            app.run(command, serde_json::json!({})).unwrap();
+            let text = painted_text(&ctx, &mut app, Locale::Uk);
+            assert!(text.contains(title), "{command}: {text}");
+        }
+        ctx.fonts_mut(|fonts| {
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Name(crate::theme::FONT_SEMIBOLD.into())] {
+                let font = egui::FontId::new(13.0, family);
+                for ch in "ҐґЄєІіЇї’«»"
+                    .chars()
+                    .chain(Locale::Uk.catalog().values().flat_map(|text| text.chars()).filter(|ch| ('\u{0400}'..='\u{04ff}').contains(ch)))
+                {
+                    assert!(fonts.has_glyph(&font, ch), "missing Ukrainian glyph {ch}");
+                }
+            }
+        });
+        set_language(Locale::En);
+    }
+
     /// Every command, control, rule and rename label, and every line of What's New, is a message a
     /// catalog can translate. What a language lacks is reported, not failed (like
     /// `catalogs_agree_on_placeholders_and_report_gaps`): a feature PR doesn't have to ship every
@@ -959,7 +1062,7 @@ mod tests {
     }
 
     #[test]
-    fn german_buttons_fit_the_bottom_bar_and_export_dialog() {
+    fn german_and_ukrainian_buttons_fit_the_bottom_bar_and_export_dialog() {
         fn collect(shape: &egui::epaint::Shape, bounds: &mut Vec<(String, egui::Rect)>) {
             match shape {
                 egui::epaint::Shape::Text(shape) => {
@@ -969,38 +1072,40 @@ mod tests {
                 _ => {}
             }
         }
-        let ctx = fonts_ctx(&[]);
-        let services = crate::Services { pick_folder: Some(Box::new(|| None)), ..Default::default() };
-        let mut app = crate::LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
-        app.ui.language = Locale::De;
-        let mut bounds = Vec::new();
-        for export in [false, true] {
-            if export {
-                app.run("dialog.export", serde_json::json!({})).unwrap();
-            }
-            for frame in 0..4 {
-                let input = crate::headless::HeadlessView::raw_input(egui::vec2(1600.0, 1000.0), 1.0, frame as f64 / 60.0, vec![]);
-                let mut out = ctx.run_ui(input, |ui| {
-                    app.logic(ui.ctx());
-                    app.ui(ui);
-                });
-                out.textures_delta.clear();
-                bounds.clear();
-                for shape in out.shapes {
-                    collect(&shape.shape, &mut bounds);
+        for language in [Locale::De, Locale::Uk] {
+            let ctx = fonts_ctx(&[]);
+            let services = crate::Services { pick_folder: Some(Box::new(|| None)), ..Default::default() };
+            let mut app = crate::LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
+            app.ui.language = language;
+            let mut bounds = Vec::new();
+            for export in [false, true] {
+                if export {
+                    app.run("dialog.export", serde_json::json!({})).unwrap();
                 }
-            }
-            let rect = |id: &str| app.widgets.iter().find(|entry| entry.0 == id).unwrap().1;
-            if export {
-                let dialog = rect("dialog:window");
-                for id in ["button:exportNamingTags", "button:exportChooseFolder", "button:exportSavePreset"] {
-                    assert!(dialog.contains_rect(rect(id)), "{id} spills outside {dialog:?}: {:?}", rect(id));
+                for frame in 0..4 {
+                    let input = crate::headless::HeadlessView::raw_input(egui::vec2(1600.0, 1000.0), 1.0, frame as f64 / 60.0, vec![]);
+                    let mut out = ctx.run_ui(input, |ui| {
+                        app.logic(ui.ctx());
+                        app.ui(ui);
+                    });
+                    out.textures_delta.clear();
+                    bounds.clear();
+                    for shape in out.shapes {
+                        collect(&shape.shape, &mut bounds);
+                    }
                 }
-            } else {
-                let button = rect("button:copySettings");
-                let (_, text) = bounds.iter().find(|entry| entry.0 == "Bearbeitungseinstellungen kopieren").unwrap();
-                assert!(button.contains_rect(*text), "German copy caption overflows its button: {text:?} vs {button:?}");
-                assert!(!button.intersects(rect("icon:copyGear")));
+                let rect = |id: &str| app.widgets.iter().find(|entry| entry.0 == id).unwrap().1;
+                if export {
+                    let dialog = rect("dialog:window");
+                    for id in ["button:exportNamingTags", "button:exportChooseFolder", "button:exportSavePreset"] {
+                        assert!(dialog.contains_rect(rect(id)), "{id} spills outside {dialog:?}: {:?}", rect(id));
+                    }
+                } else {
+                    let button = rect("button:copySettings");
+                    let (_, text) = bounds.iter().find(|entry| entry.0 == language.tr("Copy Edit Settings")).unwrap();
+                    assert!(button.contains_rect(*text), "{language:?} copy caption overflows its button: {text:?} vs {button:?}");
+                    assert!(!button.intersects(rect("icon:copyGear")));
+                }
             }
         }
         set_language(Locale::En);

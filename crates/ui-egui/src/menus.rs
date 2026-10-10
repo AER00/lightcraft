@@ -12,7 +12,7 @@ use crate::state::{BeforeAfter, Dialog, RightPanel, ViewMode, Zoom};
 pub type UiCommand = (&'static str, &'static str, Option<&'static str>, &'static str);
 
 /// The "Edit → Language" entries, one per language in [`crate::i18n::Locale::ALL`], so a language
-/// added to the table shows up in the menu (and in the control channel's command list) by itself.
+/// has a matching menu command (also listed through the control channel). Tests check coverage.
 pub const LANGUAGE_COMMANDS: &[UiCommand] = &[
     ("app.language.english", crate::i18n::Locale::En.name(), None, "Edit>Language"),
     ("app.language.simplifiedChinese", crate::i18n::Locale::ZhHans.name(), None, "Edit>Language"),
@@ -23,6 +23,7 @@ pub const LANGUAGE_COMMANDS: &[UiCommand] = &[
     ("app.language.spanish", crate::i18n::Locale::Es.name(), None, "Edit>Language"),
     ("app.language.german", crate::i18n::Locale::De.name(), None, "Edit>Language"),
     ("app.language.russian", crate::i18n::Locale::Ru.name(), None, "Edit>Language"),
+    ("app.language.ukrainian", crate::i18n::Locale::Uk.name(), None, "Edit>Language"),
 ];
 
 /// Every UI command: the languages, then everything else. `xtask parity` reads both tables from
@@ -44,6 +45,7 @@ pub fn language_from_command(id: &str) -> Option<crate::i18n::Locale> {
         "app.language.spanish" => Some(crate::i18n::Locale::Es),
         "app.language.german" => Some(crate::i18n::Locale::De),
         "app.language.russian" => Some(crate::i18n::Locale::Ru),
+        "app.language.ukrainian" => Some(crate::i18n::Locale::Uk),
         _ => None,
     }
 }
