@@ -16,9 +16,8 @@
 //!   `i` at bits `[12 i, 12 i + 12)`, i.e. per byte triple `s0 = b0 | (b1 & 15) << 8`, `s1 = b1 >> 4 | b2 << 4`, left
 //!   to right. The layout was first recalled only roughly ("ten pixels, then a skipped byte"); the pad position
 //!   (last), the bit order and the pixel order were fixed by measurement on the CC0 files 2878 (E-300), 3540 (E-500)
-//!   and 3624 (E-330), as was the sensor-origin RGGB anchoring (the maker-note crop offsets are odd). Analysis
-//!   log and scripts: `data/testing/retry-olympus-e300/log.md`, `tools/retry-olympus-e300/`. The E-M5 Mark II and
-//!   PEN-F files were only checked for smoothness, not for CFA anchoring or black level.
+//!   and 3624 (E-330), as was the sensor-origin RGGB anchoring (the maker-note crop offsets are odd). The E-M5 Mark II
+//!   and PEN-F files were only checked for smoothness, not for CFA anchoring or black level.
 //! - Olympus's compressed ORF (most interchangeable-lens bodies since ~2008) is not decoded: no permissively
 //!   licensed description exists. It reports [`RawError::Unsupported`]; the embedded preview still works.
 //! - The colour-filter layout is the file's Exif `CFAPattern`: GRBG on the E-1 and E-400, RGGB on the XZ-2, where
