@@ -1,10 +1,10 @@
 //! Library-wide keyword commands: list (tree with counts), suggestions, rename, delete, merge;
 //! keyword sets (nine keywords a keystroke away: ⌥1–⌥9) and Recent Keywords.
 
-use lightcraft_catalog::keywords::{clean, is_under};
+use lightcraft_catalog::keywords::{KeywordInfo, clean, closest, is_under, reparent};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, always, bad, cmd, str_param};
+use super::{CommandSpec, always, bad, bool_or, cmd, str_param};
 use crate::{Result, Session};
 
 fn strs(p: &Value, key: &str) -> Vec<String> {
@@ -15,20 +15,54 @@ fn strs(p: &Value, key: &str) -> Vec<String> {
     }
 }
 
-/// Commit a keyword batch; returns how many photos changed. The keyword filter follows a renamed
-/// keyword and is cleared when its keyword is deleted.
+/// Commit a keyword batch; returns `{changed: photos changed, listed: keyword list changes}`. The
+/// keyword filter follows a renamed keyword and is cleared when its keyword is deleted.
 fn commit_keywords(s: &mut Session, label: &str, op: lightcraft_catalog::Op, follow: impl Fn(&str) -> Option<String>) -> Result<Value> {
-    let n = match &op {
-        lightcraft_catalog::Op::Batch { ops } => ops.len(),
-        _ => 1,
+    use lightcraft_catalog::Op;
+    let (photos, listed) = match &op {
+        Op::Batch { ops } => {
+            (ops.iter().filter(|o| matches!(o, Op::SetMeta { .. })).count(), ops.iter().filter(|o| matches!(o, Op::SetKeyword { .. })).count())
+        }
+        Op::SetMeta { .. } => (1, 0),
+        _ => (0, 1),
     };
-    if n > 0 {
+    if photos + listed > 0 {
         s.commit(label, op)?;
     }
     if let Some(k) = s.filter.keyword.clone() {
         s.filter.keyword = follow(&k);
     }
-    Ok(json!({"changed": n}))
+    Ok(json!({"changed": photos, "listed": listed}))
+}
+
+/// A keyword's attributes from command params over `base`: those not given keep their value.
+fn info_from(p: &Value, base: KeywordInfo) -> KeywordInfo {
+    KeywordInfo {
+        synonyms: if p.get("synonyms").is_some() {
+            strs(p, "synonyms").into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+        } else {
+            base.synonyms
+        },
+        include_on_export: bool_or(p, "includeOnExport", base.include_on_export),
+        export_containing: bool_or(p, "exportContaining", base.export_containing),
+        export_synonyms: bool_or(p, "exportSynonyms", base.export_synonyms),
+        person: bool_or(p, "person", base.person),
+        new_keywords_inside: base.new_keywords_inside,
+    }
+}
+
+/// The keyword a command names (`keyword`), as the library writes it.
+fn named_keyword(s: &Session, p: &Value, command: &str) -> Result<String> {
+    let k = str_param(p, "keyword").ok_or_else(|| bad(command, "missing `keyword`"))?;
+    s.catalog.keyword_path(k).ok_or_else(|| bad(command, format!("no keyword “{}”", clean(k))))
+}
+
+/// A catalog refusal as a command error; a taken name says how to merge.
+fn refused(command: &str, e: lightcraft_catalog::CatalogError, how_to_merge: &str) -> crate::EngineError {
+    match e {
+        lightcraft_catalog::CatalogError::KeywordExists(k) => bad(command, format!("there is a keyword “{k}” already{how_to_merge}")),
+        e => bad(command, e.to_string()),
+    }
 }
 
 /// A named set of up to nine keywords.
@@ -186,6 +220,135 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            query "keyword.info",
+            "Keyword Info",
+            [],
+            None,
+            "{keyword} → {path, listed, count, synonyms, includeOnExport, exportContaining, exportSynonyms, person}",
+            always,
+            |s, p| {
+                let path = named_keyword(s, p, "keyword.info")?;
+                let info = s.catalog.keyword_info(&path).cloned();
+                let count = s.catalog.photos().filter(|ph| ph.in_library() && ph.meta.keywords.iter().any(|k| is_under(k, &path))).count();
+                let mut v = serde_json::to_value(info.clone().unwrap_or_default()).unwrap_or_default();
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("path".into(), json!(path));
+                    o.insert("listed".into(), json!(info.is_some()));
+                    o.insert("count".into(), json!(count));
+                    o.entry("synonyms").or_insert(json!([]));
+                }
+                Ok(v)
+            }
+        ),
+        cmd!(
+            "keyword.create",
+            "Create Keyword",
+            [],
+            None,
+            "{name, parent?: keyword | null (default: the default parent; null = the top level), synonyms?, includeOnExport?, exportContaining?, exportSynonyms?, person?, addToSelected?: bool, ids?} → {keyword}",
+            always,
+            |s, p| {
+                let name = str_param(p, "name").map(clean).filter(|n| !n.is_empty()).ok_or_else(|| bad("keyword.create", "missing `name`"))?;
+                let parent = match p.get("parent") {
+                    Some(Value::String(k)) => Some(s.catalog.keyword_path(k).unwrap_or_else(|| clean(k))),
+                    Some(_) => None,
+                    None => s.catalog.default_keyword_parent(),
+                };
+                let path = clean(&match parent {
+                    Some(parent) => format!("{parent}|{name}"),
+                    None => name,
+                });
+                let photos = if bool_or(p, "addToSelected", false) { s.targets(p) } else { Vec::new() };
+                let op = s
+                    .catalog
+                    .create_keyword_ops(&path, info_from(p, KeywordInfo::default()), &photos)
+                    .map_err(|e| refused("keyword.create", e, ""))?;
+                s.commit("Create Keyword", op)?;
+                if !photos.is_empty() {
+                    note_recent(s, std::slice::from_ref(&path));
+                }
+                Ok(json!({"keyword": path}))
+            }
+        ),
+        cmd!(
+            "keyword.edit",
+            "Edit Keyword",
+            [],
+            None,
+            "{keyword, name?: its new name (one level), synonyms?, includeOnExport?, exportContaining?, exportSynonyms?, person?} — what isn't given keeps its value",
+            always,
+            |s, p| {
+                let from = named_keyword(s, p, "keyword.edit")?;
+                let leaf = from.rsplit('|').next().unwrap_or(&from).to_string();
+                let name = str_param(p, "name").unwrap_or(&leaf).to_string();
+                let info = info_from(p, s.catalog.keyword_info(&from).cloned().unwrap_or_default());
+                let op =
+                    s.catalog.edit_keyword_ops(&from, &name, info).map_err(|e| refused("keyword.edit", e, " (to merge them, use keyword.merge)"))?;
+                let to = match from.rsplit_once('|') {
+                    Some((parent, _)) => format!("{parent}|{}", name.trim()),
+                    None => name.trim().to_string(),
+                };
+                commit_keywords(s, "Edit Keyword", op, |k| Some(if is_under(k, &from) { reparent(k, &from, &to) } else { k.to_string() }))
+            }
+        ),
+        cmd!(
+            "keyword.move",
+            "Move Keyword",
+            [],
+            None,
+            "{keyword, parent: keyword | null (the top level), merge?: bool} — with the keywords below it; onto a name that is taken only with `merge: true`",
+            always,
+            |s, p| {
+                let from = named_keyword(s, p, "keyword.move")?;
+                let parent = match p.get("parent") {
+                    Some(Value::String(k)) => Some(k.clone()),
+                    Some(Value::Null) => None,
+                    _ => return Err(bad("keyword.move", "`parent` is a keyword, or null for the top level")),
+                };
+                // where it lands, as the catalog spells it: a parent that doesn't exist yet is made
+                let leaf = from.rsplit('|').next().unwrap_or(&from).to_string();
+                let to = match parent.as_deref().map(|k| s.catalog.keyword_path(k).unwrap_or_else(|| clean(k))).filter(|k| !k.is_empty()) {
+                    Some(parent) => format!("{parent}|{leaf}"),
+                    None => leaf,
+                };
+                let op = s
+                    .catalog
+                    .move_keyword_ops(&from, parent.as_deref(), bool_or(p, "merge", false))
+                    .map_err(|e| refused("keyword.move", e, ": moving would merge the two (merge: true)"))?;
+                commit_keywords(s, "Move Keyword", op, |k| Some(if is_under(k, &from) { reparent(k, &from, &to) } else { k.to_string() }))
+            }
+        ),
+        cmd!(
+            "keyword.purgeUnused",
+            "Purge Unused Keywords",
+            [],
+            None,
+            "{} — takes off the keyword list the keywords no photo has → {purged}",
+            always,
+            |s, _| {
+                let op = s.catalog.purge_unused_keywords_ops();
+                let r = commit_keywords(s, "Purge Unused Keywords", op, |k| Some(k.to_string()))?;
+                Ok(json!({"purged": r["listed"]}))
+            }
+        ),
+        cmd!(
+            "keyword.setDefaultParent",
+            "Put New Keywords Inside",
+            [],
+            None,
+            "{keyword: keyword | null} — the parent keyword.create puts new keywords inside (null: the top level)",
+            always,
+            |s, p| {
+                let keyword = match p.get("keyword") {
+                    Some(Value::Null) | None => None,
+                    Some(_) => Some(named_keyword(s, p, "keyword.setDefaultParent")?),
+                };
+                let op = s.catalog.set_default_parent_ops(keyword.as_deref()).map_err(|e| bad("keyword.setDefaultParent", e.to_string()))?;
+                commit_keywords(s, "Put New Keywords Inside", op, |k| Some(k.to_string()))?;
+                Ok(json!({"keyword": s.catalog.default_keyword_parent()}))
+            }
+        ),
+        cmd!(
             "keyword.rename",
             "Rename Keyword",
             [],
@@ -197,9 +360,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let to = str_param(p, "to").ok_or_else(|| bad("keyword.rename", "missing `to`"))?.to_string();
                 let op = s.catalog.rename_keyword_ops(&from, &to).map_err(|e| bad("keyword.rename", e.to_string()))?;
                 let (f, t) = (clean(&from), clean(&to));
-                commit_keywords(s, "Rename Keyword", op, |k| {
-                    Some(if is_under(k, &f) { format!("{t}{}", &k[f.len().min(k.len())..]) } else { k.to_string() })
-                })
+                commit_keywords(s, "Rename Keyword", op, |k| Some(if is_under(k, &f) { reparent(k, &f, &t) } else { k.to_string() }))
             }
         ),
         cmd!(
@@ -229,8 +390,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 let op = s.catalog.merge_keywords_ops(&from, &into).map_err(|e| bad("keyword.merge", e.to_string()))?;
                 let (from, into) = (from.iter().map(|f| clean(f)).collect::<Vec<_>>(), clean(&into));
                 commit_keywords(s, "Merge Keywords", op, |k| {
-                    Some(match from.iter().find(|f| is_under(k, f)) {
-                        Some(f) => format!("{into}{}", &k[f.len().min(k.len())..]),
+                    Some(match closest(k, &from) {
+                        Some(f) => reparent(k, f, &into),
                         None => k.to_string(),
                     })
                 })

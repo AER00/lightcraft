@@ -805,16 +805,26 @@ pub fn specs() -> Vec<CommandSpec> {
                             *field = v.to_string();
                         }
                     }
-                    if let Some(k) = strs("keywords") {
-                        m.keywords = k;
-                    }
-                    for k in strs("addKeywords").unwrap_or_default() {
-                        if !m.keywords.iter().any(|x| x.eq_ignore_ascii_case(&k)) {
+                    // keywords are stored cleaned (`a | b ` is `a|b`), each once whatever its case
+                    use lightcraft_catalog::keywords::{clean, same};
+                    let add = |m: &mut lightcraft_catalog::Meta, k: &str| {
+                        let k = clean(k);
+                        if !k.is_empty() && !m.keywords.iter().any(|x| same(x, &k)) {
                             m.keywords.push(k);
                         }
+                    };
+                    if let Some(k) = strs("keywords") {
+                        m.keywords.clear();
+                        for k in k {
+                            add(&mut m, &k);
+                        }
+                    }
+                    for k in strs("addKeywords").unwrap_or_default() {
+                        add(&mut m, &k);
                     }
                     for k in strs("removeKeywords").unwrap_or_default() {
-                        m.keywords.retain(|x| !x.eq_ignore_ascii_case(&k));
+                        let k = clean(&k);
+                        m.keywords.retain(|x| !same(&clean(x), &k));
                     }
                     ops.push(Op::SetMeta { id, meta: Box::new(m) });
                 }

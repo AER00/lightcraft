@@ -19,6 +19,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let width = app.ui.right_width;
     let resized = super::resizable_side(ui, false, "right_panel", frame, width, crate::state::RIGHT_WIDTH, reserve, |ui| {
         let Some(id) = app.session.active() else {
+            // the Keyword List is the library's, not a photo's: it is there without a selection
+            if app.ui.right == RightPanel::Keywords {
+                egui::ScrollArea::vertical().id_salt("right-scroll").auto_shrink([false, false]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    header(ui, "Keywords");
+                    padded(ui, |ui| {
+                        ui.label(egui::RichText::new(crate::i18n::tr("Select photos to give them keywords.")).color(t.text_dim));
+                    });
+                    super::keyword_list::show(app, ui);
+                });
+                return;
+            }
             let r = ui.max_rect();
             super::empty_message(ui, r, "No photo selected", "Select a photo to edit");
             return;
@@ -807,7 +819,8 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text(crate::i18n::tr("Add keyword")).desired_width(f32::INFINITY));
         register(ui.ctx(), "field:keyword", r.rect);
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
-            let kws: Vec<String> = text.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            // a new name goes inside the default parent (Put New Keywords Inside This Keyword)
+            let kws: Vec<String> = text.split(',').map(|s| app.session.catalog.typed_keyword(s)).filter(|s| !s.is_empty()).collect();
             let _ = app.run("photo.setMeta", json!({"addKeywords": kws}));
             text.clear();
         }
@@ -883,6 +896,7 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             });
         }
     });
+    super::keyword_list::show(app, ui);
 }
 
 /// The keyword set: pick a set, then nine buttons (⌥1–⌥9) that toggle its keywords on the

@@ -449,6 +449,14 @@ pub struct UiState {
     /// The keyword painter: clicking a photo in the grid toggles this keyword on it.
     #[serde(skip)]
     pub keyword_painter: Option<String>,
+    /// The Keyword List's open levels (lower-case paths).
+    pub keyword_list_open: Vec<String>,
+    /// The keyword picked in the Keyword List (− deletes it, Edit edits it).
+    #[serde(skip)]
+    pub keyword_list_selected: Option<String>,
+    /// A keyword being dragged in the Keyword List (onto another to nest it).
+    #[serde(skip)]
+    pub dragging_keyword: Option<String>,
     /// A running slideshow (full screen): seconds per photo, when the next one is due (egui
     /// time), paused.
     #[serde(skip)]
@@ -556,6 +564,36 @@ pub enum Dialog {
     RenameKeyword {
         from: String,
         to: String,
+    },
+    /// Create a keyword, or edit one (`editing`): Lightroom Classic's Create / Edit Keyword Tag.
+    KeywordTag {
+        /// The keyword being edited; `None`: a new one.
+        editing: Option<String>,
+        name: String,
+        /// A new keyword goes inside this one when `inside` is on (the keyword picked in the
+        /// list, or the default parent).
+        parent: Option<String>,
+        inside: bool,
+        /// Comma-separated.
+        synonyms: String,
+        include_on_export: bool,
+        export_containing: bool,
+        export_synonyms: bool,
+        person: bool,
+        /// A new keyword is given to the selected photos.
+        add_to_selected: bool,
+    },
+    /// Move a keyword inside `parent` (`None`: the top level) where one of its name is already:
+    /// asks before merging the two.
+    MoveKeyword {
+        keyword: String,
+        parent: Option<String>,
+    },
+    /// Delete a keyword from every photo and the keyword list, after asking.
+    DeleteKeyword {
+        keyword: String,
+        /// Photos that have it (or one below it).
+        count: usize,
     },
     /// Merge keywords into another one on every photo.
     MergeKeywords {
@@ -757,6 +795,9 @@ impl Default for UiState {
             slideshow: None,
             second_window: false,
             keyword_painter: None,
+            keyword_list_open: Vec::new(),
+            keyword_list_selected: None,
+            dragging_keyword: None,
             info_overlay: InfoOverlay::Off,
             navigator: true,
             settings: AppSettings::default(),

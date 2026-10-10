@@ -37,7 +37,8 @@ fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
         usage_terms: m.usage_terms.clone().unwrap_or_default(),
         copyright_url: m.copyright_url.clone().unwrap_or_default(),
         creator: m.artist.clone().unwrap_or_default(),
-        keywords: m.keywords.clone(),
+        // paths from `lr:hierarchicalSubject`, names from `dc:subject` that aren't their levels
+        keywords: lightcraft_catalog::keywords::from_file(&m.keywords, &m.hierarchical_keywords),
         regions: m.regions.clone(),
     };
     (meta, m.capture_time.as_ref().map(|d| d.to_iso()))
@@ -659,6 +660,19 @@ impl crate::Session {
 
 #[cfg(test)]
 mod tests {
+    /// Keywords from a file keep their hierarchy: the paths of `lr:hierarchicalSubject`, not the
+    /// flat names of `dc:subject` that LightCraft's exports (and Lightroom Classic) write besides
+    /// them; an exported `travel|Italy|Rome` comes back as itself.
+    #[test]
+    fn imported_keywords_keep_their_hierarchy() {
+        let m = lightcraft_meta::Metadata {
+            keywords: vec!["Rome".into(), "Italy".into(), "travel".into(), "beach".into()],
+            hierarchical_keywords: vec!["travel|Italy|Rome".into()],
+            ..Default::default()
+        };
+        assert_eq!(super::meta_of(&m).0.keywords, ["travel|Italy|Rome", "beach"]);
+    }
+
     use super::*;
     use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};
 

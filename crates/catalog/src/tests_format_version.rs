@@ -60,6 +60,20 @@ fn v2_library_loads_and_is_upgraded() {
     assert_eq!(snapshot_version(&m), u64::from(VERSION));
 }
 
+/// A library saved before keywords could be listed on their own opens as it was and is rewritten
+/// in the current format.
+#[test]
+fn v3_library_loads_and_is_upgraded() {
+    let (base, log, full) = legacy_parts();
+    let m = MemStore::new();
+    m.set(SNAPSHOT, format!("{{\"format\":\"lightcraft-catalog\",\"version\":3,\"seq\":2,\"catalog\":{}}}\n", base.to_snapshot()).into_bytes());
+    m.set(LOG, log.into_bytes());
+    let (_, c, r) = Journal::open(Box::new(m.clone())).unwrap();
+    assert_eq!(c.to_snapshot(), full.to_snapshot());
+    assert_eq!((r.replayed, r.upgraded_from), (1, Some(3)));
+    assert_eq!(snapshot_version(&m), u64::from(VERSION));
+}
+
 #[test]
 fn versionless_log_only_library_is_upgraded() {
     let mut c = Catalog::new();
@@ -194,8 +208,9 @@ fn op_variants_are_versioned() {
             Op::SetBrowsed { .. } => 2,
             Op::SetAlbumOrder { .. } => 3,
             Op::SetEmbeddedLens { .. } => 4,
+            Op::SetKeyword { .. } => 5,
         }
     }
-    let newest = since(&Op::SetEmbeddedLens { id: PhotoId(0), lens: None });
+    let newest = since(&Op::SetKeyword { path: "travel".into(), info: None });
     assert_eq!(newest, VERSION, "the newest op's version must be the current format version");
 }
