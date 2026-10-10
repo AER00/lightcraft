@@ -108,6 +108,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::CopySettings { .. } => "Choose Edit Settings to Copy",
         Dialog::PasteSettings { .. } => "Paste Selected Settings",
         Dialog::Export { .. } => "Export",
+        Dialog::ContactSheet { .. } => "Contact Sheet PDF",
         Dialog::Merge { opts } => opts.title(),
         Dialog::Settings { .. } => "Settings",
         Dialog::ConfirmDelete { .. } => "Delete Photos",
@@ -475,6 +476,24 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                             .color(t.text_dim),
                     );
                     group_checklist(ui, "pasteGroup", groups);
+                }
+                Dialog::ContactSheet { options } => {
+                    options.columns = options.columns.clamp(1, 8);
+                    options.rows = options.rows.clamp(1, 10);
+                    let n = app.session.targets(&json!({})).len();
+                    ui.label(format!("{n} selected photos · {} pages", n.div_ceil(options.columns * options.rows)));
+                    field(ui, "Paper", |ui| {
+                        egui::ComboBox::from_id_salt("contactSheetPaper").selected_text(&options.paper).show_ui(ui, |ui| {
+                            ui.selectable_value(&mut options.paper, "a4".into(), "A4");
+                            ui.selectable_value(&mut options.paper, "letter".into(), "Letter");
+                        });
+                    });
+                    ui.checkbox(&mut options.landscape, "Landscape");
+                    field(ui, "Columns", |ui| { ui.add(egui::DragValue::new(&mut options.columns).range(1..=8)); });
+                    field(ui, "Rows", |ui| { ui.add(egui::DragValue::new(&mut options.rows).range(1..=10)); });
+                    ui.checkbox(&mut options.captions, "Filename captions");
+                    ui.label("150 dpi · sRGB · current edits · fit without cropping");
+                    ui.label("Choose a PDF destination after confirming. Print the PDF from your viewer.");
                 }
                 Dialog::Export { opts, full_size, resize, preset_name, limit_kb, dir } => {
                     use lightcraft_engine::export::{Anchor as P, ExportFormat as F, MetadataPolicy as M, SharpenAmount as A, SharpenFor as S};
@@ -947,6 +966,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         add_label = crate::i18n::tr_format!("{verb} {n} Photo{}", if n == 1 { "" } else { "s" }, verb = crate::i18n::tr(verb), n = n);
                         add_label.as_str()
                     }
+                    Dialog::ContactSheet { .. } => "Choose PDF…",
                     Dialog::Merge { .. } => "Merge",
                     Dialog::DenoiseModel { info, .. } if info["download"].is_string() => "Accept & Download",
                     Dialog::DenoiseModel { .. } => "Install",
@@ -1010,6 +1030,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     dlg,
                     Dialog::Import { .. }
                         | Dialog::Export { .. }
+                        | Dialog::ContactSheet { .. }
                         | Dialog::NewAlbum { .. }
                         | Dialog::NewSmartAlbum { .. }
                         | Dialog::SmartRules { .. }
@@ -1328,6 +1349,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
                 "groups": groups,
             }),
         ),
+        Dialog::ContactSheet { options } => app.run("app.contactSheet", json!(options)),
         Dialog::CopySettings { groups } => app.run("develop.copy", json!({"groups": groups})),
         Dialog::PasteSettings { groups } => app.run("develop.paste", json!({"groups": groups})),
         Dialog::Export { opts, full_size, resize, limit_kb, dir, .. } => {

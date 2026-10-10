@@ -83,7 +83,8 @@ Take the first one nobody is working on.
    built-in list is empty, so today users need their own mirror or a manual install). Subject / Sky / People could
    use the same model with fixed prompts; denoise / super-resolution models remain a maintainer decision.
 7. **HDR** (Q. HDR, LR-EXP-HDR), **video** (R. Video), **Classic output modules** (Map view, Book, Slideshow module,
-   Print, publish): large, well understood, lower priority than 1–5.
+   Print, publish): large, well understood, lower priority than 1–5. Contact-sheet PDF export now covers a
+   basic Print workflow; custom picture packages, printer integration and print colour management remain open.
 8. **LR-VIEW-ZOOM** (P0): pinch zoom and two-finger pan now work, with stable image cursors between gesture events.
    The whole-image preview is still capped by
    Settings → Performance → Preview size (2,560 px by default). Render visible regions at native resolution so
@@ -798,13 +799,13 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-SS-MUSIC | Slideshow music | P2 | ⬜ | | |
 | LRC-SS-PLAYBACK | Slideshow playback | P2 | ⬜ | | |
 | LRC-SS-EXPORT | Slideshow export | P2 | ⬜ | | |
-| LRC-PRINT-LAYOUTSTYLE | Print layout styles | P2 | ⬜ | | |
+| LRC-PRINT-LAYOUTSTYLE | Print layout styles | P2 | 🟡 | `cmd:dialog.contactSheet`, `cmd:export.contactSheet`, `crates/engine/src/contact_sheet.rs` | paginated contact sheets; single-image/custom package layouts missing |
 | LRC-PRINT-IMAGESETTINGS | Print image settings | P2 | ⬜ | | |
-| LRC-PRINT-LAYOUT | Print layout | P2 | ⬜ | | |
+| LRC-PRINT-LAYOUT | Print layout | P2 | 🟡 | `cmd:export.contactSheet`, `crates/ui-egui/src/panels/dialogs.rs` | A4/Letter, portrait/landscape, 1–8 columns and 1–10 rows; fixed margins and spacing |
 | LRC-PRINT-GUIDES | Print guides | P2 | ⬜ | | |
 | LRC-PRINT-CELLS | Picture-package cells | P2 | ⬜ | | |
-| LRC-PRINT-PAGE | Print page options | P2 | ⬜ | | |
-| LRC-PRINT-JOB | Print job & colour management | P2 | ⬜ | | |
+| LRC-PRINT-PAGE | Print page options | P2 | 🟡 | `cmd:export.contactSheet`, `crates/engine/src/contact_sheet.rs` | optional filename captions; no page backgrounds/identity plates |
+| LRC-PRINT-JOB | Print job & colour management | P2 | 🟡 | `cmd:export.contactSheet`, `cmd:app.contactSheet`, `crates/ui-egui/src/export_task.rs` | PDF export at fixed 150 dpi in sRGB, current edits, background progress/cancel and original protection; no native printer integration, ICC soft proof/print profiles or selectable resolution |
 | LRC-PRINT-TEMPLATES | Print templates | P2 | ⬜ | | |
 | LRC-WEB-LAYOUT | Web gallery layouts | OOS | 🚫 | | |
 | LRC-WEB-SITEINFO | Web gallery site info | OOS | 🚫 | | |
