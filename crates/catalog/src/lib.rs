@@ -206,6 +206,11 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         preview_only: Option<String>,
     },
+    /// The lens data a photo's file carries (what Reload finds when it was read after import).
+    SetEmbeddedLens {
+        id: PhotoId,
+        lens: Option<Box<lightcraft_develop::EmbeddedLens>>,
+    },
     /// The name shown for a colour label (`None` = its colour's name).
     SetLabelName {
         label: ColorLabel,
@@ -595,6 +600,10 @@ impl Catalog {
                     content_hash: std::mem::replace(&mut p.content_hash, content_hash),
                     preview_only: std::mem::replace(&mut p.preview_only, preview_only),
                 }
+            }
+            Op::SetEmbeddedLens { id, lens } => {
+                let p = self.photo_mut(id)?;
+                Op::SetEmbeddedLens { id, lens: std::mem::replace(&mut p.embedded_lens, lens.map(|l| *l)).map(Box::new) }
             }
             Op::SetFile { id, file_name, source } => {
                 if file_name.trim().is_empty() {
