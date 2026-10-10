@@ -95,6 +95,28 @@ pub fn note_recent(s: &mut Session, added: &[String]) {
     let _ = s.save_prefs();
 }
 
+/// The largest keyword list file read: a file is input (a list of 100,000 keywords is ~2 MB).
+const MAX_LIST_BYTES: u64 = 16 << 20;
+
+/// The characters Capture One's keyword importer refuses in a list (`|` can't be in a name here).
+const CAPTURE_ONE_REFUSES: [char; 4] = [';', ',', '<', '>'];
+
+/// A keyword list file's text: at most `MAX_LIST_BYTES`, UTF-8 (with or without a byte-order mark).
+fn read_list(path: &str) -> Result<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|e| bad("keyword.import", format!("{path}: {e}")))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_LIST_BYTES + 1).read_to_end(&mut bytes).map_err(|e| bad("keyword.import", format!("{path}: {e}")))?;
+    if bytes.len() as u64 > MAX_LIST_BYTES {
+        return Err(bad("keyword.import", format!("{path}: larger than {} MB, not a keyword list", MAX_LIST_BYTES >> 20)));
+    }
+    // Notepad and some exporters save UTF-16: say how to get the file in, not just that it isn't
+    if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+        return Err(bad("keyword.import", format!("{path}: UTF-16 text — save it as UTF-8 and import it again")));
+    }
+    String::from_utf8(bytes).map_err(|_| bad("keyword.import", format!("{path}: not UTF-8 text")))
+}
+
 /// A set's slots as typed: each cleaned in its place (an empty one is an empty slot, so the others
 /// keep their ⌥ keys), each keyword once whatever its case (a second one leaves its slot empty),
 /// nine at most, no empty ones at the end.
@@ -402,6 +424,55 @@ pub fn specs() -> Vec<CommandSpec> {
                 let op = s.catalog.set_default_parent_ops(keyword.as_deref()).map_err(|e| bad("keyword.setDefaultParent", e.to_string()))?;
                 commit_keywords(s, "Put New Keywords Inside", op, |k| Some(k.to_string()))?;
                 Ok(json!({"keyword": s.catalog.default_keyword_parent()}))
+            }
+        ),
+        cmd!(
+            "keyword.export",
+            "Export Keywords",
+            [],
+            None,
+            "{path?} — the keyword list as a file (Lightroom Classic's format, which Capture One, Photo Supreme and Bridge read) → {keywords, captureOneRefuses: keywords with ; , < > that Capture One's importer refuses, unwritable: keywords left out because the format can't hold them (a name in brackets or braces, a line break, deeper than 64 levels; a synonym as \"path {synonym}\"), text when there is no path}",
+            always,
+            |s, p| {
+                let file = s.catalog.keyword_list_text();
+                // Capture One's importer refuses ; , < > in a keyword's name
+                let refuses: Vec<&str> = file
+                    .written
+                    .iter()
+                    .filter_map(|p| p.rsplit(lightcraft_catalog::keywords::SEP).next())
+                    .filter(|n| n.contains(CAPTURE_ONE_REFUSES))
+                    .collect();
+                let mut r = json!({"keywords": file.written.len(), "captureOneRefuses": refuses, "unwritable": file.unwritable});
+                match str_param(p, "path").map(str::trim).filter(|x| !x.is_empty()) {
+                    Some(path) => {
+                        std::fs::write(path, &file.text).map_err(|e| crate::EngineError::Other(format!("{path}: {e}")))?;
+                        r["path"] = json!(path);
+                    }
+                    None => r["text"] = json!(file.text),
+                }
+                Ok(r)
+            }
+        ),
+        cmd!(
+            "keyword.import",
+            "Import Keywords",
+            [],
+            None,
+            "{path | text} — a keyword list (Lightroom Classic's format, also Capture One's and Photo Supreme's Formatted Vocabulary File): adds the keywords the library doesn't have, gives those it has the list's synonyms; one undo step → {added, updated}",
+            always,
+            |s, p| {
+                let text = match (str_param(p, "path").map(str::trim).filter(|x| !x.is_empty()), str_param(p, "text")) {
+                    (Some(path), _) => read_list(path)?,
+                    (None, Some(text)) if text.len() as u64 > MAX_LIST_BYTES => {
+                        return Err(bad("keyword.import", format!("larger than {} MB, not a keyword list", MAX_LIST_BYTES >> 20)));
+                    }
+                    (None, Some(text)) => text.to_string(),
+                    (None, None) => return Err(bad("keyword.import", "give `path` or `text`")),
+                };
+                let entries = lightcraft_catalog::keywords::parse_keyword_list(&text).map_err(|e| bad("keyword.import", e.to_string()))?;
+                let (op, added, updated) = s.catalog.import_keywords_ops(&entries);
+                commit_keywords(s, "Import Keywords", op, |k| Some(k.to_string()))?;
+                Ok(json!({"added": added, "updated": updated}))
             }
         ),
         cmd!(

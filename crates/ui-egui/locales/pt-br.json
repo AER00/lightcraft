@@ -1829,5 +1829,10 @@
   "Keywords (⌥1–⌥9)": "Palavras-chave (⌥1–⌥9)",
   "A keyword set needs a name": "Um conjunto de palavras-chave precisa de um nome",
   "Save as a new set": "Salvar como novo conjunto",
-  "Recent Keywords is built in: choose another name": "“Palavras-chave recentes” é fixo: escolha outro nome"
+  "Recent Keywords is built in: choose another name": "“Palavras-chave recentes” é fixo: escolha outro nome",
+  "Import Keywords…": "Importar palavras-chave…",
+  "Export Keywords…": "Exportar palavras-chave…",
+  "Import Keywords": "Importar palavras-chave",
+  "Export Keywords": "Exportar palavras-chave",
+  "Keyword Lists": "Listas de palavras-chave"
 }

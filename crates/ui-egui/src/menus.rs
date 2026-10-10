@@ -164,6 +164,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.quit", "Quit LightCraft", Some("Cmd+Q"), "File"),
     ("file.importPresets", "Import Profiles & Presets…", None, "File"),
     ("file.exportPresets", "Export Presets…", None, "File"),
+    ("file.importKeywords", "Import Keywords…", None, "File"),
+    ("file.exportKeywords", "Export Keywords…", None, "File"),
     // Edit panel ▸ Curve ▸ Point Curve dropdown
     ("file.importCurvePresets", "Import Point Curve Presets…", None, ""),
     ("file.exportCurvePresets", "Export Point Curve Presets…", None, ""),
@@ -256,7 +258,8 @@ pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
 /// Handle UI commands; `None` means "not a UI command — send it to the engine".
 pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
     if matches!(id, "library.inspectLightroom" | "library.importLightroom") {
-        let ctx = egui::Context::default();
+        // the app's own context: a fresh one's repaints reach no window and its clock starts at zero
+        let ctx = app.tasks.repaint.clone().unwrap_or_default();
         return Some(crate::lightroom_import::command(app, id, p, &ctx));
     }
     if let Some(language) = language_from_command(id) {
@@ -266,7 +269,9 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         crate::i18n::set_language(app.ui.language);
         return Some(Ok(json!(app.ui.language)));
     }
-    let ctx = egui::Context::default();
+    // the app's own context: a toast's time comes from its clock (a fresh context's clock is at 0,
+    // and a toast set by it was long over by the app's clock: it never showed)
+    let ctx = app.tasks.repaint.clone().unwrap_or_default();
     let r: Result<Value, String> = match id {
         "view.photoGrid" => {
             app.ui.view = ViewMode::PhotoGrid;
@@ -1224,7 +1229,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 if kept > 0 {
                     msg += &crate::i18n::tr_format!("; {kept} already had a location", kept = kept);
                 }
-                app.toast(&egui::Context::default(), msg);
+                let ctx = app.tasks.repaint.clone().unwrap_or_default();
+                app.toast(&ctx, msg);
             }
             r
         }
@@ -1364,6 +1370,80 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 if n > 0 {
                     app.ui.presets = true;
                 }
+            }
+            return Some(r);
+        }
+        "file.importKeywords" => {
+            // a keyword list file: Lightroom Classic's, Capture One's, Photo Supreme's (.utf8)
+            let path = match p.get("path").and_then(Value::as_str) {
+                Some(x) => x.to_string(),
+                None => {
+                    let req = PickRequest::file(crate::i18n::tr("Import Keywords"), crate::i18n::tr("Keyword Lists"), &["txt", "utf8"]);
+                    match crate::pick::ask(app, id, p, "path", req, |s| s.pick_keyword_list.as_mut().map(|f| f())) {
+                        Picked::Now(v) => match v.into_iter().next() {
+                            Some(x) => x,
+                            None => return Some(Ok(Value::Null)),
+                        },
+                        Picked::Later => return Some(Ok(Value::Null)),
+                        Picked::Unavailable => return Some(Err("no file dialog on this platform".into())),
+                    }
+                }
+            };
+            let r = app.session.execute("keyword.import", &json!({"path": path})).map_err(|e| e.to_string());
+            match &r {
+                Ok(v) => {
+                    let (added, updated) = (v["added"].as_u64().unwrap_or(0), v["updated"].as_u64().unwrap_or(0));
+                    let mut msg = crate::i18n::tr_format!("Added {n} keyword{}", if added == 1 { "" } else { "s" }, n = added);
+                    if updated > 0 {
+                        msg.push_str(&crate::i18n::tr_format!("; {n} gained synonyms", n = updated));
+                    }
+                    app.toast(&ctx, msg);
+                }
+                Err(e) => app.toast(&ctx, e.clone()),
+            }
+            return Some(r);
+        }
+        "file.exportKeywords" => {
+            let path = match p.get("path").and_then(Value::as_str) {
+                Some(x) => x.to_string(),
+                None => {
+                    let name = "Keywords.txt";
+                    let req = PickRequest::save(crate::i18n::tr("Export Keywords"), crate::i18n::tr("Keyword Lists"), &["txt"], name);
+                    match crate::pick::ask(app, id, p, "path", req, |s| s.save_keyword_list.as_mut().map(|f| f(name).into_iter().collect())) {
+                        Picked::Now(v) => match v.into_iter().next() {
+                            Some(x) => x,
+                            None => return Some(Ok(Value::Null)),
+                        },
+                        Picked::Later => return Some(Ok(Value::Null)),
+                        Picked::Unavailable => return Some(Err("no file dialog on this platform".into())),
+                    }
+                }
+            };
+            let r = app.session.execute("keyword.export", &json!({"path": path})).map_err(|e| e.to_string());
+            if let Err(e) = &r {
+                app.toast(&ctx, e.clone());
+            }
+            if let Ok(v) = &r {
+                let n = v["keywords"].as_u64().unwrap_or(0);
+                let mut msg = crate::i18n::tr_format!("Exported {n} keyword{}", if n == 1 { "" } else { "s" }, n = n);
+                // Capture One's importer refuses ; , < > in a list: say which to rename first
+                let refuses: Vec<&str> = v["captureOneRefuses"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                if !refuses.is_empty() {
+                    msg.push_str(&crate::i18n::tr_format!(
+                        " — Capture One won't import a list with ; , < or > in a keyword: {names}",
+                        names = refuses.iter().take(5).copied().collect::<Vec<_>>().join(" · ")
+                    ));
+                }
+                // what the format can't hold (a name in brackets, a line break…) isn't in the file
+                let left: Vec<&str> = v["unwritable"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                if !left.is_empty() {
+                    msg.push_str(&crate::i18n::tr_format!(
+                        " — left out, as a keyword list can't hold them: {names}",
+                        // escaped: a line break in a name would break the toast
+                        names = left.iter().take(5).map(|n| n.escape_debug().to_string()).collect::<Vec<_>>().join(" · ")
+                    ));
+                }
+                app.toast(&ctx, msg);
             }
             return Some(r);
         }

@@ -1984,5 +1984,10 @@
   "Keywords (⌥1–⌥9)": "Stichwörter (⌥1–⌥9)",
   "A keyword set needs a name": "Ein Stichwortsatz braucht einen Namen",
   "Save as a new set": "Als neuen Satz speichern",
-  "Recent Keywords is built in: choose another name": "„Letzte Stichwörter“ ist vorgegeben: Wählen Sie einen anderen Namen"
+  "Recent Keywords is built in: choose another name": "„Letzte Stichwörter“ ist vorgegeben: Wählen Sie einen anderen Namen",
+  "Import Keywords…": "Stichwörter importieren…",
+  "Export Keywords…": "Stichwörter exportieren…",
+  "Import Keywords": "Stichwörter importieren",
+  "Export Keywords": "Stichwörter exportieren",
+  "Keyword Lists": "Stichwortlisten"
 }

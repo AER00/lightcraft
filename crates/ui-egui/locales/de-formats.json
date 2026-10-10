@@ -216,5 +216,10 @@
   "Added “{keyword}” to {n} photo{}": "„{keyword}“ zu {n} Foto{} hinzugefügt",
   "On {have} of {of} selected photos": "Auf {have} von {of} ausgewählten Fotos",
   "Remove “{name}”": "„{name}“ entfernen",
-  "There is a keyword set “{name}” already": "Es gibt bereits einen Stichwortsatz „{name}“"
+  "There is a keyword set “{name}” already": "Es gibt bereits einen Stichwortsatz „{name}“",
+  "Added {n} keyword{}": "Stichwörter hinzugefügt: {n}{:.0}",
+  "; {n} gained synonyms": "; mit neuen Synonymen: {n}",
+  "Exported {n} keyword{}": "Stichwörter exportiert: {n}{:.0}",
+  " — Capture One won't import a list with ; , < or > in a keyword: {names}": " — Capture One importiert keine Liste mit ; , < oder > in einem Stichwort: {names}",
+  " — left out, as a keyword list can't hold them: {names}": " — ausgelassen, weil eine Stichwortliste sie nicht aufnehmen kann: {names}"
 }

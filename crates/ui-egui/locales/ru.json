@@ -1541,5 +1541,10 @@
   "Set name": "Название набора",
   "Save as a new set": "Сохранить как новый набор",
   "Recent Keywords is built in: choose another name": "«Недавние ключевые слова» — встроенный набор: выберите другое название",
-  "Recent Keywords": "Недавние ключевые слова"
+  "Recent Keywords": "Недавние ключевые слова",
+  "Import Keywords…": "Импорт ключевых слов…",
+  "Export Keywords…": "Экспорт ключевых слов…",
+  "Import Keywords": "Импорт ключевых слов",
+  "Export Keywords": "Экспорт ключевых слов",
+  "Keyword Lists": "Списки ключевых слов"
 }
