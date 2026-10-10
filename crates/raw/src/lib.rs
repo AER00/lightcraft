@@ -1080,22 +1080,36 @@ mod tests {
         assert_eq!(r.cfa.unwrap().name(), "RGGB");
     }
 
-    /// A lossless-JPEG scan whose predictor selection value is outside 0 to 7 (the 3FR/FFF files use 8) is
-    /// not a coding the lossless decoder knows: the file stays an undecodable raw, with that as the reason,
-    /// and keeps the stand-in preview an unsupported container gets.
+    /// Hasselblad's own lossless-JPEG coding (selection value 8, as in FFF and most compressed 3FR files) of the
+    /// same layout decodes: the file is read like the uncompressed one.
+    #[test]
+    fn selection_value_8_cfa_tiff_decodes() {
+        let strip = ljpeg::tests::encode_hasselblad(&cfa_samples(), 8, 6);
+        let bytes = plain_cfa_tiff(7, strip, None);
+        assert_eq!(probe(&bytes), Some(RawFormat::CfaTiff));
+        let r = decode(&bytes).unwrap();
+        assert_eq!((r.format, r.width, r.height), (RawFormat::CfaTiff, 8, 6));
+        assert_eq!(r.data, RawData::U16(cfa_samples()));
+        assert_eq!(r.cfa.unwrap().name(), "RGGB");
+        assert_eq!(probe_info(&bytes).unwrap().format, RawFormat::CfaTiff);
+    }
+
+    /// A lossless-JPEG scan whose predictor selection value is neither 0 to 7 (T.81) nor 8 (Hasselblad) is not a
+    /// coding the lossless decoder knows: the file stays an undecodable raw, with that as the reason, and keeps the
+    /// stand-in preview an unsupported container gets.
     #[test]
     fn cfa_tiff_with_an_unknown_predictor_stays_undecodable() {
         let mut strip = ljpeg::encode(&cfa_samples(), 8, 6, 1, 16, 1, 0);
         let sos = strip.windows(2).position(|w| w == [0xff, 0xda]).unwrap();
         let ss = sos + 2 + 2 + 1 + 2;
         assert_eq!(strip[ss], 1, "selection value byte");
-        strip[ss] = 8;
-        assert!(matches!(ljpeg::decode(&strip, 1 << 20), Err(RawError::Unsupported(w)) if w.contains("selection value 8")));
+        strip[ss] = 9;
+        assert!(matches!(ljpeg::decode(&strip, 1 << 20), Err(RawError::Unsupported(w)) if w.contains("selection value 9")));
         let bytes = plain_cfa_tiff(7, strip, None);
         assert_eq!(probe(&bytes), Some(RawFormat::OtherTiff));
         assert!(!RawFormat::OtherTiff.is_supported());
         let Err(RawError::Unsupported(why)) = decode(&bytes) else { panic!("expected Unsupported") };
-        assert!(why.contains("lossless JPEG") && why.contains("selection value 8"), "{why}");
+        assert!(why.contains("lossless JPEG") && why.contains("selection value 9"), "{why}");
     }
 
     /// Other codings of a CFA IFD (here Deflate) are not claimed by the plain reader.
