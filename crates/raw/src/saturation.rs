@@ -35,11 +35,14 @@ impl RawImage {
         let (RawData::U16(d), Some(cfa)) = (&self.data, &self.cfa) else { return none };
         let white = self.white_at(0);
         let black = self.black.mean();
-        if self.cpp != 1 || !cfa.valid() || d.len() != self.width * self.height || white <= black || white > 65535.0 {
+        // a hostile file can state any levels: NaN, negative or inverted ones are left alone
+        let levels_ok = black.is_finite() && white.is_finite() && black >= 0.0 && white > black && white <= 65535.0;
+        if self.cpp != 1 || !cfa.valid() || self.width.checked_mul(self.height) != Some(d.len()) || !levels_ok {
             return none;
         }
         let a = self.active_area;
-        if a.x + a.width > self.width || a.y + a.height > self.height {
+        let fits = |start: usize, len: usize, max: usize| start.checked_add(len).is_some_and(|end| end <= max);
+        if !fits(a.x, a.width, self.width) || !fits(a.y, a.height, self.height) {
             return none;
         }
         let lo = (black + 0.5 * (white - black)).ceil().max(0.0) as usize;
@@ -64,7 +67,7 @@ impl RawImage {
             if (n as f64) < (total[c] as f64 * MIN_SHARE).max(100.0) || v as f32 >= white - NEAR_WHITE * (white - black) {
                 continue;
             }
-            let below: u64 = (v - NEIGHBOURHOOD..v).map(|u| hist[u][c] as u64).sum();
+            let below: u64 = (v.saturating_sub(NEIGHBOURHOOD)..v).map(|u| hist[u][c] as u64).sum();
             let from = (v + ((ABOVE_MARGIN * (white - black)) as usize).max(1) + 1).min(hist.len());
             let above: u64 = hist[from..].iter().map(|h| h[c] as u64).sum();
             if n as f64 >= MIN_SPIKE * (below as f64 / NEIGHBOURHOOD as f64).max(1.0) && above as f64 <= MAX_ABOVE * n as f64 {
@@ -144,6 +147,21 @@ mod tests {
                 *v = 528 + (*v - 528) % 3000;
             }
         }
+    }
+
+    #[test]
+    fn hostile_levels_are_left_alone() {
+        // a negative or NaN black level used to let the search start below NEIGHBOURHOOD and underflow
+        for black in [-5000.0, f32::NAN] {
+            let mut r = raw_with(Some(40), 4095.0);
+            r.black = BlackLevel::uniform(black);
+            assert_eq!(r.saturation_points(), [None; 3]);
+            assert_eq!(r.lift_clipped_samples(), 0);
+        }
+        // an active area that runs past the image (or overflows when added up) is refused
+        let mut r = raw_with(Some(3567), 4095.0);
+        r.active_area = Rect::new(usize::MAX, 0, 2, 64);
+        assert_eq!(r.saturation_points(), [None; 3]);
     }
 
     #[test]

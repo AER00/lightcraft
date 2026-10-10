@@ -219,7 +219,7 @@ mod tests {
         assert!(mask.iter().all(|&m| m & (highlight::CLIPPED_R | highlight::CLIPPED_B) == 0));
         // the clipped block's green is its mean: (31 · 0.3 + 1) / 32
         assert!((masked.get(0, 0)[1] - (31.0 * 0.3 + 1.0) / 32.0).abs() < 1e-3, "{:?}", masked.get(0, 0));
-        assert_eq!(highlight::reconstruct_masked(&mut masked, wb, 0.99, &mask), 32);
+        assert_eq!(highlight::reconstruct_masked(&mut masked, wb, 0.99, [1.0; 3], &mask), 32);
         let green = |img: &Rgb32f| img.data.iter().map(|p| p[1] / p[0]).fold(0.0f32, f32::max);
         // (no more than the mean itself: the clipped sample counts at the clip level)
         assert!(green(&masked) < 1.08, "green excess {}", green(&masked));
