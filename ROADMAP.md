@@ -69,6 +69,11 @@ Already closed in the week of 2026-10-03: compressed NEF (#10), Move import (#29
 Local roots / cleanup, grid and catalog performance at 85k photos (#35, #37), failed-save reporting, GPU export
 hardening (#78), copyright metadata (#51), GPX geotagging (#60), import tag help and folder templates (#31, #32).
 
+Library folders now have records of their own in the catalog (`Catalog.folder_records`, keyed by folder path; colour
+labels first). Photos still store full paths, so moving a whole disk or folder relinks each photo. If that becomes a
+problem (an "Update Folder Location" for a renamed or replaced drive, journal growth on large moves), the next step is
+the Classic model: photos point to a folder id (root + relative path), and the records keyed by path become those rows.
+
 Image navigation now supports native pinch zoom and two-finger pan in Detail, Compare and Reference views.
 The whole-image preview still has a configurable size cap (2,560 px default), so 100% on larger photos does not
 yet guarantee original-pixel detail; visible-region rendering remains a gap (LR-VIEW-ZOOM).

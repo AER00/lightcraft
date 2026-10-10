@@ -209,8 +209,9 @@ fn op_variants_are_versioned() {
             Op::SetAlbumOrder { .. } => 3,
             Op::SetEmbeddedLens { .. } => 4,
             Op::SetKeyword { .. } => 5,
+            Op::SetFolderRecord { .. } => 6,
         }
     }
-    let newest = since(&Op::SetKeyword { path: "travel".into(), info: None });
+    let newest = since(&Op::SetFolderRecord { folder: "/".into(), record: None });
     assert_eq!(newest, VERSION, "the newest op's version must be the current format version");
 }

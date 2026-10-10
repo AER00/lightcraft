@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub use dates::{DateRun, GroupBy};
-pub use folders::FolderNode;
+pub use folders::{FolderNode, FolderRecord};
 pub use journal::{Journal, LoadReport, PersistStats, SnapshotPolicy, SnapshotTiming};
 pub use keywords::KeywordNode;
 use lightcraft_develop::DevelopSettings;
@@ -231,6 +231,12 @@ pub enum Op {
         path: String,
         info: Option<keywords::KeywordInfo>,
     },
+    /// What the library keeps about one of its folders (see [`folders::FolderRecord`]), under
+    /// its identity ([`query::folder_key`]); `None` or an empty record = keep nothing.
+    SetFolderRecord {
+        folder: String,
+        record: Option<FolderRecord>,
+    },
     /// Several ops as one step (undo applies the inverses in reverse).
     Batch {
         ops: Vec<Op>,
@@ -256,6 +262,9 @@ pub struct Catalog {
     /// Keywords listed on their own or given attributes, by lower-case path (see [`keywords`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     keyword_list: BTreeMap<String, keywords::ListedKeyword>,
+    /// What the library keeps about its folders (folder identity → record), see [`folders`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    folder_records: BTreeMap<String, FolderRecord>,
     /// Increments on every applied op.
     #[serde(skip)]
     pub revision: u64,
@@ -715,6 +724,14 @@ impl Catalog {
                 };
                 Op::SetBrowsed { folder, at: old }
             }
+            Op::SetFolderRecord { folder, record } => {
+                let key = folders::record_key(&folder).ok_or_else(|| CatalogError::Invalid(format!("not a folder: {folder}")))?;
+                let old = match record.filter(|r| !r.is_empty()) {
+                    Some(r) => self.folder_records.insert(key.clone(), r),
+                    None => self.folder_records.remove(&key),
+                };
+                Op::SetFolderRecord { folder: key, record: old }
+            }
             Op::Batch { ops } => {
                 let mut inverses = Vec::with_capacity(ops.len());
                 for op in ops {
@@ -815,6 +832,8 @@ mod tests;
 mod tests_album_order;
 #[cfg(test)]
 mod tests_background;
+#[cfg(test)]
+mod tests_folder_records;
 #[cfg(test)]
 mod tests_folders;
 #[cfg(test)]

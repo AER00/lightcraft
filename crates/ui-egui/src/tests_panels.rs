@@ -924,6 +924,29 @@ fn right_click_opens_a_folders_menu_from_the_triangle_too() {
     assert!(!popup_open(&h), "the startup disk offers nothing");
 }
 
+/// Right-click a folder ▸ Set Color Label ▸ a colour: the folder's row shows the label's dot (a
+/// row without a label shows none), and None takes it off again.
+#[test]
+fn a_folder_takes_a_colour_label_from_its_menu() {
+    let mut h = folders_app(&["/pics/trip/a.jpg", "/pics/home/b.jpg"]);
+    click(&mut h, "libraryFolderToggle:/pics");
+    assert!(!has(&h, "labelMark:libfolder:/pics/trip"), "no label, no dot");
+    right_click(&mut h, "source:libfolder:/pics/trip");
+    click(&mut h, "folderLabelMenu");
+    click(&mut h, "folderLabel:red");
+    assert_eq!(h.app.session.catalog.folder_color_label("/pics/trip"), Some(lightcraft_catalog::ColorLabel::Red));
+    assert!(!popup_open(&h), "choosing closes the menu");
+    h.step();
+    assert!(has(&h, "labelMark:libfolder:/pics/trip"), "the row shows its label");
+    assert!(!has(&h, "labelMark:libfolder:/pics/home"), "its neighbour does not");
+    right_click(&mut h, "source:libfolder:/pics/trip");
+    click(&mut h, "folderLabelMenu");
+    click(&mut h, "folderLabel:none");
+    assert_eq!(h.app.session.catalog.folder_color_label("/pics/trip"), None);
+    h.step();
+    assert!(!has(&h, "labelMark:libfolder:/pics/trip"));
+}
+
 #[test]
 fn removing_a_disk_from_the_library_asks_first() {
     use crate::state::Dialog;

@@ -301,7 +301,8 @@ impl Op {
             | Op::RemoveStack { .. }
             | Op::SetLabelName { .. }
             | Op::SetKeyword { .. }
-            | Op::SetBrowsed { .. } => {}
+            | Op::SetBrowsed { .. }
+            | Op::SetFolderRecord { .. } => {}
         }
     }
 }
