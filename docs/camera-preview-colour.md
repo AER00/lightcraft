@@ -128,6 +128,20 @@ calibrate` still pools the uncorrected camera colour of covered models, so a pro
 No colour-difference measurement of the spectral matrices against the camera JPEG, or against the file-local fit,
 is recorded here yet. Whether they should come before the file-local fit for these models is open until one is.
 
+## Smart previews and the look version
+
+A smart preview keeps the result of the fit twice: the colour matrix is baked into its pixels and the tone and chroma curves are stored in its header. When the fit changes, a preview built earlier keeps the old look until it is rebuilt, and the render cache version does not reach it (renders are keyed on the library's files, proxies are files of their own).
+
+The fit therefore has a version, `LOOK_VERSION` in `crates/engine/src/camera_preview.rs`, and every smart preview records the version that wrote it in its header line (`look_version`). **Bump the constant in any change that makes the fit give a different result for the same file**: the matrix, hue/saturation, tone or chroma fit, their gates and fallbacks, or how a camera profile feeds them. Changes that leave the fitted look alone don't need it. A header without the field (everything built before it existed) counts as version 0, and so does a value that is not a non-negative integer; a value from a newer build is left alone.
+
+A proxy older than the constant is brought up to date by the existing Build Smart Previews path (`smart_run`), which also repairs damaged proxies:
+
+- only proxies of raws that take the per-file look (`file_local_look`: ARW, NEF, RW2, RAF, CR3, CR2, PEF, SRW, ORF…) go stale; the fit never reaches JPEG, PNG, TIFF or DNG proxies, which are never rebuilt for it;
+- when the library is opened and its smart previews folder has not been checked at this `LOOK_VERSION` (the `look-version` marker file in the folder), a background thread looks at those proxies, rebuilds the stale ones from their originals and then writes the marker, so the scan runs once per version bump, not at every opening (no proxy is created, nothing is shown, the UI never waits on a drive);
+- Build Smart Previews does the same for the photos it is run on (`refreshed` in its result), whatever the marker says;
+- when the original can't be read (offline drive), the proxy and its curve are kept exactly as they are (`staleKept`). The old version in its header is the mark: the next Build Smart Previews with the original online rebuilds it. A rebuilt proxy carries the current version, so nothing is rebuilt twice. A proxy is only ever rebuilt from the original, never from another proxy;
+- the two never write the same proxy at once: each proxy is checked and written under one lock.
+
 ## Nikon crop and preview colour metadata
 
 Nikon maker-note `CropArea` (0x0045) supplies the default `[left, top, width, height]` crop. The decoder validates the rectangle against the active sensor area and falls back to that area for missing or invalid values. The CFA origin is unchanged; cropping follows demosaicing.

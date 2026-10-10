@@ -12,6 +12,19 @@ use lightcraft_raster::{
 };
 use lightcraft_raw::{RawFormat, RawImage, color::CameraTransform, profile::HsvTable};
 
+/// The version of the camera-look fit: how a raw's colour matrix, hue/saturation table and tone
+/// and chroma curves are chosen. Smart previews record it in their header (`look_version`), because
+/// they keep the curve and the colour the fit produced; one written by an older version is rebuilt
+/// from its original when that is online, and kept as it is while it is offline.
+///
+/// **Bump this whenever a change makes the fit give a different result for the same file** (the
+/// fit, its gates, the fallbacks, the camera profiles' effect on it). Do not bump it for changes
+/// that leave the fitted look alone. `RENDER_CACHE_VERSION` covers renders; this covers proxies.
+///
+/// 1: the fit as of #499's follow-up; 2: Sony DRO (tone curve lowered to Sony's curve without DRO)
+/// and the ILCE-7CR profile (#528, #583, #568, #616).
+pub const LOOK_VERSION: u32 = 2;
+
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {
     pub matrix: Mat3,
