@@ -250,7 +250,7 @@ pub fn show_compare(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let area = canvas.shrink(18.0);
     let half = (area.width() - 16.0) / 2.0;
     let panes = [
-        (sel, Rect::from_min_size(area.min, vec2(half, area.height())), "Selected", 0u8),
+        (sel, Rect::from_min_size(area.min, vec2(half, area.height())), "Select", 0u8),
         (cand, Rect::from_min_size(pos2(area.right() - half, area.top()), vec2(half, area.height())), "Candidate", 1u8),
     ];
     let zoom = app.ui.zoom;
