@@ -501,7 +501,9 @@ mod tests {
             app.ui.settings.gpu = false;
             let mut h = Headless::new(app, [480.0, 320.0], scale);
             let t = Duration::from_secs(5);
-            assert_eq!(h.request("ui.key", json!({"key": "Plus", "cmd": true}), t)["ok"], true);
+            assert_eq!(h.request("ui.zoomFactor", json!({"factor": 1.1}), t)["ok"], true);
+            h.step();
+            assert!(h.view.ctx.zoom_factor() > 1.0);
             let native_size = resized_viewport([320.0, 240.0], scale, h.view.ctx.zoom_factor()).unwrap();
             let expected = native_viewport_pixels([native_size.x, native_size.y], scale).unwrap();
             assert_eq!(h.request("ui.resize", json!({"width": 320, "height": 240}), t)["ok"], true);

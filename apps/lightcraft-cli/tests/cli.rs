@@ -233,6 +233,26 @@ fn snapshot_script_failure_exits_non_zero() {
     assert_eq!((d.width, d.height), (320, 200));
 }
 
+#[test]
+fn snapshot_ui_zoom_keeps_requested_pixel_dimensions() {
+    let script = tmp("snap-ui-zoom.jsonl");
+    std::fs::write(&script, format!("{}\n{}\n", json!({"method": "ui.zoomFactor", "params": {"factor": 1.1}}), json!({"method": "ui.inspect"})))
+        .unwrap();
+    for (size, scale, expected) in [("400x240", "1", (400, 240)), ("345x200", "0.9", (311, 180))] {
+        let out = tmp(&format!("snap-ui-zoom-{scale}.png"));
+        let o = Command::new(BIN)
+            .args(["snapshot", "--script", script.to_str().unwrap(), "-o", out.to_str().unwrap(), "--size", size, "--scale", scale])
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let replies: Vec<Value> = String::from_utf8_lossy(&o.stdout).lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert!(replies.iter().all(|reply| reply["ok"] == true), "{replies:?}");
+        assert!(replies[1]["result"]["pixelsPerPoint"].as_f64().unwrap() > scale.parse::<f64>().unwrap());
+        let decoded = lightcraft_codecs::decode(&std::fs::read(out).unwrap(), Default::default()).unwrap();
+        assert_eq!((decoded.width, decoded.height), expected);
+    }
+}
+
 /// Headless snapshots default to CPU photo rendering as well as CPU UI rasterization.
 #[test]
 fn snapshot_defaults_to_cpu_without_gpu_environment_overrides() {
