@@ -314,6 +314,16 @@ fn cmd_ci() -> Result<(), String> {
 /// One per format / compression variant we decode or deliberately report as unsupported (preview only).
 const RAW_SAMPLES: &[(&str, &str, &str)] = &[
     (
+        "arw-sony-a7rm4a-compressed.arw",
+        "https://raw.pixls.us/getfile.php/4822/nice/Sony%20-%20ILCE-7RM4A%20-%2014bit%2014bit%20compressed%20%283:2%29.ARW",
+        "690c774f1d7bc1db3fa8c2489762743d8e7586e50b6f65d0b6a61cb467972c67",
+    ),
+    (
+        "arw-sony-a9m2-compressed.arw",
+        "https://raw.pixls.us/getfile.php/3989/nice/Sony%20-%20ILCE-9M2%20-%2014bit%2014bit%20compressed%20%283:2%29.ARW",
+        "161c2a9da2b5f1e50be6117a0b4da0ce249660b5d7de13568d301c4034716b97",
+    ),
+    (
         "arw-sony-a7m3-compressed.arw",
         "https://raw.pixls.us/getfile.php/2414/nice/Sony%20-%20ILCE-7M3%20-%2014bit%2014bit%20compressed%20%283:2%29.ARW",
         "250784580ea527442c09004417bb0eead484f2bf3ee8f9121a776ac65bb50d0f",

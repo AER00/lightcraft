@@ -485,19 +485,27 @@ fn word16_order(strip: &[u8], bits: u32, file: lightcraft_tiff::ByteOrder) -> li
     if n > 0 && over_other == 0 && over_file * 100 > n { other } else { file }
 }
 
-/// The image area for files without Sony's crop tags (`0x74c7/0x74c8`, written since about 2017): the DNG-style
-/// default crop when the raw IFD has one, else the image size the camera records (see [`recorded_size_crop`]).
+/// The raw IFD's DNG-style `DefaultCropOrigin` / `DefaultCropSize`, clipped to the `w × h` frame.
 ///
 /// `centred` places that recorded-size window in the middle of the frame (on even offsets, keeping the CFA phase)
 /// instead of at the left: the packed 12-bit frame (DSLR-A900) has no padding at either edge, and its camera JPEG
 /// is centred on the frame.
-fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, exif_size: Option<(u64, u64)>, w: usize, h: usize, centred: bool) -> Rect {
-    let full = Rect::new(0, 0, w, h);
+fn dng_default_crop(raw: &Ifd, w: usize, h: usize, centred: bool) -> Option<Rect> {
     if let (Some([x, y]), Some([cw, ch])) = (raw.u64s(t::DEFAULT_CROP_ORIGIN).as_deref(), raw.u64s(t::DEFAULT_CROP_SIZE).as_deref())
         && *cw > 0
         && *ch > 0
     {
-        return Rect::new(*x as usize, *y as usize, *cw as usize, *ch as usize).clipped(w, h);
+        return Some(Rect::new(*x as usize, *y as usize, *cw as usize, *ch as usize).clipped(w, h));
+    }
+    None
+}
+
+/// The image area for files without Sony's crop tags (`0x74c7/0x74c8`, written since about 2017): the DNG-style
+/// default crop when the raw IFD has one, else the image size the camera records (see [`recorded_size_crop`]).
+fn default_crop(raw: &Ifd, mn: Option<&makernote::MakerNote>, exif_size: Option<(u64, u64)>, w: usize, h: usize) -> Rect {
+    let full = Rect::new(0, 0, w, h);
+    if let Some(crop) = dng_default_crop(raw, w, h) {
+        return crop;
     }
     match mn.and_then(|m| m.ifd.u64s(MN_FULL_IMAGE_SIZE)).as_deref() {
         Some([fh, fw]) => recorded_size_crop((*fw, *fh), exif_size, w, h, centred).unwrap_or(full),
@@ -681,7 +689,19 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         // makes a neutral surface magenta. WB edits remain relative to this as-shot RGB.
         wb_multipliers: if linear_rgb { Some([1.0; 3]) } else { wb },
         linearized: false,
-        opcodes: OpcodeLists::default(),
+        // The distortion table is centred on the DNG-style default crop when the file has one: on the ILCE-7RM4A
+        // it starts at x = 32 where Sony's crop tags (the image crop, unchanged) start at 0, and the warp was
+        // validated against Sony's exports with that centre. The opcode's centre is in active-area coordinates, so
+        // it stays on the optical centre whichever crop frames the image.
+        opcodes: OpcodeLists {
+            list3: if linear_rgb {
+                Vec::new()
+            } else {
+                let geometry = dng_default_crop(raw, w, h).unwrap_or(crop);
+                super::arw_lens::distortion(&model, raw, Rect::new(0, 0, w, h), geometry).into_iter().collect()
+            },
+            ..Default::default()
+        },
         metadata,
     };
     img.validate_for(mode)?;
