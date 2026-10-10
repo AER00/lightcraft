@@ -236,7 +236,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-EDIT-AUTO | Auto settings | P0 | ✅ | `cmd:develop.auto`, `crates/pipeline/src/auto.rs` | |
+| LR-EDIT-AUTO | Auto settings | P0 | ✅ | `cmd:develop.auto`, `crates/pipeline/src/auto.rs` | a Lightroom-like recipe calibrated black-box on Lightroom's Auto results for 24 Sony raws: Exposure from the scene's scene-linear log-average luminance (Lightroom's observed slope, -0.41 EV per EV), Highlights -66 and Shadows +52 (Lightroom's average Auto values), Contrast +68 and Vibrance +30 fitted on our scales. Held out one photo at a time: on the 16 photos whose start Sony's DRO doesn't brighten, a median dE76 of 6.4 from Lightroom's Auto results against 8.3 unedited; on all 24, 7.7 against 7.9 (issues #318, #209). Calibrated on Sony files only; Whites and Blacks stay 0 |
 | LR-EDIT-BW | Black & white | P0 | ✅ | `cmd:develop.treatment` | |
 | LR-EDIT-HDR-MODE | HDR editing | P2 | ⬜ | | |
 | LR-EDIT-LIGHT-EXPOSURE | Exposure | P0 | ✅ | `ctl:light.exposure` | |
