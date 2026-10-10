@@ -102,12 +102,17 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         });
     });
     if let Some(id) = cancel {
-        // the task may have just finished: nothing to tell the user then
-        let _ = app.run("activity.cancel", json!({"id": id}));
+        self::cancel(app, id);
     }
     if toggle {
         app.activity_expanded = !app.activity_expanded;
     }
+}
+
+/// ✕ on task `id`'s row. The task may have just finished or stopped being cancellable: nothing to tell the user then,
+/// so the command goes to the engine directly (`LightcraftApp::run` would put its error in the status bar).
+pub(crate) fn cancel(app: &mut LightcraftApp, id: u64) {
+    let _ = app.session.execute("activity.cancel", &json!({"id": id}));
 }
 
 /// One task: name and ✕, the bar, the detail line. True when ✕ was clicked.

@@ -492,7 +492,11 @@ fn every_scanned_face_is_shown_by_the_same_kind_of_box() {
 fn face_scan_row_follows_pending_photos() {
     let d = temp("activity");
     let (mut s, _) = setup(&d, 64);
-    let (a, b) = two_photos(&s);
+    // the last two demo photos, not the first two the other scan tests use: two sessions scanning the same demo scene
+    // at once can deadlock (issue #630), and this test is about the row, not that
+    let mut ids = s.catalog.photos().map(|p| p.id).collect::<Vec<_>>();
+    ids.sort();
+    let (a, b) = (ids[ids.len() - 2], ids[ids.len() - 1]);
     set_regions(&mut s, a, vec![region(0.1, None), region(0.5, None)]);
     set_regions(&mut s, b, vec![region(0.3, None)]);
     let faces_rows = |s: &Session| s.activity.list().into_iter().filter(|t| t.kind == "faces").collect::<Vec<_>>();

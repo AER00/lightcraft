@@ -130,6 +130,12 @@ fn stale_cancel_is_harmless() {
     assert_eq!(r["ok"], false, "an error result, not a panic: {r}");
     h.step();
     assert!(h.app.ui.toast.is_none(), "{:?}", h.app.ui.toast);
+    // the same through the row's ✕ (clicked in the frame the task ended): no message in the status bar either
+    h.app.ui.status = "Ready".into();
+    crate::panels::activity::cancel(&mut h.app, id);
+    h.step();
+    assert_eq!(h.app.ui.status, "Ready");
+    assert!(h.app.ui.toast.is_none(), "{:?}", h.app.ui.toast);
 }
 
 #[test]
