@@ -2066,5 +2066,7 @@
   "Discarding smart previews": "Видалення смарт-переглядів",
   "Importing Lightroom catalog": "Імпорт каталогу Lightroom",
   "Reading Lightroom catalog": "Читання каталогу Lightroom",
-  "Merging": "Об’єднання"
+  "Merging": "Об’єднання",
+  "Downloading model": "Завантаження моделі",
+  "Finding faces": "Пошук облич"
 }

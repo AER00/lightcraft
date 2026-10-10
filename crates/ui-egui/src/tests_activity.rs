@@ -76,6 +76,12 @@ fn more_than_three_rows_overflow_and_expand() {
     assert!(has(&h, "activity:more"));
     click(&mut h, "activity:more");
     assert_eq!(rows(&h), 5);
+    // expanded, the stack grows to show them all
+    let stack = h.view.ctx.memory(|m| m.area_rect(egui::Id::new("activity-stack"))).expect("the stack is drawn");
+    for g in &guards {
+        let r = rect(&h, &format!("activity:row:{}", g.id()));
+        assert!(stack.contains_rect(r), "row {} at {r:?} is cut off by the stack at {stack:?}", g.id());
+    }
     drop(guards);
     h.step();
     assert_eq!(rows(&h), 0);
@@ -359,4 +365,25 @@ fn auto_import_listing_has_no_row() {
     assert!(h.app.session.activity.list().is_empty(), "{:?}", h.app.session.activity.list());
     h.app.session.import_defaults.auto_folder = None;
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn rows_added_later_grow_the_stack() {
+    let mut h = demo();
+    let a = h.app.session.activity.start("export", "Exporting", Cancel::Yes);
+    a.progress(1, 24);
+    a.detail("LC01347.jpg");
+    wait_visible(&mut h);
+    // two more tasks while the stack already shows one row: it grows to show them, nothing is cut off
+    let b = h.app.session.activity.start("previews", "Building previews", Cancel::Yes);
+    let c = h.app.session.activity.start("lightroom", "Reading Lightroom catalog", Cancel::Yes);
+    wait_visible(&mut h);
+    for _ in 0..5 {
+        h.step();
+    }
+    let stack = h.view.ctx.memory(|m| m.area_rect(egui::Id::new("activity-stack"))).expect("the stack is drawn");
+    for g in [&a, &b, &c] {
+        let r = rect(&h, &format!("activity:row:{}", g.id()));
+        assert!(stack.contains_rect(r), "row {} at {r:?} is cut off by the stack at {stack:?}", g.id());
+    }
 }
