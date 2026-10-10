@@ -20,6 +20,13 @@
 //! `0x7310`, else the level stored in the encrypted `SR2SubIFD` (see [`SR2_BLACK_AT`]; 800 rather than the
 //! default 512 on 1″-sensor bodies such as the RX100 series), else 512 (14-bit) / 128 (12-bit).
 //!
+//! The Sony DSC-R1 (.SR2, 2005) stores uncompressed 16-bit words big-endian inside a little-endian TIFF
+//! ([`word16_order`]). Measured on the CC0 DSC-R1 (raw.pixls.us 3221): StripByteCounts 20780544 = 3984×2608×2; read
+//! big-endian the maximum is 16368 and the image is smooth (neighbour roughness 0.012 against 0.249), read
+//! little-endian the maximum is 65340 (noise). Black stays the default 512 (the masked columns read 511.4) and white
+//! comes from the data. The crop and white balance are NOT addressed here: the file has no maker-note `FullImageSize`
+//! and no plain WB tag (they live in its `SR2SubIFD`), so it opens uncropped with unit multipliers.
+//!
 //! Also: uncompressed 16-bit ARW, and lossless-compressed ARW (Compression 7, ILCE-7M4 and later): LJ92 tiles whose
 //! frames hold one 2×2 CFA cell per four-component sample ([`read_quad_tiles`]). Other lossless-JPEG layouts go
 //! through the generic TIFF path.
@@ -412,6 +419,25 @@ fn sr2_black_levels(cipher: &[u8], order: lightcraft_tiff::ByteOrder) -> Option<
     (levels.len() == 4 && (64..=4096).contains(&lo) && hi - lo <= 64).then(|| levels.iter().map(|&v| f32::from(v)).sum::<f32>() / 4.0)
 }
 
+/// Byte order of 16-bit-word samples: the file's own order unless the words only fit the sample width in the other
+/// (see the DSC-R1 note at the top). Sampled across the strip; the order is swapped only when the file order leaves
+/// more than 1 % of the sampled words at or above `1 << max(bits, 14)` while the other order leaves none.
+fn word16_order(strip: &[u8], bits: u32, file: lightcraft_tiff::ByteOrder) -> lightcraft_tiff::ByteOrder {
+    use lightcraft_tiff::ByteOrder::{Big, Little};
+    let other = if file == Little { Big } else { Little };
+    let limit = 1u32 << bits.clamp(14, 16);
+    let (mut n, mut over_file, mut over_other) = (0usize, 0usize, 0usize);
+    let words = strip.len() / 2;
+    let step = (words / 65536).max(1);
+    for i in (0..words).step_by(step) {
+        let b = [strip[2 * i], strip[2 * i + 1]];
+        n += 1;
+        over_file += usize::from(u32::from(file.u16(b)) >= limit);
+        over_other += usize::from(u32::from(other.u16(b)) >= limit);
+    }
+    if n > 0 && over_other == 0 && over_file * 100 > n { other } else { file }
+}
+
 /// The image area for files without Sony's crop tags (`0x74c7/0x74c8`, written since about 2017): the DNG-style
 /// default crop when the raw IFD has one, else the maker note's `FullImageSize` (the camera JPEG's size) anchored
 /// at the top-left. Older bodies store a few columns of padding at the right edge of the raw frame (constant
@@ -486,8 +512,13 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
             }
         },
         1 => {
-            let packing = if strip_len >= (w * h * 2) as u64 { Packing::Word16 } else { Packing::Msb };
-            (read_image_in(mode, bytes, &info, tiff.order, packing)?, bits)
+            let word16 = strip_len >= (w * h * 2) as u64;
+            let packing = if word16 { Packing::Word16 } else { Packing::Msb };
+            let order = match chunks.first().and_then(|c| chunk_bytes(bytes, c)) {
+                Some(strip) if word16 => word16_order(strip, bits, tiff.order),
+                _ => tiff.order,
+            };
+            (read_image_in(mode, bytes, &info, order, packing)?, bits)
         }
         _ => (read_image_in(mode, bytes, &info, tiff.order, Packing::Msb)?, bits),
     };
@@ -743,6 +774,23 @@ mod tests {
         assert_eq!(sr2_black_levels(&cipher([0; 4]), Little), None);
         assert_eq!(sr2_black_levels(&cipher([800; 4])[..5], Little), None);
         assert_eq!(sr2_black_levels(&[], Little), None);
+    }
+
+    #[test]
+    fn word16_byte_order_follows_the_sample_range() {
+        use lightcraft_tiff::ByteOrder::{Big, Little};
+        let be: Vec<u8> = (0..4096u16).flat_map(|i| (512 + i * 3).to_be_bytes()).collect(); // 512..12800 big-endian words
+        assert_eq!(word16_order(&be, 14, Little), Big);
+        let le: Vec<u8> = (0..4096u16).flat_map(|i| (512 + i * 3).to_le_bytes()).collect();
+        assert_eq!(word16_order(&le, 14, Little), Little);
+        // values whose bytes are all below 0x40 fit both ways: keep the file order
+        let amb: Vec<u8> = (0..4096usize).flat_map(|i| [(i % 60) as u8, (i % 50) as u8]).collect();
+        assert_eq!(word16_order(&amb, 14, Little), Little);
+        assert_eq!(word16_order(&[], 14, Big), Big);
+        // any `bits` value (even a corrupt one) clamps to 14..=16 instead of overflowing the shift
+        for bits in [0, 1, 12, 14, 16, 17, 31, 32, 33, u32::MAX] {
+            let _ = word16_order(&be, bits, Little);
+        }
     }
 
     #[test]
