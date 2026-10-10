@@ -991,7 +991,7 @@ fn tooltip_shown(h: &Headless) -> bool {
     h.view.ctx.memory(|m| m.areas().visible_layer_ids().into_iter().any(|l| l.order == egui::Order::Tooltip))
 }
 
-const LONG_NAME: &str = "Aliah Ira Polanco-Grylls and a name much longer than any sidebar row can show";
+const LONG_NAME: &str = "Lake Como Wedding-Day and a name much longer than any sidebar row can show";
 
 /// A name never runs past the photo count: it is cut with an ellipsis, in full on hover.
 #[test]

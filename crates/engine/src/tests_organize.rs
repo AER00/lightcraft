@@ -79,6 +79,22 @@ fn smart_album_from_smart_album_view_keeps_its_rules() {
     assert_eq!(s.source, LibrarySource::Album(lightcraft_catalog::AlbumId(id)));
 }
 
+/// Saving the view of a smart album keeps the filter bar's settings even when the album holds a
+/// rule that no longer checks (it tests an album that has since been deleted).
+#[test]
+fn smart_album_view_keeps_the_filter_bar_over_a_stale_rule() {
+    let mut s = Session::with_demo();
+    let gone = s.execute("album.create", &json!({"name": "Gone", "addSelected": false})).unwrap()["id"].as_u64().unwrap();
+    let rules = json!({"ruleSet": {"rules": [{"field": "album", "op": "isNot", "value": gone}]}});
+    let id = s.execute("album.createSmart", &json!({"name": "Not in Gone", "rules": rules})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.delete", &json!({"id": gone})).unwrap();
+    s.execute("library.source", &json!({"kind": "album", "id": id})).unwrap();
+    s.execute("library.filter", &json!({"rating": 3})).unwrap();
+    let r = s.view_rules();
+    assert_eq!(r.rating, 3, "the filter bar's rating survives");
+    assert!(r.rule_set.is_some(), "and so do the album's own rules");
+}
+
 #[test]
 fn virtual_copies_are_independent_and_persist() {
     let dir = temp_dir("vc");

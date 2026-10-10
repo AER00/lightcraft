@@ -329,10 +329,55 @@ impl Catalog {
     /// no smart album).
     pub fn album_contains(&self, id: AlbumId, p: &Photo) -> bool {
         match self.albums.get(&id) {
-            Some(Album { smart: Some(rules), .. }) => !p.deleted && rules.matches(p, self),
+            // guarded: a smart album testing smart albums can't loop or recurse without end
+            Some(Album { smart: Some(rules), .. }) => !p.deleted && rules::smart_album_holds(id, p.id, || rules.matches(p, self)),
             Some(a) => a.photos.contains(&p.id),
             None => false,
         }
+    }
+
+    /// Whether smart album `from` tests `to`, directly or through the smart albums it tests (the
+    /// rules of `from` would then change when those of `to` do). Loops in saved rules end the
+    /// search, they don't repeat it.
+    pub fn album_reaches(&self, from: AlbumId, to: AlbumId) -> bool {
+        let mut seen: std::collections::HashSet<AlbumId> = std::collections::HashSet::new();
+        let mut next = vec![from];
+        while let Some(a) = next.pop() {
+            if !seen.insert(a) {
+                continue;
+            }
+            let tested = self.albums.get(&a).and_then(|al| al.smart.as_deref()).map(Filter::albums_tested).unwrap_or_default();
+            if tested.contains(&to) {
+                return true;
+            }
+            next.extend(tested);
+        }
+        false
+    }
+
+    /// What is wrong with a saved smart album's rules now (`RuleSet::check`, after
+    /// `RuleSet::upgrade`): typically a rule testing an album that has since been deleted. Empty
+    /// for a sound smart album, a plain album or no album.
+    pub fn smart_album_problems(&self, id: AlbumId) -> Vec<rules::Problem> {
+        let Some(filter) = self.albums.get(&id).and_then(|a| a.smart.as_deref()) else { return Vec::new() };
+        let mut out: Vec<rules::Problem> = self.album_filter_problem(filter, Some(id)).into_iter().collect();
+        if let Some(mut rules) = filter.rule_set.clone() {
+            rules.upgrade();
+            out.extend(rules.check_for(self, Some(id)));
+        }
+        out
+    }
+
+    /// A loop through `filter`'s own album field (not its rules): smart album `owner` filtered to
+    /// itself, or to an album that leads back to it.
+    pub fn album_filter_problem(&self, filter: &Filter, owner: Option<AlbumId>) -> Option<rules::Problem> {
+        let (a, owner) = (filter.album?, owner?);
+        (a == owner || self.album_reaches(a, owner)).then(|| rules::Problem {
+            path: Vec::new(),
+            field: Some("album".into()),
+            issue: rules::Issue::AlbumLoop,
+            message: format!("its album filter (album {}) would make this album include itself", a.0),
+        })
     }
 
     /// The photos of an album: the stored list, or a smart album's current matches (id order).
@@ -378,7 +423,9 @@ impl Catalog {
     /// The label a name stands for: a custom name first, then a colour's own name (any case).
     pub fn label_from_name(&self, name: &str) -> Option<ColorLabel> {
         let name = name.trim();
-        self.label_names.iter().find(|(_, n)| n.trim().eq_ignore_ascii_case(name)).map(|(l, _)| *l).or_else(|| ColorLabel::parse(name))
+        // any case, accents included (Été / été), as rules compare names
+        let name_lower = name.to_lowercase();
+        self.label_names.iter().find(|(_, n)| n.trim().to_lowercase() == name_lower).map(|(l, _)| *l).or_else(|| ColorLabel::parse(name))
     }
 
     // ---- writes

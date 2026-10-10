@@ -1231,16 +1231,6 @@ pub fn encode_deep(img: &DeepImage, o: &ExportOptions, meta: Option<&Metadata>) 
     r.map_err(|e| e.to_string())
 }
 
-/// Parse a shutter speed such as `1/250`, `0.5` or `2"` into seconds.
-fn parse_shutter(s: &str) -> Option<f64> {
-    let s = s.trim().trim_end_matches(['s', '"']).trim();
-    match s.split_once('/') {
-        Some((n, d)) => Some(n.trim().parse::<f64>().ok()? / d.trim().parse::<f64>().ok()?),
-        None => s.parse().ok(),
-    }
-    .filter(|v: &f64| v.is_finite() && *v > 0.0)
-}
-
 /// The metadata to embed for `photo` under `o.metadata` / `o.remove_location`. `None` = embed nothing.
 pub fn export_metadata(photo: &lightcraft_catalog::Photo, o: &ExportOptions) -> Option<Metadata> {
     let m = &photo.meta;
@@ -1283,7 +1273,7 @@ pub fn export_metadata(photo: &lightcraft_catalog::Photo, o: &ExportOptions) -> 
         out.lens_model = text(&m.lens);
         out.focal_length = m.focal_mm.map(f64::from);
         out.f_number = m.aperture.map(f64::from);
-        out.exposure_time = parse_shutter(&m.shutter);
+        out.exposure_time = lightcraft_catalog::parse_shutter_seconds(&m.shutter);
         out.iso = m.iso;
     }
     Some(out)

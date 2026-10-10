@@ -727,7 +727,13 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             let target =
                 app.session.target_album.filter(|t| app.session.catalog.album(*t).is_some()).or_else(|| app.session.catalog.quick_collection());
             let label = if target == Some(a.id) { format!("{} +", a.name) } else { a.name.clone() };
+            // a smart album whose rules no longer check (an album they test was deleted) says so
+            let problems = app.caches.smart_album_problems(&app.session.catalog).get(&a.id).cloned().unwrap_or_default();
+            let label = if problems.is_empty() { label } else { format!("⚠ {label}") };
             let mut resp = row_sensed(app, ui, &format!("album:{}", a.id.0), icon, &label, None, Some(n), sel, indent, Sense::click_and_drag());
+            if !problems.is_empty() {
+                crate::widgets::register(ui.ctx(), format!("albumProblem:{}", a.id.0), resp.rect);
+            }
             if resp.drag_started() {
                 app.ui.dragging_album = Some(a.id.0);
             }
@@ -736,7 +742,17 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
                 drop_target(app, ui, &resp, a);
             }
             if let Some(rules) = &a.smart {
-                resp = resp.on_hover_text(crate::i18n::tr_format!("Smart album: {}", crate::i18n::filter_label(rules, &app.session.catalog)));
+                // one tooltip: the rules, then what needs fixing in them
+                let mut tip = crate::i18n::tr_format!("Smart album: {}", crate::i18n::filter_label(rules, &app.session.catalog));
+                if !problems.is_empty() {
+                    tip.push_str("\n\n");
+                    tip.push_str(crate::i18n::tr("Some rules need fixing (Edit Smart Album…):"));
+                    for p in &problems {
+                        tip.push('\n');
+                        tip.push_str(&crate::i18n::problem_line(p));
+                    }
+                }
+                resp = resp.on_hover_text(tip);
             }
             if resp.clicked() {
                 let _ = app.run("library.source", json!({"kind": "album", "id": a.id.0}));
@@ -1038,12 +1054,15 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
             let _ = app.run("album.clearQuick", json!({}));
         }
         if a.is_smart() && ui.button(crate::i18n::tr("Edit Smart Album…")).clicked() {
-            // older smart albums keep their filter fields; the editor works on the rule set
-            let rules = a.smart.as_ref().and_then(|f| f.rule_set.clone()).unwrap_or_default();
-            app.ui.dialog = Some(crate::state::Dialog::SmartRules { id: Some(a.id.0), name: a.name.clone(), rules, parent: None });
+            // the same editor as `dialog.smartAlbum` (older smart albums keep their filter fields;
+            // it works on the rule set, upgraded)
+            let _ = app.run("dialog.smartAlbum", json!({"id": a.id.0}));
         }
         if a.is_smart() && ui.button(crate::i18n::tr("Update Rules from Current Filter")).clicked() {
-            let _ = app.run("album.setRules", json!({"id": a.id.0, "fromView": true}));
+            // refused when the view would make the album test itself: say why
+            if let Err(e) = app.run("album.setRules", json!({"id": a.id.0, "fromView": true})) {
+                app.toast(ui.ctx(), e);
+            }
         }
         if !a.folder {
             // export: show the album, select its photos, then the dialog / a preset

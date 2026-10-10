@@ -362,6 +362,16 @@ pub fn specs() -> Vec<CommandSpec> {
                 if f.library_folder.is_some() && s.source == LibrarySource::LibraryFolder {
                     return Err(bad("library.filter", "a folder is already shown (library.source): show another source first"));
                 }
+                // checked like a smart album's rules when this call sets them: an unknown field or a value
+                // that can't match is an error, not an empty grid. Rules that stopped checking since
+                // (their album was deleted) don't block other filter changes.
+                if let Some(rules) = f.rule_set.as_mut() {
+                    rules.upgrade();
+                }
+                let sets_rules = p.get("ruleSet").is_some_and(|r| !r.is_null());
+                if let Some(problems) = f.rule_set.as_ref().filter(|_| sets_rules).map(|rs| rs.check(&s.catalog)).filter(|p| !p.is_empty()) {
+                    return Err(bad("library.filter", problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")));
+                }
                 s.filter = f;
                 Ok(json!({"count": s.visible().len()}))
             }
@@ -848,7 +858,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     return Err(bad("album.createSmart", "empty name"));
                 }
                 let rules = match p.get("rules") {
-                    Some(r) => merge_rules(&lightcraft_catalog::Filter::default(), r, "album.createSmart")?,
+                    Some(r) => merge_rules(&lightcraft_catalog::Filter::default(), r, "album.createSmart", &s.catalog, None)?,
                     None => view_rules(s),
                 };
                 let parent = p.get("parent").and_then(Value::as_u64).map(AlbumId);
@@ -858,8 +868,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"id": id.0, "count": s.catalog.album_count(id)}))
             }
         ),
-        cmd!(query "album.ruleFields", "Smart Album Rule Fields", [], None, "{} → [{field, label, kind, ops: [{op, label}], choices?}] for ruleSet rules", always, |_, _| {
-            use lightcraft_catalog::rules::{FIELDS, Kind, ops_for};
+        cmd!(query "album.ruleFields", "Smart Album Rule Fields", [], None, "{} → [{field, label, kind (text|keywords|number|date|choice|bool|album: an album id), group (field-menu submenu, null at the top level), ops: [{op, label}], choices? (ids), choiceLabels? ({id: label})}] for ruleSet rules, in menu order", always, |_, _| {
+            use lightcraft_catalog::rules::{FIELDS, Kind, field_group, ops_for};
             Ok(json!(FIELDS
                 .iter()
                 .map(|(id, label, kind)| {
@@ -867,13 +877,15 @@ pub fn specs() -> Vec<CommandSpec> {
                         Kind::Text => "text",
                         Kind::Keywords => "keywords",
                         Kind::Number => "number",
+                        Kind::Album => "album",
                         Kind::Date => "date",
                         Kind::Choice(_) => "choice",
                         Kind::Bool => "bool",
                     };
-                    let mut v = json!({"field": id, "label": label, "kind": k, "ops": ops_for(*kind).iter().map(|(o, l)| json!({"op": o, "label": l})).collect::<Vec<_>>()});
+                    let mut v = json!({"field": id, "label": label, "kind": k, "group": field_group(id), "ops": ops_for(*kind).iter().map(|(o, l)| json!({"op": o, "label": l})).collect::<Vec<_>>()});
                     if let Kind::Choice(c) = kind {
-                        v["choices"] = json!(c);
+                        v["choices"] = json!(c.iter().map(|c| c.0).collect::<Vec<_>>());
+                        v["choiceLabels"] = c.iter().map(|(id, label)| (id.to_string(), json!(label))).collect::<serde_json::Map<_, _>>().into();
                     }
                     v
                 })
@@ -884,18 +896,34 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit Smart Album",
             [],
             None,
-            "{id, rules?: partial Filter merged onto the current rules (null clears a field), replace?: bool, fromView?: bool (use the current view)}",
+            "{id, rules?: partial Filter merged onto the current rules (null clears a field), replace?: bool, fromView?: bool (use the current view), name?: also rename it (blank keeps the name) — one undo step, both or neither}",
             always,
             |s, p| {
                 let id = album_param(p, "id", "album.setRules")?;
                 let cur = s.catalog.album(id).and_then(|a| a.smart.as_deref().cloned()).ok_or_else(|| bad("album.setRules", "not a smart album"))?;
                 let rules = if bool_or(p, "fromView", false) {
-                    view_rules(s)
+                    // the view is saved as it is, but never as a loop (showing A, which tests this
+                    // album, and saving that view here would make it test itself)
+                    let view = view_rules(s);
+                    let loops: Vec<String> = view
+                        .rule_set
+                        .as_ref()
+                        .map(|r| r.check_for(&s.catalog, Some(id)))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .chain(s.catalog.album_filter_problem(&view, Some(id)))
+                        .filter(|p| p.issue == lightcraft_catalog::rules::Issue::AlbumLoop)
+                        .map(|p| p.to_string())
+                        .collect();
+                    if !loops.is_empty() {
+                        return Err(bad("album.setRules", loops.join("; ")));
+                    }
+                    view
                 } else {
                     let replace = bool_or(p, "replace", false);
                     let folder = cur.library_folder.clone();
                     let base = if replace { Default::default() } else { cur };
-                    let mut r = merge_rules(&base, p.get("rules").unwrap_or(&Value::Null), "album.setRules")?;
+                    let mut r = merge_rules(&base, p.get("rules").unwrap_or(&Value::Null), "album.setRules", &s.catalog, Some(id))?;
                     // the rules dialog has no folder field: replacing its rules keeps the folder
                     // unless the call says (`libraryFolder: null`) to drop it
                     if replace && p.get("rules").and_then(|r| r.get("libraryFolder")).is_none() {
@@ -903,7 +931,13 @@ pub fn specs() -> Vec<CommandSpec> {
                     }
                     r
                 };
-                s.commit("Edit Smart Album", Op::SetAlbumRules { id, rules: Box::new(rules) })?;
+                let set = Op::SetAlbumRules { id, rules: Box::new(rules) };
+                // a new name goes with the rules: one step, applied (and undone) together
+                let rename = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty() && s.catalog.album(id).is_some_and(|a| a.name != *n));
+                match rename {
+                    Some(name) => s.commit("Edit Smart Album", Op::Batch { ops: vec![Op::RenameAlbum { id, name: name.to_string() }, set] })?,
+                    None => s.commit("Edit Smart Album", set)?,
+                };
                 Ok(json!({"count": s.catalog.album_count(id)}))
             }
         ),
@@ -1343,12 +1377,39 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// `base` with a partial Filter (JSON) merged on top.
-fn merge_rules(base: &lightcraft_catalog::Filter, patch: &Value, c: &str) -> Result<lightcraft_catalog::Filter> {
+/// `patch` merged onto `base`, its rules brought up to date (`RuleSet::upgrade`), unchecked (see
+/// [`merge_rules`]).
+fn merge_filter(base: &lightcraft_catalog::Filter, patch: &Value, c: &str) -> Result<lightcraft_catalog::Filter> {
     let mut v = serde_json::to_value(base).unwrap_or_default();
     lightcraft_develop::presets::deep_merge(&mut v, patch);
-    let f: lightcraft_catalog::Filter = serde_json::from_value(v).map_err(|e| bad(c, e.to_string()))?;
-    if let Some(problem) = f.rule_set.as_ref().and_then(|r| r.problems().into_iter().next()) {
-        return Err(bad(c, problem));
+    let mut f: lightcraft_catalog::Filter = serde_json::from_value(v).map_err(|e| bad(c, e.to_string()))?;
+    if let Some(rules) = f.rule_set.as_mut() {
+        rules.upgrade();
+    }
+    Ok(f)
+}
+
+/// `patch` merged onto `base`, refused when the rule set it sets has problems (`RuleSet::check_for`;
+/// `owner` is the smart album the rules are for, so testing an album that leads back to it is a
+/// problem too).
+fn merge_rules(
+    base: &lightcraft_catalog::Filter,
+    patch: &Value,
+    c: &str,
+    cat: &lightcraft_catalog::Catalog,
+    owner: Option<AlbumId>,
+) -> Result<lightcraft_catalog::Filter> {
+    let f = merge_filter(base, patch, c)?;
+    // only rules this change sets are checked: one that stopped checking since (its album was
+    // deleted) doesn't block editing the album's other settings
+    let sets_rules = patch.get("ruleSet").is_some_and(|r| !r.is_null());
+    let mut problems = f.rule_set.as_ref().filter(|_| sets_rules).map(|r| r.check_for(cat, owner)).unwrap_or_default();
+    // and a loop through the album field the change sets
+    if patch.get("album").is_some_and(|a| !a.is_null()) {
+        problems.extend(cat.album_filter_problem(&f, owner));
+    }
+    if !problems.is_empty() {
+        return Err(bad(c, problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")));
     }
     Ok(f)
 }
@@ -1384,7 +1445,9 @@ fn view_rules(s: &Session) -> lightcraft_catalog::Filter {
                     }
                 }
             }
-            merge_rules(&base, &Value::Object(patch), "").unwrap_or(base)
+            // the view as it is: a rule that no longer checks (its album was deleted) just matches
+            // nothing there, and mustn't cost the filter bar's settings
+            merge_filter(&base, &Value::Object(patch), "").unwrap_or(base)
         }
         None => {
             let mut f = s.source.to_filter(&s.filter, &s.catalog);

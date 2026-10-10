@@ -887,7 +887,16 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 Some(a) => Dialog::SmartRules {
                     id: Some(a.id.0),
                     name: a.name.clone(),
-                    rules: a.smart.as_ref().and_then(|f| f.rule_set.clone()).unwrap_or_default(),
+                    // older rules read as they always matched (RuleSet::upgrade)
+                    rules: a
+                        .smart
+                        .as_ref()
+                        .and_then(|f| f.rule_set.clone())
+                        .map(|mut r| {
+                            r.upgrade();
+                            r
+                        })
+                        .unwrap_or_default(),
                     parent: None,
                 },
                 None => Dialog::SmartRules {

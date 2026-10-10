@@ -152,6 +152,17 @@ impl CopyrightStatus {
     }
 }
 
+/// A shutter speed as cameras write it (`1/250`, `0.5`, `2"`, `30s`) in seconds; `None` for
+/// anything that isn't a positive, finite time.
+pub fn parse_shutter_seconds(s: &str) -> Option<f64> {
+    let s = s.trim().trim_end_matches(['s', '"']).trim();
+    match s.split_once('/') {
+        Some((n, d)) => Some(n.trim().parse::<f64>().ok()? / d.trim().parse::<f64>().ok()?),
+        None => s.parse().ok(),
+    }
+    .filter(|v: &f64| v.is_finite() && *v > 0.0)
+}
+
 /// Descriptive + capture metadata.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -376,6 +387,46 @@ impl Photo {
         }
         d.process = self.develop.process;
         d
+    }
+    /// The file name's extension without the dot, as written (`CR2` for `IMG_0042.CR2`); empty
+    /// when the name has none (`README`, a dot file such as `.hidden`).
+    pub fn extension(&self) -> &str {
+        self.file_name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty()).map_or("", |(_, ext)| ext)
+    }
+    /// Width and height in pixels as the photo is shown: turned by its orientation and cut by its
+    /// crop. Straightening and Constrain Crop shrink the crop without changing its shape, so the
+    /// aspect is exact and the edges can read a little larger than an export.
+    pub fn shown_size(&self) -> (f64, f64) {
+        let (w, h) = (self.width as f64, self.height as f64);
+        let (w, h) = if self.develop.orientation.swaps_axes() { (h, w) } else { (w, h) };
+        let r = self.develop.crop.geometry.rect;
+        // a crop read from a file or an agent is hostile: no NaN, nothing outside the frame
+        let part = |len: f64| if len.is_finite() { len.clamp(0.0, 1.0) } else { 1.0 };
+        (w * part(r.width()), h * part(r.height()))
+    }
+    /// Cropped or straightened.
+    pub fn is_cropped(&self) -> bool {
+        !self.develop.crop.geometry.is_identity()
+    }
+    /// How many keywords the photo has: a hierarchical keyword (`travel|italy|rome`) is one, and
+    /// the same keyword in different case or with stray spaces counts once; blank ones don't count.
+    pub fn keyword_count(&self) -> usize {
+        let mut seen: Vec<String> = self.meta.keywords.iter().map(|k| k.trim().to_lowercase()).filter(|k| !k.is_empty()).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        seen.len()
+    }
+    /// The people in the photo: the names on its face regions, trimmed, each once (names that
+    /// differ only in case are one person, as first seen). Pets and unnamed faces are not people.
+    pub fn people(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = Vec::new();
+        for r in self.meta.regions.iter().filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
+            let Some(name) = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else { continue };
+            if !out.iter().any(|o| o.to_lowercase() == name.to_lowercase()) {
+                out.push(name);
+            }
+        }
+        out
     }
     /// In the library: not deleted and not only browsed (Local).
     pub fn in_library(&self) -> bool {

@@ -2,6 +2,42 @@
 
 ## October 2026
 
+### Smart album rules
+- The rule editor's field menu is grouped: Rating, Pick Flag, Color Label and Any Searchable Text at the top, then
+  submenus for Source, File, Date, Keywords & People, Description, Camera Info, Location, Size, Develop and Assisted
+  Culling.
+- New fields: Keyword Count ("2 or more", "exactly 2"…), People and People Count (named faces), Shutter Speed (written
+  as 1/250), File Extension, Video Duration, Copy Name, In a Stack, Alt Text, City, State / Province, Country, Long
+  Edge, Short Edge, Aspect Ratio (landscape / portrait / square), Cropped and Treatment (in color / black & white).
+  Size rules measure the photo as shown: Megapixels now counts the cropped photo, like Long Edge, Short Edge and
+  Aspect Ratio (a 24 MP photo cropped to a square is 16 MP).
+- Choice values read as words in every language: "Public Domain", "Picked", "Black & White" rather than ids like
+  `publicDomain` (rules and agents keep using the ids; `album.ruleFields` adds `choiceLabels`).
+- Rule values are checked: a rating of 9, a date like 2026-13 or "banana", a "between" whose dates are the wrong
+  way round, "in the last 0 days", a colour label that doesn't exist, "contains" with nothing to look for, an
+  album that is gone, or an empty group is reported with its rule ("rule 2.1: no rating 0–5 is 9")
+  instead of quietly matching nothing or everything. New date rules start at the current year.
+- A smart album can include or exclude another smart album: "Keywords contain travel" and "Album isn't Excluded Photos"
+  leaves out whatever Excluded Photos matches, as its rules change. The album picker shows your albums as in the sidebar
+  (folders open on click) or finds them as you type part of a name or folder (↑ / ↓ and Enter to pick); albums that
+  can't be picked, such as one that would make an album include itself, are greyed with the reason. Esc with a dropdown or calendar open in a dialog
+  closes just that.
+- Date rules have a calendar button: pick a day, a month or a whole year (Year / Month / Day), in your language; the
+  two dates of a "between" can't be picked out of order; Esc closes just the calendar. It picks dates, not times (a
+  time is typed, and picking a day replaces one). Typing still works, and "2026-10-01 10:00" (a space for the
+  T) now matches.
+- Rule problems are shown in your language and name the field the way the menu does ("Title: needs something to look
+  for").
+- A smart album whose rules no longer check (an album they test was deleted) is marked ⚠ in the sidebar; its tooltip
+  says what to fix, and `albums.list` reports `problems`.
+- Editing a smart album's name and rules is one step: both or neither, and one undo takes both back
+  (`album.setRules` takes `name`).
+- The rule editor marks each rule that needs fixing right under it and keeps OK disabled until they are fixed. An
+  Album rule is "is" or "isn't" an album, picked with the album picker.
+- Yes/no fields (Has Edits, Cropped, Has GPS…) read Yes / No instead of true / false. A rule sent as `"false"` now
+  means no (it used to count as yes), and a value that is neither yes nor no is refused.
+- Any Searchable Text also finds the state / province, alt text, people and a virtual copy's name.
+
 ### Masking
 - Drag anywhere inside the selected radial gradient's ellipse to move it, including rotated
   ellipses and radial components in compound masks. Edge and rotation handles keep their existing

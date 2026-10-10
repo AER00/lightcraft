@@ -164,6 +164,16 @@ pub fn tr(source: &str) -> &str {
     tr_in(language(), source)
 }
 
+/// [`tr`] for a message whose translation depends on where it appears: a catalog entry keyed
+/// `"<context>|<source>"` wins, else the plain message. A language adds the contextual entry only
+/// where its shared translation reads wrongly there (Japanese はい / いいえ as a rule's value).
+fn tr_ctx_in<'a>(language: Locale, context: &str, source: &'a str) -> &'a str {
+    match language.catalog().get(&format!("{context}|{source}")) {
+        Some(translation) => translation.as_str(),
+        None => tr_in(language, source),
+    }
+}
+
 /// Catalog values are `'static` (they live in the embedded file), so a translation can be handed
 /// out for as long as the `'static` key it was looked up by.
 fn tr_in(language: Locale, source: &str) -> &str {
@@ -308,7 +318,7 @@ pub fn color_label(catalog: &lightcraft_catalog::Catalog, label: lightcraft_cata
 /// A legacy smart-album filter summary, using the same display labels as filter chips.
 pub fn filter_label(filter: &lightcraft_catalog::Filter, catalog: &lightcraft_catalog::Catalog) -> String {
     if language() == Locale::En {
-        filter.describe()
+        filter.describe_with(catalog)
     } else {
         lightcraft_engine::filter_chips(filter, catalog)
             .iter()
@@ -318,9 +328,62 @@ pub fn filter_label(filter: &lightcraft_catalog::Filter, catalog: &lightcraft_ca
     }
 }
 
+/// What people read for a smart-album rule's problem, under its row: the field's name and the
+/// issue, in the current language ("Title: needs something to look for").
+pub fn problem_text(problem: &lightcraft_catalog::rules::Problem) -> String {
+    problem_text_in(language(), problem)
+}
+
+/// [`problem_text`] with the rule's position first ("#2.1 Rating: …"), for lists away from the
+/// editor (the sidebar's tooltip).
+pub fn problem_line(problem: &lightcraft_catalog::rules::Problem) -> String {
+    problem_line_in(language(), problem)
+}
+
+fn problem_text_in(language: Locale, problem: &lightcraft_catalog::rules::Problem) -> String {
+    let issue = tr_in(language, problem.issue.text());
+    // Japanese and Chinese catalogs join a label and its text with a full-width colon
+    let colon = if matches!(language.script(), "Jpan" | "Hans" | "Hant") { "：" } else { ": " };
+    match problem.field.as_deref() {
+        Some(field) => format!("{}{colon}{issue}", tr_in(language, lightcraft_catalog::rules::field_label(field).unwrap_or(field))),
+        None => issue.to_string(),
+    }
+}
+
+fn problem_line_in(language: Locale, problem: &lightcraft_catalog::rules::Problem) -> String {
+    let at: Vec<String> = problem.path.iter().map(|i| i.saturating_add(1).to_string()).collect();
+    // a problem with the album filter around the rules has no rule to point at
+    if at.is_empty() {
+        return problem_text_in(language, problem);
+    }
+    format!("#{} {}", at.join("."), problem_text_in(language, problem))
+}
+
+/// What people read for smart-album choice `id` of `field` ("Gemeinfrei" for `publicDomain` in
+/// German); an id the field doesn't know, as written.
+pub fn choice_text<'a>(field: &str, id: &'a str) -> &'a str {
+    choice_text_in(language(), field, id)
+}
+
+fn choice_text_in<'a>(language: Locale, field: &str, id: &'a str) -> &'a str {
+    lightcraft_catalog::rules::choice_label(field, id).map_or(id, |label| tr_in(language, label))
+}
+
+/// What people read for a smart-album yes/no value ("Ja" / "Nein" in German).
+pub fn bool_text(b: bool) -> &'static str {
+    bool_text_in(language(), b)
+}
+
+/// The context of a smart-album yes/no value ([`tr_ctx_in`]).
+const BOOL_CONTEXT: &str = "smart album value";
+
+fn bool_text_in(language: Locale, b: bool) -> &'static str {
+    tr_ctx_in(language, BOOL_CONTEXT, lightcraft_catalog::rules::bool_label(b))
+}
+
 /// A rule summary for display, keeping free-text rule values verbatim.
-pub fn rules_label(rules: &lightcraft_catalog::RuleSet) -> String {
-    fn describe(rules: &lightcraft_catalog::RuleSet, depth: usize) -> String {
+pub fn rules_label(rules: &lightcraft_catalog::RuleSet, catalog: &lightcraft_catalog::Catalog) -> String {
+    fn describe(rules: &lightcraft_catalog::RuleSet, catalog: &lightcraft_catalog::Catalog, depth: usize) -> String {
         use lightcraft_catalog::{
             Match, Rule,
             rules::{FIELDS, Kind, ops_for},
@@ -332,14 +395,15 @@ pub fn rules_label(rules: &lightcraft_catalog::RuleSet) -> String {
             .rules
             .iter()
             .map(|rule| match rule {
-                Rule::Group { group } => format!("({})", describe(group, depth + 1)),
+                Rule::Group { group } => format!("({})", describe(group, catalog, depth + 1)),
                 Rule::Field { field, op, value } => {
                     let Some((_, label, kind)) = FIELDS.iter().find(|entry| entry.0 == field) else { return field.clone() };
                     let operator = ops_for(*kind).iter().find(|entry| entry.0 == op).map_or(op.as_str(), |entry| entry.1);
                     let text = match kind {
-                        Kind::Choice(_) | Kind::Bool => {
-                            tr(value.as_str().unwrap_or(if value.as_bool() == Some(true) { "true" } else { "false" })).to_string()
-                        }
+                        // the album's name, as people know it (a user's name is never translated)
+                        Kind::Album => lightcraft_catalog::rules::album_name(value, Some(catalog)),
+                        Kind::Choice(_) => value.as_str().map_or_else(|| value.to_string(), |id| choice_text(field, id).to_string()),
+                        Kind::Bool => lightcraft_catalog::rules::bool_value(value).map_or_else(|| value.to_string(), |b| bool_text(b).to_string()),
                         _ if matches!(op.as_str(), "inLast" | "notInLast") => format!(
                             "{} {}",
                             value.get("n").unwrap_or(&serde_json::Value::Null),
@@ -359,7 +423,7 @@ pub fn rules_label(rules: &lightcraft_catalog::RuleSet) -> String {
         if rules.mode == Match::None { format!("{} ({text})", tr("none of")) } else { text }
     }
     // Preserve the established source-language summary.
-    if language() == Locale::En { rules.describe() } else { describe(rules, 0) }
+    if language() == Locale::En { rules.describe_with(catalog) } else { describe(rules, catalog, 0) }
 }
 
 #[cfg(test)]
@@ -627,6 +691,125 @@ mod tests {
         }
     }
 
+    /// Smart-album choice values read as words in every language (English "Public Domain", German
+    /// "Gemeinfrei"), never as rule ids like `publicDomain`; an id the field doesn't know shows as
+    /// written. Unlike other labels these must be translated: an untranslated one would be English
+    /// in the middle of a translated rule.
+    #[test]
+    fn choice_values_read_as_words_in_every_language() {
+        use lightcraft_catalog::rules::{FIELDS, Kind};
+        assert_eq!(choice_text_in(Locale::En, "copyrightStatus", "publicDomain"), "Public Domain");
+        assert_eq!(choice_text_in(Locale::De, "copyrightStatus", "publicDomain"), "Gemeinfrei");
+        assert_eq!(choice_text_in(Locale::De, "copyrightStatus", "someday"), "someday");
+        assert_eq!(choice_text_in(Locale::ZhHans, "treatment", "color"), "彩色", "in colour, not the colour noun");
+        assert_eq!(choice_text_in(Locale::Ru, "treatment", "color"), "Цветное");
+        assert_eq!(choice_text_in(Locale::Es, "label", "none"), "Sin etiqueta");
+        // yes/no fields read Yes / No, never true / false
+        assert_eq!((bool_text_in(Locale::En, true), bool_text_in(Locale::En, false)), ("Yes", "No"));
+        assert_eq!(bool_text_in(Locale::De, false), "Nein");
+        // Japanese answers はい / いいえ don't read as a rule's value: its own wording, あり / なし,
+        // through a context, while the shared Yes / No keep their meaning everywhere else
+        assert_eq!((bool_text_in(Locale::Ja, true), bool_text_in(Locale::Ja, false)), ("あり", "なし"));
+        assert_eq!((Locale::Ja.tr("Yes"), Locale::Ja.tr("No")), ("はい", "いいえ"));
+        assert_eq!(tr_ctx_in(Locale::Ja, "nope", "Yes"), "はい", "no contextual entry: the plain message");
+        assert_eq!(tr_ctx_in(Locale::En, BOOL_CONTEXT, "Yes"), "Yes");
+        // and the yes/no fields are named by plain nouns, so "編集 … なし" doesn't read "edits: yes … none"
+        for (field, label, kind) in FIELDS {
+            if *kind != Kind::Bool {
+                continue;
+            }
+            let ja = Locale::Ja.catalog().get(*label).unwrap_or_else(|| panic!("ja lacks the {field} label {label:?}"));
+            assert!(!ja.contains("あり") && !ja.contains("なし"), "{field}: {ja}");
+        }
+        // a contextual entry names a real value (a typo would silently fall back to はい / いいえ)
+        let values = [lightcraft_catalog::rules::bool_label(true), lightcraft_catalog::rules::bool_label(false)];
+        for language in Locale::ALL {
+            for key in language.catalog().keys() {
+                if let Some(value) = key.strip_prefix(BOOL_CONTEXT).and_then(|k| k.strip_prefix('|')) {
+                    assert!(values.contains(&value), "{}: {key:?} isn't a yes/no value", language.code());
+                }
+            }
+        }
+        for language in Locale::ALL.iter().filter(|language| **language != Locale::En) {
+            for label in [lightcraft_catalog::rules::bool_label(true), lightcraft_catalog::rules::bool_label(false)] {
+                assert!(language.catalog().contains_key(label), "{} lacks {label:?}", language.code());
+            }
+        }
+        for language in Locale::ALL {
+            for (field, _, kind) in FIELDS {
+                let Kind::Choice(choices) = kind else { continue };
+                for (id, label) in *choices {
+                    let text = choice_text_in(*language, field, id);
+                    assert_ne!(text, *id, "{}: {field} {id}", language.code());
+                    if *language != Locale::En {
+                        assert!(language.catalog().contains_key(*label), "{} lacks {label:?}", language.code());
+                    }
+                }
+            }
+        }
+    }
+
+    /// A rule's problem reads as the field's name and the issue, in the editor's language ("Titel:
+    /// braucht einen Suchbegriff …"); the sidebar's list puts the rule's position first. Every issue
+    /// is translated in every language: an English one would stand out in a translated editor.
+    #[test]
+    fn problems_read_in_every_language() {
+        use lightcraft_catalog::rules::Issue;
+        let cat = lightcraft_catalog::Catalog::new();
+        let problems = |rules: serde_json::Value| {
+            serde_json::from_value::<lightcraft_catalog::RuleSet>(serde_json::json!({"rules": rules})).unwrap().check(&cat)
+        };
+        let p = problems(serde_json::json!([{"field": "rating", "op": "gte", "value": 3}, {"field": "title", "op": "contains", "value": ""}]));
+        assert_eq!(problem_text_in(Locale::En, &p[0]), "Title: needs something to look for (or use “is empty”)");
+        assert_eq!(problem_text_in(Locale::De, &p[0]), "Titel: braucht einen Suchbegriff (oder „ist leer“)");
+        assert_eq!(problem_line_in(Locale::En, &p[0]), "#2 Title: needs something to look for (or use “is empty”)");
+        // Japanese and Chinese join with a full-width colon, as their catalogs do
+        assert_eq!(problem_text_in(Locale::Ja, &p[0]), "タイトル：検索する語句が必要です（または「が空」を使用）");
+        // a problem with the album filter itself has no rule position to show
+        let filter_loop =
+            lightcraft_catalog::rules::Problem { path: Vec::new(), field: Some("album".into()), issue: Issue::AlbumLoop, message: String::new() };
+        assert!(problem_line_in(Locale::En, &filter_loop).starts_with("Album: "), "{}", problem_line_in(Locale::En, &filter_loop));
+        let g = problems(serde_json::json!([{"group": {"rules": []}}]));
+        assert_eq!(problem_text_in(Locale::En, &g[0]), "This group is empty: add a rule or remove it.");
+        // the issues, the operators their hints name and the album picker's words, in every language
+        for language in Locale::ALL.iter().filter(|l| **l != Locale::En) {
+            // the field menu: every field and every group, so it never mixes languages
+            for label in lightcraft_catalog::rules::FIELDS.iter().map(|f| f.1).chain(lightcraft_catalog::rules::FIELD_GROUPS.iter().map(|g| g.0)) {
+                assert!(language.catalog().contains_key(label), "{} lacks the rule label {label:?}", language.code());
+            }
+            for word in [
+                "Choose an album…",
+                "No albums yet",
+                "Search albums",
+                "No albums match",
+                "This is the album you're editing",
+                "It tests this album, so testing it back would loop",
+                "Fix the marked rules to save this album.",
+            ] {
+                assert!(language.catalog().contains_key(word), "{} lacks {word:?}", language.code());
+            }
+            for issue in Issue::ALL {
+                assert!(language.catalog().contains_key(issue.text()), "{} lacks {:?}", language.code(), issue.text());
+            }
+            for (_, _, kind) in lightcraft_catalog::rules::FIELDS {
+                for (_, op) in lightcraft_catalog::rules::ops_for(*kind) {
+                    assert!(language.catalog().contains_key(*op), "{} lacks the operator {op:?}", language.code());
+                }
+            }
+        }
+    }
+
+    /// The date picker's own words (its tooltip, the weekday headers) are in every language, as the
+    /// month and day labels it borrows from the date headings are.
+    #[test]
+    fn date_picker_words_are_translated() {
+        for language in Locale::ALL.iter().filter(|l| **l != Locale::En) {
+            for word in crate::date_picker::WEEKDAY_SHORT.iter().chain(&["Pick a date", "Year", "Month", "Day"]) {
+                assert!(language.catalog().contains_key(*word), "{} lacks {word:?}", language.code());
+            }
+        }
+    }
+
     /// Every command, control, rule and rename label, and every line of What's New, is a message a
     /// catalog can translate. What a language lacks is reported, not failed (like
     /// `catalogs_agree_on_placeholders_and_report_gaps`): a feature PR doesn't have to ship every
@@ -640,6 +823,7 @@ mod tests {
             labels.push(label);
             labels.extend(lightcraft_catalog::rules::ops_for(*kind).iter().map(|(_, label)| *label));
         }
+        labels.extend(lightcraft_catalog::rules::FIELD_GROUPS.iter().map(|group| group.0));
         labels.extend(lightcraft_engine::rename::TOKENS.iter().map(|token| token.meaning));
         labels.extend(lightcraft_engine::rename::TEMPLATE_NOTES);
         let ui_labels = labels.len();
@@ -703,7 +887,32 @@ mod tests {
             mode: lightcraft_catalog::Match::All,
             rules: vec![lightcraft_catalog::Rule::Field { field: "keywords".into(), op: "contains".into(), value: serde_json::json!("Color") }],
         };
-        assert_eq!(rules_label(&rules), "Stichwörter enthält Color");
+        let mut catalog = lightcraft_catalog::Catalog::new();
+        catalog
+            .apply(lightcraft_catalog::Op::AddAlbum { album: lightcraft_catalog::Album::new(lightcraft_catalog::AlbumId(4), "Ausgeschlossen") })
+            .unwrap();
+        assert_eq!(rules_label(&rules, &catalog), "Stichwörter enthält Color");
+        let album = lightcraft_catalog::RuleSet {
+            mode: lightcraft_catalog::Match::All,
+            rules: vec![lightcraft_catalog::Rule::Field { field: "album".into(), op: "isNot".into(), value: serde_json::json!(4) }],
+        };
+        assert!(rules_label(&album, &catalog).ends_with(" “Ausgeschlossen”"), "{}", rules_label(&album, &catalog));
+        let rules = lightcraft_catalog::RuleSet {
+            mode: lightcraft_catalog::Match::All,
+            rules: vec![lightcraft_catalog::Rule::Field {
+                field: "copyrightStatus".into(),
+                op: "is".into(),
+                value: serde_json::json!("publicDomain"),
+            }],
+        };
+        assert!(rules_label(&rules, &catalog).ends_with(" Gemeinfrei"), "{}", rules_label(&rules, &catalog));
+        for value in [serde_json::json!(false), serde_json::json!("false")] {
+            let rules = lightcraft_catalog::RuleSet {
+                mode: lightcraft_catalog::Match::All,
+                rules: vec![lightcraft_catalog::Rule::Field { field: "edited".into(), op: "is".into(), value }],
+            };
+            assert!(rules_label(&rules, &catalog).ends_with(" Nein"), "{}", rules_label(&rules, &catalog));
+        }
         let filter = lightcraft_catalog::Filter {
             labels: vec![lightcraft_catalog::ColorLabel::Red, lightcraft_catalog::ColorLabel::Blue],
             ..Default::default()

@@ -63,6 +63,11 @@ pub const WHATS_NEW: &str = include_str!("../../../../docs/whats-new.md");
 pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let Some(mut dlg) = app.ui.dialog.clone() else { return };
     let at_start = dlg.clone();
+    // Esc with a popup open in the dialog (a dropdown, a date picker's calendar) closes the popup
+    // only: claimed before the dialog is drawn, since the popup is gone once it has handled the key
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && egui::Popup::is_any_open(ctx) {
+        crate::widgets::take_escape(ctx);
+    }
     let t = Tokens::get(ctx);
     let screen = ctx.content_rect();
     // The backdrop is an area below the dialog window (a bare `Middle` layer painter would be
@@ -242,22 +247,25 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
                     crate::widgets::register(ui.ctx(), "field:smartName", r.rect);
                     ui.add_space(6.0);
-                    egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
-                        crate::panels::rules_editor::edit(ui, rules, "rules", 0);
-                    });
-                    let problems = rules.problems();
                     // the folder an album made from a folder view carries is not in the editor, but it counts
                     let folder = id.and_then(|id| app.session.catalog.album(lightcraft_catalog::AlbumId(id))).and_then(|a| a.smart.as_deref().and_then(|f| f.library_folder.clone()));
-                    let f = lightcraft_catalog::Filter { rule_set: Some(rules.clone()), library_folder: folder, ..Default::default() };
-                    let n = if problems.is_empty() { app.session.catalog.query(&f, &Default::default()).len() } else { 0 };
+                    // problems, count and albums: cached until the catalog or the rules change (not per frame)
+                    let now = (app.session.clock)();
+                    let view = app.caches.rules_view(&app.session.catalog, rules, *id, folder, &now);
+                    let env = crate::panels::rules_editor::Env { problems: view.problems.clone(), today: now, albums: view.albums.clone() };
+                    egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
+                        crate::panels::rules_editor::edit(ui, rules, "rules", 0, &[], &env);
+                    });
+                    let n = view.count;
                     ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new(match problems.first() {
-                            Some(p) => p.clone(),
-                            None => crate::i18n::tr_format!("{n} photo{} match · updates automatically as photos change", if n == 1 { "" } else { "s" }, n = n),
-                        })
-                        .color(t.text_dim),
-                    );
+                    if view.problems.is_empty() {
+                        ui.label(
+                            egui::RichText::new(crate::i18n::tr_format!("{n} photo{} match · updates automatically as photos change", if n == 1 { "" } else { "s" }, n = n))
+                                .color(t.text_dim),
+                        );
+                    } else {
+                        ui.label(egui::RichText::new(crate::i18n::tr("Fix the marked rules to save this album.")).color(t.caution));
+                    }
                 }
                 Dialog::NewSmartAlbum { name, .. } => {
                     let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
@@ -836,7 +844,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     _ => "OK",
                 };
                 // installing waits for the licence to be accepted
-                let can_confirm = informational || !matches!(&dlg, Dialog::DenoiseModel { accepted: false, .. } | Dialog::FaceModel { accepted: false, .. });
+                let can_confirm = informational
+                    || !matches!(&dlg, Dialog::DenoiseModel { accepted: false, .. } | Dialog::FaceModel { accepted: false, .. })
+                        // smart-album rules that can't mean anything wait to be fixed
+                        && !matches!(&dlg, Dialog::SmartRules { id, rules, .. } if !rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)).is_empty());
                 let r = (!ok.is_empty()).then(|| ui.add_enabled(can_confirm, egui::Button::new(crate::i18n::tr(ok))));
                 if let Some(r) = &r {
                     crate::widgets::register(ui.ctx(), "button:dialogOk", r.rect);
@@ -857,8 +868,9 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         ctx.move_to_top(w.response.layer_id);
         crate::widgets::register(ctx, "dialog:window", w.response.rect);
     }
-    // (while the shortcuts editor records a key, it takes Esc itself to cancel)
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    // (while the shortcuts editor records a key, it takes Esc itself to cancel; an open popup in
+    // the dialog, such as a date picker's calendar, takes it to close itself)
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !crate::widgets::escape_taken(ctx) {
         close = true;
     }
     if confirm {
@@ -1019,6 +1031,17 @@ fn created_in(app: &mut LightcraftApp, command: &str, params: serde_json::Value)
     Ok(r)
 }
 
+/// The albums an Album rule in smart album `editing` picks from, in the sidebar's order: the album
+/// itself and any smart album that tests it (testing it back would loop) are blocked, with why.
+pub(crate) fn album_entries(cat: &lightcraft_catalog::Catalog, editing: Option<u64>) -> Vec<crate::album_picker::AlbumEntry> {
+    let editing = editing.map(lightcraft_catalog::AlbumId);
+    crate::album_picker::entries_from(cat, |a| match editing {
+        Some(e) if a.id == e => Some(crate::i18n::tr("This is the album you're editing").to_string()),
+        Some(e) if cat.album_reaches(a.id, e) => Some(crate::i18n::tr("It tests this album, so testing it back would loop").to_string()),
+        _ => None,
+    })
+}
+
 pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_json::Value, String> {
     match dlg {
         Dialog::SamModel { then, .. } => {
@@ -1078,14 +1101,14 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             app.run("photo.analyze", p)
         }
         Dialog::SmartRules { id, name, rules, parent } => {
+            // refused before anything changes (not even the name)
+            if let Some(problem) = rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)).first() {
+                return Err(problem.to_string());
+            }
             let name = if name.trim().is_empty() { "Smart Album".to_string() } else { name.trim().to_string() };
             match id {
-                Some(id) => {
-                    if app.session.catalog.album(lightcraft_catalog::AlbumId(*id)).is_some_and(|a| a.name != name) {
-                        app.run("album.rename", json!({"id": id, "name": name}))?;
-                    }
-                    app.run("album.setRules", json!({"id": id, "replace": true, "rules": {"ruleSet": rules}}))
-                }
+                // the name and the rules together: one undo step, both or neither
+                Some(id) => app.run("album.setRules", json!({"id": id, "name": name, "replace": true, "rules": {"ruleSet": rules}})),
                 None => created_in(app, "album.createSmart", json!({"name": name, "rules": {"ruleSet": rules}, "parent": parent})),
             }
         }
