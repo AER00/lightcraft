@@ -113,9 +113,10 @@ fn albums_crud() {
     s.execute("library.selectAll", &json!({})).unwrap();
     s.execute("album.addPhotos", &json!({"id": a})).unwrap();
     assert_eq!(s.catalog.album(lightcraft_catalog::AlbumId(a)).unwrap().photos.len(), 24);
-    assert!(s.execute("album.delete", &json!({"id": f})).is_err(), "non-empty folder");
-    s.execute("album.delete", &json!({"id": a})).unwrap();
     s.execute("album.delete", &json!({"id": f})).unwrap();
+    assert!(s.catalog.album(lightcraft_catalog::AlbumId(a)).is_none());
+    assert!(s.catalog.album(lightcraft_catalog::AlbumId(f)).is_none());
+    assert_eq!(s.catalog.photos().count(), 24, "album deletion keeps the photos");
 }
 
 /// Given an album and a folder, when something is created inside each, then only the folder
