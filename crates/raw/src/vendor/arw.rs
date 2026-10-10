@@ -64,10 +64,6 @@ pub(crate) fn dynamic_range_optimizer(note: &makernote::MakerNote) -> Option<boo
         _ => None,
     }
 }
-/// Maker-note `FileFormat` (ExifTool Sony tag names): `1 0 0 0` is SR2, `2 0 0 0` ARW 1.0, `3 …` and later ARW 2.x+.
-/// The DSC-R1's SR2 stores 16-bit samples that are spread uniformly over 2–65340 (median ~33000, three quarters
-/// above any white level): encrypted, so it is refused and opens from its preview instead of decoding to noise.
-const MN_FILE_FORMAT: u16 = 0xb000;
 
 /// Inverse of Sony's maker-note byte substitution. ExifTool's Sony tag documentation states that the data of
 /// tags `0x2010`, `0x9050` and `0x94xx` "is encrypted by a simple substitution cipher" (no decoder source was
@@ -494,13 +490,6 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
     let raw = raw_ifd(&tiff).ok_or_else(|| RawError::Unsupported("ARW without a CFA image IFD (old ARW or SR2)".into()))?;
-    let mn = tiff
-        .exif()
-        .and_then(|e| e.get(t::MAKER_NOTE))
-        .and_then(|e| makernote::parse_makernote(bytes, e.offset, e.count() as u64, tiff.order, &ifd0.string(t::MAKE).unwrap_or_default()));
-    if mn.as_ref().and_then(|m| m.ifd.u64s(MN_FILE_FORMAT)).as_deref() == Some(&[1, 0, 0, 0]) {
-        return Err(RawError::Unsupported("Sony SR2 (DSC-R1): the raw data is encrypted, not decoded yet".into()));
-    }
     let info = raw.image()?;
     let (w, h) = (info.width as usize, info.height as usize);
     if w * h > crate::MAX_SAMPLES {
@@ -579,6 +568,10 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         raw.f64(t::WHITE_LEVEL).map(|v| v as f32).filter(|v| *v > 0.0).unwrap_or_else(|| super::white_from_data(samples, scale_bits))
     };
     let model = ifd0.string(t::MODEL).unwrap_or_default();
+    let mn = tiff
+        .exif()
+        .and_then(|e| e.get(t::MAKER_NOTE))
+        .and_then(|e| makernote::parse_makernote(bytes, e.offset, e.count() as u64, tiff.order, &ifd0.string(t::MAKE).unwrap_or_default()));
     let wb = raw
         .f64s(WB_RGGB)
         .and_then(|v| rggb_gains(&v))
@@ -676,44 +669,6 @@ mod tests {
         assert_eq!(recorded_size_crop((0, 2832), None, 4288, 2848), None);
         assert_eq!(recorded_size_crop((u64::MAX, u64::MAX), Some((u64::MAX, 1)), 4288, 2848), None);
         assert_eq!(recorded_size_crop((4240, 2832), Some((4240, 0)), 4288, 2848), Some(Rect::new(0, 0, 4240, 2832)));
-    }
-
-    /// A Sony CFA file whose maker note carries only `FileFormat` (tag 0xb000) = `format`.
-    fn sony_with_file_format(format: [u8; 4]) -> Vec<u8> {
-        use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value};
-        // Sony maker note: 12-byte header, then an IFD (one entry whose 4-byte value is stored inline)
-        let mut note = b"SONY DSC \0\0\0".to_vec();
-        note.extend(1u16.to_le_bytes());
-        note.extend(MN_FILE_FORMAT.to_le_bytes());
-        note.extend(1u16.to_le_bytes()); // BYTE
-        note.extend(4u32.to_le_bytes());
-        note.extend(format);
-        note.extend(0u32.to_le_bytes());
-        let mut exif = IfdBuilder::new();
-        exif.set(t::MAKER_NOTE, Value::Undefined(note));
-        let mut raw = IfdBuilder::new();
-        raw.set(t::MAKE, Value::Ascii("SONY".into()));
-        raw.set(t::MODEL, Value::Ascii("DSC-R1".into()));
-        raw.set(t::IMAGE_WIDTH, Value::Long(vec![8]));
-        raw.set(t::IMAGE_LENGTH, Value::Long(vec![4]));
-        raw.set(t::BITS_PER_SAMPLE, Value::Short(vec![14]));
-        raw.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
-        raw.set(t::PHOTOMETRIC, Value::Short(vec![photometric::CFA]));
-        raw.set(t::COMPRESSION, Value::Short(vec![1]));
-        raw.set_child(t::EXIF_IFD, exif);
-        raw.set_image(ImageData::Strips { rows_per_strip: 4, strips: vec![vec![0x10u8; 8 * 4 * 2]] });
-        TiffWriter::default().write(&[raw]).unwrap()
-    }
-
-    #[test]
-    fn sr2_is_refused_not_decoded_as_noise() {
-        for mode in [Mode::Header, Mode::Full] {
-            let err = decode(&sony_with_file_format([1, 0, 0, 0]), mode).unwrap_err();
-            assert!(matches!(err, RawError::Unsupported(ref m) if m.contains("SR2")), "{mode:?}: {err:?}");
-            // the same file as an ARW 2.x decodes
-            let ok = decode(&sony_with_file_format([3, 0, 0, 0]), mode);
-            assert!(ok.is_ok(), "{mode:?}: {ok:?}");
-        }
     }
 
     /// A 32767-compressed ARW whose single strip is `strip` bytes for a 32 x 4 image.
