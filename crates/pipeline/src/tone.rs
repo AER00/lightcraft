@@ -35,7 +35,7 @@ pub const BASE_WHITE_EV: f32 = 1.30;
 
 /// The display value Contrast pivots about (measured; the per-value fits agree to 0.05 over
 /// twenty-four bodies, and it does not move with the slider).
-const CONTRAST_PIVOT: f32 = 0.4934;
+const CONTRAST_PIVOT: f32 = 0.4700;
 
 /// The Contrast slider's exponent is exponential in the slider: `g = exp(-this · contrast)`.
 ///
@@ -70,6 +70,11 @@ fn contrast_g(contrast: f64) -> f32 {
 
 /// Apply Contrast to a display-*linear* value: an odd-symmetric power about [`CONTRAST_PIVOT`] in
 /// the encoded domain, mirrored to both sides of it.
+///
+/// The pivot is measured against the owner's seventeen default-path DNGs rather than taken from
+/// the exponent fit that produced the 0.4934 it replaced, whose own scatter is +-0.05: searching it
+/// against the reference's transfer puts the optimum at 0.47, and per file that is 12 of 17 better
+/// at -100 (-0.29 dE) and 12 of 17 at +100 (-0.21), even at +-50 and no notch worse.
 ///
 /// The pivot is in encoded units because that is where the reference's Contrast acts; taking the
 /// value there and coming back is the same round trip [`whites_display`] makes, and for the same
