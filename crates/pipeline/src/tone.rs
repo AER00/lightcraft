@@ -202,27 +202,6 @@ pub const LUT_N: usize = 4096;
 pub const CHROMA_N: usize = 8;
 const NO_CHROMA: [f32; CHROMA_N] = [1.0; CHROMA_N];
 
-/// Colourfulness of the default raw rendering relative to a purely luminance-preserving tone map,
-/// by display luminance (0, 1/7 … 1).
-///
-/// [`ToneMap::new`] curves luminance and rescales the colour with it, which preserves saturation
-/// exactly. The reference developer's default rendering does not: its baseline curve acts on the
-/// channels, which saturates the shadows and bleaches the highlights toward white. Left out, an
-/// otherwise-correct raw render came out ~19 % under the reference in chroma (mean ΔE 6.3 against
-/// 3.4), flat rather than punchy.
-///
-/// Multiplying the colour back about the mapped luminance by these factors restores that behaviour
-/// without the hue shifts and channel clipping a per-channel curve brings. Derived by measurement:
-/// for every pixel of five Adobe Standard raws, the colourfulness the per-channel curve gives
-/// against the colourfulness the luminance curve gives, averaged into these eight bins (the five
-/// images agree to within a few percent of each other, so this is a property of the curve, not of a
-/// photo). They are why [`ToneMap::new`] is punchy in the shadows and clean in the highlights.
-///
-/// A camera's own [`CameraTone`] curve carries its own chroma curve, fitted alongside it. A DNG
-/// `ProfileToneCurve` has no such fit — it *is* the reference's curve — so it takes these factors
-/// too, for the same reason: on its own the luminance curve renders the file flat.
-pub const DEFAULT_CHROMA: [f32; CHROMA_N] = [1.431, 1.308, 1.164, 1.040, 0.955, 0.778, 0.593, 0.400];
-
 /// A file-local camera look, fitted independently of the scene-linear colour transform.
 /// Knots are scene/display-linear luminance pairs. Keeping this in the finish stage preserves
 /// RAW exposure and highlight headroom; it is never baked into the decoded sensor pixels.
@@ -533,8 +512,8 @@ impl ToneMap {
     /// the channels, so a bright colour desaturates as its channels clip one by one. Across twelve
     /// bodies, whole-render ΔE against Lightroom falls from 3.49 to 3.13 at neutral and from 9.36
     /// to 7.65 at Whites +100 (chroma there 0.70 → 0.88), with 8 and 10 of the twelve better. The
-    /// default curve therefore also carries no chroma curve: `DEFAULT_CHROMA` existed to put back
-    /// the saturation that mapping luminance had thrown away.
+    /// default curve therefore carries no chroma curve: a chroma curve existed to put back the
+    /// saturation that mapping luminance had thrown away.
     ///
     /// A camera look does *not*: it is a per-file fit of the whole image, so it stays on luminance.
     /// Forcing it per channel was measured too and is clearly worse — the same split, for the same
