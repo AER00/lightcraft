@@ -405,16 +405,27 @@ pub struct ToneMap {
 impl ToneMap {
     /// **V1's** camera-look tone map, frozen: the camera curve composed with the display-domain
     /// adjustment ([`ToneMap::display`]) that owned Contrast, Whites *and* Blacks before V2 gave
-    /// them their own measured models. [`ToneMap::camera_scaled`] is the V2 rendering; the base
-    /// curve, the Blacks curve and the per-photo Whites scale all differ (see [`super::finish::base_tone`]).
+    /// them their own measured models. The base curve, the Blacks curve and the per-photo Whites
+    /// scale all differ in [`ToneMap::camera_scaled`] (see [`super::finish::base_tone`]).
     pub fn camera_v1(curve: &CameraTone, contrast: f64, whites: f64, blacks: f64) -> ToneMap {
+        ToneMap::camera_hdr(curve, contrast, whites, blacks, 1.0)
+    }
+
+    /// [`ToneMap::camera_v1`] for an HDR render reaching `peak` (linear, SDR white = 1; 1 = SDR
+    /// exactly): the camera's look up to 1.5 EV over grey, so midtones match the SDR render (and a
+    /// gain map only lifts highlights), then the highlights gain up to `peak − 1` more as in
+    /// [`ToneMap::hdr_v1`].
+    pub fn camera_hdr(curve: &CameraTone, contrast: f64, whites: f64, blacks: f64, peak: f32) -> ToneMap {
+        let peak = if peak.is_finite() { peak.max(1.0) } else { 1.0 };
         let adjustment = Self::display(contrast, whites, blacks);
         let neutral = contrast == 0.0 && whites == 0.0 && blacks == 0.0;
+        let top = (2.9 - 1.6 * (whites as f32 / 100.0) + peak.log2() + 1.0).max(HDR_FROM_EV + 0.5);
         let lut = (0..LUT_N)
             .map(|i| {
                 let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
                 let y = curve.apply(GREY * 2f32.powf(ev));
-                if neutral { y } else { adjustment.apply(y) }
+                let o = if neutral { y } else { adjustment.apply(y) };
+                if peak > 1.0 { (o + (peak - 1.0) * smooth(HDR_FROM_EV, top, ev)).clamp(0.0, peak) } else { o }
             })
             .collect();
         ToneMap { lut, chroma: curve.chroma, per_channel: false }
@@ -466,6 +477,14 @@ impl ToneMap {
 
     /// [`ToneMap::camera`] with the per-photo positive-Whites scale ([`whites_scale`]) applied.
     pub fn camera_scaled(curve: &CameraTone, contrast: f64, whites: f64, whites_scale: f32) -> ToneMap {
+        Self::camera_scaled_hdr(curve, contrast, whites, 1.0, whites_scale)
+    }
+
+    /// [`ToneMap::camera_scaled`] for an HDR render reaching `peak`: the measured model through the
+    /// midtones and the camera's highlights lifted past white, the way V1's [`ToneMap::camera_hdr`]
+    /// lifts them, so an HDR render keeps the file's own camera look.
+    pub fn camera_scaled_hdr(curve: &CameraTone, contrast: f64, whites: f64, peak: f32, whites_scale: f32) -> ToneMap {
+        let peak = if peak.is_finite() { peak.max(1.0) } else { 1.0 };
         // Whites is the measured scene-domain move of the white point and the log-slope (see
         // [`WHITES_KNOTS`]), applied here over the camera curve's output as the display→display map
         // that move is equivalent to — see [`whites_display`]. This used to route Whites through
@@ -475,12 +494,17 @@ impl ToneMap {
         let g = contrast_g(contrast);
         let dew = whites_ev_scaled(whites, whites_scale);
         let neutral = g == 1.0 && dew == 0.0;
+        let top = (BASE_WHITE_EV - dew + peak.log2() + 1.0).max(HDR_FROM_EV + 0.5);
         let lut = (0..LUT_N)
             .map(|i| {
                 let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
                 let y = curve.apply(GREY * 2f32.powf(ev));
                 let y = if neutral { y } else { contrast_display(y, g) };
-                whites_display(y, dew)
+                let mut o = whites_display(y, dew);
+                if peak > 1.0 {
+                    o = (o + (peak - 1.0) * smooth(HDR_FROM_EV, top, ev)).clamp(0.0, peak);
+                }
+                o
             })
             .collect();
         ToneMap { lut, chroma: curve.chroma, per_channel: false }
@@ -788,6 +812,33 @@ mod tests {
         }
         // a broken peak falls back to SDR
         assert_eq!(ToneMap::hdr(0.0, 0.0, f32::NAN).lut(), ToneMap::new(0.0, 0.0).lut());
+    }
+
+    #[test]
+    fn camera_hdr_keeps_the_camera_look_and_lifts_highlights() {
+        let curve = CameraTone::new(knots()).unwrap().with_chroma([1.2, 1.1, 1.0, 1.0, 0.9, 0.8, 0.7, 0.6]).unwrap();
+        for (c, w, b) in [(0.0, 0.0, 0.0), (40.0, -30.0, -20.0)] {
+            let sdr = ToneMap::camera_v1(&curve, c, w, b);
+            assert_eq!(ToneMap::camera_hdr(&curve, c, w, b, 1.0).lut(), sdr.lut());
+            assert_eq!(ToneMap::camera_hdr(&curve, c, w, b, f32::NAN).lut(), sdr.lut());
+            for peak in [2.0f32, 8.0] {
+                let t = ToneMap::camera_hdr(&curve, c, w, b, peak);
+                assert_eq!(t.chroma_lut(), sdr.chroma_lut());
+                let mut prev = -1.0;
+                for i in 0..2400 {
+                    let y = 1e-5 * 1.01f32.powi(i);
+                    let o = t.apply(y);
+                    assert!((0.0..=peak).contains(&o), "{peak} at {y}: {o}");
+                    assert!(o >= prev - 1e-6, "{peak} at {y}: {o} < {prev}");
+                    prev = o;
+                    // the camera's midtones, not the generic HDR curve's (issue: dark HDR exports)
+                    if y <= GREY * 2f32.powf(HDR_FROM_EV - 0.01) {
+                        assert!((o - sdr.apply(y)).abs() < 1e-6, "midtones differ at {y}: {o} vs {}", sdr.apply(y));
+                    }
+                }
+                assert!(t.apply(4.0) > 1.0 && t.apply(4.0) > sdr.apply(4.0) + 0.5, "{peak}: highlights lifted");
+            }
+        }
     }
 
     #[test]

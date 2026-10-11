@@ -7,13 +7,19 @@ stronger Light sliders, issue #196) without changing a single photo someone has 
 
 * **V1** — LightCraft's rendering from before process versions existed. Frozen: no change lands in
   it, so a photo on V1 renders today exactly as it did when process versions arrived.
-* **V2** — the measured rendering (2026-10). The default raw tone curve, the Blacks and Whites
-  sliders and the raw curve's per-channel application are fitted to the reference raw developer's
-  observed output rather than inherited from a neutral log-slope; positive Whites is per-photo (see
-  `crates/pipeline/src/tone.rs`). The Highlights/Shadows base and the sharpening land in the **same**
-  process, so a photo that updates to V2 gets the whole measured look in one step; because a photo
-  can sit on V2 between two merges, the pieces must reach `main` together. It is `LATEST`, so new
-  photos and Reset get it, and existing photos keep V1 until Update to Current Process.
+* **V2** — the measured rendering (2026-10), shipped as one batch. **Highlights and Shadows** keep
+  the local contrast of the tones they move (issue #632): their base layer (`local::tone_base`) is the
+  edge-aware filter of a separable median of log luminance (radius 0.15 % of the long edge, at most
+  24 px, `local::BASE_DETAIL`) instead of log luminance itself, so twigs, lines and texture take their
+  surroundings' shift and keep their contrast; region edges stay sharp. CPU (`local::prepare`) and GPU
+  prepare branch on `local::tone_base_detail` (0 = no median under V1); the base plane is cached per
+  process (`local::BaseKey`). Renders without Highlights or Shadows (global or local) are the same as
+  V1's. **The tone model** — the default raw tone curve, the Blacks and Whites sliders and the raw
+  curve's per-channel application are fitted to the reference raw developer's observed output rather
+  than inherited from a neutral log-slope; positive Whites is per-photo (see
+  `crates/pipeline/src/tone.rs`). A photo that updates to V2 gets the whole measured look in one step,
+  so the pieces must reach `main` together. It is `LATEST`, so new photos and Reset get it, and
+  existing photos keep V1 until Update to Current Process.
 
 ## Where the numbers come from
 
@@ -60,7 +66,7 @@ because a clean-room fit is only defensible if the thing it was fitted from is o
    passing: settings saved without the field must stay V1, not become the new latest. That is the
    field's `#[serde(default = "ProcessVersion::legacy")]`; the struct-level `Default` gives new
    settings the latest instead.
-4. Render a few procedural scenes on both processes and compare, and update `docs/parity.md`.
+4. Render a few procedural scenes on both processes and compare, and update `docs/parity-checklist.md`.
 
 ## What gets which process
 

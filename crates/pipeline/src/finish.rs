@@ -281,27 +281,29 @@ impl FinishParams {
 /// #146) is a new [`Process`] with its own arm here, and V1's arm stays as it is, so photos edited
 /// under V1 keep their look (`docs/process-versions.md`). CPU and GPU both take it from here.
 /// `peak` is the HDR render's peak relative to SDR white ([`lightcraft_develop::Hdr::peak`]); at 1.0 (SDR)
-/// every arm is the SDR tone map. The camera's look is bounded at white, so HDR renders use the HDR tone map.
+/// every arm is the SDR tone map. An HDR render keeps the camera's look through the midtones and
+/// lifts its highlights past white ([`ToneMap::camera_scaled_hdr`]), so it matches the SDR render below them.
 ///
 /// The arms differ only in the raw tone model: both render a display-referred source (a JPEG) with
-/// [`ToneMap::display_hdr`], which is where Blacks still lives for those. The three V2 constants,
-/// the per-channel application and the per-photo Whites scale are described in `tone.rs`.
+/// [`ToneMap::display_hdr`], which is where Blacks still lives for those. The V2 constants, the
+/// per-channel application and the per-photo Whites scale are described in `tone.rs`.
 pub fn base_tone(s: &DevelopSettings, info: &SourceInfo, peak: f32, whites_scale: f32) -> ToneMap {
     let l = &s.light;
     match s.process.process() {
         // V1 (frozen): a neutral base curve, Whites as a display-domain lift, Blacks as the toe of
-        // the tone map. `tone::ToneMap::{camera_v1, hdr_v1}`.
-        Process::V1 => match info.camera_tone.as_ref().filter(|_| info.raw && peak <= 1.0) {
-            Some(curve) => ToneMap::camera_v1(curve, l.contrast, l.whites, l.blacks),
+        // the tone map. `tone::ToneMap::{camera_hdr, hdr_v1}`.
+        Process::V1 => match info.camera_tone.as_ref().filter(|_| info.raw) {
+            Some(curve) => ToneMap::camera_hdr(curve, l.contrast, l.whites, l.blacks, peak),
             None if info.raw => ToneMap::hdr_v1(l.contrast, l.whites, l.blacks, peak),
             None => ToneMap::display_hdr(l.contrast, l.whites, l.blacks, peak),
         },
         // V2: the model measured against the reference's observed output (see `tone.rs`). Blacks
         // is no longer part of the curve -- it is the separate curve `FinishParams::blacks` runs
         // after it. Positive Whites is per-photo, whichever curve carries the file's tone, so the
-        // scale goes to the raw arms and not only the default one.
-        Process::V2 => match info.camera_tone.as_ref().filter(|_| info.raw && peak <= 1.0) {
-            Some(curve) => ToneMap::camera_scaled(curve, l.contrast, l.whites, whites_scale),
+        // scale goes to the raw arms and not only the default one. V2 also carries #632's
+        // Highlights/Shadows base, which lives in `local::tone_base`, not here.
+        Process::V2 => match info.camera_tone.as_ref().filter(|_| info.raw) {
+            Some(curve) => ToneMap::camera_scaled_hdr(curve, l.contrast, l.whites, peak, whites_scale),
             None if info.raw => ToneMap::hdr_scaled(l.contrast, l.whites, peak, whites_scale),
             None => ToneMap::display_hdr(l.contrast, l.whites, l.blacks, peak),
         },
@@ -629,6 +631,13 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             // soft proofing maps into the proof space first and shows that in the output space
             let mut warn = None;
             let mut r = match &fp.proof {
+                Some(pp) if pp.table.is_some() => {
+                    let (q, dist) = pp.table.as_ref().map_or((d, 0.0), |t| t.sample(d));
+                    if pp.dest_warning && dist > crate::output::PROOF_GAMUT_TOLERANCE {
+                        warn = Some(crate::output::PROOF_DEST_WARNING);
+                    }
+                    mul3(to_out, q)
+                }
                 Some(pp) => {
                     let q0 = mul3(&pp.to_proof, d);
                     let (q, t) = gamut_map_to(q0, pp.luma, peak);
@@ -640,7 +649,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 None => mul3(to_out, d),
             };
             let (mapped, t) = gamut_map_to(r, *out_luma, peak);
-            if fp.proof.is_some_and(|pp| pp.display_warning) && warn.is_none() && out_of_gamut(r, t) {
+            if fp.proof.as_ref().is_some_and(|pp| pp.display_warning) && warn.is_none() && out_of_gamut(r, t) {
                 warn = Some(crate::output::PROOF_DISPLAY_WARNING);
             }
             r = mapped;
