@@ -517,6 +517,13 @@ fn stored_process_numbers_render_with_a_known_process() {
                 assert!(out(&legacy(&s)) == v1, "saved before process versions: rendered as V1");
                 let latest = out(&with(&s, Process::LATEST.version()));
                 assert!(out(&with(&s, ProcessVersion(Process::LATEST.version().0 + 7))) == latest, "newer than this build: as the latest");
+                // The process version is load-bearing: V2's measured tone model renders a raw
+                // differently from V1's frozen one, so the arm cannot be collapsed by accident.
+                // Both arms share `ToneMap::display_hdr` for a rendered source, and V1's
+                // display-domain adjustment is the identity at neutral, so a camera-tone raw at
+                // neutral coincides as well -- that pair alone is allowed to match.
+                let alike = !info.raw || (info.camera_tone.is_some() && s.is_unedited());
+                assert_eq!(v1 == latest, alike, "V1 and V2 on a raw with toned={}", info.camera_tone.is_some());
             }
         }
     }

@@ -523,7 +523,7 @@ fn matte_kind(name: &str) -> Option<lightcraft_pipeline::masks::MatteKind> {
 ///
 /// The curve carries **no chroma curve**. It is the file's own and acts on the reference's
 /// *channels*, so mapping luminance here does lose colourfulness the reference keeps — but both
-/// ways of putting it back overshoot on measured files. On the owner's `ProfileToneCurve` DNGs at
+/// ways of putting it back overshoot on measured files. On `ProfileToneCurve` DNGs at neutral
 /// neutral (Adobe Standard, 1200 px) the bare luminance map reads ΔE 5.5 and 4.9; compositing the
 /// default curve's chroma curve over it reads 7.8 and 7.9, and applying the curve per channel
 /// instead reads 7.9 and 8.4. The reference sits *under* a luminance map on these files, so the
@@ -1000,7 +1000,7 @@ mod tests {
         // The profile curve is the reference's own and acts on its channels, but this path maps
         // luminance, and every chroma curve we can put back over it overshoots the reference on
         // measured files (see `dng_tone_curve`) — so the file's tone carries none, and it must not
-        // silently grow one again. A chroma curve here cost the owner's 00931 and 07664 1.9 and
+        // silently grow one again. A chroma curve here cost two measured files 1.9 and
         // 2.9 ΔE at neutral against Lightroom.
         assert!(tone.chroma().iter().all(|k| *k == 1.0), "camera tone has a chroma curve: {:?}", tone.chroma());
         // a look table alone changes the render too (applied after exposure)

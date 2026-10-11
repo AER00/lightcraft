@@ -79,18 +79,39 @@ impl ProcessVersion {
 /// makes the compiler point at every stage whose behaviour depends on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Process {
-    /// The rendering of LightCraft before process versions existed (2026-10).
+    /// The rendering of LightCraft before process versions existed (2026-10). Frozen.
     V1,
+    /// The measured rendering (2026-10): the tone model — the default raw tone curve, Blacks and
+    /// Whites fitted to the reference developer's observed output instead of inherited from a
+    /// neutral curve, the raw curve acting per channel and positive Whites per-photo
+    /// (`crates/pipeline/src/tone.rs`) — together with the Highlights/Shadows base and the
+    /// sharpening that land in the same batch. Shipped as one process version, so a photo that
+    /// updates to V2 gets the whole measured look in one step; the pieces must therefore land
+    /// together (`docs/process-versions.md`).
+    V2,
 }
 
 impl Process {
     /// Every process, oldest first.
-    pub const ALL: [Process; 1] = [Process::V1];
-    pub const LATEST: Process = Process::V1;
+    pub const ALL: [Process; 2] = [Process::V1, Process::V2];
+    pub const LATEST: Process = Process::V2;
 
     pub const fn version(self) -> ProcessVersion {
         match self {
             Process::V1 => ProcessVersion(1),
+            Process::V2 => ProcessVersion(2),
+        }
+    }
+
+    /// Whether this process renders the tone model measured against the reference developer's
+    /// output (V2 on): the raw tone curve acts per channel, positive Whites is per-photo, and
+    /// Blacks is a separate per-channel curve. The tone stages branch on this — `finish::base_tone`
+    /// in one exhaustive `match`, and the two places that only have a yes/no question to ask
+    /// (whether to measure the frame's highlights, whether to build the Blacks curve).
+    pub const fn is_measured_tone(self) -> bool {
+        match self {
+            Process::V1 => false,
+            Process::V2 => true,
         }
     }
 }

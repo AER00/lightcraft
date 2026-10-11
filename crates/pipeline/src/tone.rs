@@ -71,7 +71,7 @@ fn contrast_g(contrast: f64) -> f32 {
 /// Apply Contrast to a display-*linear* value: an odd-symmetric power about [`CONTRAST_PIVOT`] in
 /// the encoded domain, mirrored to both sides of it.
 ///
-/// The pivot is measured against the owner's seventeen default-path DNGs rather than taken from
+/// The pivot is measured against seventeen default-path DNGs rather than taken from
 /// the exponent fit that produced the 0.4934 it replaced, whose own scatter is +-0.05: searching it
 /// against the reference's transfer puts the optimum at 0.47, and per file that is 12 of 17 better
 /// at -100 (-0.29 dE) and 12 of 17 at +100 (-0.21), even at +-50 and no notch worse.
@@ -106,7 +106,7 @@ fn contrast_display(o: f32, g: f32) -> f32 {
 ///
 /// The positive arm is 1.3x what the family fit gives. That fit was made on the ten-body corpus and
 /// the extra was declined as "as likely to be profile error on unusual bodies as the reference's
-/// true level"; measured again on the owner's own seventeen DNGs, where the profile is not in
+/// true level"; measured again on the same seventeen DNGs, where the camera profile is not in
 /// question, the same 1.25–1.3 falls out of the transfer directly — the reference moves the
 /// midtones further than the family does. Taking it cuts the transfer error at +100 from 0.054 to
 /// 0.038 encoded and the whole-render dE against Lightroom from 8.16 to 6.71, with the midtone
@@ -403,6 +403,63 @@ pub struct ToneMap {
 }
 
 impl ToneMap {
+    /// **V1's** camera-look tone map, frozen: the camera curve composed with the display-domain
+    /// adjustment ([`ToneMap::display`]) that owned Contrast, Whites *and* Blacks before V2 gave
+    /// them their own measured models. [`ToneMap::camera_scaled`] is the V2 rendering; the base
+    /// curve, the Blacks curve and the per-photo Whites scale all differ (see [`super::finish::base_tone`]).
+    pub fn camera_v1(curve: &CameraTone, contrast: f64, whites: f64, blacks: f64) -> ToneMap {
+        let adjustment = Self::display(contrast, whites, blacks);
+        let neutral = contrast == 0.0 && whites == 0.0 && blacks == 0.0;
+        let lut = (0..LUT_N)
+            .map(|i| {
+                let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
+                let y = curve.apply(GREY * 2f32.powf(ev));
+                if neutral { y } else { adjustment.apply(y) }
+            })
+            .collect();
+        ToneMap { lut, chroma: curve.chroma, per_channel: false }
+    }
+
+    /// **V1's** default-raw tone map, frozen: a neutral log-slope of 1 about grey, an extended
+    /// Reinhard shoulder and Blacks as a toe inside the curve. [`ToneMap::hdr_scaled`] is the V2
+    /// rendering. Only ever built for V1 photos; see [`super::finish::base_tone`].
+    pub fn hdr_v1(contrast: f64, whites: f64, blacks: f64, peak: f32) -> ToneMap {
+        let peak = if peak.is_finite() { peak.max(1.0) } else { 1.0 };
+        let c = (contrast / 100.0) as f32;
+        let slope = if c >= 0.0 { 1.0 + 0.55 * c } else { 1.0 + 0.4 * c };
+        // White point: scene luminance (after contrast) that maps to display 1.0.
+        let white_ev = 2.9 - 1.6 * (whites as f32 / 100.0);
+        let wl = GREY * 2f32.powf(white_ev);
+        let pre = 1.0 + GREY / wl; // keep grey near grey
+        let b = (blacks / 100.0) as f32;
+        let lut = (0..LUT_N)
+            .map(|i| {
+                let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
+                let y = GREY * 2f32.powf(ev * slope) * pre;
+                // extended Reinhard with white point wl: y(1 + y/wl²)/(1 + y)
+                let mut o = y * (1.0 + y / (wl * wl)) / (1.0 + y);
+                o = o.min(1.0);
+                // Toe: blacks < 0 crushes, > 0 lifts.
+                if b < 0.0 {
+                    // Smooth max(0, o − k) (a soft knee), renormalized so 1 stays 1.
+                    let k = -b * 0.035;
+                    let e = 0.004;
+                    let soft = |v: f32| ((v - k) + ((v - k) * (v - k) + e * e).sqrt()) * 0.5;
+                    o = (soft(o) - soft(0.0)) / (soft(1.0) - soft(0.0));
+                } else if b > 0.0 {
+                    let k = b * 0.03;
+                    o = k + (1.0 - k) * o;
+                }
+                if peak > 1.0 {
+                    let top = (white_ev + peak.log2() + 1.0).max(HDR_FROM_EV + 0.5);
+                    o += (peak - 1.0) * smooth(HDR_FROM_EV, top, ev * slope);
+                }
+                o.clamp(0.0, peak)
+            })
+            .collect();
+        ToneMap { lut, chroma: NO_CHROMA, per_channel: false }
+    }
+
     pub fn camera(curve: &CameraTone, contrast: f64, whites: f64) -> ToneMap {
         Self::camera_scaled(curve, contrast, whites, 1.0)
     }
@@ -1063,5 +1120,93 @@ mod tests {
             assert!(deep.apply(y) > base.apply(y), "highlight {y}");
             assert!(flat.apply(y) < base.apply(y), "highlight {y}");
         }
+    }
+
+    // --- V1 (frozen): the rendering before the measured tone model. These are the assertions V1
+    // must keep making, whatever V2 does, so an edit to the shared helpers cannot move them.
+
+    #[test]
+    fn v1_default_curve_stays_near_grey_and_rolls_off() {
+        let t = ToneMap::hdr_v1(0.0, 0.0, 0.0, 1.0);
+        let g = t.apply(0.18);
+        assert!((0.15..0.24).contains(&g), "{g}");
+        // Reinhard shoulder: well below white at 1.0, and close to it a few stops up
+        assert!(t.apply(1.0) < 0.95 && t.apply(1.0) > 0.6);
+        assert!(t.apply(8.0) > 0.97);
+        // and it renders on luminance, not per channel (that is V2's change)
+        assert!(!t.per_channel());
+        assert!([0.0, 0.5, 1.0].iter().all(|o| t.chroma_scale(*o) == 1.0));
+    }
+
+    #[test]
+    fn v1_sliders_move_the_right_way() {
+        let base = ToneMap::hdr_v1(0.0, 0.0, 0.0, 1.0);
+        let contrast = ToneMap::hdr_v1(60.0, 0.0, 0.0, 1.0);
+        assert!(contrast.apply(0.05) < base.apply(0.05));
+        assert!(contrast.apply(0.8) > base.apply(0.8));
+        assert!(ToneMap::hdr_v1(0.0, 60.0, 0.0, 1.0).apply(0.8) > base.apply(0.8));
+        // Blacks is a toe inside V1's own curve, not the separate `Blacks` curve
+        assert!(ToneMap::hdr_v1(0.0, 0.0, -60.0, 1.0).apply(0.01) < base.apply(0.01));
+        assert!(ToneMap::hdr_v1(0.0, 0.0, 60.0, 1.0).apply(0.01) > base.apply(0.01));
+    }
+
+    #[test]
+    fn v1_curve_is_monotone_and_bounded() {
+        for (c, w, b) in [(0.0, 0.0, 0.0), (100.0, 100.0, -100.0), (-100.0, -100.0, 100.0), (50.0, -30.0, -40.0)] {
+            let t = ToneMap::hdr_v1(c, w, b, 1.0);
+            let mut prev = -1.0;
+            for i in 0..2000 {
+                let y = 1e-5 * 1.012f32.powi(i);
+                let o = t.apply(y);
+                assert!((0.0..=1.0).contains(&o));
+                assert!(o >= prev - 1e-6, "{c} {w} {b} at {y}: {o} < {prev}");
+                prev = o;
+            }
+        }
+    }
+
+    #[test]
+    fn v1_camera_curve_preserves_black_and_extends_headroom() {
+        let knots = std::array::from_fn(|i| {
+            let x = 0.005 * 1.15f32.powi(i as i32);
+            [x, 1.0 - (-3.0 * x).exp()]
+        });
+        let curve = CameraTone::new(knots).unwrap();
+        let base = ToneMap::camera_v1(&curve, 0.0, 0.0, 0.0);
+        assert_eq!(base.apply(0.0), 0.0);
+        assert!(base.apply(0.1) < base.apply(0.2));
+        let mut previous = 0.0;
+        for i in 0..2000 {
+            let y = 1e-6 * 1.01f32.powi(i);
+            let v = base.apply(y);
+            assert!((0.0..=1.0).contains(&v));
+            assert!(v >= previous - 1e-6);
+            previous = v;
+        }
+        // At neutral the camera curve is used as it is (V1's `neutral` shortcut).
+        assert!((base.apply(0.1) - curve.apply(0.1)).abs() < 0.001);
+        assert!(ToneMap::camera_v1(&curve, 50.0, 0.0, 0.0).apply(0.3) > base.apply(0.3));
+        // and it carries the curve's own chroma, not the per-channel stage
+        let colored = curve.with_chroma([1.4, 1.3, 1.1, 1.0, 0.7, 0.4, 0.25, 0.2]).unwrap();
+        let m = ToneMap::camera_v1(&colored, 0.0, 0.0, 0.0);
+        assert!((m.chroma_scale(0.0) - 1.4).abs() < 1e-6);
+        assert!(!m.per_channel());
+    }
+
+    #[test]
+    fn v2_is_not_v1() {
+        // The whole reason for the process arm: the default raw curve is a different shape, so a
+        // photo edited under V1 does not change look when the branch lands.
+        let v1 = ToneMap::hdr_v1(0.0, 0.0, 0.0, 1.0);
+        let v2 = ToneMap::new(0.0, 0.0);
+        assert!(v1.per_channel() != v2.per_channel());
+        let differs = (0..2000).any(|i| {
+            let y = 1e-4 * 1.01f32.powi(i);
+            (v1.apply(y) - v2.apply(y)).abs() > 1e-3
+        });
+        assert!(differs, "V2 must render the default raw curve differently from V1");
+        // Whites and Blacks move too: at the same setting the two arms disagree.
+        assert!((ToneMap::hdr_v1(0.0, 100.0, 0.0, 1.0).apply(0.5) - ToneMap::new(0.0, 100.0).apply(0.5)).abs() > 1e-3);
+        assert!((ToneMap::hdr_v1(0.0, 0.0, -100.0, 1.0).apply(0.05) - ToneMap::new(0.0, 0.0).apply(0.05)).abs() > 1e-3);
     }
 }

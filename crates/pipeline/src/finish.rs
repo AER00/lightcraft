@@ -153,8 +153,9 @@ pub struct FinishParams {
     /// A LUT profile and its amount (0..2), applied to the display-encoded colour.
     pub lut: Option<(std::sync::Arc<crate::lut::Lut3d>, f32)>,
     pub tone: ToneMap,
-    /// The Blacks curve, applied per channel after the tone map. Identity for display-referred
-    /// sources, where [`ToneMap::display`] still owns the Blacks slider.
+    /// The Blacks curve, applied per channel after the tone map (process V2 on). Identity for
+    /// display-referred sources, where [`ToneMap::display`] still owns the Blacks slider, and for
+    /// V1, where the toe of the tone map does.
     pub blacks: Blacks,
     pub ops: ColorOps,
     /// Calibration: primaries matrix (row-major, linear Rec.2020) and shadows tint (−1..1).
@@ -233,7 +234,7 @@ impl FinishParams {
             calib: if calibration { crate::colorops::calibration_matrix(&s.calibration) } else { None },
             shadow_tint: if calibration { (s.calibration.shadows_tint / 100.0) as f32 } else { 0.0 },
             tone: base_tone(s, info, peak, whites_scale),
-            blacks: if info.raw { Blacks::new(s.light.blacks) } else { Blacks::IDENTITY },
+            blacks: if info.raw && s.process.process().is_measured_tone() { Blacks::new(s.light.blacks) } else { Blacks::IDENTITY },
             lut: crate::lut::get(&s.profile.id).map(|l| (l, (s.profile.amount / 100.0).clamp(0.0, 2.0) as f32)),
             ops: ColorOps::new(s),
             curves: curve_luts(&s.curve),
@@ -281,12 +282,25 @@ impl FinishParams {
 /// under V1 keep their look (`docs/process-versions.md`). CPU and GPU both take it from here.
 /// `peak` is the HDR render's peak relative to SDR white ([`lightcraft_develop::Hdr::peak`]); at 1.0 (SDR)
 /// every arm is the SDR tone map. The camera's look is bounded at white, so HDR renders use the HDR tone map.
+///
+/// The arms differ only in the raw tone model: both render a display-referred source (a JPEG) with
+/// [`ToneMap::display_hdr`], which is where Blacks still lives for those. The three V2 constants,
+/// the per-channel application and the per-photo Whites scale are described in `tone.rs`.
 pub fn base_tone(s: &DevelopSettings, info: &SourceInfo, peak: f32, whites_scale: f32) -> ToneMap {
     let l = &s.light;
     match s.process.process() {
-        // Positive Whites is per-photo, whichever curve carries the file's tone (see
-        // `tone::whites_scale`) -- so the scale goes to the raw arms, not only the default one.
+        // V1 (frozen): a neutral base curve, Whites as a display-domain lift, Blacks as the toe of
+        // the tone map. `tone::ToneMap::{camera_v1, hdr_v1}`.
         Process::V1 => match info.camera_tone.as_ref().filter(|_| info.raw && peak <= 1.0) {
+            Some(curve) => ToneMap::camera_v1(curve, l.contrast, l.whites, l.blacks),
+            None if info.raw => ToneMap::hdr_v1(l.contrast, l.whites, l.blacks, peak),
+            None => ToneMap::display_hdr(l.contrast, l.whites, l.blacks, peak),
+        },
+        // V2: the model measured against the reference's observed output (see `tone.rs`). Blacks
+        // is no longer part of the curve -- it is the separate curve `FinishParams::blacks` runs
+        // after it. Positive Whites is per-photo, whichever curve carries the file's tone, so the
+        // scale goes to the raw arms and not only the default one.
+        Process::V2 => match info.camera_tone.as_ref().filter(|_| info.raw && peak <= 1.0) {
             Some(curve) => ToneMap::camera_scaled(curve, l.contrast, l.whites, whites_scale),
             None if info.raw => ToneMap::hdr_scaled(l.contrast, l.whites, peak, whites_scale),
             None => ToneMap::display_hdr(l.contrast, l.whites, l.blacks, peak),

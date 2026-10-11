@@ -121,7 +121,10 @@ walks the drive.
   `masks::brush_dabs`; exact tables (tone LUT, sRGB LUT, curve LUTs, resample taps) and the OkLab
   matrices are uploaded / generated into the WGSL prelude from the CPU values. The Blacks curve is
   the one finish-stage step passed as plain numbers rather than a table
-  (`tone::{Blacks, …}` → `F_BLACKS_T` / `_P` / `_A`), since it is two constants and a `pow`.
+  (`tone::{Blacks, …}` → `F_BLACKS_T` / `_P` / `_A`), since it is two constants and a `pow`. Whether
+  the tone map runs per channel or on luminance is likewise a flag rather than a second table
+  (`ToneMap::per_channel` → `F_PER_CHANNEL`): the raw curve is per channel and a camera look is not,
+  and the same LUT is used either way.
 - Buffers, not textures: images are `array<f32>` with the CPU's interleaved layout (RGB, 1–3
   channels), so upload / readback are plain copies of `Rgb32f` / `Plane` / `Rgba8` data.
 - Kernels (`crates/gpu/src/wgsl/`): `geom` (orientation pixel map, bilinear through the

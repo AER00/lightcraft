@@ -5,7 +5,33 @@ Every photo's develop settings record the **rendering process** they are interpr
 this the process version. It lets the look of LightCraft improve (a new default tone curve, issue #146;
 stronger Light sliders, issue #196) without changing a single photo someone has already edited.
 
-Today there is one process, **V1**: LightCraft's rendering from before process versions existed.
+* **V1** — LightCraft's rendering from before process versions existed. Frozen: no change lands in
+  it, so a photo on V1 renders today exactly as it did when process versions arrived.
+* **V2** — the measured rendering (2026-10). The default raw tone curve, the Blacks and Whites
+  sliders and the raw curve's per-channel application are fitted to the reference raw developer's
+  observed output rather than inherited from a neutral log-slope; positive Whites is per-photo (see
+  `crates/pipeline/src/tone.rs`). The Highlights/Shadows base and the sharpening land in the **same**
+  process, so a photo that updates to V2 gets the whole measured look in one step; because a photo
+  can sit on V2 between two merges, the pieces must reach `main` together. It is `LATEST`, so new
+  photos and Reset get it, and existing photos keep V1 until Update to Current Process.
+
+## Where the numbers come from
+
+The V2 constants are **fitted to observed output**, and what they were fitted from is recorded here,
+because a clean-room fit is only defensible if the thing it was fitted from is on the record.
+
+- **What was observed:** the reference raw developer's rendered images — its JPEG/TIFF *output* —
+  opened and measured as pixel data. Nothing else: no application bundle, no resource, no profile,
+  no preset, no code, no disassembly, and no Adobe asset of any kind (see the clean-room rule in
+  `CLAUDE.md`). No Adobe profile, matrix, tone curve or LUT is copied, read or shipped.
+- **How:** each slider is rendered at a set of values on one photo, and its *transfer* — how a pixel
+  at a given level at value 0 moves — is measured by binning the render at value V by the render at
+  0, per colour channel, so everything the two engines disagree about cancels and only the slider's
+  own effect remains. The model in `tone.rs` is fitted to that transfer. The reference renders are
+  measurement data, not shipped code, and no reference image is committed.
+- **What that buys:** the constants are ours, derived from measurements of a public program's
+  output — the same footing as reading a histogram. Each constant's doc comment in `tone.rs` names
+  what it was fitted against and the residual left, so a later change can be checked the same way.
 
 ## The rule
 
@@ -21,13 +47,15 @@ Today there is one process, **V1**: LightCraft's rendering from before process v
 
 ## Adding a process
 
-1. Add a variant to `Process` (`V2`), append it to `Process::ALL` (oldest first), give it its number in
+1. Add a variant to `Process` (`V3`), append it to `Process::ALL` (oldest first), give it its number in
    `Process::version` and make it `Process::LATEST`.
 2. The compiler then points at every `match` on `Process`. The base tone map is chosen in one place,
    `lightcraft_pipeline::finish::base_tone` (both the CPU and the GPU renderer take it from there): give
-   V2 its own arm and leave V1's alone. A process that changes another stage branches there the same
-   way, on `s.process.process()`; if that stage is cached (`Plan::lin_key`, the planes in `local.rs`),
-   add the process to its key.
+   the new process its own arm and leave the others alone. A process that changes another stage branches
+   there the same way, on `s.process.process()`; if that stage is cached (`Plan::lin_key`, the planes in
+   `local.rs`), add the process to its key. Where a stage only has a yes/no question to ask (V2's
+   `Process::is_measured_tone` used by the Blacks curve and the per-photo Whites statistic), answer it
+   with an exhaustive helper on `Process`, not a `matches!`, so the compiler still points here.
 3. Keep `settings_saved_before_process_versions_load_as_v1` (`crates/develop/src/tests_process.rs`)
    passing: settings saved without the field must stay V1, not become the new latest. That is the
    field's `#[serde(default = "ProcessVersion::legacy")]`; the struct-level `Default` gives new

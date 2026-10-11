@@ -400,11 +400,12 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     let (full_w, full_h) = frame.fit(req.max_w, req.max_h);
     // sizes and scale are those of the whole output; a window only narrows what is drawn
     let px_per_long = frame.px_per_long(full_w);
-    // Positive Whites is per-photo (see [`tone::whites_scale`]), so the frame's highlight level
-    // is measured from a small render of the *whole* frame -- which a window cannot see, and
-    // which must not depend on the Whites value it scales. Whites at 0 or below has no per-photo
-    // term at all, so there is nothing to measure and nothing to pay for.
-    let whites_scale = if info.raw && s.light.whites > 0.0 {
+    // Positive Whites is per-photo from V2 on (see [`tone::whites_scale`]), so the frame's
+    // highlight level is measured from a small render of the *whole* frame -- which a window
+    // cannot see, and which must not depend on the Whites value it scales. Whites at 0 or below
+    // has no per-photo term at all, so there is nothing to measure and nothing to pay for; V1's
+    // Whites is a fixed curve, so it has nothing to measure either.
+    let whites_scale = if s.process.process().is_measured_tone() && info.raw && s.light.whites > 0.0 {
         let k = (AIRLIGHT_PROXY_EDGE as f64 / full_w.max(full_h) as f64).min(1.0);
         let (pw, ph) = (((full_w as f64 * k).round() as usize).max(1), ((full_h as f64 * k).round() as usize).max(1));
         let p99 = local::frame_highlight(src, info, s, &frame, pw, ph);
