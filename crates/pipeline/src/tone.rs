@@ -97,8 +97,16 @@ fn contrast_display(o: f32, g: f32) -> f32 {
 /// is as good as the free one to four decimals.
 ///
 /// Asymmetric and convex, like the reference's other sliders: per unit it is 0.0042 EV at −100
-/// against 0.0175 at +100. One parameter serves the whole range, but not one *coefficient*.
-const WHITES_KNOTS: [f32; 9] = [-0.420, -0.357, -0.267, -0.147, 0.0, 0.115, 0.388, 0.904, 1.753];
+/// against 0.0228 at +100. One parameter serves the whole range, but not one *coefficient*.
+///
+/// The positive arm is 1.3x what the family fit gives. That fit was made on the ten-body corpus and
+/// the extra was declined as "as likely to be profile error on unusual bodies as the reference's
+/// true level"; measured again on the owner's own seventeen DNGs, where the profile is not in
+/// question, the same 1.25–1.3 falls out of the transfer directly — the reference moves the
+/// midtones further than the family does. Taking it cuts the transfer error at +100 from 0.054 to
+/// 0.038 encoded and the whole-render dE against Lightroom from 8.16 to 6.71, with the midtone
+/// term going from −0.066 to +0.004 and the negative arm unchanged.
+const WHITES_KNOTS: [f32; 9] = [-0.420, -0.357, -0.267, -0.147, 0.0, 0.150, 0.504, 1.175, 2.279];
 
 /// The log-slope move that comes with a white-point move of [`whites_ev`] (measured, tied).
 const WHITES_SLOPE: f32 = 0.425;
@@ -137,9 +145,8 @@ const WHITES_SCALE_MAX: f32 = 2.00;
 /// Negative Whites is the opposite — its per-body spread is 0.04..0.08 EV, one curve — so
 /// [`whites_ev_scaled`] applies the scale to positive travel only and the curve below zero is
 /// untouched. The relation is normalised so the average photo keeps [`WHITES_KNOTS`] exactly
-/// (mean multiplier 1.0 over the corpus), rather than also taking the ~36 % stronger mean the
-/// same fit would give, which is as likely to be this engine's own profile error on unusual
-/// bodies as the reference's true level.
+/// (mean multiplier 1.0 over the corpus); the ~36 % stronger mean the same fit gives is carried by
+/// the knots themselves instead (see [`WHITES_KNOTS`]).
 ///
 /// This is the one slider where a per-photo statistic survived measurement: across the rest of
 /// the Basic panel no usable one was found (Highlights and Shadows fit well but their parameters
@@ -879,31 +886,31 @@ mod tests {
         // (whites, scene luminance, measured encoded out) -- the encoded baseline level is in the
         // comment, 0.25 / 0.50 / 0.75 / 0.90 top to bottom of each block.
         let rows: [(f64, f32, f32); 16] = [
-            (-100.0, 0.039_50, 0.2400),
-            (-100.0, 0.111_98, 0.4643),
-            (-100.0, 0.273_11, 0.6693),
-            (-100.0, 0.596_72, 0.8094),
-            (-50.0, 0.039_50, 0.2415),
-            (-50.0, 0.111_98, 0.4721),
-            (-50.0, 0.273_11, 0.7003),
-            (-50.0, 0.596_72, 0.8573),
-            (50.0, 0.039_50, 0.2598),
-            (50.0, 0.111_98, 0.5450),
-            (50.0, 0.273_11, 0.8248),
-            (50.0, 0.596_72, 0.9543),
-            (100.0, 0.039_50, 0.3395),
-            (100.0, 0.111_98, 0.7357),
-            (100.0, 0.273_11, 0.9457),
-            (100.0, 0.596_72, 0.9920),
+            (-100.0, 0.039_50, 0.2386),
+            (-100.0, 0.111_98, 0.4497),
+            (-100.0, 0.273_11, 0.6749),
+            (-100.0, 0.596_72, 0.8404),
+            (-50.0, 0.039_50, 0.2425),
+            (-50.0, 0.111_98, 0.4674),
+            (-50.0, 0.273_11, 0.7029),
+            (-50.0, 0.596_72, 0.8644),
+            (50.0, 0.039_50, 0.2671),
+            (50.0, 0.111_98, 0.5667),
+            (50.0, 0.273_11, 0.8297),
+            (50.0, 0.596_72, 0.9471),
+            (100.0, 0.039_50, 0.3692),
+            (100.0, 0.111_98, 0.8199),
+            (100.0, 0.273_11, 0.9749),
+            (100.0, 0.596_72, 0.9964),
         ];
         for (whites, scene, want) in rows {
             let got = lin_to_srgb_test(ToneMap::new(0.0, whites).apply(scene));
             assert!((got - want).abs() < TOL, "Whites {whites} at {scene}: {got} vs {want}");
         }
-        // One parameter, and it is asymmetric: +100 moves the white point 4x as far as the
-        // reference used to be said to, and the slope follows it.
+        // One parameter, and it is asymmetric: +100 moves the white point 5.4x as far as -100,
+        // and the slope follows it.
         assert_eq!(whites_ev(0.0), 0.0);
-        assert!((whites_ev(100.0) - 1.753).abs() < 1e-6);
+        assert!((whites_ev(100.0) - 2.279).abs() < 1e-6);
         assert!((whites_ev(-100.0) + 0.420).abs() < 1e-6);
         // Not the linear pair it replaced (1.00 up, 0.42 down): convex both ways, and asymmetric.
         assert!(whites_ev(50.0) < 0.5 * whites_ev(100.0), "convex: {}", whites_ev(50.0));
